@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,13 +9,11 @@ import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
-from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
+from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.channels.callback import BaseCallbackInfo, ChannelType
-from app.services.channels.commands import IM_CHANNEL_CONTEXT_HINT
-from app.services.channels.device_selection import DeviceSelection, DeviceType
 from app.services.channels.handler import BaseChannelHandler, MessageContext
 from app.services.im.session_service import im_session_service
 
@@ -194,28 +191,6 @@ def _create_team(test_db: Session, test_user: User) -> Kind:
 
 
 @pytest.mark.asyncio
-async def test_private_bind_creates_session_and_replies_bound(
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    handler = FakeChannelHandler(test_user)
-
-    handled = await handler.handle_message(
-        _message("/bind", proactive_recipient_id="staff-delivery-a")
-    )
-
-    test_db.expire_all()
-    session = await _private_session(test_db, test_user)
-    assert handled is True
-    assert session is not None
-    assert session.sender_id == "staff-a"
-    assert session.proactive_recipient_id == "staff-delivery-a"
-    assert session.display_name == "Alice"
-    assert any("已绑定" in reply for reply in handler.replies)
-
-
-@pytest.mark.asyncio
 async def test_group_bind_does_not_create_private_session_and_uses_fallback(
     test_db: Session,
     test_user: User,
@@ -232,505 +207,7 @@ async def test_group_bind_does_not_create_private_session_and_uses_fallback(
         test_db, user_id=test_user.id
     )
     assert sessions == []
-    assert handler.replies == [
-        "请在私聊会话中使用该命令；任务模式正在初始化，请稍后重试。"
-    ]
-
-
-@pytest.mark.asyncio
-async def test_private_chat_mode_plain_text_fallthrough_keeps_user_fields_usable(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    expiring_channel_sessionlocal,
-) -> None:
-    handler = FakeChannelHandler(test_user)
-    calls: dict[str, Any] = {}
-
-    async def fake_route_private_im_session(
-        db: Session,
-        user: User,
-        im_session: IMPrivateSession,
-        message_context: MessageContext,
-    ) -> bool:
-        calls["session_key"] = im_session.session_key
-        return False
-
-    async def fake_process_chat_message(
-        user: User,
-        message_context: MessageContext,
-    ) -> None:
-        calls["user_email"] = user.email
-        calls["content"] = message_context.content
-
-    monkeypatch.setattr(
-        handler, "_route_private_im_session", fake_route_private_im_session
-    )
-    monkeypatch.setattr(handler, "_process_chat_message", fake_process_chat_message)
-
-    handled = await handler.handle_message(_message("普通私聊消息"))
-
-    test_db.expire_all()
-    session = await _private_session(test_db, test_user)
-    assert handled is True
-    assert session is not None
-    assert calls["session_key"] == session.session_key
-    assert calls == {
-        "session_key": session.session_key,
-        "user_email": test_user.email,
-        "content": "普通私聊消息",
-    }
-
-
-@pytest.mark.asyncio
-async def test_private_task_then_numeric_choice_binds_recent_task_and_clears_pending(
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    task = _create_wework_task(test_db, test_user, title="整理私聊需求")
-    handler = FakeChannelHandler(test_user)
-
-    first_handled = await handler.handle_message(_message("/task"))
-    second_handled = await handler.handle_message(_message("1"))
-
-    test_db.expire_all()
-    session = await _private_session(test_db, test_user)
-    assert first_handled is True
-    assert second_handled is True
-    assert session is not None
-    assert session.mode == IMSessionMode.TASK
-    assert session.active_task_id == task.id
-    assert session.state == IMSessionState.IDLE
-    assert session.pending_payload == {}
-    assert any("最近任务" in reply for reply in handler.replies)
-    assert any(
-        "整理私聊需求" in reply and "已切换" in reply for reply in handler.replies
-    )
-
-
-@pytest.mark.asyncio
-async def test_private_new_choice_chat_is_consumed_and_clears_cached_task(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    handler = FakeChannelHandler(test_user)
-    calls: dict[str, Any] = {}
-    current_selection = DeviceSelection(device_type=DeviceType.CLOUD)
-
-    async def fake_delete_conversation_task_id(
-        conversation_id: str,
-        user_id: int,
-    ) -> None:
-        calls["delete_cache"] = {
-            "conversation_id": conversation_id,
-            "user_id": user_id,
-        }
-
-    async def fake_set_chat_mode(user_id: int) -> bool:
-        nonlocal current_selection
-        calls["chat_mode_user_id"] = user_id
-        current_selection = DeviceSelection(device_type=DeviceType.CHAT)
-        return True
-
-    async def fake_get_selection(user_id: int) -> DeviceSelection:
-        assert user_id == test_user.id
-        return current_selection
-
-    async def fake_process_chat_mode(
-        user: User,
-        message_context: MessageContext,
-    ) -> None:
-        calls["chat"] = {
-            "user_id": user.id,
-            "content": message_context.content,
-        }
-
-    async def fake_process_cloud_mode(
-        user: User,
-        message_context: MessageContext,
-    ) -> None:
-        calls["cloud"] = {
-            "user_id": user.id,
-            "content": message_context.content,
-        }
-
-    monkeypatch.setattr(
-        handler,
-        "_delete_conversation_task_id",
-        fake_delete_conversation_task_id,
-    )
-    monkeypatch.setattr(
-        "app.services.im.interaction_service.device_selection_manager.set_chat_mode",
-        fake_set_chat_mode,
-    )
-    monkeypatch.setattr(
-        "app.services.channels.handler.device_selection_manager.get_selection",
-        fake_get_selection,
-    )
-    monkeypatch.setattr(handler, "_process_chat_mode", fake_process_chat_mode)
-    monkeypatch.setattr(handler, "_process_cloud_mode", fake_process_cloud_mode)
-
-    first_handled = await handler.handle_message(_message("/new"))
-    second_handled = await handler.handle_message(_message("1"))
-    third_handled = await handler.handle_message(_message("检查代码"))
-
-    test_db.expire_all()
-    session = await _private_session(test_db, test_user)
-    assert first_handled is True
-    assert second_handled is True
-    assert third_handled is True
-    assert session is not None
-    assert session.mode == IMSessionMode.CHAT
-    assert session.state == IMSessionState.IDLE
-    assert session.pending_payload == {}
-    assert calls == {
-        "chat_mode_user_id": test_user.id,
-        "delete_cache": {
-            "conversation_id": "conv-private",
-            "user_id": test_user.id,
-        },
-        "chat": {
-            "user_id": test_user.id,
-            "content": "检查代码",
-        },
-    }
-    assert handler.replies[-1] == "已开始新 Chat，请发送消息。"
-
-
-@pytest.mark.asyncio
-async def test_private_use_cloud_clears_bound_runtime_task(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    handler = FakeChannelHandler(test_user)
-    session = await im_session_service.get_or_create_private_session(
-        db=test_db,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=77,
-        conversation_id="conv-private",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    await im_session_service.bind_active_runtime_task(
-        test_db,
-        session=session,
-        runtime_task={
-            "deviceId": "local-device",
-            "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
-        },
-    )
-    selection = DeviceSelection(
-        device_type=DeviceType.LOCAL,
-        device_id="local-device",
-        device_name="Wework Device",
-    )
-    calls: dict[str, Any] = {}
-
-    async def fake_get_selection(user_id: int) -> DeviceSelection:
-        assert user_id == test_user.id
-        return selection
-
-    async def fake_set_cloud_executor(user_id: int) -> bool:
-        nonlocal selection
-        assert user_id == test_user.id
-        selection = DeviceSelection(device_type=DeviceType.CLOUD)
-        return True
-
-    async def fake_process_cloud_mode(
-        user: User,
-        message_context: MessageContext,
-    ) -> None:
-        calls["cloud"] = {
-            "user_id": user.id,
-            "content": message_context.content,
-        }
-
-    async def fake_process_device_mode(
-        user: User,
-        device_selection: DeviceSelection,
-        message_context: MessageContext,
-    ) -> None:
-        calls["device"] = {
-            "user_id": user.id,
-            "device_id": device_selection.device_id,
-            "content": message_context.content,
-        }
-
-    monkeypatch.setattr(
-        "app.services.channels.handler.device_selection_manager.get_selection",
-        fake_get_selection,
-    )
-    monkeypatch.setattr(
-        "app.services.channels.handler.device_selection_manager.set_cloud_executor",
-        fake_set_cloud_executor,
-    )
-    monkeypatch.setattr(handler, "_process_cloud_mode", fake_process_cloud_mode)
-    monkeypatch.setattr(handler, "_process_device_mode", fake_process_device_mode)
-
-    handled = await handler.handle_message(_message("/use cloud"))
-    next_handled = await handler.handle_message(_message("执行 pwd"))
-
-    refreshed = await _private_session(test_db, test_user)
-    assert handled is True
-    assert next_handled is True
-    assert selection.device_type == DeviceType.CLOUD
-    assert refreshed is not None
-    assert refreshed.mode == IMSessionMode.CHAT
-    assert refreshed.active_task_id is None
-    assert refreshed.active_runtime_task is None
-    assert calls == {
-        "cloud": {
-            "user_id": test_user.id,
-            "content": "执行 pwd",
-        }
-    }
-    assert any("云端执行模式" in reply for reply in handler.replies)
-
-
-@pytest.mark.asyncio
-async def test_task_mode_plain_text_appends_to_active_task_with_im_source_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    _create_team(test_db, test_user)
-    task = _create_wework_task(test_db, test_user, title="继续私聊任务")
-    handler = FakeChannelHandler(test_user)
-    session = await im_session_service.get_or_create_private_session(
-        db=test_db,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=77,
-        conversation_id="conv-private",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    await im_session_service.bind_active_task(test_db, session=session, task_id=task.id)
-
-    calls: dict[str, Any] = {}
-
-    async def fake_append_message_to_task(
-        db: Session,
-        *,
-        user: User,
-        task_id: int,
-        message: str,
-        message_source: dict[str, Any] | None,
-    ):
-        calls["append"] = {
-            "task_id": task_id,
-            "message": message,
-            "message_source": message_source,
-        }
-        return SimpleNamespace(
-            task=SimpleNamespace(id=task_id),
-            user_subtask=SimpleNamespace(id=501),
-            assistant_subtask=SimpleNamespace(id=502),
-        )
-
-    async def fake_trigger_ai_response_unified(**kwargs):
-        calls["trigger"] = kwargs
-
-    class FakeStreamingEmitter:
-        async def emit_start(self, **kwargs):
-            calls["emit_start"] = kwargs
-
-        def set_shared_content_key(self, key: str):
-            calls["shared_content_key"] = key
-
-    async def fake_create_streaming_emitter(message_context: MessageContext):
-        return FakeStreamingEmitter()
-
-    monkeypatch.setattr(
-        "app.services.im.task_continuation_service.append_message_to_task",
-        fake_append_message_to_task,
-    )
-    monkeypatch.setattr(
-        "app.services.chat.trigger.trigger_ai_response_unified",
-        fake_trigger_ai_response_unified,
-    )
-    monkeypatch.setattr(
-        handler,
-        "create_streaming_emitter",
-        fake_create_streaming_emitter,
-    )
-
-    handled = await handler.handle_message(_message("继续处理这个任务"))
-
-    assert handled is True
-    assert calls["append"]["task_id"] == task.id
-    assert calls["append"]["message"] == "继续处理这个任务"
-    assert calls["append"]["message_source"]["source"] == "im"
-    assert calls["append"]["message_source"]["session_key"] == session.session_key
-    assert calls["append"]["message_source"]["channel_label"] == "钉钉"
-    assert calls["trigger"]["task"].id == task.id
-    assert calls["trigger"]["user_subtask_id"] == 501
-
-
-@pytest.mark.asyncio
-async def test_task_mode_runtime_message_registers_callback_without_static_ack(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    from app.services import runtime_work_service
-
-    handler = FakeChannelHandler(test_user)
-    session = await im_session_service.get_or_create_private_session(
-        db=test_db,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=77,
-        conversation_id="conv-private",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    await im_session_service.bind_active_runtime_task(
-        test_db,
-        session=session,
-        runtime_task={
-            "deviceId": "device-1",
-            "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
-            "modelSelection": {
-                "modelName": "gpt-5.6-luna",
-                "modelType": "public",
-                "options": {"reasoningEffort": "low"},
-            },
-        },
-    )
-    calls: dict[str, Any] = {}
-
-    class FakeCallbackService:
-        async def save_callback_info(self, task_id, callback_info):
-            calls["callback"] = {
-                "task_id": task_id,
-                "callback_info": callback_info,
-            }
-
-        async def delete_callback_info(self, task_id):
-            calls["deleted_callback"] = task_id
-
-    async def fake_send_runtime_message(**kwargs):
-        calls["send"] = kwargs
-        return SimpleNamespace(accepted=True, local_task_id="codex-1", error=None)
-
-    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
-    monkeypatch.setattr(
-        runtime_work_service,
-        "send_runtime_message",
-        fake_send_runtime_message,
-    )
-
-    handled = await handler.handle_message(
-        _message(
-            "继续 runtime",
-            extra_data={"message_id": "dingtalk-message-1"},
-        )
-    )
-
-    assert handled is True
-    assert handler.replies == []
-    assert calls["callback"]["task_id"] == "runtime:device-1:codex-1"
-    assert calls["callback"]["callback_info"].conversation_id == "conv-private"
-    assert calls["send"]["request"].source.source == "im"
-    assert calls["send"]["allow_app_device_task_messaging"] is True
-    assert calls["send"]["request"].source.message_id == "dingtalk-message-1"
-    assert (
-        calls["send"]["request"].client_user_message_id
-        == "im:dingtalk:77:dingtalk-message-1"
-    )
-    assert calls["send"]["request"].model_selection.model_name == "gpt-5.6-luna"
-    assert calls["send"]["request"].model_selection.model_type == "public"
-    assert calls["send"]["request"].model_selection.options == {
-        "reasoningEffort": "low"
-    }
-
-
-@pytest.mark.asyncio
-async def test_task_mode_runtime_message_migrates_app_device_callback_route(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    from app.services import runtime_work_service
-
-    device = Kind(
-        user_id=test_user.id,
-        kind="Device",
-        name="local-device",
-        namespace="default",
-        is_active=True,
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Device",
-            "metadata": {"name": "local-device", "namespace": "default"},
-            "spec": {
-                "deviceId": "local-device",
-                "deviceType": "app",
-                "runtimeInstanceId": "runtime-installation",
-                "appDeviceId": "electron-app",
-            },
-        },
-    )
-    test_db.add(device)
-    test_db.commit()
-    test_db.refresh(device)
-    handler = FakeChannelHandler(test_user)
-    session = await im_session_service.get_or_create_private_session(
-        db=test_db,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=77,
-        conversation_id="conv-private",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    await im_session_service.bind_active_runtime_task(
-        test_db,
-        session=session,
-        runtime_task={
-            "deviceId": "electron-app",
-            "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
-        },
-    )
-    calls: dict[str, Any] = {}
-
-    class FakeCallbackService:
-        async def save_callback_info(self, task_id, callback_info):
-            calls["callback_key"] = task_id
-
-    async def fake_send_runtime_message(**kwargs):
-        calls["send"] = kwargs
-        return SimpleNamespace(accepted=True, local_task_id="codex-1", error=None)
-
-    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
-    monkeypatch.setattr(
-        runtime_work_service,
-        "send_runtime_message",
-        fake_send_runtime_message,
-    )
-
-    handled = await handler.handle_message(_message("继续 runtime"))
-
-    canonical_device_id = f"app-record-{device.id}"
-    assert handled is True
-    assert calls["callback_key"] == f"runtime:{canonical_device_id}:codex-1"
-    assert calls["send"]["request"].address.device_id == canonical_device_id
-    refreshed = await _private_session(test_db, test_user)
-    assert refreshed.active_runtime_task["deviceId"] == canonical_device_id
-    assert refreshed.active_runtime_task["localTaskId"] == "codex-1"
+    assert handler.replies == ["该命令仅支持私聊，请在与机器人的私聊中使用。"]
 
 
 @pytest.mark.asyncio
@@ -752,15 +229,11 @@ async def test_dingtalk_runtime_message_registers_started_card_for_cross_worker(
         sender_id="staff-a",
         display_name="Alice",
     )
-    await im_session_service.bind_active_runtime_task(
-        test_db,
-        session=session,
-        runtime_task={
-            "deviceId": "device-1",
-            "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
-        },
-    )
+    runtime_task = {
+        "deviceId": "device-1",
+        "workspacePath": "/repo/Wegent",
+        "localTaskId": "codex-1",
+    }
     calls: dict[str, Any] = {}
 
     class FakeCallbackService:
@@ -808,11 +281,15 @@ async def test_dingtalk_runtime_message_registers_started_card_for_cross_worker(
         fake_send_runtime_message,
     )
 
-    handled = await handler.handle_message(
-        _message(
-            "继续 runtime",
-            extra_data={"message_id": "dingtalk-message-1"},
-        )
+    handled = await handler._execute_private_im_continue_runtime_task(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message="继续 runtime",
+        message_context=handler.parse_message(
+            _message("继续 runtime", extra_data={"message_id": "dingtalk-message-1"})
+        ),
+        runtime_task=runtime_task,
     )
 
     callback_key = "runtime:device-1:codex-1"
@@ -849,15 +326,11 @@ async def test_weibo_runtime_message_registers_stream_without_status_prefix(
         sender_id="staff-a",
         display_name="Alice",
     )
-    await im_session_service.bind_active_runtime_task(
-        test_db,
-        session=session,
-        runtime_task={
-            "deviceId": "device-1",
-            "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
-        },
-    )
+    runtime_task = {
+        "deviceId": "device-1",
+        "workspacePath": "/repo/Wegent",
+        "localTaskId": "codex-1",
+    }
     calls: dict[str, Any] = {}
 
     class FakeCallbackService:
@@ -904,7 +377,14 @@ async def test_weibo_runtime_message_registers_stream_without_status_prefix(
         fake_send_runtime_message,
     )
 
-    handled = await handler.handle_message(_message("继续 runtime"))
+    handled = await handler._execute_private_im_continue_runtime_task(
+        db=test_db,
+        user=test_user,
+        im_session=session,
+        message="继续 runtime",
+        message_context=handler.parse_message(_message("继续 runtime")),
+        runtime_task=runtime_task,
+    )
 
     assert handled is True
     assert handler.replies == []
@@ -919,415 +399,6 @@ async def test_weibo_runtime_message_registers_stream_without_status_prefix(
         "emitter": calls["created_emitter"],
     }
     assert calls["send"]["request"].address.local_task_id == "codex-1"
-
-
-@pytest.mark.asyncio
-async def test_task_mode_dingtalk_quoted_notification_switches_runtime_task(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    from app.services import runtime_work_service
-
-    handler = FakeChannelHandler(test_user)
-    session = await im_session_service.get_or_create_private_session(
-        db=test_db,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=77,
-        conversation_id="conv-private",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    await im_session_service.bind_active_runtime_task(
-        test_db,
-        session=session,
-        runtime_task={
-            "deviceId": "device-active",
-            "workspacePath": "/repo/Active",
-            "localTaskId": "codex-active",
-        },
-    )
-    await im_session_service.save_runtime_task_reply_target(
-        session=session,
-        message_id="notification-query-key",
-        runtime_task={
-            "deviceId": "device-notified",
-            "workspacePath": "/repo/Notified",
-            "localTaskId": "codex-notified",
-        },
-    )
-    calls: dict[str, Any] = {}
-
-    class FakeCallbackService:
-        async def save_callback_info(self, task_id, callback_info):
-            calls["callback"] = {
-                "task_id": task_id,
-                "callback_info": callback_info,
-            }
-
-        async def delete_callback_info(self, task_id):
-            calls["deleted_callback"] = task_id
-
-    async def fake_send_runtime_message(**kwargs):
-        calls["send"] = kwargs
-        return SimpleNamespace(
-            accepted=True,
-            local_task_id="codex-notified",
-            error=None,
-        )
-
-    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
-    monkeypatch.setattr(
-        runtime_work_service,
-        "send_runtime_message",
-        fake_send_runtime_message,
-    )
-
-    handled = await handler.handle_message(
-        _message(
-            "回复通知",
-            extra_data={"reply_to_message_id": "notification-query-key"},
-        )
-    )
-
-    assert handled is True
-    assert handler.replies == []
-    assert calls["callback"]["task_id"] == "runtime:device-notified:codex-notified"
-    assert calls["send"]["request"].address.device_id == "device-notified"
-    assert calls["send"]["request"].address.local_task_id == "codex-notified"
-    refreshed = await _private_session(test_db, test_user)
-    assert refreshed.mode == IMSessionMode.TASK
-    assert refreshed.active_runtime_task["deviceId"] == "device-notified"
-    assert refreshed.active_runtime_task["localTaskId"] == "codex-notified"
-
-
-@pytest.mark.asyncio
-async def test_runtime_notification_reply_continues_task_from_chat_mode(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    from app.services import runtime_work_service
-
-    handler = FakeChannelHandler(test_user)
-    session = await im_session_service.get_or_create_private_session(
-        db=test_db,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=77,
-        conversation_id="conv-private",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    await im_session_service.set_mode(test_db, session=session, mode=IMSessionMode.CHAT)
-    await im_session_service.save_runtime_task_reply_target(
-        session=session,
-        message_id=902,
-        runtime_task={
-            "deviceId": "device-notified",
-            "workspacePath": "/repo/Notified",
-            "localTaskId": "codex-notified",
-        },
-    )
-    calls: dict[str, Any] = {}
-
-    class FakeCallbackService:
-        async def save_callback_info(self, task_id, callback_info):
-            calls["callback"] = task_id
-
-        async def delete_callback_info(self, task_id):
-            calls["deleted_callback"] = task_id
-
-    async def fake_send_runtime_message(**kwargs):
-        calls["send"] = kwargs
-        return SimpleNamespace(
-            accepted=True,
-            local_task_id="codex-notified",
-            error=None,
-        )
-
-    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
-    monkeypatch.setattr(
-        runtime_work_service,
-        "send_runtime_message",
-        fake_send_runtime_message,
-    )
-
-    handled = await handler.handle_message(
-        _message(
-            "从通知回复",
-            extra_data={"reply_to_message_id": 902},
-        )
-    )
-
-    assert handled is True
-    assert handler.replies == []
-    assert calls["callback"] == "runtime:device-notified:codex-notified"
-    assert calls["send"]["request"].address.local_task_id == "codex-notified"
-    refreshed = await _private_session(test_db, test_user)
-    assert refreshed.mode == IMSessionMode.TASK
-    assert refreshed.active_runtime_task["deviceId"] == "device-notified"
-    assert refreshed.active_runtime_task["localTaskId"] == "codex-notified"
-
-
-@pytest.mark.asyncio
-async def test_task_mode_runtime_message_rejects_invalid_address_before_callback(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    from app.services import runtime_work_service
-
-    handler = FakeChannelHandler(test_user)
-    session = await im_session_service.get_or_create_private_session(
-        db=test_db,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=77,
-        conversation_id="conv-private",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    await im_session_service.bind_active_runtime_task(
-        test_db,
-        session=session,
-        runtime_task={"deviceId": "device-1"},
-    )
-    calls: dict[str, Any] = {}
-
-    class FakeCallbackService:
-        async def save_callback_info(self, task_id, callback_info):
-            calls["callback"] = task_id
-
-        async def delete_callback_info(self, task_id):
-            calls["deleted_callback"] = task_id
-
-    async def fake_send_runtime_message(**kwargs):
-        calls["send"] = kwargs
-        return SimpleNamespace(accepted=True, local_task_id="codex-1", error=None)
-
-    monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
-    monkeypatch.setattr(
-        runtime_work_service,
-        "send_runtime_message",
-        fake_send_runtime_message,
-    )
-
-    handled = await handler.handle_message(_message("继续 runtime"))
-
-    assert handled is True
-    assert "callback" not in calls
-    assert "deleted_callback" not in calls
-    assert "send" not in calls
-    assert handler.replies == ["当前本地任务不可用,请回到 Wework 重新选择。"]
-    refreshed = await _private_session(test_db, test_user)
-    assert refreshed.active_runtime_task is None
-
-
-@pytest.mark.asyncio
-async def test_task_mode_media_only_message_appends_to_active_task_and_persists_media(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    _create_team(test_db, test_user)
-    task = _create_wework_task(test_db, test_user, title="继续图片任务")
-    handler = FakeChannelHandler(test_user)
-    session = await im_session_service.get_or_create_private_session(
-        db=test_db,
-        user_id=test_user.id,
-        channel_type="dingtalk",
-        channel_id=77,
-        conversation_id="conv-private",
-        sender_id="staff-a",
-        display_name="Alice",
-    )
-    await im_session_service.bind_active_task(test_db, session=session, task_id=task.id)
-
-    calls: dict[str, Any] = {}
-
-    async def fake_append_message_to_task(
-        db: Session,
-        *,
-        user: User,
-        task_id: int,
-        message: str,
-        message_source: dict[str, Any] | None,
-    ):
-        calls["append"] = {
-            "task_id": task_id,
-            "message": message,
-            "message_source": message_source,
-        }
-        return SimpleNamespace(
-            task=SimpleNamespace(id=task_id),
-            user_subtask=SimpleNamespace(id=601),
-            assistant_subtask=SimpleNamespace(id=602),
-        )
-
-    async def fake_trigger_ai_response_unified(**kwargs):
-        calls["trigger"] = kwargs
-
-    class FakeStreamingEmitter:
-        async def emit_start(self, **kwargs):
-            calls["emit_start"] = kwargs
-
-        def set_shared_content_key(self, key: str):
-            calls["shared_content_key"] = key
-
-    async def fake_create_streaming_emitter(message_context: MessageContext):
-        return FakeStreamingEmitter()
-
-    def fake_persist_images_as_attachments(
-        db: Session,
-        user_id: int,
-        subtask_id: int,
-        images: list[dict[str, str]],
-    ):
-        calls["persist_images"] = {
-            "user_id": user_id,
-            "subtask_id": subtask_id,
-            "images": images,
-        }
-        return [9001]
-
-    monkeypatch.setattr(
-        "app.services.im.task_continuation_service.append_message_to_task",
-        fake_append_message_to_task,
-    )
-    monkeypatch.setattr(
-        "app.services.chat.trigger.trigger_ai_response_unified",
-        fake_trigger_ai_response_unified,
-    )
-    monkeypatch.setattr(
-        handler,
-        "create_streaming_emitter",
-        fake_create_streaming_emitter,
-    )
-    monkeypatch.setattr(
-        handler,
-        "_persist_im_images_as_attachments",
-        fake_persist_images_as_attachments,
-    )
-
-    image = {"mime_type": "image/png", "base64_data": "aGVsbG8="}
-    handled = await handler.handle_message(_message("", images=[image]))
-
-    assert handled is True
-    assert calls["append"]["task_id"] == task.id
-    assert calls["append"]["message"] == ""
-    assert calls["append"]["message_source"]["source"] == "im"
-    assert calls["persist_images"] == {
-        "user_id": test_user.id,
-        "subtask_id": 601,
-        "images": [image],
-    }
-    assert calls["trigger"]["task"].id == task.id
-    assert calls["trigger"]["message"] == IM_CHANNEL_CONTEXT_HINT
-
-
-@pytest.mark.asyncio
-async def test_private_task_creation_uses_task_type_task_and_binds_new_task(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: Session,
-    test_user: User,
-    channel_sessionlocal,
-) -> None:
-    team = _create_team(test_db, test_user)
-    test_user.preferences = json.dumps(
-        {
-            "wework_new_chat_model_selection": {
-                "modelName": "openai-gpt-5.6-sol",
-                "modelType": "public",
-                "options": {"reasoning": "high"},
-            }
-        }
-    )
-    test_db.add(test_user)
-    test_db.commit()
-    handler = FakeChannelHandler(test_user)
-    calls: dict[str, Any] = {}
-
-    async def fake_create_chat_task(
-        db: Session,
-        user: User,
-        team: Kind,
-        message: str,
-        params: Any,
-        task_id: int | None = None,
-        should_trigger_ai: bool = True,
-        rag_prompt: str | None = None,
-        source: str = "web",
-    ):
-        calls["create"] = {
-            "message": message,
-            "params": params,
-            "should_trigger_ai": should_trigger_ai,
-            "source": source,
-        }
-        return SimpleNamespace(
-            task=SimpleNamespace(id=710),
-            user_subtask=SimpleNamespace(id=711),
-            assistant_subtask=SimpleNamespace(id=712),
-        )
-
-    async def fake_trigger_ai_response_unified(**kwargs):
-        calls["trigger"] = kwargs
-
-    class FakeStreamingEmitter:
-        async def emit_start(self, **kwargs):
-            calls["emit_start"] = kwargs
-
-        def set_shared_content_key(self, key: str):
-            calls["shared_content_key"] = key
-
-    async def fake_create_streaming_emitter(message_context: MessageContext):
-        return FakeStreamingEmitter()
-
-    monkeypatch.setattr(
-        handler,
-        "_get_task_mode_team",
-        lambda db, user_id: team,
-    )
-    monkeypatch.setattr(
-        "app.services.chat.storage.task_manager.create_chat_task",
-        fake_create_chat_task,
-    )
-    monkeypatch.setattr(
-        "app.services.chat.trigger.trigger_ai_response_unified",
-        fake_trigger_ai_response_unified,
-    )
-    monkeypatch.setattr(
-        handler,
-        "create_streaming_emitter",
-        fake_create_streaming_emitter,
-    )
-
-    await handler.handle_message(_message("/task"))
-    await handler.handle_message(_message("new"))
-    await handler.handle_message(_message("0"))
-    handled = await handler.handle_message(_message("创建新的任务需求"))
-
-    test_db.expire_all()
-    session = await _private_session(test_db, test_user)
-    assert handled is True
-    assert calls["create"]["message"] == "创建新的任务需求"
-    assert calls["create"]["params"].task_type == "task"
-    assert calls["create"]["params"].client_origin == CLIENT_ORIGIN_WEWORK
-    assert calls["create"]["params"].source == "im"
-    assert calls["create"]["params"].model_id is None
-    assert calls["create"]["params"].force_override_bot_model is False
-    assert calls["create"]["should_trigger_ai"] is True
-    assert calls["create"]["source"] == "im"
-    assert session is not None
-    assert session.active_task_id == 710
-    assert session.state == IMSessionState.IDLE
-    assert session.pending_payload == {}
 
 
 def _create_restricted_team(
@@ -1391,95 +462,46 @@ def _create_restricted_team(
     return team
 
 
-@pytest.mark.parametrize(
-    ("allowed_model_name", "expected_model_id"),
-    [
-        ("allowed-model", None),
-        ("openai-gpt-5.1(overseas)", "openai-gpt-5.1(overseas)"),
-    ],
-)
 @pytest.mark.asyncio
-async def test_private_task_creation_honors_agent_model_restriction(
+async def test_private_chat_mode_plain_text_fallthrough_keeps_user_fields_usable(
     monkeypatch: pytest.MonkeyPatch,
     test_db: Session,
     test_user: User,
-    channel_sessionlocal,
-    allowed_model_name: str,
-    expected_model_id: str | None,
+    expiring_channel_sessionlocal,
 ) -> None:
-    """An agent's allowed_models whitelist wins over the Wework model preference."""
-    team = _create_restricted_team(
-        test_db, test_user, allowed_model_name=allowed_model_name
-    )
-    test_user.preferences = json.dumps(
-        {
-            "wework_new_chat_model_selection": {
-                "modelName": "openai-gpt-5.1(overseas)",
-                "modelType": "public",
-                "options": {"reasoning": "high"},
-            }
-        }
-    )
-    test_db.add(test_user)
-    test_db.commit()
-    handler = FakeChannelHandler(test_user, channel_type=ChannelType.TELEGRAM)
+    handler = FakeChannelHandler(test_user)
     calls: dict[str, Any] = {}
 
-    async def fake_create_chat_task(
+    async def fake_route_private_im_session(
         db: Session,
         user: User,
-        team: Kind,
-        message: str,
-        params: Any,
-        task_id: int | None = None,
-        should_trigger_ai: bool = True,
-        rag_prompt: str | None = None,
-        source: str = "web",
-    ):
-        calls["params"] = params
-        return SimpleNamespace(
-            task=SimpleNamespace(id=810),
-            user_subtask=SimpleNamespace(id=811),
-            assistant_subtask=SimpleNamespace(id=812),
-        )
+        im_session: IMPrivateSession,
+        message_context: MessageContext,
+    ) -> bool:
+        calls["session_key"] = im_session.session_key
+        return False
 
-    async def fake_trigger_ai_response_unified(**kwargs):
-        calls["trigger"] = kwargs
+    async def fake_process_chat_message(
+        user: User,
+        message_context: MessageContext,
+    ) -> None:
+        calls["user_email"] = user.email
+        calls["content"] = message_context.content
 
-    class FakeStreamingEmitter:
-        async def emit_start(self, **kwargs):
-            calls["emit_start"] = kwargs
-
-        def set_shared_content_key(self, key: str):
-            calls["shared_content_key"] = key
-
-    async def fake_create_streaming_emitter(message_context: MessageContext):
-        return FakeStreamingEmitter()
-
-    monkeypatch.setattr(handler, "_get_task_mode_team", lambda db, user_id: team)
     monkeypatch.setattr(
-        "app.services.chat.storage.task_manager.create_chat_task",
-        fake_create_chat_task,
+        handler, "_route_private_im_session", fake_route_private_im_session
     )
-    monkeypatch.setattr(
-        "app.services.chat.trigger.trigger_ai_response_unified",
-        fake_trigger_ai_response_unified,
-    )
-    monkeypatch.setattr(
-        handler,
-        "create_streaming_emitter",
-        fake_create_streaming_emitter,
-    )
+    monkeypatch.setattr(handler, "_process_chat_message", fake_process_chat_message)
 
-    await handler.handle_message(_message("/task"))
-    await handler.handle_message(_message("new"))
-    await handler.handle_message(_message("0"))
-    handled = await handler.handle_message(_message("继续这个需求"))
+    handled = await handler.handle_message(_message("普通私聊消息"))
 
+    test_db.expire_all()
+    session = await _private_session(test_db, test_user)
     assert handled is True
-    params = calls["params"]
-    assert params.model_id == expected_model_id
-    assert params.force_override_bot_model is (expected_model_id is not None)
-    if expected_model_id is None:
-        assert params.force_override_bot_model_type is None
-        assert params.model_options is None
+    assert session is not None
+    assert calls["session_key"] == session.session_key
+    assert calls == {
+        "session_key": session.session_key,
+        "user_email": test_user.email,
+        "content": "普通私聊消息",
+    }

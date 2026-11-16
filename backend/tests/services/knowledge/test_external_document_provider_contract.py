@@ -137,7 +137,9 @@ class ProviderContractSuite:
         provider = self.make_provider()
         self.configure_user(monkeypatch, test_user)
         self.create_resource(test_db, test_user, "contract-fetch", "Fetch Doc")
-        self.mock_fetch_body(monkeypatch, provider, "# Fetch Doc body")
+        self.mock_fetch_body(
+            monkeypatch, provider, "# Fetch Doc body", title="Fetch Doc"
+        )
 
         content = asyncio.run(
             provider.fetch_content(test_db, test_user, "contract-fetch")
@@ -186,7 +188,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         ],
     )
     async def test_live_timestamp_probe_only_accepts_a_positive_epoch(
-        self, test_user, monkeypatch, value, expected
+        self, test_db, test_user, monkeypatch, value, expected
     ):
         self.configure_user(monkeypatch, test_user)
         session = SimpleNamespace(
@@ -204,7 +206,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         )
 
         @asynccontextmanager
-        async def connected(url):
+        async def connected(db, user, service_id):
             yield session
 
         monkeypatch.setattr(
@@ -212,7 +214,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
             connected,
         )
         assert (
-            await self.make_provider().get_update_time(test_user, "probe-node")
+            await self.make_provider().get_update_time(test_db, test_user, "probe-node")
             == expected
         )
         session.call_tool.assert_awaited_once_with(
@@ -221,7 +223,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
 
     @pytest.mark.asyncio
     async def test_probe_failure_names_the_underlying_cause(
-        self, test_user, monkeypatch
+        self, test_db, test_user, monkeypatch
     ):
         from app.services.knowledge.external_document_providers import (
             ExternalDocumentFetchError,
@@ -233,7 +235,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         )
 
         @asynccontextmanager
-        async def connected(url):
+        async def connected(db, user, service_id):
             yield session
 
         monkeypatch.setattr(
@@ -242,13 +244,13 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         )
 
         with pytest.raises(ExternalDocumentFetchError) as excinfo:
-            await self.make_provider().get_update_time(test_user, "probe-node")
+            await self.make_provider().get_update_time(test_db, test_user, "probe-node")
 
         assert "RuntimeError" in str(excinfo.value)
 
     @pytest.mark.asyncio
     async def test_unusable_update_time_is_logged_with_its_value(
-        self, test_user, monkeypatch, caplog
+        self, test_db, test_user, monkeypatch, caplog
     ):
         self.configure_user(monkeypatch, test_user)
         session = SimpleNamespace(
@@ -268,7 +270,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         )
 
         @asynccontextmanager
-        async def connected(url):
+        async def connected(db, user, service_id):
             yield session
 
         monkeypatch.setattr(
@@ -281,7 +283,9 @@ class TestDingTalkProviderContract(ProviderContractSuite):
             logger="app.services.knowledge.external_document_providers",
         ):
             assert (
-                await self.make_provider().get_update_time(test_user, "probe-node")
+                await self.make_provider().get_update_time(
+                    test_db, test_user, "probe-node"
+                )
                 is None
             )
 
@@ -317,10 +321,13 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         assert content.metadata["title"] == "重命名后的名字"
 
     @pytest.mark.asyncio
-    async def test_fetch_keeps_the_cached_title_when_the_source_has_none(
-        self, test_db, test_user, monkeypatch
-    ):
-        """A source without a usable title never blanks the copy's name."""
+    async def test_fetch_leaves_title_unspecified_when_the_source_has_none(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An absent live title signals the publisher to retain the copy's name."""
         provider = self.make_provider()
         self.configure_user(monkeypatch, test_user)
         self.create_resource(test_db, test_user, "untitled-copy", "缓存的旧名字")
@@ -328,19 +335,24 @@ class TestDingTalkProviderContract(ProviderContractSuite):
 
         content = await provider.fetch_content(test_db, test_user, "untitled-copy")
 
-        assert content.name == "缓存的旧名字"
+        assert content.name == ""
+        assert "title" not in content.metadata
 
     @pytest.mark.asyncio
-    async def test_fetch_requires_a_node_in_the_user_directory(
-        self, test_db, test_user, monkeypatch
-    ):
+    async def test_fetch_reads_a_node_without_the_user_directory(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         provider = self.make_provider()
         self.configure_user(monkeypatch, test_user)
-        self.mock_fetch_body(monkeypatch, provider, "body")
+        self.mock_fetch_body(monkeypatch, provider, "body", title="Live title")
 
-        with pytest.raises(ExternalDocumentFetchError) as exc_info:
-            await provider.fetch_content(test_db, test_user, "not-in-cache")
-        assert not isinstance(exc_info.value, ExternalSourceUnavailableError)
+        content = await provider.fetch_content(test_db, test_user, "not-in-cache")
+
+        assert content.name == "Live title"
+        assert content.content == b"body"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -363,14 +375,14 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         ],
     )
     async def test_node_metadata_naming_a_gone_source_signals_unavailable(
-        self, test_user, monkeypatch, envelope
+        self, test_db, test_user, monkeypatch, envelope
     ):
         """A positively gone node keeps its reason distinct from a fetch failure."""
         self.configure_user(monkeypatch, test_user)
         self.answer_document_info(monkeypatch, envelope)
 
         with pytest.raises(ExternalSourceUnavailableError) as excinfo:
-            await self.make_provider().get_update_time(test_user, "probe-node")
+            await self.make_provider().get_update_time(test_db, test_user, "probe-node")
 
         assert excinfo.value.error_code == "external_source_missing"
         # The user-facing record keeps the provider's own message and logId:
@@ -417,7 +429,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         ],
     )
     async def test_metadata_failure_without_source_evidence_stays_transient(
-        self, test_user, monkeypatch, result
+        self, test_db, test_user, monkeypatch, result
     ):
         """Only captured error codes may turn a probe failure into a gone source."""
         from app.services.knowledge.external_document_providers import (
@@ -428,7 +440,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         self.answer_document_info(monkeypatch, result)
 
         with pytest.raises(ExternalDocumentFetchError) as excinfo:
-            await self.make_provider().get_update_time(test_user, "probe-node")
+            await self.make_provider().get_update_time(test_db, test_user, "probe-node")
 
         assert not isinstance(excinfo.value, ExternalSourceUnavailableError)
         # A structured envelope failure keeps its provider detail for the
@@ -475,7 +487,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         self.configure_user(monkeypatch, test_user)
         self.create_resource(test_db, test_user, "broken-read", "Broken Doc")
 
-        async def broken_read(mcp_url, node_id, user):
+        async def broken_read(db, user, node_id):
             # The MCP session wraps in-session failures in a task group.
             raise ExceptionGroup(
                 "unhandled errors in a TaskGroup",
@@ -501,7 +513,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         self.configure_user(monkeypatch, test_user)
         self.create_resource(test_db, test_user, "wrapped-read", "Wrapped Doc")
 
-        async def wrapped_read(mcp_url, node_id, user):
+        async def wrapped_read(db, user, node_id):
             raise ExceptionGroup(
                 "unhandled errors in a TaskGroup",
                 [
@@ -523,7 +535,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
 
     @pytest.mark.asyncio
     async def test_metadata_probe_unwraps_a_task_group_hiding_a_gone_source(
-        self, test_user, monkeypatch
+        self, test_db, test_user, monkeypatch
     ):
         """The probe keeps the reason the session teardown wrapped."""
         provider = self.make_provider()
@@ -544,7 +556,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         monkeypatch.setattr(provider, "_read_document_info", wrapped_info)
 
         with pytest.raises(ExternalSourceUnavailableError) as excinfo:
-            await provider.get_update_time(test_user, "probe-node")
+            await provider.get_update_time(test_db, test_user, "probe-node")
 
         assert excinfo.value.error_code == "external_source_missing"
 
@@ -564,7 +576,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         session = SimpleNamespace(call_tool=AsyncMock(return_value=result))
 
         @asynccontextmanager
-        async def connected(url):
+        async def connected(db, user, service_id):
             yield session
 
         monkeypatch.setattr(
@@ -587,7 +599,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         monkeypatch.setattr(
             "app.services.dingtalk_doc_service.DingTalkDocService"
             ".get_user_dingtalk_mcp_url",
-            lambda user: "https://mcp.example.test/dingtalk",
+            lambda user, service_id="docs": "https://mcp.example.test/dingtalk",
         )
 
     def create_resource(
@@ -640,7 +652,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         title: str = "",
     ) -> None:
         async def fake_fetch(
-            mcp_url: str, node_id: str, user: User
+            db: Session, user: User, node_id: str
         ) -> tuple[str, bytes, int | None, str]:
             return "md", markdown.encode("utf-8"), 1789562644000, title
 
@@ -649,6 +661,8 @@ class TestDingTalkProviderContract(ProviderContractSuite):
     @pytest.mark.asyncio
     async def test_mcp_fetch_sets_explicit_read_timeouts(
         self,
+        test_db: Session,
+        test_user: User,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import mcp
@@ -700,12 +714,13 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         monkeypatch.setattr(streamable_http, "streamablehttp_client", fake_transport)
         monkeypatch.setattr(mcp, "ClientSession", FakeClientSession)
 
+        self.configure_user(monkeypatch, test_user)
         provider = self.make_provider()
         extension, content, update_time, source_title = (
             await provider._fetch_document_content(
-                "https://mcp.example.test/dingtalk",
+                test_db,
+                test_user,
                 "node-1",
-                SimpleNamespace(),
             )
         )
 
@@ -714,6 +729,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         assert source_title == "Imported Doc"
         assert observed["transport"] == {
             "url": "https://mcp.example.test/dingtalk",
+            "headers": None,
             "sse_read_timeout": 180,
         }
         assert observed["session"] == ("read-stream", "write-stream", 180.0)

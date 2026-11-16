@@ -134,7 +134,7 @@ export function CoreDshPluginManagementSection({
                 'workbench.core_dsh_plugins_install_placeholder',
                 'package@version / github:owner/plugin / file:/absolute/path'
               )}
-              className="min-h-10 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+              className="min-h-10 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none keyboard:focus:border-primary"
               data-testid="core-dsh-plugin-spec-input"
               disabled={operation !== null}
             />

@@ -105,35 +105,35 @@ def trace_async(
             # Import OpenTelemetry types
             try:
                 from opentelemetry import trace
-
-                with tracer.start_as_current_span(
-                    name, kind=trace.SpanKind.INTERNAL, attributes=span_attributes
-                ) as span:
-                    try:
-                        result = await func(*args, **kwargs)
-
-                        # Set span status based on result
-                        # Check if result has a 'value' attribute (like TaskStatus)
-                        if hasattr(result, "value"):
-                            result_value = (
-                                result.value.lower()
-                                if hasattr(result.value, "lower")
-                                else str(result.value).lower()
-                            )
-                            if result_value in ("completed", "success"):
-                                span.set_status(trace.Status(trace.StatusCode.OK))
-                            elif result_value in ("failed", "error"):
-                                span.set_status(
-                                    trace.Status(trace.StatusCode.ERROR, "Task failed")
-                                )
-
-                        return result
-                    except Exception as e:
-                        span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
-                        span.record_exception(e)
-                        raise
             except ImportError:
                 return await func(*args, **kwargs)
+
+            with tracer.start_as_current_span(
+                name, kind=trace.SpanKind.INTERNAL, attributes=span_attributes
+            ) as span:
+                try:
+                    result = await func(*args, **kwargs)
+
+                    # Set span status based on result
+                    # Check if result has a 'value' attribute (like TaskStatus)
+                    if hasattr(result, "value"):
+                        result_value = (
+                            result.value.lower()
+                            if hasattr(result.value, "lower")
+                            else str(result.value).lower()
+                        )
+                        if result_value in ("completed", "success"):
+                            span.set_status(trace.Status(trace.StatusCode.OK))
+                        elif result_value in ("failed", "error"):
+                            span.set_status(
+                                trace.Status(trace.StatusCode.ERROR, "Task failed")
+                            )
+
+                    return result
+                except Exception as e:
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                    span.record_exception(e)
+                    raise
 
         return wrapper  # type: ignore
 
@@ -194,34 +194,34 @@ def trace_sync(
             # Import OpenTelemetry types
             try:
                 from opentelemetry import trace
-
-                with tracer.start_as_current_span(
-                    name, kind=trace.SpanKind.INTERNAL, attributes=span_attributes
-                ) as span:
-                    try:
-                        result = func(*args, **kwargs)
-
-                        # Set span status based on result
-                        if hasattr(result, "value"):
-                            result_value = (
-                                result.value.lower()
-                                if hasattr(result.value, "lower")
-                                else str(result.value).lower()
-                            )
-                            if result_value in ("completed", "success"):
-                                span.set_status(trace.Status(trace.StatusCode.OK))
-                            elif result_value in ("failed", "error"):
-                                span.set_status(
-                                    trace.Status(trace.StatusCode.ERROR, "Task failed")
-                                )
-
-                        return result
-                    except Exception as e:
-                        span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
-                        span.record_exception(e)
-                        raise
             except ImportError:
                 return func(*args, **kwargs)
+
+            with tracer.start_as_current_span(
+                name, kind=trace.SpanKind.INTERNAL, attributes=span_attributes
+            ) as span:
+                try:
+                    result = func(*args, **kwargs)
+
+                    # Set span status based on result
+                    if hasattr(result, "value"):
+                        result_value = (
+                            result.value.lower()
+                            if hasattr(result.value, "lower")
+                            else str(result.value).lower()
+                        )
+                        if result_value in ("completed", "success"):
+                            span.set_status(trace.Status(trace.StatusCode.OK))
+                        elif result_value in ("failed", "error"):
+                            span.set_status(
+                                trace.Status(trace.StatusCode.ERROR, "Task failed")
+                            )
+
+                    return result
+                except Exception as e:
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                    span.record_exception(e)
+                    raise
 
         return wrapper  # type: ignore
 
@@ -383,48 +383,47 @@ def trace_background(
                 from opentelemetry.trace.propagation.tracecontext import (
                     TraceContextTextMapPropagator,
                 )
-
-                # Try to restore parent context from trace_context parameter
-                parent_context = None
-                trace_ctx = kwargs.get(context_param)
-                if trace_ctx and isinstance(trace_ctx, dict):
-                    try:
-                        propagator = TraceContextTextMapPropagator()
-                        parent_context = propagator.extract(carrier=trace_ctx)
-                    except Exception as e:
-                        logger.debug(f"Failed to extract parent context: {e}")
-
-                # Use parent context if available, otherwise create root span
-                ctx = parent_context if parent_context else Context()
-
-                # Create span with the determined context
-                span = tracer.start_span(
-                    name,
-                    context=ctx,
-                    kind=trace.SpanKind.INTERNAL,
-                    attributes=span_attributes,
-                )
-
-                # Attach the span to context so add_span_event() works
-                # IMPORTANT: Use ctx as the base context to preserve parent trace info
-                # Without this, trace.set_span_in_context(span) would use the current
-                # (possibly empty) context, breaking trace propagation
-                token = otel_context.attach(trace.set_span_in_context(span, ctx))
-
-                try:
-                    result = func(*args, **kwargs)
-                    span.set_status(trace.Status(trace.StatusCode.OK))
-                    return result
-                except Exception as e:
-                    span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
-                    span.record_exception(e)
-                    raise
-                finally:
-                    span.end()
-                    otel_context.detach(token)
-
             except ImportError:
                 return func(*args, **kwargs)
+
+            # Try to restore parent context from trace_context parameter
+            parent_context = None
+            trace_ctx = kwargs.get(context_param)
+            if trace_ctx and isinstance(trace_ctx, dict):
+                try:
+                    propagator = TraceContextTextMapPropagator()
+                    parent_context = propagator.extract(carrier=trace_ctx)
+                except Exception as e:
+                    logger.debug(f"Failed to extract parent context: {e}")
+
+            # Use parent context if available, otherwise create root span
+            ctx = parent_context if parent_context else Context()
+
+            # Create span with the determined context
+            span = tracer.start_span(
+                name,
+                context=ctx,
+                kind=trace.SpanKind.INTERNAL,
+                attributes=span_attributes,
+            )
+
+            # Attach the span to context so add_span_event() works
+            # IMPORTANT: Use ctx as the base context to preserve parent trace info
+            # Without this, trace.set_span_in_context(span) would use the current
+            # (possibly empty) context, breaking trace propagation
+            token = otel_context.attach(trace.set_span_in_context(span, ctx))
+
+            try:
+                result = func(*args, **kwargs)
+                span.set_status(trace.Status(trace.StatusCode.OK))
+                return result
+            except Exception as e:
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                raise
+            finally:
+                span.end()
+                otel_context.detach(token)
 
         return wrapper  # type: ignore
 
@@ -497,23 +496,24 @@ def trace_async_generator(
             # Import OpenTelemetry types
             try:
                 from opentelemetry import trace
-
-                with tracer.start_as_current_span(
-                    name, kind=trace.SpanKind.INTERNAL, attributes=span_attributes
-                ) as span:
-                    try:
-                        async with aclosing(func(*args, **kwargs)) as generator:
-                            async for item in generator:
-                                yield item
-                        span.set_status(trace.Status(trace.StatusCode.OK))
-                    except Exception as e:
-                        span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
-                        span.record_exception(e)
-                        raise
             except ImportError:
                 async with aclosing(func(*args, **kwargs)) as generator:
                     async for item in generator:
                         yield item
+                return
+
+            with tracer.start_as_current_span(
+                name, kind=trace.SpanKind.INTERNAL, attributes=span_attributes
+            ) as span:
+                try:
+                    async with aclosing(func(*args, **kwargs)) as generator:
+                        async for item in generator:
+                            yield item
+                    span.set_status(trace.Status(trace.StatusCode.OK))
+                except Exception as e:
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                    span.record_exception(e)
+                    raise
 
         return wrapper  # type: ignore
 

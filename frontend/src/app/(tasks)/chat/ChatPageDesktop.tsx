@@ -42,6 +42,7 @@ import { calculateOpenLinks } from '@/utils/openLinks'
 import { resolveChatPageTaskType } from '@/utils/taskRouting'
 import type { MessageBlock } from '@/features/tasks/components/message/thinking/types'
 import type { UnifiedMessage } from '@wegent/chat-core'
+import { selectTaskFileChanges } from '@/features/tasks/components/workbench/taskFileChanges'
 
 const Workbench = dynamic(() => import('@/features/tasks/components/workbench/Workbench'), {
   ssr: false,
@@ -319,6 +320,11 @@ export function ChatPageDesktop() {
   const taskState =
     sessionTaskState && sessionTaskState.taskId === selectedTaskDetail?.id ? sessionTaskState : null
 
+  const fileChanges = useMemo(
+    () => (taskState ? selectTaskFileChanges(taskState.messages.values()) : null),
+    [taskState]
+  )
+
   const { blocksData, workbenchData } = useMemo(() => {
     if (taskState?.messages && taskState.messages.size > 0) {
       const allBlocks: MessageBlock[] = []
@@ -490,6 +496,9 @@ export function ChatPageDesktop() {
 
           {hasOpenTask && isCodeTaskOpen && !rightPanelRequest && (
             <Workbench
+              key={selectedTaskDetail?.id}
+              repository={selectedTaskDetail?.git_repo}
+              fileChanges={fileChanges}
               isOpen={isWorkbenchOpen}
               onClose={() => setIsWorkbenchOpen(false)}
               onOpen={() => setIsWorkbenchOpen(true)}

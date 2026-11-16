@@ -2,8 +2,8 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 
-import '@/i18n'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import '@/i18n'
 import { TaskBoardAssociationDialog } from './TaskBoardAssociationDialog'
 
 function project(id: string, name: string): CloudProject {
@@ -50,35 +50,65 @@ function item(id: string, title: string, overrides: Partial<CloudLoopItem> = {})
 }
 
 describe('TaskBoardAssociationDialog', () => {
-  test('supports creating a card and searching editable existing cards', async () => {
+  test('escapes the clipped workbench pane and restores focus when closed', () => {
+    const props = {
+      project: project('target', '研发看板'),
+      currentProject: null,
+      items: [],
+      loading: false,
+      pending: false,
+      onClose: vi.fn(),
+      onCreate: vi.fn(),
+      onSelect: vi.fn(),
+    }
+    const pane = (open: boolean) => (
+      <div style={{ overflow: 'hidden', isolation: 'isolate', transform: 'translateX(0)' }}>
+        <button data-testid="association-trigger">加入项目</button>
+        <TaskBoardAssociationDialog {...props} project={open ? props.project : null} />
+      </div>
+    )
+    const { container, rerender } = render(pane(false))
+    const trigger = screen.getByTestId('association-trigger')
+    trigger.focus()
+
+    rerender(pane(true))
+
+    const dialog = screen.getByRole('dialog', { name: '加入「研发看板」' })
+    expect(container).not.toContainElement(dialog)
+    expect(dialog.parentElement?.parentElement).toBe(document.body)
+    expect(screen.getByTestId('task-board-association-search')).toHaveFocus()
+    rerender(pane(false))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  test('prevents duplicate actions while an association is pending', async () => {
     const user = userEvent.setup()
-    const target = project('target', '研发看板')
-    const first = item('DEV-1', '修复登录')
-    const second = item('DEV-2', '优化搜索')
+    const onClose = vi.fn()
     const onCreate = vi.fn()
     const onSelect = vi.fn()
-
     render(
       <TaskBoardAssociationDialog
-        project={target}
+        project={project('target', '研发看板')}
         currentProject={null}
-        items={[first, second, item('DEV-3', '无权限任务', { can_edit: false })]}
+        items={[item('DEV-1', '修复登录')]}
         loading={false}
-        pending={false}
-        onClose={vi.fn()}
+        pending
+        onClose={onClose}
         onCreate={onCreate}
         onSelect={onSelect}
       />
     )
 
-    expect(screen.queryByTestId('task-board-association-item-DEV-3')).not.toBeInTheDocument()
-    await user.type(screen.getByTestId('task-board-association-search'), '搜索')
-    expect(screen.queryByTestId('task-board-association-item-DEV-1')).not.toBeInTheDocument()
-    await user.click(screen.getByTestId('task-board-association-item-DEV-2'))
-    expect(onSelect).toHaveBeenCalledWith(second)
-
-    await user.click(screen.getByTestId('task-board-association-create'))
-    expect(onCreate).toHaveBeenCalledOnce()
+    for (const id of ['create', 'close', 'search', 'item-DEV-1']) {
+      const control = screen.getByTestId(`task-board-association-${id}`)
+      expect(control).toBeDisabled()
+      await user.click(control)
+    }
+    await user.keyboard('{Escape}')
+    expect(onCreate).not.toHaveBeenCalled()
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   test('requires confirmation before moving a task from another board', async () => {

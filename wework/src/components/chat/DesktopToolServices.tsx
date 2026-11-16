@@ -1,5 +1,12 @@
-import { useMemo, type ReactNode } from 'react'
-import { ToolInteractionServicesProvider } from '@wegent/collaboration/conversation'
+import { useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
+import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
+import type { McpAppConversationServices } from '@/api/mcpApps'
+import { McpAppsProvider, McpAppSlot } from '@/features/mcp-apps/McpAppsProvider'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  ToolInteractionServicesProvider,
+  useToolInteractionServices,
+} from '@wegent/collaboration/conversation'
 import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import {
   devicePathBasename,
@@ -13,6 +20,7 @@ import { track } from '@/telemetry/client'
 import { DesktopConversationTranslation } from './DesktopConversationTranslation'
 import { useDesktopMarkdownServices } from './useDesktopMarkdownServices'
 import { useWorkspaceFileReader } from './WorkspaceFileReaderContext'
+import { DesktopGitAccountConfigurationProvider } from '@/components/settings/DesktopGitAccountConfigurationProvider'
 
 interface ToolImageTarget {
   deviceId: string
@@ -38,18 +46,32 @@ const services = {
 export function DesktopToolServices({
   children,
   imageTarget,
+  mcpApp,
 }: {
   children: ReactNode
   imageTarget?: ToolImageTarget | null
+  mcpApp?: McpAppConversationServices
 }) {
+  const { t } = useTranslation('common')
+  const inheritedServices = useToolInteractionServices()
   const markdown = useDesktopMarkdownServices()
   const readWorkspaceFileChunk = useWorkspaceFileReader()
   const deviceId = imageTarget?.deviceId
   const workspacePath = imageTarget?.workspacePath
   const toolServices = useMemo(() => {
-    if (!deviceId || !workspacePath) return services
-    return {
+    const base = {
+      ...inheritedServices,
       ...services,
+      requestUserInputSource: mcpApp?.address ?? inheritedServices.requestUserInputSource,
+      renderMcpApp: mcpApp
+        ? (block: ToolBlock, turnId?: string) => (
+            <McpAppSlot key={block.id} block={block} turnId={turnId} />
+          )
+        : undefined,
+    }
+    if (!deviceId || !workspacePath) return base
+    return {
+      ...base,
       readImageFile: async (path: string) => {
         if (!readWorkspaceFileChunk) throw new Error('Workspace file reader is unavailable')
         const root = normalizeDevicePath(workspacePath)
@@ -71,12 +93,59 @@ export function DesktopToolServices({
         })
       },
     }
-  }, [deviceId, workspacePath, readWorkspaceFileChunk])
+  }, [deviceId, workspacePath, readWorkspaceFileChunk, mcpApp, inheritedServices])
+  const sendMessage = mcpApp?.sendMessage
+  const messageAdmission = useRef<McpAppConversationServices | undefined>(undefined)
+  useLayoutEffect(() => {
+    messageAdmission.current = mcpApp
+    return () => {
+      messageAdmission.current = undefined
+    }
+  }, [mcpApp])
+  const content = mcpApp ? (
+    <McpAppsProvider
+      key={`${mcpApp.address.deviceId}:${mcpApp.address.taskId}:${Boolean(sendMessage)}`}
+      address={mcpApp.address}
+      api={mcpApp.api}
+      onMessage={
+        sendMessage
+          ? async message => {
+              const confirmation = await import('@/api/dsh/desktopHost').then(
+                ({ invokeDesktopHost }) =>
+                  invokeDesktopHost<{ response: number }>('dialog.message', {
+                    type: 'question',
+                    message,
+                    buttons: [t('mcp_apps.cancel'), t('mcp_apps.send')],
+                    defaultId: 0,
+                    cancelId: 0,
+                  })
+              )
+              if (confirmation.response !== 1) throw new Error('User declined the app message')
+              const current = messageAdmission.current
+              if (
+                !current?.sendMessage ||
+                current.address.deviceId !== mcpApp.address.deviceId ||
+                current.address.taskId !== mcpApp.address.taskId
+              )
+                throw new Error('MCP App message admission is no longer available')
+              const accepted = await current.sendMessage(message)
+              if (!accepted) throw new Error('The conversation could not accept the app message')
+            }
+          : undefined
+      }
+    >
+      {children}
+    </McpAppsProvider>
+  ) : (
+    children
+  )
   return (
     <DesktopConversationTranslation>
       <MarkdownServicesProvider value={markdown}>
         <ToolInteractionServicesProvider value={toolServices}>
-          {children}
+          <DesktopGitAccountConfigurationProvider deviceId={imageTarget?.deviceId} conversation>
+            {content}
+          </DesktopGitAccountConfigurationProvider>
         </ToolInteractionServicesProvider>
       </MarkdownServicesProvider>
     </DesktopConversationTranslation>

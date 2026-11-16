@@ -48,7 +48,7 @@ function LinkTargetSelect({
       value={value}
       disabled={disabled}
       onChange={event => onChange(event.target.value as BrowserLinkTarget)}
-      className="h-8 min-w-[156px] rounded-md border border-border bg-background px-2.5 text-sm text-text-primary outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+      className="h-8 min-w-[156px] rounded-md border border-border bg-background px-2.5 text-sm text-text-primary outline-none keyboard:focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
     >
       <option value="system">{t('workbench.browser_settings_target_system')}</option>
       <option value="wework">{t('workbench.browser_settings_target_wework')}</option>
@@ -154,6 +154,19 @@ export function BrowserSettingsPage() {
           {t('workbench.browser_settings_general')}
         </h2>
         <SettingsGroup>
+          <SettingsRow
+            label={t('workbench.browser_settings_full_control')}
+            description={t('workbench.browser_settings_full_control_description')}
+            control={
+              <SettingsSwitch
+                data-testid="browser-full-control-toggle"
+                checked={preferences.browserFullControl}
+                disabled={controlsDisabled}
+                onCheckedChange={checked => void savePreferences({ browserFullControl: checked })}
+                aria-label={t('workbench.browser_settings_full_control')}
+              />
+            }
+          />
           <SettingsRow
             label={t('workbench.browser_settings_external_links')}
             description={t('workbench.browser_settings_external_links_description')}
@@ -273,7 +286,7 @@ export function BrowserSettingsPage() {
         <div
           data-testid="browser-settings-status"
           className={`mt-4 flex items-center gap-2 text-xs ${
-            error ? 'text-red-500' : 'text-text-secondary'
+            error ? 'text-destructive wework:text-red-500' : 'text-text-secondary'
           }`}
         >
           {(loading || saving) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}

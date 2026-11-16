@@ -31,6 +31,54 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
+  it("round-trips opaque MCP server names and options through project Agent editing", async () => {
+    const { transport, get, patch } = createTransport();
+    const mcpServers = {
+      Review_Server: {
+        command: "review",
+        env: { API_KEY_NAME: "fixture" },
+        customOption: true,
+      },
+    };
+    const stored = {
+      id: "agent",
+      name: "Agent",
+      version: 3,
+      mcp_servers: mcpServers,
+    };
+    get.mockResolvedValue([stored]);
+    patch.mockImplementation(async (_path, input) => ({ ...stored, ...input }));
+    const api = createSharedWorkspaceHttpApi(transport).agents;
+    const [agent] = await api.list("project");
+    expect(agent.mcpServers).toEqual(mcpServers);
+    const saved = await api.update("project", agent.id, {
+      version: agent.version,
+      name: "Renamed",
+      mcpServers: agent.mcpServers,
+    });
+    expect(patch).toHaveBeenCalledWith(
+      "/v1/cloud-projects/project/chat-agents/agent",
+      {
+        version: 3,
+        name: "Renamed",
+        mcp_servers: mcpServers,
+      },
+    );
+    expect(saved.mcpServers).toEqual(mcpServers);
+  });
+
+  it.each(["renamed", null])(
+    "serializes atomic tag change target %s without losing null",
+    (target) => {
+      expect(
+        workspaceHttpRequestBody({
+          version: 2,
+          tagChange: { source: "old", target },
+        }),
+      ).toEqual({ version: 2, tag_change: { source: "old", target } });
+    },
+  );
+
   it("loads devices without fetching the agent resource catalog", async () => {
     const { transport, get } = createTransport();
     get.mockResolvedValue({
@@ -39,6 +87,9 @@ describe("createSharedWorkspaceHttpApi", () => {
           id: 42,
           device_id: "runner-42",
           app_device_id: "desktop-installation-42",
+          runtime_instance_id: "runtime-42",
+          last_seen_at: "2026-11-06T00:00:00Z",
+          workspace_ids: ["space-1"],
           name: "Runner",
           device_type: "remote",
           status: "busy",
@@ -59,6 +110,9 @@ describe("createSharedWorkspaceHttpApi", () => {
         device_id: 42,
         device_key: "runner-42",
         app_device_id: "desktop-installation-42",
+        runtime_instance_id: "runtime-42",
+        last_seen_at: "2026-11-06T00:00:00Z",
+        workspace_ids: ["space-1"],
         kind: "cloud_host",
         status: "online",
       },
@@ -83,6 +137,27 @@ describe("createSharedWorkspaceHttpApi", () => {
 
     expect(remove).toHaveBeenCalledWith(
       "/teams/12?force=true&confirm_name=review-agent",
+    );
+  });
+
+  it("invalidates the lightweight resource catalog after deleting an Agent", async () => {
+    const { transport, get } = createTransport();
+    get
+      .mockResolvedValueOnce({
+        agents: [{ id: 12, team_id: 12, name: "Review", status: "unchecked" }],
+      })
+      .mockResolvedValueOnce({ agents: [] });
+    const api = createSharedWorkspaceHttpApi(transport);
+    const resources = await api.resources.list();
+    await api.resources.list();
+    expect(get).toHaveBeenCalledOnce();
+
+    await api.resources.removeAgent?.(resources.agents[0]);
+
+    await expect(api.resources.list()).resolves.toMatchObject({ agents: [] });
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenLastCalledWith(
+      "/v1/resources?include_readiness=false",
     );
   });
 
@@ -211,6 +286,7 @@ describe("createSharedWorkspaceHttpApi", () => {
     await expect(api.resources.list()).resolves.toMatchObject({
       execution_environments: [{ device_id: 22, owner_type: "user" }],
     });
+    expect(get).toHaveBeenCalledWith("/v1/resources?include_readiness=false");
     await expect(
       api.workspaces.addMember("workspace/1", { userId: 8 }),
     ).resolves.toMatchObject({ user_id: 8, user_name: "王芳" });
@@ -222,7 +298,7 @@ describe("createSharedWorkspaceHttpApi", () => {
     );
     expect(get).toHaveBeenNthCalledWith(
       3,
-      "/v1/workspaces/workspace%2F1/agents",
+      "/v1/workspaces/workspace%2F1/agents?include_readiness=false",
     );
     expect(post).toHaveBeenCalledWith("/v1/workspaces/workspace%2F1/members", {
       user_id: 8,
@@ -373,6 +449,19 @@ describe("createSharedWorkspaceHttpApi", () => {
     });
   });
 
+  it("keeps board view documents opaque while converting their request field", () => {
+    const boardViews = {
+      schema_version: 1,
+      views: [],
+      futureField: { keepCase: true },
+      sorts: { "Lane-ABC": ["created-asc"] },
+    };
+    expect(workspaceHttpRequestBody({ boardViews, version: 2 })).toEqual({
+      board_views: boardViews,
+      version: 2,
+    });
+  });
+
   it("preserves the runner policy wire keys when reading a project Agent", async () => {
     const { transport, get } = createTransport();
     const model = {
@@ -462,4 +551,25 @@ it("revalidates workspace grants without reusing an older in-flight catalog", as
   await oldRead;
   await expect(api.workspaces.listAgents("space")).resolves.toEqual([]);
   expect(get).toHaveBeenCalledTimes(2);
+});
+
+it("removes exactly one persisted device registration with offline revalidation", async () => {
+  const { transport, remove } = createTransport();
+  const api = createSharedWorkspaceHttpApi(transport);
+  await api.resources.removeDevice!({
+    id: "42",
+    device_id: 42,
+    device_key: "same-logical-name",
+    name: "MacBook",
+    kind: "local_device",
+    coding_tools: [],
+    status: "offline",
+    updated_at: "",
+    owner_type: "user",
+    owner_id: "7",
+    owner_name: "Owner",
+  });
+  expect(remove).toHaveBeenCalledExactlyOnceWith(
+    "/devices/records/42?offline_only=true",
+  );
 });

@@ -199,9 +199,14 @@ def get_team_input_parameters(
 def get_share_info(
     share_token: str = Query(..., description="Share token"),
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
     """Get team share information from token"""
-    return shared_team_service.get_share_info(db=db, share_token=share_token)
+    return shared_team_service.get_share_info(
+        db=db,
+        share_token=share_token,
+        viewer_id=current_user.id if current_user else None,
+    )
 
 
 @router.post("/share/join", response_model=JoinSharedTeamResponse)

@@ -125,7 +125,7 @@ async fn handle_request(request: &Value) -> Option<Value> {
     }
 }
 
-fn mcp_tools(value: &Value) -> Vec<Value> {
+pub(crate) fn mcp_tools(value: &Value) -> Vec<Value> {
     value
         .get("tools")
         .and_then(Value::as_array)
@@ -605,18 +605,6 @@ fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn maps_backend_tool_schema_to_mcp_shape() {
-        let tools = mcp_tools(&json!({ "tools": [{
-            "name": "tickets__search",
-            "description": "Search tickets",
-            "input_schema": { "type": "object", "properties": { "q": { "type": "string" } } },
-            "annotations": { "readOnlyHint": true }
-        }] }));
-        assert_eq!(tools[0]["name"], "tickets__search");
-        assert_eq!(tools[0]["inputSchema"]["properties"]["q"]["type"], "string");
-    }
 
     #[test]
     fn exposes_local_source_directory_for_wegent_sites_source_revisions() {

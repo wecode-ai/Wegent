@@ -46,6 +46,7 @@ const MIN_PANE_HEIGHT = 240
 interface SplitWorkbenchPaneStackProps {
   activePane: WorkbenchPaneIdentity
   layout: WorkbenchLayoutState
+  showWorkbenchBackground: boolean
   validRuntimeKeys: string[]
   retainedResourceKeys?: string[]
   activeTestId: string | null
@@ -92,6 +93,7 @@ interface LayoutLabels {
 export function SplitWorkbenchPaneStack({
   activePane,
   layout,
+  showWorkbenchBackground,
   validRuntimeKeys,
   retainedResourceKeys = [],
   activeTestId,
@@ -326,6 +328,7 @@ export function SplitWorkbenchPaneStack({
         <WorkbenchLayoutRenderer
           node={visibleRoot}
           canonicalLayout={layout}
+          showWorkbenchBackground={showWorkbenchBackground}
           totalPanes={panes.length}
           activeTestId={activeTestId}
           dragged={draggedPaneKey !== null}
@@ -383,6 +386,7 @@ function collectPanePresentations(
 function WorkbenchLayoutRenderer({
   node,
   canonicalLayout,
+  showWorkbenchBackground,
   totalPanes,
   activeTestId,
   dragged,
@@ -400,6 +404,7 @@ function WorkbenchLayoutRenderer({
 }: {
   node: WorkbenchLayoutNode
   canonicalLayout: WorkbenchLayoutState
+  showWorkbenchBackground: boolean
   totalPanes: number
   activeTestId: string | null
   dragged: boolean
@@ -419,6 +424,7 @@ function WorkbenchLayoutRenderer({
     return (
       <WorkbenchPaneView
         pane={node}
+        showWorkbenchBackground={showWorkbenchBackground}
         focused={canonicalLayout.focusedPaneId === node.id}
         focusedView={focusedViewPaneId === node.id}
         totalPanes={totalPanes}
@@ -457,6 +463,7 @@ function WorkbenchLayoutRenderer({
           <WorkbenchLayoutRenderer
             node={child}
             canonicalLayout={canonicalLayout}
+            showWorkbenchBackground={showWorkbenchBackground}
             totalPanes={totalPanes}
             activeTestId={activeTestId}
             dragged={dragged}
@@ -520,6 +527,7 @@ function LayoutPanel({
 
 function WorkbenchPaneView({
   pane,
+  showWorkbenchBackground,
   focused,
   focusedView,
   totalPanes,
@@ -536,6 +544,7 @@ function WorkbenchPaneView({
   onToggleFocusedView,
 }: {
   pane: WorkbenchPaneNode
+  showWorkbenchBackground: boolean
   focused: boolean
   focusedView: boolean
   totalPanes: number
@@ -560,7 +569,8 @@ function WorkbenchPaneView({
       data-focused={focused ? 'true' : 'false'}
       className={cn(
         styles.paneGroup,
-        'relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background'
+        'relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
+        showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
       )}
       onPointerDown={() => {
         if (!focused) onFocus(pane.id)
@@ -576,7 +586,7 @@ function WorkbenchPaneView({
           <button
             type="button"
             data-testid={`workbench-pane-title-${pane.id}`}
-            className="min-w-0 flex-1 truncate text-left text-sm font-medium text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+            className="min-w-0 flex-1 truncate text-left text-sm font-medium text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
             title={title}
             onClick={() => onFocus(pane.id)}
           >
@@ -597,7 +607,7 @@ function WorkbenchPaneView({
               aria-label={focusedView ? labels.restoreSplit : labels.focusTask}
               aria-pressed={focusedView}
               onClick={() => onToggleFocusedView(pane.id)}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
             >
               {focusedView ? <Columns2 className="h-4 w-4" /> : <Focus className="h-4 w-4" />}
             </button>
@@ -615,7 +625,7 @@ function WorkbenchPaneView({
               data-testid={`workbench-close-pane-${pane.id}`}
               aria-label={labels.closePane}
               onClick={() => onClose(pane.id)}
-              className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+              className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-text-primary/[0.06] hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/70"
             >
               <X className="h-4 w-4" />
             </button>

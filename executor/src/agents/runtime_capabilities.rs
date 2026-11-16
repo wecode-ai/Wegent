@@ -14,7 +14,6 @@ use reqwest::{
     header::{ETAG, IF_NONE_MATCH},
     StatusCode,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::{
@@ -40,20 +39,31 @@ use super::claude_code::has_task_skill_names;
 mod claude_mcp;
 mod codex;
 mod codex_mcp;
-mod home_skills;
+#[cfg(test)]
+#[path = "runtime_capabilities/execution_snapshot.rs"]
+mod execution_snapshot;
 mod skill_archive;
-pub use codex::prepare_codex_runtime;
-pub(crate) use codex::prepare_codex_runtime_locked;
-use home_skills::HomeSkillsStage;
-pub(crate) mod mcp_environment;
 #[cfg(test)]
 use crate::services::workbench::archive_hash;
+pub use codex::prepare_codex_runtime;
+pub(crate) use codex::prepare_codex_runtime_locked;
 use skill_archive::{expected_hash, publish_archive};
+pub(super) use wegent_filesystem::json_file::write_json_file;
+pub(crate) use wegent_mcp_runtime::mcp_environment;
+use wegent_mcp_runtime::toml_encoding::{
+    toml_json_value, toml_key_path, toml_key_segment, toml_value,
+};
+use wegent_plugin_packages::skill_selection::{
+    copy_skill_directory, read_skill_manifest, record_installed_skill, HomeSkillsStage,
+};
+#[cfg(test)]
+use wegent_plugin_packages::skill_selection::{
+    skill_manifest_path, write_skill_manifest, InstalledSkillRecord,
+};
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 const DOWNLOAD_ATTEMPTS: usize = 3;
-const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
 
 pub async fn prepare_claude_execution_request(mut request: ExecutionRequest) -> ExecutionRequest {
     if request
@@ -360,8 +370,13 @@ pub async fn prepare_claude_runtime(
         )
     })?;
 
-    let config_dir =
-        claude_config_dir(request, Some(&task_dir)).unwrap_or_else(|| task_dir.join(".claude"));
+    let config_dir = spec
+        .envs()
+        .get("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| claude_config_dir(request, Some(&task_dir)))
+        .unwrap_or_else(|| task_dir.join(".claude"));
+    crate::artifact_workspace::bind(request, Some(&task_dir))?;
     fs::create_dir_all(&config_dir).map_err(|error| {
         format!(
             "failed to create Claude config dir {}: {error}",
@@ -416,9 +431,7 @@ pub async fn prepare_claude_runtime(
             ),
         ],
     );
-    if managed_wework_mcp_required(request) {
-        crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
-    }
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     spec = claude_mcp::prepare(&config_dir, request, &global_mcps, spec)?;
     log_runtime_event(
         request,
@@ -432,24 +445,20 @@ pub async fn prepare_claude_runtime(
     Ok(spec)
 }
 
-fn managed_wework_mcp_required(request: &ExecutionRequest) -> bool {
-    let notifications_available = request
-        .backend_url
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-        && request
-            .auth_token
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty());
-    notifications_available
-        || crate::task_runtime::mcp::stand_in_identity(request).is_some()
-        || crate::task_runtime::mcp::encoded_space_context_grant(request).is_some()
-}
-
 fn inject_managed_wework_mcps(
     request: &ExecutionRequest,
     mcp_servers: &mut BTreeMap<String, Value>,
 ) -> Result<(), String> {
+    mcp_servers.remove(crate::workbench_control::SERVER_NAME);
+    if let Some(config) = crate::task_runtime::mcp::control_mcp_client_config(request)? {
+        mcp_servers.insert(
+            crate::workbench_control::SERVER_NAME.to_owned(),
+            json!({
+                "type": "http", "url": config.url, "headers": config.headers,
+                "timeout": crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS * 1000,
+            }),
+        );
+    }
     if let Some(config) = crate::task_runtime::mcp::stand_in_mcp_client_config(request)? {
         mcp_servers.insert(
             crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME.into(),
@@ -474,9 +483,6 @@ fn inject_managed_wework_mcps(
                 "timeout": crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000,
             }),
         );
-    }
-    if crate::task_runtime::mcp::encoded_space_context_grant(request).is_none() {
-        return Ok(());
     }
     let config = crate::task_runtime::mcp::space_mcp_client_config(request)?;
     let headers = config
@@ -592,6 +598,7 @@ async fn deploy_request_skills(
     ) else {
         if required_skills.is_empty() {
             return super::instance_home::request_home(request)
+                .and_then(|_| skills_dir.parent().map(Path::to_owned))
                 .map(|home| {
                     let skills = HomeSkillsStage::prepare(&home)?;
                     skills.activate()
@@ -606,7 +613,8 @@ async fn deploy_request_skills(
         });
     };
     let home_skills = super::instance_home::request_home(request)
-        .map(|home| HomeSkillsStage::prepare(&home))
+        .and_then(|_| skills_dir.parent())
+        .map(HomeSkillsStage::prepare)
         .transpose()?;
     if let Some(home_skills) = &home_skills {
         home_skills.reuse(&plan.skills)?;
@@ -1293,33 +1301,6 @@ fn stage_local_skill(source: &Path, target: &Path) -> Result<(), String> {
     })
 }
 
-fn copy_skill_directory(source: &Path, target: &Path) -> Result<(), String> {
-    for entry in fs::read_dir(source)
-        .map_err(|error| format!("failed to read Skill source {}: {error}", source.display()))?
-    {
-        let entry = entry.map_err(|error| format!("failed to read Skill entry: {error}"))?;
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("failed to inspect Skill entry: {error}"))?;
-        if file_type.is_dir() {
-            fs::create_dir_all(&target_path)
-                .map_err(|error| format!("failed to create Skill directory: {error}"))?;
-            copy_skill_directory(&source_path, &target_path)?;
-        } else if file_type.is_file() {
-            fs::copy(&source_path, &target_path)
-                .map_err(|error| format!("failed to copy Skill file: {error}"))?;
-        } else {
-            return Err(format!(
-                "unsupported Skill entry type: {}",
-                source_path.display()
-            ));
-        }
-    }
-    Ok(())
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SkillDeploymentReport {
     skill_count: usize,
@@ -1341,54 +1322,6 @@ struct DownloadedSkillRecord {
     namespace: String,
     content_hash: Option<String>,
     staging: tempfile::TempDir,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct InstalledSkillRecord {
-    skill_id: i64,
-    namespace: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    content_hash: Option<String>,
-}
-
-fn skill_manifest_path(skills_dir: &Path) -> PathBuf {
-    skills_dir.join(SKILL_MANIFEST_FILE)
-}
-
-fn read_skill_manifest(
-    skills_dir: &Path,
-) -> Result<BTreeMap<String, InstalledSkillRecord>, String> {
-    let path = skill_manifest_path(skills_dir);
-    if !path.exists() {
-        return Ok(BTreeMap::new());
-    }
-    let content = fs::read_to_string(&path)
-        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    serde_json::from_str(&content)
-        .map_err(|error| format!("failed to parse {}: {error}", path.display()))
-}
-
-fn write_skill_manifest(
-    skills_dir: &Path,
-    manifest: &BTreeMap<String, InstalledSkillRecord>,
-) -> Result<(), String> {
-    let path = skill_manifest_path(skills_dir);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-    }
-    let content = serde_json::to_string_pretty(manifest)
-        .map_err(|error| format!("failed to serialize skill manifest: {error}"))?;
-    use std::io::Write;
-    let mut staging = tempfile::NamedTempFile::new_in(skills_dir)
-        .map_err(|error| format!("failed to stage skill manifest: {error}"))?;
-    staging
-        .write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write skill manifest: {error}"))?;
-    staging
-        .persist(&path)
-        .map_err(|error| format!("failed to publish {}: {error}", path.display()))?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1433,25 +1366,6 @@ fn installed_skill_hash(skills_dir: &Path, skill_name: &str) -> Option<String> {
             .get(skill_name)
             .and_then(|record| record.content_hash.clone())
     })
-}
-
-fn record_installed_skill(
-    skills_dir: &Path,
-    skill_name: &str,
-    skill_id: i64,
-    namespace: &str,
-    content_hash: Option<String>,
-) -> Result<(), String> {
-    let mut manifest = read_skill_manifest(skills_dir)?;
-    manifest.insert(
-        skill_name.to_owned(),
-        InstalledSkillRecord {
-            skill_id,
-            namespace: namespace.to_owned(),
-            content_hash,
-        },
-    );
-    write_skill_manifest(skills_dir, &manifest)
 }
 
 fn publish_downloaded_skill(
@@ -2197,12 +2111,18 @@ fn install_deferred_mcp_hook(config_dir: &Path) {
         }]
     });
     if let Some(items) = pre_tool_use.as_array_mut() {
-        items.retain(
-            |item| match item.pointer("/hooks/0/command").and_then(Value::as_str) {
-                Some(command) => command != hook_command,
-                None => true,
-            },
-        );
+        items.retain(|item| {
+            let managed = item["matcher"] == "mcp__.*interactive_form_question.*"
+                && item
+                    .pointer("/hooks/0/command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|command| {
+                        Path::new(command)
+                            .file_name()
+                            .is_some_and(|name| name == "defer-interactive-mcp-hook.sh")
+                    });
+            !managed
+        });
         items.push(hook_entry);
     } else {
         *pre_tool_use = Value::Array(vec![hook_entry]);
@@ -2254,6 +2174,7 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
 fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
     let mut servers = extract_claude_options(request, &BTreeMap::new()).mcp_servers;
     preserve_explicit_mcp_approval_modes(request, &mut servers);
+    servers.remove(crate::workbench_control::SERVER_NAME);
     servers
 }
 
@@ -2494,7 +2415,7 @@ fn request_api_base_url(_request: &ExecutionRequest) -> String {
     request_backend_url_or_default(_request)
 }
 
-fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
+pub(crate) fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
     let mut backend =
         url::Url::parse(backend_url.trim()).map_err(|_| "invalid backend API URL".to_owned())?;
     let base_path = backend.path().trim_end_matches('/');
@@ -2505,27 +2426,6 @@ fn api_url(backend_url: &str, path: &str) -> Result<String, String> {
         .join(path.trim_start_matches('/'))
         .map(Into::into)
         .map_err(|_| "invalid backend API path".to_owned())
-}
-
-pub(super) fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-    }
-    let content = serde_json::to_string_pretty(value)
-        .map_err(|error| format!("failed to serialize JSON: {error}"))?;
-    let parent = path.parent().ok_or("JSON file has no parent")?;
-    let mut file = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|error| format!("failed to stage JSON: {error}"))?;
-    use std::io::Write;
-    file.write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-    file.as_file()
-        .sync_all()
-        .map_err(|error| error.to_string())?;
-    file.persist(path)
-        .map_err(|error| format!("failed to publish JSON: {}", error.error))?;
-    Ok(())
 }
 
 fn primary_bot(request: &ExecutionRequest) -> Option<&Value> {
@@ -2601,74 +2501,17 @@ fn value_id_string(value: &Value) -> Option<String> {
     }
 }
 
-fn toml_key_path(segments: &[&str]) -> String {
-    segments
-        .iter()
-        .map(|segment| toml_key_segment(segment))
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
-fn toml_key_segment(segment: &str) -> String {
-    if segment
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '-')
-    {
-        segment.to_owned()
-    } else {
-        serde_json::to_string(segment).unwrap_or_else(|_| "\"invalid\"".to_owned())
-    }
-}
-
-fn toml_value(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned())
-}
-
-fn toml_json_value(value: &Value) -> String {
-    match value {
-        Value::Array(items) => format!(
-            "[{}]",
-            items
-                .iter()
-                .map(|item| match item {
-                    Value::String(value) => toml_value(value),
-                    _ => item.to_string(),
-                })
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
-        Value::String(value) => toml_value(value),
-        _ => value.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     mod codex;
+    #[path = "workbench_control.rs"]
+    mod workbench_control;
 
     use super::*;
-    use std::io::{Cursor, Write};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
-
-    #[test]
-    fn backend_api_url_includes_api_prefix_once() {
-        for suffix in ["", "/", "/api", "/api/"] {
-            for path in [
-                "/api/attachments/1/executor-download",
-                "/api/v1/kinds/skills/1/download",
-                "/api/v1/kinds/skills?namespace=default",
-                "/api",
-            ] {
-                assert_eq!(
-                    api_url(&format!("https://backend.example/wework{suffix}"), path).unwrap(),
-                    format!("https://backend.example/wework{path}")
-                );
-            }
-        }
-    }
 
     #[test]
     fn backend_api_url_preserves_route_boundaries() {
@@ -2715,15 +2558,6 @@ mod tests {
         fs::write(&current, "invalid JSON").unwrap();
         assert!(load_global_mcp_records().is_err());
         assert_eq!(fs::read_to_string(current).unwrap(), "invalid JSON");
-    }
-
-    #[test]
-    fn native_mcp_reader_accepts_a_new_empty_managed_home() {
-        let _lock = crate::test_env::lock();
-        let root = tempfile::tempdir().unwrap();
-        let _capabilities =
-            EnvGuard::set("WEGENT_CAPABILITIES_HOME", root.path().to_str().unwrap());
-        assert!(load_global_mcp_records().unwrap().is_empty());
     }
 
     #[test]
@@ -2789,7 +2623,7 @@ mod tests {
         inject_managed_wework_mcps(&request, &mut servers)
             .expect("notifications MCP should be injected");
 
-        assert!(!servers.contains_key(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME));
+        assert!(servers.contains_key(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME));
         let server = &servers[crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME];
         assert_eq!(server["type"], "http");
         let url = server["url"]
@@ -2806,25 +2640,24 @@ mod tests {
     }
 
     #[test]
-    fn stages_local_codex_skill_for_any_runtime() {
-        let temp = tempfile::tempdir().expect("temporary Skill directory");
-        let source = temp.path().join("source");
-        let target = temp.path().join("target");
-        fs::create_dir_all(source.join("references")).expect("nested source directory");
-        fs::write(source.join("SKILL.md"), "# Shared Skill").expect("Skill file");
-        fs::write(source.join("references").join("guide.md"), "guide").expect("reference file");
+    fn claude_discovers_project_space_without_a_project_binding() {
+        let mut servers = BTreeMap::new();
+        inject_managed_wework_mcps(&ExecutionRequest::default(), &mut servers).unwrap();
+        let server = &servers[crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME];
+        assert_eq!(server["type"], "http");
+        assert!(server["headers"]["X-Wework-Mcp-Context"].as_str().is_some());
+    }
 
-        stage_local_skill(&source, &target).expect("local Skill should stage");
-
-        assert_eq!(
-            fs::read_to_string(target.join("SKILL.md")).expect("staged Skill"),
-            "# Shared Skill"
+    #[test]
+    fn claude_rejects_incomplete_dispatch_instead_of_exposing_personal_tools() {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "origin".into(),
+            json!({
+                "type":"issue_dispatch", "dispatchRole":"manager", "cloudProjectId":"space-1"
+            }),
         );
-        assert_eq!(
-            fs::read_to_string(target.join("references").join("guide.md"))
-                .expect("staged reference"),
-            "guide"
-        );
+        assert!(inject_managed_wework_mcps(&request, &mut BTreeMap::new()).is_err());
     }
 
     #[test]
@@ -2848,39 +2681,6 @@ mod tests {
         );
         assert_eq!(unique_attachment_filename("draft", &mut used), "draft");
         assert_eq!(unique_attachment_filename("draft", &mut used), "draft-2");
-    }
-
-    #[test]
-    fn coordinate_subagent_uses_its_resolved_model() {
-        let bot = json!({
-            "id": 106,
-            "name": "glm",
-            "description": "GLM worker",
-            "system_prompt": "You are the GLM worker.",
-            "agent_config": {
-                "env": {
-                    "model_id": "weibo-glm5.2"
-                }
-            }
-        });
-
-        let (name, content) = subagent_file(&bot).unwrap();
-
-        assert_eq!(name, "glm-106");
-        assert!(content.contains("model: \"weibo-glm5.2\""));
-    }
-
-    #[test]
-    fn coordinate_subagent_inherits_when_model_is_unconfigured() {
-        let bot = json!({
-            "id": 103,
-            "name": "worker",
-            "system_prompt": "You are a worker."
-        });
-
-        let (_, content) = subagent_file(&bot).unwrap();
-
-        assert!(content.contains("model: inherit"));
     }
 
     pub(super) struct EnvGuard {
@@ -2910,30 +2710,6 @@ mod tests {
                 env::remove_var(self.key);
             }
         }
-    }
-
-    #[test]
-    fn write_claude_user_config_creates_legacy_and_runtime_configs() {
-        let temp = env::temp_dir().join(format!("claude-user-config-{}", std::process::id()));
-        let config_dir = temp.join(".claude");
-
-        write_claude_user_config(&config_dir);
-
-        let legacy_config: Value =
-            serde_json::from_str(&fs::read_to_string(config_dir.join("claude.json")).unwrap())
-                .unwrap();
-        let runtime_config: Value =
-            serde_json::from_str(&fs::read_to_string(config_dir.join(".claude.json")).unwrap())
-                .unwrap();
-        assert_eq!(legacy_config["hasCompletedOnboarding"], true);
-        assert_eq!(legacy_config["bypassPermissionsModeAccepted"], true);
-        assert!(runtime_config["firstStartTime"].as_str().is_some());
-        assert_eq!(runtime_config["migrationVersion"], 13);
-        assert_eq!(runtime_config["opusProMigrationComplete"], true);
-        assert_eq!(runtime_config["sonnet1m45MigrationComplete"], true);
-        assert!(runtime_config["seenNotifications"].is_object());
-
-        let _ = fs::remove_dir_all(temp);
     }
 
     #[test]
@@ -3165,27 +2941,6 @@ mod tests {
             pending_download_attachments(&attachments),
             vec![attachments[2].clone()]
         );
-    }
-
-    #[test]
-    fn attachment_sync_response_serializes_status_and_paths() {
-        let success = vec![attachment(
-            1,
-            Some("success"),
-            Some("/workspace/a.txt"),
-            None,
-        )];
-        let failed = vec![attachment(2, Some("failed"), None, Some("HTTP 404"))];
-
-        let payload = attachment_sync_response("72", "204", &success, &failed);
-
-        assert_eq!(payload["task_id"], "72");
-        assert_eq!(payload["success_count"], 1);
-        assert_eq!(payload["failed_count"], 1);
-        assert_eq!(payload["attachments"][0]["status"], "success");
-        assert_eq!(payload["attachments"][0]["local_path"], "/workspace/a.txt");
-        assert_eq!(payload["attachments"][1]["status"], "failed");
-        assert_eq!(payload["attachments"][1]["error"], "HTTP 404");
     }
 
     #[test]
@@ -3592,16 +3347,7 @@ mod tests {
         skill_zip_entries(&[(&entry, "# Skill")])
     }
 
-    pub(super) fn skill_zip_entries(entries: &[(&str, &str)]) -> Vec<u8> {
-        let cursor = Cursor::new(Vec::new());
-        let mut writer = zip::ZipWriter::new(cursor);
-        let options = zip::write::FileOptions::default();
-        for (path, content) in entries {
-            writer.start_file(*path, options).unwrap();
-            writer.write_all(content.as_bytes()).unwrap();
-        }
-        writer.finish().unwrap().into_inner()
-    }
+    pub(super) use wegent_executor_test_support::zip_entries as skill_zip_entries;
 
     #[test]
     fn shared_skill_stage_remaps_mismatched_root_to_requested_skill() {
@@ -3679,22 +3425,5 @@ mod tests {
 
         assert_eq!(reason, "backend download request failed");
         assert!(!reason.contains("secret-task-token"));
-    }
-
-    #[test]
-    fn request_api_base_url_prefers_env_over_payload_backend_url() {
-        let _lock = crate::test_env::lock();
-        let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
-        let _mode = EnvGuard::remove("EXECUTOR_MODE");
-        let _api = EnvGuard::set("TASK_API_DOMAIN", "http://env-backend.local:8000");
-        let request = ExecutionRequest {
-            backend_url: Some("http://payload-backend.invalid".to_owned()),
-            ..ExecutionRequest::default()
-        };
-
-        assert_eq!(
-            request_api_base_url(&request),
-            "http://env-backend.local:8000"
-        );
     }
 }

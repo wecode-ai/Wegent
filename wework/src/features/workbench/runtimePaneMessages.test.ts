@@ -83,6 +83,52 @@ describe('createRuntimeConversationStreamHandlers', () => {
 })
 
 describe('createRuntimeTaskStreamHandlers lifecycle retention', () => {
+  test('settles a recovered overload without publishing a terminal failure lifecycle', () => {
+    const actions: RuntimePaneMessageAction[] = []
+    const onAssistantRecovered = vi.fn()
+    const onAssistantSettled = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'task-1' },
+      {
+        onMessageAction: action => actions.push(action),
+        onAssistantRecovered,
+        onAssistantSettled,
+      }
+    )
+
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      subtaskId: 'turn-1',
+    })
+    handlers.onChatError?.({
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      subtaskId: 'turn-1',
+      error: 'Selected model is at capacity.',
+      type: 'response.failed',
+    })
+    handlers.onChatRecovered?.({
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      subtaskId: 'turn-1',
+      turnId: 'turn-1',
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({ type: 'assistant_started', subtaskId: 'turn-1' }),
+      expect.objectContaining({
+        type: 'assistant_error',
+        subtaskId: 'turn-1',
+        error: 'Selected model is at capacity.',
+      }),
+      expect.objectContaining({ type: 'assistant_done', subtaskId: 'turn-1' }),
+    ])
+    expect(onAssistantRecovered).toHaveBeenCalledWith('turn-1')
+    expect(onAssistantSettled).toHaveBeenCalledTimes(1)
+    expect(onAssistantSettled).toHaveBeenCalledWith('turn-1', 'failed')
+  })
+
   test('bounds settled turn deduplication state for a long-running task', () => {
     const onAssistantStart = vi.fn()
     const handlers = createRuntimeTaskStreamHandlers(

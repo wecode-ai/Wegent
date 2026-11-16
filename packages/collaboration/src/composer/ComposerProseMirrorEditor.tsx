@@ -15,6 +15,7 @@ import {
 } from "./composerMarkdownSerializer";
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -41,7 +42,12 @@ import {
   Plugin,
   TextSelection,
 } from "prosemirror-state";
-import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
+import {
+  Decoration,
+  DecorationSet,
+  EditorView,
+  type NodeViewConstructor,
+} from "prosemirror-view";
 import type { PluginReference } from "@wegent/chat-core/plugin-reference";
 import { ComposerMentionNodeView } from "./ComposerMentionNodeView";
 import { ComposerLinkNodeView } from "./ComposerLinkNodeView";
@@ -71,6 +77,7 @@ import {
   convertTypedComposerTable,
   indentComposerList,
 } from "./composerMarkdownInputRules";
+import { observeComposerScrollFade } from "./composerScrollFade";
 
 export interface ComposerEditorSnapshot {
   value: string;
@@ -109,6 +116,8 @@ export interface ComposerProseMirrorEditorProps {
   onDrop: (event: DragEvent) => boolean;
   onOpenMentionFile?: (path: string) => void;
   onOpenMentionPlugin?: (reference: PluginReference) => void;
+  onActivateMention?: (reference: string) => boolean;
+  onOpenMentionReference?: (href: string, label: string) => void;
   onEditComposerLink?: (
     payload: ComposerLinkPayload,
     anchor?: HTMLElement,
@@ -153,6 +162,30 @@ export const ComposerProseMirrorEditor = forwardRef<
   useLayoutEffect(() => {
     callbacksRef.current = resolvedProps;
   });
+
+  const canActivateMention = Boolean(props.onActivateMention);
+  const canOpenMentionReference = Boolean(props.onOpenMentionReference);
+  const createMentionView = useCallback<NodeViewConstructor>(
+    (node, view, getPos) =>
+      new ComposerMentionNodeView(
+        node,
+        view,
+        getPos,
+        (path) => callbacksRef.current.onOpenMentionFile?.(path),
+        (reference) => callbacksRef.current.onOpenMentionPlugin?.(reference),
+        (href) =>
+          callbacksRef.current.services.resolveMentionIcon?.(href) ?? null,
+        canActivateMention
+          ? (reference) =>
+              callbacksRef.current.onActivateMention?.(reference) ?? false
+          : undefined,
+        canOpenMentionReference
+          ? (href, label) =>
+              callbacksRef.current.onOpenMentionReference?.(href, label)
+          : undefined,
+      ),
+    [canActivateMention, canOpenMentionReference],
+  );
 
   useLayoutEffect(() => {
     textareaRefRef.current = props.textareaRef;
@@ -332,18 +365,7 @@ export const ComposerProseMirrorEditor = forwardRef<
       },
       editable: () => !callbacksRef.current.disabled,
       nodeViews: {
-        composer_mention(node, view, getPos) {
-          return new ComposerMentionNodeView(
-            node,
-            view,
-            getPos,
-            (path) => callbacksRef.current.onOpenMentionFile?.(path),
-            (reference) =>
-              callbacksRef.current.onOpenMentionPlugin?.(reference),
-            (href) =>
-              callbacksRef.current.services.resolveMentionIcon?.(href) ?? null,
-          );
-        },
+        composer_mention: createMentionView,
         composer_link(node, view, getPos) {
           return new ComposerLinkNodeView(node, view, getPos, {
             onEditLink: (payload, anchor, range) =>
@@ -509,7 +531,23 @@ export const ComposerProseMirrorEditor = forwardRef<
       callbacksRef.current.services.isWindowFocused() && view.hasFocus(),
     );
 
+    /** Lets focused mention nodes handle Enter and Space before composer submit. */
     const handleKeyDownCapture = (event: KeyboardEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest(
+          '.composer-mention-node[role="button"], .composer-mention-node[data-composer-reference-navigation]',
+        )
+      )
+        return;
+      if (event.key.length === 1) {
+        recordComposerDiagnostic("keyboard-text", {
+          composerId,
+          trusted: event.isTrusted,
+          valueLength: internalValueRef.current.length,
+          ...classifyComposerInputData(event.key),
+        });
+      }
       const prediction = callbacksRef.current.prediction;
       if (
         prediction &&
@@ -525,6 +563,12 @@ export const ComposerProseMirrorEditor = forwardRef<
         view.state.doc.childCount === 1 &&
         view.state.doc.firstChild?.content.size === 0
       ) {
+        recordComposerDiagnostic("prediction-accepted", {
+          composerId,
+          key: event.key,
+          trusted: event.isTrusted,
+          valueLength: prediction.text.length,
+        });
         replaceComposerValue(
           view,
           prediction.text,
@@ -701,6 +745,24 @@ export const ComposerProseMirrorEditor = forwardRef<
       view.destroy();
     };
   }, []);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.setProps({
+      nodeViews: {
+        ...view.props.nodeViews,
+        composer_mention: createMentionView,
+      },
+    });
+  }, [createMentionView]);
+
+  useEffect(() => {
+    const viewport = mountRef.current;
+    const content = viewRef.current?.dom;
+    if (!props.scrollContainerClassName || !viewport || !content) return;
+    return observeComposerScrollFade(viewport, content);
+  }, [props.scrollContainerClassName]);
 
   useEffect(() => {
     const view = viewRef.current;

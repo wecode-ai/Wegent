@@ -5,7 +5,8 @@
 import '@testing-library/jest-dom'
 import { act, renderHook, waitFor } from '@testing-library/react'
 
-import { listDocuments } from '@/apis/knowledge'
+import { batchDeleteDocuments, deleteDocument, listDocuments } from '@/apis/knowledge'
+import { toast } from '@/hooks/use-toast'
 import { useDocuments } from '@/features/knowledge/document/hooks/useDocuments'
 import type { KnowledgeContentOrigin } from '@/types/knowledge'
 
@@ -26,6 +27,8 @@ jest.mock('@/apis/knowledge', () => ({
 }))
 
 const mockListDocuments = listDocuments as jest.MockedFunction<typeof listDocuments>
+
+jest.mock('@/hooks/use-toast', () => ({ toast: jest.fn() }))
 
 function createDocument(id: number, name: string, overrides = {}) {
   return {
@@ -83,6 +86,162 @@ function deferredResponse(id: number, name: string) {
 }
 
 describe('useDocuments query parameters', () => {
+  it('does not subtract an old folder deletion from the newly opened folder', async () => {
+    let finish!: (value: Awaited<ReturnType<typeof batchDeleteDocuments>>) => void
+    mockListDocuments.mockImplementation(async (_id, params) =>
+      params?.folder_id === 2
+        ? createListResponseFromItems([
+            createDocument(20, 'twenty'),
+            createDocument(21, 'twenty-one'),
+          ])
+        : createListResponseFromItems([createDocument(1, 'one')])
+    )
+    jest.mocked(batchDeleteDocuments).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    const { result, rerender } = renderHook(
+      ({ folderId }) =>
+        useDocuments({
+          knowledgeBaseId: 1,
+          folderId,
+          paginationEnabled: false,
+        }),
+      { initialProps: { folderId: 1 } }
+    )
+    await waitFor(() => expect(result.current.documents.map(doc => doc.id)).toEqual([1]))
+    let request!: ReturnType<typeof result.current.batchDelete>
+    act(() => {
+      request = result.current.batchDelete([1])
+    })
+    rerender({ folderId: 2 })
+    await waitFor(() => expect(result.current.documents.map(doc => doc.id)).toEqual([20, 21]))
+    await act(async () => {
+      finish({
+        success_count: 1,
+        failed_count: 0,
+        failed_ids: [],
+        message: 'Deleted',
+        unconfirmed_count: 0,
+        items: [
+          {
+            document_id: 1,
+            content_deleted: true,
+            index_cleanup: 'confirmed',
+            error_code: null,
+            can_continue: false,
+          },
+        ],
+      })
+      await request
+    })
+    expect(result.current.totalCount).toBe(2)
+    expect(result.current.documents.map(doc => doc.id)).toEqual([20, 21])
+  })
+
+  it('removes committed deletions even if the paginated refresh fails', async () => {
+    mockListDocuments.mockResolvedValue(
+      createListResponseFromItems([createDocument(1, 'one'), createDocument(2, 'two')])
+    )
+    jest.mocked(batchDeleteDocuments).mockResolvedValue({
+      success_count: 1,
+      failed_count: 1,
+      failed_ids: [2],
+      message: 'Partial',
+      unconfirmed_count: 0,
+      items: [
+        {
+          document_id: 1,
+          content_deleted: true,
+          index_cleanup: 'confirmed',
+          error_code: null,
+          can_continue: false,
+        },
+        {
+          document_id: 2,
+          content_deleted: false,
+          index_cleanup: 'unconfirmed',
+          error_code: 'permission_denied',
+          can_continue: false,
+        },
+      ],
+    })
+    const { result } = renderHook(() => useDocuments({ knowledgeBaseId: 1 }))
+    await waitFor(() => expect(result.current.documents).toHaveLength(2))
+    mockListDocuments.mockRejectedValue(new Error('list unavailable'))
+    await act(async () => {
+      await result.current.batchDelete([1, 2])
+    })
+    expect(result.current.documents.map(doc => doc.id)).toEqual([2])
+    expect(result.current.totalCount).toBe(1)
+    expect(result.current.error).toBeTruthy()
+  })
+  it('counts actual batch deletions once even when requested IDs repeat', async () => {
+    mockListDocuments.mockResolvedValue(
+      createListResponseFromItems([
+        createDocument(1, 'one'),
+        createDocument(2, 'two'),
+        createDocument(3, 'three'),
+      ])
+    )
+    jest.mocked(batchDeleteDocuments).mockResolvedValue({
+      success_count: 1,
+      failed_count: 2,
+      failed_ids: [2, 3],
+      message: 'Partial deletion',
+      unconfirmed_count: 0,
+      items: [
+        {
+          document_id: 1,
+          content_deleted: true,
+          index_cleanup: 'confirmed',
+          error_code: null,
+          can_continue: false,
+        },
+        {
+          document_id: 2,
+          content_deleted: false,
+          index_cleanup: 'unconfirmed',
+          error_code: 'external_engine_unavailable',
+          can_continue: true,
+        },
+        {
+          document_id: 3,
+          content_deleted: false,
+          index_cleanup: 'unconfirmed',
+          error_code: 'permission_denied',
+          can_continue: false,
+        },
+      ],
+    })
+    const { result } = renderHook(() =>
+      useDocuments({ knowledgeBaseId: 1, paginationEnabled: false })
+    )
+    await waitFor(() => expect(result.current.documents).toHaveLength(3))
+    await act(async () => {
+      await result.current.batchDelete([1, 2, 3, 1])
+    })
+    expect(result.current.documents.map(doc => doc.id)).toEqual([2, 3])
+    expect(result.current.totalCount).toBe(2)
+  })
+  it('reports residual index risk after a confirmed content deletion', async () => {
+    mockListDocuments.mockResolvedValue(createListResponse(11, 'document.txt'))
+    jest.mocked(deleteDocument).mockResolvedValue({
+      content_deleted: true,
+      index_cleanup: 'unconfirmed',
+      error_code: 'external_engine_unavailable',
+      can_continue: false,
+    })
+    const { result } = renderHook(() => useDocuments({ knowledgeBaseId: 1 }))
+    await waitFor(() => expect(result.current.documents).toHaveLength(1))
+    await act(async () => {
+      await result.current.remove(11, true)
+    })
+    expect(deleteDocument).toHaveBeenCalledWith(11, true)
+    expect(toast).toHaveBeenCalledWith({ title: 'knowledge:document.deletion.residualWarning' })
+  })
   beforeEach(() => {
     jest.clearAllMocks()
     mockListDocuments.mockResolvedValue({
@@ -242,60 +401,68 @@ describe('useDocuments query parameters', () => {
   })
 
   it('ignores stale responses after query changes', async () => {
-    const requestsByKeyword = new Map<string, Array<ReturnType<typeof deferredResponse>>>()
-    mockListDocuments.mockImplementation((_knowledgeBaseId, params) => {
-      if (!params?.keyword) {
-        return Promise.resolve(
-          createListResponseFromItems([], {
-            total: 2001,
-            returned_count: 0,
-            has_more: true,
-          })
+    // Advance the debounce explicitly so CPU contention cannot consume waitFor's deadline.
+    jest.useFakeTimers()
+    try {
+      const requestsByKeyword = new Map<string, Array<ReturnType<typeof deferredResponse>>>()
+      mockListDocuments.mockImplementation((_knowledgeBaseId, params) => {
+        if (!params?.keyword) {
+          return Promise.resolve(
+            createListResponseFromItems([], {
+              total: 2001,
+              returned_count: 0,
+              has_more: true,
+            })
+          )
+        }
+
+        const keyword = params?.keyword ?? ''
+        const request = deferredResponse(
+          keyword === 'new' ? 2 : 1,
+          keyword === 'new' ? 'new.txt' : 'old.txt'
         )
-      }
+        requestsByKeyword.set(keyword, [...(requestsByKeyword.get(keyword) ?? []), request])
+        return request.promise
+      })
 
-      const keyword = params?.keyword ?? ''
-      const request = deferredResponse(
-        keyword === 'new' ? 2 : 1,
-        keyword === 'new' ? 'new.txt' : 'old.txt'
+      const { result, rerender } = renderHook(
+        ({ keyword }) =>
+          useDocuments({
+            knowledgeBaseId: 1,
+            paginationEnabled: true,
+            keyword,
+          }),
+        { initialProps: { keyword: 'old' } }
       )
-      requestsByKeyword.set(keyword, [...(requestsByKeyword.get(keyword) ?? []), request])
-      return request.promise
-    })
 
-    const { result, rerender } = renderHook(
-      ({ keyword }) =>
-        useDocuments({
-          knowledgeBaseId: 1,
-          paginationEnabled: true,
-          keyword,
-        }),
-      { initialProps: { keyword: 'old' } }
-    )
+      await act(async () => {})
+      expect(requestsByKeyword.get('old')?.length).toBeGreaterThan(0)
 
-    await waitFor(() => expect(requestsByKeyword.get('old')?.length).toBeGreaterThan(0))
+      rerender({ keyword: 'new' })
 
-    rerender({ keyword: 'new' })
+      await act(async () => {
+        jest.advanceTimersByTime(300)
+      })
+      expect(requestsByKeyword.get('new')?.length).toBeGreaterThan(0)
 
-    await waitFor(() => expect(requestsByKeyword.get('new')?.length).toBeGreaterThan(0))
+      await act(async () => {
+        const newRequest = requestsByKeyword.get('new')!.at(-1)!
+        newRequest.resolve()
+        await newRequest.promise
+      })
 
-    await act(async () => {
-      const newRequest = requestsByKeyword.get('new')!.at(-1)!
-      newRequest.resolve()
-      await newRequest.promise
-    })
-
-    await waitFor(() => {
       expect(result.current.documents.map(doc => doc.name)).toEqual(['new.txt'])
-    })
 
-    await act(async () => {
-      const oldRequests = requestsByKeyword.get('old') ?? []
-      oldRequests.forEach(request => request.resolve())
-      await Promise.all(oldRequests.map(request => request.promise))
-    })
+      await act(async () => {
+        const oldRequests = requestsByKeyword.get('old') ?? []
+        oldRequests.forEach(request => request.resolve())
+        await Promise.all(oldRequests.map(request => request.promise))
+      })
 
-    expect(result.current.documents.map(doc => doc.name)).toEqual(['new.txt'])
+      expect(result.current.documents.map(doc => doc.name)).toEqual(['new.txt'])
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('uses the same fixed id-desc tie-break as the server in local mode', async () => {

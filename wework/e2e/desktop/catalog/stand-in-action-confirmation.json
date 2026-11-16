@@ -1,0 +1,12 @@
+{
+  "order": 30000,
+  "scenario": "./scenarios/stand-in-action-confirmation.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 37000,
+      "shard": 3,
+      "position": 8000
+    }
+  }
+}

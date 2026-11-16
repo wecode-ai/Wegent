@@ -3,6 +3,7 @@ import { AlertTriangle, ChevronDown } from "lucide-react";
 import type { WorkbenchMessage } from "@wegent/chat-core/runtime-conversation";
 import { parseChatError } from "@wegent/chat-core/chat-error";
 import { useConversationTranslation } from "./ConversationTranslation";
+import { GitAccountConfigurationButton } from "../controls/GitAccountConfiguration";
 
 export function AssistantErrorCard({
   error,
@@ -19,17 +20,20 @@ export function AssistantErrorCard({
   onRetry?: (message: WorkbenchMessage) => void;
   onSwitchModel?: (message: WorkbenchMessage) => void;
 }) {
-  const { t } = useConversationTranslation();
+  const { t, translate } = useConversationTranslation();
   const [isDetailExpanded, setIsDetailExpanded] = useState(false);
-  const displayError = rawError || error;
+  const parsedError = parseChatError(rawError || error || "", errorType);
+  const displayError = parsedError.gitFailure
+    ? `${parsedError.gitFailure.domain}: ${parsedError.gitFailure.message}`
+    : rawError || error;
   const hasErrorDetails = Boolean(displayError);
-  const parsedError = parseChatError(displayError ?? "", errorType);
   const modelName =
     displayError?.match(/model_id:\s*([^"'}\s]+)/)?.[1] ??
     displayError?.match(/model(?:\s+|_id["':\s]+)([a-z0-9._:-]+)/i)?.[1];
   const title = t(parsedError.titleKey);
-  const description =
-    parsedError.type === "model_protocol_error" && modelName
+  const description = parsedError.gitFailure
+    ? t(parsedError.descriptionKey, { domain: parsedError.gitFailure.domain })
+    : parsedError.type === "model_protocol_error" && modelName
       ? t("assistant_error.types.model_protocol_error.description_with_model", {
           model: modelName,
         })
@@ -62,12 +66,17 @@ export function AssistantErrorCard({
         </p>
         <p
           data-testid="assistant-error-description"
-          className="mt-0.5 text-xs leading-[18px] text-text-secondary"
+          className="mt-0.5 break-words text-xs leading-[18px] text-text-secondary"
         >
           {description}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          {onSwitchModel ? (
+          <GitAccountConfigurationButton
+            failure={parsedError.gitFailure}
+            translate={translate}
+            testId="assistant-error-configure-git"
+          />
+          {onSwitchModel && !parsedError.gitFailure ? (
             <button
               type="button"
               data-testid="assistant-error-switch-model-retry"
@@ -82,7 +91,7 @@ export function AssistantErrorCard({
               type="button"
               data-testid="assistant-error-retry"
               onClick={() => onRetry(message)}
-              className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
+              className="h-8 min-h-11 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8"
             >
               {t("assistant_error.actions.retry")}
             </button>
@@ -93,7 +102,7 @@ export function AssistantErrorCard({
               data-testid="assistant-error-details-toggle"
               aria-expanded={isDetailExpanded}
               onClick={() => setIsDetailExpanded((value) => !value)}
-              className="inline-flex h-8 items-center gap-1 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
+              className="inline-flex h-8 min-h-11 items-center gap-1 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8"
             >
               <ChevronDown
                 className={[

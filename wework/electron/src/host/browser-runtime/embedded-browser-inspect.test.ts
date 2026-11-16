@@ -9,7 +9,16 @@ describe('embedded browser inspect runtime', () => {
     const source = await readFile(inspectRuntimePath, 'utf8')
 
     expect(source).toContain('const root = doc.documentElement || doc.body')
-    expect(source).toContain('const hit = deepestElementFromPoint(doc, localX, localY)')
+    expect(source).toContain('const hit = deepestElementFromPoint(doc, x, y)')
     expect(source).toContain('element.shadowRoot.elementFromPoint(x, y)')
+  })
+
+  test('maps nested frames with their borders and scales', async () => {
+    const source = await readFile(inspectRuntimePath, 'utf8')
+
+    expect(source).toContain('localRect.x + frameMetrics.left * frameMetrics.scaleX')
+    expect(source).toContain('function frameContentMetrics(frame, rect)')
+    expect(source).toContain('ancestorFramesAccept(element, x, y)')
+    expect(source).toContain('viewportRect: viewportRectFor(element)')
   })
 })

@@ -9,6 +9,8 @@ export function useIssueActivityScroll({
   readSequence: storedReadSequence = 0,
   unread = true,
   unreadRevision,
+  readRequestKey,
+  visibilityRevision,
   onReadSequence,
   linear = true,
   compact = true,
@@ -20,6 +22,8 @@ export function useIssueActivityScroll({
   readSequence?: number
   unread?: boolean
   unreadRevision?: number
+  readRequestKey?: string | null
+  visibilityRevision?: string | number | null
   onReadSequence?(sequence: number): Promise<void> | void
   linear?: boolean
   compact?: boolean
@@ -31,11 +35,25 @@ export function useIssueActivityScroll({
   const readStateRef = useRef<VisibleReadState>({
     issueId,
     sequence: storedReadSequence,
+    requestKey: readRequestKey,
     pending: new Set(),
   })
   useEffect(() => {
     if (readStateRef.current.issueId !== issueId) {
-      readStateRef.current = { issueId, sequence: storedReadSequence, pending: new Set() }
+      readStateRef.current = {
+        issueId,
+        sequence: storedReadSequence,
+        requestKey: readRequestKey,
+        pending: new Set(),
+      }
+    } else if (readStateRef.current.requestKey !== readRequestKey) {
+      // A fresh navigation consumes later notifications without resetting scroll progress.
+      readStateRef.current = {
+        ...readStateRef.current,
+        requestKey: readRequestKey,
+        revision: undefined,
+        pending: new Set(),
+      }
     }
     const state = readStateRef.current
     if (!loading && state.baseline === undefined) {
@@ -46,7 +64,7 @@ export function useIssueActivityScroll({
     }
     const sequence = storedReadSequence > 0 || unread ? storedReadSequence : (state.baseline ?? 0)
     state.sequence = Math.max(state.sequence, sequence)
-  }, [issueId, loading, storedReadSequence, threadMessages, unread])
+  }, [issueId, loading, storedReadSequence, threadMessages, unread, readRequestKey])
   const markVisibleRead = useCallback(
     (scroller: HTMLElement) => {
       const state = readStateRef.current
@@ -59,7 +77,7 @@ export function useIssueActivityScroll({
         threadMessages.length === 0
       )
     },
-    [issueId, onReadSequence, threadMessages.length, unreadRevision]
+    [issueId, onReadSequence, threadMessages.length, unreadRevision, readRequestKey]
   )
   const scrollTaskCommentsToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
@@ -124,11 +142,17 @@ export function useIssueActivityScroll({
     const frame = requestAnimationFrame(() => {
       const scroller = resolveTaskCommentScrollContainer(listRef.current, linear)
       if (!scroller) return
-      const activities = activityElements(scroller)
+      const activities = Array.from(
+        scroller.querySelectorAll<HTMLElement>(
+          '[data-activity-sequence], [data-activity-collapsed-first-sequence]'
+        )
+      )
       if (activities.length === 0) return
       initializedIssueRef.current = issueId
-      const firstUnread = activities.find(
-        element => activitySequence(element) > readStateRef.current.sequence
+      const firstUnread = activities.find(element =>
+        element.dataset.activityCollapsedFirstSequence !== undefined
+          ? Number(element.dataset.activityCollapsedLastSequence) > readStateRef.current.sequence
+          : activitySequence(element) > readStateRef.current.sequence
       )
       if (firstUnread) {
         const scrollerRect = scroller.getBoundingClientRect()
@@ -139,7 +163,14 @@ export function useIssueActivityScroll({
       }
     })
     return () => cancelAnimationFrame(frame)
-  }, [issueId, linear, loading, scrollTaskCommentsToBottom, threadMessages.length])
+  }, [
+    issueId,
+    linear,
+    loading,
+    scrollTaskCommentsToBottom,
+    threadMessages.length,
+    visibilityRevision,
+  ])
 
   useEffect(() => {
     const scroller = resolveTaskCommentScrollContainer(listRef.current, linear)
@@ -157,7 +188,7 @@ export function useIssueActivityScroll({
       cancelAnimationFrame(frame)
       scroller.removeEventListener('scroll', update)
     }
-  }, [linear, loading, markVisibleRead, onReadSequence, threadMessages])
+  }, [linear, loading, markVisibleRead, onReadSequence, threadMessages, visibilityRevision])
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -215,6 +246,7 @@ interface VisibleReadState {
   baseline?: number
   sequence: number
   revision?: number
+  requestKey?: string | null
   pending: Set<string>
 }
 
@@ -236,6 +268,15 @@ function markVisibleActivitiesRead(
     }
     return latest
   }, 0)
+  // A content acknowledgement also consumes notifications. Keep it pending while
+  // unread messages remain hidden in a folded middle, even if the tail is visible.
+  for (const element of scroller.querySelectorAll<HTMLElement>(
+    '[data-activity-collapsed-first-sequence]'
+  )) {
+    const first = Number(element.dataset.activityCollapsedFirstSequence)
+    const last = Number(element.dataset.activityCollapsedLastSequence)
+    if (first > 0 && last > state.sequence) return
+  }
   const unreadContent = unreadRevision !== undefined && unreadRevision > (state.revision ?? -1)
   if (
     sequence <= state.sequence &&

@@ -128,7 +128,7 @@ function DisconnectedCloudCodexSyncSection({
   codexOfficialModels: CodexOfficialModelList | null
   codexOfficialLoading: boolean
   codexOfficialError: string | null
-  onRefreshCodexOfficialModels: () => void
+  onRefreshCodexOfficialModels: () => void | Promise<void>
   subscriptionEnabled: boolean
 }) {
   const { t } = useTranslation('common')
@@ -710,7 +710,7 @@ export function ModelSettingsPage({
               codexOfficialModels={codexOfficialModels}
               codexOfficialLoading={codexOfficialLoading}
               codexOfficialError={codexOfficialError}
-              onRefreshCodexOfficialModels={() => void loadCodexOfficialModels()}
+              onRefreshCodexOfficialModels={loadCodexOfficialModels}
               subscriptionEnabled={subscriptionEnabled}
             />
           </CodexAuthSettingsSection>
@@ -916,7 +916,7 @@ export function ModelSettingsPage({
               {error && (
                 <div
                   data-testid="runtime-config-error"
-                  className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500"
+                  className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-500"
                 >
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>{error}</span>

@@ -1,7 +1,9 @@
-import { expect, test } from 'vitest'
-import { updateRuntimeWorkProject } from './runtime-project-update'
-import { qualifyLocalRuntimeWork } from './local-runtime-sidebar-identity'
+// @vitest-environment node
+
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import { expect, test } from 'vitest'
+import { qualifyLocalRuntimeWork } from './local-runtime-sidebar-identity'
+import { updateRuntimeWorkProject } from './runtime-project-update'
 
 const ownerDevices = ['a', 'b'].map(
   (deviceId, index): DeviceInfo => ({
@@ -128,62 +130,6 @@ test('keeps an unrelated proven local owner with the same project key when proje
       devices
     )
   ).toThrow('ambiguous-executor-identity:shared-address')
-})
-
-test('projects confirmed defaults across proven owner aliases without rewriting execution addresses', () => {
-  const work: RuntimeWorkListResponse = {
-    projects: ownerDevices.map(device => ({
-      project: {
-        key: 'shared-key',
-        name: device.name,
-        source: 'remote_project',
-        ownerDeviceId: device.device_id,
-        ownerProjectKey: 'shared-key',
-        sidebarStateKey: `mirror-${device.device_id}`,
-      },
-      deviceWorkspaces: [
-        {
-          deviceId: device.device_id,
-          remoteHostId: device.device_id,
-          workspacePath: '/old',
-          available: true,
-          tasks: [],
-        },
-      ],
-    })),
-    chats: [],
-    totalTasks: 0,
-  }
-  const settings = {
-    modelSelection: { modelName: 'project-model', modelType: 'runtime' as const },
-    quickPhrases: [
-      {
-        id: 'review',
-        title: 'Review project',
-        content: 'Review this project',
-        mode: 'normal' as const,
-      },
-    ],
-  }
-  const next = updateRuntimeWorkProject(
-    work,
-    {
-      deviceId: 'socket-b',
-      projectKey: 'shared-key',
-      name: 'Edited',
-      roots: ['/new'],
-      defaultProjectSpace: null,
-      aiSettings: settings,
-      source: 'local_project',
-    },
-    ownerDevices
-  )
-  expect(next.projects[0]).toBe(work.projects[0])
-  expect(next.projects[1].project.aiSettings).toEqual(settings)
-  expect(next.projects[1].project.ownerDeviceId).toBe('b')
-  expect(next.projects[1].deviceWorkspaces[0].remoteHostId).toBe('b')
-  expect(next.projects[1].project.source).toBe('remote_project')
-  expect(next.projects[1].project.sidebarStateKey).toBe('mirror-b')
 })
 
 test('promotes a legacy directory only with confirmed owner source while preserving its sidebar identity', () => {

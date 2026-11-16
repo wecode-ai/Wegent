@@ -92,12 +92,18 @@ pub trait ExecutorHttp: Send + Sync {
 #[async_trait]
 impl ExecutorHttp for HttpClient {
     async fn post_json(&self, url: &str, body: &Value) -> Result<Value, ExecutorDispatchError> {
-        let response = self
+        let request = self
             .post(url)
             .map_err(|error| ExecutorDispatchError::Transport(error.to_string()))?
             .header("content-type", "application/json")
-            .header("accept", super::dispatch::OPENAI_ACCEPT)
-            .header("authorization", super::dispatch::OPENAI_DUMMY_AUTHORIZATION)
+            .header("accept", super::openai_client::OPENAI_ACCEPT)
+            .header(
+                "authorization",
+                super::openai_client::OPENAI_DUMMY_AUTHORIZATION,
+            );
+        // Same Source client identity as the streaming path; one shared set
+        // keeps the two outbound model requests from drifting apart.
+        let response = super::openai_client::apply_openai_client_headers(request)
             .json(body)
             .send()
             .await
@@ -190,7 +196,7 @@ mod tests {
         let payload = DispatchPayload {
             model: "qwen3.7-plus".to_string(),
             stream: false,
-            input: "hi".to_string(),
+            input: serde_json::json!("hi"),
             instructions: "sys".to_string(),
             background: Some(true),
             ..DispatchPayload::new()

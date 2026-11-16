@@ -1,0 +1,12 @@
+{
+  "order": 159000,
+  "scenario": "./scenarios/release-package-startup.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 109000,
+      "shard": 1,
+      "position": 2000
+    }
+  }
+}

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join, resolve } from 'node:path'
+import { packagedComponentRoots } from '../modules/packaged-component-resources.mjs'
 
 const PROFILE_NAME = 'wework-core'
 const NATIVE_PROVIDER = '@wework-e2e/native-dsh-provider'
@@ -151,7 +152,7 @@ export function apply(ctx) {
   )
 }
 
-async function assertReleasePackageResources() {
+async function assertReleasePackageResources(resultDir) {
   const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
   const resourcesRoot =
     process.platform === 'darwin'
@@ -190,20 +191,18 @@ async function assertReleasePackageResources() {
     `Release startup E2E was not given a formal release binary: ${appBinary}`
   )
   if (process.platform === 'darwin') await assertMacosMicrophoneSigning(appBinary)
+  const roots = await packagedComponentRoots({
+    appBinary,
+    resourcesRoot,
+    components: components.components,
+    resultDir,
+  })
   await Promise.all([
     readFile(join(resourcesRoot, 'harness-runtime', 'runtimes.json')),
     readFile(join(resourcesRoot, 'codex', 'WEGENT_CODEX_BINARY.json')),
-    readFile(join(resourcesRoot, 'wework-core-plugins', 'wework-app', 'package.json')),
-    readFile(join(resourcesRoot, 'wework-app-static', 'wasm', 'data', 'sql-wasm.wasm')),
-    readFile(
-      join(
-        resourcesRoot,
-        'bundled-plugins',
-        'wework-personal',
-        '.claude-plugin',
-        'marketplace.json'
-      )
-    ),
+    readFile(join(roots.weworkCorePlugins, 'wework-app', 'package.json')),
+    readFile(join(roots.weworkAppStatic, 'wasm', 'data', 'sql-wasm.wasm')),
+    readFile(join(roots.bundledPlugins, 'wework-personal', '.claude-plugin', 'marketplace.json')),
     readFile(
       join(
         resourcesRoot,
@@ -314,7 +313,7 @@ export async function createDesktopScenario({
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
 }) {
-  const packagedComponents = await assertReleasePackageResources()
+  const packagedComponents = await assertReleasePackageResources(resultDir)
   const hostUpdateCompression = await assertCompressedHostUpdatePackage(
     packagedComponents.appVersion
   )
@@ -440,19 +439,30 @@ async function verifyWindowsProfileOwnedAssets(userDataDirectory) {
   assert.ok((await readdir(assets)).length > 0, 'Windows Core DSH profile assets must not be empty')
 }
 
-async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
-  const binDirectory = join(userDataDirectory, 'managed-runtimes', 'electron-node', 'bin')
+export async function verifyEmbeddedNodeSkillRuntime(userDataDirectory, resultDir) {
+  const binDirectory = join(userDataDirectory, 'runtime', 'bin')
+  const launcher = join(binDirectory, process.platform === 'win32' ? 'node.cmd' : 'node')
+  assert.ok((await lstat(launcher)).isFile(), 'The packaged Node launcher must exist')
   const skillScript = join(resultDir, 'embedded-node-skill.ts')
   await writeFile(
     skillScript,
-    'const runtime: string = `electron-node:${process.versions.node}`\nconsole.log(runtime)\n'
+    'const runtime: NodeJS.ProcessVersions = process.versions\nconsole.log(JSON.stringify({ node: runtime.node, electron: runtime.electron, availableMemoryBytes: process.availableMemory() }))\n'
   )
   const output = await runNodeSkill(skillScript, binDirectory)
+  const runtime = JSON.parse(output)
+  const electronPackage = JSON.parse(
+    await readFile(new URL('../../../electron/package.json', import.meta.url), 'utf8')
+  )
+  // DSH's native loader accepts exact Electron fingerprints, not an entire major range.
+  assert.equal(runtime.electron, electronPackage.devDependencies.electron)
+  assert.match(runtime.electron, /^43\./, 'The release package must support Electron 43')
+  assert.ok(Number.isFinite(runtime.availableMemoryBytes) && runtime.availableMemoryBytes >= 0)
   assert.match(
-    output,
-    /^electron-node:\d+\.\d+\.\d+$/m,
+    runtime.node,
+    /^\d+\.\d+\.\d+$/,
     'A Codex skill TypeScript script did not run through Electron embedded Node'
   )
+  await writeFile(join(resultDir, 'embedded-node-versions.json'), `${JSON.stringify(runtime)}\n`)
 }
 
 function runNodeSkill(script, binDirectory) {

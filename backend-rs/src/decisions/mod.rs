@@ -10,7 +10,6 @@ use crate::{http_compat::FastApiError, models_unified::auth::AuthenticatedUser, 
 
 mod catalog;
 mod config;
-pub(crate) use config::validate_spec;
 mod protocol;
 pub(crate) mod provider;
 mod schema;

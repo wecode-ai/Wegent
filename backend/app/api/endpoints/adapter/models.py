@@ -77,6 +77,12 @@ def get_unified_model(
     model_type: Optional[str] = Query(
         None, description="Model type ('public', 'user', 'group', or 'runtime')"
     ),
+    client_origin: Optional[str] = Query(
+        None, description="Client surface; 'wework' applies Wework availability"
+    ),
+    model_category_type: Optional[str] = Query(
+        None, description="Required model category, such as 'llm'"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -106,7 +112,12 @@ def get_unified_model(
     from fastapi import HTTPException
 
     result = model_aggregation_service.resolve_model(
-        db=db, current_user=current_user, name=model_name, model_type=model_type
+        db=db,
+        current_user=current_user,
+        name=model_name,
+        model_type=model_type,
+        client_origin=client_origin,
+        model_category_type=model_category_type,
     )
 
     if not result:
@@ -119,7 +130,7 @@ def get_unified_model(
 def create_model(
     model_create: ModelCreate,
     group_name: Optional[str] = Query(None, description="Group name (namespace)"),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_admin_user),
     db: Session = Depends(get_db),
 ):
     """
@@ -137,7 +148,7 @@ def create_model(
 @router.post("/batch", status_code=status.HTTP_201_CREATED)
 def bulk_create_models(
     items: List[ModelBulkCreateItem],
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_admin_user),
     db: Session = Depends(get_db),
 ):
     """
@@ -298,7 +309,7 @@ def get_model(
 def update_model(
     model_id: int,
     model_update: ModelUpdate,
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_admin_user),
     db: Session = Depends(get_db),
 ):
     """
@@ -312,7 +323,7 @@ def update_model(
 @router.delete("/{model_id}")
 def delete_model(
     model_id: int,
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_admin_user),
     db: Session = Depends(get_db),
 ):
     """

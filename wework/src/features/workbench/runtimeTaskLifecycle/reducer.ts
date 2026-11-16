@@ -3,15 +3,74 @@ import {
   isRuntimeGoalExecutionActive,
   isRuntimeTaskAuthoritativeCompletion,
   isRuntimeTaskConfirmedActive,
+  normalizeRuntimeTaskSummary,
+  isRuntimeTurnRunningStatus,
 } from './projection'
 import type { RuntimeTaskLifecycleEvent, RuntimeTaskLifecycleState } from './types'
+
+function reduceNativeSnapshot(
+  state: RuntimeTaskLifecycleState,
+  event: Extract<RuntimeTaskLifecycleEvent, { type: 'executor_snapshot_received' }>
+): RuntimeTaskLifecycleState {
+  const execution = event.task.executionState
+  if (!execution) return state
+  const previous = state.task?.executionState
+  if (previous && BigInt(execution.revision) <= BigInt(previous.revision)) return state
+  return {
+    ...state,
+    address: mergeAddress(state.address, event.address),
+    task: event.task,
+    executionPhase: execution.phase,
+    turnPhase: execution.turnId
+      ? 'streaming'
+      : execution.phase === 'starting'
+        ? 'awaiting'
+        : 'idle',
+    activeTurnId: execution.turnId,
+    latestTurnId: execution.latestTurnId,
+    turnOutcome: execution.outcome,
+    goalStatus: event.task.goalStatus ?? null,
+    interactionStatus: event.task.interactionStatus ?? null,
+    hasAuthoritativeGoalStatus: true,
+    continuable: event.task.continuable !== false,
+    expectedExecutorRunning: null,
+  }
+}
 
 export function reduceRuntimeTaskLifecycle(
   state: RuntimeTaskLifecycleState,
   event: RuntimeTaskLifecycleEvent
 ): RuntimeTaskLifecycleState {
+  // RPC completion cannot settle native execution or the task's aggregate pending inputs.
+  if (
+    state.task?.executionState &&
+    [
+      'executor_started',
+      'executor_settled',
+      'turn_started',
+      'turn_settled',
+      'turn_recovered',
+      'user_input_responded',
+    ].includes(event.type)
+  ) {
+    return state
+  }
   switch (event.type) {
+    case 'executor_replaced':
+      return {
+        ...state,
+        task: state.task
+          ? { ...state.task, executionState: undefined, cachedProjection: true }
+          : null,
+        executionPhase: 'unknown',
+        turnPhase: 'idle',
+        activeTurnId: null,
+        expectedExecutorRunning: null,
+      }
     case 'executor_snapshot_received': {
+      if (event.task.executionState || state.task?.executionState) {
+        return reduceNativeSnapshot(state, event)
+      }
       const goalExecutionActive = isRuntimeGoalExecutionActive(event.task)
       const snapshotRunning =
         event.task.running === true || goalExecutionActive
@@ -44,13 +103,31 @@ export function reduceRuntimeTaskLifecycle(
       const transitionMismatch =
         snapshotRunning !== null && expectedRunning !== null && snapshotRunning !== expectedRunning
       const snapshotConfirmsAutonomousTurn = isRuntimeTaskConfirmedActive(event.task)
+      const snapshotTurnId =
+        typeof event.task.runtimeHandle?.lastTurnId === 'string'
+          ? event.task.runtimeHandle.lastTurnId
+          : null
+      const snapshotTurnAlreadySettled =
+        snapshotTurnId !== null &&
+        snapshotTurnId === state.latestTurnId &&
+        state.turnOutcome !== null
       const snapshotRevivesSettledTaskWithoutIntent =
-        Boolean(state.task && isRuntimeTaskAuthoritativeCompletion(state.task)) &&
+        (Boolean(state.task && isRuntimeTaskAuthoritativeCompletion(state.task)) ||
+          (state.executionPhase === 'idle' && state.expectedExecutorRunning === false)) &&
         isRuntimeTaskConfirmedActive(event.task) &&
         state.goalStatus !== null &&
         state.goalStatus !== 'active' &&
         state.expectedExecutorRunning !== true
       if (snapshotRevivesSettledTaskWithoutIntent) {
+        return state
+      }
+      if (
+        snapshotTurnAlreadySettled &&
+        snapshotConfirmsAutonomousTurn &&
+        state.executionPhase === 'idle' &&
+        expectedRunning !== true &&
+        !goalExecutionActive
+      ) {
         return state
       }
       if (
@@ -71,10 +148,23 @@ export function reduceRuntimeTaskLifecycle(
             : snapshotRunning === true
               ? 'running'
               : state.executionPhase
+      const restoredTurnId =
+        !hasIdentifiedActiveTurn &&
+        !snapshotTurnAlreadySettled &&
+        snapshotConfirmsAutonomousTurn &&
+        isRuntimeTurnRunningStatus(event.task.turnStatus)
+          ? snapshotTurnId
+          : null
       const turnPhase =
-        queuedStatus || terminalStatus || snapshotRunning === false ? 'idle' : state.turnPhase
+        queuedStatus || terminalStatus || snapshotRunning === false
+          ? 'idle'
+          : restoredTurnId
+            ? 'streaming'
+            : state.turnPhase
       const activeTurnId =
-        queuedStatus || terminalStatus || snapshotRunning === false ? null : state.activeTurnId
+        queuedStatus || terminalStatus || snapshotRunning === false
+          ? null
+          : (state.activeTurnId ?? restoredTurnId)
       const hasInteractionStatus = Object.hasOwn(event.task, 'interactionStatus')
       const snapshotInteractionStatus = hasInteractionStatus
         ? (event.task.interactionStatus ?? null)
@@ -90,6 +180,7 @@ export function reduceRuntimeTaskLifecycle(
         task: event.task,
         executionPhase,
         turnPhase,
+        turnOutcome: restoredTurnId ? null : state.turnOutcome,
         activeTurnId,
         latestTurnId:
           typeof event.task.runtimeHandle?.lastTurnId === 'string'
@@ -234,11 +325,12 @@ export function reduceRuntimeTaskLifecycle(
       }
       return {
         ...state,
+        executionPhase: state.goalStatus === 'complete' ? 'idle' : state.executionPhase,
         turnPhase: 'idle',
         turnOutcome: event.outcome ?? state.turnOutcome,
         activeTurnId: null,
         latestTurnId: event.turnId ?? state.activeTurnId ?? state.latestTurnId,
-        expectedExecutorRunning: null,
+        expectedExecutorRunning: state.goalStatus === 'complete' ? false : null,
       }
     }
 
@@ -281,6 +373,18 @@ export function reduceRuntimeTaskLifecycle(
             }
 
     case 'goal_status_received': {
+      if (state.task?.executionState) {
+        return { ...state, goalStatus: event.goalStatus, hasAuthoritativeGoalStatus: true }
+      }
+      // Goal events also supersede the cached task's autonomous execution hint.
+      // Otherwise an idle transcript inherits that hint and cannot confirm completion.
+      const task = state.task
+        ? normalizeRuntimeTaskSummary({
+            ...state.task,
+            goalStatus: event.goalStatus,
+            ...(event.goalStatus !== 'active' ? { goalExecutionStatus: null } : {}),
+          })
+        : null
       const goalJustSettled =
         state.goalStatus === 'active' &&
         event.goalStatus !== null &&
@@ -289,6 +393,7 @@ export function reduceRuntimeTaskLifecycle(
       return goalJustSettled
         ? {
             ...state,
+            task,
             executionPhase: 'idle',
             turnPhase: 'idle',
             activeTurnId: null,
@@ -300,6 +405,7 @@ export function reduceRuntimeTaskLifecycle(
           }
         : {
             ...state,
+            task,
             goalStatus: event.goalStatus,
             hasAuthoritativeGoalStatus: true,
           }

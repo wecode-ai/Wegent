@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { InteractiveFormAnswerPayload, SkillRef, TaskType } from './api'
+import type { InteractiveFormAnswerPayload, SkillRef, SubtaskContextBrief, TaskType } from './api'
 import type { ArtifactNodeContext } from './knowledge-artifact'
 
 /**
@@ -354,6 +354,8 @@ export interface ChatDonePayload {
   }
   /** Message ID for ordering (primary sort key) */
   message_id?: number
+  /** Committed context metadata for this assistant message */
+  contexts?: SubtaskContextBrief[] | null
   /** Knowledge base source references (for RAG citations) */
   sources?: SourceReference[]
   /** Aggregated retrieval coverage summary */

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem, ProjectChatAgent
 from app.models.kind import Kind
@@ -13,6 +14,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import ProjectChatCommentExecution, ProjectChatSend
 from app.services.project_chat.comment_execution import execute_comment
@@ -25,7 +27,19 @@ from tests.utils.collaboration import (
 
 
 @pytest.fixture
-def scenario(test_db, test_user, test_admin_user, monkeypatch):
+def scenario(
+    test_db, test_user, test_admin_user, monkeypatch, runtime_transcript_sessions
+):
+    return create_scenario(test_db, test_user, test_admin_user, monkeypatch)
+
+
+def create_scenario(
+    test_db: Session,
+    test_user: User,
+    test_admin_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Build committed collaboration state for SQLite and MySQL regressions."""
     owner, member = test_admin_user, test_user
     project = CloudProject(
         public_id="comment-project",
@@ -123,14 +137,25 @@ def scenario(test_db, test_user, test_admin_user, monkeypatch):
     )
     test_db.add(root)
     test_db.commit()
-    compiler = MagicMock(
-        return_value=SimpleNamespace(
+
+    def compile_request(_db=None, *, request, **_kwargs):
+        return SimpleNamespace(
             payload={
-                "executionRequest": {"user": {"id": owner.id}, "model_config": {}}
+                "executionRequest": {
+                    "user": {"id": owner.id},
+                    "model_config": {},
+                    "client_user_message_id": request.client_user_message_id,
+                },
+                **(
+                    {"clientUserMessageId": request.client_user_message_id}
+                    if request.client_user_message_id
+                    else {}
+                ),
             },
             target=SimpleNamespace(device_id="admin-cloud"),
         )
-    )
+
+    compiler = MagicMock(side_effect=compile_request)
     rpc = AsyncMock(return_value={"accepted": True})
     monkeypatch.setattr(
         "app.services.runtime_work_service.compile_runtime_task_create", compiler
@@ -210,6 +235,72 @@ async def test_old_thread_survives_reassignment(scenario):
     s.db.commit()
     await execute_comment(s.db, user_id=s.member.id, request=comment(s))
     assert s.rpc.call_args.kwargs["payload"]["taskId"] == "original-session"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offset", [None, 360 * 1024])
+async def test_project_transcript_relays_lossless_chunks_under_the_bound_identity(
+    scenario, offset
+):
+    from app.schemas.runtime_transcript_transport import (
+        RuntimeTranscriptTransferRequest,
+    )
+    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.services.runtime_work_service import get_runtime_transcript
+
+    s = scenario
+    snapshot_id = "a" * 64
+    transfer = {"snapshotId": snapshot_id, "offset": offset} if offset else None
+    request = RuntimeTranscriptRequest(
+        deviceId="admin-cloud",
+        taskId="original-session",
+        workspacePath="/untrusted",
+        runtimeHandle={"threadId": "unrelated-private-thread"},
+        projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
+        transcriptProtocolVersion=2,
+        transcriptTransfer=transfer,
+        limit=5,
+        refresh=True,
+    )
+    chunk = {
+        "success": True,
+        "transcriptProtocolVersion": 2,
+        "transfer": {
+            "snapshotId": snapshot_id,
+            "encoding": "gzip+base64+json",
+            "offset": offset or 0,
+            "totalBytes": 2 * 360 * 1024,
+            "nextOffset": None if offset else 360 * 1024,
+            "payload": "cGF5bG9hZA==",
+        },
+    }
+    s.rpc.return_value = chunk
+
+    response = await get_runtime_transcript(
+        db=s.db, user_id=s.member.id, address=request
+    )
+
+    assert response.model_dump(by_alias=True) == chunk
+    assert s.rpc.await_args.kwargs["user_id"] == s.owner.id
+    assert s.rpc.await_args.kwargs["allow_app_device_task_reading"] is True
+    assert s.rpc.await_args.kwargs["payload"] == {
+        "deviceId": "admin-cloud",
+        "taskId": "original-session",
+        "limit": 5,
+        "refresh": True,
+        "transcriptProtocolVersion": 2,
+        **({"transcriptTransfer": transfer} if transfer else {}),
+    }
+
+    s.db.delete(s.grant)
+    s.db.commit()
+    request.transcript_transfer = RuntimeTranscriptTransferRequest(
+        snapshotId=snapshot_id, offset=360 * 1024
+    )
+    with pytest.raises(HTTPException) as denied:
+        await get_runtime_transcript(db=s.db, user_id=s.member.id, address=request)
+    assert denied.value.status_code == 404
+    assert s.rpc.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -520,6 +611,7 @@ async def test_new_root_preserves_real_queue_owner_and_comment_intent(scenario):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", [BaseRole.Developer, BaseRole.Viewer])
 async def test_member_reads_bound_transcript_using_original_owner(scenario, role):
+    """Read a granted project session through its original owner's device identity."""
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services.runtime_work_service import get_runtime_transcript
 
@@ -553,6 +645,7 @@ async def test_member_reads_bound_transcript_using_original_owner(scenario, role
             "taskId": "original-session",
             "limit": 20,
             "beforeCursor": "page-2",
+            "transcriptProtocolVersion": 2,
         },
         timeout_seconds=30,
         allow_app_device_task_reading=True,
@@ -566,6 +659,7 @@ async def test_member_reads_bound_transcript_using_original_owner(scenario, role
 async def test_group_transcript_reads_manager_session_without_changing_dispatch_identity(
     scenario, requested_task
 ):
+    """Resolve group history to the manager session without changing its binding."""
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services.runtime_work_service import get_runtime_transcript
 
@@ -604,6 +698,7 @@ async def test_group_transcript_reads_manager_session_without_changing_dispatch_
     assert s.rpc.call_args.kwargs["payload"] == {
         "deviceId": "admin-cloud",
         "taskId": "original-session-manager-initial",
+        "transcriptProtocolVersion": 2,
     }
     assert s.rpc.call_args.kwargs["user_id"] == s.owner.id
 
@@ -640,8 +735,9 @@ async def test_invalid_runtime_transcript_returns_explicit_gateway_error(scenari
     "change",
     ["outsider", "wrong_issue", "wrong_task", "wrong_device", "conflicting_owner"],
 )
+@pytest.mark.parametrize("continuation", [False, True])
 async def test_project_transcript_rejects_unbound_or_unauthorized_requests(
-    scenario, change
+    scenario, change, continuation
 ):
     from app.schemas.runtime_work import RuntimeTranscriptRequest
     from app.services.runtime_work_service import get_runtime_transcript
@@ -651,6 +747,10 @@ async def test_project_transcript_rejects_unbound_or_unauthorized_requests(
         deviceId="admin-cloud",
         taskId="original-session",
         projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
+        transcriptProtocolVersion=2,
+        transcriptTransfer=(
+            {"snapshotId": "a" * 64, "offset": 360 * 1024} if continuation else None
+        ),
     )
     if change == "outsider":
         s.db.delete(s.grant)
@@ -709,16 +809,17 @@ async def test_project_transcript_uses_manual_binding_and_reports_real_device_fa
         projectSession={"projectId": str(s.project.id), "issueId": s.issue.id},
     )
     with pytest.raises(HTTPException) as exc:
-        await get_runtime_transcript(db=s.db, user_id=s.member.id, address=request)
+        await get_runtime_transcript(db=s.db, user_id=s.owner.id, address=request)
     assert exc.value.status_code == 502
     assert "admin-cloud" in exc.value.detail
     assert s.rpc.await_args.kwargs["user_id"] == s.owner.id
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("continuation", [False, True])
 @pytest.mark.parametrize("search", [False, True])
 async def test_project_transcript_websocket_uses_same_authorization(
-    scenario, monkeypatch, search
+    scenario, monkeypatch, search, continuation
 ):
     from contextlib import contextmanager
 
@@ -747,7 +848,23 @@ async def test_project_transcript_websocket_uses_same_authorization(
             "deviceId": "forged-device",
             "taskId": "original-session",
             "projectSession": {"projectId": str(s.project.id), "issueId": s.issue.id},
-            **({"query": "needle", "limit": 250} if search else {}),
+            **(
+                {"query": "needle", "limit": 250}
+                if search
+                else {
+                    "transcriptProtocolVersion": 2,
+                    **(
+                        {
+                            "transcriptTransfer": {
+                                "snapshotId": "a" * 64,
+                                "offset": 360 * 1024,
+                            }
+                        }
+                        if continuation
+                        else {}
+                    ),
+                }
+            ),
         },
         timeout_seconds=30,
     )
@@ -755,7 +872,23 @@ async def test_project_transcript_websocket_uses_same_authorization(
     assert s.rpc.await_args.kwargs["payload"] == {
         "deviceId": "admin-cloud",
         "taskId": "original-session",
-        **({"query": "needle", "limit": 250} if search else {}),
+        **(
+            {"query": "needle", "limit": 250}
+            if search
+            else {
+                "transcriptProtocolVersion": 2,
+                **(
+                    {
+                        "transcriptTransfer": {
+                            "snapshotId": "a" * 64,
+                            "offset": 360 * 1024,
+                        }
+                    }
+                    if continuation
+                    else {}
+                ),
+            }
+        ),
     }
 
 

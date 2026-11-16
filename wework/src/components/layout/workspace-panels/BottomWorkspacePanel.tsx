@@ -347,7 +347,7 @@ function BottomWorkspaceExtensionTitleTab({
       onClick={onSelect}
       onKeyDown={handleKeyDown}
       className={cn(
-        'flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl px-2 py-1 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+        'flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl px-2 py-1 text-left text-xs font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40',
         active
           ? 'bg-muted text-text-primary'
           : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
@@ -454,7 +454,7 @@ function BottomWorkspaceTitleTab({
       onClick={onSelect}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group relative flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl py-1 pl-2 pr-7 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+        'group relative flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl py-1 pl-2 pr-7 text-left text-xs font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40',
         active
           ? 'bg-muted text-text-primary'
           : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
@@ -472,7 +472,7 @@ function BottomWorkspaceTitleTab({
           event.stopPropagation()
           onClose()
         }}
-        className="pointer-events-none absolute right-1 top-1/2 flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-full text-text-secondary opacity-0 transition-colors hover:!bg-text-secondary hover:text-background focus-visible:pointer-events-auto focus-visible:bg-border/70 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:bg-border/70 group-hover:opacity-100"
+        className="pointer-events-none absolute right-1 top-1/2 flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-full text-text-secondary opacity-0 transition-colors hover:!bg-text-secondary hover:text-background focus-visible:pointer-events-auto focus-visible:bg-border/70 focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:bg-border/70 group-hover:opacity-100"
         aria-label={t('workbench.close_terminal', '关闭终端')}
       >
         <X className="h-3 w-3" />

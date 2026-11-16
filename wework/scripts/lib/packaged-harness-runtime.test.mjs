@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { expect, test } from 'vitest'
 import { packagedHarnessRuntimeCatalog } from './packaged-harness-runtime.mjs'
 

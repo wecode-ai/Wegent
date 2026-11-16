@@ -9,6 +9,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session
 
+from app.db.base import Base
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.services.project_chat.service import project_chat_service
 
@@ -84,6 +86,89 @@ def verify_existing_activity_serialization(engine: Engine) -> None:
     print("MySQL: existing stream updates retain row serialization and both results")
 
 
+def verify_final_content_after_concurrent_history(
+    engine: Engine, identity: str
+) -> None:
+    """A stale event transaction must observe the history winner before repair."""
+    task_id = f"continued-member-{identity}"
+    with Session(engine, expire_on_commit=False) as setup:
+        execution = LoopItemExecution(
+            loop_item_id="ISSUE-1",
+            cloud_project_id="project-1",
+            runtime_device_id="runtime-device",
+            runtime_task_id=task_id,
+            status="running",
+            last_event_seq=10,
+        )
+        setup.add(execution)
+        setup.flush()
+        activity = ProjectChatMessage(
+            message_id=f"{task_id}-reply",
+            client_message_id=f"{task_id}-reply",
+            trigger_message_id=f"{task_id}-user",
+            project_id="project-1",
+            task_id="ISSUE-1",
+            sender_type="agent",
+            sender_id="worker",
+            sender_name="Worker",
+            runtime_device_id="runtime-device",
+            runtime_task_id=task_id,
+            status="streaming",
+            content="",
+            metadata_json={
+                "execution_id": execution.id,
+                **({} if identity == "client" else {"runtime_turn_id": "turn-2"}),
+            },
+        )
+        setup.add(activity)
+        setup.commit()
+        activity_id, execution_id = activity.id, execution.id
+    with Session(engine, expire_on_commit=False, autoflush=False) as event_db:
+        observed = event_db.get(ProjectChatMessage, activity_id)
+        assert observed is not None and observed.status == "streaming"
+        with Session(engine) as history_db:
+            root = history_db.get(LoopItemExecution, execution_id)
+            root.status = "completed"
+            completed = history_db.get(ProjectChatMessage, activity_id)
+            completed.status = "completed"
+            completed.metadata_json = {
+                **completed.metadata_json,
+                "run_status": "completed",
+                "runtime_turn_id": "turn-2",
+                "runtime_completed_at": 1000,
+            }
+            history_db.commit()
+        projected = project_chat_service.project_runtime_event(
+            event_db,
+            device_id="runtime-device",
+            runtime_task_id=task_id,
+            event_name="response.completed",
+            payload={
+                "subtaskId": "old-turn" if identity == "wrong_turn" else "turn-2",
+                "clientUserMessageId": f"{task_id}-user",
+                "eventSeq": 10 if identity == "old_sequence" else 12,
+                "data": {"text": "The continued member's complete answer"},
+            },
+        )
+        accepted = identity in {"bound", "client"}
+        if accepted:
+            assert (
+                projected is not None
+            ), "Concurrent history must not discard final text"
+            assert projected[0].content == "The continued member's complete answer"
+        else:
+            assert projected is None
+    with Session(engine) as verify:
+        expected = "The continued member's complete answer" if accepted else ""
+        assert verify.get(ProjectChatMessage, activity_id).content == expected
+        assert verify.get(LoopItemExecution, execution_id).last_event_seq == (
+            12 if accepted else 10
+        )
+    print(
+        f"MySQL: concurrent history completion identity={identity} accepted={accepted}"
+    )
+
+
 def main() -> None:
     url = make_url(os.environ["RUNTIME_ACTIVITY_TEST_MYSQL_URL"])
     if url.get_backend_name() != "mysql" or url.host not in {
@@ -103,9 +188,11 @@ def main() -> None:
         engine = create_engine(
             url.set(database=database), isolation_level="REPEATABLE READ"
         )
-        ProjectChatMessage.__table__.create(engine)
+        Base.metadata.create_all(engine)
         verify_independent_runtime_tasks(engine)
         verify_existing_activity_serialization(engine)
+        for identity in ("bound", "client", "wrong_turn", "old_sequence"):
+            verify_final_content_after_concurrent_history(engine, identity)
     finally:
         if engine is not None:
             engine.dispose()

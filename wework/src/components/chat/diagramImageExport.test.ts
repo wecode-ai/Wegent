@@ -20,4 +20,7 @@ test('replaces Mermaid foreignObject labels before PNG export', () => {
   expect(serialized).toContain('y="50"')
   expect(serialized).toContain('transform="translate(2 3)"')
   expect(serialized).toContain('fill="#f3f4f6"')
+  expect(
+    new DOMParser().parseFromString(serialized, 'image/svg+xml').querySelector('parsererror')
+  ).toBeNull()
 })

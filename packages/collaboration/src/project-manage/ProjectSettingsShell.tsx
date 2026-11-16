@@ -63,8 +63,8 @@ export function ProjectSettingsShell({
                   aria-current={selected.id === section.id ? 'page' : undefined}
                   className={
                     selected.id === section.id
-                      ? 'flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md bg-muted px-3 text-left text-sm font-medium text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/70 md:min-h-8 md:w-full md:px-2.5'
-                      : 'flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-3 text-left text-sm text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/70 md:min-h-8 md:w-full md:px-2.5'
+                      ? 'flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md bg-muted px-3 text-left text-sm font-medium text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus/70 md:min-h-8 md:w-full md:px-2.5'
+                      : 'flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-md px-3 text-left text-sm text-text-secondary hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus/70 md:min-h-8 md:w-full md:px-2.5'
                   }
                   data-testid={section.testId}
                   key={section.id}

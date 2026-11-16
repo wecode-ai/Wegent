@@ -12,6 +12,7 @@ import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 
 import { snapshotHasAssistantActivity } from './response-protocol.mjs'
+import { findRuntimeWorkTask, waitForRunningRuntimeTask } from './runtime-task-evidence.mjs'
 
 import {
   COMPOSER_READY_STABILITY_MS,
@@ -56,6 +57,9 @@ import {
 } from './shared.mjs'
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
+import { prepareGoalCompletionRace } from './goal-completion-race.mjs'
+import { runtimeTransportGates } from './runtime-transport-gates.mjs'
+import { verifyGoalDraftNavigation } from './goal-draft-flows.mjs'
 
 const SUPERVISOR_MODEL_KEY = `public:${CLOUD_PUBLIC_MODEL_NAME}:default:0`
 
@@ -104,25 +108,60 @@ async function verifyMissingGoalSnapshotReconciliation({ composerSelector, contr
   await control.command('dropNextRuntimeEvent', 'body', {
     value: 'runtime.goal.cleared',
   })
-  const clearResponse = JSON.parse(
-    await control.command('clearRuntimeGoalDirectly', 'body', {
-      value: JSON.stringify({ address }),
-    })
-  )
-  assert.equal(clearResponse.accepted, true, 'The executor rejected the direct Goal clear')
-  const staleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.equal(
-    staleSnapshot.testIds.includes('goal-status-bar'),
-    true,
-    'The dropped Goal clear event did not preserve the stale Goal bar fixture'
-  )
-  assert.equal(
-    staleSnapshot.testIds.includes(goalDotTestId),
-    true,
-    'The dropped Goal clear event did not preserve the stale sidebar Goal fixture'
-  )
+  const gates = runtimeTransportGates(control)
+  // Match the cleared snapshot rather than consuming an unrelated in-flight update.
+  await gates.arm({
+    id: 'missing-goal-cleared-snapshot',
+    kind: 'event',
+    name: 'runtime.turn.updated',
+    holdFollowing: true,
+    where: [
+      { path: 'payload.taskId', equals: goalTaskId },
+      { path: 'payload.data.task.goalStatus', equals: null },
+    ],
+  })
+  // A refreshed task list can independently repair the sidebar from the same snapshot.
+  await gates.arm({
+    id: 'missing-goal-task-list',
+    kind: 'response',
+    name: 'runtime.tasks.list',
+    holdFollowing: true,
+  })
+  // Point refreshes can repair the sidebar too; keep every cleared snapshot held.
+  await gates.arm({
+    id: 'missing-goal-task-lookup',
+    kind: 'response',
+    name: 'runtime.tasks.get',
+    holdFollowing: true,
+    where: [
+      { path: 'params.taskId', equals: goalTaskId },
+      { path: 'result.task.goalStatus', equals: null },
+    ],
+  })
+  try {
+    const clearResponse = JSON.parse(
+      await control.command('clearRuntimeGoalDirectly', 'body', {
+        value: JSON.stringify({ address }),
+      })
+    )
+    assert.equal(clearResponse.accepted, true, 'The executor rejected the direct Goal clear')
+    await gates.wait('missing-goal-cleared-snapshot')
+    const staleSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      staleSnapshot.testIds.includes('goal-status-bar'),
+      true,
+      'The dropped Goal clear event did not preserve the stale Goal bar fixture'
+    )
+    assert.equal(
+      staleSnapshot.testIds.includes(goalDotTestId),
+      true,
+      'The dropped Goal clear event did not preserve the stale sidebar Goal fixture'
+    )
 
-  await control.command('dispatchRuntimeEventLagged', 'body')
+    await control.command('dispatchRuntimeEventLagged', 'body')
+  } finally {
+    await gates.reset()
+  }
   await waitForSnapshot(
     control,
     snapshot =>
@@ -162,7 +201,12 @@ async function getSelectedSupervisorModel(control) {
   })
 }
 
-async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, executorLogPath }) {
+async function verifyActiveGoalIdleUnreadLifecycle({
+  composerSelector,
+  control,
+  executorLogPath,
+  nativeCompletionRace = false,
+}) {
   control.setScenario('goal_idle')
   const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
   const taskRowsBeforeGoal = new Set(
@@ -425,6 +469,13 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   await assertConversationTextNotDuplicated(control, [GOAL_IDLE_PROMPT])
   await captureVerificationScreenshot(control, 'goal-idle-03-reloaded-continuation.png')
 
+  const completionRace = nativeCompletionRace
+    ? await prepareGoalCompletionRace(
+        control,
+        reloadedContinuationDebugSnapshot.workbench.currentRuntimeTask
+      )
+    : null
+
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
   await waitForSnapshot(
@@ -439,6 +490,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   await captureVerificationScreenshot(control, 'goal-idle-04-background-unread-free.png')
 
   control.releaseGoalIdleResponse()
+  await completionRace?.settleBeforeStaleReads(executorLogPath)
   await control.command('waitFor', `[data-testid="${goalUnreadTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -460,6 +512,12 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     `The completed Goal remained authoritative runtime work: ${JSON.stringify(
       completedDebugSnapshot.workbench?.runningState ?? null
     )}`
+  )
+  assert.equal(completedDebugSnapshot.workbench?.activeLifecycle?.task?.goalStatus, 'complete')
+  assert.equal(
+    completedDebugSnapshot.workbench?.activeLifecycle?.task?.goalExecutionStatus,
+    null,
+    'The completed Goal retained its obsolete autonomous execution hint'
   )
   await waitForSnapshot(
     control,
@@ -495,6 +553,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     'The completed Goal kept the composer busy'
   )
   await captureVerificationScreenshot(control, 'goal-idle-06-completed-read.png')
+  await completionRace?.releaseFreshReads()
 
   await sendPrompt(control, composerSelector, GOAL_IDLE_FOLLOW_UP_PROMPT)
   await withTimeout(
@@ -510,13 +569,18 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
       snapshot.pane?.status?.isAssistantStreaming === true,
     'The ordinary continuation after Goal completion did not enter running state'
   )
-  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
-    value: JSON.stringify({
-      address: followUpDebugSnapshot.workbench.currentRuntimeTask,
-      type: 'goal_status_received',
-      goalStatus: 'complete',
-    }),
-  })
+  if (completionRace) {
+    // Repeat the original native notification while a real explicit follow-up is active.
+    await completionRace.replayComplete()
+  } else {
+    await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+      value: JSON.stringify({
+        address: followUpDebugSnapshot.workbench.currentRuntimeTask,
+        type: 'goal_status_received',
+        goalStatus: 'complete',
+      }),
+    })
+  }
   try {
     await waitForSnapshot(
       control,
@@ -565,6 +629,8 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     DEFAULT_STEP_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
+  await completionRace?.reset()
+  await verifyGoalDraftNavigation({ composerSelector, control, taskRowTestId: goalTaskRowTestId })
 }
 
 async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLogPath }) {
@@ -681,7 +747,7 @@ async function verifyBusyTurnGoalHandoff({ composerSelector, control, executorLo
   )
 }
 
-async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
+async function verifyTaskSupervisorLifecycle({ composerSelector, control, readRuntimeTask }) {
   await ensureExperimentalFeaturesEnabled(control)
   control.setScenario('supervisor')
   const taskRowsBeforeSupervisor = new Set(
@@ -769,8 +835,32 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   await control.command('waitFor', `[data-testid="${supervisorRunningTestId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  const beforeStaleSettlement = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const readOwnerTask =
+    readRuntimeTask ??
+    (async taskId =>
+      findRuntimeWorkTask(JSON.parse(await control.command('getLocalRuntimeWork', 'body')), taskId))
+  // Read the owner's wire response independently of the UI's last cached summary.
+  const runningWireTask = await waitForRunningRuntimeTask(
+    readOwnerTask,
+    supervisorTaskId,
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  const beforeStaleSettlement = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === supervisorTaskId &&
+      snapshot.workbench?.activeLifecycle?.execution.running === true,
+    'The supervisor correction was not represented as running'
+  )
+  assert.equal(
+    beforeStaleSettlement.workbench?.activeLifecycle?.execution.running,
+    true,
+    'The autonomous supervisor correction was not recognized before its first model output'
+  )
+  assert.equal(
+    runningWireTask.completedAt,
+    null,
+    'The running correction wire summary retained the preceding turn completion'
   )
   assert.equal(
     beforeStaleSettlement.workbench?.currentRuntimeTask?.taskId,

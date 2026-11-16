@@ -1,0 +1,12 @@
+{
+  "order": 194000,
+  "scenario": "./scenarios/change-request-running-repair.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 142000,
+      "shard": 2,
+      "position": 11000
+    }
+  }
+}

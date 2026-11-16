@@ -114,7 +114,7 @@ export function ConversationHeaderTitle({
               type="button"
               data-testid="conversation-project-button"
               aria-label={t('workbench.conversation_project_details')}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg hover:bg-muted data-[state=open]:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg hover:bg-muted data-[state=open]:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
             >
               <Folder className="h-4 w-4" />
             </button>
@@ -225,7 +225,7 @@ export function ConversationHeaderTitle({
           if (event.detail > 0) event.currentTarget.blur()
           setRenaming(true)
         }}
-        className="h-7 min-w-0 truncate rounded-md px-1 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        className="h-7 min-w-0 truncate rounded-md px-1 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
       >
         {displayTitle}
       </button>

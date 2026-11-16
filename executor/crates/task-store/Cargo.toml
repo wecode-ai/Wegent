@@ -1,0 +1,28 @@
+[package]
+name = "wegent-local-task-store"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Local task records, durable execution queues, and transactional project policy"
+
+[dependencies]
+regex = "1.11"
+url = "2"
+wegent-runtime-config = { path = "../config" }
+wegent-runtime-logging = { path = "../logging" }
+wegent-protocol = { path = "../../../shared/rust/protocol" }
+wegent-workspace = { path = "../workspace" }
+wegent-automation = { path = "../automation" }
+aes-gcm = "0.10"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+thiserror = "2.0"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3.23"

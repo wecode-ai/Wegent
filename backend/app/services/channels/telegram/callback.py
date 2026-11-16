@@ -21,6 +21,7 @@ from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
     ChannelType,
+    TaskCallbackKey,
     get_callback_registry,
 )
 
@@ -186,7 +187,10 @@ class TelegramCallbackService(BaseChannelCallbackService[TelegramCallbackInfo]):
         return "⏳ 处理中..."
 
     async def _create_emitter(
-        self, task_id: int, subtask_id: int, callback_info: TelegramCallbackInfo
+        self,
+        task_id: TaskCallbackKey,
+        subtask_id: int,
+        callback_info: TelegramCallbackInfo,
     ) -> Optional["ResultEmitter"]:
         """Create a streaming emitter for Telegram.
 

@@ -21,6 +21,14 @@ import {
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
+import { isTranscriptReadAdmissionBusy } from '../modules/runtime-read-admission.mjs'
+import {
+  answerResumedManagerFromIssue,
+  createCollaborationIssueReplies,
+  managerResumeQuestion,
+  updateStatusArguments,
+} from '../modules/collaboration-manager-resume-input.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -45,60 +53,17 @@ const CALLS = {
   updateStatus: `${MARKER}-update-status`,
 }
 
-function updateStatusArguments() {
-  return {
-    status: 'in_review',
-    reason: '本轮两项成员任务均已完成，负责人已综合核验。',
-    comment: '负责人已核验本轮两项任务的执行证据，提交 Issue 待确认。',
-  }
-}
-
-function scoped(selector) {
-  return `${CONTENT} ${selector}`
-}
-
-async function replyToActivity(control, cardTestId, text) {
-  const messageId = cardTestId.slice('cloud-task-activity-card-'.length)
-  await control.command('scrollIntoView', scoped(`[data-testid="${cardTestId}"]`))
-  await control.command(
-    'click',
-    scoped(`[data-testid="cloud-task-activity-reply-toggle-${messageId}"]`)
-  )
-  const composer = scoped('[data-testid="issue-reply-composer"]')
-  await control.command('fill', `${composer} [data-testid="cloud-task-activity-composer"]`, {
-    value: text,
-  })
-  await control.command('clickWhenEnabled', `${composer} [data-testid="send-message-button"]`)
-}
-
-async function replyToManagerConclusion(control, cardTestId, text, timeoutMs) {
-  const messageId = cardTestId.slice('cloud-task-activity-card-'.length)
-  await control.command('scrollIntoView', scoped(`[data-testid="${cardTestId}"]`))
-  await control.command(
-    'click',
-    scoped(`[data-testid="cloud-task-activity-open-task-${messageId}"]`)
-  )
-  const panel = scoped('[data-testid="work-item-task-chat-panel"]')
-  const composer = `${panel} [data-testid="chat-message-input"]`
-  await control.command('waitFor', composer, { timeoutMs })
-  await control.command('fill', composer, { value: text })
-  await control.command('clickWhenEnabled', `${panel} [data-testid="send-message-button"]`, {
-    timeoutMs,
-  })
-  await control.command('waitFor', `${panel} [data-testid="message-assistant"]`, {
-    text: MANAGER_REPLY_RESULT,
-    timeoutMs,
-  })
-  await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
-  await control.command('waitFor', panel, { visible: false, timeoutMs })
-}
+const { scoped, replyToActivity, replyToManagerConclusion } = createCollaborationIssueReplies(
+  CONTENT,
+  MANAGER_REPLY_RESULT
+)
 
 function writeEvents(response, responseId, events) {
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
   response.end(createSse([responseCreated(responseId), ...events, responseCompleted(responseId)]))
 }
 
-async function requestJson(baseUrl, token, pathname, options = {}) {
+async function requestJson(baseUrl, token, pathname, options = {}, deferTranscriptBusy = false) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     ...options,
     headers: {
@@ -108,6 +73,12 @@ async function requestJson(baseUrl, token, pathname, options = {}) {
     },
   })
   const text = await response.text()
+  if (
+    deferTranscriptBusy &&
+    pathname === '/api/runtime-work/transcript' &&
+    isTranscriptReadAdmissionBusy(response.status, text)
+  )
+    return null
   assert.equal(
     response.ok,
     true,
@@ -340,7 +311,7 @@ async function createCoordinateGroup(control, request, projectId, timeoutMs) {
 }
 
 async function createIssue(control, request, projectId, timeoutMs) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'board')
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ISSUE,
@@ -369,9 +340,6 @@ async function assignGroup(control, groupId, timeoutMs) {
     'click',
     `[data-testid="cloud-todo-detail-assignee-option-group:${groupId}"]`
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
-  })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-state-assignee"]'), {
     text: GROUP,
     timeoutMs,
@@ -481,6 +449,7 @@ export async function createDesktopScenario({
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
   verifyManagerPlanning,
+  verifyMemberActivity,
 }) {
   let active = false
   let backendUrl = ''
@@ -517,7 +486,8 @@ export async function createDesktopScenario({
   const bothChildrenStarted = new Promise(resolve => {
     resolveBothChildrenStarted = resolve
   })
-  const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
+  const request = (pathname, options, deferTranscriptBusy) =>
+    requestJson(backendUrl, authToken, pathname, options, deferTranscriptBusy)
 
   return {
     requiresCloudEnvironment: true,
@@ -636,6 +606,11 @@ export async function createDesktopScenario({
         )
         assert.ok(requestText.includes(`${FIRST_TASK} 已完成：证据完整。`))
         assert.ok(requestText.includes(`${SECOND_TASK} 已完成：复核通过。`))
+        const question = managerResumeQuestion(body)
+        if (question) {
+          writeEvents(response, responseId, question)
+          return true
+        }
         const selection = managerToolEvents(
           body,
           'update_issue_status',
@@ -710,6 +685,7 @@ export async function createDesktopScenario({
       assert.equal(String(group.reviewerId), String(collaborationGroupAgentId(reviewer)))
       collectorAgentId = group.collectorId
       reviewerAgentId = group.reviewerId
+      const creationStartedAt = Date.now()
       rootIssue = await createIssue(control, request, project.id, uiTimeoutMs)
       await assignGroup(control, group.id, uiTimeoutMs)
 
@@ -719,7 +695,11 @@ export async function createDesktopScenario({
           modelResponseTimeoutMs,
           '远程负责人没有开始规划任务'
         )
-        await verifyManagerPlanning(control, { groupRules: GROUP_RULES, leader: LEADER })
+        await verifyManagerPlanning(control, {
+          groupRules: GROUP_RULES,
+          leader: LEADER,
+          creationStartedAt,
+        })
         releaseManagerPlanning()
       }
 
@@ -756,7 +736,20 @@ export async function createDesktopScenario({
       await waitForIssueStatus(control, 'in_progress', modelResponseTimeoutMs)
       await waitForActivityText(control, FIRST_TASK, modelResponseTimeoutMs)
       await waitForActivityText(control, SECOND_TASK, modelResponseTimeoutMs)
-      await waitForActivityText(control, `${LEADER} 负责人 · 分配任务：`, modelResponseTimeoutMs)
+      await verifyMemberActivity?.(control, {
+        backendUrl,
+        authToken,
+        projectId: project.id,
+        issueId: rootIssue.id,
+        creationStartedAt,
+        phase: 'running',
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitForActivityText(
+        control,
+        `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
+        modelResponseTimeoutMs
+      )
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
         'in_progress',
@@ -787,8 +780,24 @@ export async function createDesktopScenario({
         CONTENT
       )
 
+      const beforeManagerResume = JSON.parse(
+        await control.command('snapshot', scoped('[data-testid="cloud-task-activity-list"]'))
+      )
       releaseSecondChild()
       await waitForCompletedMemberTasks(control, 2, modelResponseTimeoutMs)
+      await answerResumedManagerFromIssue({
+        control,
+        scope: CONTENT,
+        leader,
+        request,
+        issueId: rootIssue.id,
+        managerTaskId: `${runningDispatch.runtimeTaskId}-manager-initial-manager-after-${MARKER}-round-1`,
+        previousManagerEvents: beforeManagerResume.testIds.filter(id =>
+          id.startsWith('cloud-task-manager-event-')
+        ),
+        waitForValue,
+        timeoutMs: modelResponseTimeoutMs,
+      })
       await waitForIssueStatus(control, 'in_review', modelResponseTimeoutMs)
       await waitForActivityText(control, '待确认', modelResponseTimeoutMs)
       await waitForCondition(
@@ -800,6 +809,15 @@ export async function createDesktopScenario({
       assert.equal(managerRuns, 2, '本轮 barrier 后应恰好启动一次新的负责人运行')
       assert.equal(childRequests, 2, '应仅启动最初派发的两个成员任务')
       assert.equal(childCompletions, 2, '两个成员任务都应完成')
+      await verifyMemberActivity?.(control, {
+        backendUrl,
+        authToken,
+        projectId: project.id,
+        issueId: rootIssue.id,
+        creationStartedAt,
+        phase: 'completed',
+        timeoutMs: uiTimeoutMs,
+      })
       await captureScreenshot(
         control,
         'remote-group-coordinate-03-agent-owner-awaiting-review.png',
@@ -873,13 +891,24 @@ export async function createDesktopScenario({
         MANAGER_REPLY,
         modelResponseTimeoutMs
       )
-      const continuedTranscript = await request('/api/runtime-work/transcript', {
-        method: 'POST',
-        body: JSON.stringify({
-          deviceId: runtimeDeviceId(dispatch),
-          taskId: managerTaskId,
-        }),
-      })
+      // Closed popup readers retain worker admission until cancellation completes.
+      const continuedTranscript = await waitForValue(
+        () =>
+          request(
+            '/api/runtime-work/transcript',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                deviceId: runtimeDeviceId(dispatch),
+                taskId: managerTaskId,
+              }),
+            },
+            true
+          ),
+        Boolean,
+        'The continued manager transcript did not regain read admission',
+        uiTimeoutMs
+      )
       assert.equal(continuedTranscript.taskId, managerTaskId)
       assert.ok(
         JSON.stringify(continuedTranscript.turns).includes(updateStatusArguments().comment),

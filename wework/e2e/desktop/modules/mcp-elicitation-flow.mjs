@@ -1,4 +1,6 @@
 import {
+  MCP_URL_TIMEOUT_MS,
+  MCP_FORM_TIMEOUT_MS,
   readElicitationEvidence,
   readPendingElicitation,
   readMatchingElicitation,
@@ -29,6 +31,17 @@ import {
   waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
 import { findRuntimeWorkTask } from './runtime-task-evidence.mjs'
+
+async function assertElicitationCountdown(control, durationMs) {
+  const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
+  const time = countdown.match(/\b(\d+):([0-5]\d)\b/)
+  assert.ok(time, `Expected an MCP countdown in minutes and seconds, got "${countdown}"`)
+  const seconds = Number(time[1]) * 60 + Number(time[2])
+  assert.ok(
+    seconds > 0 && seconds <= Math.ceil(durationMs / 1000),
+    `MCP countdown "${countdown}" must be within the configured ${durationMs}ms deadline`
+  )
+}
 
 async function verifyMcpElicitationInFullAccess(control) {
   await verifyConcurrentMcpUserInput(control)
@@ -68,12 +81,7 @@ async function verifyMcpElicitationInFullAccess(control) {
   for (const expectedText of ['访问范围', '所有人', '仅自己']) {
     assert.ok(formText.includes(expectedText), `The MCP elicitation form omitted ${expectedText}`)
   }
-  const countdown = await control.command('getText', '[data-testid="request-user-input-deadline"]')
-  assert.match(
-    countdown,
-    /(?:5:00|4:[0-5]\d)/,
-    'A new MCP form must start with a five-minute deadline'
-  )
+  await assertElicitationCountdown(control, MCP_FORM_TIMEOUT_MS)
   const formSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
     formSnapshot.testIds.includes('request-user-input-option-__codex_approval-0'),
@@ -142,8 +150,8 @@ async function verifyMcpElicitationInFullAccess(control) {
   await captureVerificationScreenshot(control, 'permission-08-mcp-elicitation-complete.png')
   await verifyAnsweredElicitationReload(control, taskId, firstForm, 1)
   await verifyFollowUpElicitationRecovery(control, taskId, evidencePath)
-  await verifyElicitationTimeout(control, taskId, evidencePath, 'url_timeout', 3, 600_000)
-  await verifyElicitationTimeout(control, taskId, evidencePath, 'form_timeout', 4, 300_000)
+  await verifyElicitationTimeout(control, taskId, evidencePath, 'url_timeout', 3)
+  await verifyElicitationTimeout(control, taskId, evidencePath, 'form_timeout', 4)
 }
 
 async function expandLauncherWithPendingForm(control, formSelector) {
@@ -288,6 +296,9 @@ async function revealElicitationSummary(control, round) {
 
 async function verifyAnsweredElicitationReload(control, taskId, original, round) {
   await reloadMainWindow(control, 'The WebView did not reconnect after answering the MCP form')
+  await control.command('ensureLocalModelCatalogReady', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await waitForWorkbenchDebugState(
     control,
     state =>
@@ -354,15 +365,9 @@ async function assertExpiredElicitation(control, taskId, original, round) {
   assert.equal(task.interactionStatus, null, 'Timeout left the task waiting for input')
 }
 
-async function verifyElicitationTimeout(
-  control,
-  taskId,
-  evidencePath,
-  scenario,
-  round,
-  durationMs
-) {
+async function verifyElicitationTimeout(control, taskId, evidencePath, scenario, round) {
   const isUrl = scenario === 'url_timeout'
+  const durationMs = isUrl ? MCP_URL_TIMEOUT_MS : MCP_FORM_TIMEOUT_MS
   await sendPromptUntilScenarioRequest(
     control,
     ACTIVE_COMPOSER_SELECTOR,
@@ -374,11 +379,10 @@ async function verifyElicitationTimeout(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  assert.match(
-    await control.command('getText', '[data-testid="request-user-input-deadline"]'),
-    isUrl ? /(?:10:00|9:[0-5]\d)/ : /(?:5:00|4:[0-5]\d)/
-  )
   const original = await readPendingElicitation(control, taskId)
+  const remainingSeconds = Math.ceil((original.expiresAtUnixMs - Date.now()) / 1000)
+  assert.ok(remainingSeconds > 0 && remainingSeconds <= durationMs / 1000)
+  await assertElicitationCountdown(control, durationMs)
   assert.equal(original.interactionKind === 'mcp_url', isUrl)
   const requests = (await readElicitationEvidence(evidencePath)).filter(
     record => record.event === 'timeout_elicitation_request' && record.scenario === scenario
@@ -416,6 +420,9 @@ async function verifyElicitationTimeout(
   assert.equal(response.success, false, 'The real executor accepted a late response')
   assert.ok(['missing_request_user_input', 'stale_request_user_input'].includes(response.code))
   await reloadMainWindow(control, `Reload failed after ${scenario}`)
+  await control.command('ensureLocalModelCatalogReady', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await assertExpiredElicitation(control, taskId, original, round)
   assert.deepEqual(
     await readElicitationEvidence(evidencePath),

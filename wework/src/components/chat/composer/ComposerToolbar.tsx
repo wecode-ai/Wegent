@@ -1,6 +1,6 @@
 import { ComposerToolbar as SharedComposerToolbar } from '@wegent/collaboration/composer'
 
-import { type ComponentProps, type ReactNode } from 'react'
+import { useCallback, useState, type ComponentProps, type ReactNode } from 'react'
 
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import type { ComposerFollowUpBehavior } from './composerTextareaTypes'
@@ -28,6 +28,7 @@ interface ComposerToolbarProps {
   className?: string
   canSend: boolean
   disabled?: boolean
+  showPluginPicker?: boolean
   pluginPickerIconOnly?: boolean
   showModelSelector?: boolean
   showExecutionTools?: boolean
@@ -76,9 +77,19 @@ interface ComposerToolbarProps {
 
 export function ComposerToolbar(props: ComposerToolbarProps) {
   const { t } = useTranslation('common')
+  const [voiceActivity, setVoiceActivity] = useState({
+    scope: props.composerScopeKey,
+    active: false,
+  })
+  const voiceActive = voiceActivity.scope === props.composerScopeKey && voiceActivity.active
+  const onVoiceActiveChange = useCallback(
+    (active: boolean) => setVoiceActivity({ scope: props.composerScopeKey, active }),
+    [props.composerScopeKey]
+  )
   const {
     disabled = false,
     showExecutionTools = true,
+    showPluginPicker = true,
     pluginPickerIconOnly = false,
     onListLocalApps,
     projectPhrases = [],
@@ -91,6 +102,7 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
       {drawingDialog}
       <SharedComposerToolbar
         {...props}
+        hideFeatureActions={voiceActive}
         onDraw={openDrawing}
         translate={(key, fallback, options) => t(key, fallback ?? key, options)}
         renderModelSelector={modelProps => <ModelSelector {...modelProps} />}
@@ -106,38 +118,47 @@ export function ComposerToolbar(props: ComposerToolbarProps) {
             <PopoutWorkspaceMenu {...props.projectWorkMenuContext} disabled={disabled} />
           ) : null
         }
-        renderFeatureMenus={compact => (
+        renderFeatureMenus={(compact, permissionSelector) => (
           <>
-            <DshMenuActions disabled={disabled} location="composer.toolbar" />
-            <div className="contents" data-testid="composer-extension-actions">
-              <DshContributionSlotSurface
-                attachedClassName="contents"
-                props={{
-                  compact,
-                  disabled,
-                  workspaceTarget,
-                  captureInsertion: props.captureInsertion,
-                  sessionId: props.composerScopeKey,
-                }}
-                slot={WEWORK_DSH_SLOTS.composerAction}
-              />
-            </div>
-            {showExecutionTools ? (
+            {!voiceActive && <DshMenuActions disabled={disabled} location="composer.toolbar" />}
+            {showExecutionTools && !voiceActive ? (
               <>
                 <QuickPhraseMenu
                   disabled={disabled}
+                  compact={compact}
                   projectPhrases={projectPhrases}
                   onSelect={onQuickPhraseSelect}
                 />
-                <PluginPickerMenu
-                  disabled={disabled}
-                  iconOnly={compact || pluginPickerIconOnly}
-                  onListLocalApps={onListLocalApps}
-                  onInsertReference={props.onInsertPluginReference}
-                />
+                {permissionSelector}
+                {showPluginPicker && (
+                  <PluginPickerMenu
+                    disabled={disabled}
+                    iconOnly={compact || pluginPickerIconOnly}
+                    onListLocalApps={onListLocalApps}
+                    onInsertReference={props.onInsertPluginReference}
+                  />
+                )}
               </>
             ) : null}
           </>
+        )}
+        renderTrailingActions={compact => (
+          <div className="contents" data-testid="composer-extension-actions">
+            <DshContributionSlotSurface
+              key={props.composerScopeKey}
+              entryId={voiceActive ? 'voice-input' : undefined}
+              attachedClassName="contents"
+              props={{
+                compact,
+                onActiveChange: onVoiceActiveChange,
+                disabled,
+                workspaceTarget,
+                captureInsertion: props.captureInsertion,
+                sessionId: props.composerScopeKey,
+              }}
+              slot={WEWORK_DSH_SLOTS.composerAction}
+            />
+          </div>
         )}
       />
     </>

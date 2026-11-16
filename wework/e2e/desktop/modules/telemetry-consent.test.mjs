@@ -10,6 +10,7 @@ test('accepts telemetry consent for checkpoints that assert public telemetry', (
   assert.equal(shouldAcceptInitialTelemetryConsent('native-window-startup'), true)
   assert.equal(shouldAcceptInitialTelemetryConsent('plugin-marketplace-lifecycle'), true)
   assert.equal(shouldAcceptInitialTelemetryConsent('plugin-lifecycle'), true)
+  assert.equal(shouldAcceptInitialTelemetryConsent('core-dsh-ui-plugin-composition'), true)
 })
 
 test('declines telemetry consent for unrelated isolated checkpoints', () => {

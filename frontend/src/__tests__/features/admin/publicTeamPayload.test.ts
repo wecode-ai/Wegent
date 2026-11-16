@@ -6,6 +6,7 @@ import type { AdminPublicTeam } from '@/apis/admin'
 import {
   buildPublicTeamJson,
   buildPublicTeamUpdateData,
+  resolvePublicTeamBaseJson,
   resolvePublicTeamName,
   syncPublicTeamVideoModeSpec,
 } from '@/features/admin/utils/publicTeamPayload'
@@ -38,6 +39,22 @@ describe('publicTeamPayload', () => {
       'json-agent'
     )
     expect(resolvePublicTeamName('', {}, 'fallback-agent')).toBe('fallback-agent')
+  })
+
+  it('uses the advanced editor JSON as the base when it holds a team object', () => {
+    const opened = { spec: { members: [{ botRef: { name: 'writer' }, role: 'writer' }] } }
+    const edited = { spec: { members: [] } }
+
+    expect(resolvePublicTeamBaseJson(JSON.stringify(edited), opened)).toEqual(edited)
+  })
+
+  it('falls back to the opened team when the advanced editor is empty or invalid', () => {
+    const opened = { spec: { members: [{ botRef: { name: 'writer' }, role: 'writer' }] } }
+
+    expect(resolvePublicTeamBaseJson('', opened)).toBe(opened)
+    expect(resolvePublicTeamBaseJson('{}', opened)).toBe(opened)
+    expect(resolvePublicTeamBaseJson('{', opened)).toBe(opened)
+    expect(resolvePublicTeamBaseJson('[]', opened)).toBe(opened)
   })
 
   it('includes the resolved name in public team update payloads', () => {
@@ -117,6 +134,124 @@ describe('publicTeamPayload', () => {
         },
       },
     })
+  })
+
+  it('keeps roles the basic editor never rendered when it rebuilds members', () => {
+    const teamJson = buildPublicTeamJson({
+      baseJson: {
+        spec: {
+          members: [
+            { botRef: { name: 'code-wiki-bot', namespace: 'default' }, role: 'leader' },
+            { botRef: { name: 'code-wiki-reviewer', namespace: 'default' }, role: 'reviewer' },
+            {
+              botRef: { name: 'code-wiki-section-writer', namespace: 'default' },
+              role: 'writer',
+            },
+          ],
+        },
+      },
+      name: 'code-wiki-team',
+      displayName: 'Code Wiki',
+      description: '',
+      bindMode: ['chat'],
+      icon: null,
+      requiresWorkspace: true,
+      mode: 'coordinate',
+      members: [
+        { botName: 'code-wiki-bot', botPrompt: '', role: 'leader' },
+        { botName: 'code-wiki-reviewer', botPrompt: '' },
+        { botName: 'code-wiki-section-writer', botPrompt: '' },
+        { botName: 'new-bot', botPrompt: '' },
+      ],
+    })
+
+    const members = (teamJson.spec as { members: { botRef: { name: string }; role?: string }[] })
+      .members
+
+    expect(members.map(member => [member.botRef.name, member.role])).toEqual([
+      ['code-wiki-bot', 'leader'],
+      ['code-wiki-reviewer', 'reviewer'],
+      ['code-wiki-section-writer', 'writer'],
+      ['new-bot', undefined],
+    ])
+  })
+
+  it('keeps roles from legacy string bot references', () => {
+    const teamJson = buildPublicTeamJson({
+      baseJson: {
+        spec: {
+          members: [{ botRef: 'legacy-writer', role: 'writer' }],
+        },
+      },
+      name: 'legacy-team',
+      displayName: 'Legacy Team',
+      description: '',
+      bindMode: ['chat'],
+      icon: null,
+      requiresWorkspace: true,
+      mode: 'coordinate',
+      members: [{ botName: 'legacy-writer', botPrompt: '' }],
+    })
+
+    const members = (teamJson.spec as { members: { role?: string }[] }).members
+
+    expect(members.map(member => member.role)).toEqual(['writer'])
+  })
+
+  it('ignores malformed persisted members when building the role map', () => {
+    const teamJson = buildPublicTeamJson({
+      baseJson: {
+        spec: {
+          members: [null, 'not-an-object', { botRef: { name: 'writer' }, role: 'writer' }],
+        },
+      },
+      name: 'malformed-team',
+      displayName: 'Malformed Team',
+      description: '',
+      bindMode: ['chat'],
+      icon: null,
+      requiresWorkspace: true,
+      mode: 'coordinate',
+      members: [{ botName: 'writer', botPrompt: '' }],
+    })
+
+    const members = (teamJson.spec as { members: { role?: string }[] }).members
+
+    expect(members.map(member => member.role)).toEqual(['writer'])
+  })
+
+  it('does not keep a stale leader role when leadership moves', () => {
+    const teamJson = buildPublicTeamJson({
+      baseJson: {
+        spec: {
+          members: [
+            { botRef: { name: 'old-leader', namespace: 'default' }, role: 'leader' },
+            { botRef: { name: 'writer', namespace: 'default' }, role: 'writer' },
+          ],
+        },
+      },
+      name: 'moved-leader-team',
+      displayName: 'Moved Leader',
+      description: '',
+      bindMode: ['chat'],
+      icon: null,
+      requiresWorkspace: true,
+      mode: 'coordinate',
+      members: [
+        { botName: 'new-leader', botPrompt: '', role: 'leader' },
+        { botName: 'old-leader', botPrompt: '' },
+        { botName: 'writer', botPrompt: '' },
+      ],
+    })
+
+    const members = (teamJson.spec as { members: { botRef: { name: string }; role?: string }[] })
+      .members
+
+    expect(members.map(member => [member.botRef.name, member.role])).toEqual([
+      ['new-leader', 'leader'],
+      ['old-leader', undefined],
+      ['writer', 'writer'],
+    ])
   })
 
   it('stores video mode behavior without duplicating the Bot model binding', () => {

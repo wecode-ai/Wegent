@@ -13,6 +13,7 @@ tokens before each task instead of asking the user to paste a new URL.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import logging
@@ -30,7 +31,12 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.user import User
-from app.services.user_mcp_service import MCP_AUTH_MODE_OAUTH, user_mcp_service
+from app.services.user_mcp_service import (
+    MCP_AUTH_MODE_OAUTH,
+    MCPPreferencesError,
+    user_mcp_service,
+)
+from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -157,15 +163,15 @@ class UserMcpOAuthService:
         service_id: str,
     ) -> dict[str, Any]:
         """Start an authorization-code session and return the authorize URL."""
-        config = user_mcp_service.get_provider_service_config(
-            user.preferences, provider_id, service_id
+        session_id = str(uuid.uuid4())
+        config, snapshot = await asyncio.to_thread(
+            user_mcp_service.start_authorization,
+            user.id,
+            provider_id,
+            service_id,
+            session_id,
         )
-        resource_url = str(config.get("url") or "").strip()
-        if not resource_url:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "Please save the MCP OAuth server URL before connecting",
-            )
+        resource_url = str(config["url"])
 
         metadata = await UserMcpOAuthService.discover(resource_url)
         client_id = await UserMcpOAuthService._ensure_client(
@@ -174,7 +180,6 @@ class UserMcpOAuthService:
 
         now = int(time.time())
         ttl = settings.MCP_OAUTH_SESSION_TTL_SECONDS
-        session_id = str(uuid.uuid4())
         poll_token = secrets.token_urlsafe(32)
         nonce = secrets.token_urlsafe(24)
         binding = secrets.token_urlsafe(24)
@@ -194,6 +199,7 @@ class UserMcpOAuthService:
             algorithm=settings.ALGORITHM,
         )
         session_data = {
+            "session_id": session_id,
             "status": "pending",
             "provider_id": provider_id,
             "service_id": service_id,
@@ -203,6 +209,7 @@ class UserMcpOAuthService:
             "binding": binding,
             "code_verifier": verifier,
             "resource": resource_url,
+            "service_snapshot": snapshot,
             "token_endpoint": metadata["token_endpoint"],
             "redirect_uri": settings.MCP_OAUTH_REDIRECT_URI,
             "client_id": client_id,
@@ -215,6 +222,7 @@ class UserMcpOAuthService:
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "Failed to create MCP authorization session",
             )
+        await asyncio.to_thread(user_mcp_service.validate_authorization, session_data)
 
         params = urlencode(
             {
@@ -275,8 +283,8 @@ class UserMcpOAuthService:
 
         session["status"] = "claimed"
         await UserMcpOAuthService._write_session(session_id, session)
-        config = user_mcp_service.get_provider_service_config(
-            user.preferences, provider_id, service_id
+        config, _ = await asyncio.to_thread(
+            user_mcp_service.read_service, user.id, provider_id, service_id
         )
         return {
             "status": "success",
@@ -330,40 +338,19 @@ class UserMcpOAuthService:
                 "MCP authorization could not be completed",
             ) from exc
 
-        user = db.get(User, int(session["user_id"]))
-        if not user:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
-        UserMcpOAuthService._store_tokens(user, session, token_payload)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        try:
+            await asyncio.to_thread(
+                UserMcpOAuthService._store_authorization, session, token_payload
+            )
+        except MCPPreferencesError as exc:
+            session.update({"status": "failed", "error": str(exc.detail)})
+            await UserMcpOAuthService._write_session(session_id, session)
+            raise
 
         session.update({"status": "success", "completed_at": int(time.time())})
         session.pop("code_verifier", None)
         await UserMcpOAuthService._write_session(session_id, session)
         return "Connected. You can close this window."
-
-    @staticmethod
-    def clear_stored_credentials(
-        db: Session,
-        *,
-        user: User,
-        provider_id: str,
-        service_id: str,
-    ) -> None:
-        """Drop stored OAuth credentials for a provider service."""
-        updated = user_mcp_service.clear_service_oauth_credentials(
-            user.preferences, provider_id, service_id
-        )
-        preferences = user_mcp_service.dump_preferences(updated)
-        # Callers can hold a user loaded in another session (request building
-        # runs in a fresh session), so merge instead of add: adding a detached
-        # instance would insert a duplicate user row.
-        persistent = db.merge(user)
-        persistent.preferences = preferences
-        db.commit()
-        db.refresh(persistent)
-        user.preferences = persistent.preferences
 
     @staticmethod
     async def disconnect(
@@ -373,10 +360,26 @@ class UserMcpOAuthService:
         provider_id: str,
         service_id: str,
     ) -> None:
-        """Drop stored credentials after the user disconnects a service."""
-        UserMcpOAuthService.clear_stored_credentials(
-            db, user=user, provider_id=provider_id, service_id=service_id
+        """Disconnect the user's service and invalidate pending authorizations."""
+        await asyncio.to_thread(
+            UserMcpOAuthService.clear_stored_credentials,
+            user.id,
+            provider_id,
+            service_id,
         )
+
+    @staticmethod
+    def clear_stored_credentials(
+        user_id: int, provider_id: str, service_id: str
+    ) -> None:
+        with user_mcp_service.locked_user(user_id) as current:
+            user_mcp_service.set_authorization_session(
+                user_id, provider_id, service_id, None
+            )
+            updated = user_mcp_service.clear_service_oauth_credentials(
+                current.preferences, provider_id, service_id
+            )
+            current.preferences = user_mcp_service.dump_preferences(updated)
 
     @staticmethod
     async def ensure_access_token(
@@ -386,50 +389,16 @@ class UserMcpOAuthService:
         provider_id: str,
         service_id: str,
     ) -> str:
-        """Return a usable access token, refreshing it when it is close to expiry."""
-        fresh = UserMcpOAuthService._usable_token(user, provider_id, service_id)
-        if fresh:
-            return fresh
-
-        target = UserMcpOAuthService._refresh_target(user, provider_id, service_id)
-        if not target:
-            return ""
-        try:
-            async with httpx.AsyncClient(timeout=DISCOVERY_TIMEOUT_SECONDS) as client:
-                response = await client.post(
-                    target["token_endpoint"],
-                    data=UserMcpOAuthService._refresh_body(target),
-                )
-                response.raise_for_status()
-                payload = response.json()
-            UserMcpOAuthService._require_token_payload(payload)
-        except httpx.HTTPStatusError as exc:
-            UserMcpOAuthService._note_refresh_failure(
-                db,
-                user=user,
-                provider_id=provider_id,
-                service_id=service_id,
-                reason=f"HTTP {exc.response.status_code}",
-                response=exc.response,
-            )
-            return ""
-        except (httpx.HTTPError, ValueError) as exc:
-            UserMcpOAuthService._note_refresh_failure(
-                db,
-                user=user,
-                provider_id=provider_id,
-                service_id=service_id,
-                reason=type(exc).__name__,
-            )
-            return ""
-
-        return UserMcpOAuthService._store_tokens_from_payload(
-            db,
-            user=user,
-            provider_id=provider_id,
-            service_id=service_id,
-            payload=payload,
-            fallback_refresh_token=target["refresh_token"],
+        """Run the shared refresh transaction without moving an ORM session."""
+        url = user_mcp_service.get_provider_service_config(
+            user.preferences, provider_id, service_id
+        )["url"]
+        return await asyncio.to_thread(
+            UserMcpOAuthService._ensure_access_token,
+            user.id,
+            provider_id,
+            service_id,
+            url,
         )
 
     @staticmethod
@@ -440,14 +409,50 @@ class UserMcpOAuthService:
         provider_id: str,
         service_id: str,
     ) -> str:
-        """Synchronous variant used while assembling an execution request."""
-        fresh = UserMcpOAuthService._usable_token(user, provider_id, service_id)
-        if fresh:
-            return fresh
+        """Use the same transaction as asynchronous provider calls."""
+        url = user_mcp_service.get_provider_service_config(
+            user.preferences, provider_id, service_id
+        )["url"]
+        return UserMcpOAuthService._ensure_access_token(
+            user.id, provider_id, service_id, url
+        )
 
-        target = UserMcpOAuthService._refresh_target(user, provider_id, service_id)
-        if not target:
-            return ""
+    @staticmethod
+    @trace_sync("mcp.oauth.ensure_access_token", "backend.mcp_oauth")
+    def _ensure_access_token(
+        user_id: int,
+        provider_id: str,
+        service_id: str,
+        expected_url: str,
+    ) -> str:
+        """Keep the owner row locked from reread through refresh and persistence."""
+        with user_mcp_service.locked_user(user_id) as current:
+            config = user_mcp_service.get_provider_service_config(
+                current.preferences, provider_id, service_id
+            )
+            if (
+                not config["enabled"]
+                or config["auth_mode"] != MCP_AUTH_MODE_OAUTH
+                or config["url"] != expected_url
+            ):
+                raise MCPPreferencesError("MCP configuration changed; please retry")
+            fresh = UserMcpOAuthService._usable_token(current, provider_id, service_id)
+            if fresh:
+                return fresh
+            target = UserMcpOAuthService._refresh_target(
+                current, provider_id, service_id
+            )
+            if not target:
+                return ""
+            return UserMcpOAuthService._refresh_locked_user(
+                current, provider_id, service_id, target
+            )
+
+    @staticmethod
+    def _refresh_locked_user(
+        current: User, provider_id: str, service_id: str, target: dict[str, str]
+    ) -> str:
+        """All writes stay inside the transaction holding the owner row lock."""
         try:
             with httpx.Client(timeout=DISCOVERY_TIMEOUT_SECONDS) as client:
                 response = client.post(
@@ -457,34 +462,28 @@ class UserMcpOAuthService:
                 response.raise_for_status()
                 payload = response.json()
             UserMcpOAuthService._require_token_payload(payload)
-        except httpx.HTTPStatusError as exc:
-            UserMcpOAuthService._note_refresh_failure(
-                db,
-                user=user,
-                provider_id=provider_id,
-                service_id=service_id,
-                reason=f"HTTP {exc.response.status_code}",
-                response=exc.response,
-            )
-            return ""
         except (httpx.HTTPError, ValueError) as exc:
+            response = getattr(exc, "response", None)
             UserMcpOAuthService._note_refresh_failure(
-                db,
-                user=user,
+                user=current,
                 provider_id=provider_id,
                 service_id=service_id,
-                reason=type(exc).__name__,
+                reason=(
+                    f"HTTP {response.status_code}"
+                    if response is not None
+                    else type(exc).__name__
+                ),
+                response=response,
+                expected_refresh_token=target["refresh_token"],
             )
             return ""
-
-        return UserMcpOAuthService._store_tokens_from_payload(
-            db,
-            user=user,
-            provider_id=provider_id,
-            service_id=service_id,
-            payload=payload,
+        UserMcpOAuthService._store_tokens(
+            current,
+            {"provider_id": provider_id, "service_id": service_id},
+            payload,
             fallback_refresh_token=target["refresh_token"],
         )
+        return str(payload["access_token"])
 
     @staticmethod
     def _validate_browser_binding(
@@ -610,12 +609,12 @@ class UserMcpOAuthService:
 
     @staticmethod
     def _note_refresh_failure(
-        db: Session,
         *,
         user: User,
         provider_id: str,
         service_id: str,
         reason: str,
+        expected_refresh_token: str,
         response: httpx.Response | None = None,
     ) -> None:
         """Log a failed refresh and drop only the grants the provider rejected."""
@@ -629,9 +628,15 @@ class UserMcpOAuthService:
         )
         if error != INVALID_GRANT_ERROR:
             return
-        UserMcpOAuthService.clear_stored_credentials(
-            db, user=user, provider_id=provider_id, service_id=service_id
+        credentials = user_mcp_service.get_service_oauth_credentials(
+            user.preferences, provider_id, service_id
         )
+        if credentials["refresh_token"] != expected_refresh_token:
+            return
+        updated = user_mcp_service.clear_service_oauth_credentials(
+            user.preferences, provider_id, service_id
+        )
+        user.preferences = user_mcp_service.dump_preferences(updated)
         logger.info(
             "[MCP-OAUTH] Cleared the rejected grant for %s/%s; the service "
             "must be authorized again",
@@ -705,7 +710,20 @@ class UserMcpOAuthService:
         provider_id: str,
         metadata: dict[str, Any],
     ) -> str:
-        """Reuse the cached client registration or register a public client."""
+        return await asyncio.to_thread(
+            UserMcpOAuthService._ensure_client_sync, user.id, provider_id, metadata
+        )
+
+    @staticmethod
+    def _ensure_client_sync(
+        user_id: int, provider_id: str, metadata: dict[str, Any]
+    ) -> str:
+        with user_mcp_service.locked_user(user_id) as user:
+            return UserMcpOAuthService._register_client(user, provider_id, metadata)
+
+    @staticmethod
+    def _register_client(user: User, provider_id: str, metadata: dict[str, Any]) -> str:
+        """Reuse or register the provider client while its owner row is locked."""
         cached = user_mcp_service.get_provider_oauth_client(
             user.preferences, provider_id
         )
@@ -734,8 +752,8 @@ class UserMcpOAuthService:
             body["scope"] = metadata["scope"]
 
         try:
-            async with httpx.AsyncClient(timeout=DISCOVERY_TIMEOUT_SECONDS) as client:
-                response = await client.post(registration_endpoint, json=body)
+            with httpx.Client(timeout=DISCOVERY_TIMEOUT_SECONDS) as client:
+                response = client.post(registration_endpoint, json=body)
                 response.raise_for_status()
                 payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -763,9 +781,6 @@ class UserMcpOAuthService:
             },
         )
         user.preferences = user_mcp_service.dump_preferences(updated)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
         return client_id
 
     @staticmethod
@@ -800,50 +815,37 @@ class UserMcpOAuthService:
         return int(time.time()) + seconds if seconds > 0 else 0
 
     @staticmethod
+    def _store_authorization(session: dict[str, Any], payload: dict[str, Any]) -> None:
+        """Reject a callback whose service was changed or disconnected meanwhile."""
+        with user_mcp_service.locked_user(int(session["user_id"])) as current:
+            user_mcp_service.require_authorization(current, session)
+            current.preferences = user_mcp_service.dump_preferences(
+                user_mcp_service.clear_service_oauth_credentials(
+                    current.preferences,
+                    str(session["provider_id"]),
+                    str(session["service_id"]),
+                )
+            )
+            UserMcpOAuthService._store_tokens(current, session, payload)
+
+    @staticmethod
     def _store_tokens(
-        user: User, session: dict[str, Any], payload: dict[str, Any]
+        user: User,
+        session: dict[str, Any],
+        payload: dict[str, Any],
+        *,
+        fallback_refresh_token: str = "",
     ) -> None:
         updated = user_mcp_service.save_service_oauth_credentials(
             user.preferences,
             str(session["provider_id"]),
             str(session["service_id"]),
             access_token=str(payload.get("access_token") or ""),
-            refresh_token=str(payload.get("refresh_token") or ""),
-            expires_at=UserMcpOAuthService._expires_at(payload),
-            scope=str(payload.get("scope") or ""),
-        )
-        user.preferences = user_mcp_service.dump_preferences(updated)
-
-    @staticmethod
-    def _store_tokens_from_payload(
-        db: Session,
-        *,
-        user: User,
-        provider_id: str,
-        service_id: str,
-        payload: dict[str, Any],
-        fallback_refresh_token: str,
-    ) -> str:
-        access_token = str(payload.get("access_token") or "")
-        updated = user_mcp_service.save_service_oauth_credentials(
-            user.preferences,
-            provider_id,
-            service_id,
-            access_token=access_token,
             refresh_token=str(payload.get("refresh_token") or fallback_refresh_token),
             expires_at=UserMcpOAuthService._expires_at(payload),
             scope=str(payload.get("scope") or ""),
         )
-        preferences = user_mcp_service.dump_preferences(updated)
-        # Callers can hold a user loaded in another session (request building
-        # runs in a fresh session), so merge instead of add: adding a detached
-        # instance would insert a duplicate user row.
-        persistent = db.merge(user)
-        persistent.preferences = preferences
-        db.commit()
-        db.refresh(persistent)
-        user.preferences = persistent.preferences
-        return access_token
+        user.preferences = user_mcp_service.dump_preferences(updated)
 
     @staticmethod
     def _decode_state(state_token: str) -> dict[str, Any]:

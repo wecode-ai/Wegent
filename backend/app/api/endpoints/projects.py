@@ -26,7 +26,6 @@ from app.schemas.project import (
     ProjectCreate,
     ProjectDeviceSessionCreate,
     ProjectDeviceSessionResponse,
-    ProjectListResponse,
     ProjectResponse,
     ProjectTaskCreate,
     ProjectTaskListResponse,
@@ -51,28 +50,6 @@ ClientOriginQuery = Annotated[
         description="Client surface to scope projects and project chats",
     ),
 ]
-
-
-# MIGRATION-CANDIDATE(api="GET /api/projects"): remove after final confirmation.
-# @router.get("", response_model=ProjectListResponse)
-def list_projects(
-    include_tasks: bool = Query(
-        True, description="Whether to include tasks in response"
-    ),
-    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    List all projects for the current user.
-    Returns projects with optional task lists.
-    """
-    return project_service.list_projects(
-        db=db,
-        user_id=current_user.id,
-        include_tasks=include_tasks,
-        client_origin=client_origin,
-    )
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -376,6 +353,9 @@ def list_project_tasks_endpoint(
     limit: int = Query(50, ge=1, le=100, description="Tasks per page"),
     cursor: str | None = Query(None, max_length=512, description="Next-page cursor"),
     title: str | None = Query(None, min_length=1, description="Task title keywords"),
+    include_total: bool = Query(
+        True, description="Whether to count all matching tasks"
+    ),
     client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -390,6 +370,7 @@ def list_project_tasks_endpoint(
         cursor=cursor,
         title=title,
         client_origin=client_origin,
+        include_total=include_total,
     )
 
 

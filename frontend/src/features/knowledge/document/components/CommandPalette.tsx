@@ -10,10 +10,10 @@
 
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Search, Users } from 'lucide-react'
 import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -63,6 +63,7 @@ export function CommandPalette({
   const { t } = useTranslation('knowledge')
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const selectedResultRef = useRef<HTMLButtonElement>(null)
 
   // Reset state when dialog opens/closes
   useEffect(() => {
@@ -114,6 +115,10 @@ export function CommandPalette({
     }
   }, [results.length, selectedIndex])
 
+  useEffect(() => {
+    selectedResultRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [results, selectedIndex])
+
   // Handle keyboard navigation
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -152,10 +157,20 @@ export function CommandPalette({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden" data-testid="command-palette">
+      <DialogContent
+        className="max-h-[90dvh] w-[calc(100%_-_1rem)] max-w-lg min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] p-0 gap-0 overflow-hidden"
+        data-testid="command-palette"
+        closeButtonProps={{
+          className: 'right-1 top-0.5 flex h-11 w-11 items-center justify-center',
+          'data-testid': 'close-knowledge-search',
+        }}
+      >
         <DialogTitle className="sr-only">
           {t('document.sidebar.searchPlaceholder', '搜索知识库...')}
         </DialogTitle>
+        <DialogDescription className="sr-only">
+          {t('document.sidebar.typeToSearch', '输入关键词搜索知识库')}
+        </DialogDescription>
         {/* Search input */}
         <div className="flex items-center gap-2 px-3 border-b border-border">
           <Search className="w-4 h-4 text-text-muted flex-shrink-0" />
@@ -167,17 +182,17 @@ export function CommandPalette({
             }}
             onKeyDown={handleKeyDown}
             placeholder={t('document.sidebar.searchPlaceholder', '搜索知识库...')}
-            className="border-0 focus-visible:ring-0 px-0 h-12"
+            className="border-0 focus-visible:ring-0 pl-0 pr-11 h-12 sm:pr-0"
             autoFocus
             data-testid="command-palette-input"
           />
-          <kbd className="hidden sm:inline-flex text-xs bg-muted px-1.5 py-0.5 rounded font-mono text-text-muted">
+          <kbd className="hidden sm:inline-flex mr-11 text-xs bg-muted px-1.5 py-0.5 rounded font-mono text-text-muted">
             ESC
           </kbd>
         </div>
 
         {/* Results */}
-        <div className="max-h-80 overflow-y-auto">
+        <div className="min-h-0 max-h-80 overflow-y-auto">
           {query && results.length === 0 ? (
             <div className="py-8 text-center text-sm text-text-muted">
               {t('document.sidebar.noSearchResults', '未找到相关知识库')}
@@ -198,9 +213,10 @@ export function CommandPalette({
                       return (
                         <button
                           key={`kb-${result.id}`}
+                          ref={isSelected ? selectedResultRef : undefined}
                           onClick={() => handleResultClick(result)}
                           className={cn(
-                            'w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors',
+                            'w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors max-md:min-h-11',
                             isSelected ? 'bg-primary/10 text-primary' : 'hover:bg-muted'
                           )}
                           data-testid={`search-result-kb-${kb.id}`}
@@ -236,9 +252,10 @@ export function CommandPalette({
                       return (
                         <button
                           key={`group-${result.id}`}
+                          ref={isSelected ? selectedResultRef : undefined}
                           onClick={() => handleResultClick(result)}
                           className={cn(
-                            'w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors',
+                            'w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors max-md:min-h-11',
                             isSelected ? 'bg-primary/10 text-primary' : 'hover:bg-muted'
                           )}
                           data-testid={`search-result-group-${group.id}`}

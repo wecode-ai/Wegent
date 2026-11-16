@@ -11,6 +11,7 @@ export {
   selectActivityRerunModel,
   formatThreadHistory,
   mergeProjectChatMessages,
+  refreshTaskAfterComment,
 } from '@wegent/collaboration/execution/taskAiExecution'
 export type TaskAiRuntimeBridge = Pick<
   WorkbenchContextValue,

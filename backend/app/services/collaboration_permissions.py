@@ -22,6 +22,7 @@ from app.services.cloud_project_visibility import (
     VALID_CLOUD_PROJECT_MEMBER_ROLES,
     collaboration_role,
     project_access_query,
+    project_grant_roles,
 )
 
 Action = Literal["read", "manage", "edit", "comment", "assign", "execute", "transfer"]
@@ -95,8 +96,49 @@ class CollaborationPermissionService:
     def project_sources(
         self, db: Session, project: CloudProject, user_id: int
     ) -> tuple[dict, ...]:
-        sources = []
         role = self.workspace_role(db, project.workspace_id, user_id)
+        direct = _membership(db, "CloudProject", int(project.id), user_id)
+        return self._project_sources(
+            project, role, BaseRole(collaboration_role(direct.role)) if direct else None
+        )
+
+    def project_sources_many(
+        self,
+        project: CloudProject,
+        users: list[User],
+        *,
+        workspace: Kind | None,
+        grants: list[ResourceMember],
+    ) -> dict[int, tuple[dict, ...]]:
+        """Resolve provenance from the same relationships used by the roster."""
+        roles = {
+            key: BaseRole(role) for key, role in project_grant_roles(grants).items()
+        }
+        result = {}
+        for user in users:
+            user_id = user.id
+            role = None
+            if (
+                user.is_active
+                and workspace is not None
+                and workspace.kind == "CollaborationWorkspace"
+                and workspace.is_active
+            ):
+                role = (
+                    BaseRole.Owner
+                    if workspace.user_id == user_id
+                    else roles.get(("Workspace", str(user_id)))
+                )
+            result[user_id] = self._project_sources(
+                project, role, roles.get(("CloudProject", str(user_id)))
+            )
+        return result
+
+    @staticmethod
+    def _project_sources(
+        project: CloudProject, role: BaseRole | None, direct: BaseRole | None
+    ) -> tuple[dict, ...]:
+        sources = []
         if role and (
             project.membership_mode == "inherit"
             or has_permission(role, BaseRole.Maintainer)
@@ -112,9 +154,8 @@ class CollaborationPermissionService:
                     ),
                 }
             )
-        direct = _membership(db, "CloudProject", int(project.id), user_id)
         if direct:
-            sources.append({"type": "direct", "role": collaboration_role(direct.role)})
+            sources.append({"type": "direct", "role": direct.value})
         return tuple(sources)
 
     def check(

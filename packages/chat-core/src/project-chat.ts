@@ -92,6 +92,7 @@ export interface ProjectChatClient {
     error?: string
   }) => Promise<ProjectChatMessage>
   executeTaskComment?: (input: {
+    humanRequestId?: string
     runnerSelection?: {
       execution_policy?: {
         mode: 'project_pool' | 'fixed' | 'user_select'

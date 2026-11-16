@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { createDesktopScenario as createGoalOutputIdentity } from './goal-output-identity.scenario.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
+  withTimeout,
 } from '../modules/shared.mjs'
 import {
   createSse,
@@ -57,6 +59,10 @@ export function createDesktopScenario(options) {
   let requests = 0
   let releaseProgress
   let releaseCompletion
+  let continuationStarted
+  const continuation = new Promise(resolve => {
+    continuationStarted = resolve
+  })
   const progress = new Promise(resolve => {
     releaseProgress = resolve
   })
@@ -101,6 +107,7 @@ export function createDesktopScenario(options) {
         ])
       response.write(createSse(stream.start))
       response.write(delta(CURRENT))
+      continuationStarted()
       await progress
       if (response.destroyed) return true
       response.write(delta(`\n${UPDATED}`))
@@ -114,11 +121,11 @@ export function createDesktopScenario(options) {
       let address
       const origin = await control.command('getLocationOrigin', 'body')
       const rpc = async (method, params) => {
-        const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+        const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ id: `goal-order-${method}`, method, params }),
-          signal: AbortSignal.timeout(options.uiTimeoutMs),
+          timeoutMs: options.uiTimeoutMs,
         })
         const payload = await response.json()
         assert.equal(response.ok, true)
@@ -135,14 +142,19 @@ export function createDesktopScenario(options) {
         await control.command('click', '[data-testid="set-goal-button"]')
         await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: PROMPT })
         await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+        // Wait for native persistence and Goal continuation without repeatedly
+        // serializing the thousand-item transcript while it is still being built.
+        await withTimeout(
+          continuation,
+          options.workbenchReadyTimeoutMs,
+          'The real Goal did not reach the held model continuation'
+        )
         const running = await waitForWorkbenchDebugState(
           control,
           snapshot =>
             requests === COMPLETED_TURNS + 1 &&
             Boolean(snapshot.workbench?.activeLifecycle?.turn.id),
-          'The real Goal did not reach the held continuation',
-          // Generating and persisting more than a thousand native items is deliberately slow.
-          30_000
+          'The held Goal continuation did not appear in the workbench'
         )
         address = running.workbench.currentRuntimeTask
         const page = await rpc('runtime.tasks.transcript', { address, limit: 5 })

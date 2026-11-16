@@ -1,0 +1,43 @@
+{
+  "revision": "b1c2d3e4f5a6",
+  "parents": [
+    "f3a7c9e1b2d4"
+  ],
+  "source": "20261106_b1c2d3e4f5a6_secure_share_link_tokens.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE share_links ADD COLUMN token_version INT NOT NULL DEFAULT 1"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE share_links ADD COLUMN token_hash VARCHAR(64) NULL COMMENT 'SHA-256 hash of the share token'"
+      ]
+    },
+    {
+      "sql": [
+        "UPDATE share_links SET token_hash = SHA2(REPLACE(REPLACE(share_token, '%2B', '+'), '%3D', '='), 256) WHERE token_hash IS NULL"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE UNIQUE INDEX uniq_share_links_token_hash ON share_links (token_hash)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX uniq_share_links_token_hash ON share_links"
+      ],
+      "warning": true
+    },
+    {
+      "sql": [
+        "ALTER TABLE share_links DROP COLUMN token_hash",
+        "ALTER TABLE share_links DROP COLUMN token_version"
+      ]
+    }
+  ]
+}

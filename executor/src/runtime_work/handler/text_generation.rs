@@ -45,6 +45,10 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "requestId is required"))?;
         let (_guard, cancellation) = self.register_text_generation(request_id)?;
         let source = self.task_link_from_payload(&payload, false).await?;
+        // Legacy in-memory threads have no rollout for prediction's resume/fork flow.
+        if runtime_task_uses_ephemeral_codex_thread(&source) {
+            return Ok(json!({"suggestion": null}));
+        }
         if source.running || self.is_active_local_task(&source.local_task_id) {
             return Ok(json!({"suggestion": null}));
         }
@@ -94,7 +98,7 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn generate_text(&self, payload: Value) -> Result<Value, AppIpcError> {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
-        request.ephemeral = true;
+        request.use_ephemeral_codex_thread();
         let local_task_id = request.task_id.clone();
         let stream_request = request.clone();
         let (_guard, cancel_rx) = self.register_text_generation(local_task_id.clone())?;

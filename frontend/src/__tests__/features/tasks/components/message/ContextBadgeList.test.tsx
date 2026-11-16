@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { ContextBadgeList } from '@/features/tasks/components/message/ContextBadgeList'
 import type { SubtaskContextBrief } from '@/types/api'
@@ -39,6 +39,10 @@ jest.mock('@/hooks/useAttachmentImage', () => ({
     isLoading: false,
     error: false,
   }),
+}))
+
+jest.mock('@/apis/user', () => ({
+  getToken: () => 'browser-token',
 }))
 
 const makeAttachmentContext = (
@@ -101,6 +105,66 @@ describe('ContextBadgeList', () => {
       '40'
     )
     expect(screen.queryByTestId('attachment-image_179_250_0.png')).not.toBeInTheDocument()
+  })
+
+  it('downloads a declared device artifact through the authenticated backend route', async () => {
+    const originalFetch = global.fetch
+    const originalCreateObjectUrl = URL.createObjectURL
+    const originalRevokeObjectUrl = URL.revokeObjectURL
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      blob: jest.fn().mockResolvedValue(new Blob(['report'])),
+    })
+    global.fetch = fetchMock
+    const createObjectUrl = jest.fn().mockReturnValue('blob:artifact')
+    const revokeObjectUrl = jest.fn()
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectUrl })
+    const anchorClick = jest
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined)
+
+    render(
+      <ContextBadgeList
+        contexts={[
+          {
+            id: 71,
+            context_type: 'remote_workspace_artifact',
+            name: 'report.pdf',
+            status: 'ready',
+            file_extension: '.pdf',
+            file_size: 4096,
+            mime_type: 'application/pdf',
+            remote_task_id: 42,
+            remote_path: 'outputs/report.pdf',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('remote-workspace-artifact-download-71'))
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/tasks/42/remote-workspace/artifacts/71/file?disposition=attachment',
+        { headers: { Authorization: 'Bearer browser-token' } }
+      )
+    )
+    expect(anchorClick).toHaveBeenCalled()
+    expect(createObjectUrl).toHaveBeenCalled()
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:artifact')
+
+    global.fetch = originalFetch
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreateObjectUrl,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: originalRevokeObjectUrl,
+    })
+    anchorClick.mockRestore()
   })
 
   it('renders a previous task reference without exposing its transcript', () => {

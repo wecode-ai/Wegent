@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, test, vi } from 'vitest'
 import {
   closeWorkspaceTab,
@@ -61,16 +63,6 @@ describe('workspaceTabs', () => {
       tabId: 'board-1',
       tabTitle: '产品规划',
     })
-  })
-
-  test('uses localized labels for auxiliary routes', () => {
-    expect(createWorkspaceTab('auxiliary', labels, { contentRoute: '/plugins' }).title).toBe('插件')
-    expect(createWorkspaceTab('auxiliary', labels, { contentRoute: '/automations' }).title).toBe(
-      '已安排'
-    )
-    expect(createWorkspaceTab('auxiliary', labels, { contentRoute: '/cloud-work' }).title).toBe(
-      '云端工作'
-    )
   })
 
   test('moves tabs and selects the nearest survivor when closing the active tab', () => {

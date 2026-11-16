@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  prioritizeWorkspaceOpener,
   visibleOpenersForPlatform,
   type LocalWorkspaceOpenerDef,
   type LocalWorkspaceOpenerId,
@@ -38,6 +39,7 @@ interface LocalWorkspaceOpenerPickerProps {
   preferredPlacement?: 'above' | 'below'
   align?: 'start' | 'end'
   availability: Record<LocalWorkspaceOpenerId, boolean | undefined>
+  preferredOpener: LocalWorkspaceOpenerId | null
   labels?: Record<string, string | undefined>
   onChooseOther?: () => void | Promise<void>
   onOpen?: () => void | Promise<void>
@@ -54,6 +56,7 @@ export function LocalWorkspaceOpenerPicker({
   preferredPlacement = 'below',
   align = 'end',
   availability,
+  preferredOpener,
   labels,
   onChooseOther,
   onOpen,
@@ -149,7 +152,7 @@ export function LocalWorkspaceOpenerPicker({
   }
 
   const platform = getPlatform()
-  const openers = visibleOpenersForPlatform(platform)
+  const openers = prioritizeWorkspaceOpener(visibleOpenersForPlatform(platform), preferredOpener)
   const showChooseOther = platform === 'win' && onChooseOther != null
 
   return (
@@ -211,7 +214,7 @@ export function LocalWorkspaceOpenerPicker({
                     onClick={() => void onChooseOther?.()}
                     className="flex h-10 w-full min-w-0 items-center gap-3 rounded-xl px-2.5 text-left text-base font-normal leading-5 text-text-secondary transition-colors hover:bg-muted"
                   >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-black/5 bg-muted text-text-secondary shadow-sm">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border/50 bg-muted text-text-secondary shadow-sm wework:border-black/5">
                       <Plus className="h-3.5 w-3.5" />
                     </span>
                     <span className="min-w-0 flex-1 truncate">
@@ -246,7 +249,7 @@ export function LocalWorkspaceOpenerIcon({
   className?: string
 }) {
   const wrapperClassName = cn(
-    'inline-flex items-center justify-center overflow-hidden rounded-md border border-black/5 shadow-sm',
+    'inline-flex items-center justify-center overflow-hidden rounded-md border border-border/50 shadow-sm wework:border-black/5',
     className
   )
 

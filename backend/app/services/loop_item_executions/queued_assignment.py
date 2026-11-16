@@ -9,6 +9,7 @@ from app.models.delivery import LoopItem, ProjectChatAgent
 from app.models.loop_item_execution import LoopItemExecution
 from app.services.collaboration_revocation import execution_authorized
 from app.services.device.runtime_route import normalize_execution_device_id
+from app.services.execution_permission_scope import execution_resource_scope
 from app.services.loop_item_executions.assignment import prepare_assignment
 from app.services.loop_item_executions.notification import notify_execution_lifecycle
 
@@ -96,6 +97,7 @@ def _prepare_one(
         execution_device_id=request.get("execution_device_id"),
         priority=None,
         automation_context=context,
+        session_environment_id=continuation["environment_id"] if continuation else None,
     )
     row.executor_owner_user_id = plan["owner_user_id"]
     row.team_id = plan["team_id"]
@@ -148,6 +150,7 @@ def _project_preparation(
         }
 
 
+@execution_resource_scope()
 def prepare_queued_assignments(
     service: "LoopItemExecutionService", db: Session, *, limit: int = 100
 ) -> int:

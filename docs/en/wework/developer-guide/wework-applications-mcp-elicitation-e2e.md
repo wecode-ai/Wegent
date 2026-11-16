@@ -231,6 +231,33 @@ Run this scenario after `permission-modes` confirms Full access and before switc
 }
 ```
 
+## Real Timeout Verification
+
+`permission-modes` sets `WEGENT_CODEX_MCP_URL_TIMEOUT_MS=5000` and
+`WEGENT_CODEX_MCP_FORM_TIMEOUT_MS=45000` for its isolated application and Executor.
+URL authorization uses a real five-second timer. Concurrent and ordinary forms
+each use 45 seconds, totaling about 95 seconds of fixed waits. Forms must survive
+the ordinary answer, two pending-card reloads, and state assertions before expiry.
+In CI job `131059186468`, the fixture received a cancellation after 30060ms while
+`ordinary_first` was restoring the waiting state after the second reload.
+The 45-second test deadline gives that interaction time to complete.
+Other checkpoints do not automatically set this
+configuration. With no valid override, production defaults remain ten minutes
+for URLs and five minutes for forms. Ordinary execution approval timeouts are
+unaffected.
+
+The test does not change clocks or simulate cancellation results. The UI countdown
+and Executor wait share one deadline. The MCP fixture records actual elapsed time
+and rejects early cancellation. Full-chain assertions remain in place:
+
+- The real MCP server receives exactly one `action=cancel`, and the session stops waiting.
+- A concurrent ordinary question stays pending until the user answers it.
+- Expired cards expose no actions, and the Executor rejects late answers.
+- Reload preserves expiry without sending another response to the MCP server.
+
+Rust unit tests separately assert the ten/five-minute defaults, short timeout
+configuration, and invalid configuration handling.
+
 ## Evidence and Failure Diagnosis
 
 A successful run retains at least:

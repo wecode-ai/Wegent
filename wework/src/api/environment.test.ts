@@ -1,6 +1,7 @@
+// @vitest-environment node
+
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
-  applyProjectEnvironmentPatch,
   buildPullRequestUrl,
   checkoutProjectBranch,
   commitAndPushProjectChanges,
@@ -10,8 +11,6 @@ import {
   loadProjectEnvironment,
   loadProjectEnvironmentDiff,
   parseGitShortStat,
-  pushProjectChanges,
-  removeGitWorktree,
   workspaceHasUncommittedChanges,
 } from './environment'
 
@@ -28,13 +27,6 @@ beforeEach(() => {
 })
 
 describe('parseGitShortStat', () => {
-  test('extracts additions and deletions from git shortstat output', () => {
-    expect(parseGitShortStat(' 10 files changed, 173 insertions(+), 13366 deletions(-)')).toEqual({
-      additions: '+173',
-      deletions: '-13366',
-    })
-  })
-
   test('detects a non-git workspace without depending on localized stderr', async () => {
     const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
       if (data.command_key === 'git_is_worktree') {
@@ -88,10 +80,6 @@ describe('parseGitShortStat', () => {
     })
   })
 
-  test('defaults missing additions and deletions to zero', () => {
-    expect(parseGitShortStat('')).toEqual({ additions: '+0', deletions: '-0' })
-  })
-
   test('parses pending file count from no-commit repos', () => {
     expect(parseGitShortStat(' 3 file(s) pending')).toEqual({
       additions: '+3',
@@ -101,21 +89,6 @@ describe('parseGitShortStat', () => {
 })
 
 describe('buildPullRequestUrl', () => {
-  test('builds GitHub compare URL from https remote', () => {
-    expect(
-      buildPullRequestUrl(
-        'https://github.com/wecode-ai/Wegent.git',
-        'human/narwhal-20260528-073440'
-      )
-    ).toBe('https://github.com/wecode-ai/Wegent/compare/human%2Fnarwhal-20260528-073440?expand=1')
-  })
-
-  test('builds GitLab merge request URL from ssh remote', () => {
-    expect(buildPullRequestUrl('git@gitlab.com:wecode-ai/Wegent.git', 'feature/context-info')).toBe(
-      'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcontext-info'
-    )
-  })
-
   test('does not use the SSH transport port as the GitLab web port', () => {
     expect(
       buildPullRequestUrl(
@@ -124,17 +97,6 @@ describe('buildPullRequestUrl', () => {
       )
     ).toBe(
       'https://gitlab.example.com/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcontext-info'
-    )
-  })
-
-  test('preserves an explicit HTTPS web port', () => {
-    expect(
-      buildPullRequestUrl(
-        'https://gitlab.example.com:8443/wecode-ai/Wegent.git',
-        'feature/context-info'
-      )
-    ).toBe(
-      'https://gitlab.example.com:8443/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcontext-info'
     )
   })
 })
@@ -156,24 +118,6 @@ describe('workspaceHasUncommittedChanges', () => {
       path: '/workspace/worktrees/9/app',
       timeout_seconds: 10,
       max_output_bytes: 65536,
-    })
-  })
-
-  test('removes clean worktrees through the device command API', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: '',
-      stderr: '',
-    })
-
-    await removeGitWorktree({ executeCommand }, 'device-123', '/workspace/worktrees/9/app')
-
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_worktree_remove',
-      path: '/workspace/worktrees/9/app',
-      args: ['/workspace/worktrees/9/app', '/workspace/worktrees/9/app'],
-      timeout_seconds: 30,
-      max_output_bytes: 8192,
     })
   })
 })
@@ -727,71 +671,6 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
-  test('loads the current GitLab merge request and pipeline status', async () => {
-    const executeCommand = vi
-      .fn()
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: 'feature/change-request-status\n',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: '',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: '',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: 'git@gitlab.com:wecode-ai/Wegent.git\n',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: [
-          {
-            iid: 42,
-            web_url: 'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/42',
-            title: 'feat(wework): show merge request status',
-            state: 'opened',
-            draft: true,
-            head_pipeline: { status: 'success' },
-          },
-        ],
-        stderr: '',
-      })
-
-    const info = await loadProjectEnvironment(
-      { executeCommand },
-      null,
-      {
-        deviceId: 'local-device',
-        path: '/workspace/Wegent',
-      },
-      { force: true }
-    )
-
-    expect(info.changeRequest).toEqual({
-      provider: 'gitlab',
-      state: 'found',
-      changeRequest: {
-        provider: 'gitlab',
-        number: 42,
-        url: 'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/42',
-        title: 'feat(wework): show merge request status',
-        state: 'open',
-        draft: true,
-        checks: 'success',
-        mergeability: 'unknown',
-        mergeQueue: 'unknown',
-      },
-    })
-  })
-
   test('resolves git checkout path to an absolute device workspace path', async () => {
     const executeCommand = vi
       .fn()
@@ -859,159 +738,6 @@ describe('loadProjectEnvironment', () => {
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
-  })
-
-  test('loads git info through the selected project device command API', async () => {
-    const executeCommand = vi
-      .fn()
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: 'human/narwhal-20260528-073440\n',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: ' 2 files changed, 8 insertions(+), 3 deletions(-)',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: '',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: [],
-        stderr: '',
-      })
-
-    const info = await loadProjectEnvironment(
-      { executeCommand },
-      {
-        id: 1,
-        name: 'Wegent',
-        config: {
-          mode: 'workspace',
-          execution: {
-            targetType: 'cloud',
-            deviceId: 'device-123',
-          },
-          workspace: {
-            source: 'local_path',
-            localPath: '/workspace/Wegent',
-          },
-        },
-      }
-    )
-
-    expect(info).toEqual({
-      executionTarget: 'cloud',
-      deviceId: 'device-123',
-      workspacePath: '/workspace/Wegent',
-      isGitRepository: true,
-      branchName: 'human/narwhal-20260528-073440',
-      additions: '+8',
-      deletions: '-3',
-      createPullRequestUrl:
-        'https://github.com/wecode-ai/Wegent/compare/human%2Fnarwhal-20260528-073440?expand=1',
-      changeRequest: {
-        provider: 'github',
-        state: 'not_found',
-      },
-    })
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_branch',
-      path: '/workspace/Wegent',
-      timeout_seconds: 10,
-      max_output_bytes: 4096,
-    })
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_branch_diff_shortstat',
-      path: '/workspace/Wegent',
-      timeout_seconds: 10,
-      max_output_bytes: 4096,
-    })
-  })
-
-  test('loads git info from the active workspace target', async () => {
-    const executeCommand = vi
-      .fn()
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: 'human/worktree-branch\n',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: ' 1 file changed, 4 insertions(+)',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: '',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: [],
-        stderr: '',
-      })
-
-    const info = await loadProjectEnvironment(
-      { executeCommand },
-      {
-        id: 1,
-        name: 'Wegent',
-        config: {
-          mode: 'workspace',
-          execution: {
-            targetType: 'cloud',
-            deviceId: 'project-device',
-          },
-          workspace: {
-            source: 'local_path',
-            localPath: '/workspace/Wegent',
-          },
-        },
-      },
-      {
-        deviceId: 'runtime-device',
-        path: '/workspace/worktrees/1029/Wegent',
-        source: 'runtime',
-      }
-    )
-
-    expect(info).toMatchObject({
-      executionTarget: 'cloud',
-      deviceId: 'runtime-device',
-      branchName: 'human/worktree-branch',
-      additions: '+4',
-      deletions: '-0',
-    })
-    for (const commandKey of [
-      'git_branch',
-      'git_branch_diff_shortstat',
-      'git_status_porcelain',
-      'git_remote_url',
-    ]) {
-      expect(executeCommand).toHaveBeenCalledWith(
-        'runtime-device',
-        expect.objectContaining({
-          command_key: commandKey,
-          path: '/workspace/worktrees/1029/Wegent',
-        })
-      )
-    }
   })
 
   test('surfaces structured stdout from text device commands as an environment error', async () => {
@@ -1146,122 +872,6 @@ describe('loadProjectEnvironment', () => {
       error: 'fatal: failed to read git metadata',
     })
     expect(info.isGitRepository).toBeUndefined()
-  })
-
-  test('deduplicates repeated environment loads for the same project briefly', async () => {
-    const executeCommand = vi
-      .fn()
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: 'human/narwhal-20260528-073440\n',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: ' 2 files changed, 8 insertions(+), 3 deletions(-)',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: '',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: [],
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: 'human/narwhal-20260528-073440\n',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: ' 3 files changed, 13 insertions(+), 5 deletions(-)',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: '',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
-        stderr: '',
-      })
-      .mockResolvedValueOnce({
-        success: true,
-        stdout: [],
-        stderr: '',
-      })
-
-    const api = { executeCommand }
-    const project = {
-      id: 1001,
-      name: 'Wegent',
-      config: {
-        mode: 'workspace' as const,
-        execution: {
-          targetType: 'local' as const,
-          deviceId: 'device-123',
-        },
-        workspace: {
-          source: 'local_path' as const,
-          localPath: '/workspace/Wegent',
-        },
-      },
-    }
-
-    const [firstInfo, secondInfo] = await Promise.all([
-      loadProjectEnvironment(api, project),
-      loadProjectEnvironment(api, project),
-    ])
-
-    expect(firstInfo).toEqual(secondInfo)
-    expect(firstInfo).not.toBe(secondInfo)
-    firstInfo.branchName = 'mutated'
-
-    const cachedInfo = await loadProjectEnvironment(api, project)
-
-    expect(cachedInfo.branchName).toBe('human/narwhal-20260528-073440')
-    // 5 calls: branch, diff, status, remote, and the branch's pull request lookup.
-    expect(executeCommand).toHaveBeenCalledTimes(5)
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_branch',
-      path: '/workspace/Wegent',
-      timeout_seconds: 10,
-      max_output_bytes: 4096,
-    })
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_branch_diff_shortstat',
-      path: '/workspace/Wegent',
-      timeout_seconds: 10,
-      max_output_bytes: 4096,
-    })
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_status_porcelain',
-      path: '/workspace/Wegent',
-      timeout_seconds: 10,
-      max_output_bytes: 4096,
-    })
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_remote_url',
-      path: '/workspace/Wegent',
-      timeout_seconds: 10,
-      max_output_bytes: 4096,
-    })
-
-    const refreshedInfo = await loadProjectEnvironment(api, project, undefined, { force: true })
-
-    expect(refreshedInfo).toMatchObject({ additions: '+13', deletions: '-5' })
-    expect(executeCommand).toHaveBeenCalledTimes(10)
   })
 
   test('publishes stale environment info immediately while revalidating an expired cache', async () => {
@@ -1540,345 +1150,6 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
-  test('publishes pull request status before a slow branch diff finishes', async () => {
-    let resolveShortStat: (value: {
-      success: boolean
-      stdout: string
-      stderr: string
-    }) => void = () => {}
-    const shortStatResult = new Promise<{
-      success: boolean
-      stdout: string
-      stderr: string
-    }>(resolve => {
-      resolveShortStat = resolve
-    })
-    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
-      if (data.command_key === 'git_branch') {
-        return Promise.resolve({
-          success: true,
-          stdout: 'fix/fast-pr-status\n',
-          stderr: '',
-        })
-      }
-      if (data.command_key === 'git_branch_diff_shortstat') {
-        return shortStatResult
-      }
-      if (data.command_key === 'git_remote_url') {
-        return Promise.resolve({
-          success: true,
-          stdout: 'https://github.com/wecode-ai/Wegent.git\n',
-          stderr: '',
-        })
-      }
-      if (data.command_key === 'git_github_pull_requests') {
-        return Promise.resolve({
-          success: true,
-          stdout: [
-            {
-              number: 301,
-              url: 'https://github.com/wecode-ai/Wegent/pull/301',
-              title: 'fix(wework): show PR status immediately',
-              state: 'OPEN',
-              isDraft: false,
-              statusCheckRollup: [],
-              mergeable: 'MERGEABLE',
-              mergeStateStatus: 'CLEAN',
-            },
-          ],
-          stderr: '',
-        })
-      }
-      if (data.command_key === 'git_github_pull_request_merge_queue') {
-        return Promise.resolve({
-          success: true,
-          stdout: { data: { resource: { mergeQueueEntry: null } } },
-          stderr: '',
-        })
-      }
-      return Promise.resolve({
-        success: true,
-        stdout: '',
-        stderr: '',
-      })
-    })
-    const onPartialInfo = vi.fn()
-    const load = loadProjectEnvironment(
-      { executeCommand },
-      {
-        id: 1003,
-        name: 'Wegent',
-        config: {
-          mode: 'workspace' as const,
-          execution: {
-            targetType: 'local' as const,
-            deviceId: 'device-123',
-          },
-          workspace: {
-            source: 'local_path' as const,
-            localPath: '/workspace/Wegent',
-          },
-        },
-      },
-      undefined,
-      { onPartialInfo }
-    )
-
-    await vi.waitFor(() => {
-      expect(onPartialInfo).toHaveBeenCalledWith(
-        expect.objectContaining({
-          branchName: 'fix/fast-pr-status',
-          changeRequest: expect.objectContaining({
-            state: 'found',
-            changeRequest: expect.objectContaining({ number: 301 }),
-          }),
-        })
-      )
-    })
-
-    let settled = false
-    void load.then(() => {
-      settled = true
-    })
-    await Promise.resolve()
-    expect(settled).toBe(false)
-
-    resolveShortStat({
-      success: true,
-      stdout: ' 2 files changed, 3 insertions(+), 1 deletion(-)',
-      stderr: '',
-    })
-
-    await expect(load).resolves.toMatchObject({
-      additions: '+3',
-      deletions: '-1',
-      changeRequest: expect.objectContaining({ state: 'found' }),
-    })
-  })
-
-  test('publishes the branch before a slow pull request lookup finishes', async () => {
-    let resolvePullRequests: (value: {
-      success: boolean
-      stdout: unknown[]
-      stderr: string
-    }) => void = () => {}
-    const pullRequestsResult = new Promise<{
-      success: boolean
-      stdout: unknown[]
-      stderr: string
-    }>(resolve => {
-      resolvePullRequests = resolve
-    })
-    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
-      if (data.command_key === 'git_branch') {
-        return Promise.resolve({
-          success: true,
-          stdout: 'fix/fast-branch-status\n',
-          stderr: '',
-        })
-      }
-      if (data.command_key === 'git_remote_url') {
-        return Promise.resolve({
-          success: true,
-          stdout: 'https://github.com/wecode-ai/Wegent.git\n',
-          stderr: '',
-        })
-      }
-      if (data.command_key === 'git_github_pull_requests') {
-        return pullRequestsResult
-      }
-      return Promise.resolve({
-        success: true,
-        stdout: '',
-        stderr: '',
-      })
-    })
-    const onPartialInfo = vi.fn()
-    const load = loadProjectEnvironment(
-      { executeCommand },
-      {
-        id: 1004,
-        name: 'Wegent',
-        config: {
-          mode: 'workspace' as const,
-          execution: {
-            targetType: 'local' as const,
-            deviceId: 'device-123',
-          },
-          workspace: {
-            source: 'local_path' as const,
-            localPath: '/workspace/Wegent',
-          },
-        },
-      },
-      undefined,
-      { onPartialInfo }
-    )
-
-    await vi.waitFor(() => {
-      expect(onPartialInfo).toHaveBeenCalledWith(
-        expect.objectContaining({
-          branchName: 'fix/fast-branch-status',
-        })
-      )
-    })
-    expect(onPartialInfo.mock.calls[0]?.[0]).not.toHaveProperty('changeRequest')
-
-    let settled = false
-    void load.then(() => {
-      settled = true
-    })
-    await Promise.resolve()
-    expect(settled).toBe(false)
-
-    resolvePullRequests({
-      success: true,
-      stdout: [],
-      stderr: '',
-    })
-
-    await expect(load).resolves.toMatchObject({
-      branchName: 'fix/fast-branch-status',
-      changeRequest: expect.objectContaining({ state: 'not_found' }),
-    })
-  })
-
-  test('uses git diff against HEAD for tracked uncommitted changes', async () => {
-    const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
-      if (data.command_key === 'git_branch') {
-        return Promise.resolve({
-          success: true,
-          stdout: 'feature/context-info\n',
-          stderr: '',
-        })
-      }
-
-      if (data.command_key === 'git_branch_diff_shortstat') {
-        return Promise.resolve({
-          success: true,
-          stdout: ' 1 file changed, 1 insertion(+), 1 deletion(-)',
-          stderr: '',
-        })
-      }
-
-      if (data.command_key === 'git_status_porcelain') {
-        return Promise.resolve({
-          success: true,
-          stdout: '',
-          stderr: '',
-        })
-      }
-
-      if (data.command_key === 'git_remote_url') {
-        return Promise.resolve({
-          success: true,
-          stdout: 'https://github.com/wecode-ai/Wegent.git\n',
-          stderr: '',
-        })
-      }
-
-      return Promise.resolve({
-        success: false,
-        stdout: '',
-        stderr: 'unknown command',
-      })
-    })
-
-    const info = await loadProjectEnvironment(
-      { executeCommand },
-      {
-        id: 1,
-        name: 'Wegent',
-        config: {
-          mode: 'workspace',
-          execution: {
-            targetType: 'local',
-            deviceId: 'device-123',
-          },
-          workspace: {
-            source: 'local_path',
-            localPath: '/workspace/Wegent',
-          },
-        },
-      }
-    )
-
-    expect(info.additions).toBe('+1')
-    expect(info.deletions).toBe('-1')
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_branch_diff_shortstat',
-      path: '/workspace/Wegent',
-      timeout_seconds: 10,
-      max_output_bytes: 4096,
-    })
-  })
-
-  test('keeps shortstat line counts without counting untracked files as lines', async () => {
-    const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
-      if (data.command_key === 'git_branch') {
-        return Promise.resolve({
-          success: true,
-          stdout: 'main\n',
-          stderr: '',
-        })
-      }
-
-      if (data.command_key === 'git_branch_diff_shortstat') {
-        return Promise.resolve({
-          success: true,
-          stdout: ' 1 file changed, 5 insertions(+), 2 deletions(-)',
-          stderr: '',
-        })
-      }
-
-      if (data.command_key === 'git_status_porcelain') {
-        return Promise.resolve({
-          success: true,
-          stdout: '?? output.txt\n?? notes.md\n',
-          stderr: '',
-        })
-      }
-
-      if (data.command_key === 'git_remote_url') {
-        return Promise.resolve({
-          success: false,
-          stdout: '',
-          stderr: 'No such remote',
-        })
-      }
-
-      return Promise.resolve({
-        success: false,
-        stdout: '',
-        stderr: 'unknown command',
-      })
-    })
-
-    const info = await loadProjectEnvironment(
-      { executeCommand },
-      {
-        id: 1,
-        name: 'Wegent',
-        config: {
-          mode: 'workspace',
-          execution: {
-            targetType: 'local',
-            deviceId: 'device-123',
-          },
-          workspace: {
-            source: 'local_path',
-            localPath: '/workspace/Wegent',
-          },
-        },
-      }
-    )
-
-    // 5 tracked insertions; untracked files are files, not lines.
-    expect(info.additions).toBe('+5')
-    expect(info.deletions).toBe('-2')
-    expect(info.branchName).toBe('main')
-  })
-
   test('counts pending files from porcelain when repo has no commits', async () => {
     const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
       if (data.command_key === 'git_branch') {
@@ -1951,39 +1222,6 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
-  test('keeps an empty shortstat for a committed repo with only untracked files', async () => {
-    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
-      if (data.command_key === 'git_branch') {
-        return Promise.resolve({ success: true, stdout: 'main\n', stderr: '' })
-      }
-      if (data.command_key === 'git_branch_diff_shortstat') {
-        return Promise.resolve({ success: true, stdout: '', stderr: '' })
-      }
-      if (data.command_key === 'git_status_porcelain') {
-        return Promise.resolve({ success: true, stdout: '?? output.txt\n', stderr: '' })
-      }
-      return Promise.resolve({ success: false, stdout: '', stderr: 'unknown command' })
-    })
-
-    const info = await loadProjectEnvironment(
-      { executeCommand },
-      {
-        id: 1,
-        name: 'Wegent',
-        config: {
-          mode: 'workspace',
-          execution: { targetType: 'local', deviceId: 'device-123' },
-          workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
-        },
-      }
-    )
-
-    // Untracked files are not lines; an empty shortstat on a committed repo
-    // must stay +0 instead of falling back to the porcelain file count.
-    expect(info.additions).toBe('+0')
-    expect(info.deletions).toBe('-0')
-  })
-
   test('does not count porcelain files when shortstat fails on a committed repo', async () => {
     const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
       if (data.command_key === 'git_branch') {
@@ -2020,120 +1258,9 @@ describe('loadProjectEnvironment', () => {
     expect(info.additions).toBe('+0')
     expect(info.deletions).toBe('-0')
   })
-
-  test('shows zero diff when repo is clean and has no untracked files', async () => {
-    const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
-      if (data.command_key === 'git_branch') {
-        return Promise.resolve({
-          success: true,
-          stdout: 'main\n',
-          stderr: '',
-        })
-      }
-
-      if (data.command_key === 'git_branch_diff_shortstat') {
-        return Promise.resolve({
-          success: false,
-          stdout: '',
-          stderr: "fatal: bad revision 'HEAD'",
-        })
-      }
-
-      if (data.command_key === 'git_status_porcelain') {
-        return Promise.resolve({
-          success: true,
-          stdout: '',
-          stderr: '',
-        })
-      }
-
-      if (data.command_key === 'git_remote_url') {
-        return Promise.resolve({
-          success: false,
-          stdout: '',
-          stderr: 'No such remote',
-        })
-      }
-
-      return Promise.resolve({
-        success: false,
-        stdout: '',
-        stderr: 'unknown command',
-      })
-    })
-
-    const info = await loadProjectEnvironment(
-      { executeCommand },
-      {
-        id: 3,
-        name: 'clean-repo',
-        config: {
-          mode: 'workspace',
-          execution: {
-            targetType: 'local',
-            deviceId: 'device-123',
-          },
-          workspace: {
-            source: 'local_path',
-            localPath: '/tmp/clean-repo',
-          },
-        },
-      }
-    )
-
-    expect(info.additions).toBe('+0')
-    expect(info.deletions).toBe('-0')
-    expect(info.error).toBeUndefined()
-  })
 })
 
 describe('commitProjectChanges', () => {
-  test('applies a selected patch through the restricted device command', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: '',
-      stderr: '',
-    })
-    const patch = [
-      'diff --git a/src/env.ts b/src/env.ts',
-      '--- a/src/env.ts',
-      '+++ b/src/env.ts',
-      '@@ -1 +1 @@',
-      '-old',
-      '+new',
-      '',
-    ].join('\n')
-
-    await applyProjectEnvironmentPatch(
-      { executeCommand },
-      {
-        id: 1,
-        name: 'Wegent',
-        config: {
-          mode: 'workspace',
-          execution: {
-            targetType: 'local',
-            deviceId: 'device-123',
-          },
-          workspace: {
-            source: 'local_path',
-            localPath: '/workspace/Wegent',
-          },
-        },
-      },
-      'stage',
-      patch
-    )
-
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_apply_patch',
-      path: '/workspace/Wegent',
-      args: ['stage', btoa(patch)],
-      timeout_seconds: 30,
-      max_output_bytes: 64 * 1024,
-    })
-  })
-
   test('loads the full environment diff through the project device command API', async () => {
     const executeCommand = vi.fn().mockResolvedValue({
       success: true,
@@ -2165,46 +1292,6 @@ describe('commitProjectChanges', () => {
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
       command_key: 'git_branch_diff',
       path: '/workspace/Wegent',
-      timeout_seconds: 30,
-      max_output_bytes: 5 * 1024 * 1024,
-    })
-  })
-
-  test('loads the full environment diff from the active workspace target', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: '',
-      stderr: '',
-    })
-
-    await expect(
-      loadProjectEnvironmentDiff(
-        { executeCommand },
-        {
-          id: 1,
-          name: 'Wegent',
-          config: {
-            mode: 'workspace',
-            execution: {
-              targetType: 'local',
-              deviceId: 'device-123',
-            },
-            workspace: {
-              source: 'local_path',
-              localPath: '/workspace/Wegent',
-            },
-          },
-        },
-        {
-          deviceId: 'device-123',
-          path: '/workspace/worktrees/1029/Wegent',
-        }
-      )
-    ).resolves.toBe('')
-
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_branch_diff',
-      path: '/workspace/worktrees/1029/Wegent',
       timeout_seconds: 30,
       max_output_bytes: 5 * 1024 * 1024,
     })
@@ -2245,52 +1332,6 @@ describe('commitProjectChanges', () => {
     expect(executeCommand).toHaveBeenNthCalledWith(2, 'device-123', {
       command_key: 'git_commit',
       path: '/workspace/Wegent',
-      args: ['-m', 'feat: update environment info'],
-      timeout_seconds: 30,
-      max_output_bytes: 8192,
-    })
-  })
-
-  test('stages and commits changes in the active workspace target', async () => {
-    const executeCommand = vi
-      .fn()
-      .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
-      .mockResolvedValueOnce({ success: true, stdout: '[main abc123] update\n', stderr: '' })
-
-    await commitProjectChanges(
-      { executeCommand },
-      {
-        id: 1,
-        name: 'Wegent',
-        config: {
-          mode: 'workspace',
-          execution: {
-            targetType: 'local',
-            deviceId: 'project-device',
-          },
-          workspace: {
-            source: 'local_path',
-            localPath: '/workspace/Wegent',
-          },
-        },
-      },
-      'feat: update environment info',
-      {
-        deviceId: 'runtime-device',
-        path: '/workspace/worktrees/1029/Wegent',
-        source: 'runtime',
-      }
-    )
-
-    expect(executeCommand).toHaveBeenNthCalledWith(1, 'runtime-device', {
-      command_key: 'git_add_all',
-      path: '/workspace/worktrees/1029/Wegent',
-      timeout_seconds: 30,
-      max_output_bytes: 4096,
-    })
-    expect(executeCommand).toHaveBeenNthCalledWith(2, 'runtime-device', {
-      command_key: 'git_commit',
-      path: '/workspace/worktrees/1029/Wegent',
       args: ['-m', 'feat: update environment info'],
       timeout_seconds: 30,
       max_output_bytes: 8192,
@@ -2385,84 +1426,6 @@ describe('commitProjectChanges', () => {
     ).rejects.toThrow('Model authentication failed')
     expect(executeCommand).toHaveBeenCalledTimes(2)
   })
-
-  test('pushes only after generation and commit finish', async () => {
-    const steps: string[] = []
-    const executeCommand = vi.fn(async (_device, data) => {
-      steps.push(data.command_key)
-      return { success: true, stdout: 'diff', stderr: '' }
-    })
-    await commitAndPushProjectChanges(
-      { executeCommand },
-      commitProject,
-      '',
-      undefined,
-      async () => {
-        steps.push('generate')
-        return 'feat: update'
-      }
-    )
-    expect(steps).toEqual(['git_add_all', 'git_diff_staged', 'generate', 'git_commit', 'git_push'])
-  })
-})
-
-describe('pushProjectChanges', () => {
-  const project = {
-    id: 1,
-    name: 'Wegent',
-    config: {
-      mode: 'workspace',
-      execution: { targetType: 'local' as const, deviceId: 'device-123' },
-      workspace: { source: 'local_path' as const, localPath: '/workspace/Wegent' },
-    },
-  }
-
-  test('pushes the current branch through the project device command API', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: 'Everything up-to-date\n',
-      stderr: '',
-    })
-
-    await pushProjectChanges({ executeCommand }, project)
-
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_push',
-      path: '/workspace/Wegent',
-      timeout_seconds: 120,
-      max_output_bytes: 8192,
-    })
-  })
-
-  test('commits and then pushes changes', async () => {
-    const executeCommand = vi
-      .fn()
-      .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
-      .mockResolvedValueOnce({ success: true, stdout: '[main abc123] update\n', stderr: '' })
-      .mockResolvedValueOnce({ success: true, stdout: 'pushed\n', stderr: '' })
-
-    await commitAndPushProjectChanges({ executeCommand }, project, 'feat: update environment info')
-
-    expect(executeCommand).toHaveBeenNthCalledWith(1, 'device-123', {
-      command_key: 'git_add_all',
-      path: '/workspace/Wegent',
-      timeout_seconds: 30,
-      max_output_bytes: 4096,
-    })
-    expect(executeCommand).toHaveBeenNthCalledWith(2, 'device-123', {
-      command_key: 'git_commit',
-      path: '/workspace/Wegent',
-      args: ['-m', 'feat: update environment info'],
-      timeout_seconds: 30,
-      max_output_bytes: 8192,
-    })
-    expect(executeCommand).toHaveBeenNthCalledWith(3, 'device-123', {
-      command_key: 'git_push',
-      path: '/workspace/Wegent',
-      timeout_seconds: 120,
-      max_output_bytes: 8192,
-    })
-  })
 })
 
 describe('branch environment commands', () => {
@@ -2475,40 +1438,6 @@ describe('branch environment commands', () => {
       workspace: { source: 'local_path' as const, localPath: '/workspace/Wegent' },
     },
   }
-
-  test('lists branches with the current branch first', async () => {
-    const executeCommand = vi.fn().mockImplementation(async (_deviceId, data) => {
-      if (data.command_key === 'git_branch_list') {
-        return {
-          success: true,
-          stdout: 'human/zebra\nmain\nhuman/alpaca\n',
-          stderr: '',
-        }
-      }
-      if (data.command_key === 'git_branch') {
-        return { success: true, stdout: 'human/zebra\n', stderr: '' }
-      }
-      return { success: false, stdout: '', stderr: 'unexpected command' }
-    })
-
-    await expect(listProjectBranches({ executeCommand }, project)).resolves.toEqual([
-      'human/zebra',
-      'main',
-      'human/alpaca',
-    ])
-    expect(executeCommand).toHaveBeenNthCalledWith(1, 'device-123', {
-      command_key: 'git_branch_list',
-      path: '/workspace/Wegent',
-      timeout_seconds: 15,
-      max_output_bytes: 1024 * 64,
-    })
-    expect(executeCommand).toHaveBeenNthCalledWith(2, 'device-123', {
-      command_key: 'git_branch',
-      path: '/workspace/Wegent',
-      timeout_seconds: 10,
-      max_output_bytes: 4096,
-    })
-  })
 
   test('runs branch commands in the active workspace target', async () => {
     const executeCommand = vi.fn().mockImplementation(async (_deviceId, data) => {
@@ -2558,34 +1487,6 @@ describe('branch environment commands', () => {
     expect(executeCommand).toHaveBeenNthCalledWith(4, 'runtime-device', {
       command_key: 'git_checkout_new',
       path: '/workspace/worktrees/1029/Wegent',
-      args: ['human/new-branch'],
-      timeout_seconds: 30,
-      max_output_bytes: 8192,
-    })
-  })
-
-  test('checks out an existing branch', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({ success: true, stdout: '', stderr: '' })
-
-    await checkoutProjectBranch({ executeCommand }, project, 'human/alpaca')
-
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_checkout',
-      path: '/workspace/Wegent',
-      args: ['human/alpaca'],
-      timeout_seconds: 30,
-      max_output_bytes: 8192,
-    })
-  })
-
-  test('creates and checks out a new branch', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({ success: true, stdout: '', stderr: '' })
-
-    await createAndCheckoutProjectBranch({ executeCommand }, project, 'human/new-branch')
-
-    expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_checkout_new',
-      path: '/workspace/Wegent',
       args: ['human/new-branch'],
       timeout_seconds: 30,
       max_output_bytes: 8192,

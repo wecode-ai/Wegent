@@ -101,7 +101,7 @@ def test_gateway_rejects_passthrough_for_non_responses_models(
 
     with patch("app.services.llm_proxy_service.httpx.AsyncClient") as upstream:
         response = test_client.post(
-            "/api/runtime-work/llm-responses-proxy/responses",
+            "/api/runtime-work/llm-responses-proxy/chat/completions",
             headers={
                 "Authorization": f"Bearer {test_token}",
                 "X-Wegent-Model-Type": "public",
@@ -115,12 +115,3 @@ def test_gateway_rejects_passthrough_for_non_responses_models(
         "Codex passthrough requires an OpenAI Responses model"
     )
     upstream.assert_not_called()
-
-
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
-
-    with component_client(test_client, ("llm_responses",)) as client:
-        yield client

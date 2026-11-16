@@ -1,10 +1,11 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   ManagedExecutorRuntime,
+  executorRequestTimeoutMs,
   managedExecutorLogPath,
   prepareManagedExecutorEnvironment,
   requestExecutor,
@@ -13,6 +14,120 @@ import {
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('managed executor runtime', () => {
+  test.each([false, true])(
+    'does not import or remove credentials when consent is unknown: %s',
+    async existing => {
+      const directory = await temporaryDirectory('managed-auth-unknown-')
+      try {
+        const native = join(directory.path, 'native')
+        const managed = join(directory.path, 'managed')
+        await mkdir(native)
+        await mkdir(managed)
+        await writeFile(join(native, 'auth.json'), 'synthetic-native-account')
+        if (existing) {
+          await writeFile(join(managed, 'auth.json'), 'synthetic-managed-account')
+          await writeFile(join(managed, '.wework-managed-auth'), '')
+        }
+        prepareManagedExecutorEnvironment({
+          dataDirectory: directory.path,
+          environment: {
+            VITE_WEWORK_E2E: 'true',
+            WEWORK_E2E_NATIVE_CODEX_HOME: native,
+            WEGENT_CODEX_HOME: managed,
+            WEWORK_CODEX_SUBSCRIPTION_ENABLED: 'unavailable',
+          },
+        })
+        expect(await readFile(join(native, 'auth.json'), 'utf8')).toBe('synthetic-native-account')
+        if (existing) {
+          expect(await readFile(join(managed, 'auth.json'), 'utf8')).toBe(
+            'synthetic-managed-account'
+          )
+          expect(await readFile(join(managed, '.wework-managed-auth'), 'utf8')).toBe('')
+        } else
+          await expect(readFile(join(managed, 'auth.json'))).rejects.toMatchObject({
+            code: 'ENOENT',
+          })
+      } finally {
+        await directory.remove()
+      }
+    }
+  )
+  test('keeps the runtime available after credential import fails and can import after repair', async () => {
+    const directory = await temporaryDirectory('managed-auth-unavailable-')
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const native = join(directory.path, 'native')
+      const managed = join(directory.path, 'managed')
+      await mkdir(native)
+      const credential = 'synthetic-credential-never-log-or-delete'
+      await writeFile(join(native, 'auth.json'), credential)
+      await writeFile(managed, 'preserve-existing-file')
+      const options = {
+        dataDirectory: directory.path,
+        environment: {
+          VITE_WEWORK_E2E: 'true',
+          WEWORK_E2E_NATIVE_CODEX_HOME: native,
+          WEGENT_CODEX_HOME: managed,
+          WEGENT_EXECUTOR_HOME: directory.path,
+        },
+      }
+      expect(prepareManagedExecutorEnvironment(options).CODEX_HOME).toBe(managed)
+      expect(warning).toHaveBeenCalledOnce()
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(credential)
+      expect(await readFile(managed, 'utf8')).toBe('preserve-existing-file')
+      expect(await readFile(join(native, 'auth.json'), 'utf8')).toBe(credential)
+      await rm(managed)
+      prepareManagedExecutorEnvironment(options)
+      expect(await readFile(join(managed, 'auth.json'), 'utf8')).toBe(credential)
+    } finally {
+      warning.mockRestore()
+      await directory.remove()
+    }
+  })
+
+  test('allows Python provisioning before auth operations without extending ordinary requests', () => {
+    for (const method of [
+      'executor.plugin_auth.migrate',
+      'executor.plugin_auth.run',
+      'runtime.connections.cli',
+      'runtime.local_connector_auth.start',
+      'runtime.local_connector_auth.health',
+    ]) {
+      expect(executorRequestTimeoutMs(method)).toBe(21 * 60_000 + 5_000)
+    }
+    expect(executorRequestTimeoutMs('executor.plugins.local_sync')).toBe(305_000)
+    expect(executorRequestTimeoutMs('executor.health')).toBe(75_000)
+  })
+
+  test('binds verification ownership to the native-created auth entry without exposing auth', async () => {
+    const directory = await temporaryDirectory('managed-auth-ownership-')
+    try {
+      const native = join(directory.path, 'native')
+      const managed = join(directory.path, 'managed')
+      await mkdir(native, { recursive: true })
+      await writeFile(join(native, 'auth.json'), 'synthetic-account-not-marker-data')
+      prepareManagedExecutorEnvironment({
+        dataDirectory: directory.path,
+        environment: {
+          VITE_WEWORK_E2E: 'true',
+          WEWORK_E2E_NATIVE_CODEX_HOME: native,
+          WEGENT_CODEX_HOME: managed,
+          WEGENT_EXECUTOR_HOME: directory.path,
+          WEWORK_AI_VERIFY_AUTH_OWNER: 'synthetic-session-owner',
+        },
+      })
+      const text = await readFile(join(managed, '.wework-managed-auth'), 'utf8')
+      const marker = JSON.parse(text)
+      expect(marker.version).toBe(1)
+      expect(marker.ownerId).toBe('synthetic-session-owner')
+      expect(marker.auth.kind).toBe(process.platform === 'win32' ? 'file' : 'symlink')
+      expect(marker.auth.ino).toMatch(/^\d+$/)
+      expect(text).not.toContain('synthetic-account-not-marker-data')
+    } finally {
+      await directory.remove()
+    }
+  })
+
   test('reuses the existing executor home by default', () => {
     const environment = prepareManagedExecutorEnvironment({
       dataDirectory: '/unused-electron-data',
@@ -90,6 +205,7 @@ describe('managed executor runtime', () => {
 
     expect(environment.CODEX_HOME).toBe(managedCodexHome)
     expect(environment.WEGENT_CODEX_HOME).toBe(managedCodexHome)
+    expect(environment.WEGENT_NATIVE_CODEX_HOME).toBe(nativeCodexHome)
     expect(await readFile(join(managedCodexHome, 'auth.json'), 'utf8')).toBe('{"auth":"native"}\n')
     await directory.remove()
   })
@@ -105,15 +221,38 @@ describe('managed executor runtime', () => {
       dataDirectory: join(directory.path, 'data'),
       environment: {
         CODEX_HOME: launchingCodexHome,
+        WEGENT_NATIVE_CODEX_HOME: launchingCodexHome,
         VITE_WEWORK_E2E: 'true',
         WEGENT_CODEX_HOME: managedCodexHome,
       },
     })
 
     expect(environment.CODEX_HOME).toBe(managedCodexHome)
+    expect(environment.WEGENT_NATIVE_CODEX_HOME).toBeUndefined()
     await expect(readFile(join(managedCodexHome, 'auth.json'), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     })
+    await directory.remove()
+  })
+
+  test('retains the custom native auth source when preparing an existing managed environment', async () => {
+    const directory = await temporaryDirectory('managed-executor-native-source-')
+    const nativeCodexHome = join(directory.path, 'custom-native')
+    const managedCodexHome = join(directory.path, 'managed')
+    const options = {
+      dataDirectory: join(directory.path, 'data'),
+      environment: {
+        CODEX_HOME: nativeCodexHome,
+        WEGENT_CODEX_HOME: managedCodexHome,
+      },
+    }
+
+    const environment = prepareManagedExecutorEnvironment(options)
+    expect(environment.CODEX_HOME).toBe(managedCodexHome)
+    expect(environment.WEGENT_NATIVE_CODEX_HOME).toBe(nativeCodexHome)
+    expect(
+      prepareManagedExecutorEnvironment({ ...options, environment }).WEGENT_NATIVE_CODEX_HOME
+    ).toBe(nativeCodexHome)
     await directory.remove()
   })
 
@@ -228,15 +367,60 @@ describe('managed executor runtime', () => {
     }
   })
 
-  test('reconnects the owner stream after the executor restarts', async () => {
-    const directory = await temporaryDirectory('managed-executor-restart-')
-    const ownerConnectionsPath = join(directory.path, 'owner-connections')
-    const identityPath = join(directory.path, 'executor-identity.json')
-    const runtime = new ManagedExecutorRuntime({
-      command: process.execPath,
-      args: [
-        '-e',
-        `
+  test('retries an early authentication close without outliving its deadline', async () => {
+    const directory = await temporaryDirectory('exec-closed-')
+    const endpoint =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\executor-closed-${process.pid}-${Date.now()}`
+        : `${directory.path}/executor.sock`
+    let connections = 0
+    const server = createServer(socket => {
+      const attempt = ++connections
+      socket.once('data', () => {
+        if (attempt === 1) socket.end()
+        else socket.end('{"type":"authenticated","ok":true,"protocol_version":1}\n')
+      })
+    })
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(endpoint, resolve)
+    })
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    try {
+      await expect(
+        Promise.race([
+          waitForEndpointAuthentication(endpoint, 'test-token', AbortSignal.timeout(1_000)),
+          new Promise<never>((_, reject) => {
+            deadline = setTimeout(
+              () => reject(new Error('Authentication promise stayed pending')),
+              2_000
+            )
+          }),
+        ])
+      ).resolves.toBeUndefined()
+      expect(connections).toBe(2)
+    } finally {
+      clearTimeout(deadline)
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      await directory.remove()
+    }
+  })
+
+  describe('owner stream recovery', () => {
+    let directory: Awaited<ReturnType<typeof temporaryDirectory>>
+    let ownerConnectionsPath: string
+    let identityPath: string
+    let runtime: ManagedExecutorRuntime
+
+    beforeEach(async () => {
+      directory = await temporaryDirectory('managed-executor-restart-')
+      ownerConnectionsPath = join(directory.path, 'owner-connections')
+      identityPath = join(directory.path, 'executor-identity.json')
+      runtime = new ManagedExecutorRuntime({
+        command: process.execPath,
+        args: [
+          '-e',
+          `
           const net = require('node:net')
           const fs = require('node:fs')
           const path = require('node:path')
@@ -245,6 +429,8 @@ describe('managed executor runtime', () => {
           const identityPath = process.argv[2]
           fs.writeFileSync(identityPath, JSON.stringify({
             deviceId: process.env.WEGENT_APP_IPC_DEVICE_ID,
+            registrationDeviceId: process.env.DEVICE_ID,
+            runtimeInstanceId: process.env.WEGENT_RUNTIME_INSTANCE_ID,
             deviceName: process.env.DEVICE_NAME,
           }))
           if (process.platform !== 'win32') {
@@ -269,26 +455,41 @@ describe('managed executor runtime', () => {
             })
           }).listen(endpoint)
         `,
-        ownerConnectionsPath,
-        identityPath,
-      ],
-      environment: {
-        ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
-        VITE_WEWORK_E2E: 'true',
-        WEGENT_EXECUTOR_HOME: join(directory.path, 'executor-home'),
-      },
-      dataDirectory: join(directory.path, 'data'),
-      logDirectory: join(directory.path, 'logs'),
-      deviceId: 'test-device',
-      deviceName: 'Test Device',
+          ownerConnectionsPath,
+          identityPath,
+        ],
+        environment: {
+          ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
+          VITE_WEWORK_E2E: 'true',
+          WEGENT_EXECUTOR_HOME: join(directory.path, 'executor-home'),
+          DEVICE_ID: 'stale-launcher-device',
+          WEGENT_RUNTIME_INSTANCE_ID: 'stale-launcher-runtime',
+        },
+        dataDirectory: join(directory.path, 'data'),
+        logDirectory: join(directory.path, 'logs'),
+        deviceId: 'test-device',
+        deviceName: 'Test Device',
+      })
+
+      await runtime.start()
     })
 
-    try {
-      await runtime.start()
+    afterEach(async () => {
+      // Cleanup must run even when startup or the recovery assertion times out.
+      try {
+        await runtime?.stop()
+      } finally {
+        await directory?.remove()
+      }
+    })
+
+    test('reconnects the owner stream after the executor restarts', async () => {
       await expect
         .poll(async () => JSON.parse(await readFile(identityPath, 'utf8')))
         .toEqual({
           deviceId: 'test-device',
+          registrationDeviceId: 'device-test-device',
+          runtimeInstanceId: 'runtime-test-device',
           deviceName: 'Test Device',
         })
 
@@ -303,10 +504,7 @@ describe('managed executor runtime', () => {
           { timeout: 5_000 }
         )
         .toBe(2)
-    } finally {
-      await runtime.stop()
-      await directory.remove()
-    }
+    })
   })
 
   test('sends authenticated executor requests without a renderer transport', async () => {

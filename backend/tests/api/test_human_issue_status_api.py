@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token, get_password_hash
 from app.models.delivery import (
     CloudProject,
+    LoopItem,
+    LoopItemActiveAssignment,
     LoopItemTaskBinding,
     WorkspaceCleanupIntent,
 )
@@ -19,7 +21,11 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
+from app.services.collaboration_human_assignments import (
+    collaboration_human_assignment_status,
+)
 from app.services.issue_assignments import issue_assignment_service
+from tests.service_results import service_result
 from tests.utils.collaboration import authorize_project
 
 
@@ -310,13 +316,18 @@ def test_task_binding_is_persisted_before_status_transition(
     current = test_client.get(url, headers=_auth(token)).json()
     assert current["status"] == status
     assert current["version"] == issue["version"]
-    projection = test_client.post(
-        f"/api/v1/cloud-projects/{project.id}/executions/statuses",
-        headers=_auth(token),
-        json={
-            "loop_item_id": issue["id"],
-            "human_assignment_ids": [identity["humanAssignmentId"]],
-        },
+    projection = service_result(
+        lambda: {
+            "items": [
+                collaboration_human_assignment_status(
+                    test_db,
+                    project_id=int(project.id),
+                    issue_id=issue["id"],
+                    human_assignment_id=identity,
+                )
+                for identity in [identity["humanAssignmentId"]]
+            ]
+        }
     )
     assert projection.status_code == 200, projection.text
     assert projection.json()["items"][0]["status"] == "running"
@@ -382,10 +393,68 @@ def test_assigned_task_binding_survives_normal_status_changes(
     assert reopened.json()["human_task_binding"] == binding
 
 
-@pytest.fixture
-def test_client(test_client):
-    """Exercise retained Python HTTP components in an isolated application."""
-    from tests.retained_python_handlers import component_client
+def test_active_assignment_index_follows_reassignment_and_transaction_rollback(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    project: CloudProject,
+    test_user: User,
+) -> None:
+    assignee, _ = _member(test_db, project)
+    issue = _assigned_issue(test_client, project, test_token, assignee)
 
-    with component_client(test_client, ("execution_statuses",)) as client:
-        yield client
+    assert LoopItemActiveAssignment.__table__ is LoopItem.__table__
+    child = test_client.post(
+        f"/api/v1/cloud-projects/{project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Unrelated child", "parent_id": issue["id"]},
+    )
+    assert child.status_code == 201, child.text
+
+    def indexed_ids() -> set[str]:
+        return {
+            row.loop_item_id
+            for row in test_db.query(LoopItemActiveAssignment)
+            .filter_by(parent_id=issue["id"])
+            .filter(LoopItemActiveAssignment.loop_item_id.isnot(None))
+            .all()
+        }
+
+    original = indexed_ids()
+    assert original == {
+        event.id
+        for event in issue_assignment_service.active_for_issue(test_db, issue["id"])
+    }
+    assert len(original) == 1
+    nested = test_db.begin_nested()
+    replacement, _ = issue_assignment_service.record(
+        test_db,
+        project_id=project.id,
+        issue_id=issue["id"],
+        member_type="human",
+        member_id=str(assignee.id),
+        assigned_by_user_id=assignee.id,
+        workflow_step=None,
+        notify=False,
+        trigger="test",
+        replace_root_assignments=True,
+    )
+    assert indexed_ids() == {replacement.id}
+    assert (
+        test_client.get(
+            f"/api/v1/loop-items/{child.json()['id']}", headers=_auth(test_token)
+        ).status_code
+        == 200
+    )
+    nested.rollback()
+    assert indexed_ids() == original
+
+    assignment = issue_assignment_service.remove(
+        test_db,
+        project_id=int(project.id),
+        issue_id=issue["id"],
+        assignment_id=next(iter(original)),
+        user_id=test_user.id,
+    )
+    assert assignment.id in original
+    assert indexed_ids() == set()

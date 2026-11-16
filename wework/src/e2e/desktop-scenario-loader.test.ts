@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { describe, expect, test } from 'vitest'

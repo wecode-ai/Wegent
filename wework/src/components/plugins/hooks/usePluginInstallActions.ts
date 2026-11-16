@@ -10,10 +10,12 @@ import {
 export function usePluginInstallActions({
   installedPlugins,
   localPluginApi,
+  isUninstalling,
   t,
   setPluginMarketplaceState,
 }: {
   installedPlugins: InstalledPluginItem[]
+  isUninstalling: (item: PluginMarketplaceItem) => boolean
   localPluginApi: {
     rememberMarketplaceSelection: (marketplaceId: string) => void
   }
@@ -26,6 +28,7 @@ export function usePluginInstallActions({
       installed: InstalledPluginItem | null | undefined,
       prompt?: string
     ) => {
+      if (isUninstalling(item)) return
       const queued = queueMarketplacePluginTrial({
         item,
         installed,
@@ -40,7 +43,7 @@ export function usePluginInstallActions({
         }))
       }
     },
-    [localPluginApi, setPluginMarketplaceState, t]
+    [isUninstalling, localPluginApi, setPluginMarketplaceState, t]
   )
 
   const tryMarketplacePluginInChat = useCallback(

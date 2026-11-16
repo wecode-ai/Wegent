@@ -26,14 +26,15 @@ fn task_row_with_crd(id: i64, name: &str, updated_at: &str, crd: TaskCrd) -> Pro
 
 #[test]
 fn include_tasks_parses_pydantic_booleans() {
-    assert!(parse_include_tasks(None).unwrap());
-    assert!(parse_include_tasks(Some("true")).unwrap());
-    assert!(!parse_include_tasks(Some("False")).unwrap());
-    assert!(parse_include_tasks(Some("1")).unwrap());
-    assert!(!parse_include_tasks(Some("0")).unwrap());
-    assert!(parse_include_tasks(Some("yes")).unwrap());
-    assert!(parse_include_tasks(Some("on")).unwrap());
-    let error = parse_include_tasks(Some("maybe")).unwrap_err();
+    let parse = |raw| parse_include_flag(raw, "include_tasks");
+    assert!(parse(None).unwrap());
+    assert!(parse(Some("true")).unwrap());
+    assert!(!parse(Some("False")).unwrap());
+    assert!(parse(Some("1")).unwrap());
+    assert!(!parse(Some("0")).unwrap());
+    assert!(parse(Some("yes")).unwrap());
+    assert!(parse(Some("on")).unwrap());
+    let error = parse(Some("maybe")).unwrap_err();
     assert_eq!(
         error.status(),
         brz_http_server::StatusCode::UNPROCESSABLE_ENTITY
@@ -134,6 +135,7 @@ fn list_projects_declares_the_json_response_model() {
         F: for<'a> std::ops::AsyncFn(
                 &'a Arc<AppState>,
                 crate::auth::SessionUser,
+                Option<String>,
                 Option<String>,
                 Option<String>,
             ) -> Result<ProjectListResponse, FastApiError>,

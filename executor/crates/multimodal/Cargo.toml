@@ -1,0 +1,18 @@
+[package]
+name = "wegent-multimodal"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Attachment processing, image preparation, and multimodal prompts"
+
+[dependencies]
+wegent-runtime-config = { path = "../config" }
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tokio = { version = "1.48", features = ["macros", "rt"] }
+
+[dev-dependencies]
+tempfile = "3.23"

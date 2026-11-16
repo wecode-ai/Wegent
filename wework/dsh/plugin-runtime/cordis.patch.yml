@@ -3,3 +3,4 @@
       name: '@wegent/dsh-plugin-runtime'
       inject:
         - webServer
+        - weworkRequestSecurity

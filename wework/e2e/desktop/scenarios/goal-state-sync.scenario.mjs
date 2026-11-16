@@ -1,3 +1,4 @@
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -6,6 +7,7 @@ import {
 } from '../modules/shared.mjs'
 import { createSse, readRequestBody, streamingTextEvents } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 
 const MARKER = 'WEWORK_GOAL_STATE_SYNC'
 
@@ -50,13 +52,14 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs }) {
     async verify(control) {
       active = true
       let address
+      const gates = runtimeTransportGates(control)
       const origin = await control.command('getLocationOrigin', 'body')
       const rpc = async (method, params) => {
-        const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+        const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ id: `goal-state-sync-${method}`, method, params }),
-          signal: AbortSignal.timeout(uiTimeoutMs),
+          timeoutMs: uiTimeoutMs,
         })
         const payload = await response.json()
         assert.equal(response.ok, true)
@@ -79,7 +82,16 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs }) {
           .currentRuntimeTask
         assert.ok(address?.taskId)
 
+        let update = 0
         for (const status of ['active', 'paused', 'active', 'blocked', 'active']) {
+          const lookup = `goal-point-snapshot-${++update}`
+          await gates.arm({
+            id: lookup,
+            kind: 'response',
+            name: 'runtime.tasks.get',
+            where: [{ path: 'params.taskId', equals: address.taskId }],
+            hold: false,
+          })
           const result = await rpc('runtime.tasks.goal.set', { address, objective: MARKER, status })
           assert.equal(result.goal.status, status)
           await waitForWorkbenchDebugState(
@@ -89,6 +101,9 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs }) {
               snapshot.workbench?.activeLifecycle?.goalStatus === status,
             `The Goal bar and lifecycle did not agree on ${status}`
           )
+          const snapshot = await gates.wait(lookup)
+          assert.equal(snapshot.value.result.success, true)
+          assert.equal(snapshot.value.result.task.taskId, address.taskId)
           await control.command(
             'waitFor',
             `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="${status === 'active' ? 'pause-goal-button' : 'resume-goal-button'}"]`
@@ -121,6 +136,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs }) {
         )
         await control.command('waitFor', '[data-testid="goal-status-bar"]', { visible: false })
       } finally {
+        await gates.reset()
         release()
         if (address) await rpc('runtime.tasks.goal.clear', { address })
       }

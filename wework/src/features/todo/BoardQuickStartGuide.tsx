@@ -131,7 +131,10 @@ export function BoardQuickStartGuide({
         role="status"
         className="mx-6 mb-3 flex min-h-10 items-center gap-2 rounded-xl border border-border bg-muted/50 px-3 text-sm text-text-secondary"
       >
-        <Check className="h-4 w-4 text-green-600 dark:text-green-400" aria-hidden="true" />
+        <Check
+          className="h-4 w-4 text-success wework:text-green-600 wework:dark:text-green-400"
+          aria-hidden="true"
+        />
         <span>{t('todo.quick_start_completed', '快速上手已完成，可以继续推进工作了。')}</span>
       </div>
     )
@@ -158,7 +161,7 @@ export function BoardQuickStartGuide({
           type="button"
           data-testid="cloud-board-quick-start-dismiss"
           onClick={() => updateState({ dismissed: true })}
-          className="h-7 rounded-lg px-2 text-xs text-text-muted transition hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+          className="h-7 rounded-lg px-2 text-xs text-text-muted transition hover:bg-background hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
         >
           {t('todo.quick_start_dismiss', '不再显示')}
         </button>
@@ -167,7 +170,7 @@ export function BoardQuickStartGuide({
           data-testid="cloud-board-quick-start-toggle"
           aria-expanded={!state.collapsed}
           onClick={() => updateState({ collapsed: !state.collapsed })}
-          className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-background hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+          className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-background hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
         >
           {state.collapsed
             ? t('todo.quick_start_expand', '展开')
@@ -251,7 +254,7 @@ function QuickStartStep({
         className={[
           'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs',
           complete
-            ? 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-300'
+            ? 'border-success/30 bg-success/10 text-success wework:border-green-600/30 wework:bg-green-600/10 wework:text-green-700 wework:dark:text-green-300'
             : 'border-border text-text-muted',
         ].join(' ')}
         aria-label={
@@ -271,7 +274,7 @@ function QuickStartStep({
             data-testid={`${testId}-action`}
             disabled={actionDisabled}
             onClick={onAction}
-            className="mt-2 h-7 rounded-lg bg-muted px-2.5 text-xs font-medium text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-40"
+            className="mt-2 h-7 rounded-lg bg-muted px-2.5 text-xs font-medium text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-40"
           >
             {actionLabel}
           </button>

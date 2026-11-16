@@ -5,6 +5,7 @@ import {
   createLocalCollaborationProject,
   configureFirstProjectExecutionEnvironment,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const PROJECT_NAME = '评论提及成员回归'
 const ISSUE_NAME = '评论 @ 成员必须弹出成员列表'
@@ -84,7 +85,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await configureFirstProjectExecutionEnvironment(control, ACTIVE_CONTENT, uiTimeoutMs)
-      await control.command('click', board('[data-testid="collaboration-tab-board"]'))
+      await selectCollaborationProjectView(control, ACTIVE_BOARD, 'board')
 
       await control.command(
         'clickWhenEnabled',
@@ -103,25 +104,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
           timeoutMs: uiTimeoutMs,
         }
       )
-      const boardSnapshot = await (async () => {
-        const deadline = Date.now() + uiTimeoutMs
-        while (Date.now() < deadline) {
-          const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_BOARD))
-          const item = snapshot.testIds.find(
-            testId =>
-              testId.startsWith('collaboration-issue-') &&
-              !testId.startsWith('collaboration-issue-create') &&
-              !testId.startsWith('collaboration-issue-detail')
-          )
-          if (item) return { item, snapshot }
-          await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-        }
-        assert.fail('The Issue detail fixture did not create an Issue card')
-      })()
-      await control.command('click', board(`[data-testid="${boardSnapshot.item}"]`), {
-        visible: true,
-      })
       await control.command('waitFor', board('[data-testid="cloud-todo-detail"]'), {
+        text: ISSUE_NAME,
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', board('[data-testid="cloud-todo-detail-title"]'), {
+        value: ISSUE_NAME,
         timeoutMs: uiTimeoutMs,
       })
 

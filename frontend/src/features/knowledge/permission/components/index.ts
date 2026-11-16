@@ -4,4 +4,3 @@
 
 export { ShareLinkDialog } from './ShareLinkDialog'
 export { PermissionManagementTab } from './PermissionManagementTab'
-export { AddUserDialog } from './add-user-dialog'

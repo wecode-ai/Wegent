@@ -144,3 +144,138 @@ it("keeps cloud attachment actions and safe external navigation on the same rend
     "noopener,noreferrer",
   );
 });
+
+it("allows long recognized-link labels to wrap inside Issue comments", async () => {
+  const url = `https://github.com/example/repository/commit/${"a".repeat(80)}`;
+  const label = `commit ${"a".repeat(120)}`;
+  await act(async () =>
+    root.render(<IssueActivityMarkdown content={`[${label}](${url})`} />),
+  );
+
+  const link = container.querySelector<HTMLAnchorElement>(
+    '[data-testid="composer-link-chip"]',
+  )!;
+  const linkLabel = link.querySelector<HTMLSpanElement>(
+    ".composer-mention-label",
+  )!;
+  expect(link.classList.contains("composer-link-node")).toBe(true);
+  expect(linkLabel.classList.contains("min-w-0")).toBe(true);
+  expect(linkLabel.classList.contains("whitespace-normal")).toBe(true);
+  expect(linkLabel.classList.contains("[overflow-wrap:anywhere]")).toBe(true);
+});
+
+it("opens the current Issue attachment by its exact link label instead of its executor path", async () => {
+  const onOpenAttachment = vi.fn();
+  const list = vi
+    .fn()
+    .mockResolvedValue([
+      { id: "uploaded-report", display_name: "需求澄清.md" },
+    ]);
+  const attachments = { list } as unknown as SharedWorkspaceAttachmentsApi;
+  await act(async () =>
+    root.render(
+      <IssueMarkdownProvider attachments={attachments} issueId="issue-6">
+        <IssueActivityMarkdown
+          content="[需求澄清.md](/home/ubuntu/executor/outputs/clarification.md)"
+          onOpenAttachment={onOpenAttachment}
+        />
+      </IssueMarkdownProvider>,
+    ),
+  );
+  expect(list).not.toHaveBeenCalled();
+  const button = container.querySelector<HTMLButtonElement>(
+    '[data-testid="issue-comment-file-attachment"]',
+  )!;
+  expect(button.disabled).toBe(false);
+  await act(async () => button.click());
+  expect(list).toHaveBeenCalledExactlyOnceWith("issue-6");
+  expect(onOpenAttachment).toHaveBeenCalledExactlyOnceWith(
+    "uploaded-report",
+    "需求澄清.md",
+  );
+});
+
+it("resolves against the new Issue after navigation and leaves external links alone", async () => {
+  const onOpenAttachment = vi.fn();
+  const list = vi.fn(async (issueId: string) => [
+    { id: issueId, display_name: "report.md" },
+  ]);
+  const attachments = { list } as unknown as SharedWorkspaceAttachmentsApi;
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
+  for (const issueId of ["first-issue", "second-issue"]) {
+    await act(async () =>
+      root.render(
+        <IssueMarkdownProvider attachments={attachments} issueId={issueId}>
+          <IssueActivityMarkdown
+            content="[report.md](/remote/report.md) [report.md](https://example.com/report.md)"
+            onOpenAttachment={onOpenAttachment}
+          />
+        </IssueMarkdownProvider>,
+      ),
+    );
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="issue-comment-file-attachment"]',
+        )!
+        .click(),
+    );
+    expect(list).toHaveBeenLastCalledWith(issueId);
+    expect(onOpenAttachment).toHaveBeenLastCalledWith(issueId, "report.md");
+  }
+  await act(async () =>
+    container.querySelector<HTMLAnchorElement>("a")!.click(),
+  );
+  expect(list).toHaveBeenCalledTimes(2);
+  expect(open).toHaveBeenCalledExactlyOnceWith(
+    "https://example.com/report.md",
+    "_blank",
+    "noopener,noreferrer",
+  );
+});
+
+it.each(["missing", "ambiguous", "offline", "open-failed"])(
+  "reports %s attachments and permits recovery without guessing a file",
+  async (failure) => {
+    const onOpenAttachment = vi.fn();
+    const list = vi.fn().mockResolvedValue(
+      failure === "missing"
+        ? [{ id: "other", display_name: "prefix-report.md" }]
+        : failure === "ambiguous"
+          ? [
+              { id: "first", display_name: "report.md" },
+              { id: "second", display_name: "report.md" },
+            ]
+          : [{ id: "report", display_name: "report.md" }],
+    );
+    if (failure === "offline") list.mockRejectedValueOnce(new Error("offline"));
+    if (failure === "open-failed")
+      onOpenAttachment.mockRejectedValueOnce(new Error("read failed"));
+    const attachments = { list } as unknown as SharedWorkspaceAttachmentsApi;
+    await act(async () =>
+      root.render(
+        <IssueMarkdownProvider attachments={attachments} issueId="issue-6">
+          <IssueActivityMarkdown
+            content="[report.md](/remote/report.md)"
+            translate={translate}
+            onOpenAttachment={onOpenAttachment}
+          />
+        </IssueMarkdownProvider>,
+      ),
+    );
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-testid="issue-comment-file-attachment"]',
+    )!;
+    await act(async () => button.click());
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      translate("todo.file_preview_failed"),
+    );
+    if (failure !== "open-failed")
+      expect(onOpenAttachment).not.toHaveBeenCalled();
+    expect(button.disabled).toBe(false);
+    list.mockResolvedValue([{ id: "recovered", display_name: "report.md" }]);
+    await act(async () => button.click());
+    expect(onOpenAttachment).toHaveBeenLastCalledWith("recovered", "report.md");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  },
+);

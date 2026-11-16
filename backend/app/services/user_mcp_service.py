@@ -6,10 +6,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from contextlib import contextmanager
 from copy import deepcopy
-from typing import Any
+from typing import Any, Iterator
 
+from fastapi import HTTPException
+from redis.exceptions import RedisError
+from sqlalchemy.exc import OperationalError
+
+from app.core.cache import cache_manager
+from app.core.config import settings
+from app.db.session import SessionLocal
+from app.models.user import User
 from app.services.mcp_provider_registry import (
     get_mcp_provider,
     get_mcp_provider_service,
@@ -37,6 +47,18 @@ MCP_SCOPE_KEY = "scope"
 MCP_ACCOUNT_KEY = "account"
 
 
+class MCPPreferencesError(HTTPException):
+    """A concurrent configuration change or lock timeout requires a retry."""
+
+    def __init__(self, detail: str, status_code: int = 409) -> None:
+        super().__init__(status_code=status_code, detail=detail)
+        self.error_code = (
+            "mcp_authorization_busy"
+            if status_code == 503
+            else "mcp_configuration_changed"
+        )
+
+
 def _encrypt(value: str) -> str:
     """Encrypt a value unless it is already stored encrypted."""
     if not value:
@@ -55,6 +77,179 @@ def _decrypt(value: Any) -> str:
 
 class UserMCPService:
     """Helper service for reading and writing user-scoped MCP settings."""
+
+    @staticmethod
+    @contextmanager
+    def locked_user(user_id: int) -> Iterator[User]:
+        """Own a fresh transaction; serialize all MCP writes on the user row."""
+        try:
+            with SessionLocal.begin() as db:
+                user = (
+                    db.query(User)
+                    .filter(User.id == user_id)
+                    .with_for_update()
+                    .populate_existing()
+                    .one_or_none()
+                )
+                if user is None:
+                    raise HTTPException(status_code=404, detail="User not found")
+                yield user
+        except OperationalError as exc:
+            error_args = getattr(exc.orig, "args", ())
+            if error_args and error_args[0] in {1205, 1213, 3572}:
+                raise MCPPreferencesError(
+                    "MCP authorization is busy; please retry shortly", status_code=503
+                ) from None
+            raise
+
+    @staticmethod
+    def service_snapshot(preferences: Any, provider_id: str, service_id: str) -> str:
+        """Track user-controlled configuration, excluding rotating credentials."""
+        config = UserMCPService.get_provider_service_config(
+            preferences, provider_id, service_id
+        )
+        snapshot = {key: config[key] for key in ("enabled", "url", "auth_mode")}
+        return hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode()).hexdigest()
+
+    @staticmethod
+    def authorization_session_key(
+        user_id: int, provider_id: str, service_id: str
+    ) -> str:
+        return f"user_mcp_oauth_active:{user_id}:{provider_id}:{service_id}"
+
+    @staticmethod
+    def set_authorization_session(
+        user_id: int, provider_id: str, service_id: str, session_id: str | None
+    ) -> None:
+        """Replace or cancel pending consent while the caller holds the user row."""
+        key = UserMCPService.authorization_session_key(user_id, provider_id, service_id)
+        if not cache_manager.set_from_sync(
+            key, session_id, expire=settings.MCP_OAUTH_SESSION_TTL_SECONDS
+        ):
+            raise MCPPreferencesError(
+                "MCP authorization session is unavailable; please retry",
+                status_code=503,
+            )
+
+    @staticmethod
+    def get_authorization_session(
+        user_id: int, provider_id: str, service_id: str
+    ) -> Any:
+        key = UserMCPService.authorization_session_key(user_id, provider_id, service_id)
+        try:
+            return cache_manager.get_sync_or_raise(key)
+        except RedisError:
+            raise MCPPreferencesError(
+                "MCP authorization session is unavailable; please retry",
+                status_code=503,
+            ) from None
+
+    @staticmethod
+    def start_authorization(
+        user_id: int, provider_id: str, service_id: str, session_id: str
+    ) -> tuple[dict[str, Any], str]:
+        """Claim consent before discovery so disconnect can cancel in-flight starts."""
+        with UserMCPService.locked_user(user_id) as current:
+            config = UserMCPService.get_provider_service_config(
+                current.preferences, provider_id, service_id
+            )
+            if not config["url"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Please save the MCP OAuth server URL before connecting",
+                )
+            if config["auth_mode"] != MCP_AUTH_MODE_OAUTH:
+                raise MCPPreferencesError("Please save OAuth mode before connecting")
+            snapshot = UserMCPService.service_snapshot(
+                current.preferences, provider_id, service_id
+            )
+            UserMCPService.set_authorization_session(
+                user_id, provider_id, service_id, session_id
+            )
+            return config, snapshot
+
+    @staticmethod
+    def require_authorization(current: User, session: dict[str, Any]) -> None:
+        """Called only while holding the owner row; never reactivate canceled consent."""
+        provider_id, service_id = str(session["provider_id"]), str(
+            session["service_id"]
+        )
+        active = UserMCPService.get_authorization_session(
+            current.id, provider_id, service_id
+        )
+        if active != session.get("session_id"):
+            raise MCPPreferencesError(
+                "MCP authorization was canceled or replaced; start again"
+            )
+        snapshot = UserMCPService.service_snapshot(
+            current.preferences, provider_id, service_id
+        )
+        if snapshot != session.get("service_snapshot"):
+            raise MCPPreferencesError(
+                "MCP configuration or authorization changed; start authorization again"
+            )
+
+    @staticmethod
+    def validate_authorization(session: dict[str, Any]) -> None:
+        with UserMCPService.locked_user(int(session["user_id"])) as current:
+            UserMCPService.require_authorization(current, session)
+
+    @staticmethod
+    def read_service(
+        user_id: int, provider_id: str, service_id: str
+    ) -> tuple[dict, str]:
+        """Read committed configuration without borrowing a caller's ORM session."""
+        with SessionLocal() as db:
+            user = db.get(User, user_id)
+            if user is None:
+                raise HTTPException(status_code=404, detail="User not found")
+            return (
+                UserMCPService.get_provider_service_config(
+                    user.preferences, provider_id, service_id
+                ),
+                UserMCPService.service_snapshot(
+                    user.preferences, provider_id, service_id
+                ),
+            )
+
+    @staticmethod
+    def save_service_config(
+        user_id: int,
+        *,
+        provider_id: str,
+        service_id: str,
+        enabled: bool,
+        url: str,
+        auth_mode: str | None,
+    ) -> dict[str, Any]:
+        """Merge one service into current preferences while holding its owner row."""
+        with UserMCPService.locked_user(user_id) as user:
+            previous = UserMCPService.get_provider_service_config(
+                user.preferences, provider_id, service_id
+            )
+            if (
+                previous["auth_mode"] == MCP_AUTH_MODE_OAUTH
+                or auth_mode == MCP_AUTH_MODE_OAUTH
+            ):
+                UserMCPService.set_authorization_session(
+                    user_id, provider_id, service_id, None
+                )
+            preferences = UserMCPService.set_provider_service_config(
+                user.preferences,
+                provider_id=provider_id,
+                service_id=service_id,
+                enabled=enabled,
+                url=url,
+                auth_mode=auth_mode,
+            )
+            if previous["url"] != url.strip():
+                preferences = UserMCPService.clear_service_oauth_credentials(
+                    preferences, provider_id, service_id
+                )
+            user.preferences = UserMCPService.dump_preferences(preferences)
+            return UserMCPService.get_provider_service_config(
+                user.preferences, provider_id, service_id
+            )
 
     @staticmethod
     def load_preferences(preferences: str | dict[str, Any] | None) -> dict[str, Any]:

@@ -9,9 +9,9 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 
 const FIELD_CLASS =
-  'h-9 min-w-0 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary'
+  'h-9 min-w-0 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-primary'
 const TEXTAREA_CLASS =
-  'w-full resize-y rounded-md border border-border bg-background p-3 text-sm leading-6 text-text-primary outline-none focus:border-primary'
+  'w-full resize-y rounded-md border border-border bg-background p-3 text-sm leading-6 text-text-primary outline-none keyboard:focus:border-primary'
 
 type CatalogObject = Record<string, unknown>
 
@@ -613,13 +613,13 @@ export function CustomModelCapabilitiesForm({
                                 <option value="native">
                                   {t(
                                     'workbench.local_model_codex_tool_compatibility_native',
-                                    '原生兼容（推荐）'
+                                    '原生兼容'
                                   )}
                                 </option>
                                 <option value="standard">
                                   {t(
                                     'workbench.local_model_codex_tool_compatibility_standard',
-                                    '仅兼容标准 Responses'
+                                    '仅兼容标准 Responses（推荐）'
                                   )}
                                 </option>
                               </select>

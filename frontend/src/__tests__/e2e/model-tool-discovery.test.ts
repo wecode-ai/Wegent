@@ -1,4 +1,5 @@
 import {
+  codeModeToolCall,
   deferredToolSearchCall,
   modelToolDefinitions,
   modelToolMatches,
@@ -6,6 +7,42 @@ import {
 
 describe('mock model deferred tool discovery', () => {
   const search = { type: 'function', function: { name: 'search_deferred_tools' } }
+
+  it('uses native Code Mode for compatible declarations and audits restricted capabilities', async () => {
+    const request = { tools: [{ type: 'function', function: { name: 'exec' } }] }
+    const call = codeModeToolCall(request, 'wework_space__get_current_context', {}, [
+      'spawn_agent',
+    ])!
+    expect(call.toolName).toBe('exec')
+    const catalog = [
+      { name: 'mcp__wework_space__get_current_context' },
+      { name: 'collaboration__spawn_agent' },
+    ]
+    const output: unknown[] = []
+    const tools = { [catalog[0].name]: jest.fn().mockResolvedValue({ projectId: 'p1' }) }
+    await new Function(
+      'ALL_TOOLS',
+      'tools',
+      'text',
+      `return (async () => { ${call.arguments.input} })()`
+    )(catalog, tools, (value: unknown) => output.push(value))
+    expect(tools[catalog[0].name]).toHaveBeenCalledWith({})
+    const nativeOutput =
+      'Script completed\nWall time 0.0 seconds\nOutput:\n\n' +
+      output.map(value => JSON.stringify(value)).join('\n')
+    expect(modelToolDefinitions({ input: nativeOutput }).map(tool => tool.name)).toContain(
+      'collaboration__spawn_agent'
+    )
+    expect(output.at(-1)).toEqual({ projectId: 'p1' })
+    await expect(
+      new Function(
+        'ALL_TOOLS',
+        'tools',
+        'text',
+        `return (async () => { ${call.arguments.input} })()`
+      )([], tools, () => {})
+    ).rejects.toThrow('missing or ambiguous')
+  })
 
   it('searches missing tools before issuing a scenario call', () => {
     expect(deferredToolSearchCall({ tools: [search] }, ['wework_space__get_board_item'])).toEqual({

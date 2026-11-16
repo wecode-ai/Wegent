@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -40,6 +40,7 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.schemas.base_role import BaseRole
+from app.schemas.delivery import LoopItemResponse
 from app.schemas.project_chat import (
     ProjectChatAgentCreate,
     ProjectChatAgentFailure,
@@ -50,13 +51,18 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBinding,
 )
 from app.schemas.runtime_work import DeviceWorkspaceUpsert
+from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.ghost_capabilities import MergedGhostCapabilities
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.profile import WeworkExecutionProfile
+from app.services.loop_item_executions.runtime_identity import (
+    execution_runtime_turn_id,
+)
 from app.services.loop_item_executions.service import (
     TaskContext,
     loop_item_execution_service,
 )
+from app.services.loop_items.read_context import LoopItemReadContext
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import (
     bot_config,
@@ -775,7 +781,7 @@ def test_only_project_maintainers_can_change_executable_agent_configuration(
     assert update_error.value.status_code == 403
 
 
-def test_non_creator_maintainer_cannot_change_agent_execution_identity(
+def test_non_creator_maintainer_can_edit_project_definition_without_credential_access(
     test_db: Session, test_user: User
 ) -> None:
     from app.models.resource_member import MemberStatus, ResourceMember
@@ -806,22 +812,21 @@ def test_non_creator_maintainer_cannot_change_agent_execution_identity(
         test_db,
         user_id=test_user.id,
         project_id=project.id,
-        request=ProjectChatAgentCreate(name="Creator-owned Agent"),
+        request=ProjectChatAgentCreate(
+            name="Creator-owned Agent",
+            mcp_servers={"private": {"command": "review", "env": {"KEY": "hidden"}}},
+        ),
     )
 
-    with pytest.raises(HTTPException) as update_error:
-        project_chat_service.update_agent(
-            test_db,
-            user_id=maintainer.id,
-            project_id=project.id,
-            agent_id=agent.id,
-            request=ProjectChatAgentUpdate(
-                version=agent.version,
-                mcp_servers={"unsafe": {"command": "sh"}},
-            ),
+    visible = next(
+        row
+        for row in project_chat_service.list_agents(
+            test_db, user_id=maintainer.id, project_id=project.id
         )
-
-    assert update_error.value.status_code == 403
+        if row.id == agent.id
+    )
+    assert visible.can_edit is True
+    assert visible.mcp_servers == {"private": {}}
 
     renamed = project_chat_service.update_agent(
         test_db,
@@ -831,9 +836,18 @@ def test_non_creator_maintainer_cannot_change_agent_execution_identity(
         request=ProjectChatAgentUpdate(
             version=agent.version,
             name="Project-managed display name",
+            system_prompt="Project-managed instructions",
+            mcp_servers=visible.mcp_servers,
         ),
     )
     assert renamed.name == "Project-managed display name"
+    assert renamed.system_prompt == "Project-managed instructions"
+    assert renamed.created_by_user_id == test_user.id
+    assert renamed.mcp_servers == {"private": {}}
+    stored = test_db.get(ProjectChatAgent, agent.id)
+    assert stored.metadata_json["mcp_servers"] == {
+        "private": {"command": "review", "env": {"KEY": "hidden"}}
+    }
 
 
 @pytest.mark.parametrize(
@@ -3189,6 +3203,265 @@ def test_execution_truth_rejection_blocks_project_chat_projection(
     assert message.status == "streaming"
 
 
+def _create_terminal_runtime_activity(
+    test_db: Session,
+    test_user: User,
+    *,
+    content: str,
+    turn_id: str | None = None,
+) -> ProjectChatMessage:
+    """Create a completed execution with its already-projected runtime activity."""
+
+    suffix = uuid.uuid4().hex[:8]
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id=f"CHAT-RECONCILED-RUNTIME-{suffix}",
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Reconciled runtime activity",
+        description="",
+        status="in_review",
+        assignee_agent_id="12",
+        created_by_user_id=test_user.id,
+    )
+    execution = LoopItemExecution(
+        loop_item_id=task.id,
+        cloud_project_id=project.id,
+        executor_owner_user_id=test_user.id,
+        agent_id="12",
+        execution_environment="local",
+        execution_device_id="local-device",
+        status="completed",
+        runtime_device_id="local-device",
+        runtime_task_id=f"reconciled-runtime-{suffix}",
+    )
+    test_db.add_all([task, execution])
+    test_db.flush()
+    metadata = {
+        "execution_id": execution.id,
+        "run_status": "completed",
+        "runtime_completed_at": datetime.now(UTC).isoformat(),
+    }
+    if turn_id is not None:
+        metadata["runtime_turn_id"] = turn_id
+    activity = ProjectChatMessage(
+        message_id=str(uuid.uuid4()),
+        project_id=project.id,
+        task_id=task.id,
+        sender_type="agent",
+        sender_id="12",
+        sender_name="Agent",
+        message_type="text",
+        content=content,
+        metadata_json=metadata,
+        status="completed",
+        runtime_device_id="local-device",
+        runtime_task_id=execution.runtime_task_id,
+    )
+    test_db.add(activity)
+    test_db.commit()
+    return activity
+
+
+def test_delayed_completed_event_restores_reconciled_activity_content(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    activity = _create_terminal_runtime_activity(
+        test_db,
+        test_user,
+        content="Runtime reconciled",
+    )
+    execution = test_db.get(LoopItemExecution, activity.metadata_json["execution_id"])
+    turn_id = execution_runtime_turn_id(execution)
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": activity.runtime_task_id,
+                "subtaskId": turn_id,
+                "eventSeq": 5,
+                "data": {"value": "Final answer from the delayed event"},
+            },
+        },
+        test_user.id,
+    )
+
+    assert projected is not None
+    assert projected["mode"] == "snapshot"
+    assert projected["message"]["messageId"] == activity.message_id
+    assert projected["message"]["content"] == "Final answer from the delayed event"
+    test_db.refresh(activity)
+    assert activity.content == "Final answer from the delayed event"
+    assert activity.metadata_json["runtime_turn_id"] == turn_id
+
+
+def test_delayed_completed_event_rejects_an_activity_bound_to_another_turn(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    activity = _create_terminal_runtime_activity(
+        test_db,
+        test_user,
+        content="Runtime reconciled",
+        turn_id="turn-b",
+    )
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": activity.runtime_task_id,
+                "subtaskId": "turn-a",
+                "eventSeq": 5,
+                "data": {"value": "Stale answer from another turn"},
+            },
+        },
+        test_user.id,
+    )
+
+    assert projected is not None
+    assert projected["message"] is None
+    test_db.refresh(activity)
+    assert activity.content == "Runtime reconciled"
+    assert activity.metadata_json["runtime_turn_id"] == "turn-b"
+
+
+def test_delayed_completed_event_requires_a_turn_id(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    activity = _create_terminal_runtime_activity(
+        test_db,
+        test_user,
+        content="Runtime reconciled",
+    )
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": activity.runtime_task_id,
+                "eventSeq": 5,
+                "data": {"value": "Unattributed delayed answer"},
+            },
+        },
+        test_user.id,
+    )
+
+    assert projected is not None
+    assert projected["message"] is None
+    test_db.refresh(activity)
+    assert activity.content == "Runtime reconciled"
+    assert "runtime_turn_id" not in activity.metadata_json
+
+
+def test_delayed_completed_event_rejects_an_unbound_foreign_turn(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    activity = _create_terminal_runtime_activity(
+        test_db,
+        test_user,
+        content="Runtime reconciled",
+    )
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": activity.runtime_task_id,
+                "subtaskId": "turn-from-another-execution",
+                "eventSeq": 5,
+                "data": {"value": "Misattributed delayed answer"},
+            },
+        },
+        test_user.id,
+    )
+
+    assert projected is not None
+    assert projected["message"] is None
+    test_db.refresh(activity)
+    assert activity.content == "Runtime reconciled"
+    assert "runtime_turn_id" not in activity.metadata_json
+
+
+def test_delayed_completed_event_preserves_existing_completed_content(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    activity = _create_terminal_runtime_activity(
+        test_db,
+        test_user,
+        content="A more recent completed answer",
+    )
+
+    @contextmanager
+    def same_session():
+        yield test_db
+
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+
+    projected = _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": activity.runtime_task_id,
+                "subtaskId": "older-turn",
+                "eventSeq": 5,
+                "data": {"value": "Stale older answer"},
+            },
+        },
+        test_user.id,
+    )
+
+    assert projected is not None
+    assert projected["message"] is None
+    test_db.refresh(activity)
+    assert activity.content == "A more recent completed answer"
+    assert "runtime_turn_id" not in activity.metadata_json
+
+
 def test_subscribe_reconciles_streaming_message_from_terminal_task_ai_state(
     test_db: Session, test_user: User
 ) -> None:
@@ -3543,6 +3816,45 @@ def test_subscribe_reconciles_stale_run_metadata_from_terminal_message(
     assert messages[-1].metadata["run_status"] == "completed"
 
 
+def test_subscribe_does_not_reconcile_manager_assignment_as_an_execution(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    response = project_chat_service.start_agent_response(
+        test_db,
+        user_id=test_user.id,
+        request=ProjectChatAgentStart(
+            projectId=project.id,
+            agentId="12",
+            runtimeDeviceId="local-device",
+            runtimeTaskId="manager-assignment-session",
+        ),
+    )
+    row = (
+        test_db.query(ProjectChatMessage)
+        .filter_by(message_id=response.message_id)
+        .one()
+    )
+    row.status = "completed"
+    row.metadata_json = {
+        **row.metadata_json,
+        "activity_type": "manager_assignment",
+        "run_status": "running",
+    }
+    test_db.commit()
+
+    with patch.object(project_chat_service, "_commit") as commit:
+        messages = project_chat_service.subscribe(
+            test_db,
+            user_id=test_user.id,
+            request=ProjectChatSubscribe(projectId=project.id),
+        )
+        commit.assert_not_called()
+
+    assert messages[-1].metadata["run_status"] == "running"
+    assert row.metadata_json["run_status"] == "running"
+
+
 def test_subscribe_never_rewrites_wegent_activity_sender(
     test_db: Session, test_user: User
 ) -> None:
@@ -3651,3 +3963,45 @@ def test_agent_response_dedup_matches_mysql_empty_trigger_sentinel(
         .all()
     )
     assert len(rows) == 1
+
+
+def test_invited_resource_projection_keeps_private_configuration_out_of_issue_responses(
+    test_db: Session, test_user: User
+) -> None:
+    project = create_project(test_db, test_user)
+    item = LoopItem(
+        cloud_project_id=project.id,
+        sequence_number=1,
+        title="Invited Agent",
+        description="Work",
+        status="todo",
+        priority="medium",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "resource_participants": [
+                {
+                    "kind": "agent",
+                    "id": 12,
+                    "name": "Reviewer",
+                    "instructions": "Private configuration",
+                    "team_id": 12,
+                }
+            ]
+        },
+    )
+    test_db.add(item)
+    test_db.commit()
+    test_db.refresh(item)
+    values = loop_item_service.response_values(test_db, item, test_user.id)
+    response = LoopItemResponse.model_validate(values).model_dump()
+    assert response["resource_participants"] == [
+        {"kind": "agent", "id": 12, "name": "Reviewer"}
+    ]
+
+    access = require_cloud_project_role(test_db, project.id, test_user.id)
+    context = LoopItemReadContext.load(test_db, [item], test_user.id, access)
+    context.visible_ids.clear()
+    hidden = loop_item_service.response_values(
+        test_db, item, test_user.id, access, read_context=context
+    )
+    assert hidden["resource_participants"] == []

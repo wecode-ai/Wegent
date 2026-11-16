@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { beforeEach, expect, test, vi } from 'vitest'
 import type { ModelProvider } from './providerModelConfiguration'
 import { testProviderConnection } from './providerConnectionTest'

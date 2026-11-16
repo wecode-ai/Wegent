@@ -45,7 +45,6 @@ export function PluginManagementPage() {
     archiveChatConversations,
     selectStandaloneDevice,
     openStandaloneWorkspace,
-    getRemoteDeviceStartupCommand,
     refreshDevices,
     createProject,
     createGitWorkspaceProject,
@@ -60,6 +59,7 @@ export function PluginManagementPage() {
     getProjectWorkspaceRoot,
     listDeviceDirectories,
     createDeviceDirectory,
+    cloneGitRepository,
   } = useWorkbench()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -169,13 +169,13 @@ export function PluginManagementPage() {
           onArchiveChatConversations={archiveChatConversations}
           onOpenStandaloneWorkspace={openStandaloneWorkspace}
           onSelectStandaloneDevice={selectStandaloneDevice}
-          onGetRemoteDeviceStartupCommand={getRemoteDeviceStartupCommand}
           onRefreshDevices={refreshDevices}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
+          onCloneGitRepository={cloneGitRepository}
           onOpenSettings={options => {
             if (options?.settingsPage) {
               navigateTo(`/settings/${options.settingsPage}`)

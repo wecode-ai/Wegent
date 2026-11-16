@@ -1,0 +1,12 @@
+{
+  "order": 148000,
+  "scenario": "./scenarios/runtime-task-queue.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 97000,
+      "shard": 6,
+      "position": 3000
+    }
+  }
+}

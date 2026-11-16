@@ -18,6 +18,7 @@ pub mod http_error;
 pub mod output_builder;
 #[cfg(test)]
 mod output_builder_tests;
+mod output_result;
 pub mod python_json;
 pub mod rate_limit;
 pub mod responses_repository;
@@ -28,3 +29,8 @@ mod generation_output;
 mod handler;
 mod shell_output;
 pub(crate) mod stream_state;
+
+#[cfg(test)]
+mod test_mysql;
+#[cfg(test)]
+mod test_redis;

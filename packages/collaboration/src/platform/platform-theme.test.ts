@@ -67,6 +67,42 @@ function rgb(triplet: string) {
 }
 
 describe("collaboration surface theme", () => {
+  it("scrolls workspace pages while leaving project scrolling to the project shell", () => {
+    installTheme("light");
+    document.body.innerHTML = `<main class="collaboration-platform-main">
+      <div class="collaboration-platform-page">
+        <div data-testid="collaboration-workspace-home"></div>
+      </div>
+    </main>`;
+    const main = document.querySelector("main")!;
+    expect(getComputedStyle(main).overflowY).toBe("auto");
+    expect(getComputedStyle(main).height).toBe("100%");
+    expect(getComputedStyle(main).minHeight).toBe("0px");
+
+    main.innerHTML = '<div class="collaboration-app"></div>';
+    expect(getComputedStyle(main).overflow).toBe("hidden");
+    expect(getComputedStyle(main).overflowY).not.toBe("auto");
+    expect(getComputedStyle(main.firstElementChild!).height).toBe("100%");
+  });
+
+  it("scrolls only the project area and keeps primary and management entries fixed", () => {
+    installTheme("light");
+    document.body.innerHTML = `<aside class="collaboration-platform-sidebar">
+      <nav class="collaboration-primary-navigation"></nav>
+      <div class="collaboration-projects-scroll"><div class="collaboration-workspace-tree"><section class="collaboration-workspace-project-list"></section></div></div>
+      <nav class="collaboration-management-navigation"></nav>
+    </aside>`;
+    const sidebar = document.querySelector("aside")!;
+    const scroller = sidebar.querySelector(".collaboration-projects-scroll")!;
+    expect(getComputedStyle(sidebar).overflowY).toBe("hidden");
+    expect(getComputedStyle(scroller).overflowY).toBe("auto");
+    expect(getComputedStyle(scroller).minHeight).toBe("0px");
+    expect(getComputedStyle(sidebar.firstElementChild!).flexShrink).toBe("0");
+    expect(getComputedStyle(sidebar.lastElementChild!).flexShrink).toBe("0");
+    expect(getComputedStyle(scroller.firstElementChild!).overflowY).not.toBe(
+      "auto",
+    );
+  });
   it.each(["light", "dark"] as const)(
     "keeps workspace and group surfaces readable in %s mode",
     (mode) => {

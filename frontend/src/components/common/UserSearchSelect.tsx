@@ -6,11 +6,15 @@
 
 import { useState, useEffect, useRef, ReactNode } from 'react'
 import { Search, X, Check } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import client from '@/apis/client'
+import { useUser } from '@/features/common/UserContext'
 import { userApis } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SearchUser } from '@/types/api'
+import { cn } from '@/lib/utils'
 
 interface UserSearchSelectProps<T extends SearchUser = SearchUser> {
   /** Currently selected users */
@@ -35,6 +39,10 @@ interface UserSearchSelectProps<T extends SearchUser = SearchUser> {
   renderSelectedUsers?: (users: T[], onRemove: (userId: number) => void) => ReactNode
   /** Hide the default selected users display (use when handling display externally) */
   hideSelectedUsers?: boolean
+  /** Let scrollable forms reserve space for results instead of overlaying controls. */
+  resultsLayout?: 'overlay' | 'inline'
+  /** Keep the query and results available when a caller collects multiple targets. */
+  clearSearchOnSelect?: boolean
 }
 
 /**
@@ -56,18 +64,36 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
   renderNoResults,
   renderSelectedUsers,
   hideSelectedUsers = false,
+  resultsLayout = 'overlay',
+  clearSearchOnSelect = true,
 }: UserSearchSelectProps<T>) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
+  const { user } = useUser()
+  const searchScope = JSON.stringify([user?.id, client.getCacheScope()])
+  const [stateScope, setStateScope] = useState(searchScope)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchUser[]>([])
   const [isSearching, setIsSearching] = useState(false)
+  const [searchFailed, setSearchFailed] = useState(false)
+  const [searchAttempt, setSearchAttempt] = useState(0)
   const [showDropdown, setShowDropdown] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
+  if (stateScope !== searchScope) {
+    setStateScope(searchScope)
+    setSearchResults([])
+    setSearchFailed(false)
+    setShowDropdown(false)
+    setIsSearching(false)
+  }
+
   // Search users with 300ms debounce
   useEffect(() => {
+    let cancelled = false
     const trimmedQuery = searchQuery.trim()
+    setSearchFailed(false)
+    setSearchResults([])
     if (!trimmedQuery) {
       setSearchResults([])
       setShowDropdown(false)
@@ -77,24 +103,32 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
 
     // Mark pending immediately so loading state is shown during debounce window
     setIsSearching(true)
+    setShowDropdown(true)
     const timeoutId = setTimeout(async () => {
       try {
         const response = await userApis.searchUsers(trimmedQuery)
+        if (cancelled) return
         setSearchResults(response.users || [])
         setShowDropdown(true)
-      } catch (error) {
-        console.error('Failed to search users:', error)
+      } catch {
+        if (cancelled) return
+        setSearchFailed(true)
+        setShowDropdown(true)
         setSearchResults([])
       } finally {
-        setIsSearching(false)
+        if (!cancelled) setIsSearching(false)
       }
     }, 300)
 
-    return () => clearTimeout(timeoutId)
-  }, [searchQuery])
+    return () => {
+      cancelled = true
+      clearTimeout(timeoutId)
+    }
+  }, [searchQuery, searchScope, searchAttempt])
 
-  // Close dropdown when clicking outside
+  // Inline results must not collapse on mousedown and move the clicked form action.
   useEffect(() => {
+    if (resultsLayout === 'inline') return
     const handleClickOutside = (event: MouseEvent) => {
       if (
         dropdownRef.current &&
@@ -110,7 +144,7 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [])
+  }, [resultsLayout])
 
   // Handle selecting a user from search results
   const handleSelectUser = (user: SearchUser) => {
@@ -123,9 +157,11 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
       // Single-select mode: replace selected
       onSelectedUsersChange([user as T])
     }
-    setSearchQuery('')
-    setSearchResults([])
-    setShowDropdown(false)
+    if (clearSearchOnSelect) {
+      setSearchQuery('')
+      setSearchResults([])
+      setShowDropdown(false)
+    }
   }
 
   // Handle removing a selected user
@@ -141,7 +177,8 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
   }
 
   // Check if we should show no results
-  const showNoResults = searchQuery.trim() && !isSearching && searchResults.length === 0
+  const showNoResults =
+    searchQuery.trim() && !isSearching && !searchFailed && searchResults.length === 0
 
   return (
     <div className={`space-y-2 ${className}`}>
@@ -169,26 +206,48 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
         </div>
 
         {/* Search Results Dropdown */}
-        {showDropdown && (searchResults.length > 0 || isSearching) && (
+        {showDropdown && (searchResults.length > 0 || isSearching || searchFailed) && (
           <div
             ref={dropdownRef}
-            className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
+            data-testid={inputTestId ? `${inputTestId}-results` : undefined}
+            className={cn(
+              'w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto',
+              resultsLayout === 'inline' ? 'overscroll-contain' : 'absolute z-50'
+            )}
           >
             {isSearching ? (
               <div className="p-3 text-sm text-text-muted text-center">
                 {t('common:actions.loading')}
+              </div>
+            ) : searchFailed ? (
+              <div role="alert" className="p-3 text-sm text-error">
+                <p>{t('common:userSearch.searchFailed')}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 min-w-11"
+                  data-testid={(inputTestId || 'user-search') + '-retry'}
+                  onClick={() => setSearchAttempt(value => value + 1)}
+                >
+                  {t('common:actions.retry')}
+                </Button>
               </div>
             ) : (
               searchResults.map(user => {
                 const isSelected = selectedUsers.some(u => u.id === user.id)
                 return (
                   <button
+                    type="button"
                     key={user.id}
+                    data-testid={`user-search-result-${user.id}`}
                     onClick={() => handleSelectUser(user)}
                     disabled={isSelected}
+                    aria-pressed={isSelected}
                     className="w-full flex items-center gap-3 p-3 hover:bg-surface cursor-pointer text-left disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <div className="flex-1">
+                    <div
+                      className={cn('flex-1', resultsLayout === 'inline' && 'min-w-0 break-words')}
+                    >
                       <span className="font-medium text-sm text-text-primary">
                         {user.user_name}
                       </span>
@@ -224,6 +283,7 @@ export function UserSearchSelect<T extends SearchUser = SearchUser>({
               <Badge key={user.id} variant="secondary" className="pr-1">
                 {user.user_name}
                 <button
+                  type="button"
                   onClick={() => handleRemoveUser(user.id)}
                   className="ml-1 hover:bg-accent rounded-full p-0.5"
                   disabled={disabled}

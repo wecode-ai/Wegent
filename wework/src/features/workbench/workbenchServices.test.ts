@@ -49,6 +49,8 @@ const mocks = vi.hoisted(() => {
     localDeliveryApi,
     sharedWorkspaceApi,
     backendServices: {
+      issueHumanRequestsApi: { inbox: vi.fn() },
+      projectChatClient: { subscribe: vi.fn() },
       deliveryApi: backendDeliveryApi,
       sharedWorkspaceApi,
       projectSpaceApis: {
@@ -59,6 +61,13 @@ const mocks = vi.hoisted(() => {
     localServices: {
       deliveryApi: localDeliveryApi,
       externalIssueApi,
+      localParticipationIdentity: {
+        nativeOwnerUserId: 0 as const,
+        currentUser: { id: 7, user_name: 'current-user' },
+        viewerUserIds: [0, 7],
+      },
+      localIssueHumanRequestsApi: { inbox: vi.fn() },
+      localProjectChatClient: { subscribe: vi.fn() },
     },
     hybridServices: {
       deliveryApi: backendDeliveryApi,
@@ -93,8 +102,8 @@ vi.mock('@/lib/runtime-environment', () => ({
   isElectronRuntime: vi.fn(() => true),
 }))
 
-import { createDefaultWorkbenchServices } from './workbenchServices'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
+import { createDefaultWorkbenchServices } from './workbenchServices'
 
 describe('default workbench project-space services', () => {
   beforeEach(() => {
@@ -106,26 +115,28 @@ describe('default workbench project-space services', () => {
     vi.unstubAllEnvs()
   })
 
-  test('keeps cloud GitLab tasks on the backend in backend desktop mode', async () => {
+  test('preserves local participation scope alongside cloud-first desktop services', () => {
     const services = createDefaultWorkbenchServices()
-    const api = services.projectSpaceApis!.cloud!
 
-    await api.listCloudProjects()
-    await api.createLoopItem(mocks.project.id, {
-      title: 'GitLab Issue',
-      status: 'pending',
-    })
+    expect(services.localParticipationIdentity).toBe(mocks.localServices.localParticipationIdentity)
+    expect(services.localIssueHumanRequestsApi).toBe(mocks.localServices.localIssueHumanRequestsApi)
+    expect(services.localProjectChatClient).toBe(mocks.localServices.localProjectChatClient)
+    expect(services.issueHumanRequestsApi).toBe(mocks.backendServices.issueHumanRequestsApi)
+    expect(services.projectChatClient).toBe(mocks.backendServices.projectChatClient)
+    expect(services.sharedWorkspaceApi).toBe(mocks.backendServices.sharedWorkspaceApi)
+    expect(services.projectSpaceApis?.defaultLocation).toBe('cloud')
+  })
 
-    expect(mocks.externalIssueApi.retainProjects).not.toHaveBeenCalled()
-    expect(mocks.backendDeliveryApi.listCloudProjects).toHaveBeenCalled()
-    expect(mocks.backendDeliveryApi.createLoopItem).toHaveBeenCalledWith(mocks.project.id, {
-      title: 'GitLab Issue',
-      status: 'pending',
-    })
-    expect(mocks.externalIssueApi.configureProject).not.toHaveBeenCalled()
-    expect(mocks.externalIssueApi.createLoopItem).not.toHaveBeenCalled()
-    expect(services.projectSpaceApis?.local).toBe(mocks.localDeliveryApi)
-    expect(services.sharedWorkspaceApi).toBe(mocks.sharedWorkspaceApi)
+  test('keeps local-first participation and chat owned by the local composition', () => {
+    vi.mocked(isLocalFirstAppRuntime).mockReturnValue(true)
+
+    const services = createDefaultWorkbenchServices()
+
+    expect(services.localParticipationIdentity).toBe(mocks.localServices.localParticipationIdentity)
+    expect(services.localIssueHumanRequestsApi).toBe(mocks.localServices.localIssueHumanRequestsApi)
+    expect(services.localProjectChatClient).toBe(mocks.localServices.localProjectChatClient)
+    expect(services.issueHumanRequestsApi).not.toBe(mocks.backendServices.issueHumanRequestsApi)
+    expect(services.projectChatClient).not.toBe(mocks.backendServices.projectChatClient)
   })
 
   test('adds build-time feedback submission to an offline local workbench', () => {

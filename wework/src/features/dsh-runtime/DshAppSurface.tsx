@@ -4,6 +4,7 @@ import type { WeworkDshApp } from './dshApps'
 import { DshSlotSurface } from './DshSlotSurface'
 import { WEWORK_DSH_SLOTS } from './dshUiSlots'
 import { getLoadedDshUiModule, importDshUiModule } from './dshUiModules'
+import { DshSurfaceLoading } from './DshSurfaceLoading'
 
 export interface WeworkDshAppModuleProps {
   active: boolean
@@ -32,7 +33,7 @@ export function DshAppSurface({
 }) {
   if (app.module) {
     return (
-      <Suspense fallback={<div className="h-full min-h-0" data-testid="dsh-app-loading" />}>
+      <Suspense fallback={<DshSurfaceLoading testId="dsh-app-loading" />}>
         <DshAppModuleLoader active={active} app={app} module={app.module} tab={tab} />
       </Suspense>
     )

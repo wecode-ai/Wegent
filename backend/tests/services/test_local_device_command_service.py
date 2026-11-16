@@ -3003,7 +3003,14 @@ async def test_device_runtime_settings_update_uses_runtime_rpc(monkeypatch):
     rpc_mock = AsyncMock(
         side_effect=[
             {"maxConcurrentTasks": 4},
-            {"limit": 4, "active": 2, "queued": 1},
+            {
+                "maxConcurrentTasks": 4,
+                "maxConcurrentStandInTasks": 6,
+                "maxConcurrentAgentTasks": 8,
+                "limit": 18,
+                "active": 2,
+                "queued": 1,
+            },
         ]
     )
     monkeypatch.setattr(devices.runtime_rpc_service, "call", rpc_mock)
@@ -3017,6 +3024,8 @@ async def test_device_runtime_settings_update_uses_runtime_rpc(monkeypatch):
     assert response.model_dump() == {
         "device_id": "device-abc",
         "max_concurrent_tasks": 4,
+        "max_concurrent_stand_in_tasks": 6,
+        "max_concurrent_agent_tasks": 8,
         "active_tasks": 2,
         "queued_tasks": 1,
     }
@@ -3174,3 +3183,90 @@ async def test_execute_device_command_endpoint_rejects_unknown_command_key(monke
 
     assert exc_info.value.status_code == 400
     assert "not configured" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "runtime_field"),
+    [
+        ("max_concurrent_tasks", "maxConcurrentTasks"),
+        ("max_concurrent_stand_in_tasks", "maxConcurrentStandInTasks"),
+        ("max_concurrent_agent_tasks", "maxConcurrentAgentTasks"),
+    ],
+)
+async def test_device_runtime_settings_updates_only_selected_category(
+    monkeypatch, field, runtime_field
+):
+    from app.api.endpoints import devices
+
+    capacity = {
+        "maxConcurrentTasks": 2,
+        "maxConcurrentStandInTasks": 4,
+        "maxConcurrentAgentTasks": 6,
+        "limit": 12,
+        "active": 0,
+        "queued": 0,
+    }
+    rpc_mock = AsyncMock(side_effect=[capacity, capacity])
+    monkeypatch.setattr(devices.runtime_rpc_service, "call", rpc_mock)
+    await devices.update_device_runtime_settings(
+        device_id="device-abc",
+        request=devices.DeviceRuntimeSettingsUpdate(**{field: 3}),
+        current_user=SimpleNamespace(id=7),
+    )
+    assert rpc_mock.await_args_list[0].kwargs["payload"] == {runtime_field: 3}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"max_concurrent_tasks": 0},
+        {"max_concurrent_stand_in_tasks": 21},
+        {"max_concurrent_agent_tasks": None},
+    ],
+)
+def test_device_runtime_settings_rejects_empty_or_invalid_updates(payload):
+    from pydantic import ValidationError
+
+    from app.api.endpoints.devices import DeviceRuntimeSettingsUpdate
+
+    with pytest.raises(ValidationError):
+        DeviceRuntimeSettingsUpdate(**payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "legacy_capacity",
+    [
+        {"limit": 4, "active": 2, "queued": 1},
+        {"maxConcurrentTasks": 4, "active": 2, "queued": 1},
+    ],
+)
+async def test_device_runtime_settings_preserves_legacy_get_and_successful_save(
+    monkeypatch, legacy_capacity
+):
+    from app.api.endpoints import devices
+
+    rpc_mock = AsyncMock(
+        side_effect=[legacy_capacity, {"maxConcurrentTasks": 4}, legacy_capacity]
+    )
+    monkeypatch.setattr(devices.runtime_rpc_service, "call", rpc_mock)
+    read = await devices.get_device_runtime_settings(
+        device_id="old-device", current_user=SimpleNamespace(id=7)
+    )
+    saved = await devices.update_device_runtime_settings(
+        device_id="old-device",
+        request=devices.DeviceRuntimeSettingsUpdate(max_concurrent_tasks=4),
+        current_user=SimpleNamespace(id=7),
+    )
+    expected = {
+        "device_id": "old-device",
+        "max_concurrent_tasks": 4,
+        "active_tasks": 2,
+        "queued_tasks": 1,
+    }
+    assert read.model_dump(exclude_none=True) == expected
+    assert saved.model_dump(exclude_none=True) == expected
+    assert saved.max_concurrent_stand_in_tasks is None
+    assert saved.max_concurrent_agent_tasks is None

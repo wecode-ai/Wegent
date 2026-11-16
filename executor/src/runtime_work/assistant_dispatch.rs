@@ -12,14 +12,20 @@ pub(super) fn declaration(device: &str) -> Value {
         .ok()
         .flatten()
         .unwrap_or_default();
-    public_declaration(&settings)
+    public_declaration(&settings, device)
 }
 
-fn public_declaration(settings: &[Value]) -> Value {
+fn public_declaration(settings: &[Value], device: &str) -> Value {
     let roles: Vec<Value> = settings
         .iter()
+        .filter(|settings| settings["lifecycle"]["status"].is_null())
         .flat_map(stand_in_identities)
-        .filter(|role| role["id"] == "@primary")
+        .filter(|role| {
+            role["id"] == "@primary"
+                && role["executionDeviceId"]
+                    .as_str()
+                    .map_or(true, |owner| owner.is_empty() || owner == device)
+        })
         .map(|role| {
             let collaboration = &role["collaboration"];
             let project_policies: Vec<Value> = collaboration["projectPolicies"]
@@ -77,7 +83,7 @@ mod tests {
                     "projects":[],"excludedProjects":[{"id":"excluded","store":"cloud","private":"secret"}],
                     "policy":{"automatic":true,"askBeforeAct":true},
                     "projectPolicies":[{"id":"manual","store":"cloud","policy":{"automatic":false,"askBeforeAct":true}}]}}});
-        let declaration = public_declaration(&[settings]);
+        let declaration = public_declaration(&[settings], "device");
         let roles = declaration["roles"].as_array().unwrap();
         assert_eq!(roles.len(), 1);
         assert_eq!(roles[0]["id"], "@primary");
@@ -93,7 +99,10 @@ mod tests {
             json!([{"id":"excluded","store":"cloud"}])
         );
         assert!(!declaration.to_string().contains("private"));
-        assert_eq!(public_declaration(&[]), json!({"version":1,"roles":[]}));
+        assert_eq!(
+            public_declaration(&[], "device"),
+            json!({"version":1,"roles":[]})
+        );
     }
 
     #[test]
@@ -120,6 +129,29 @@ mod tests {
         assert_eq!(
             store.personal_stand_in(7, "").unwrap()["executionDeviceId"],
             "owner-device"
+        );
+    }
+
+    #[test]
+    fn declaration_revokes_stopped_profiles_and_primary_roles_selected_on_another_device() {
+        let mut settings = json!({"userId":7,"version":1,"executionDeviceId":"device","roles":[],
+            "primary":{"enabled":true,"executionDeviceId":"other","collaboration":{"enabled":true,"allProjects":true}}});
+        assert_eq!(
+            public_declaration(&[settings.clone()], "device")["roles"],
+            json!([])
+        );
+        settings["primary"]["executionDeviceId"] = json!("device");
+        assert_eq!(
+            public_declaration(&[settings.clone()], "device")["roles"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        settings["lifecycle"] = json!({"status":"stopped"});
+        assert_eq!(
+            public_declaration(&[settings], "device")["roles"],
+            json!([])
         );
     }
 }

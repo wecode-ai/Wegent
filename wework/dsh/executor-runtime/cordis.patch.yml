@@ -3,4 +3,5 @@
       name: '@wegent/dsh-executor-runtime'
       inject:
         - webServer
+        - weworkRequestSecurity
         - sessions

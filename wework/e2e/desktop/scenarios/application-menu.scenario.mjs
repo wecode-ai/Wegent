@@ -1,8 +1,12 @@
+import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
+import { selectWorkbenchTheme } from '../modules/appearance-theme.mjs'
 import assert from 'node:assert/strict'
 import { withTimeout, WORKBENCH_READY_TIMEOUT_MS } from '../modules/shared.mjs'
+import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
 const MENU_ITEM_IDS = [
   'application',
+  'application.about',
   'application.settings',
   'application.quit',
   'file',
@@ -138,6 +142,8 @@ async function waitForWindowElementCount(explorerCommand, selector, expected, ti
 export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   return {
     async verify(control) {
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
+      await ensureExperimentalFeaturesEnabled(control)
       // Every declared item must exist so the menu structure cannot silently
       // lose an entry. Visibility is asserted separately below.
       const items = await menuSnapshot(control)
@@ -168,11 +174,47 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
       // Work-menu navigation opens real workspace surfaces.
       for (const [id, route] of [
         ['work.plugins', '/plugins'],
-        ['work.automations', '/automations'],
+        ['work.automations', '/stand-in'],
         ['work.applications', '/sites'],
       ]) {
+        if (id === 'work.automations') {
+          await control.command('waitFor', '[data-testid="automation-button"]')
+          await control.command('click', '[data-testid="automation-button"]')
+          await waitForRoute(control, '/automations', uiTimeoutMs)
+          // Native menu dispatch is asynchronous; observe a real route transition.
+          await control.command('navigate', 'body', { value: '/plugins' })
+          await waitForRoute(control, '/plugins', uiTimeoutMs)
+        }
         assert.equal(await activateMenuItem(control, id), true, `${id} could not be activated`)
+        if (id === 'work.automations') {
+          await waitForRoute(control, '/automations', uiTimeoutMs)
+          await control.command('waitFor', '[data-testid="create-automation-button"]')
+          await control.command('navigate', 'body', { value: '/stand-in?view=scheduled' })
+        }
         await waitForRoute(control, route, uiTimeoutMs)
+        if (id === 'work.automations') {
+          await control.command('waitFor', '[data-testid="stand-in-calendar-connection"]', {
+            timeoutMs: uiTimeoutMs,
+          })
+          assert.equal(
+            await control.command(
+              'getElementCount',
+              '[data-testid="stand-in-work-view-scheduled"]'
+            ),
+            '0'
+          )
+          await control.command('click', '[data-testid="stand-in-connections-back"]')
+          await openConnectionTypePicker(control)
+          await control.command('waitFor', '[data-testid="stand-in-time-connections"]')
+          assert.equal(await activateMenuItem(control, id), true)
+          await waitForRoute(control, '/automations', uiTimeoutMs)
+          await control.command('waitFor', '[data-testid="create-automation-button"]')
+          await control.command('navigate', 'body', { value: '/stand-in?view=scheduled' })
+          await control.command('waitFor', '[data-testid="stand-in-calendar-connection"]', {
+            timeoutMs: uiTimeoutMs,
+          })
+          await captureScreenshot(control, 'application-menu-stand-in-scheduled.png', 'body')
+        }
       }
 
       // Returning to the task workspace re-selects the existing tab instead of
@@ -188,8 +230,30 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
         timeoutMs: uiTimeoutMs,
       })
 
+      // Help > Report an issue opens the in-app feedback form instead of the
+      // GitHub issue tracker.
+      assert.equal(await activateMenuItem(control, 'help.issues'), true)
+      await control.command('waitFor', '[data-testid="task-feedback-dialog-overlay"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="task-feedback-close-button"]')
+      await waitForElementCount(
+        control,
+        '[data-testid="task-feedback-dialog-overlay"]',
+        0,
+        uiTimeoutMs
+      )
+
+      // About opens the in-app settings page instead of the native panel.
+      assert.equal(await activateMenuItem(control, 'application.about'), true)
+      await waitForRoute(control, '/settings/about', uiTimeoutMs)
+      await control.command('waitFor', '[data-testid="about-settings-page"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+
       // Settings replaces the workspace surface, so task-only items must hide
-      // rather than remain clickable dead entries.
+      // rather than remain clickable dead entries. Returning to the general
+      // settings route also keeps the rest of this checkpoint unchanged.
       assert.equal(await activateMenuItem(control, 'application.settings'), true)
       await waitForRoute(control, '/settings', uiTimeoutMs)
       await waitForVisible(control, 'view.terminal', false, uiTimeoutMs)
@@ -324,6 +388,31 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
         'dark',
         'The Process Explorer did not inherit the dark theme'
       )
+      await explorerCommand('waitFor', 'html[data-appearance-theme="tokyo-night"]')
+      assert.equal(
+        await explorerCommand('getComputedStyleValue', 'html', { value: '--color-bg-base' }),
+        '26 27 38',
+        'The Process Explorer did not inherit the named palette'
+      )
+      await captureScreenshot(
+        { command: explorerCommand },
+        'appearance-tokyo-process-explorer.png',
+        'body'
+      )
+      await selectWorkbenchTheme(control, { themeId: 'matrix', timeoutMs: uiTimeoutMs })
+      await explorerCommand('waitFor', 'html[data-appearance-theme="matrix"]')
+      assert.equal(
+        await explorerCommand('getComputedStyleValue', 'html', { value: '--color-bg-base' }),
+        '4 8 5',
+        'An open auxiliary window did not follow a theme change within dark mode'
+      )
+      await captureScreenshot(
+        { command: explorerCommand },
+        'appearance-matrix-process-explorer.png',
+        'body'
+      )
+      await selectWorkbenchTheme(control, { timeoutMs: uiTimeoutMs })
+      await explorerCommand('waitFor', 'html[data-appearance-theme="tokyo-night"]')
 
       // Header edges resize a column, and the change is visible immediately.
       const firstColumnBefore = await explorerCommand(

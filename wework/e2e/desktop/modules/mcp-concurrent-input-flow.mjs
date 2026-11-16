@@ -14,6 +14,7 @@ import {
   writeFile,
 } from './shared.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
+import { restartCodexWhenIdle } from './executor-restart-readiness.mjs'
 import {
   CONCURRENT_CASES,
   CONCURRENT_SCENARIO,
@@ -22,6 +23,7 @@ import {
   concurrentPrompt,
 } from './mcp-concurrent-model.mjs'
 import {
+  MCP_FORM_TIMEOUT_MS,
   readElicitationEvidence,
   readMatchingElicitation,
   readMcpInteractions,
@@ -113,9 +115,12 @@ async function settleMcp(control, action) {
         return readMcpResult(action)
       },
       'The real concurrent MCP form did not expire',
-      300_000 + DEFAULT_STEP_TIMEOUT_MS
+      MCP_FORM_TIMEOUT_MS + DEFAULT_STEP_TIMEOUT_MS
     )
-    assert.ok(result.elapsedMs >= 300_000, 'Concurrent form expired before the production deadline')
+    assert.ok(
+      result.elapsedMs >= MCP_FORM_TIMEOUT_MS,
+      'Concurrent form expired before the configured deadline'
+    )
   } else {
     await control.command(
       'click',
@@ -174,6 +179,11 @@ async function verifyConcurrentCases(control) {
       const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
       assert.ok(taskId)
+      // Read the restored state after reload so this step proves persistence
+      // without spending the MCP form deadline on duplicate pre-reload checks.
+      await reloadMainWindow(control, 'Reload failed while both native questions were pending')
+      await visible(control, ordinaryFirst ? ordinaryOption : mcpOption)
+      await assertWaiting(control, taskId, true)
       const interactions = await readMcpInteractions(control, taskId)
       await writeFile(
         join(resultDir, `permission-concurrent-${action}-transcript.json`),
@@ -194,10 +204,6 @@ async function verifyConcurrentCases(control) {
       assert.notEqual(String(ordinary.requestId), String(original.requestId))
       assert.equal(ordinary.interactionStatus, 'pending')
       assert.equal(ordinary.response, undefined)
-      await assertWaiting(control, taskId, true)
-      await reloadMainWindow(control, 'Reload failed while both native questions were pending')
-      await visible(control, ordinaryFirst ? ordinaryOption : mcpOption)
-      await assertWaiting(control, taskId, true)
       await captureVerificationScreenshot(
         control,
         `permission-concurrent-${action}-both-pending.png`
@@ -213,7 +219,6 @@ async function verifyConcurrentCases(control) {
           'Ordinary answer settled the real MCP request'
         )
       } else await settleMcp(control, action)
-      await assertRemaining(control, taskId, original, ordinaryFirst, status)
       await reloadMainWindow(control, 'Reload failed after settling only one concurrent request')
       await assertRemaining(control, taskId, original, ordinaryFirst, status)
       await captureVerificationScreenshot(
@@ -270,6 +275,11 @@ async function verifyConcurrentCases(control) {
 }
 
 export async function verifyConcurrentMcpUserInput(control) {
+  const restartWhenIdle = () =>
+    restartCodexWhenIdle(
+      async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+      DEFAULT_STEP_TIMEOUT_MS
+    )
   const { models } = await requestExecutor(
     control,
     'runtime.codex.catalog.overrides.read',
@@ -289,19 +299,31 @@ export async function verifyConcurrentMcpUserInput(control) {
     },
     DEFAULT_STEP_TIMEOUT_MS
   )
-  await control.command('restartLocalCodexAppServerIfIdle', 'body')
+  let verificationFailed = false
   try {
+    await restartWhenIdle()
     await verifyConcurrentCases(control)
+  } catch (error) {
+    verificationFailed = true
+    throw error
   } finally {
-    await requestExecutor(
-      control,
-      'runtime.codex.catalog.overrides.write',
-      {
-        slug: DEFAULT_MODEL_ID,
-        entry: model.effective,
-      },
-      DEFAULT_STEP_TIMEOUT_MS
-    )
+    try {
+      await requestExecutor(
+        control,
+        'runtime.codex.catalog.overrides.write',
+        {
+          slug: DEFAULT_MODEL_ID,
+          entry: model.effective,
+        },
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+      await restartWhenIdle()
+    } catch (error) {
+      if (!verificationFailed) throw error
+      console.error(
+        'Failed to restore the Codex model catalog after concurrent MCP verification',
+        error
+      )
+    }
   }
-  await control.command('restartLocalCodexAppServerIfIdle', 'body')
 }

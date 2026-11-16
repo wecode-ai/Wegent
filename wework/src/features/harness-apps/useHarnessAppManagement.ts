@@ -9,35 +9,14 @@ import {
   harnessAppRoute,
   openHarnessAppTab,
   registerHarnessAppTab,
-  takeHarnessAppContextToken,
-  takeHarnessAppDecisionToken,
-  takeHarnessAppProxyToken,
   unregisterHarnessAppTab,
 } from './harnessAppTabs'
 import { beginHarnessAppLaunch, clearHarnessAppLaunch } from './harnessAppLaunchState'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-
-/**
- * Releases every route registration an installation owns. The three routes are
- * independent, so one failing unregister must not strand the others.
- */
-export async function releaseHarnessAppRoutes(
-  installationId: string,
-  localHarnessModelApi: WorkbenchServices['localHarnessModelApi'],
-  localDecisionRouterApi: WorkbenchServices['localDecisionRouterApi']
-): Promise<void> {
-  await Promise.allSettled([
-    takeHarnessAppProxyToken(installationId).then(token =>
-      token ? localHarnessModelApi?.unregisterProxy(token) : undefined
-    ),
-    takeHarnessAppContextToken(installationId).then(token =>
-      token ? localHarnessModelApi?.unregisterContext(token) : undefined
-    ),
-    takeHarnessAppDecisionToken(installationId).then(token =>
-      token ? localDecisionRouterApi?.unregister(token) : undefined
-    ),
-  ])
-}
+import { releaseHarnessAppRoutes } from './harnessAppRoutes'
+import {
+  isHarnessAppRuntimeOperationPending,
+  runHarnessAppRuntimeOperation,
+} from './harnessAppRuntimeOperations'
 
 interface HarnessAppManagementOptions {
   installations: HarnessAppInstallation[]
@@ -62,7 +41,14 @@ export function useHarnessAppManagement({
 
   useEffect(() => {
     installations
-      .filter(installation => installation.state === 'running' && installation.webUrl)
+      // Host "running" precedes renderer token handoff. The lifecycle owner
+      // publishes the tab only after handoff (or removes it after queued stop).
+      .filter(
+        installation =>
+          installation.state === 'running' &&
+          installation.webUrl &&
+          !isHarnessAppRuntimeOperationPending(installation.id)
+      )
       .forEach(installation => registerHarnessAppTab(installation))
   }, [installations])
 
@@ -103,6 +89,18 @@ export function useHarnessAppManagement({
         return
       }
       onError(null)
+      // A retained management page may have republished its old running
+      // snapshot before refreshing. Do not mount that stopped runtime's URL
+      // while the new launcher is still registering and handing off routes.
+      // An existing tab or operation owns its registration even if this
+      // management snapshot has not received the running update yet.
+      if (
+        installation.state !== 'running' &&
+        !isHarnessAppRuntimeOperationPending(installation.id) &&
+        !workspaceTabs.tabs.some(tab => tab.contentRoute === harnessAppRoute(installation.id))
+      ) {
+        unregisterHarnessAppTab(installation.id)
+      }
       openHarnessAppTab(workspaceTabs, installation)
     },
     [hasSelectedModel, onError, t, workspaceTabs]
@@ -118,13 +116,17 @@ export function useHarnessAppManagement({
           installation.id,
           installation.manifest.displayName,
           () => {
-            registerHarnessAppTab(installation)
+            if (!isHarnessAppRuntimeOperationPending(installation.id)) {
+              registerHarnessAppTab(installation)
+            }
             openHarnessAppTab(workspaceTabs, installation)
           },
           'loadingApp'
         )
       }
-      registerHarnessAppTab(installation)
+      if (!isHarnessAppRuntimeOperationPending(installation.id)) {
+        registerHarnessAppTab(installation)
+      }
       openHarnessAppTab(workspaceTabs, installation)
     },
     [workspaceTabs]
@@ -135,15 +137,17 @@ export function useHarnessAppManagement({
       onBusyChange(installation.id)
       onError(null)
       try {
-        await harnessAppsApi.stop(installation.id)
-        unregisterHarnessAppTab(installation.id)
-        clearHarnessAppLaunch(installation.id)
-        closeAppTabs(installation.id)
-        await releaseHarnessAppRoutes(
-          installation.id,
-          services.localHarnessModelApi,
-          services.localDecisionRouterApi
-        )
+        await runHarnessAppRuntimeOperation(installation.id, async () => {
+          await harnessAppsApi.stop(installation.id)
+          unregisterHarnessAppTab(installation.id)
+          clearHarnessAppLaunch(installation.id)
+          closeAppTabs(installation.id)
+          await releaseHarnessAppRoutes(
+            installation.id,
+            services.localHarnessModelApi,
+            services.localDecisionRouterApi
+          )
+        })
         if (refresh) await onRefresh()
         return true
       } catch (error) {

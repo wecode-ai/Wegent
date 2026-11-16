@@ -1,17 +1,14 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { useStandInModels } from './useStandInModels'
-import {
-  runnerModelKey,
-  type WorkspaceStandInSettings,
-  type WorkspaceProjectAgent,
-} from '@wegent/collaboration'
+import { type WorkspaceStandInSettings } from '@wegent/collaboration'
 import { useProjectWorktreeAvailabilityProbe } from '@/components/layout/useProjectWorktreeAvailabilityProbe'
 import { resolveProjectWorktreeAvailability } from '@/lib/worktree-availability'
 import { ProjectWorkBar, ProjectWorkSection } from '@/components/chat/composer/ProjectWorkBar'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { ComposerCatalogContext } from '@/components/chat/composer/ComposerCatalogContext'
-import { useRuntimeComposerCatalog } from '@/components/chat/composer/useRuntimeComposerCatalog'
+import { useStandInComposerCatalog } from './useStandInComposerCatalog'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { listProjectBranches } from '@/api/environment'
@@ -26,9 +23,7 @@ export function StandInComposer({
   onSave,
   disabled,
   submitDisabled,
-  controls,
   deviceControl,
-  selectedAgent,
   onValidityChange,
   runtimeWork,
   devices,
@@ -41,16 +36,14 @@ export function StandInComposer({
   disabled: boolean
   submitDisabled: boolean
   onValidityChange?(valid: boolean): void
-  selectedAgent?: WorkspaceProjectAgent
   deviceControl?: ReactNode
-  controls: ReactNode
   runtimeWork?: RuntimeWorkListResponse | null
   devices: DeviceInfo[]
   services?: WorkbenchServices
   showPrompt?: boolean
 }) {
   const { t } = useTranslation('common')
-  const composerCatalog = useRuntimeComposerCatalog(
+  const composerCatalog = useStandInComposerCatalog(
     draft.executionDeviceId
       ? {
           deviceId: draft.executionDeviceId,
@@ -61,22 +54,12 @@ export function StandInComposer({
     services,
     t
   )
-  const models = useStandInModels(services, draft, selectedAgent)
+  const models = useStandInModels(services, draft)
   useEffect(() => {
-    if (!showPrompt && !draft.model) return
-    const model = models.fixedIdentity ?? (showPrompt ? models.defaultIdentity : null)
-    if (
-      model &&
-      (!draft.model ||
-        (models.fixedIdentity && runnerModelKey(draft.model) !== runnerModelKey(model)))
-    )
-      onChange(current =>
-        current.model &&
-        (!models.fixedIdentity || runnerModelKey(current.model) === runnerModelKey(model))
-          ? current
-          : { ...current, model }
-      )
-  }, [draft.model, models.defaultIdentity, models.fixedIdentity, onChange, showPrompt])
+    if (!showPrompt || draft.model || !models.defaultIdentity) return
+    const model = models.defaultIdentity
+    onChange(current => (current.model ? current : { ...current, model }))
+  }, [draft.model, models.defaultIdentity, onChange, showPrompt])
   const rows = (runtimeWork?.projects ?? []).flatMap(row => {
     const workspace = row.deviceWorkspaces.find(
       workspace =>
@@ -175,12 +158,6 @@ export function StandInComposer({
         className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-sm"
         data-testid="stand-in-workspace-bar"
       >
-        {controls && (
-          <>
-            <span className="text-text-muted">{t('standIn.agent_label')}</span>
-            <div className="min-w-0">{controls}</div>
-          </>
-        )}
         <span className="text-text-muted">{t('standIn.device_label')}</span>
         <div className="min-w-0">{deviceControl}</div>
         <span className="text-text-muted">{t('standIn.local_project')}</span>
@@ -204,11 +181,27 @@ export function StandInComposer({
         <div className="min-w-0">
           <ModelSelector
             models={models.models}
+            getModelOptionId={models.getModelOptionId}
             selectedModel={models.selectedModel}
             selectedModelOptions={draft.modelOptions ?? {}}
-            disabled={disabled || models.fixed}
+            disabled={disabled}
+            onOpenChange={open => {
+              if (open) models.refresh()
+            }}
             onSelectModel={model =>
               onChange(current => ({ ...current, model: models.resolve(model) }))
+            }
+            onSelectModelAndOptions={(model, options) =>
+              onChange(current => {
+                const modelOptions = { ...current.modelOptions }
+                delete modelOptions.reasoning
+                delete modelOptions.reasoningEffort
+                return {
+                  ...current,
+                  model: models.resolve(model),
+                  modelOptions: { ...modelOptions, ...options },
+                }
+              })
             }
             onSelectModelOption={(key, value) =>
               onChange(current => ({
@@ -251,7 +244,7 @@ export function StandInComposer({
               <>
                 {models.error && (
                   <span role="status" className="text-xs text-error">
-                    {models.error}
+                    {getStandInErrorMessage(models.error)}
                   </span>
                 )}
               </>

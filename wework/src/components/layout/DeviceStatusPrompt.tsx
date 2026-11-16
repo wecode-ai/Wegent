@@ -218,8 +218,8 @@ export function DeviceStatusPrompt({
   }) => {
     const toneClass =
       tone === 'danger'
-        ? 'bg-red-50 text-red-600 hover:bg-red-100 disabled:hover:bg-red-50'
-        : 'bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:hover:bg-blue-50'
+        ? 'bg-destructive/10 text-destructive hover:bg-destructive/15 disabled:hover:bg-destructive/10 wework:bg-red-50 wework:text-red-600 wework:hover:bg-red-100 wework:disabled:hover:bg-red-50'
+        : 'bg-focus/10 text-focus hover:bg-focus/15 disabled:hover:bg-focus/10 wework:bg-blue-50 wework:text-blue-600 wework:hover:bg-blue-100 wework:disabled:hover:bg-blue-50'
     const tooltip = (
       <div
         ref={sidebarTooltipRef}
@@ -370,12 +370,12 @@ export function DeviceStatusPrompt({
       <div
         data-testid="device-status-prompt"
         className={cn(
-          'flex items-center gap-2 rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900',
+          'flex items-center gap-2 rounded-lg border border-warning/60 bg-warning/10 px-3 py-2 text-xs text-warning wework:border-amber-300/60 wework:bg-amber-50 wework:text-amber-900',
           compact && 'mx-0',
           className
         )}
       >
-        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-warning wework:text-amber-600" />
         <span className="min-w-0 flex-1">{message}</span>
         {upgradeDeviceIds.length > 0 && (
           <button
@@ -383,7 +383,7 @@ export function DeviceStatusPrompt({
             data-testid="device-status-upgrade-button"
             disabled={manualPending}
             onClick={() => void runUpgrades(upgradeDeviceIds)}
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-warning hover:bg-warning/15 disabled:cursor-not-allowed disabled:opacity-60 wework:text-amber-900 wework:hover:bg-amber-100"
           >
             {manualPending ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -467,12 +467,12 @@ export function DeviceStatusPrompt({
       <div
         data-testid="device-status-prompt"
         className={cn(
-          'flex items-center gap-2 rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900',
+          'flex items-center gap-2 rounded-lg border border-warning/60 bg-warning/10 px-3 py-2 text-xs text-warning wework:border-amber-300/60 wework:bg-amber-50 wework:text-amber-900',
           compact && 'mx-0',
           className
         )}
       >
-        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-warning wework:text-amber-600" />
         <span className="min-w-0 flex-1">{message}</span>
         {upgradeDeviceIds.length > 0 && (
           <button
@@ -480,7 +480,7 @@ export function DeviceStatusPrompt({
             data-testid="device-status-upgrade-button"
             disabled={manualPending}
             onClick={() => void runUpgrades(upgradeDeviceIds)}
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-medium text-warning hover:bg-warning/15 disabled:cursor-not-allowed disabled:opacity-60 wework:text-amber-900 wework:hover:bg-amber-100"
           >
             {manualPending ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

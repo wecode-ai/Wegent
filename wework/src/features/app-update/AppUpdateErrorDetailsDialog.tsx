@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import type { AppUpdateError } from './app-update-error'
 import {
   formatAppUpdateErrorFeature,
@@ -35,7 +36,7 @@ export function AppUpdateErrorDetailsDialog({
   const { t } = useTranslation('common')
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
-  const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
+  const [copyState, setCopyState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle')
   const [retrying, setRetrying] = useState(false)
   const summary = formatAppUpdateErrorSummary(error, t)
   const errorType = formatAppUpdateErrorType(error.kind, t)
@@ -103,11 +104,20 @@ export function AppUpdateErrorDetailsDialog({
     error.kind === 'network'
       ? t('workbench.app_update_error_reconnect', '重新连接')
       : t('common.retry', '重试')
+  const copyLabel = {
+    idle: t('workbench.app_update_error_copy', '复制诊断信息'),
+    copying: t('workbench.app_update_error_copying', '复制中'),
+    copied: t('workbench.app_update_error_copied', '已复制'),
+    failed: t('workbench.app_update_error_copy_failed', '复制失败，请重试'),
+  }[copyState]
 
   return createPortal(
     <div
       data-testid="app-update-error-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+      // Keep the owning menu mounted until portaled dialog actions receive their click.
+      onPointerDown={event => event.stopPropagation()}
+      onMouseDown={event => event.stopPropagation()}
       onClick={event => {
         if (event.target === event.currentTarget && !retrying) onClose()
       }}
@@ -135,7 +145,7 @@ export function AppUpdateErrorDetailsDialog({
         </button>
 
         <div className="flex items-start gap-3 pr-10">
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning wework:bg-orange-500/10 wework:text-orange-600 wework:dark:text-orange-400">
             <TriangleAlert className="h-4 w-4" aria-hidden="true" />
           </span>
           <div className="min-w-0">
@@ -177,36 +187,41 @@ export function AppUpdateErrorDetailsDialog({
           <button
             type="button"
             data-testid="app-update-error-copy"
+            disabled={copyState === 'copying'}
+            aria-busy={copyState === 'copying'}
+            aria-live="polite"
             onClick={() => {
-              void navigator.clipboard
-                ?.writeText(diagnostics)
+              setCopyState('copying')
+              void copyTextToClipboard(diagnostics)
                 .then(() => setCopyState('copied'))
-                .catch(() => undefined)
+                .catch(() => setCopyState('failed'))
             }}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-muted"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
           >
-            {copyState === 'copied' ? (
+            {copyState === 'copying' ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : copyState === 'copied' ? (
               <Check className="h-4 w-4" aria-hidden="true" />
             ) : (
               <Copy className="h-4 w-4" aria-hidden="true" />
             )}
-            {copyState === 'copied'
-              ? t('workbench.app_update_error_copied', '已复制')
-              : t('workbench.app_update_error_copy', '复制诊断信息')}
+            {copyLabel}
           </button>
-          <button
-            type="button"
-            data-testid="app-update-error-retry"
-            disabled={retrying}
-            onClick={() => {
-              setRetrying(true)
-              void onRetry().finally(() => setRetrying(false))
-            }}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-            {retryLabel}
-          </button>
+          {error.retryable !== false ? (
+            <button
+              type="button"
+              data-testid="app-update-error-retry"
+              disabled={retrying}
+              onClick={() => {
+                setRetrying(true)
+                void onRetry().finally(() => setRetrying(false))
+              }}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+              {retryLabel}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>,

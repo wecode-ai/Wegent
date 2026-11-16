@@ -49,9 +49,10 @@ def _endpoint(db: Session, owner: int, item: LoopItem) -> tuple[Kind, dict] | No
     )
     project = {"id": str(item.cloud_project_id), "store": "cloud"}
     for device in devices:
-        declaration = (
-            (device.json or {}).get("spec", {}).get("personalAssistantDispatch", {})
-        )
+        spec = (device.json or {}).get("spec", {})
+        if spec.get("workspaceOwnerId"):
+            continue
+        declaration = spec.get("personalAssistantDispatch", {})
         for role in declaration.get("roles", []):
             source = role.get("collaboration") or {}
             if (
@@ -206,49 +207,56 @@ def _resolve_dispatch(
     return dispatch
 
 
-def refresh_owner_dispatches(db: Session, user_id: int) -> None:
-    """Resolve existing waiting intents after the owned device advertises settings."""
-    if not enabled():
-        return
-    from app.services.issue_assignments import issue_assignment_service
-
-    items = db.query(LoopItem).filter_by(assignee_user_id=user_id).all()
-    for item in items:
-        db.refresh(item, with_for_update=True)
-        if item.assignee_user_id != user_id:
-            continue
-        for event in issue_assignment_service.active_for_issue(db, item.id):
-            db.refresh(event.comment, with_for_update=True)
-            dispatch = (event.comment.metadata_json or {}).get(DISPATCH_KEY)
-            if not isinstance(dispatch, dict):
-                continue
-            if _endpoint(db, user_id, item) is None and dispatch.get("executionId"):
-                cancel_assignment_dispatch(db, event, "no_authorized_assistant")
-            elif not dispatch.get("executionId"):
-                _resolve_dispatch(db, item, event, dispatch)
-
-
 def current_dispatch(db: Session, item: LoopItem) -> dict | None:
-    if not item.assignee_user_id:
-        return None
+    return current_dispatches(db, [item]).get(item.id)
+
+
+def current_dispatches(db: Session, items: list[LoopItem]) -> dict[str, dict]:
+    """Project assignment intents in batches for Issue lists and My Work."""
     from app.services.issue_assignments import issue_assignment_service
 
-    event = issue_assignment_service.active(
-        db,
-        issue_id=item.id,
-        member_type="human",
-        member_id=str(item.assignee_user_id),
-        workflow_step=None,
+    candidates = [item for item in items if item.assignee_user_id]
+    assignments = issue_assignment_service.active_for_issues(
+        db, [item.id for item in candidates]
     )
-    dispatch = (event.comment.metadata_json or {}).get(DISPATCH_KEY) if event else None
-    if not isinstance(dispatch, dict):
-        return None
+    dispatches = {}
+    for item in candidates:
+        for assignment in assignments[item.id]:
+            if (
+                assignment.member_type == "human"
+                and assignment.member_id == str(item.assignee_user_id)
+                and not assignment.workflow_step
+            ):
+                dispatch = (assignment.comment.metadata_json or {}).get(DISPATCH_KEY)
+                if isinstance(dispatch, dict):
+                    dispatches[item.id] = dispatch
+    execution_ids = {
+        dispatch["executionId"]
+        for dispatch in dispatches.values()
+        if dispatch.get("executionId")
+    }
+    executions = (
+        {
+            str(row.id): row
+            for row in db.query(LoopItemExecution).filter(
+                LoopItemExecution.id.in_(execution_ids)
+            )
+        }
+        if execution_ids
+        else {}
+    )
+    return {
+        item_id: _dispatch_view(
+            db, dispatch, executions.get(str(dispatch.get("executionId")))
+        )
+        for item_id, dispatch in dispatches.items()
+    }
+
+
+def _dispatch_view(
+    db: Session, dispatch: dict, execution: LoopItemExecution | None
+) -> dict:
     result = dict(dispatch)
-    execution = (
-        db.get(LoopItemExecution, result.get("executionId"))
-        if result.get("executionId")
-        else None
-    )
     if execution is not None and execution.status != "waiting_runtime":
         result["dispatchState"] = {
             "claimed": "queued",

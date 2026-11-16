@@ -577,6 +577,34 @@ class TestGetUserGroups:
 class TestGetEffectiveRolesInGroups:
     """Tests for batched get_effective_roles_in_groups."""
 
+    @pytest.mark.parametrize("role", ["Viewer", "Developer"])
+    def test_uses_only_matched_department_roles(self, test_db: Session, role: str):
+        owner = _create_user(test_db, "owner")
+        employee = _create_user(test_db, "employee")
+        _create_group(test_db, owner, "parent")
+        _create_group(test_db, owner, "parent/child")
+        for entity_id, granted_role in [("mine", role), ("other", "Maintainer")]:
+            create_group_entity_member(
+                test_db,
+                group_name="parent",
+                entity_type="mock_department",
+                entity_id=entity_id,
+                role=granted_role,
+            )
+        resolver = MockDepartmentResolver({employee.id: {"mine"}})
+        register_entity_resolver("mock_department", lambda: resolver)
+        with patch.object(
+            resolver, "match_entity_bindings", wraps=resolver.match_entity_bindings
+        ) as match:
+            roles = get_effective_roles_in_groups(
+                test_db, employee.id, ["parent", "parent/child"]
+            )
+            assert roles == {"parent": GroupRole(role), "parent/child": GroupRole(role)}
+            match.assert_called_once()
+        assert roles["parent"] == get_effective_role_in_group(
+            test_db, employee.id, "parent"
+        )
+
     def test_returns_roles_for_multiple_groups(self, test_db: Session):
         owner = _create_user(test_db, "owner")
         employee = _create_user(test_db, "employee")

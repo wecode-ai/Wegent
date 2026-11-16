@@ -24,7 +24,7 @@ Backend files:
 
 - Create `backend/app/models/resource_library.py`: SQLAlchemy models for listings, versions, installs, constants, and indexes.
 - Modify `backend/app/models/__init__.py`: import the new models so `Base.metadata.create_all()` and Alembic see them.
-- Create `backend/alembic/versions/20260527_e1f2a3b4c5d6_add_resource_library_tables.py`: create and drop the three resource library tables.
+- Create `backend-rs/migrations/reference/versions/20260527_e1f2a3b4c5d6_add_resource_library_tables.py`: create and drop the three resource library tables.
 - Create `backend/app/schemas/resource_library.py`: Pydantic request/response models and typed manifest structures.
 - Create `backend/app/services/resource_library/__init__.py`: service exports.
 - Create `backend/app/services/resource_library/service.py`: listing/version CRUD, list/detail queries, publish orchestration, install orchestration.
@@ -61,7 +61,7 @@ Frontend files:
 - Create: `backend/app/models/resource_library.py`
 - Modify: `backend/app/models/__init__.py`
 - Create: `backend/app/schemas/resource_library.py`
-- Create: `backend/alembic/versions/20260527_e1f2a3b4c5d6_add_resource_library_tables.py`
+- Create: `backend-rs/migrations/reference/versions/20260527_e1f2a3b4c5d6_add_resource_library_tables.py`
 - Test: `backend/tests/models/test_resource_library_models.py`
 - Test: `backend/tests/schemas/test_resource_library_schema.py`
 
@@ -492,7 +492,7 @@ class ResourceLibraryInstallListResponse(BaseModel):
 
 - [ ] **Step 7: Add migration**
 
-Create `backend/alembic/versions/20260527_e1f2a3b4c5d6_add_resource_library_tables.py`:
+Create `backend-rs/migrations/reference/versions/20260527_e1f2a3b4c5d6_add_resource_library_tables.py`:
 
 ```python
 """add resource library tables
@@ -658,7 +658,7 @@ Expected: PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add backend/app/models/resource_library.py backend/app/models/__init__.py backend/app/schemas/resource_library.py backend/alembic/versions/20260527_e1f2a3b4c5d6_add_resource_library_tables.py backend/tests/models/test_resource_library_models.py backend/tests/schemas/test_resource_library_schema.py
+git add backend/app/models/resource_library.py backend/app/models/__init__.py backend/app/schemas/resource_library.py backend-rs/migrations/reference/versions/20260527_e1f2a3b4c5d6_add_resource_library_tables.py backend/tests/models/test_resource_library_models.py backend/tests/schemas/test_resource_library_schema.py
 git commit -m "feat(resource-library): add core data model"
 ```
 

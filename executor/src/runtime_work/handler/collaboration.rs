@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::runtime_work::lifecycle::{native_execution_state, NativeExecutionPhase};
 use crate::task_runtime::{
     collaboration_member_profile_instructions, collaboration_member_system_prompt,
     mcp::{CloudCollaborationRoundCommand, CloudCollaborationRoundDispatcher},
@@ -482,6 +483,28 @@ impl RuntimeWorkRpcHandler {
         result: &str,
         error: &str,
     ) -> Result<(), CollaborationReportError> {
+        self.report_cloud_collaboration_activity(
+            command,
+            &json!({
+                "loop_item_id": command.item_id,
+                "dispatch_id": command.dispatch_id,
+                "round_id": command.round_id,
+                "assignment_id": required_assignment_string(assignment, "assignment_id")?,
+                "runtime_device_id": self.device_id,
+                "runtime_task_id": runtime_task_id,
+                "status": status,
+                "result": truncate_utf8(result, 100_000),
+                "error": truncate_utf8(error, 2_000),
+            }),
+        )
+        .await
+    }
+
+    async fn report_cloud_collaboration_activity(
+        &self,
+        command: &CloudCollaborationRoundCommand,
+        payload: &Value,
+    ) -> Result<(), CollaborationReportError> {
         let connection = self
             .backend_connection_snapshot()
             .map_err(|value| value.message)?
@@ -496,17 +519,7 @@ impl RuntimeWorkRpcHandler {
                 command.project_id
             ))
             .bearer_auth(&connection.auth_token)
-            .json(&json!({
-                "loop_item_id": command.item_id,
-                "dispatch_id": command.dispatch_id,
-                "round_id": command.round_id,
-                "assignment_id": required_assignment_string(assignment, "assignment_id")?,
-                "runtime_device_id": self.device_id,
-                "runtime_task_id": runtime_task_id,
-                "status": status,
-                "result": truncate_utf8(result, 100_000),
-                "error": truncate_utf8(error, 2_000),
-            }))
+            .json(payload)
             .send()
             .await
             .map_err(|value| value.to_string())?;
@@ -821,6 +834,10 @@ fn update_collaboration_member_origin(
 }
 
 fn collaboration_member_status(link: &RuntimeTaskLink) -> &'static str {
+    // A completed native turn is not completion of a starting or continuing request.
+    if native_execution_state(link).is_some_and(|state| state.phase != NativeExecutionPhase::Idle) {
+        return "running";
+    }
     if link.status == "cancelled"
         || link.turn_status.as_deref() == Some("cancelled")
         || link.interaction_status.as_deref() == Some("cancelled")

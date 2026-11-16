@@ -27,11 +27,14 @@ export interface RunnerModel extends RunnerModelIdentity {
   local_model_id: string
   account_label: string
   is_default: boolean
+  default_reasoning_effort?: string | null
+  supported_reasoning_efforts?: string[] | null
 }
 
 export interface RunnerEnvironment {
   id: string
   device_key: string
+  app_device_id?: string
   name: string
   owner_type: 'user' | 'workspace'
   owner_id: string
@@ -40,6 +43,15 @@ export interface RunnerEnvironment {
   catalog_error?: string | null
   models: RunnerModel[]
   runtimes?: RunnerModelIdentity['runtime'][]
+}
+
+/** Native model references can be validated without connecting to a cloud catalog. */
+export function requiresCloudModelCatalog(
+  policy?: AgentModelPolicy,
+  selection?: RunnerSelection
+): boolean {
+  const model = policy?.mode === 'fixed' ? policy.model : selection?.model
+  return !model || model.source === 'cloud'
 }
 
 export function runnerModelKey(model: RunnerModelIdentity): string {
@@ -57,37 +69,64 @@ export function runnerModelKey(model: RunnerModelIdentity): string {
   return JSON.stringify([model.runtime, model.provider, model.model_id])
 }
 
+/** Execution references never include display metadata or provider credentials. */
+export function runnerModelIdentity(model: RunnerModelIdentity): RunnerModelIdentity {
+  return {
+    runtime: model.runtime,
+    provider: model.provider,
+    model_id: model.model_id,
+    ...(model.source ? { source: model.source } : {}),
+    ...(model.cloud_model ? { cloud_model: model.cloud_model } : {}),
+  }
+}
+
+export function cloudRunnerModelIdentity(
+  model: UnifiedModel,
+  runtime: RunnerModelIdentity['runtime']
+): RunnerModelIdentity | null {
+  const protocol = getCloudModelUpstreamApiFormat(model)
+  if (
+    model.type === 'runtime' ||
+    model.isActive === false ||
+    model.compatibilityDisabled ||
+    !protocol ||
+    !model.namespace ||
+    model.resourceUserId == null
+  )
+    return null
+  return {
+    runtime,
+    source: 'cloud',
+    provider: model.provider || protocol,
+    model_id: model.modelId || model.name,
+    cloud_model: {
+      name: model.name,
+      type: model.type,
+      namespace: model.namespace,
+      resource_user_id: model.resourceUserId,
+    },
+  }
+}
+
 /** Resource references and account labels only; never persist a model config. */
 export function cloudRunnerModels(models: UnifiedModel[]): RunnerModel[] {
-  return models.flatMap(model => {
-    const protocol = getCloudModelUpstreamApiFormat(model)
-    if (
-      model.type === 'runtime' ||
-      model.isActive === false ||
-      model.compatibilityDisabled ||
-      !protocol ||
-      !model.namespace ||
-      model.resourceUserId == null
-    )
-      return []
-    const runtimes: RunnerModelIdentity['runtime'][] = ['codex', 'claude_code']
-    return runtimes.map(runtime => ({
-      runtime,
-      source: 'cloud' as const,
-      provider: model.provider || protocol,
-      model_id: model.modelId || model.name,
-      cloud_model: {
-        name: model.name,
-        type: model.type as 'public' | 'user' | 'group',
-        namespace: model.namespace!,
-        resource_user_id: model.resourceUserId!,
-      },
-      label: model.displayName || model.name,
-      local_model_id: '',
-      account_label: 'cloud_gateway',
-      is_default: false,
-    }))
-  })
+  const runtimes: RunnerModelIdentity['runtime'][] = ['codex', 'claude_code']
+  return models.flatMap(model =>
+    runtimes.flatMap(runtime => {
+      const identity = cloudRunnerModelIdentity(model, runtime)
+      return identity
+        ? [
+            {
+              ...identity,
+              label: model.displayName || model.name,
+              local_model_id: '',
+              account_label: 'cloud_gateway',
+              is_default: false,
+            },
+          ]
+        : []
+    })
+  )
 }
 
 export function runnerSupportsModel(
@@ -150,6 +189,26 @@ export function policyModels(
 export interface RunnerSelection {
   execution_policy?: AgentExecutionPolicy
   model?: RunnerModelIdentity
+  recovery_from_environment_id?: string
+}
+
+/**
+ * A saved fixed cloud reference carries the full execution identity even when
+ * the admin has since hidden the model from the discovery catalog. The server
+ * still resolves and authorizes that persisted reference when the task runs,
+ * so discovery membership is not the authorization source for it.
+ */
+function isPersistedCloudReference(
+  modelPolicy: AgentModelPolicy,
+  model: RunnerModelIdentity
+): boolean {
+  const reference = model.cloud_model
+  return (
+    modelPolicy.mode === 'fixed' &&
+    model.source === 'cloud' &&
+    Boolean(reference?.name && reference.type && reference.namespace) &&
+    typeof reference?.resource_user_id === 'number'
+  )
 }
 
 /** Resolve a local execution using the same rules as the server queue. */
@@ -192,7 +251,12 @@ export function resolveRunnerSelection(input: {
     throw new Error('RUNNER_POLICY_FIXED: this agent has a fixed environment rule')
   }
   let candidates = policyEnvironments(input.environments, policy, true)
-  if (input.boundEnvironmentId)
+  const recovery =
+    !!input.boundEnvironmentId &&
+    !input.automatic &&
+    selection.recovery_from_environment_id === input.boundEnvironmentId &&
+    !candidates.some(item => item.id === input.boundEnvironmentId)
+  if (input.boundEnvironmentId && !recovery)
     candidates = candidates.filter(item => item.id === input.boundEnvironmentId)
   if (!candidates.length)
     throw new Error(
@@ -218,18 +282,16 @@ export function resolveRunnerSelection(input: {
   if (!model) throw new Error('RUNNER_MODEL_REQUIRED: select a model before execution')
   if (model.runtime !== input.runtime)
     throw new Error('RUNNER_RUNTIME_MISMATCH: the model does not support this runtime')
-  const selectedModel: RunnerModelIdentity = {
-    runtime: model.runtime,
-    provider: model.provider,
-    model_id: model.model_id,
-    ...(model.source ? { source: model.source } : {}),
-    ...(model.cloud_model ? { cloud_model: model.cloud_model } : {}),
-  }
+  const selectedModel = runnerModelIdentity(model)
   if (model.source === 'native' && input.executionPolicy.mode !== 'fixed')
     throw new Error('RUNNER_MODEL_UNAVAILABLE: local models require a fixed environment')
+  const catalogCloudModel = (input.cloudModels ?? []).some(
+    item => runnerModelKey(item) === runnerModelKey(model!)
+  )
   if (
     model.source === 'cloud' &&
-    !(input.cloudModels ?? []).some(item => runnerModelKey(item) === runnerModelKey(model!))
+    !catalogCloudModel &&
+    !isPersistedCloudReference(input.modelPolicy, model)
   )
     throw new Error(
       'RUNNER_MODEL_UNAVAILABLE: the cloud model is unavailable or no longer authorized'
@@ -248,5 +310,6 @@ export function resolveRunnerSelection(input: {
         : selection.model
           ? 'execution_selection'
           : 'environment_default',
+    ...(recovery ? { recovery_from_environment_id: input.boundEnvironmentId } : {}),
   }
 }

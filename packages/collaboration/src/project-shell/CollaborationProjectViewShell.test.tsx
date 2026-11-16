@@ -194,3 +194,32 @@ describe("CollaborationProjectViewShell permissions", () => {
     ]);
   });
 });
+
+it("places milestones immediately after table without moving calendar and gantt", () => {
+  const extension = (
+    id: "milestones" | "calendar" | "gantt",
+  ): CollaborationProjectViewExtension => ({
+    id,
+    label: id,
+    testId: id,
+    content: null,
+    ...(id === "milestones" ? { after: "table" as const } : {}),
+  });
+  const options = buildCollaborationProjectViewOptions({
+    project: { project_store: "local" },
+    labels,
+    testIds,
+    extensions: ["milestones", "calendar", "gantt"].map((id) =>
+      extension(id as "milestones" | "calendar" | "gantt"),
+    ),
+  });
+  expect(options.map((option) => option.id)).toEqual([
+    "board",
+    "calendar",
+    "gantt",
+    "table",
+    "milestones",
+    "files",
+    "manage",
+  ]);
+});

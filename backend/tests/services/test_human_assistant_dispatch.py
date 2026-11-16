@@ -15,7 +15,6 @@ from app.schemas.project_chat import LoopItemAssign
 from app.services.human_assistant_dispatch import (
     current_dispatch,
     execution_current,
-    refresh_owner_dispatches,
 )
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_items.service import loop_item_service
@@ -134,6 +133,51 @@ def test_flag_disabled_reproduces_notification_only_assignment(test_db, test_use
     assert test_db.query(LoopItemExecution).filter_by(loop_item_id=item.id).count() == 0
 
 
+@pytest.mark.parametrize("workspace_owner", [7, "0", None, 0])
+def test_workspace_devices_do_not_inherit_personal_assistant_consent(
+    test_db, test_user, dispatch_enabled, workspace_owner
+):
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    device = _device(test_db, test_user)
+    device.json = {
+        **device.json,
+        "spec": {**device.json["spec"], "workspaceOwnerId": workspace_owner},
+    }
+    test_db.commit()
+
+    _assign(test_db, project, item, test_user, test_user)
+
+    dispatch = current_dispatch(test_db, item)
+    assert item.assignee_user_id == test_user.id
+    if workspace_owner:
+        assert dispatch["reasonCode"] == "no_authorized_assistant"
+        assert dispatch["executionId"] is None
+        assert (
+            test_db.query(LoopItemExecution).filter_by(loop_item_id=item.id).count()
+            == 0
+        )
+    else:
+        assert dispatch["executionId"]
+
+
+def test_personal_assistant_claim_rechecks_workspace_device_ownership(
+    test_db, test_user, dispatch_enabled
+):
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    device = _device(test_db, test_user)
+    _assign(test_db, project, item, test_user, test_user)
+    device.json = {
+        **device.json,
+        "spec": {**device.json["spec"], "workspaceOwnerId": "workspace-7"},
+    }
+    test_db.commit()
+
+    with pytest.raises(HTTPException, match="403"):
+        _bind(test_db, item, test_user)
+
+
 def test_assigning_closed_issue_preserves_status_without_an_active_dispatch(
     test_db, test_user, dispatch_enabled
 ):
@@ -186,10 +230,6 @@ def test_missing_authorization_remains_visible_and_manual_task_is_allowed(
         test_user.id,
     )
     assert manual.execution_id is None
-    _device(test_db, test_user)
-    refresh_owner_dispatches(test_db, test_user.id)
-    test_db.commit()
-    assert current_dispatch(test_db, item)["executionId"]
 
 
 def test_only_one_owned_endpoint_can_claim_and_retries_reuse_execution(
@@ -374,16 +414,26 @@ def test_preflight_failure_is_persisted_without_a_second_execution(
     assert test_db.query(LoopItemExecution).filter_by(loop_item_id=item.id).count() == 1
 
 
-def test_heartbeat_resolution_is_idempotent_and_invalidation_waits_for_commit(
+def test_assignment_invalidation_waits_for_commit(
     test_db, test_user, dispatch_enabled, isolate_background_delivery
 ):
+    from app.services.issue_assignments import issue_assignment_service
+
     project = _make_project(test_db, test_user)
     item = _make_item(test_db, project, test_user)
-    _assign(test_db, project, item, test_user, test_user)
     _device(test_db, test_user)
     isolate_background_delivery.reset_mock()
-    refresh_owner_dispatches(test_db, test_user.id)
-    refresh_owner_dispatches(test_db, test_user.id)
+    issue_assignment_service.record(
+        test_db,
+        project_id=project.id,
+        issue_id=item.id,
+        member_type="human",
+        member_id=str(test_user.id),
+        assigned_by_user_id=test_user.id,
+        workflow_step=None,
+        notify=False,
+        trigger="manual",
+    )
     isolate_background_delivery.assert_not_called()
     test_db.commit()
     assert any(

@@ -133,6 +133,48 @@ describe('McpMarketplace', () => {
     expect(mockedApis.syncServers).toHaveBeenCalledTimes(1)
   })
 
+  it('filters on mount with the keyword supplied by a deep link', async () => {
+    render(<McpMarketplace initialKeyword="数据" />)
+
+    expect(await screen.findByText('数据报告')).toBeInTheDocument()
+    expect(screen.queryByText('Content Search')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mcp-marketplace-search-input')).toHaveValue('数据')
+  })
+
+  it('re-applies a keyword changed in the URL', async () => {
+    const { rerender } = render(<McpMarketplace initialKeyword="数据" />)
+
+    expect(await screen.findByText('数据报告')).toBeInTheDocument()
+    rerender(<McpMarketplace initialKeyword="Content" />)
+
+    expect(await screen.findByText('Content Search')).toBeInTheDocument()
+    expect(screen.queryByText('数据报告')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mcp-marketplace-search-input')).toHaveValue('Content')
+  })
+
+  it('clears a deep-link keyword from the URL when switching providers', async () => {
+    const user = userEvent.setup()
+    const onKeywordChange = jest.fn()
+    render(<McpMarketplace initialKeyword="数据" onKeywordChange={onKeywordChange} />)
+
+    await screen.findByText('数据报告')
+    await user.click(screen.getByTestId('mcp-marketplace-provider-partner'))
+
+    expect(onKeywordChange).toHaveBeenCalledWith('')
+    expect(screen.getByTestId('mcp-marketplace-search-input')).toHaveValue('')
+  })
+
+  it('does not rewrite the URL when switching providers without a keyword', async () => {
+    const user = userEvent.setup()
+    const onKeywordChange = jest.fn()
+    render(<McpMarketplace onKeywordChange={onKeywordChange} />)
+
+    await screen.findByText('数据报告')
+    await user.click(screen.getByTestId('mcp-marketplace-provider-partner'))
+
+    expect(onKeywordChange).not.toHaveBeenCalled()
+  })
+
   it('opens target selection instead of installing the MCP to the user', async () => {
     const user = userEvent.setup()
     render(<McpMarketplace />)

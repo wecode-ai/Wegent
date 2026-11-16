@@ -21,10 +21,19 @@ class PluginOAuthRevocations:
         self.connections = connections
 
     @trace_sync("plugin_auth.oauth.revocations", "backend.plugin_auth")
-    def pending(self, db: Session, *, user_id: int, device_id: str) -> list[str]:
+    def pending(
+        self, db: Session, *, user_id: int, device_id: str, after_id: int = 0
+    ) -> dict:
         logical_id, binding = self.connections._device_binding(db, user_id, device_id)
         result = []
-        for row in self.connections._query(db, user_id).order_by("id").all():
+        cursor = None
+        rows = (
+            self.connections._query(db, user_id)
+            .filter(Kind.id > after_id)
+            .order_by(Kind.id)
+            .all()
+        )
+        for row in rows:
             spec = row.json["spec"]
             job = spec.get("oauthRevocation") or {}
             if (
@@ -33,10 +42,22 @@ class PluginOAuthRevocations:
             ):
                 continue
             if job.get("state") in {"pending", "in_flight"} and self._due(job):
-                result.append(row.name)
+                try:
+                    self.connections._validate_current_plugin(db, user_id, spec)
+                    plugin, definition = self.connections._plugin(
+                        db, user_id, spec["installedPluginId"], spec["connectorSlug"]
+                    )
+                    package = package_metadata(
+                        plugin, spec["connectorSlug"], definition
+                    )
+                except PluginAccountAuthError:
+                    # begin still owns the transition to attention for stale packages.
+                    package = None
+                result.append({"connection_id": row.name, "package": package})
             if len(result) >= 10:
+                cursor = row.id
                 break
-        return result
+        return {"revocations": result, "next_cursor": cursor}
 
     @staticmethod
     def _due(job: dict) -> bool:

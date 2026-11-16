@@ -1,0 +1,9 @@
+{
+  "revision": "e58ee381a7c2",
+  "parents": [
+    "d47dd270f4b6"
+  ],
+  "source": "20260820_e58ee381a7c2_migrate_wework_runtimes_to_loop_items.py",
+  "upgrade": null,
+  "downgrade": null
+}

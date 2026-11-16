@@ -46,7 +46,13 @@ window.__ModuleLoader__.load({
     }
 
     function composerComponent(OfficialVoiceInput) {
-      return function VoiceInput({ disabled, captureInsertion, sessionId, ...props }) {
+      return function VoiceInput({
+        disabled,
+        captureInsertion,
+        sessionId,
+        onActiveChange = noop,
+        ...props
+      }) {
         const sessionRef = useRef({ id: sessionId })
         if (sessionRef.current.id !== sessionId) sessionRef.current = { id: sessionId }
         const inputActions = useMemo(
@@ -72,7 +78,7 @@ window.__ModuleLoader__.load({
             sessionId,
             inputActions,
             locked: disabled || !captureInsertion,
-            onActiveChange: noop,
+            onActiveChange,
             openSettings: () => window.dispatchEvent(new Event(OPEN_SETTINGS)),
           })
         )

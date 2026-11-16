@@ -1,0 +1,12 @@
+{
+  "order": 47000,
+  "scenario": "./scenarios/stand-in-alternate-source.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 36000,
+      "shard": 3,
+      "position": 7000
+    }
+  }
+}

@@ -8,7 +8,7 @@ sidebar_position: 32
 
 ## 目标
 
-云项目是多人共享的协作与存储边界。成员可以在自己的本地项目中选择默认云项目，在 Wework 中执行任务，并把选定的聊天记录、文件和 Markdown 说明作为不可变交付快照提交到云端。
+云项目是多人共享的协作与存储边界。成员可以在自己的本地项目中选择默认云项目，在 Wework 中执行任务，并把选定的聊天记录、文件和 Markdown 说明作为可编辑交付物提交到云端。
 
 云项目不等同于现有 `Project`：
 
@@ -83,7 +83,7 @@ projects/{cloud-project-public-id}/
       files/
 ```
 
-交付完成后，其对象前缀不可覆盖。后续任务只能读取或复制交付物。
+已交付记录支持版本校验后的原子更新。更新先写入项目交付前缀下独立的 `edits/{revision}` 对象，再在一个数据库事务中更新标题、对象引用、附件清单和版本号；提交失败时保留原交付内容，成功后清理被替换对象。
 
 ## 数据模型
 
@@ -211,7 +211,7 @@ Wework 本地运行时把绑定区分为 `system` 和 `user`。每个运行任�
 
 ### Delivery
 
-`deliveries` 和 `delivery_assets` 保存不可变快照元数据。`Delivery.source_task_binding_id` 是可空外键：云端直接完成 TODO 时为空，本地任务交付时指向已经验证的 TODO/Task 关联。
+`deliveries` 和 `delivery_assets` 保存交付元数据。`Delivery.source_task_binding_id` 是可空外键：云端直接完成 TODO 时为空，本地任务交付时指向已经验证的 TODO/Task 关联。
 
 ## 权限
 
@@ -231,7 +231,7 @@ Wework 本地运行时把绑定区分为 `system` 和 `user`。每个运行任�
 ```text
 cloud_projects/  项目和成员
 loop_items/      TODO、状态机和 Task 关联
-delivery/        不可变交付快照
+delivery/        可编辑交付物
 cloud_files/     可变共享文件
 mcp_server/tools/delivery.py  AI 按权限读取云空间与交付引用
 ```
@@ -244,8 +244,10 @@ Delivery 服务不负责 TODO CRUD；LoopItem 服务不直接访问 MinIO；MCP 
 2. 分批上传文件，记录 SHA-256 和大小。
 3. `finalize` 锁定 Delivery 与 LoopItem，验证来源 Task 仍关联当前 TODO。
 4. 写入 `manifest.json`。
-5. 在一个数据库事务中将 Delivery 置为 `delivered`、TODO 置为 `completed`，并更新 `current_delivery_id`。
+5. 在一个数据库事务中将 Delivery 置为 `delivered`，并更新 `current_delivery_id`；人工协作任务的首次交付按轮次规则结算，编辑交付物不重复结算。
 6. 数据库提交失败时删除新写入的 manifest，草稿仍可重试。
+
+`PATCH /api/v1/deliveries/{id}` 由 Rust Backend 实现，使用 multipart `metadata` 和 `file_0`、`file_1` 等文件字段。元数据包含 `title`、`version`、`markdown`、`chat`、`retained_asset_ids` 和文件描述清单。新文件与保留附件必须具有唯一相对路径，引用其他交付物附件的请求被拒绝。已有创建、读取和首次交付接口保留原所有权。
 
 ## API
 
@@ -365,3 +367,13 @@ flowchart LR
 历史执行结果与会话读取状态独立。读取失败不得显示为“没有对话记录”，也不能据此宣称执行器确认未运行。首次读取展示骨架屏；设备实际离线时保留错误与重试入口，不切换到成员同名设备。自动化回归包含成员读取管理员会话；默认只执行针对性单元测试，E2E 需明确要求。
 
 HTTP transcript 响应必须保留 Runtime 的 `turns`、`running`、`origin`、`historyUnavailable` 和 `turnNavigation`，与 Socket.IO 读取契约一致。缺少 `turns` 是协议错误，不能用空列表替代已有会话。
+
+## 项目里程碑
+
+本地和云端的内部 Issue 项目都支持里程碑。项目视图中的“里程碑”可以创建和编辑目标描述、截止日期，手动关闭或重新打开，并展示当前用户可见 Issue 的完成数和剩余数。完成比例按已完成 Issue 数除以关联 Issue 总数计算；空里程碑显示 0%，AI 执行结束不会直接计为 Issue 完成。
+
+每个 Issue 最多关联同项目的一个里程碑，父子 Issue 分别设置。创建或查看 Issue 时可选择里程碑；从里程碑详情新建 Issue 时默认选中当前里程碑，也可手动更改或解除关联。看板和表格支持筛选，表格支持批量设置或移除关联。里程碑删除只解除关联，保留全部 Issue。云端里程碑由项目 Maintainer/Owner 管理，Issue 关联遵守原有内容编辑权限；进度统计沿用 Issue 可见性规则。
+
+里程碑复用 `loop_items` 的 `resource_type=milestone`，Issue 的关联保存于 `metadata.milestone_id`。本地通过 Executor IPC 和 SQLite 事务持久化，云端里程碑管理 API 由 Rust 实现；现有 Python Issue API 负责关联字段的创建和更新。同项目校验与删除使用同一里程碑记录的事务锁，更新和删除均校验版本。无需新增表或数据库迁移。外部 GitHub/GitLab/钉钉 Issue provider 不包含在此支持范围内。
+
+已完成 Issue 归档后继续计入里程碑的总数和完成数，未完成 Issue 归档后仍计入未完成数，归档与恢复均不改变交付进度；界面单独标明已归档数量，可从里程碑详情进入现有归档箱查看。

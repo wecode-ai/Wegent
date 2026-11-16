@@ -9,6 +9,7 @@ import type {
 } from '@/api/local/codexPlugins'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { useTranslation } from '@/hooks/useTranslation'
+import { PluginInstallWarning } from './PluginInstallWarning'
 
 function issueGuidance(
   issue: LocalPluginImportIssue,
@@ -317,7 +318,7 @@ export function PluginImportDialog({
           {savedExamplePath && (
             <div
               data-testid="plugin-import-example-saved"
-              className="mt-4 flex items-start gap-2 rounded-xl bg-green-500/8 px-3 py-3 text-sm text-green-700"
+              className="mt-4 flex items-start gap-2 rounded-xl bg-success/8 px-3 py-3 text-sm text-success wework:bg-green-500/8 wework:text-green-700"
             >
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
@@ -331,8 +332,11 @@ export function PluginImportDialog({
           {preview && !preview.valid && (
             <div data-testid="plugin-import-issues" className="mt-4 space-y-2">
               {preview.issues.map((issue, index) => (
-                <div key={`${issue.code}-${index}`} className="rounded-xl bg-red-500/8 px-3 py-3">
-                  <div className="flex items-start gap-2 text-sm font-medium text-red-600">
+                <div
+                  key={`${issue.code}-${index}`}
+                  className="rounded-xl bg-destructive/8 px-3 py-3 wework:bg-red-500/8"
+                >
+                  <div className="flex items-start gap-2 text-sm font-medium text-destructive wework:text-red-600">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>{issueGuidance(issue, t)}</span>
                   </div>
@@ -346,6 +350,7 @@ export function PluginImportDialog({
 
           {preview?.valid && (
             <div data-testid="plugin-import-preview" className="mt-4 space-y-3">
+              <PluginInstallWarning />
               <div className="rounded-xl bg-surface px-4 py-3">
                 <div className="flex items-start gap-3">
                   <Archive className="mt-0.5 h-5 w-5 text-text-secondary" />
@@ -372,7 +377,7 @@ export function PluginImportDialog({
               </div>
 
               {preview.existing && (
-                <div className="rounded-xl bg-orange-500/8 px-3 py-3 text-sm text-orange-700">
+                <div className="rounded-xl bg-warning/8 px-3 py-3 text-sm text-warning wework:bg-orange-500/8 wework:text-orange-700">
                   {t(
                     'workbench.plugins_import_existing',
                     '个人市场中已有 {{name}}（{{version}}）。继续后将覆盖并重新安装。',
@@ -407,7 +412,7 @@ export function PluginImportDialog({
           {error && (
             <div
               role="alert"
-              className="mt-4 flex items-start gap-2 rounded-xl bg-red-500/8 px-3 py-3 text-sm text-red-600"
+              className="mt-4 flex items-start gap-2 rounded-xl bg-destructive/8 px-3 py-3 text-sm text-destructive wework:bg-red-500/8 wework:text-red-600"
             >
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{error}</span>

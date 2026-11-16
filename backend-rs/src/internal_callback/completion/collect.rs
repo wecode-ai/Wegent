@@ -9,7 +9,7 @@ use brz_redis::Redis;
 use serde_json::{Map, Value, json};
 
 use super::Completion;
-use super::sql;
+use super::text_value::terminal_text_value;
 use crate::internal_callback::session;
 use crate::task_store::subtask_column_index;
 
@@ -23,26 +23,29 @@ fn subtask_column<T: FromMysqlCol>(row: &MysqlRow, column: &str) -> MysqlResult<
     row.get_at::<Option<T>>(index)
 }
 
-/// `_get_existing_subtask_result`: the stored subtask result, preserving the
-/// `subqueryload(Subtask.contexts)` read the ORM issues alongside it.
+/// Read the stored subtask result without loading its unrelated contexts.
 async fn existing_subtask_result<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
+    task_id: i64,
     subtask_id: i64,
 ) -> Option<Value> {
+    let (_, subtask_table) = super::resolve_tables(ctx.app, ctx.tables, task_id)
+        .await
+        .ok()?;
     let mysql = ctx
         .mysql
-        .route(crate::task_routing::ByTaskId(subtask_id as u64));
+        .route(crate::task_routing::ByTaskId(task_id as u64));
     let row: MysqlRow = mysql
-        .fetch_optional(sql::subtask_by_id(ctx.tables), (subtask_id,))
+        .fetch_optional(
+            crate::task_store_statements::subtask_by_id_statement(&subtask_table),
+            (subtask_id,),
+        )
         .await
         .ok()
         .flatten()?;
-    // The ORM eager-loads `Subtask.contexts`, so the source issues this read
-    // even though the result merge never consumes it.
-    let _contexts: Vec<MysqlRow> = mysql
-        .fetch_all(sql::contexts_by_subtask(), (subtask_id,))
-        .await
-        .unwrap_or_default();
+    if subtask_column::<i64>(&row, "task_id").ok().flatten() != Some(task_id) {
+        return None;
+    }
     let result: Option<Value> = subtask_column::<Json<Value>>(&row, "result")
         .ok()
         .flatten()
@@ -124,33 +127,6 @@ pub(crate) fn is_blank_text_value(value: Option<&Value>) -> bool {
     }
 }
 
-/// `_extract_text_value_from_blocks`.
-fn extract_text_value_from_blocks(blocks: Option<&Value>) -> String {
-    let Some(Value::Array(blocks)) = blocks else {
-        return String::new();
-    };
-    let mut parts: Vec<&str> = Vec::new();
-    for block in blocks {
-        let Value::Object(block) = block else {
-            continue;
-        };
-        if !matches!(
-            block.get("type").and_then(Value::as_str),
-            Some("text" | "output_text")
-        ) {
-            continue;
-        }
-        let mut content = block.get("content").and_then(Value::as_str);
-        if content.is_none_or(|text| text.trim().is_empty()) {
-            content = block.get("text").and_then(Value::as_str);
-        }
-        if let Some(text) = content.filter(|text| !text.trim().is_empty()) {
-            parts.push(text.trim());
-        }
-    }
-    parts.join("\n")
-}
-
 /// `_decode_tool_output_payloads`.
 fn decode_tool_output_payloads(tool_output: Option<&Value>) -> Vec<Map<String, Value>> {
     let candidates: Vec<&Value> = match tool_output {
@@ -207,6 +183,7 @@ fn extract_embedded_result_blocks(blocks: Option<&Value>) -> Vec<Value> {
 /// `collect_completed_result`: the terminal result payload for one subtask.
 pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
     ctx: &Completion<'_, M, R>,
+    task_id: i64,
     subtask_id: i64,
     status: &str,
     result: Option<&Value>,
@@ -215,7 +192,7 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
 ) -> Option<Value> {
     let normalized_status = status.to_uppercase();
     let accumulated_content = session::get_accumulated_content(ctx.redis, subtask_id).await;
-    let existing_result = existing_subtask_result(ctx, subtask_id)
+    let existing_result = existing_subtask_result(ctx, task_id, subtask_id)
         .await
         .unwrap_or_else(|| Value::Object(Map::new()));
 
@@ -246,7 +223,10 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
         }
     }
 
-    let blocks = session::finalize_and_get_blocks(
+    let session::LoadedBlocks {
+        blocks,
+        has_missing_text_content,
+    } = session::finalize_and_get_blocks(
         ctx.redis,
         subtask_id,
         termination_reason.as_deref(),
@@ -307,24 +287,29 @@ pub(crate) async fn collect_completed_result<M: Mysql, R: Redis>(
     if is_blank_text_value(final_result.get("value"))
         && (normalized_status == "COMPLETED" || !accumulated_content.trim().is_empty())
     {
-        let text_value = if !accumulated_content.trim().is_empty() {
-            accumulated_content.clone()
-        } else {
-            extract_text_value_from_blocks(final_result.get("blocks"))
-        };
+        let text_value = terminal_text_value(
+            final_result.get("blocks"),
+            &accumulated_content,
+            has_missing_text_content,
+        );
         final_result.insert("value".into(), Value::String(text_value));
     }
 
     if normalized_status == "FAILED"
         && let Some(code) = error_code
     {
-        final_result.insert("error_type".into(), Value::String(code.to_string()));
-        if let Some(status_code) = extract_http_status_code(error_message.unwrap_or_default()) {
-            final_result.insert("error_code".into(), json!(status_code));
-        }
+        final_result.extend(failure_details(error_message.unwrap_or_default(), code));
     }
 
     Some(Value::Object(final_result))
+}
+
+pub(super) fn failure_details(message: &str, code: &str) -> Map<String, Value> {
+    let mut details = Map::from_iter([("error_type".into(), json!(code))]);
+    if let Some(status_code) = extract_http_status_code(message) {
+        details.insert("error_code".into(), json!(status_code));
+    }
+    details
 }
 
 /// `shared.utils.error_classifier.extract_http_status_code`: the first

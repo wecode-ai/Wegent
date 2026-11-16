@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useSyncExternalStore } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRuntimeConversationSession } from '@wegent/chat-core/runtime-conversation-session'
@@ -36,10 +36,8 @@ describe('browser runtime question actions', () => {
   let session: ReturnType<typeof createRuntimeConversationSession>
   let actions: ReturnType<typeof useBrowserConversationActions>
   let runtime: Parameters<typeof useBrowserConversationActions>[0]
-  async function mountQuestion(
-    question: typeof payload = payload,
-    running = true
-  ): Promise<void> {
+  let client: RuntimeConversationClient
+  async function mountQuestion(question: typeof payload = payload, running = true): Promise<void> {
     if (root) act(() => root.unmount())
     if (container) container.remove()
     if (session) session.stop()
@@ -90,7 +88,7 @@ describe('browser runtime question actions', () => {
         },
       ],
     }
-    const client: RuntimeConversationClient = {
+    client = {
       getTranscript: vi.fn().mockResolvedValue(transcript),
       subscribe: vi.fn().mockResolvedValue(() => {}),
       cancel: runtime.cancel,
@@ -100,6 +98,7 @@ describe('browser runtime question actions', () => {
     session.start()
     await session.reload()
     function Harness() {
+      useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot)
       actions = useBrowserConversationActions(runtime, address, session, translate, () => ({
         address,
         modelId: 'owned-model',
@@ -234,6 +233,85 @@ describe('browser runtime question actions', () => {
       })
     )
   })
+  it.each(['accepted', 'queued', 'rejected'] as const)(
+    'shows browser retry progress until delivery or a queued turn starts (%s)',
+    async outcome => {
+      const failed = session.getSnapshot().messages.find(message => message.status === 'failed')!
+      let finish!: (value: { accepted: boolean; status?: 'queued'; taskId: string }) => void
+      vi.mocked(runtime.work.sendRuntimeMessage).mockReturnValueOnce(
+        new Promise(resolve => {
+          finish = resolve
+        })
+      )
+      let sending!: Promise<boolean>
+      act(() => {
+        sending = actions.onRetryFailedMessage!(failed)
+      })
+      expect(actions.isRetryPending).toBe(true)
+      expect(session.getSnapshot().messages.some(message => message.role === 'user')).toBe(false)
+      await act(async () => {
+        finish({
+          accepted: outcome !== 'rejected',
+          ...(outcome === 'queued' ? { status: 'queued' } : {}),
+          taskId: address.taskId,
+        })
+        expect(await sending).toBe(outcome !== 'rejected')
+      })
+      expect(actions.isRetryPending).toBe(outcome === 'queued')
+      expect(session.getSnapshot().messages.some(message => message.role === 'user')).toBe(
+        outcome === 'accepted'
+      )
+      if (outcome === 'queued') {
+        await act(async () => expect(await actions.onRetryFailedMessage!(failed)).toBe(false))
+        expect(runtime.work.sendRuntimeMessage).toHaveBeenCalledOnce()
+      }
+    }
+  )
+
+  it('keeps a queued retry visible when older history loads and settles only its matching user message', async () => {
+    const failed = session.getSnapshot().messages.find(message => message.status === 'failed')!
+    vi.mocked(runtime.work.sendRuntimeMessage).mockResolvedValueOnce({
+      accepted: true,
+      status: 'queued',
+      taskId: address.taskId,
+    })
+    await act(async () => expect(await actions.onRetryFailedMessage!(failed)).toBe(true))
+    const previous = session.getSnapshot().turns
+    const history: RuntimeTranscriptResponse = {
+      runtime: 'codex',
+      workspacePath: '/repo',
+      running: true,
+      messages: [],
+      turns: [{ id: 'older-history', status: 'done', items: [] }, ...previous],
+    }
+    vi.mocked(client.getTranscript).mockResolvedValueOnce(history)
+    await act(async () => session.reload())
+    expect(actions.isRetryPending).toBe(true)
+
+    const messageId = vi.mocked(runtime.work.sendRuntimeMessage).mock.calls[0][0]
+      .clientUserMessageId!
+    vi.mocked(client.getTranscript).mockResolvedValueOnce({
+      ...history,
+      turns: [
+        ...history.turns!,
+        {
+          id: 'native-retry-turn',
+          status: 'done',
+          clientUserMessageId: messageId,
+          items: [
+            {
+              id: messageId,
+              type: 'user_message',
+              message: { id: messageId, role: 'user', content: '继续', status: 'done' },
+            },
+          ],
+        },
+      ],
+    })
+    await act(async () => session.reload())
+    expect(actions.isRetryPending).toBe(false)
+  })
+
   it('ignores duplicate retries and validates against the current transcript', async () => {
     const failed = session.getSnapshot().messages.find(message => message.status === 'failed')!
     let finish!: (value: { accepted: boolean; taskId: string }) => void

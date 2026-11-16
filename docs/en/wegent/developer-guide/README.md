@@ -30,6 +30,8 @@ Welcome to the Wegent Developer Guide! This guide will help you understand how t
 - [External Knowledge MCP](./external-knowledge-mcp.md) - Knowledge MCP integration for trusted external systems
 - [External OAuth 2.0 Integration](./external-oauth-integration.md) - Authorization Code, PKCE, userinfo, refresh, and revocation
 
+- [Local Plugin Execution and Cloud Synchronization](./plugin-local-sync.md)
+
 ### 💬 Chat Shell
 
 - [Chat Shell Context Governance](./chat-shell-context-governance.md) - Overview of the three-stage Chat Shell context-governance rollout

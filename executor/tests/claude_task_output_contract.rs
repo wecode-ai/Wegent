@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{borrow::Cow, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{borrow::Cow, future::Future, pin::Pin, process::Command, sync::Arc, time::Duration};
 
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
@@ -11,10 +11,16 @@ use wegent_executor::{
     process::{CommandSpec, StreamProcessEngine},
     protocol::ExecutionRequest,
     runner::{AgentEngine, EventSink, ExecutionOutcome},
-    stream::{compact_claude_stdout_line, extract_claude_tool_results, ClaudeStdoutJsonBuffer},
+    stream::{
+        collect_claude_stream_summary, compact_claude_stdout_line, extract_claude_tool_results,
+        ClaudeStdoutJsonBuffer,
+    },
 };
 
-const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+const MAX_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_RAW_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+const BUFFER_LIMIT_ENV: &str = "WEGENT_CLAUDE_STDOUT_MAX_BUFFER_BYTES";
+const BUFFER_LIMIT_TEST_CASE: &str = "WEGENT_TEST_CLAUDE_STDOUT_LIMIT_CASE";
 
 fn task_output_event(transcript: &str) -> Value {
     json!({
@@ -43,8 +49,8 @@ fn task_output_event(transcript: &str) -> Value {
 }
 
 fn oversized_task_output_event() -> Value {
-    // Each transcript fits separately; two UTF-8 copies exceed the byte limit.
-    task_output_event(&"子代理日志\n".repeat(50_000))
+    // The two transcript copies together put the event just above the limit.
+    task_output_event(&format!("子代理{}", "x".repeat(MAX_MESSAGE_BYTES / 2)))
 }
 
 #[test]
@@ -75,17 +81,24 @@ fn oversized_duplicate_transcripts_preserve_every_other_field() {
 }
 
 #[test]
-fn small_task_output_keeps_the_borrowed_fast_path_and_metadata() {
-    let event = task_output_event("short transcript");
-    let raw = event.to_string();
+fn task_outputs_within_limit_keep_the_borrowed_fast_path_and_metadata() {
+    for (transcript, minimum_bytes) in [
+        ("short transcript".to_owned(), 0),
+        ("子代理日志\n".repeat(50_000), 1024 * 1024),
+    ] {
+        let event = task_output_event(&transcript);
+        let raw = event.to_string();
+        assert!(raw.len() < MAX_MESSAGE_BYTES);
+        assert!(raw.len() > minimum_bytes);
 
-    let normalized = compact_claude_stdout_line(&raw, 1).unwrap();
-    let parsed = ClaudeStdoutJsonBuffer::default()
-        .push_line(&raw, 1)
-        .unwrap();
+        let normalized = compact_claude_stdout_line(&raw, 1).unwrap();
+        let parsed = ClaudeStdoutJsonBuffer::default()
+            .push_line(&raw, 1)
+            .unwrap();
 
-    assert!(matches!(normalized, Cow::Borrowed(_)));
-    assert_eq!(parsed, Some(event));
+        assert!(matches!(normalized, Cow::Borrowed(_)));
+        assert_eq!(parsed, Some(event));
+    }
 }
 
 #[test]
@@ -145,12 +158,187 @@ fn raw_message_limit_still_rejects_incomplete_json() {
     assert!(buffer.push_line("{\"payload\":\"", 1).unwrap().is_none());
 
     let error = buffer
-        .push_line(&"x".repeat(64 * MAX_MESSAGE_BYTES), 2)
+        .push_line(&"x".repeat(MAX_RAW_MESSAGE_BYTES), 2)
         .unwrap_err();
 
     assert_eq!(error.line_number, 2);
     assert!(error.message.contains("maximum raw size of 67108864 bytes"));
     assert_eq!(buffer.push_line("{}", 3).unwrap(), Some(json!({})));
+}
+
+#[test]
+fn stdout_buffer_limit_uses_the_executor_process_environment() {
+    for (case, limit) in [
+        ("default", None),
+        ("smaller", Some("1048576")),
+        ("larger", Some(" 20971520 ")),
+        ("invalid", Some("10MiB")),
+        ("utf8_boundary", Some("11")),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "stdout_buffer_limit_subprocess",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(BUFFER_LIMIT_TEST_CASE, case)
+            .env_remove(BUFFER_LIMIT_ENV)
+            .env("WEGENT_EXECUTOR_HOME", home.path())
+            .env("WEGENT_EXECUTOR_DISABLE_FILE_LOG", "1")
+            .env("WEGENT_DEBUG_CLAUDE_STDOUT", "0");
+        if let Some(limit) = limit {
+            command.env(BUFFER_LIMIT_ENV, limit);
+        }
+        let output = command.output().unwrap();
+        let diagnostics = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success(), "{case}: {diagnostics}");
+        assert!(
+            diagnostics.contains("test result: ok. 1 passed;"),
+            "{case}: subprocess test did not run: {diagnostics}"
+        );
+        if case == "invalid" {
+            assert_eq!(
+                diagnostics
+                    .matches("invalid claude stdout buffer limit")
+                    .count(),
+                1
+            );
+        }
+    }
+}
+
+fn configured_task_output(case: &str) -> Value {
+    let transcript = if case == "larger" {
+        "x".repeat(6 * 1024 * 1024)
+    } else {
+        "原始记录\n".repeat(50_000)
+    };
+    let mut event = task_output_event(&transcript);
+    if case != "larger" {
+        event["toolUseResult"]["task"]
+            .as_object_mut()
+            .unwrap()
+            .remove("isRawTranscript");
+    }
+    event
+}
+
+fn assert_configured_utf8_boundary() {
+    let line = json!({"x": "汉"}).to_string();
+    assert_eq!(line.len(), 11);
+    assert!(matches!(
+        compact_claude_stdout_line(&line, 1).unwrap(),
+        Cow::Borrowed(_)
+    ));
+    let mut buffer = ClaudeStdoutJsonBuffer::default();
+    assert!(buffer.push_line("{\"x\":", 1).unwrap().is_none());
+    assert_eq!(
+        buffer.push_line("\"汉\"}", 2).unwrap(),
+        Some(json!({"x": "汉"}))
+    );
+    let larger = json!({"x": "汉a"}).to_string();
+    assert!(larger.chars().count() < 11);
+    let error = compact_claude_stdout_line(&larger, 3).unwrap_err();
+    assert!(error.message.contains("maximum buffer size of 11 bytes"));
+}
+
+#[tokio::test]
+async fn stdout_buffer_limit_subprocess() {
+    let Ok(case) = std::env::var(BUFFER_LIMIT_TEST_CASE) else {
+        return;
+    };
+    if case == "utf8_boundary" {
+        assert_configured_utf8_boundary();
+        return;
+    }
+    let mut event = configured_task_output(&case);
+    let raw = event.to_string();
+    assert!(raw.len() > 1024 * 1024);
+    assert_eq!(raw.len() > MAX_MESSAGE_BYTES, case == "larger");
+    let expected = if case == "smaller" {
+        let error = compact_claude_stdout_line(&raw, 1).unwrap_err();
+        assert!(error
+            .message
+            .contains("maximum buffer size of 1048576 bytes"));
+        event["toolUseResult"]["task"]["isRawTranscript"] = json!(true);
+        let marked_raw = event.to_string();
+        let normalized = compact_claude_stdout_line(&marked_raw, 1).unwrap();
+        assert!(matches!(normalized, Cow::Owned(_)));
+        let normalized: Value = serde_json::from_str(&normalized).unwrap();
+        let task = event["toolUseResult"]["task"].as_object_mut().unwrap();
+        task.remove("output");
+        task.remove("result");
+        assert_eq!(normalized, event);
+        ExecutionOutcome::Failed {
+            message: error.failure_message(),
+        }
+    } else {
+        let normalized = compact_claude_stdout_line(&raw, 1).unwrap();
+        assert!(matches!(normalized, Cow::Borrowed(_)));
+        assert_eq!(serde_json::from_str::<Value>(&normalized).unwrap(), event);
+        assert_eq!(
+            ClaudeStdoutJsonBuffer::default()
+                .push_line(&raw, 1)
+                .unwrap(),
+            Some(event)
+        );
+        ExecutionOutcome::Completed {
+            content: "final report".to_owned(),
+        }
+    };
+    // The limit stays consistent across normalization, streaming, and final collection.
+    // This mutation is isolated in a single-test subprocess, never the parent suite.
+    std::env::set_var(BUFFER_LIMIT_ENV, "2");
+    assert_configured_process_outcome(raw, expected).await;
+}
+
+async fn assert_configured_process_outcome(raw: String, expected: ExecutionOutcome) {
+    let output = format!(
+        "{}\n{}\n{}\n",
+        raw,
+        json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "final report"}]}}),
+        json!({"type": "result", "subtype": "success", "is_error": false, "stop_reason": "end_turn"})
+    );
+    assert_eq!(collect_claude_stream_summary(&output).outcome, expected);
+    let sink = RecordingSink::default();
+    let engine = StreamProcessEngine::new(
+        CommandSpec::new("cat").stdin(output),
+        30,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
+    );
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(10),
+        engine.run_with_events(
+            ExecutionRequest::default(),
+            sink.clone(),
+            ResponsesEventBuilder::new("task", "subtask", "model"),
+        ),
+    )
+    .await
+    .expect("configured stdout limit must settle the process");
+    assert_eq!(outcome, expected);
+    let events = sink.0.lock().await;
+    let text: String = events
+        .iter()
+        .filter(|event| event.event_type == "response.output_text.delta")
+        .filter_map(|event| event.data["delta"].as_str())
+        .collect();
+    assert_eq!(
+        text,
+        if matches!(expected, ExecutionOutcome::Completed { .. }) {
+            "final report"
+        } else {
+            ""
+        }
+    );
 }
 
 #[test]
@@ -194,7 +382,12 @@ async fn process_continues_to_final_answer_after_oversized_task_output() {
         json!({"type": "result", "subtype": "success", "is_error": false, "stop_reason": "end_turn"})
     );
     let sink = RecordingSink::default();
-    let engine = StreamProcessEngine::new(CommandSpec::new("cat").stdin(output), 30);
+    let engine = StreamProcessEngine::new(
+        CommandSpec::new("cat").stdin(output),
+        30,
+        std::sync::Arc::new(wegent_executor::process_environment::CredentialEnvironment),
+        env!("CARGO_PKG_VERSION"),
+    );
 
     let outcome = tokio::time::timeout(
         Duration::from_secs(10),

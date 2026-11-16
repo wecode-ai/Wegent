@@ -129,6 +129,10 @@
   cursor: pointer;
 }
 
+.composer-mention-node[data-composer-reference-navigation] {
+  cursor: pointer;
+}
+
 .composer-mention-separator::selection {
   color: inherit;
   background: transparent;

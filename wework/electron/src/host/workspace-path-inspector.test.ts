@@ -29,4 +29,26 @@ describe('workspace path inspector', () => {
       { path: file, isDirectory: false },
     ])
   })
+
+  test('decodes XML entities in native absolute paths', () => {
+    expect(
+      extractFilePathsFromNativePayloads([
+        '<plist><array><string>/Users/alice/Project &amp; context</string></array></plist>',
+      ])
+    ).toEqual(['/Users/alice/Project & context'])
+  })
+
+  test('preserves literal entities in raw paths and decodes plist strings only once', () => {
+    expect(
+      extractFilePathsFromNativePayloads([
+        '/Users/alice/literal &amp; context',
+        'file:///Users/alice/URL%20&amp;%20context',
+        '<plist><string>/Users/alice/XML &amp;lt; context</string></plist>',
+      ])
+    ).toEqual([
+      '/Users/alice/literal &amp; context',
+      '/Users/alice/URL &amp; context',
+      '/Users/alice/XML &lt; context',
+    ])
+  })
 })

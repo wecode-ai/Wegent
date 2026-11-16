@@ -476,6 +476,10 @@ enum IssueLabel {
 }
 
 impl PageIssue {
+    pub(crate) fn title(&self) -> Option<&str> {
+        self.title.as_deref().filter(|title| !title.is_empty())
+    }
+
     /// `_number(issue)`: `number` (github) or `iid` (gitlab).
     pub(crate) fn number(&self) -> i64 {
         self.number.or(self.iid).unwrap_or(0)

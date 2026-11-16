@@ -9,6 +9,7 @@ import './styles/globals.css'
 import { RendererCrashProbe } from './e2e/RendererCrashProbe'
 import { getDesktopE2ERuntimeConfig } from './e2e/runtime-config'
 import App from './App.tsx'
+import { FeedbackDialogHost } from '@/features/feedback/FeedbackDialogHost'
 import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
 import { WorkbenchErrorPage } from '@/components/common/WorkbenchErrorPage'
 import { installAppLogging } from './lib/app-logging'
@@ -28,13 +29,17 @@ import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
 import { DshClientContextProvider } from '@/features/dsh-runtime/DshClientContextProvider'
 import { initializeDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { reportDesktopStartupFailure } from '@/desktop/startupFailure'
+import { applyAppearance } from '@/features/appearance/applyAppearance'
+import { readStoredAppearance } from '@/features/appearance/storage'
 
 import type { Context } from '@deepseek-ai/cordis'
 
 interface WeworkAppRuntime {
   mount(container: HTMLElement, context: Context): Promise<() => void>
 }
+
+applyAppearance(readStoredAppearance())
 
 const rendererStartupStartedAt = performance.now()
 
@@ -82,6 +87,9 @@ async function mountApp(container: HTMLElement, context: Context | null): Promis
   const root = createRoot(container)
   root.render(
     <StrictMode>
+      {/* Keep feedback outside the workbench boundary: reporting must remain
+          available when the workbench itself fails to render. */}
+      <FeedbackDialogHost />
       <WorkbenchErrorBoundary onError={reportRendererFailure}>
         {getDesktopE2ERuntimeConfig().controlUrl && <RendererCrashProbe />}
         <DshClientContextProvider context={context}>
@@ -105,7 +113,7 @@ function reportRendererFailure(error: unknown): void {
     errorType: error instanceof Error ? error.name : typeof error,
   })
   console.error('[Wework] Desktop frontend failed:', error)
-  void invokeDesktopHost<void>('renderer.startupFailed').catch(startupError => {
+  void reportDesktopStartupFailure(error, 'renderer_mount').catch(startupError => {
     console.error('[Wework] Failed to report desktop startup failure:', startupError)
   })
 }
@@ -119,6 +127,7 @@ const desktopStorageReady = (async () => {
   logRendererStartupStep('renderer-storage-initialize', 'started')
   try {
     await initializeDesktopLocalStoragePersistence()
+    applyAppearance(readStoredAppearance())
     await initializeProviderModelConfiguration()
     logRendererStartupStep('renderer-storage-initialize', 'completed')
     return null

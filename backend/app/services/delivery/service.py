@@ -118,6 +118,7 @@ class DeliveryService:
                 written.append(chat_key)
             delivery = Delivery(
                 id=delivery_id,
+                title=values.title.strip(),
                 loop_item_id=item.id,
                 created_by_user_id=user_id,
                 source_task_binding_id=(

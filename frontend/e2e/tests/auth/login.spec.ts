@@ -17,16 +17,6 @@ test.describe('Authentication - Login', () => {
     await page.locator('input').first().waitFor({ state: 'visible', timeout: 30000 })
   })
 
-  test('should display login form', async ({ page }) => {
-    // Wait for form to be visible with timeout - use more flexible selector
-    const formVisible = await page
-      .locator('input')
-      .first()
-      .isVisible({ timeout: 10000 })
-      .catch(() => false)
-    expect(formVisible).toBe(true)
-  })
-
   test('should login with valid credentials', async ({ page }) => {
     // Wait for form elements with more flexible selector
     const inputVisible = await page

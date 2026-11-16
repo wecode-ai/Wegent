@@ -1664,4 +1664,54 @@ describe('ContextSelector organization grouping', () => {
     })
     expect(screen.getByText('Specs / API')).toBeInTheDocument()
   })
+  it('keeps owned team libraries in the original team category and shares selection identity across receiving groups', async () => {
+    const owned = createGroupedKnowledgeBase({
+      id: 72,
+      name: 'Owned team library',
+      namespace: 'source',
+    })
+    mockGetAllGroupedKnowledgeBases.mockResolvedValue(
+      createAllGroupedResponse({
+        groups: [
+          { group_name: 'source', group_display_name: 'Source team', knowledge_bases: [owned] },
+          {
+            group_name: 'receiver',
+            group_display_name: 'Receiver',
+            knowledge_bases: [{ ...owned, group_id: 'receiver', group_name: 'Receiver' }],
+          },
+        ],
+      })
+    )
+    const selected = jest.fn()
+    function Picker() {
+      const [contexts, setContexts] = useState<ContextItem[]>([])
+      return (
+        <>
+          <ContextSelector
+            open
+            onOpenChange={jest.fn()}
+            selectedContexts={contexts}
+            onSelect={context => {
+              selected(context)
+              setContexts(prev => [...prev, context])
+            }}
+            onDeselect={id => setContexts(prev => prev.filter(item => item.id !== id))}
+          >
+            <button>trigger</button>
+          </ContextSelector>
+          <output data-testid="context-count">{contexts.length}</output>
+        </>
+      )
+    }
+    render(<Picker />)
+    fireEvent.click(await screen.findByTestId('knowledge-picker-source-group'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-group-source'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-kb-72'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-kb-select-72'))
+    expect(screen.getByTestId('context-count')).toHaveTextContent('1')
+    fireEvent.click(screen.getByTestId('knowledge-picker-group-receiver'))
+    expect(screen.getAllByTestId('knowledge-picker-kb-72')).toHaveLength(1)
+    expect(screen.getByTestId('context-count')).toHaveTextContent('1')
+    expect(selected).toHaveBeenCalledTimes(1)
+  })
 })

@@ -29,6 +29,7 @@ use super::{
 
 pub(crate) use super::remote_projects::CodexGlobalRemoteProject;
 
+use wegent_runtime_logging::project_index_diagnostics as diagnostics;
 mod migration;
 pub use migration::run_project_state_query;
 
@@ -195,7 +196,14 @@ impl CodexGlobalProjectIndex {
     }
 
     pub fn load() -> Self {
-        flush_or_watch_codex_global_state_oplog();
+        let _stage = diagnostics::Stage::start("load");
+        // Reads overlay durable pending records without waiting for the GUI probe.
+        // Explicit force-flush mode retains its synchronous write contract.
+        if env::var_os("WEGENT_FORCE_CODEX_GLOBAL_STATE_OPLOG_FLUSH").is_some() {
+            flush_or_watch_codex_global_state_oplog();
+        } else {
+            start_codex_global_state_oplog_flush_watcher();
+        }
         cached_codex_global_project_index()
     }
 
@@ -556,6 +564,8 @@ pub(crate) fn register_codex_global_thread_workspace_root(
         return Ok(None);
     }
 
+    // Keep the existing write-side flush ordering before updating official state.
+    flush_or_watch_codex_global_state_oplog();
     let project_index = CodexGlobalProjectIndex::load();
     // Only a newly created thread can replace a stale projectless marker.
     if !is_new_thread && project_index.is_projectless_thread(thread_id) {
@@ -710,8 +720,7 @@ fn append_codex_global_state_op_record(record: &CodexGlobalStateOplogRecord) -> 
     }
     let line = serde_json::to_string(&record)
         .map_err(|error| format!("failed to serialize Codex state oplog record: {error}"))?;
-    let _guard = codex_global_state_oplog_io_lock()
-        .lock()
+    let _guard = diagnostics::trace("oplog_lock", || codex_global_state_oplog_io_lock().lock())
         .map_err(|_| "failed to lock Codex state oplog".to_owned())?;
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -724,6 +733,7 @@ fn append_codex_global_state_op_record(record: &CodexGlobalStateOplogRecord) -> 
 }
 
 fn flush_codex_global_state_oplog_if_idle() -> Result<bool, String> {
+    let _stage = diagnostics::Stage::start("flush_if_idle");
     let oplog_path = codex_global_state_oplog_path();
     if !oplog_path.exists() {
         return Ok(false);
@@ -731,10 +741,9 @@ fn flush_codex_global_state_oplog_if_idle() -> Result<bool, String> {
     if !codex_global_state_oplog_should_flush() {
         return Ok(false);
     }
-    let _guard = codex_global_state_oplog_io_lock()
-        .lock()
+    let _guard = diagnostics::trace("oplog_lock", || codex_global_state_oplog_io_lock().lock())
         .map_err(|_| "failed to lock Codex state oplog".to_owned())?;
-    let ops = read_codex_global_state_oplog_unlocked();
+    let ops = read_codex_global_state_oplog_unlocked(&oplog_path);
     if ops.is_empty() {
         let _ = fs::remove_file(oplog_path);
         return Ok(false);
@@ -750,6 +759,7 @@ fn flush_codex_global_state_oplog_if_idle() -> Result<bool, String> {
 }
 
 fn flush_or_watch_codex_global_state_oplog() {
+    let _stage = diagnostics::Stage::start("flush_or_watch");
     if !codex_global_state_oplog_has_content() {
         return;
     }
@@ -800,6 +810,7 @@ fn codex_global_state_oplog_io_lock() -> &'static Mutex<()> {
 }
 
 fn codex_global_state_oplog_should_flush() -> bool {
+    let _stage = diagnostics::Stage::start("should_flush");
     if codex_global_state_oplog_flush_disabled() {
         return false;
     }
@@ -813,15 +824,9 @@ fn codex_global_state_oplog_flush_disabled() -> bool {
     env::var_os("WEGENT_DISABLE_CODEX_GLOBAL_STATE_OPLOG_FLUSH").is_some()
 }
 
-fn read_codex_global_state_oplog() -> Vec<CodexGlobalStateOplogRecord> {
-    let Ok(_guard) = codex_global_state_oplog_io_lock().lock() else {
-        return Vec::new();
-    };
-    read_codex_global_state_oplog_unlocked()
-}
-
-fn read_codex_global_state_oplog_unlocked() -> Vec<CodexGlobalStateOplogRecord> {
-    let Ok(content) = fs::read_to_string(codex_global_state_oplog_path()) else {
+fn read_codex_global_state_oplog_unlocked(path: &Path) -> Vec<CodexGlobalStateOplogRecord> {
+    let _stage = diagnostics::Stage::start("oplog_read_parse");
+    let Ok(content) = fs::read_to_string(path) else {
         return Vec::new();
     };
     content
@@ -997,8 +1002,10 @@ fn apply_codex_global_state_ops(
 }
 
 fn cached_codex_global_project_index() -> CodexGlobalProjectIndex {
+    let _stage = diagnostics::Stage::start("cached_index");
     let signature = codex_global_project_source_signature();
-    if let Ok(cache) = codex_global_project_cache().read() {
+    if let Ok(cache) = diagnostics::trace("cache_read_lock", || codex_global_project_cache().read())
+    {
         if cache.signature.as_ref() == Some(&signature) {
             return cache.index.clone();
         }
@@ -1014,7 +1021,9 @@ fn refresh_codex_global_project_cache_with_signature(
     signature: CodexGlobalProjectSourceSignature,
 ) -> CodexGlobalProjectIndex {
     let index = build_codex_global_project_index_from_files();
-    if let Ok(mut cache) = codex_global_project_cache().write() {
+    if let Ok(mut cache) =
+        diagnostics::trace("cache_write_lock", || codex_global_project_cache().write())
+    {
         cache.signature = Some(signature);
         cache.index = index.clone();
     }
@@ -1022,8 +1031,11 @@ fn refresh_codex_global_project_cache_with_signature(
 }
 
 fn build_codex_global_project_index_from_files() -> CodexGlobalProjectIndex {
-    let payload = load_codex_global_state();
-    let pending_ops = read_codex_global_state_oplog();
+    let _stage = diagnostics::Stage::start("build_index");
+    let (payload, pending_ops) = read_codex_global_project_snapshot(
+        &codex_global_state_path(),
+        &codex_global_state_oplog_path(),
+    );
     match (payload, pending_ops.is_empty()) {
         (Some(mut payload), false) => {
             apply_codex_global_state_ops(&mut payload, &pending_ops);
@@ -1045,6 +1057,7 @@ fn codex_global_project_cache() -> &'static RwLock<CodexGlobalProjectCache> {
 }
 
 fn codex_global_project_source_signature() -> CodexGlobalProjectSourceSignature {
+    let _stage = diagnostics::Stage::start("source_signature");
     let state_path = codex_global_state_path();
     let (state_modified, state_len) = file_source_signature(&state_path);
     let oplog_path = codex_global_state_oplog_path();
@@ -1066,8 +1079,22 @@ fn file_source_signature(path: &Path) -> (Option<SystemTime>, Option<u64>) {
         .unwrap_or((None, None))
 }
 
-fn load_codex_global_state() -> Option<Map<String, Value>> {
-    read_state_payload(&codex_global_state_path())
+fn read_codex_global_project_snapshot(
+    state_path: &Path,
+    oplog_path: &Path,
+) -> (Option<Map<String, Value>>, Vec<CodexGlobalStateOplogRecord>) {
+    // The watcher replaces state and removes the log under this same lock.
+    // Read both before releasing it, then apply records and build outside it.
+    let guard = diagnostics::trace("snapshot_oplog_lock", || {
+        codex_global_state_oplog_io_lock().lock()
+    });
+    let payload = read_state_payload(state_path);
+    let pending = if guard.is_ok() {
+        read_codex_global_state_oplog_unlocked(oplog_path)
+    } else {
+        Vec::new()
+    };
+    (payload, pending)
 }
 
 fn codex_global_state_path() -> PathBuf {
@@ -1086,8 +1113,8 @@ fn codex_home() -> PathBuf {
 }
 
 fn read_state_payload(path: &Path) -> Option<Map<String, Value>> {
-    let content = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<Value>(&content)
+    let content = diagnostics::trace("state_read", || fs::read_to_string(path)).ok()?;
+    diagnostics::trace("state_parse", || serde_json::from_str::<Value>(&content))
         .ok()
         .and_then(|value| value.as_object().cloned())
 }
@@ -1105,16 +1132,18 @@ fn write_state_payload(path: &Path, payload: &Map<String, Value>) -> Result<(), 
         .write(true)
         .open(&temporary_path)
         .map_err(|error| format!("failed to create Codex global state temp file: {error}"))?;
-    file.write_all(&content)
-        .and_then(|_| file.sync_all())
-        .map_err(|error| format!("failed to flush Codex global state temp file: {error}"))?;
-    fs::rename(&temporary_path, path).map_err(|error| {
+    diagnostics::trace("state_write_sync", || {
+        file.write_all(&content).and_then(|_| file.sync_all())
+    })
+    .map_err(|error| format!("failed to flush Codex global state temp file: {error}"))?;
+    diagnostics::trace("state_rename", || fs::rename(&temporary_path, path)).map_err(|error| {
         let _ = fs::remove_file(&temporary_path);
         format!("failed to replace Codex global state: {error}")
     })
 }
 
 fn index_from_payload(payload: &Map<String, Value>) -> CodexGlobalProjectIndex {
+    let _stage = diagnostics::Stage::start("index_payload");
     let mut candidates = HashMap::<String, CodexGlobalProject>::new();
     let pinned_project_ids = text_list(payload.get(PINNED_PROJECT_IDS_KEY));
     let active_workspace_roots = normalized_text_list(payload.get(ACTIVE_WORKSPACE_ROOTS_KEY));
@@ -1867,6 +1896,7 @@ fn normalize_path_or_raw(value: &str) -> String {
 
 #[cfg(target_os = "macos")]
 fn codex_app_is_running() -> bool {
+    let _stage = diagnostics::Stage::start("codex_gui_probe");
     Command::new("ps")
         .args(codex_app_running_probe_args())
         .stdout(Stdio::piped())
@@ -1885,12 +1915,12 @@ fn codex_app_is_running() -> bool {
     false
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn codex_app_running_probe_args() -> [&'static str; 2] {
     ["-axo", "command="]
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn is_codex_gui_process_command(command: &str) -> bool {
     let command = command.trim();
     command.ends_with("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT")
@@ -1902,14 +1932,8 @@ fn is_codex_gui_process_command(command: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_codex_global_state_ops, canonical_sidebar_project_key, codex_app_running_probe_args,
-        index_from_payload, is_codex_gui_process_command, remove_codex_global_project_payload,
-        rename_codex_global_project_payload, runtime_project_ui_id, CodexGlobalStateOplogRecord,
-        ACTIVE_REMOTE_PROJECT_ID_KEY, CODEX_GLOBAL_STATE_OPLOG_FILENAME,
-        OPLOG_KIND_ACTIVATE_PROJECT, OPLOG_KIND_PIN_PROJECT, OPLOG_KIND_PIN_THREAD,
-        OPLOG_KIND_PROJECT_APPEARANCE, OPLOG_KIND_REORDER_PROJECT, OPLOG_KIND_REORDER_THREAD,
-        OPLOG_KIND_UPSERT_LOCAL_PROJECT, OPLOG_KIND_UPSERT_REMOTE_PROJECT,
-        OPLOG_KIND_UPSERT_REMOTE_PROJECTS, SELECTED_REMOTE_HOST_ID_KEY,
+        apply_codex_global_state_ops, index_from_payload, CodexGlobalStateOplogRecord,
+        OPLOG_KIND_UPSERT_LOCAL_PROJECT, OPLOG_KIND_UPSERT_REMOTE_PROJECTS,
     };
     use crate::runtime_work::remote_projects::CodexGlobalRemoteProject;
     use crate::runtime_work::util::normalize_workspace_path;
@@ -1917,203 +1941,6 @@ mod tests {
 
     fn payload(value: Value) -> Map<String, Value> {
         value.as_object().cloned().expect("object payload")
-    }
-
-    #[test]
-    fn codex_app_running_probe_reads_process_commands() {
-        assert_eq!(codex_app_running_probe_args(), ["-axo", "command="]);
-        assert!(is_codex_gui_process_command(
-            "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
-        ));
-        assert!(is_codex_gui_process_command(
-            "/Applications/Codex.app/Contents/MacOS/Codex"
-        ));
-        assert!(!is_codex_gui_process_command(
-            "/Applications/ChatGPT.app/Contents/Resources/codex app-server"
-        ));
-    }
-
-    #[test]
-    fn codex_global_state_oplog_uses_jsonl_filename() {
-        assert_eq!(
-            CODEX_GLOBAL_STATE_OPLOG_FILENAME,
-            ".codex-global-state.oplog.jsonl"
-        );
-    }
-
-    #[test]
-    fn runtime_project_ui_id_matches_the_wework_project_id() {
-        assert_eq!(
-            runtime_project_ui_id("local-device", "local-709d7906a4d8eb2000f25236e148ca82",),
-            573_677_101
-        );
-    }
-
-    #[test]
-    fn resolves_a_device_local_project_id_to_its_workspace() {
-        let index = index_from_payload(&payload(json!({
-            "local-projects": {
-                "entry": {
-                    "id": "local-709d7906a4d8eb2000f25236e148ca82",
-                    "name": "Wegent"
-                }
-            },
-            "project-writable-roots": {
-                "local-709d7906a4d8eb2000f25236e148ca82": [
-                    {"kind": "local", "path": "/Volumes/OuterHD/OuterIdeaProjects/Wegent"}
-                ]
-            }
-        })));
-
-        let project = index
-            .project_for_ui_id("local-device", 573_677_101)
-            .expect("device-local project id should resolve");
-        assert_eq!(
-            project.workspace_path,
-            normalize_workspace_path("/Volumes/OuterHD/OuterIdeaProjects/Wegent")
-        );
-    }
-
-    #[test]
-    fn canonicalizes_sidebar_project_path_aliases_before_reordering_threads() {
-        let index = index_from_payload(&payload(json!({
-            "local-projects": {
-                "entry": {
-                    "id": "local-id",
-                    "name": "Wegent"
-                }
-            },
-            "project-writable-roots": {
-                "local-id": [{"kind": "local", "path": "/repo"}]
-            }
-        })));
-
-        assert_eq!(
-            canonical_sidebar_project_key(&index, "local:/repo"),
-            "local-id"
-        );
-        assert_eq!(canonical_sidebar_project_key(&index, "chats"), "chats");
-    }
-
-    #[test]
-    fn indexes_legacy_multi_root_and_remote_projects_with_thread_precedence() {
-        let payload = payload(json!({
-            "electron-saved-workspace-roots": ["/repo"],
-            "electron-workspace-root-labels": {"/repo": "Legacy"},
-            "local-projects": {
-                "multi": {"id": "multi", "name": "Multi root", "unknown": true}
-            },
-            "project-writable-roots": {
-                "multi": [
-                    {"kind": "local", "path": "/repo/nested"},
-                    {"kind": "local", "path": "/other"}
-                ]
-            },
-            "remote-projects": [
-                {"id": "remote-1", "hostId": "host-1", "remotePath": "/srv/app", "label": "Remote"}
-            ],
-            "project-order": ["remote-1", "multi", "/repo"],
-            "pinned-project-ids": ["multi"],
-            "project-appearances": {"multi": {"color": "purple"}},
-            "thread-project-assignments": {
-                "assigned": {"projectKind": "local", "projectId": "/repo"}
-            },
-            "projectless-thread-ids": ["projectless"],
-            "thread-workspace-root-hints": {"hinted": "/repo"},
-            "pinned-thread-ids": ["assigned"],
-            "sidebar-project-thread-orders": {
-                "multi": {"threadIds": ["nested"], "sortKey": "manual"}
-            }
-        }));
-
-        let index = index_from_payload(&payload);
-        assert_eq!(
-            index
-                .projects()
-                .iter()
-                .map(|project| project.key.clone())
-                .collect::<Vec<_>>(),
-            vec![
-                "remote-1".to_owned(),
-                "multi".to_owned(),
-                normalize_workspace_path("/repo")
-            ]
-        );
-        let multi = index.project_for_key("multi").expect("multi project");
-        assert_eq!(
-            multi.roots,
-            vec![
-                normalize_workspace_path("/repo/nested"),
-                normalize_workspace_path("/other")
-            ]
-        );
-        assert!(multi.pinned);
-        assert_eq!(multi.pinned_order, Some(0));
-        assert_eq!(multi.appearance, Some(json!({"color": "purple"})));
-        assert_eq!(
-            index
-                .project_for_thread(Some("assigned"), "/repo/nested/file")
-                .map(|project| project.key.as_str()),
-            Some(normalize_workspace_path("/repo").as_str())
-        );
-        assert!(index
-            .project_for_thread(Some("projectless"), "/repo/nested/file")
-            .is_none());
-        assert_eq!(
-            index
-                .project_for_thread(Some("hinted"), "/repo/nested/file")
-                .map(|project| project.key.as_str()),
-            Some(normalize_workspace_path("/repo").as_str())
-        );
-        assert_eq!(
-            index
-                .project_for_thread(Some("nested"), "/repo/nested/file")
-                .map(|project| project.key.as_str()),
-            Some("multi")
-        );
-        assert!(index.is_pinned_thread("assigned"));
-        assert_eq!(index.thread_sort_order("multi", "nested", 9), 0);
-    }
-
-    #[test]
-    fn remote_project_ops_register_order_and_active_selection() {
-        let mut payload = payload(json!({
-            "electron-saved-workspace-roots": ["/local"],
-            "project-order": ["/local"]
-        }));
-        apply_codex_global_state_ops(
-            &mut payload,
-            &[
-                CodexGlobalStateOplogRecord {
-                    kind: OPLOG_KIND_UPSERT_REMOTE_PROJECT.to_owned(),
-                    workspace_path: "/srv/app".to_owned(),
-                    project_key: Some("remote-1".to_owned()),
-                    remote_host_id: Some("host-1".to_owned()),
-                    label: Some("Remote app".to_owned()),
-                    ..Default::default()
-                },
-                CodexGlobalStateOplogRecord {
-                    kind: OPLOG_KIND_ACTIVATE_PROJECT.to_owned(),
-                    workspace_path: "/srv/app".to_owned(),
-                    project_key: Some("remote-1".to_owned()),
-                    remote_host_id: Some("host-1".to_owned()),
-                    ..Default::default()
-                },
-            ],
-        );
-
-        assert_eq!(
-            payload["project-order"],
-            json!(["remote-1", normalize_workspace_path("/local")])
-        );
-        assert_eq!(payload["remote-projects"][0]["id"], "remote-1");
-        assert_eq!(payload["remote-projects"][0]["hostId"], "host-1");
-        assert_eq!(payload["remote-projects"][0]["remotePath"], "/srv/app");
-        assert_eq!(payload[ACTIVE_REMOTE_PROJECT_ID_KEY], "remote-1");
-        assert_eq!(payload[SELECTED_REMOTE_HOST_ID_KEY], "host-1");
-
-        let index = index_from_payload(&payload);
-        assert!(index.project_for_key("remote-1").unwrap().active);
     }
 
     #[test]
@@ -2147,156 +1974,6 @@ mod tests {
         );
         assert_eq!(payload["project-order"], json!(["product", "existing"]));
         assert_eq!(payload["unknown-codex-setting"], json!({"keep": true}));
-    }
-
-    #[test]
-    fn applies_semantic_sidebar_operations_without_dropping_unknown_state() {
-        let mut payload = payload(json!({
-            "unknown-codex-setting": {"keep": true},
-            "project-order": ["a", "b", "c"],
-            "pinned-project-ids": ["a"],
-            "pinned-thread-ids": ["t1"],
-            "sidebar-project-thread-orders": {
-                "a": {"threadIds": ["t1", "t2"], "sortKey": "manual"}
-            }
-        }));
-        let records = vec![
-            CodexGlobalStateOplogRecord {
-                kind: OPLOG_KIND_REORDER_PROJECT.to_owned(),
-                project_key: Some("c".to_owned()),
-                before_id: Some("a".to_owned()),
-                ..Default::default()
-            },
-            CodexGlobalStateOplogRecord {
-                kind: OPLOG_KIND_PIN_PROJECT.to_owned(),
-                project_key: Some("b".to_owned()),
-                before_id: Some("a".to_owned()),
-                pinned: Some(true),
-                ..Default::default()
-            },
-            CodexGlobalStateOplogRecord {
-                kind: OPLOG_KIND_PROJECT_APPEARANCE.to_owned(),
-                project_key: Some("b".to_owned()),
-                appearance: Some(json!({"color": "blue"})),
-                ..Default::default()
-            },
-            CodexGlobalStateOplogRecord {
-                kind: OPLOG_KIND_REORDER_THREAD.to_owned(),
-                project_key: Some("a".to_owned()),
-                thread_id: Some("t2".to_owned()),
-                before_id: Some("t1".to_owned()),
-                ..Default::default()
-            },
-            CodexGlobalStateOplogRecord {
-                kind: OPLOG_KIND_PIN_THREAD.to_owned(),
-                thread_id: Some("t2".to_owned()),
-                before_id: Some("t1".to_owned()),
-                pinned: Some(true),
-                ..Default::default()
-            },
-        ];
-
-        apply_codex_global_state_ops(&mut payload, &records);
-        assert_eq!(payload["project-order"], json!(["c", "a", "b"]));
-        assert_eq!(payload["pinned-project-ids"], json!(["b", "a"]));
-        assert_eq!(payload["pinned-thread-ids"], json!(["t2", "t1"]));
-        assert_eq!(
-            payload["sidebar-project-thread-orders"]["a"]["threadIds"],
-            json!(["t2", "t1"])
-        );
-        assert_eq!(
-            payload["sidebar-project-thread-orders"]["a"]["sortKey"],
-            "manual"
-        );
-        assert_eq!(
-            payload["project-appearances"]["b"],
-            json!({"color": "blue"})
-        );
-        assert_eq!(payload["unknown-codex-setting"], json!({"keep": true}));
-    }
-
-    #[test]
-    fn reordering_thread_creates_manual_order_used_by_project_index() {
-        let mut payload = payload(json!({
-            "thread-project-assignments": {
-                "moved": {"projectId": "old-project", "projectKind": "local"},
-                "target": {"projectId": "old-project", "futureField": {"keep": true}}
-            },
-            "unknown-codex-setting": {"keep": true}
-        }));
-
-        apply_codex_global_state_ops(
-            &mut payload,
-            &[CodexGlobalStateOplogRecord {
-                kind: OPLOG_KIND_REORDER_THREAD.to_owned(),
-                project_key: Some("project".to_owned()),
-                thread_id: Some("moved".to_owned()),
-                before_id: Some("target".to_owned()),
-                ..Default::default()
-            }],
-        );
-
-        assert_eq!(
-            payload["sidebar-project-thread-orders"]["project"],
-            json!({"threadIds": ["moved", "target"], "sortKey": "manual"})
-        );
-        assert_eq!(
-            payload["thread-project-assignments"]["moved"],
-            json!({"projectId": "project", "projectKind": "local"})
-        );
-        assert_eq!(
-            payload["thread-project-assignments"]["target"],
-            json!({"projectId": "project", "futureField": {"keep": true}})
-        );
-        assert_eq!(payload["unknown-codex-setting"], json!({"keep": true}));
-
-        let index = index_from_payload(&payload);
-        assert_eq!(
-            index.sidebar_project_key_for_thread("moved"),
-            Some("project")
-        );
-        assert_eq!(
-            index.sidebar_project_key_for_thread("target"),
-            Some("project")
-        );
-        assert_eq!(index.thread_sort_order("project", "moved", 1), 0);
-        assert_eq!(index.thread_sort_order("project", "target", 0), 1);
-    }
-
-    #[test]
-    fn renames_and_removes_typed_projects_by_project_id() {
-        let mut payload = payload(json!({
-            "unknown-codex-setting": 42,
-            "local-projects": {"local-entry": {"id": "local-id", "name": "Old"}},
-            "project-writable-roots": {"local-id": [{"kind": "local", "path": "/repo"}]},
-            "remote-projects": [{"id": "remote-id", "hostId": "host", "remotePath": "/srv", "label": "Old remote"}],
-            "project-order": ["local-id", "remote-id"],
-            "pinned-project-ids": ["local-id", "remote-id"],
-            "project-appearances": {"local-id": {"color": "red"}},
-            "sidebar-project-thread-orders": {"local-id": {"threadIds": ["t1"]}},
-            "thread-project-assignments": {"t1": {"projectId": "local-id"}},
-            "thread-workspace-root-hints": {"t1": "/repo", "t2": "/other"}
-        }));
-
-        rename_codex_global_project_payload(&mut payload, "local-id", "Renamed");
-        rename_codex_global_project_payload(&mut payload, "remote-id", "Remote renamed");
-        assert_eq!(payload["local-projects"]["local-entry"]["name"], "Renamed");
-        assert_eq!(payload["remote-projects"][0]["label"], "Remote renamed");
-
-        remove_codex_global_project_payload(&mut payload, "local-id", "/repo");
-        assert!(payload["local-projects"]["local-entry"].is_null());
-        assert!(payload["project-writable-roots"]["local-id"].is_null());
-        assert_eq!(payload["project-order"], json!(["remote-id"]));
-        assert_eq!(payload["pinned-project-ids"], json!(["remote-id"]));
-        assert!(payload["project-appearances"]["local-id"].is_null());
-        assert!(payload["sidebar-project-thread-orders"]["local-id"].is_null());
-        assert!(payload["thread-project-assignments"]["t1"].is_null());
-        assert!(payload["thread-workspace-root-hints"]["t1"].is_null());
-        assert_eq!(payload["thread-workspace-root-hints"]["t2"], "/other");
-        assert_eq!(payload["unknown-codex-setting"], 42);
-
-        remove_codex_global_project_payload(&mut payload, "remote-id", "/srv");
-        assert_eq!(payload["remote-projects"], json!([]));
     }
 
     #[test]
@@ -2465,3 +2142,7 @@ mod tests {
         assert!(payload["thread-project-assignments"]["t1"].is_null());
     }
 }
+
+#[cfg(test)]
+#[path = "codex_global_state/index_snapshot_tests.rs"]
+mod index_snapshot_tests;

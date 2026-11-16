@@ -1,0 +1,42 @@
+[package]
+name = "wegent-plugin-packages"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Capability package publication, discovery, configuration, and activation"
+
+[package.metadata.wegent]
+source-inputs = ["../../../sdk/plugin-creator", "../../../sdk/plugin-auth"]
+
+[dependencies]
+futures-util = "0.3"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+wegent-runtime-config = { path = "../config" }
+wegent-runtime-logging = { path = "../logging" }
+wegent-execution-contracts = { path = "../execution-contracts" }
+wegent-protocol = { path = "../../../shared/rust/protocol" }
+wegent-filesystem = { path = "../../../shared/rust/filesystem" }
+base64 = "0.22"
+dirs = "5"
+fs2 = "0.4"
+libc = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+tar = "0.4"
+tempfile = "3.23"
+thiserror = "2.0"
+tokio = { version = "1.48", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+toml_edit = { version = "0.22", features = ["serde"] }
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+wegent-executor-test-support = { path = "../test-support" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Ioctl", "Win32_System_IO"] }

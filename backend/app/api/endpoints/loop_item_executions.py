@@ -28,7 +28,6 @@ from app.schemas.delivery import LoopItemResponse
 from app.schemas.project_chat import (
     LoopItemExecutionAssignmentStatus,
     LoopItemExecutionBatchCreate,
-    LoopItemExecutionBatchItem,
     LoopItemExecutionCancel,
     LoopItemExecutionDispatchFailed,
     LoopItemExecutionDispatchIntent,
@@ -36,8 +35,8 @@ from app.schemas.project_chat import (
     LoopItemExecutionHeartbeat,
     LoopItemExecutionListResponse,
     LoopItemExecutionManagerDecision,
+    LoopItemExecutionManagerStatus,
     LoopItemExecutionRuntimeStart,
-    LoopItemExecutionStatusQuery,
     LoopItemExecutionView,
 )
 from app.schemas.runtime_profile import ExecutionRuntimeSelect
@@ -49,7 +48,6 @@ from app.services.collaboration_group_execution import (
 )
 from app.services.collaboration_human_assignments import (
     collaboration_human_assignment_id,
-    collaboration_human_assignment_status,
     notify_collaboration_human_assignment,
 )
 from app.services.collaboration_manager_decisions import (
@@ -632,18 +630,25 @@ def enqueue_execution_batch(
 @router.post("/{project_id}/executions/assignment-status")
 def report_collaboration_assignment_status(
     project_id: int,
-    values: LoopItemExecutionAssignmentStatus,
+    values: LoopItemExecutionManagerStatus | LoopItemExecutionAssignmentStatus,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> dict[str, object]:
-    """Bind the member session and record progress; Executor owns the round."""
+    """Bind collaboration sessions and record progress; Executor owns the round."""
 
     require_cloud_project_role(db, project_id, current_user.id, BaseRole.Developer)
-    message, changed = project_collaboration_member_activity(
-        db,
-        project_id=project_id,
-        values=values,
-    )
+    if isinstance(values, LoopItemExecutionManagerStatus):
+        from app.services.collaboration_manager_activity import (
+            project_collaboration_manager_activity,
+        )
+
+        message, changed = project_collaboration_manager_activity(
+            db, project_id=project_id, user_id=current_user.id, values=values
+        )
+    else:
+        message, changed = project_collaboration_member_activity(
+            db, project_id=project_id, values=values
+        )
     view = project_chat_service.to_view(message, db=db).model_dump(by_alias=True)
     if changed:
         push_project_chat_message(view)
@@ -695,30 +700,6 @@ def decide_collaboration_issue_status(
             else None
         ),
     }
-
-
-# MIGRATION-CANDIDATE(api="POST /api/v1/cloud-projects/*/executions/statuses"): remove after final confirmation.
-# @router.post("/{project_id}/executions/statuses")
-def execution_statuses(
-    project_id: int,
-    values: LoopItemExecutionStatusQuery,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
-) -> dict[str, object]:
-    """Read human delivery outcomes for an Executor-owned round barrier."""
-
-    require_cloud_project_role(db, project_id, current_user.id, BaseRole.Viewer)
-    items: list[dict[str, object]] = []
-    for human_assignment_id in values.human_assignment_ids:
-        items.append(
-            collaboration_human_assignment_status(
-                db,
-                project_id=project_id,
-                issue_id=values.loop_item_id,
-                human_assignment_id=human_assignment_id,
-            )
-        )
-    return {"items": items}
 
 
 def _claimed_execution_view(

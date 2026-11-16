@@ -36,6 +36,7 @@ from app.services.loop_item_executions.service import (
     ACTIVE_STATUSES,
     loop_item_execution_service,
 )
+from app.services.loop_item_status_history import project_board_statuses
 from app.services.project_automation_domain import (
     ACTIVE_RUN_STATUSES,
     ProjectAutomationEvent,
@@ -44,6 +45,7 @@ from app.services.project_automation_domain import (
 from app.services.project_automation_domain import metadata as _metadata
 from app.services.project_automation_domain import next_run as _next_run
 from app.services.project_automation_domain import (
+    permits_scheduled_run,
     project_agent,
     text,
 )
@@ -67,10 +69,12 @@ def _canonical_event_config(
     event_config: object,
 ) -> dict:
     config = dict(event_config) if isinstance(event_config, dict) else {}
-    config.pop("statuses", None)
     if event_type == "task.status_changed":
-        config["transition"] = "entered_processing"
+        config.setdefault(
+            "transition", "any" if "statuses" in config else "entered_processing"
+        )
     else:
+        config.pop("statuses", None)
         config.pop("transition", None)
     if event_type in {"task.created", "task.tag_added", "task.status_changed"}:
         config["execution_target"] = "existing_issue"
@@ -217,11 +221,14 @@ class ProjectAutomationService:
             trigger_type=values.trigger_type,
             event_type=values.event_type,
             event_config=event_config,
+            enabled=values.enabled,
         )
         now = utcnow()
         next_run_at = (
-            _next_run(str(values.cron_expression), values.timezone, now)
-            if values.trigger_type == "schedule"
+            _next_run(
+                str(values.cron_expression), values.timezone, now, values.workday_only
+            )
+            if values.enabled and values.trigger_type == "schedule"
             else None
         )
         row = ProjectAutomationRule(
@@ -245,6 +252,7 @@ class ProjectAutomationService:
                     else None
                 ),
                 "timezone": values.timezone,
+                "workday_only": values.workday_only,
                 "last_run_at": None,
                 "dispatch_target": dispatch_target,
             },
@@ -319,6 +327,7 @@ class ProjectAutomationService:
         trigger_type: str,
         event_type: str | None,
         event_config: dict,
+        enabled: bool = True,
     ) -> None:
         if trigger_type != "event":
             return
@@ -333,6 +342,13 @@ class ProjectAutomationService:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
                     "Wework task events run on the existing Issue",
+                )
+            if event_type == "task.status_changed":
+                ProjectAutomationService._validate_status_event_config(
+                    db,
+                    project_id=project_id,
+                    event_config=event_config,
+                    enabled=enabled,
                 )
             return
         subscription_id = str(event_config.get("subscription_id") or "")
@@ -367,6 +383,45 @@ class ProjectAutomationService:
                 f"{source_type} does not support execution target {target}",
             )
 
+    @staticmethod
+    def _validate_status_event_config(
+        db: Session, *, project_id: str, event_config: dict, enabled: bool
+    ) -> None:
+        transition = event_config.get("transition")
+        if not isinstance(transition, str) or transition not in {
+            "entered_processing",
+            "any",
+        }:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Unsupported status automation transition",
+            )
+        if "statuses" not in event_config:
+            return
+        statuses = event_config["statuses"]
+        if (
+            not isinstance(statuses, list)
+            or not statuses
+            or any(not isinstance(value, str) or not value for value in statuses)
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Status automation requires a non-empty list of board status IDs",
+            )
+        if not enabled:
+            return
+        project = db.get(CloudProject, project_id)
+        available = (
+            {status_id for status_id, _ in project_board_statuses(project)}
+            if project is not None
+            else set()
+        )
+        if any(value not in available for value in statuses):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Status automation references an unknown board status",
+            )
+
     def update(
         self,
         db: Session,
@@ -399,6 +454,11 @@ class ProjectAutomationService:
         )
         timezone_name = values.timezone or str(
             rule_metadata.get("timezone") or "Asia/Shanghai"
+        )
+        workday_only = (
+            values.workday_only
+            if values.workday_only is not None
+            else rule_metadata.get("workday_only", False)
         )
         if trigger_type == "schedule":
             event_type = None
@@ -470,6 +530,7 @@ class ProjectAutomationService:
             trigger_type=trigger_type,
             event_type=str(event_type) if event_type else None,
             event_config=event_config,
+            enabled=row.status == "enabled",
         )
         rule_metadata.update(
             {
@@ -478,6 +539,7 @@ class ProjectAutomationService:
                 "event_config": event_config,
                 "cron_expression": expression,
                 "timezone": timezone_name,
+                "workday_only": workday_only,
                 "dispatch_target": (
                     {
                         **dispatch_target,
@@ -496,7 +558,7 @@ class ProjectAutomationService:
             _metadata(row).get("event_config"),
         )
         row.due_at = (
-            _next_run(str(expression), timezone_name, utcnow())
+            _next_run(str(expression), timezone_name, utcnow(), workday_only)
             if row.status == "enabled" and trigger_type == "schedule"
             else loop_unset_datetime_for_connection(db.connection(), "due_at")
         )
@@ -855,18 +917,32 @@ class ProjectAutomationService:
                     str(rule_metadata.get("cron_expression") or ""),
                     str(rule_metadata.get("timezone") or "Asia/Shanghai"),
                     max(scheduled_for, now),
+                    rule_metadata.get("workday_only", False),
                 )
+                can_dispatch = permits_scheduled_run(rule_metadata, "scheduled", now)
             except HTTPException as exc:
+                from shared.utils.workday import WorkdayCalendarError
+
+                calendar_unavailable = isinstance(exc.__cause__, WorkdayCalendarError)
                 rule_metadata["schedule_error"] = str(exc.detail)
                 rule.metadata_json = rule_metadata
-                rule.status = "disabled"
+                if not calendar_unavailable:
+                    rule.status = "disabled"
                 rule.version += 1
                 db.commit()
                 logger.error(
-                    "[ProjectAutomation] Disabled invalid rule=%s error=%s",
+                    "[ProjectAutomation] Unavailable schedule rule=%s error=%s",
                     rule.id,
                     exc.detail,
                 )
+                continue
+
+            if not can_dispatch:
+                rule.due_at = next_at
+                rule_metadata.pop("schedule_error", None)
+                rule.metadata_json = rule_metadata
+                rule.version += 1
+                db.commit()
                 continue
 
             run = self._create_run(db, rule, "scheduled", scheduled_for, commit=False)
@@ -953,6 +1029,7 @@ class ProjectAutomationService:
             "event_config": rule_metadata.get("event_config") or {},
             "cron_expression": rule_metadata.get("cron_expression"),
             "timezone": str(rule_metadata.get("timezone") or "Asia/Shanghai"),
+            "workday_only": rule_metadata.get("workday_only", False),
             "execution_device_id": text(dispatch_target.get("execution_device_id")),
             "runner_selection": dispatch_target.get("runner_selection"),
             "target_kind": str(dispatch_target["kind"]),
@@ -979,7 +1056,7 @@ class ProjectAutomationService:
     ) -> None:
         if target["kind"] == "collaboration_group":
             from app.services.runner_routing import resolve_group_routing
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 (
@@ -1060,7 +1137,7 @@ class ProjectAutomationService:
                 "name": str(agent.title or agent.name or "AI"),
             }
         if target_kind == "collaboration_group":
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 (
@@ -1178,6 +1255,8 @@ class ProjectAutomationService:
                 "trigger": trigger,
                 "timezone": str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
                 "scheduled_for": scheduled_for.isoformat(),
+                "workday_only": trigger == "scheduled"
+                and _metadata(rule).get("workday_only", False),
                 "error": None,
             },
         )

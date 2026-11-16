@@ -5,28 +5,19 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import {
-  Disclosure,
-  DisclosureButton,
-  DisclosurePanel,
-  Dialog,
-  DialogPanel,
-  DialogTitle,
-} from '@headlessui/react'
+import { Disclosure, DisclosureButton, DisclosurePanel } from '@headlessui/react'
 import {
   Bars3Icon,
   CheckIcon,
   ChevronRightIcon,
   ClipboardDocumentIcon,
   XMarkIcon,
-  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
-import { taskApis, BranchDiffResponse } from '@/apis/tasks'
-import DiffViewer from '../message/DiffViewer'
-import { TaskApp } from '@/types/api'
+import type { TaskApp, TaskFileChanges, WorkbenchData } from '@/types/api'
+import WorkbenchFiles from './WorkbenchFiles'
 import type { MessageBlock } from '../message/thinking/types'
 
 // Tool icon mapping
@@ -42,70 +33,13 @@ const TOOL_ICONS: Record<string, string> = {
   WebSearch: '🔎',
 }
 
-// Git commit statistics
-interface CommitStats {
-  files_changed: number
-  insertions: number
-  deletions: number
-}
-
-// Git commit information
-interface GitCommit {
-  commit_id: string
-  short_id: string
-  message: string
-  author: string
-  author_email: string
-  committed_date: string
-  stats: CommitStats
-}
-
-// Git information
-interface GitInfo {
-  initial_commit_id: string
-  initial_commit_message: string
-  task_commits: GitCommit[]
-  source_branch: string
-  target_branch: string
-}
-
-// File change information
-interface FileChange {
-  old_path: string
-  new_path: string
-  new_file: boolean
-  renamed_file: boolean
-  deleted_file: boolean
-  added_lines: number
-  removed_lines: number
-  diff_title: string
-}
-
-// Workbench data structure
-interface WorkbenchData {
-  taskTitle: string
-  taskNumber: string
-  status: 'running' | 'completed' | 'failed'
-  completedTime: string
-  repository: string
-  branch: string
-  sessions: number
-  premiumRequests: number
-  lastUpdated: string
-  summary: string
-  changes: string[]
-  originalPrompt: string
-  file_changes: FileChange[]
-  git_info: GitInfo
-  git_type?: 'github' | 'gitlab'
-  git_domain?: string
-}
-
 interface WorkbenchProps {
   isOpen: boolean
   onClose: () => void
   onOpen: () => void
   workbenchData?: WorkbenchData | null
+  repository?: string
+  fileChanges?: TaskFileChanges | null
   isLoading?: boolean
   taskTitle?: string
   taskNumber?: string
@@ -147,64 +81,13 @@ function formatDateTime(dateString: string | undefined): string {
   }
 }
 
-// Parse diff error message to determine error type for user-friendly display
-type DiffErrorType =
-  | 'branch_not_found'
-  | 'access_denied'
-  | 'server_error'
-  | 'network_error'
-  | 'unknown_error'
-
-function parseDiffErrorType(errorMessage: string): DiffErrorType {
-  const lowerError = errorMessage.toLowerCase()
-
-  // 404 errors - branch/resource not found
-  if (lowerError.includes('404') || lowerError.includes('not found')) {
-    return 'branch_not_found'
-  }
-
-  // 401/403 errors - access denied
-  if (
-    lowerError.includes('401') ||
-    lowerError.includes('403') ||
-    lowerError.includes('unauthorized') ||
-    lowerError.includes('forbidden') ||
-    lowerError.includes('access denied')
-  ) {
-    return 'access_denied'
-  }
-
-  // 5xx errors - server errors
-  if (
-    lowerError.includes('500') ||
-    lowerError.includes('502') ||
-    lowerError.includes('503') ||
-    lowerError.includes('504') ||
-    lowerError.includes('server error') ||
-    lowerError.includes('bad gateway') ||
-    lowerError.includes('service unavailable')
-  ) {
-    return 'server_error'
-  }
-
-  // Network errors
-  if (
-    lowerError.includes('network') ||
-    lowerError.includes('timeout') ||
-    lowerError.includes('econnrefused') ||
-    lowerError.includes('fetch failed')
-  ) {
-    return 'network_error'
-  }
-
-  return 'unknown_error'
-}
-
 export default function Workbench({
   isOpen,
   onClose,
   onOpen: _onOpen,
   workbenchData,
+  repository,
+  fileChanges,
   isLoading = false,
   taskTitle,
   taskNumber,
@@ -215,25 +98,15 @@ export default function Workbench({
   const [activeTab, setActiveTab] = useState<'overview' | 'files' | 'preview'>('overview')
   const [showCommits, setShowCommits] = useState(false)
   const [copiedCommitId, setCopiedCommitId] = useState<string | null>(null)
-  const [diffData, setDiffData] = useState<BranchDiffResponse | null>(null)
-  const [isDiffLoading, setIsDiffLoading] = useState(false)
-  const [diffLoadError, setDiffLoadError] = useState<string | null>(null)
-  const [showErrorDialog, setShowErrorDialog] = useState(false)
   const [loadingStateIndex, setLoadingStateIndex] = useState(0)
   const [tipIndex, setTipIndex] = useState(0)
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(false) // Timeline collapse state
   const prevAppRef = useRef<TaskApp | null | undefined>(undefined) // Track previous app state
   const { theme } = useTheme()
-  const { t } = useTranslation()
-
-  // Internal state: cache the latest workbench data
-  const [cachedWorkbenchData, setCachedWorkbenchData] = useState<WorkbenchData | null>(null)
+  const { t } = useTranslation('tasks')
 
   const hasBlocks = Boolean(blocks && blocks.length > 0)
-
-  // Use cached data for rendering.
-  // If loading has finished without workbench data, still show the task status instead of a spinner.
-  const displayData = cachedWorkbenchData
+  const displayData = workbenchData
 
   const getDisplayStatus = (): WorkbenchDisplayStatus | null => {
     switch (taskStatus) {
@@ -256,7 +129,7 @@ export default function Workbench({
 
   const displayStatus = getDisplayStatus()
 
-  const shouldShowLoading = isLoading && !displayData && !hasBlocks
+  const shouldShowLoading = isLoading && !displayData && !hasBlocks && !fileChanges
 
   // Loading state rotation (4 seconds)
   useEffect(() => {
@@ -282,95 +155,6 @@ export default function Workbench({
     }
   }, [shouldShowLoading, t])
 
-  // Observer pattern: listen to workbenchData changes
-  useEffect(() => {
-    // If the API returns new workbench data (not null/undefined), update the cache
-    if (workbenchData) {
-      // Check if task has changed by comparing task numbers or IDs
-      const taskChanged =
-        cachedWorkbenchData && cachedWorkbenchData.taskNumber !== workbenchData.taskNumber
-
-      setCachedWorkbenchData(workbenchData)
-
-      // Reset diff data when task changes
-      if (taskChanged) {
-        setDiffData(null)
-        setIsDiffLoading(false)
-        setDiffLoadError(null)
-      }
-    }
-    //If workbenchData is null/undefined, keep the previous state (don't update cache)
-  }, [workbenchData, cachedWorkbenchData])
-
-  const loadDiffData = async () => {
-    if (
-      !cachedWorkbenchData ||
-      !cachedWorkbenchData.git_info.source_branch ||
-      !cachedWorkbenchData.git_info.target_branch
-    ) {
-      return
-    }
-
-    setIsDiffLoading(true)
-    setDiffLoadError(null)
-    try {
-      const response = await taskApis.getBranchDiff({
-        git_repo: cachedWorkbenchData.repository,
-        source_branch: cachedWorkbenchData.git_info.source_branch,
-        target_branch: cachedWorkbenchData.git_info.target_branch,
-        type: cachedWorkbenchData.git_type || 'github',
-        git_domain: cachedWorkbenchData.git_domain || 'github.com',
-      })
-      setDiffData(response)
-      setDiffLoadError(null)
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      setDiffLoadError(errorMessage)
-      // Don't set diffData - let error state prevent retry
-    } finally {
-      setIsDiffLoading(false)
-    }
-  }
-
-  // Auto-load diff data when task is completed
-  // Only load once per task - prevent infinite retry on error
-  useEffect(() => {
-    if (
-      cachedWorkbenchData &&
-      displayStatus === 'completed' &&
-      cachedWorkbenchData.git_info.source_branch &&
-      cachedWorkbenchData.git_info.target_branch &&
-      !diffData &&
-      !isDiffLoading &&
-      !diffLoadError // Don't retry if there was an error
-    ) {
-      loadDiffData()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    displayStatus,
-    cachedWorkbenchData?.git_info.source_branch,
-    cachedWorkbenchData?.git_info.target_branch,
-    diffData,
-    isDiffLoading,
-    diffLoadError,
-  ])
-
-  // Check if we should show diff data
-  const shouldShowDiffData = () => {
-    return (
-      displayStatus === 'completed' &&
-      diffData &&
-      !isDiffLoading &&
-      !diffLoadError &&
-      diffData.files &&
-      diffData.files.length > 0
-    )
-  }
-
-  // Check if task has a git repository
-  const hasRepository = Boolean(displayData?.repository)
-
   const navigation = [
     {
       name: t('tasks:workbench.overview'),
@@ -382,10 +166,7 @@ export default function Workbench({
       name: t('tasks:workbench.files_changed'),
       value: 'files' as const,
       current: activeTab === 'files',
-      badge:
-        hasRepository && shouldShowDiffData()
-          ? diffData?.files?.length || 0
-          : displayData?.file_changes?.length || 0,
+      badge: fileChanges ? fileChanges.files.length : displayData?.file_changes?.length || 0,
     },
     // Preview tab - only shown when app data is available
     ...(app
@@ -914,7 +695,7 @@ export default function Workbench({
                           displayData.git_info.task_commits.length > 0 && (
                             <div className="border-b border-border bg-surface px-4 py-3">
                               <div className="space-y-2">
-                                {displayData.git_info.task_commits.map((commit: GitCommit) => (
+                                {displayData.git_info.task_commits.map(commit => (
                                   <div
                                     key={commit.commit_id}
                                     className="flex items-start gap-3 p-2 rounded-md hover:bg-muted/50 transition-colors"
@@ -1030,120 +811,14 @@ export default function Workbench({
                     )}
                   </div>
                 ) : activeTab === 'files' ? (
-                  // Files Changed Tab - with integrated diff support
-                  <>
-                    {!hasRepository ? (
-                      // No repository - show friendly message
-                      <div className="rounded-lg border border-border bg-surface p-8 text-center">
-                        <p className="text-text-muted">{t('tasks:workbench.no_repository')}</p>
-                      </div>
-                    ) : isDiffLoading ? (
-                      // Loading diff data
-                      <div className="flex items-center justify-center h-64">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                        <span className="ml-3 text-text-muted">
-                          {t('tasks:workbench.loading_diff')}
-                        </span>
-                      </div>
-                    ) : shouldShowDiffData() ? (
-                      // Show diff data with expand/collapse
-                      <DiffViewer
-                        diffData={diffData}
-                        isLoading={false}
-                        gitType={displayData?.git_type || 'github'}
-                        showDiffContent={true}
-                      />
-                    ) : displayData?.file_changes && displayData.file_changes.length > 0 ? (
-                      // Show simple file changes without diff content, with error banner if present
-                      <div className="space-y-4">
-                        {diffLoadError && (
-                          <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-4">
-                            <div className="flex items-start gap-3">
-                              <ExclamationTriangleIcon className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                              <div className="flex-1 min-w-0">
-                                <h4 className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                                  {t('tasks:workbench.diff_error.title')}
-                                </h4>
-                                <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
-                                  {t(
-                                    `tasks:workbench.diff_error.${parseDiffErrorType(diffLoadError)}`
-                                  )}
-                                </p>
-                                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                                  {t('tasks:workbench.diff_error.hint_file_list')}
-                                </p>
-                                <div className="mt-3 flex items-center gap-3">
-                                  <button
-                                    onClick={() => {
-                                      setDiffLoadError(null)
-                                      setDiffData(null)
-                                      loadDiffData()
-                                    }}
-                                    className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-200 bg-amber-100 dark:bg-amber-800/30 hover:bg-amber-200 dark:hover:bg-amber-800/50 rounded-md transition-colors"
-                                  >
-                                    {t('tasks:workbench.retry')}
-                                  </button>
-                                  <button
-                                    onClick={() => setShowErrorDialog(true)}
-                                    className="text-xs text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 underline"
-                                  >
-                                    {t('tasks:workbench.view_error_details')}
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                        <DiffViewer
-                          diffData={null}
-                          isLoading={false}
-                          gitType={displayData?.git_type || 'github'}
-                          fileChanges={displayData.file_changes}
-                          showDiffContent={false}
-                        />
-                      </div>
-                    ) : diffLoadError ? (
-                      // Error but no file changes to show - display full error state
-                      <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-6">
-                        <div className="flex flex-col items-center text-center">
-                          <ExclamationTriangleIcon className="w-10 h-10 text-amber-600 dark:text-amber-400 mb-3" />
-                          <h4 className="text-base font-medium text-amber-800 dark:text-amber-200">
-                            {t('tasks:workbench.diff_error.title')}
-                          </h4>
-                          <p className="mt-2 text-sm text-amber-700 dark:text-amber-300 max-w-md">
-                            {t(`tasks:workbench.diff_error.${parseDiffErrorType(diffLoadError)}`)}
-                          </p>
-                          <div className="mt-4 flex items-center gap-3">
-                            <button
-                              onClick={() => {
-                                setDiffLoadError(null)
-                                setDiffData(null)
-                                loadDiffData()
-                              }}
-                              className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-md transition-colors"
-                            >
-                              {t('tasks:workbench.retry')}
-                            </button>
-                            <button
-                              onClick={() => setShowErrorDialog(true)}
-                              className="text-sm text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 underline"
-                            >
-                              {t('tasks:workbench.view_error_details')}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      // No changes found
-                      <div className="rounded-lg border border-border bg-surface p-8 text-center">
-                        <p className="text-text-muted">
-                          {displayData?.status === 'completed'
-                            ? t('tasks:workbench.no_changes_found')
-                            : t('tasks:workbench.no_file_changes')}
-                        </p>
-                      </div>
-                    )}
-                  </>
+                  <WorkbenchFiles
+                    key={taskNumber}
+                    taskKey={taskNumber || ''}
+                    repository={repository || displayData?.repository}
+                    fileChanges={fileChanges}
+                    workbenchData={displayData}
+                    isCompleted={displayStatus === 'completed'}
+                  />
                 ) : activeTab === 'preview' && app ? (
                   // Preview Tab - iframe for app preview
                   <div className="h-full flex flex-col -mx-2 -mb-2 sm:-mx-3 lg:-mx-4">
@@ -1163,57 +838,6 @@ export default function Workbench({
           </div>
         )}
       </div>
-
-      {/* Error Details Dialog */}
-      <Dialog
-        open={showErrorDialog}
-        onClose={() => setShowErrorDialog(false)}
-        className="relative z-50"
-      >
-        <div className="fixed inset-0 bg-black/30" aria-hidden="true" />
-        <div className="fixed inset-0 flex items-center justify-center p-4">
-          <DialogPanel className="mx-auto max-w-2xl w-full rounded-lg bg-surface border border-border shadow-xl">
-            <div className="flex items-center justify-between border-b border-border px-6 py-4">
-              <DialogTitle className="text-lg font-semibold text-text-primary flex items-center gap-2">
-                <ExclamationTriangleIcon className="w-5 h-5 text-red-600" />
-                {t('tasks:workbench.error_details')}
-              </DialogTitle>
-              <button
-                onClick={() => setShowErrorDialog(false)}
-                className="rounded-md p-1 hover:bg-muted transition-colors"
-              >
-                <XMarkIcon className="w-5 h-5 text-text-muted" />
-              </button>
-            </div>
-            <div className="px-6 py-4">
-              <div className="rounded-md bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 p-4">
-                <pre className="text-sm text-red-800 dark:text-red-200 whitespace-pre-wrap font-mono overflow-x-auto">
-                  {diffLoadError}
-                </pre>
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
-              <button
-                onClick={() => setShowErrorDialog(false)}
-                className="px-4 py-2 text-sm font-medium text-text-primary bg-muted hover:bg-muted/80 rounded-md transition-colors"
-              >
-                {t('tasks:workbench.close_panel')}
-              </button>
-              <button
-                onClick={() => {
-                  setShowErrorDialog(false)
-                  setDiffLoadError(null)
-                  setDiffData(null)
-                  loadDiffData()
-                }}
-                className="px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary/90 rounded-md transition-colors"
-              >
-                {t('tasks:workbench.retry')}
-              </button>
-            </div>
-          </DialogPanel>
-        </div>
-      </Dialog>
 
       {/* Toggle button - fixed position - hidden on mobile */}
     </>

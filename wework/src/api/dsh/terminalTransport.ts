@@ -6,6 +6,7 @@ let terminalEventCursor = 0
 let terminalEventSource: EventSource | null = null
 let terminalEventReconnectTimer: number | null = null
 const terminalEventListeners = new Set<(event: DshTerminalEventEnvelope) => void>()
+const terminalEventObservers = new Set<(event: DshTerminalEventEnvelope) => void>()
 
 export interface DshTerminalEventEnvelope {
   protocolVersion: number
@@ -76,6 +77,16 @@ export function subscribeDshTerminalEvents(
   }
 }
 
+// Diagnostics observe business traffic without opening or retaining a connection.
+export function observeDshTerminalEvents(
+  observer: (event: DshTerminalEventEnvelope) => void
+): () => void {
+  terminalEventObservers.add(observer)
+  return () => {
+    terminalEventObservers.delete(observer)
+  }
+}
+
 function connectDshTerminalEventSource(): void {
   if (terminalEventSource || terminalEventListeners.size === 0) return
   terminalEventSource = new EventSource(
@@ -93,6 +104,7 @@ function connectDshTerminalEventSource(): void {
     terminalEventCursor = Math.max(terminalEventCursor, event.sequence)
     const deliver = () => {
       terminalEventListeners.forEach(activeListener => activeListener(event))
+      terminalEventObservers.forEach(observer => observer(event))
     }
     if (terminalEventSuspensionDepth > 0) {
       suspendedTerminalEventDeliveries.push(deliver)
@@ -135,6 +147,7 @@ export function resetDshTerminalTransportForTests(): void {
     terminalEventReconnectTimer = null
   }
   terminalEventListeners.clear()
+  terminalEventObservers.clear()
   terminalEventCursor = 0
   terminalEventSuspensionDepth = 0
   suspendedTerminalEventDeliveries = []

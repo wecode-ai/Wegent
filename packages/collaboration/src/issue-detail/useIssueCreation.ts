@@ -13,6 +13,7 @@ import type {
 import { persistIssueDetailFields } from "./persistIssueDetailFields";
 
 const editableFields = [
+  "milestone_id",
   "title",
   "description",
   "status",

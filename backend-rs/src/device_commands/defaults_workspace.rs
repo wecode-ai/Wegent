@@ -13,6 +13,11 @@ use super::DeviceCommandSpec;
 
 pub(super) fn lookup(key: &str) -> Option<DeviceCommandSpec> {
     match key {
+        // Native-only Task binding operations have no shell implementation.
+        "task_artifact" => Some(DeviceCommandSpec {
+            command: "task-artifact",
+            post_processor: Some("json"),
+        }),
         "pwd" => Some(DeviceCommandSpec {
             command: r#"pwd"#,
             post_processor: None,

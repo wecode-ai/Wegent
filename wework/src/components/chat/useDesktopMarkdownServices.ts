@@ -9,7 +9,6 @@ import { useOptionalAppearance } from '@/features/appearance'
 import { getRuntimeConfig } from '@/config/runtime'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
-import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { navigateTo } from '@/lib/navigation'
@@ -33,7 +32,7 @@ export function useDesktopMarkdownServices(): MarkdownServices {
       translate: (key: string, fallback?: string) =>
         key.startsWith('table.')
           ? chatTranslate(key)
-          : /^(?:code|citation|followup)\./.test(key)
+          : /^(?:code|citation|followup|image)\./.test(key)
             ? markdownMessages[i18n?.language?.startsWith('zh') ? 'zh-CN' : 'en'][
                 key as keyof typeof markdownMessages.en
               ]
@@ -45,7 +44,6 @@ export function useDesktopMarkdownServices(): MarkdownServices {
       openExternalUrl,
       openAuthorizationUrl: (url: string) => openExternalUrl(url, { target: 'system' }),
       navigateTo,
-      openHtmlFile: requestEmbeddedBrowserOpen,
       fetchAttachmentBlob,
       readLocalFile: isElectronRuntime() ? readLocalFile : undefined,
       windowMarkdown: isElectronRuntime(),

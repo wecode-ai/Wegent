@@ -1,0 +1,21 @@
+{
+  "revision": "a2b3c4d5e6f7",
+  "parents": [
+    "9d4be4601172"
+  ],
+  "source": "20260601_a2b3c4d5e6f7_use_mediumblob_for_skill_binaries.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE skill_binaries MODIFY binary_data MEDIUMBLOB NOT NULL"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE skill_binaries MODIFY binary_data BLOB NOT NULL"
+      ]
+    }
+  ]
+}

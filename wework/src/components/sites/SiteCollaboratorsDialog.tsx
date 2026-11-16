@@ -139,7 +139,7 @@ export function SiteCollaboratorsDialog({ api, site, onClose }: SiteCollaborator
             placeholder={t('collaborator_username_placeholder', '输入用户名')}
             aria-label={t('collaborator_username', '协作者用户名')}
             disabled={saving}
-            className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-focus/30"
+            className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
           />
           <button
             type="button"

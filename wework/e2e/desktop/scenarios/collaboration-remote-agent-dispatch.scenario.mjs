@@ -1,9 +1,11 @@
+import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue-boundary.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { verifyExecutionActivityOrder } from '../modules/issue-execution-activity-order.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
+import { verifyUnconfiguredAssignment } from '../modules/unconfigured-issue-archive.mjs'
 import {
   createSharedWorkspaceAgent,
   assertCreatedWorkspaceIssueAgent,
@@ -25,6 +27,7 @@ import {
   responseCompleted,
   responseCreated,
   selectProgrammaticExec,
+  toolOutputText,
 } from '../modules/response-protocol.mjs'
 import {
   REMOTE_DOCKER_DEVICE_ID,
@@ -36,7 +39,9 @@ import {
 import {
   configureFirstProjectExecutionEnvironment,
   selectCollaborationDomain,
+  waitForControlValue,
 } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'desktop-e2e-cloud-responses'
@@ -118,56 +123,14 @@ async function waitForPromise(promise, message, timeoutMs) {
   }
 }
 
-async function verifyUnconfiguredAssignment(
+export async function createAutoTaggedIssue(
   control,
   request,
   projectId,
+  agent,
   timeoutMs,
-  captureScreenshot
+  onCreated
 ) {
-  const agent = await request(`/api/v1/cloud-projects/${projectId}/chat-agents`, {
-    method: 'POST',
-    body: JSON.stringify({
-      name: `缺少配置的执行者-${process.pid}`,
-      capability_mode: 'manual',
-      visibility: 'public',
-    }),
-  })
-  const issue = await createAndAssignCloudIssue(control, request, {
-    contentSelector: CONTENT,
-    projectId,
-    title: UNCONFIGURED_ISSUE,
-    description: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
-    assigneeTarget: `agent:${agent.id}`,
-    timeoutMs,
-  })
-  await waitForValue(
-    () => request(`/api/v1/loop-items/${issue.id}`),
-    item => item.status === 'in_progress' && item.execution_state === 'waiting_runtime',
-    'An assigned robot without configuration did not expose its blocked Run',
-    timeoutMs
-  )
-  await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-status"]'), {
-    value: 'in_progress',
-    timeoutMs,
-  })
-  await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
-  await control.command(
-    'waitFor',
-    scoped(
-      `[data-testid="cloud-todo-column-in_progress"] [data-testid="collaboration-issue-${issue.id}"]`
-    ),
-    { visible: true, timeoutMs }
-  )
-  await control.command(
-    'waitFor',
-    scoped(`[data-testid="cloud-todo-card-needs-execution-config-${issue.id}"]`),
-    { text: '待配置', visible: true, timeoutMs }
-  )
-  await captureScreenshot(control, 'remote-agent-dispatch-00-waiting-configuration.png', CONTENT)
-}
-
-async function createAutoTaggedIssue(control, request, projectId, agent, timeoutMs) {
   const rule = await request(`/api/v1/cloud-projects/${projectId}/automations`, {
     method: 'POST',
     body: JSON.stringify({
@@ -196,15 +159,24 @@ async function createAutoTaggedIssue(control, request, projectId, agent, timeout
     'The auto-tagged Issue was not persisted',
     timeoutMs
   )
-  await control.command('click', scoped('[data-testid="cloud-todo-more-properties"]'))
+  // The tag can dispatch the model before the remaining UI commands finish.
+  onCreated(issue)
+  // Persistence can be visible before the create dialog becomes the saved Issue.
+  await waitForControlValue(
+    control,
+    scoped('[data-testid="cloud-todo-detail-title"]'),
+    title,
+    'The newly created Issue detail was not opened',
+    timeoutMs
+  )
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-more-properties"]'), {
+    timeoutMs,
+  })
   await control.command('fill', '[data-testid="cloud-todo-detail-tag-input"]', { value: 'auto' })
   await control.command('press', '[data-testid="cloud-todo-detail-tag-input"]', { key: 'Enter' })
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
   await control.command('waitFor', '[data-testid="cloud-todo-more-properties-popover"]', {
     visible: false,
-    timeoutMs,
-  })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
     timeoutMs,
   })
   return { issue, rule }
@@ -377,7 +349,7 @@ async function verifyConfiguredExecutionEnvironment(
   timeoutMs,
   captureScreenshot
 ) {
-  await control.command('click', scoped('[data-testid="collaboration-tab-manage"]'))
+  await selectCollaborationProjectView(control, CONTENT, 'manage')
   await control.command(
     'click',
     scoped('[data-testid="collaboration-project-settings-environments"]')
@@ -492,7 +464,7 @@ async function verifyAutomaticProcessingControls(
     scoped('[data-testid="collaboration-project-automatic-processing-page"]'),
     { timeoutMs }
   )
-  await control.command('click', scoped('[data-testid="automatic-processing-create"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="automatic-processing-create"]'))
   const form = scoped('[data-testid="automatic-processing-form"]')
   await control.command('waitFor', form, { visible: true, timeoutMs })
   assert.equal(
@@ -528,35 +500,39 @@ async function verifyAutomaticProcessingControls(
   await control.command('waitFor', ruleSelector, { visible: true, timeoutMs })
   await captureScreenshot(control, 'remote-automatic-processing-01-created.png', CONTENT)
   const enabledSelector = scoped(`[data-testid="automatic-processing-enabled-${rule.id}"]`)
-  await control.command('click', enabledSelector)
+  await control.command('clickWhenEnabled', enabledSelector, { timeoutMs })
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => rules.find(candidate => candidate.id === rule.id && candidate.enabled === false),
     'The automatic processing rule did not pause',
     timeoutMs
   )
-  await control.command('waitFor', enabledSelector, {
-    attribute: 'aria-checked',
-    value: 'false',
+  await control.command('waitFor', `${enabledSelector}[aria-checked="false"]`, {
+    enabled: true,
     timeoutMs,
   })
-  await control.command('click', enabledSelector)
+  await control.command('clickWhenEnabled', enabledSelector, { timeoutMs })
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => rules.find(candidate => candidate.id === rule.id && candidate.enabled === true),
     'The automatic processing rule did not resume',
     timeoutMs
   )
-  await control.command('waitFor', enabledSelector, {
-    attribute: 'aria-checked',
-    value: 'true',
+  await control.command('waitFor', `${enabledSelector}[aria-checked="true"]`, {
+    enabled: true,
     timeoutMs,
   })
   await control.command('click', scoped(`[data-testid="automatic-processing-edit-${rule.id}"]`))
   await control.command('waitFor', form, { visible: true, timeoutMs })
-  await control.command('click', scoped('[data-testid="automatic-processing-cancel"]'))
+  await control.command('clickWhenEnabled', scoped('[data-testid="automatic-processing-cancel"]'), {
+    timeoutMs,
+  })
   await control.command('waitFor', form, { visible: false, timeoutMs })
-  await control.command('click', scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`))
+  await control.command(
+    'clickWhenEnabled',
+    scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`),
+    { timeoutMs }
+  )
   await waitForValue(
     () => request(`/api/v1/cloud-projects/${projectId}/automations`),
     rules => !rules.some(candidate => candidate.id === rule.id),
@@ -591,6 +567,13 @@ export function createDesktopScenario({
   const modelStarted = new Promise(resolve => {
     resolveModelStarted = resolve
   })
+  const completeModelTurn = async (response, responseId, serialized) => {
+    resolveModelStarted()
+    await modelRelease
+    writeEvents(response, responseId, [
+      assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
+    ])
+  }
   const request = (pathname, options) => requestJson(backendUrl, authToken, pathname, options)
   const dispatchBoundary = createDispatchIssueBoundaryRegression(request)
 
@@ -636,7 +619,7 @@ export function createDesktopScenario({
         'Direct agent dispatch incorrectly entered the collaboration manager path'
       )
       const toolNames = advertisedToolNames(body)
-      if (requestAdvertisesProgrammaticExec(body)) {
+      if (requestAdvertisesProgrammaticExec(body) && modelRequests >= 3) {
         if (!requestContainsToolOutput(body, MANUAL_READ_CALL)) {
           const selection = selectProgrammaticExec(
             body,
@@ -653,22 +636,20 @@ export function createDesktopScenario({
               `text(${JSON.stringify(MANUAL_READ_OK)})`,
             ].join('\n')
           )
-          const event = customToolCall(MANUAL_READ_CALL, selection.name, selection.input)
-          event.item.namespace = 'functions'
-          writeEvents(response, responseId, [event])
+          writeEvents(
+            response,
+            responseId,
+            selectedToolCall(MANUAL_READ_CALL, { codeMode: selection })
+          )
           return true
         }
-        const output = body.input.find(
-          item => item.type === 'custom_tool_call_output' && item.call_id === MANUAL_READ_CALL
-        )?.output
+        const output = toolOutputText(body, MANUAL_READ_CALL)
         assert.ok(
           JSON.stringify(output)?.includes(MANUAL_READ_OK),
-          `The real bound Issue read did not succeed: ${JSON.stringify(output)}`
+          `The real bound Issue read did not succeed: ${JSON.stringify(output)}; input identities: ${JSON.stringify(body.input.map(item => ({ type: item.type, callId: item.call_id })))}`
         )
         await dispatchBoundary.verify()
-        writeEvents(response, responseId, [
-          assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
-        ])
+        await completeModelTurn(response, responseId, serialized)
         return true
       }
       for (const toolName of MANAGEMENT_TOOLS) {
@@ -717,11 +698,7 @@ export function createDesktopScenario({
           'The real MCP read did not return the bound Issue'
         )
       }
-      resolveModelStarted()
-      await modelRelease
-      writeEvents(response, responseId, [
-        assistantMessage(serialized.includes(CONTINUATION) ? CONTINUATION_RESULT : COMPLETION),
-      ])
+      await completeModelTurn(response, responseId, serialized)
       return true
     },
 
@@ -754,13 +731,16 @@ export function createDesktopScenario({
         projectName: PROJECT,
         timeoutMs: uiTimeoutMs,
       })
-      await verifyUnconfiguredAssignment(
-        control,
-        request,
-        project.id,
-        modelResponseTimeoutMs,
-        captureScreenshot
-      )
+      await verifyUnconfiguredAssignment(control, request, {
+        projectId: project.id,
+        contentSelector: CONTENT,
+        title: UNCONFIGURED_ISSUE,
+        description: `${MARKER}。由单个智能体在远程 Executor 上完成并提交待确认。`,
+        cloud: { backendUrl, authToken },
+        modelRequests: () => modelRequests,
+        timeoutMs: modelResponseTimeoutMs,
+        captureScreenshot,
+      })
       await configureFirstProjectExecutionEnvironment(
         control,
         CONTENT,
@@ -911,8 +891,16 @@ export function createDesktopScenario({
         'Direct assignment entered a manager/group execution path'
       )
       assert.equal(modelRequests, 1, 'Direct agent assignment invoked the model more than once')
-      const tagged = await createAutoTaggedIssue(control, request, project.id, agent, uiTimeoutMs)
-      issue = tagged.issue
+      const tagged = await createAutoTaggedIssue(
+        control,
+        request,
+        project.id,
+        agent,
+        uiTimeoutMs,
+        createdIssue => {
+          issue = createdIssue
+        }
+      )
       const autoExecution = await waitForValue(
         async () => {
           const result = await request(
@@ -938,6 +926,17 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(modelRequests, 2, 'The auto tag did not invoke the agent model exactly once')
+      const autoMessages = await readProjectChatMessages(
+        { backendUrl, authToken, projectId: project.id },
+        issue.id,
+        uiTimeoutMs
+      )
+      const autoResponse = autoMessages.find(message => message.content === COMPLETION)
+      assert.match(
+        autoResponse?.metadata.runtime_event_sequence ?? '',
+        /^[1-9]\d+$/,
+        'The persisted final response must preserve its exact Runtime event sequence'
+      )
       await captureScreenshot(control, 'remote-agent-dispatch-03-auto-tag-in-review.png', CONTENT)
       await request(`/api/v1/cloud-projects/${project.id}/automations/${tagged.rule.id}`, {
         method: 'DELETE',

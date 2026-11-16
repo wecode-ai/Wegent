@@ -1,0 +1,31 @@
+{
+  "revision": "e0f1a2b3c4d5",
+  "parents": [
+    "d9e0f1a2b3c4"
+  ],
+  "source": "20260815_e0f1a2b3c4d5_add_execution_capacity_identity.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions ADD COLUMN runtime_instance_id VARCHAR(100) NOT NULL DEFAULT ''"
+      ]
+    },
+    {
+      "sql": [
+        "CREATE INDEX idx_exec_runtime_capacity ON loop_item_executions (executor_owner_user_id, runtime_instance_id, status)"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "DROP INDEX idx_exec_runtime_capacity ON loop_item_executions"
+      ]
+    },
+    {
+      "sql": [
+        "ALTER TABLE loop_item_executions DROP COLUMN runtime_instance_id"
+      ]
+    }
+  ]
+}

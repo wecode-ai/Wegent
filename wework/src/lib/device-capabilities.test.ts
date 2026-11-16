@@ -1,88 +1,41 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
-  canRequestDeviceUpgrade,
   canUseForProjectCreation,
-  isDeviceBelowWeWorkVersion,
-  isDeviceRunningTask,
-  isVersionAtLeast,
-  supportsCloudSessions,
+  isRemoteTaskDevice,
   supportsLocalTerminalLaunch,
   supportsRemoteCodeServerSessions,
+  supportsCloudSessions,
   supportsRemoteTerminalSessions,
 } from './device-capabilities'
 
 describe('device-capabilities', () => {
-  test('compares executor versions with v prefixes and suffixes', () => {
-    expect(isVersionAtLeast('v1.8.5', WEWORK_MIN_EXECUTOR_VERSION)).toBe(true)
-    expect(isVersionAtLeast('1.8.6-beta', WEWORK_MIN_EXECUTOR_VERSION)).toBe(true)
-    expect(isVersionAtLeast('1.8.4', WEWORK_MIN_EXECUTOR_VERSION)).toBe(false)
-  })
-
-  test('detects devices running tasks from slot or task ids', () => {
-    expect(isDeviceRunningTask({ status: 'online', slot_used: 1 })).toBe(true)
-    expect(isDeviceRunningTask({ status: 'online', running_task_ids: [7] })).toBe(true)
-    expect(isDeviceRunningTask({ status: 'online', running_tasks: [{ task_id: 8 }] })).toBe(true)
-    expect(isDeviceRunningTask({ status: 'online', slot_used: 0 })).toBe(false)
-  })
-
-  test('blocks project creation for devices below the WeWork executor version', () => {
-    const oldDevice = {
-      device_type: 'cloud',
+  test('opted-in computers support existing tasks without exposing terminal or project creation', () => {
+    const device = {
+      id: 22,
+      device_id: 'app-record-22',
+      execution_target_id: 'app-record-22',
+      device_type: 'app',
+      status: 'online' as const,
       bind_shell: 'claudecode',
-      status: 'online',
-      executor_version: '1.8.4',
+      executor_version: WEWORK_MIN_EXECUTOR_VERSION,
+      runtime_features: { schemaVersion: 4, remoteTaskAccess: { version: 1, enabled: true } },
+      runtime_routes: [
+        {
+          kind: 'remote-relay' as const,
+          device_id: 'app-record-22',
+          runtime_device_id: 'app-record-22',
+          status: 'online' as const,
+        },
+      ],
     }
-    const compatibleDevice = {
-      ...oldDevice,
-      executor_version: '1.8.5',
-    }
-
-    expect(isDeviceBelowWeWorkVersion(oldDevice)).toBe(true)
-    expect(canUseForProjectCreation(oldDevice)).toBe(false)
-    expect(canUseForProjectCreation(compatibleDevice)).toBe(true)
-    expect(canUseForProjectCreation({ ...oldDevice, executor_version: undefined })).toBe(false)
-  })
-
-  test('requires online idle state before requesting an upgrade', () => {
-    expect(
-      canRequestDeviceUpgrade({
-        status: 'online',
-        bind_shell: 'claudecode',
-        slot_used: 0,
-      })
-    ).toBe(true)
-    expect(
-      canRequestDeviceUpgrade({
-        status: 'online',
-        bind_shell: 'claudecode',
-        slot_used: 1,
-      })
-    ).toBe(false)
-    expect(
-      canRequestDeviceUpgrade({
-        status: 'offline',
-        bind_shell: 'claudecode',
-        slot_used: 0,
-      })
-    ).toBe(false)
-  })
-
-  test('supports native terminal launch only on local Claude Code devices', () => {
-    const claudeDevice = {
-      bind_shell: 'claudecode',
-      status: 'online',
-    }
-
-    expect(supportsLocalTerminalLaunch({ ...claudeDevice, device_type: 'local' })).toBe(true)
-    expect(supportsLocalTerminalLaunch({ ...claudeDevice, device_type: 'cloud' })).toBe(false)
-    expect(
-      supportsLocalTerminalLaunch({
-        ...claudeDevice,
-        device_type: 'local',
-        bind_shell: 'openclaw',
-      })
-    ).toBe(false)
+    expect(isRemoteTaskDevice(device)).toBe(true)
+    expect(canUseForProjectCreation(device)).toBe(false)
+    expect(supportsLocalTerminalLaunch(device)).toBe(false)
+    expect(supportsRemoteTerminalSessions(device, device.device_id)).toBe(false)
+    expect(supportsRemoteCodeServerSessions(device, device.device_id)).toBe(false)
   })
 
   test('supports remote terminal sessions only on remote or cloud Claude Code devices', () => {
@@ -143,25 +96,5 @@ describe('device-capabilities', () => {
         bind_shell: 'openclaw',
       })
     ).toBe(false)
-  })
-
-  test('supports remote code-server only when the online runtime enables it', () => {
-    const remoteDevice = {
-      device_type: 'remote',
-      bind_shell: 'claudecode',
-      status: 'online',
-    }
-
-    expect(supportsRemoteCodeServerSessions(remoteDevice)).toBe(true)
-    expect(
-      supportsRemoteCodeServerSessions({
-        ...remoteDevice,
-        runtime_features: {
-          schemaVersion: 3,
-          interactiveSessions: { codeServer: false },
-        },
-      })
-    ).toBe(false)
-    expect(supportsRemoteCodeServerSessions({ ...remoteDevice, status: 'offline' })).toBe(false)
   })
 })

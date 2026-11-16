@@ -56,10 +56,14 @@ ENV PATH=/root/.cargo/bin:${PATH}
 
 WORKDIR /build/executor
 COPY executor/Cargo.toml executor/Cargo.lock ./
+COPY executor/crates ./crates
+COPY shared/rust /build/shared/rust
+COPY executor/vendor ./vendor
 COPY executor/src ./src
 COPY sdk/plugin-auth /build/sdk/plugin-auth
 COPY sdk/plugin-creator /build/sdk/plugin-creator
 COPY shared/assets /build/shared/assets
+COPY shared/protocol /build/shared/protocol
 RUN if [ -n "$CARGO_REGISTRIES_CRATES_IO_INDEX" ]; then \
         export CARGO_REGISTRIES_CRATES_IO_INDEX; \
     fi; \
@@ -135,7 +139,7 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
 
 # Install the agent CLIs from the selected npm registry.
 RUN npm install -g --registry "$NPM_REGISTRY" \
-      @anthropic-ai/claude-code@2.1.277 @openai/codex@0.155.1 \
+      @anthropic-ai/claude-code@2.1.310 @openai/codex@0.155.1 \
     && npm cache clean --force
 
 # Install the GitHub (gh) and GitLab (glab) CLIs used by git hosting features.

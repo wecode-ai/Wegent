@@ -167,6 +167,7 @@ class WorkspaceResponse(BaseModel):
         default_factory=ExecutionEnvironmentConfig
     )
     is_default: bool
+    is_system_default: bool = False
     status: Literal["active", "archived"]
     version: int
     created_at: datetime
@@ -242,7 +243,7 @@ class WorkspaceAgentResponse(BaseModel):
     owner_type: ResourceOwnerType
     owner_id: SnowflakeId
     owner_name: str
-    status: Literal["available", "unavailable"]
+    status: Literal["available", "unavailable", "unchecked"]
     execution_environment_ids: list[str] = Field(default_factory=list)
     owner_user_id: int | None
     added_by_user_id: int
@@ -380,7 +381,7 @@ class PersonalAgentResource(BaseModel):
     owner_type: Literal["user"] = "user"
     owner_id: str
     owner_name: str
-    status: Literal["available", "unavailable"]
+    status: Literal["available", "unavailable", "unchecked"]
     execution_environment_ids: list[str] = Field(default_factory=list)
     workspace_ids: list[str] = Field(default_factory=list)
 

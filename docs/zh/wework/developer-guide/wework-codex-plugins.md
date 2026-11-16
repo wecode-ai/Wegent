@@ -29,11 +29,19 @@ Renderer 通过白名单 Electron capability 调用列举、安装、更新、�
 
 ## 市场和安装
 
-本地市场和 OpenAI 官方市场由 Wework 前端通过本机 executor 的 Codex app-server 读取。列表请求不限制 `marketplaceKinds`，因此 Codex 可以按照当前功能开关和登录态返回本地市场与 `openai-curated-remote` 官方市场。远程 GitHub 自定义市场会被 clone 到本地缓存目录，后续列表读取使用缓存中的 marketplace 数据和插件目录。除 Wework 个人市场的本地缓存安装与卸载外，本地市场操作由 Codex app-server 管理。
+本地市场和 OpenAI 官方市场由 Wework 前端通过本机 executor 的 Codex app-server 读取。本地目录及安装、卸载后的目录校验固定使用 `marketplaceKinds: ['local']`。只有打开 OpenAI 官方页或在该页手动刷新时，才通过独立入口读取默认远程目录；Codex 当前不提供官方目录分页或独立的 remote 市场筛选值。官方目录按设备、运行实例、Codex 鉴权指纹及 Wegent 账号隔离，缓存 60 秒并合并并发请求；缓存过期不会自行发起请求，安装、卸载和本地刷新也不会使该目录失效。账号切换或退出后丢弃旧响应。Executor 在 IPC 返回前精简列表，详情由 `plugin/read` 按需获取，并仅记录各字段字节数以定位大响应。这可减少内部传输，不能替代上游对首次下载量的优化。远程 GitHub 自定义市场会被 clone 到本地缓存目录，后续列表读取使用缓存中的 marketplace 数据和插件目录。除 Wework 个人市场的本地缓存安装与卸载外，本地市场操作由 Codex app-server 管理。
 
-连接 Wegent 云端后，插件页还会展示 Backend 提供的 Wegent 云端市场。云端市场详情和安装状态来自 Backend；普通安装完成后，Backend 将用户的全局 `InstalledPlugin` 期望状态同步到在线本地设备和云设备。设备 Executor 从 Wework Backend / 对象存储取得包后，直接在隔离的 Claude 和 Codex home 中写入运行时缓存、marketplace 元数据和启用配置；云端插件的安装、更新和删除不调用 Codex app-server 的 `plugin/install`、`plugin/uninstall` 或配置 RPC，也不刷新 GitHub / OpenAI 市场。这样企业内部、Wework 公开和已发布个人插件在包已可达后不依赖 GitHub、OpenAI 或 Codex 联网接口。OpenAI 官方市场仍由 Codex 管理，不出现在自定义市场的编辑、排序和删除列表中。
+连接 Wegent 云端后，插件页还会展示 Backend 提供的 Wegent 云端市场。云端市场详情和安装状态来自 Backend；普通安装完成后，Backend 将用户的全局 `InstalledPlugin` 期望状态同步到在线本地设备和云设备。设备 Executor 从 Wework Backend / 对象存储取得包后，直接在隔离的 Claude 和 Codex home 中写入运行时缓存、marketplace 元数据和启用配置；云端插件的安装、更新和删除不调用 Codex app-server 的 `plugin/install`、`plugin/uninstall`，也不刷新 GitHub / OpenAI 市场。纯技能插件提交后通过本机配置重载 RPC 激活，见下文。这样企业内部、Wework 公开和已发布个人插件在包已可达后不依赖 GitHub、OpenAI 或 Codex 联网接口。OpenAI 官方市场仍由 Codex 管理，不出现在自定义市场的编辑、排序和删除列表中。
 
 云端同步中的包替换、两个运行时缓存、注册表和配置文件按一个本地事务提交。任何解压、解析或写入失败都会恢复同步前状态，避免出现新包已落盘但旧运行时仍生效，或删除一半后无法恢复的状态。Connector 的 `localAuth` 仍在包同步完成后由 Wework 独立执行，不因本地物化方式变化而跳过。
+
+### 纯技能插件热更新
+
+受管纯技能插件的安装、卸载在本地事务提交后复用 `config/batchWrite`，发送空 `edits` 和 `reloadUserConfig: true`，只重载对应 Home 中已经运行的 Codex app-server。成功后不增加进程失效版本，保留 PID 和已有聊天；新的技能目录在已有聊天下一轮生效，卸载的技能不再出现在该轮提供给模型的可用目录中。未启动的进程直接在首次启动时读取已提交状态。
+
+判定同时检查变更前后的包、原生启用配置、技能选择器和注册表，只接受已确认的纯技能成员新增或移除。包内容或版本更新、整个插件启停、MCP、Hooks、Apps、未知清单能力、无关配置变化或无法检查的状态继续使用原有进程失效机制。重载 RPC 失败或被取消时，同样使旧进程失效，避免将未完成重载当作成功。此优化避免安装、卸载引起的重启及重复初始化，不消除安装包本身的下载量。
+
+桌面 CI 的 `plugin-toggle-persistence` 场景在同一真实聊天中验证安装前、安装后、卸载后的三轮模型请求：任务和 Codex thread 不变、进程启动记录不增加，且最新技能目录依次不含、包含、不含目标技能；目录查询使用 `forceReload: false`，避免测试读取掩盖缓存未更新的问题。
 
 ### 桌面内置插件升级与恢复
 
@@ -70,7 +78,7 @@ Codex 安装成功但 `plugin/installed` 尚未确认时，安装回执保留原
 
 插件安装是用户级状态，CLI 凭据是设备级状态。因此安装期只保证当前设备完成授权；其他设备需要独立检查和授权。`logoutOnUninstall` 默认为二维码连接器启用、浏览器 OAuth 关闭，避免卸载一个插件时清除由其他插件或 profile 共享的凭据。
 
-`wegent-sites` 和 `weibo-miniapp-h5-develop-agent` 由独立插件仓库维护。构建 Backend 镜像前，`pnpm prepare:builtin-plugins` 会按插件配置将外部插件复制到忽略提交的 `backend/init_data/plugins/<plugin-name>` 目录；标准 `build_image.sh` 和 `build_image_mac.sh` 会自动执行该步骤。正式镜像工作流分别从配置的归档地址下载插件，校验固定 SHA-256 后执行同一 staging。下载、校验或 staging 失败会终止镜像构建。Backend 随后以系统所有者 `user_id=0` 将已 staging 的插件幂等发布为组织范围、推荐的 Wegent 云端市场条目。
+`wegent-sites` 和 `weibo-miniapp-h5-develop-agent` 由独立插件仓库维护。构建 Backend 镜像前，`pnpm prepare:builtin-plugins` 会按插件配置将外部插件复制到忽略提交的 `backend-rs/init_data/plugins/<plugin-name>` 目录；标准 `build_image.sh` 和 `build_image_mac.sh` 会自动执行该步骤。正式镜像工作流分别从配置的归档地址下载插件，校验固定 SHA-256 后执行同一 staging。下载、校验或 staging 失败会终止镜像构建。Backend 随后以系统所有者 `user_id=0` 将已 staging 的插件幂等发布为组织范围、推荐的 Wegent 云端市场条目。
 
 内置应用插件的身份以 Backend 内置插件注册表为准。当前注册表只包含 `wegent-sites` 和 `weibo-miniapp-h5-develop-agent`，二者都使用 `visibility=workspace`，因此规范市场名是 `wegent`。`public` 在数据模型中仍然合法，但只保留给系统/官方公开目录；普通用户的企业投稿不能选择它。只有在内置插件安装路径中，系统所有者 `user_id=0` 下的这两个内置插件市场行仍保存为 `visibility=public` 时，才会被视为历史遗留行并在安装前规范化为 `workspace`。这样可以避免同一个内置插件在旧数据中以 `plugin://...@wework`、在当前应用创建流程中以 `plugin://...@wegent` 出现两套身份。
 
@@ -103,6 +111,8 @@ Wework 使用独立的 Codex home，避免直接污染用户命令行 Codex 的�
 - 创建新的 Wework Codex home，只复用 auth 链接。
 - 从原生 Codex home 迁移配置到 Wework Codex home。
 - 是否启用 Codex 远端 apps 拉取。这个开关只控制远端 app 初始化，不代表特定内置能力。
+
+首次迁移和后续手动导入 Codex 配置时，会移除源配置中的顶层 `model` 字段，让目标运行时的模型目录决定默认模型；不会修改原生 Codex 的源配置文件。
 
 迁移完成后状态写入 Wework Codex home，插件页面和对话运行时都继续从同一个 Codex app-server 读取插件状态。设置页也暴露远端 apps 开关，便于用户后续修改自己的 Wework Codex 配置。
 

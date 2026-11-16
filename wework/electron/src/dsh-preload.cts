@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
+if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
+  contextBridge.exposeInMainWorld('weworkElectronVerification', {
+    requestRuntime: (input: unknown) => ipcRenderer.invoke('e2e:runtime-request', input),
+  })
+}
+
 if (location.protocol === 'file:') {
   contextBridge.exposeInMainWorld('weworkElectron', {
     getRuntimeState: () => ipcRenderer.invoke('runtime:get-state'),
@@ -30,16 +36,27 @@ contextBridge.exposeInMainWorld('weworkElectronLifecycle', {
 })
 
 contextBridge.exposeInMainWorld('weworkElectronCloudCredentials', {
-  getDevicePublicKey: () => ipcRenderer.invoke('cloud-credentials:get-device-public-key'),
-  claimAuthorization: (input: { apiBaseUrl: string; sessionId: string; pollToken: string }) =>
+  prepareAuthorization: (apiBaseUrl: string) =>
+    ipcRenderer.invoke('cloud-credentials:prepare-authorization', apiBaseUrl),
+  claimAuthorization: (input: { authorizationId: string; sessionId: string; pollToken: string }) =>
     ipcRenderer.invoke('cloud-credentials:claim-authorization', input),
-  refreshAccessToken: (apiBaseUrl: string) =>
-    ipcRenderer.invoke('cloud-credentials:refresh-access-token', apiBaseUrl),
+  commitAuthorization: (authorizationId: string, ownerUserId: number) =>
+    ipcRenderer.invoke('cloud-credentials:commit-authorization', authorizationId, ownerUserId),
+  discardAuthorization: (authorizationId: string) =>
+    ipcRenderer.invoke('cloud-credentials:discard-authorization', authorizationId),
+  refreshAccessToken: (apiBaseUrl: string, expectedUserId: number) =>
+    ipcRenderer.invoke('cloud-credentials:refresh-access-token', apiBaseUrl, expectedUserId),
   clear: () => ipcRenderer.invoke('cloud-credentials:clear'),
+})
+
+contextBridge.exposeInMainWorld('weworkElectronPluginAuth', {
+  configure: (apiBaseUrl: string, accountToken: string) =>
+    ipcRenderer.invoke('plugin-auth:configure', apiBaseUrl, accountToken),
 })
 
 contextBridge.exposeInMainWorld('weworkElectronExecutionEnvironments', {
   list: () => ipcRenderer.invoke('runtime:list-execution-environments'),
+  ensurePython: () => ipcRenderer.invoke('runtime:ensure-python'),
   chooseNodeExecutable: () => ipcRenderer.invoke('runtime:choose-node-executable'),
   useBuiltinNode: () => ipcRenderer.invoke('runtime:use-builtin-node'),
 })

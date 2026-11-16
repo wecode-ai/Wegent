@@ -269,7 +269,11 @@ done
         log_path.display(),
         threads
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();

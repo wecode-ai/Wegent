@@ -325,11 +325,16 @@ function ProjectItem({
   onLoadTasks,
 }: ProjectItemProps) {
   const { t } = useTranslation('projects')
-  const taskCount = project.task_count
   const visibleTasks =
     selectedTask && !project.tasks.some(task => task.task_id === selectedTask.task_id)
       ? [selectedTask, ...project.tasks]
       : project.tasks
+  const isEmpty =
+    taskPage?.loaded &&
+    !taskPage.hasMore &&
+    !taskPage.loading &&
+    !taskPage.error &&
+    visibleTasks.length === 0
 
   // Track which task is being renamed
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
@@ -442,7 +447,7 @@ function ProjectItem({
             size="sm"
             className={cn(
               'h-5 w-5 p-0 transition-opacity text-text-muted hover:text-text-primary',
-              isExpanded || taskCount === 0 ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+              isExpanded || isEmpty ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
             )}
             onClick={e => {
               e.stopPropagation()
@@ -534,7 +539,7 @@ function ProjectItem({
       )}
 
       {/* Empty State (when expanded but no tasks) */}
-      {isExpanded && taskCount === 0 && !taskPage?.loading && !taskPage?.error && (
+      {isExpanded && isEmpty && (
         <div className="ml-6 px-2 py-1">
           <span className="text-xs text-text-muted">{t('section.noTasks')}</span>
         </div>

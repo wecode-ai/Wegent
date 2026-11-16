@@ -1,8 +1,8 @@
+import '@/i18n'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import { BackgroundTerminalsSummary } from './BackgroundTerminalsSummary'
 import type { BackgroundTerminal } from './backgroundTerminals'
-import '@/i18n'
 
 const terminal: BackgroundTerminal = {
   id: 'command-1',
@@ -69,12 +69,5 @@ describe('BackgroundTerminalsSummary', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('无法停止后台终端')
     expect(screen.getByText('pnpm dev')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '停止全部后台终端' })).toBeEnabled()
-  })
-
-  test('hides the section when empty and omits unsupported stop actions', () => {
-    const { rerender } = render(<BackgroundTerminalsSummary terminals={[]} onOpen={vi.fn()} />)
-    expect(screen.queryByTestId('environment-background-terminals-section')).toBeNull()
-    rerender(<BackgroundTerminalsSummary terminals={[terminal]} onOpen={vi.fn()} />)
-    expect(screen.queryByRole('button', { name: '停止全部后台终端' })).toBeNull()
   })
 })

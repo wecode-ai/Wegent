@@ -1,6 +1,6 @@
 import * as Popover from '@radix-ui/react-popover'
 import { Ellipsis } from 'lucide-react'
-import { useId, useState, type ReactNode } from 'react'
+import { useId, useState, type ReactNode, type Ref } from 'react'
 import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
 import './IssuePropertiesPopover.css'
 
@@ -8,10 +8,12 @@ export function IssuePropertiesPopover({
   label,
   children,
   onClose,
+  triggerRef,
 }: {
   label: string
   children: ReactNode
   onClose?: () => void
+  triggerRef?: Ref<HTMLButtonElement>
 }) {
   const [open, setOpen] = useState(false)
   const portalTheme = useCollaborationPortalTheme()
@@ -29,6 +31,7 @@ export function IssuePropertiesPopover({
     <Popover.Root open={open} onOpenChange={changeOpen}>
       <Popover.Trigger asChild>
         <button
+          ref={triggerRef}
           type="button"
           className="task-detail-more-menu-trigger"
           aria-label={label}

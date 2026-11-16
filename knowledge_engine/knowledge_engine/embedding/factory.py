@@ -11,7 +11,6 @@ from typing import Any
 from knowledge_engine.embedding.capabilities import (
     normalize_additional_input_modalities,
 )
-from knowledge_engine.embedding.custom import CustomEmbedding
 from shared.knowledge_contracts import RuntimeEmbeddingModelConfig
 
 
@@ -44,6 +43,8 @@ def _create_embedding_model_from_resolved_values(
     encoding_format: str | None,
     additional_input_modalities: list[str] | None,
 ):
+    from knowledge_engine.embedding.custom import CustomEmbedding
+
     normalized_additional_input_modalities = normalize_additional_input_modalities(
         additional_input_modalities
     )

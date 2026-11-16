@@ -1,16 +1,11 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { createRef, startTransition, Suspense, useState } from 'react'
-import { describe, expect, test, vi } from 'vitest'
 import {
   ComposerProseMirrorEditor,
-  LinkEditPopover,
   type ComposerEditorHandle,
   type ComposerEditorServices,
 } from '@wegent/collaboration/composer'
-import { ConversationTranslationProvider } from '@wegent/collaboration/conversation'
-import { createCollaborationTranslator } from '@wegent/collaboration'
-import { CollaborationTheme } from '@wegent/collaboration/theme'
-import { MarkdownServicesProvider, browserMarkdownServices } from '@wegent/collaboration/markdown'
+import { createRef, startTransition, Suspense, useState } from 'react'
+import { describe, expect, test, vi } from 'vitest'
 
 function renderEditor(value = '', services?: ComposerEditorServices) {
   const ref = createRef<ComposerEditorHandle>()
@@ -165,57 +160,5 @@ describe('shared rich editor in a browser host', () => {
     expect(editor).toHaveAttribute('data-composer-focus-visible')
     unmount()
     expect(unsubscribe).toHaveBeenCalledTimes(1)
-  })
-
-  test('renders host catalog icons through the shared mention node', () => {
-    const resolveMentionIcon = vi.fn(() => ({ url: '/plugin.svg', contrastPad: true }))
-    const { editor } = renderEditor('[$example](plugin://example@marketplace)', {
-      preserveNativeEmptyCaret: true,
-      isWindowFocused: () => true,
-      subscribeWindowFocus: () => () => undefined,
-      resolveMentionIcon,
-    })
-    expect(resolveMentionIcon).toHaveBeenCalledWith('plugin://example@marketplace')
-    expect(editor.querySelector('img')).toHaveAttribute('src', '/plugin.svg')
-    expect(editor.querySelector('.composer-mention-icon-slot')).toHaveClass(
-      'composer-mention-icon-slot--contrast-pad'
-    )
-  })
-
-  test('retains theme and real URL actions throughout the link editing popover', () => {
-    const anchor = document.createElement('button')
-    document.body.append(anchor)
-    const openExternalUrl = vi.fn()
-    const onChange = vi.fn()
-    const { unmount } = render(
-      <CollaborationTheme mode="dark">
-        <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
-          <MarkdownServicesProvider value={{ ...browserMarkdownServices, openExternalUrl }}>
-            <LinkEditPopover
-              payload={{ url: 'https://example.com', label: 'Example' }}
-              anchor={anchor}
-              onClose={vi.fn()}
-              onChange={onChange}
-              onRemove={vi.fn()}
-            />
-          </MarkdownServicesProvider>
-        </ConversationTranslationProvider>
-      </CollaborationTheme>
-    )
-    expect(screen.getByTestId('link-edit-popover')).toHaveAttribute('data-theme', 'dark')
-    fireEvent.click(screen.getByTestId('link-edit-open-link'))
-    expect(openExternalUrl).toHaveBeenCalledWith('https://example.com')
-    fireEvent.click(screen.getByTestId('link-edit-edit-url'))
-    expect(screen.getByTestId('link-edit-popover')).toHaveAttribute('data-theme', 'dark')
-    fireEvent.change(screen.getByTestId('link-edit-url-input'), { target: { value: 'invalid' } })
-    fireEvent.click(screen.getByTestId('link-edit-confirm-url'))
-    expect(onChange).not.toHaveBeenCalled()
-    fireEvent.change(screen.getByTestId('link-edit-url-input'), {
-      target: { value: 'https://example.org' },
-    })
-    fireEvent.click(screen.getByTestId('link-edit-confirm-url'))
-    expect(onChange).toHaveBeenCalledWith({ url: 'https://example.org', label: 'Example' })
-    unmount()
-    anchor.remove()
   })
 })

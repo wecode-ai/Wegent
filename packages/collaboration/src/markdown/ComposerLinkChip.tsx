@@ -2,6 +2,7 @@ import { useMarkdownServices } from "./MarkdownServices";
 import { Link2 } from "lucide-react";
 import { useMemo } from "react";
 import { getRecognizedLink } from "./link-preview";
+import { COMPOSER_LINK_LABEL_CLASS } from "./linkPresentation";
 
 export interface ComposerLinkChipPayload {
   url: string;
@@ -63,7 +64,7 @@ export function ComposerLinkChip({ payload }: ComposerLinkChipProps) {
           <Link2 className="composer-mention-icon h-4 w-4" />
         )}
       </span>
-      <span className="composer-mention-label">{payload.label}</span>
+      <span className={COMPOSER_LINK_LABEL_CLASS}>{payload.label}</span>
     </a>
   );
 }

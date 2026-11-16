@@ -19,12 +19,10 @@ Supported commands:
 - /status - Show current status
 - /new - Start new conversation
 - /bind - Bind private IM session
-- /mode - Show private IM task/chat mode
+- /mode - Show private IM chat/stand-in mode
 - /chat - Switch private IM session to Chat mode
-- /task - Switch private IM session to Task mode
-- /switch - Switch active private IM task
+- /standin - Switch private IM session to Wework stand-in mode
 - /notify - Manage global IM task notifications
-- /cancel - Cancel pending private IM choice
 - /help - Show available commands
 """
 
@@ -47,12 +45,13 @@ class CommandType(str, Enum):
     HELP = "help"  # Show help
     AGENTS = "agents"  # List/switch teams/agents
     BIND = "bind"  # Bind private IM session
-    MODE = "mode"  # Show private IM task/chat mode
+    MODE = "mode"  # Show private IM chat/stand-in mode
     CHAT = "chat"  # Switch private IM session to Chat mode
-    TASK = "task"  # Switch private IM session to Task mode
-    SWITCH = "switch"  # Switch active private IM task
+    STAND_IN = "standin"  # Continue the Wework stand-in conversation
+    TASK = "task"  # Retired command; direct users to stand-in mode
+    SWITCH = "switch"  # Retired task-selection command
     NOTIFY = "notify"  # Manage global IM task notifications
-    CANCEL = "cancel"  # Cancel pending private IM choice
+    CANCEL = "cancel"  # Retired task-selection command
 
 
 @dataclass
@@ -104,6 +103,9 @@ def parse_command(content: str) -> Optional[ParsedCommand]:
         "/bind": CommandType.BIND,
         "/mode": CommandType.MODE,
         "/chat": CommandType.CHAT,
+        "/standin": CommandType.STAND_IN,
+        "/stand-in": CommandType.STAND_IN,
+        "/分身": CommandType.STAND_IN,
         "/task": CommandType.TASK,
         "/switch": CommandType.SWITCH,
         "/notify": CommandType.NOTIFY,
@@ -159,12 +161,10 @@ HELP_MESSAGE = """📋 **可用命令**
 **会话管理**
 • `/new` - 开始新对话
 • `/bind` - 绑定当前私聊会话
-• `/mode` - 查看私聊 Chat/Task 模式
-• `/chat` - 切换到 Chat 模式
-• `/task` - 切换到 Task 模式
-• `/switch` - 切换当前任务
+• `/mode` - 查看私聊的聊天/分身模式
+• `/chat` - 返回 Wegent 聊天模式
+• `/standin` - 进入 Wework 分身模式
 • `/notify on|off|status` - 管理全局 IM 任务通知
-• `/cancel` - 取消当前选择
 • `/status` - 查看当前状态
 • `/help` - 显示此帮助
 
@@ -224,12 +224,10 @@ IM_CHANNEL_CONTEXT_HINT = """
 - `/status` - 查看当前状态
 - `/new` - 开始新对话
 - `/bind` - 绑定当前私聊会话
-- `/mode` - 查看私聊 Chat/Task 模式
-- `/chat` - 切换到 Chat 模式
-- `/task` - 切换到 Task 模式
-- `/switch` - 切换当前任务
+- `/mode` - 查看私聊的聊天/分身模式
+- `/chat` - 返回 Wegent 聊天模式
+- `/standin` - 进入 Wework 分身模式
 - `/notify on|off|status` - 管理全局 IM 任务通知
-- `/cancel` - 取消当前选择
 - `/help` - 显示完整帮助
 
 如果用户询问如何切换智能体、模型、使用设备、执行模式等问题，请引导用户使用上述命令。"""

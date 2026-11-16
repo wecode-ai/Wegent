@@ -1,0 +1,10 @@
+{
+  "revision": "1e1d81b7b5f0",
+  "parents": [
+    "f82c5d1a9e37",
+    "b4c5d6e7f8a9"
+  ],
+  "source": "20260824_1e1d81b7b5f0_merge_smart_app_marketplace_and_device_.py",
+  "upgrade": [],
+  "downgrade": []
+}

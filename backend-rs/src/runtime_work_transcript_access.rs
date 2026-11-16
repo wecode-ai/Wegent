@@ -53,6 +53,21 @@ pub(crate) struct ResolvedTranscript {
     pub task_id: String,
 }
 
+/// Personal assistant transcripts remain in their owner's private workroom.
+pub(crate) fn require_execution_reader(
+    user_id: i64,
+    owner_user_id: i64,
+    executor_type: &str,
+) -> Result<(), FastApiError> {
+    if executor_type == "human_assistant" && user_id != owner_user_id {
+        return Err(FastApiError::detail(
+            brz_http_server::StatusCode::NOT_FOUND,
+            "Project session binding not found",
+        ));
+    }
+    Ok(())
+}
+
 /// `resolve_project_transcript`.
 pub(crate) async fn resolve_project_transcript<M: Mysql>(
     mysql: &M,
@@ -64,15 +79,9 @@ pub(crate) async fn resolve_project_transcript<M: Mysql>(
     let project_id = require_project_scope(mysql, user_id, scope).await?;
     // `_session_executions` — the addressed executions for the project Issue.
     let candidate_task_ids = candidate_task_ids(local_task_id);
-    let mut executions = session_executions(
-        mysql,
-        project_id,
-        scope.issue_id,
-        device_id,
-        &candidate_task_ids,
-    )
-    .await
-    .map_err(mysql_failure)?;
+    let mut executions = session_executions(mysql, project_id, scope.issue_id, &candidate_task_ids)
+        .await
+        .map_err(mysql_failure)?;
     if !executions.is_empty() {
         let owners: HashSet<i64> = executions
             .iter()
@@ -97,6 +106,13 @@ pub(crate) async fn resolve_project_transcript<M: Mysql>(
                         .is_some_and(|ids| ids.iter().any(|alias| alias == value))
                 })
         });
+    }
+    for execution in &executions {
+        require_execution_reader(
+            user_id,
+            i64::from(execution.executor_owner_user_id),
+            execution.executor_type(),
+        )?;
     }
 
     // `active_task_binding_query(...).all()` — the active `execution` binding
@@ -233,6 +249,74 @@ async fn require_project_scope<M: Mysql>(
     Ok(project_id)
 }
 
+/// `ProjectChatService._require_scope` with an explicit required role: the
+/// snapshot reconcile re-checks `Developer` for every candidate activity.
+/// Failures carry the source's status code and detail text.
+pub(crate) async fn require_project_chat_scope<M: Mysql>(
+    mysql: &M,
+    user_id: i64,
+    project_id: &str,
+    task_id: Option<&str>,
+    required_role: &str,
+) -> Result<(), (i64, String)> {
+    let internal = || (500, "Internal Server Error".to_string());
+    let not_found = || (404, "Project task not found".to_string());
+    let forbidden = || (403, "Insufficient permission".to_string());
+    let numeric_project_id = project_id.parse::<i64>().map_err(|_| internal())?;
+    let numeric_user_id = i32::try_from(user_id).unwrap_or(i32::MAX);
+    let Some(access) = project_access_details(mysql, numeric_project_id, numeric_user_id)
+        .await
+        .map_err(|_| internal())?
+    else {
+        return Err((404, "Cloud project not found".to_string()));
+    };
+    let Some(role) = role_for_priority(access.priority) else {
+        return Err(internal());
+    };
+    let Some(task_id) = task_id.filter(|value| !value.is_empty()) else {
+        return if has_permission(role, required_role) {
+            Ok(())
+        } else {
+            Err(forbidden())
+        };
+    };
+    let entity = project_entity(mysql, numeric_project_id)
+        .await
+        .map_err(|_| internal())?;
+    let task = task_item(mysql, task_id, numeric_project_id)
+        .await
+        .map_err(|_| internal())?;
+    let Some(task) = task else {
+        let Some(entity) = entity.as_ref() else {
+            return Err(internal());
+        };
+        let provider = entity
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.0.value.as_ref())
+            .and_then(|metadata| metadata.task_provider.as_deref())
+            .unwrap_or("local");
+        if matches!(provider, "github" | "gitlab") {
+            return if has_permission(role, required_role) {
+                Ok(())
+            } else {
+                Err(forbidden())
+            };
+        }
+        return Err(not_found());
+    };
+    if !can_view_item(mysql, role, entity.as_ref(), &task, user_id)
+        .await
+        .map_err(|_| internal())?
+    {
+        return Err(not_found());
+    }
+    if !has_permission(role, required_role) {
+        return Err(forbidden());
+    }
+    Ok(())
+}
+
 /// `can_view_item`: `Maintainer` and above see every Issue; lower roles need an
 /// `open` Issue or a related-item grant.
 async fn can_view_item<M: Mysql>(
@@ -322,7 +406,6 @@ async fn session_executions<M: Mysql>(
     mysql: &M,
     project_id: i64,
     issue_id: &str,
-    device_id: &str,
     task_ids: &[String],
 ) -> MysqlResult<Vec<ExecutionRow>> {
     if task_ids.is_empty() {
@@ -333,14 +416,9 @@ async fn session_executions<M: Mysql>(
         "SELECT {EXECUTION_COLUMNS} \nFROM loop_item_executions \n\
          WHERE loop_item_executions.cloud_project_id = ? \
          AND loop_item_executions.loop_item_id = ? \
-         AND loop_item_executions.runtime_device_id = ? \
          AND loop_item_executions.runtime_task_id IN ({placeholders})"
     );
-    let mut values = vec![
-        project_id.to_string(),
-        issue_id.to_string(),
-        device_id.to_string(),
-    ];
+    let mut values = vec![project_id.to_string(), issue_id.to_string()];
     values.extend(task_ids.iter().cloned());
     mysql.fetch_all(sql, values).await
 }
@@ -540,7 +618,7 @@ async fn collaboration_member_assignment<M: Mysql>(
     dispatch: &ExecutionRow,
     activity: &ActivityRow,
     metadata: &Value,
-) -> Result<(), FastApiError> {
+) -> Result<Value, FastApiError> {
     let Some(dispatch_id) = metadata_string(metadata, "dispatch_id") else {
         return Err(incomplete_member_identity());
     };
@@ -599,9 +677,36 @@ async fn collaboration_member_assignment<M: Mysql>(
     .await
     .map_err(mysql_failure)?;
     match (manager_device, member_device) {
-        (Some(manager), Some(member)) if manager.id == member.id => Ok(()),
+        (Some(manager), Some(member)) if manager.id == member.id => Ok(assignment),
         _ => Err(member_assignment_mismatch()),
     }
+}
+
+pub(crate) async fn comment_member_assignment<M: Mysql>(
+    mysql: &M,
+    project_id: i64,
+    issue_id: &str,
+    agent_id: &str,
+    runtime_device_id: &str,
+    runtime_task_id: &str,
+    metadata: &Value,
+) -> Result<Option<(i64, Value)>, FastApiError> {
+    let Some(dispatch) =
+        collaboration_dispatch_for_activity(mysql, project_id, issue_id, metadata).await?
+    else {
+        return Ok(None);
+    };
+    let activity = ActivityRow {
+        agent_id: Some(agent_id.to_owned()),
+        runtime_device_id: Some(runtime_device_id.to_owned()),
+        runtime_task_id: Some(runtime_task_id.to_owned()),
+        metadata: None,
+    };
+    let assignment = collaboration_member_assignment(
+        mysql, project_id, issue_id, &dispatch, &activity, metadata,
+    )
+    .await?;
+    Ok(Some((dispatch.id, assignment)))
 }
 
 /// `_manager_assignment`: the recorded manager card carrying one assignment.
@@ -788,12 +893,15 @@ impl ExecutionRow {
     fn executor_type(&self) -> &'static str {
         let selection = self.runtime_selection();
         if let Some(configured) = selection.get("executor_kind").and_then(Value::as_str)
-            && matches!(configured, "generic_robot" | "collaboration_group_dispatch")
+            && matches!(
+                configured,
+                "generic_robot" | "collaboration_group_dispatch" | "human_assistant"
+            )
         {
-            return if configured == "collaboration_group_dispatch" {
-                "collaboration_group_dispatch"
-            } else {
-                "generic_robot"
+            return match configured {
+                "collaboration_group_dispatch" => "collaboration_group_dispatch",
+                "human_assistant" => "human_assistant",
+                _ => "generic_robot",
             };
         }
         if !self.agent_id.is_empty() {
@@ -847,88 +955,4 @@ impl ExecutionRow {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn execution(runtime_task_id: Option<&str>, payload: &str) -> ExecutionRow {
-        ExecutionRow {
-            id: 41,
-            executor_owner_user_id: 86,
-            agent_id: String::new(),
-            team_id: 0,
-            runtime_device_id: Some("device-1".to_string()),
-            runtime_task_id: runtime_task_id.map(str::to_string),
-            execution_payload: payload.to_string(),
-        }
-    }
-
-    #[test]
-    fn candidate_task_ids_include_the_manager_base_identity() {
-        assert_eq!(
-            candidate_task_ids("runtime-1"),
-            vec!["runtime-1".to_string()]
-        );
-        assert_eq!(
-            candidate_task_ids("runtime-1-manager-initial"),
-            vec![
-                "runtime-1-manager-initial".to_string(),
-                "runtime-1".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn conversation_task_id_prefers_the_recorded_runtime_task() {
-        let row = execution(Some("runtime-9"), "");
-        assert_eq!(row.conversation_task_id(), "runtime-9");
-        assert!(row.matches_local_task("runtime-9"));
-        assert!(!row.matches_local_task("runtime-8"));
-    }
-
-    #[test]
-    fn conversation_task_id_falls_back_to_the_queue_identity() {
-        let row = execution(
-            None,
-            "{\"origin_context\": {\"comment_continue_task_id\": \"task-7\"}}",
-        );
-        assert_eq!(row.conversation_task_id(), "task-7");
-        let row = execution(None, "");
-        assert_eq!(row.conversation_task_id(), "codex-queue-41");
-    }
-
-    #[test]
-    fn group_dispatch_sessions_expose_the_manager_identity() {
-        let payload =
-            "{\"runtime_selection\": {\"executor_kind\": \"collaboration_group_dispatch\"}}";
-        let row = execution(Some("runtime-9"), payload);
-        assert_eq!(row.executor_type(), "collaboration_group_dispatch");
-        assert_eq!(row.conversation_task_id(), "runtime-9-manager-initial");
-    }
-
-    #[test]
-    fn executor_type_matches_the_source_selection_rules() {
-        assert_eq!(execution(None, "").executor_type(), "generic_robot");
-        let mut row = execution(None, "");
-        row.agent_id = "agent-1".to_string();
-        assert_eq!(row.executor_type(), "project_robot");
-        let mut row = execution(None, "");
-        row.team_id = 3;
-        assert_eq!(row.executor_type(), "wegent_team");
-        let row = execution(
-            None,
-            "{\"runtime_selection\": {\"executor_kind\": \"generic_robot\"}, \"agent_id\": \"a\"}",
-        );
-        assert_eq!(row.executor_type(), "generic_robot");
-    }
-
-    #[test]
-    fn related_item_filter_renders_the_source_subqueries() {
-        let sql = related_item_filter_sql(86);
-        assert!(sql.contains("loop_items.created_by_user_id = 86"));
-        assert!(sql.contains("loop_items.assignee_user_id = 86"));
-        assert!(sql.contains("loop_items.resource_type IN ('execution')"));
-        assert!(sql.contains("loop_items.resource_type IN ('collaborator')"));
-        assert!(sql.contains("loop_items.resource_type IN ('chat_agent')"));
-        assert!(sql.contains("'1970-01-01 00:00:01'"));
-    }
-}
+mod tests;

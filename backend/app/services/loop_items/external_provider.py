@@ -53,9 +53,14 @@ from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
 from app.services.loop_items.change_requests import persist_external_badge_source
+from app.services.loop_items.task_bindings import (
+    owned_binding_cancellation_targets,
+    uncovered_binding_cancellation_targets,
+)
 from app.services.notification_copy import NotificationTarget
 from app.services.notification_target import board_status_label
 from app.services.project_automation_domain import runnable_wegent_team
+from app.services.runtime_cancellation import emit_runtime_cancellations
 
 logger = logging.getLogger(__name__)
 
@@ -353,6 +358,7 @@ class ExternalLoopItemProvider:
                 assignee_id=agent.id,
                 assignee_name=agent.title or agent.name,
                 user_id=user_id,
+                automation_context=automation_context,
             )
             self._create_execution_for_agent(
                 db,
@@ -377,6 +383,7 @@ class ExternalLoopItemProvider:
                 assignee_id=str(team.id),
                 assignee_name=team.name,
                 user_id=user_id,
+                automation_context=automation_context,
             )
             loop_item_execution_service.create_for_team_assignment(
                 db,
@@ -388,7 +395,7 @@ class ExternalLoopItemProvider:
             )
             db.commit()
         elif values.assignee_group_id:
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 entry
@@ -405,6 +412,7 @@ class ExternalLoopItemProvider:
                 assignee_id=str(group["id"]),
                 assignee_name=str(group["name"]),
                 user_id=user_id,
+                automation_context=automation_context,
             )
             self._dispatch_collaboration_group(
                 db,
@@ -849,7 +857,7 @@ class ExternalLoopItemProvider:
         return self._response(db, project, issue, access, user_id)
 
     def archive(self, db: Session, item_id: str, user_id: int) -> None:
-        """Archive a completed external issue subtree by closing it upstream."""
+        """Archive an editable external issue subtree by closing it upstream."""
 
         project, _ = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
@@ -862,22 +870,31 @@ class ExternalLoopItemProvider:
         target = responses.get(item_id)
         if target is None or not target[1]["can_edit"]:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
-        subtree_ids = self._subtree_ids(responses, item_id)
-        if any(
-            responses[current_id][1]["status"] != "completed"
-            for current_id in subtree_ids
-        ):
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Only completed TODO subtrees can be archived",
-            )
+        subtree_ids = self._editable_subtree_ids(responses, item_id)
+        binding_targets = owned_binding_cancellation_targets(
+            db, project_id=project.id, item_ids=subtree_ids, user_id=user_id
+        )
         closed: list[int] = []
+        cancelled_runs = []
         try:
             for current_id in reversed(subtree_ids):
                 number = self._number(responses[current_id][0])
                 self._update_issue(project, number, {"state": "closed"})
                 closed.append(number)
+            for current_id in subtree_ids:
+                cancelled_runs.extend(
+                    self._cancel_active_executions(
+                        db,
+                        current_id,
+                        note="Issue was archived while the Run was active",
+                    )
+                )
+            binding_targets = uncovered_binding_cancellation_targets(
+                db, targets=binding_targets, executions=cancelled_runs
+            )
+            db.commit()
         except Exception:
+            db.rollback()
             for number in reversed(closed):
                 try:
                     self._update_issue(
@@ -892,6 +909,13 @@ class ExternalLoopItemProvider:
                         number,
                     )
             raise
+        if cancelled_runs:
+            from app.services.loop_item_executions.cancellation import (
+                request_execution_cancellations,
+            )
+
+            request_execution_cancellations(cancelled_runs)
+        emit_runtime_cancellations(binding_targets)
         self._invalidate_issue_page_cache(project.id)
 
     def list_archived(
@@ -903,7 +927,7 @@ class ExternalLoopItemProvider:
         offset: int,
         limit: int,
     ) -> tuple[list[dict[str, object]], str | None]:
-        """List closed completed external Issue roots."""
+        """List readable closed external Issue roots regardless of status."""
 
         access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         project = access.project
@@ -917,11 +941,7 @@ class ExternalLoopItemProvider:
             }
             for issue in self._list_issues_state(project, "closed")
         ]
-        visible = [
-            response
-            for response in responses
-            if response["can_view_detail"] and response["status"] == "completed"
-        ]
+        visible = [response for response in responses if response["can_view_detail"]]
         archived_ids = {str(response["id"]) for response in visible}
         roots = [
             response
@@ -962,7 +982,7 @@ class ExternalLoopItemProvider:
                 status.HTTP_409_CONFLICT,
                 "Restore the archived subtree from its root TODO",
             )
-        subtree_ids = self._subtree_ids(responses, item_id)
+        subtree_ids = self._editable_subtree_ids(responses, item_id)
         reopened: list[dict[str, object]] = []
         opened: list[int] = []
         try:
@@ -991,7 +1011,7 @@ class ExternalLoopItemProvider:
         return reopened
 
     @staticmethod
-    def _subtree_ids(
+    def _editable_subtree_ids(
         responses: dict[str, tuple[dict[str, Any], dict[str, object]]],
         root_id: str,
     ) -> list[str]:
@@ -999,6 +1019,8 @@ class ExternalLoopItemProvider:
         pending = [root_id]
         while pending:
             current = pending.pop(0)
+            if not responses[current][1]["can_edit"]:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
             ordered.append(current)
             pending.extend(
                 candidate_id
@@ -1030,7 +1052,7 @@ class ExternalLoopItemProvider:
                 )
             return self._assignee_label("agent", agent.id, agent.title or agent.name)
         if values.assignee_group_id:
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 (
@@ -1072,8 +1094,9 @@ class ExternalLoopItemProvider:
         item_id: str,
         *,
         preserve_automation_run_id: str = "",
+        note: str = "Assignee changed before the run finished",
     ) -> list:
-        """Cancel any active runs of one issue (assignee changed/unassigned).
+        """Cancel active runs when an Issue is reassigned or archived.
 
         Returns the runs that were cancelled and already handed to a device so
         callers can ask the executor to stop them after the change commits.
@@ -1088,6 +1111,7 @@ class ExternalLoopItemProvider:
                     {
                         "pending_approval",
                         "queued",
+                        "waiting_runtime",
                         "claimed",
                         "running",
                         "cancel_requested",
@@ -1100,7 +1124,7 @@ class ExternalLoopItemProvider:
             cancelled = loop_item_execution_service.cancel(
                 db,
                 execution_id=execution.id,
-                note="Assignee changed before the run finished",
+                note=note,
                 commit=False,
             )
             if (
@@ -1167,7 +1191,7 @@ class ExternalLoopItemProvider:
                 priority=priority,
             )
         elif values.assignee_group_id:
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 entry
@@ -1341,7 +1365,7 @@ class ExternalLoopItemProvider:
             assignee_label = self._assignee_label("team", str(team.id), team.name)
             assignee_name = team.name
         elif values.assignee_type == "group":
-            from app.services.workspaces import workspace_service
+            from app.services.workspaces.service import workspace_service
 
             group = next(
                 (
@@ -1366,6 +1390,16 @@ class ExternalLoopItemProvider:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
             )
+        selection_values = (
+            values.runner_selection.model_dump(exclude_none=True)
+            if values.runner_selection
+            else (automation_context or {}).get("runner_selection")
+        )
+        # An automation stores its model selection; a request body carries a
+        # new selection, which still has to come from the visible catalog.
+        allow_hidden_models = values.runner_selection is None and bool(
+            (automation_context or {}).get("runner_selection")
+        )
         if agent is not None:
             from app.services.project_chat.service import compiled_bot_config
             from app.services.runner_routing import resolve_routing
@@ -1379,12 +1413,9 @@ class ExternalLoopItemProvider:
                     project_id=str(project.id),
                     issue_id=item_id,
                     user_id=user_id,
-                    selection=(
-                        values.runner_selection.model_dump(exclude_none=True)
-                        if values.runner_selection
-                        else (automation_context or {}).get("runner_selection")
-                    ),
+                    selection=selection_values,
                     automatic=bool((automation_context or {}).get("run_id")),
+                    allow_hidden_models=allow_hidden_models,
                 )
         if group is not None:
             from app.services.runner_routing import resolve_group_routing
@@ -1395,12 +1426,9 @@ class ExternalLoopItemProvider:
                 project_id=str(project.id),
                 issue_id=item_id,
                 user_id=user_id,
-                selection=(
-                    values.runner_selection.model_dump(exclude_none=True)
-                    if values.runner_selection
-                    else (automation_context or {}).get("runner_selection")
-                ),
+                selection=selection_values,
                 automatic=bool((automation_context or {}).get("run_id")),
+                allow_hidden_models=allow_hidden_models,
             )
         # Preserve the creator label: provider label writes replace the whole
         # set, and a dropped creator would lose access to their own Issue.
@@ -1441,6 +1469,7 @@ class ExternalLoopItemProvider:
             ),
             assignee_name=assignee_name,
             user_id=user_id,
+            automation_context=automation_context,
         )
         if group is not None:
             self._dispatch_collaboration_group(
@@ -1476,6 +1505,7 @@ class ExternalLoopItemProvider:
             workflow_step=values.workflow_step,
             notify=values.notify_assignee,
             trigger=values.trigger,
+            automation_context=automation_context,
         )
         if agent is not None and assignment_created:
             self._create_execution_for_agent(
@@ -1553,6 +1583,7 @@ class ExternalLoopItemProvider:
         assignee_id: str,
         assignee_name: str | None,
         user_id: int,
+        automation_context: dict[str, Any] | None = None,
     ) -> LoopItem:
         """Create or refresh the local index row of an assigned external task.
 
@@ -1581,7 +1612,12 @@ class ExternalLoopItemProvider:
             # Production MySQL stores unset user assignees as 0, not NULL.
             row.assignee_user_id = 0
             loop_item_service.record_assignment_change(
-                metadata, user_id, "agent", assignee_id, assignee_name
+                metadata,
+                user_id,
+                "agent",
+                assignee_id,
+                assignee_name,
+                automation_context=automation_context,
             )
         elif assignee_type == "team":
             metadata.pop("collaboration_group", None)
@@ -1590,7 +1626,12 @@ class ExternalLoopItemProvider:
             row.assignee_agent_id = ""
             row.assignee_team_id = int(assignee_id)
             loop_item_service.record_assignment_change(
-                metadata, user_id, "team", assignee_id, assignee_name
+                metadata,
+                user_id,
+                "team",
+                assignee_id,
+                assignee_name,
+                automation_context=automation_context,
             )
         elif assignee_type == "group":
             previous_group = metadata.get("collaboration_group")
@@ -1609,7 +1650,12 @@ class ExternalLoopItemProvider:
                 "name": assignee_name or "",
             }
             loop_item_service.record_assignment_change(
-                metadata, user_id, "group", assignee_id, assignee_name
+                metadata,
+                user_id,
+                "group",
+                assignee_id,
+                assignee_name,
+                automation_context=automation_context,
             )
         else:
             metadata.pop("collaboration_group", None)
@@ -1618,7 +1664,12 @@ class ExternalLoopItemProvider:
             row.assignee_agent_id = ""
             row.assignee_team_id = None
             loop_item_service.record_assignment_change(
-                metadata, user_id, "user", assignee_id or None, assignee_name
+                metadata,
+                user_id,
+                "user",
+                assignee_id or None,
+                assignee_name,
+                automation_context=automation_context,
             )
         row.metadata_json = metadata
         db.flush()
@@ -1999,7 +2050,7 @@ class ExternalLoopItemProvider:
                     assignee_team_name = team.name if team is not None else None
             elif assignee["type"] == "group":
                 assignee_group_id = assignee["id"]
-                from app.services.workspaces import workspace_service
+                from app.services.workspaces.service import workspace_service
 
                 group = next(
                     (

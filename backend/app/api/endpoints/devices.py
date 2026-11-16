@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from redis.exceptions import RedisError
 from sqlalchemy.orm import Session
 
@@ -93,9 +93,17 @@ class DeviceUpgradeRequest(BaseModel):
 
 
 class DeviceRuntimeSettingsUpdate(BaseModel):
-    """Runtime-wide concurrency limit for one connected device."""
+    """Independent task concurrency limits for one connected device."""
 
-    max_concurrent_tasks: int = Field(..., ge=1, le=20)
+    max_concurrent_tasks: Optional[int] = Field(default=None, ge=1, le=20)
+    max_concurrent_stand_in_tasks: Optional[int] = Field(default=None, ge=1, le=20)
+    max_concurrent_agent_tasks: Optional[int] = Field(default=None, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def require_limit(self) -> "DeviceRuntimeSettingsUpdate":
+        if not self.model_dump(exclude_none=True):
+            raise ValueError("At least one concurrency limit is required")
+        return self
 
 
 class DeviceRuntimeSettingsResponse(BaseModel):
@@ -103,6 +111,8 @@ class DeviceRuntimeSettingsResponse(BaseModel):
 
     device_id: str
     max_concurrent_tasks: int
+    max_concurrent_stand_in_tasks: Optional[int] = None
+    max_concurrent_agent_tasks: Optional[int] = None
     active_tasks: int = 0
     queued_tasks: int = 0
 
@@ -170,12 +180,15 @@ async def delete_device_by_record(
     record_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
+    offline_only: bool = False,
 ):
     from app.services.device.identity import DeviceIdentityConflictError
     from app.services.device.record_operations import delete_device_record
 
     try:
-        deleted = await delete_device_record(db, current_user.id, record_id)
+        deleted = await delete_device_record(
+            db, current_user.id, record_id, offline_only=offline_only
+        )
     except DeviceIdentityConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (RedisError, TimeoutError) as exc:
@@ -433,8 +446,16 @@ async def trigger_device_upgrade(
 def _runtime_settings_response(
     device_id: str, result: dict[str, Any]
 ) -> DeviceRuntimeSettingsResponse:
-    limit = result.get("maxConcurrentTasks", result.get("limit"))
-    if not isinstance(limit, int) or isinstance(limit, bool):
+    limits = {
+        "max_concurrent_tasks": result.get("maxConcurrentTasks", result.get("limit")),
+        "max_concurrent_stand_in_tasks": result.get("maxConcurrentStandInTasks"),
+        "max_concurrent_agent_tasks": result.get("maxConcurrentAgentTasks"),
+    }
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 20
+        for key, value in limits.items()
+        if key == "max_concurrent_tasks" or value is not None
+    ):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Device returned invalid runtime settings",
@@ -443,7 +464,7 @@ def _runtime_settings_response(
     queued = result.get("queued", 0)
     return DeviceRuntimeSettingsResponse(
         device_id=device_id,
-        max_concurrent_tasks=limit,
+        **limits,
         active_tasks=active if isinstance(active, int) else 0,
         queued_tasks=queued if isinstance(queued, int) else 0,
     )
@@ -452,12 +473,13 @@ def _runtime_settings_response(
 @router.get(
     "/{device_id}/runtime-settings",
     response_model=DeviceRuntimeSettingsResponse,
+    response_model_exclude_none=True,
 )
 async def get_device_runtime_settings(
     device_id: str,
     current_user: User = Depends(security.get_current_user),
 ) -> DeviceRuntimeSettingsResponse:
-    """Read the total task concurrency owned by one connected Runtime."""
+    """Read task concurrency by execution owner from one connected Runtime."""
 
     try:
         result = await runtime_rpc_service.call(
@@ -477,20 +499,29 @@ async def get_device_runtime_settings(
 @router.put(
     "/{device_id}/runtime-settings",
     response_model=DeviceRuntimeSettingsResponse,
+    response_model_exclude_none=True,
 )
 async def update_device_runtime_settings(
     device_id: str,
     request: DeviceRuntimeSettingsUpdate,
     current_user: User = Depends(security.get_current_user),
 ) -> DeviceRuntimeSettingsResponse:
-    """Persist and apply one connected Runtime's total task concurrency."""
+    """Persist and apply one connected Runtime's task concurrency settings."""
 
     try:
         await runtime_rpc_service.call(
             user_id=current_user.id,
             device_id=device_id,
             method="runtime.settings.update",
-            payload={"maxConcurrentTasks": request.max_concurrent_tasks},
+            payload={
+                key: value
+                for key, value in {
+                    "maxConcurrentTasks": request.max_concurrent_tasks,
+                    "maxConcurrentStandInTasks": request.max_concurrent_stand_in_tasks,
+                    "maxConcurrentAgentTasks": request.max_concurrent_agent_tasks,
+                }.items()
+                if value is not None
+            },
         )
         result = await runtime_rpc_service.call(
             user_id=current_user.id,

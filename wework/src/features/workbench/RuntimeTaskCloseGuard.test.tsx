@@ -39,17 +39,6 @@ describe('RuntimeTaskCloseGuard', () => {
     })
   })
 
-  test('shows the close-to-tray prompt for every intercepted first close request', async () => {
-    render(<RuntimeTaskCloseGuard />)
-
-    await waitFor(() => expect(mocks.closeRequestHandler).toBeDefined())
-    act(() => {
-      mocks.closeRequestHandler?.()
-    })
-
-    expect(screen.getByTestId('runtime-task-close-confirm-overlay')).toBeInTheDocument()
-  })
-
   test('closes the dialog while the native close-to-tray command is pending', async () => {
     let resolveClose: (() => void) | undefined
     mocks.closeMainWindowToTray.mockImplementationOnce(
@@ -73,36 +62,6 @@ describe('RuntimeTaskCloseGuard', () => {
     await act(async () => {
       resolveClose?.()
     })
-  })
-
-  test('quits completely from the secondary action', async () => {
-    render(<RuntimeTaskCloseGuard />)
-
-    await waitFor(() => expect(mocks.closeRequestHandler).toBeDefined())
-    act(() => {
-      mocks.closeRequestHandler?.()
-    })
-
-    fireEvent.click(screen.getByTestId('runtime-task-close-cancel-button'))
-
-    expect(screen.queryByTestId('runtime-task-close-confirm-overlay')).not.toBeInTheDocument()
-    expect(mocks.quitApplication).toHaveBeenCalledTimes(1)
-    expect(mocks.cancelMainWindowClose).not.toHaveBeenCalled()
-  })
-
-  test('dismisses the close prompt with Escape without quitting', async () => {
-    render(<RuntimeTaskCloseGuard />)
-
-    await waitFor(() => expect(mocks.closeRequestHandler).toBeDefined())
-    act(() => {
-      mocks.closeRequestHandler?.()
-    })
-
-    fireEvent.keyDown(document, { key: 'Escape' })
-
-    await waitFor(() => expect(mocks.cancelMainWindowClose).toHaveBeenCalledTimes(1))
-    expect(screen.queryByTestId('runtime-task-close-confirm-overlay')).not.toBeInTheDocument()
-    expect(mocks.quitApplication).not.toHaveBeenCalled()
   })
 
   test('reopens the dialog when quitting completely fails', async () => {

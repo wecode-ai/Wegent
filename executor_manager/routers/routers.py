@@ -26,6 +26,7 @@ from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from executor_manager.clients.executor_binding import BINDING_SCHEME, BINDING_TOKEN
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
@@ -291,6 +292,11 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
                     f"[Callback] Backend returned error: "
                     f"status_code={response.status_code}, "
                     f"body_preview={_to_log_preview(response.text)}"
+                )
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    media_type=response.headers.get("content-type"),
                 )
 
         # Handle terminal events - remove from RunningTaskTracker
@@ -1026,7 +1032,11 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
         set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
 
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-        result = executor.cancel_task(request.task_id, request.subtask_id)
+        result = await asyncio.to_thread(
+            executor.cancel_task,
+            request.task_id,
+            request.subtask_id,
+        )
 
         if result["status"] == "success":
             logger.info(f"Successfully cancelled task {request.task_id}")
@@ -1465,6 +1475,12 @@ async def openai_responses(http_request: Request):
 
     # Extract task identification from metadata
     metadata = request_data.get("metadata", {})
+    # Only the backend-to-manager authorization header carries this grant.
+    metadata.pop(BINDING_TOKEN, None)
+    scheme, _, credential = http_request.headers.get("Authorization", "").partition(" ")
+    if scheme == BINDING_SCHEME and credential:
+        metadata[BINDING_TOKEN] = credential
+        request_data["metadata"] = metadata
     task_id = metadata.get("task_id", 0)
     subtask_id = metadata.get("subtask_id", 0)
     background = request_data.get("background", False)
@@ -1484,7 +1500,11 @@ async def openai_responses(http_request: Request):
         queue_type = metadata.get("type") or "online"
         service_pool = os.getenv("SERVICE_POOL", "default")
         queue_service = TaskQueueService(service_pool, queue_type)
-        success = queue_service.enqueue_task(request_data)
+        request_id = metadata.get("request_id")
+        if task_id and subtask_id and request_id == f"pipeline-{task_id}-{subtask_id}":
+            success = queue_service.enqueue_pipeline_task(request_data)
+        else:
+            success = queue_service.enqueue_task(request_data)
 
         if not success:
             logger.error(f"[v1/responses] Failed to enqueue task {task_id}")
@@ -1541,6 +1561,61 @@ async def task_heartbeat(task_id: str, http_request: Request):
         )
 
     return {"status": "ok", "task_id": task_id}
+
+
+@api_router.get("/tasks/{task_id}/heartbeat")
+async def get_task_heartbeat_status(task_id: str):
+    """Report whether an executor heartbeat is currently registered.
+
+    Used by the backend stalled-task sweep to distinguish a live-but-silent
+    executor from one that vanished. Returns ``alive=false`` only when no
+    heartbeat key exists for either task or sandbox heartbeats.
+    """
+    from executor_manager.services.heartbeat_manager import (
+        HeartbeatType,
+        get_heartbeat_manager,
+    )
+
+    heartbeat_mgr = get_heartbeat_manager()
+    for heartbeat_type in (HeartbeatType.TASK, HeartbeatType.SANDBOX):
+        last_heartbeat = await heartbeat_mgr.get_last_heartbeat(task_id, heartbeat_type)
+        if last_heartbeat is not None:
+            return {
+                "task_id": task_id,
+                "alive": True,
+                "heartbeat_type": heartbeat_type.value,
+                "last_heartbeat_at": last_heartbeat,
+            }
+    return {
+        "task_id": task_id,
+        "alive": False,
+        "heartbeat_type": None,
+        "last_heartbeat_at": None,
+    }
+
+
+@api_router.get("/tasks/{task_id}/dispatch-state")
+async def get_task_dispatch_state(task_id: str):
+    """Report whether the task still has a pending queue record.
+
+    The backend uses this to avoid failing a RUNNING subtask that is merely
+    waiting behind queue backpressure and has no executor yet. ``pending=null``
+    means the state is unknown and callers must not treat it as "not queued".
+    """
+    from executor_manager.common.redis_factory import RedisClientFactory
+    from executor_manager.services.task_queue_service import PENDING_KEY_TEMPLATE
+
+    try:
+        client = RedisClientFactory.get_sync_client()
+        if client is None:
+            return {"task_id": task_id, "pending": None}
+        pending = bool(client.exists(PENDING_KEY_TEMPLATE.format(task_id=task_id)))
+        return {"task_id": task_id, "pending": pending}
+    except Exception as exc:
+        logger.warning(
+            "[TaskAPI] Failed to read dispatch state for task %s: %s", task_id, exc
+        )
+        return {"task_id": task_id, "pending": None}
 
 
 # =============================================================================

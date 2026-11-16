@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 import {
   assistantMessage,
@@ -66,10 +67,7 @@ function advertisedToolNames(body) {
 async function addLocalAgent(control, timeoutMs) {
   const projectNavId = await waitForTestIdByText(
     control,
-    inCollaborationSidebar(
-      '[data-testid="collaboration-workspace-tree-wework-local-workspace"]',
-      CONTENT
-    ),
+    inCollaborationSidebar('[data-testid="collaboration-project-tree"]', CONTENT),
     'collaboration-workspace-project-',
     PROJECT,
     timeoutMs
@@ -125,9 +123,7 @@ async function addLocalAgent(control, timeoutMs) {
 }
 
 async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
-  await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-tab-board"]'), {
-    timeoutMs,
-  })
+  await selectCollaborationProjectView(control, CONTENT, 'board', timeoutMs)
   await control.command('clickWhenEnabled', scoped('[data-testid="collaboration-issue-create"]'))
   await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
     value: ASSIGNED_TASK,
@@ -247,8 +243,8 @@ async function renameIssueWhileRunning(control, timeoutMs) {
   await control.command('fill', scoped('[data-testid="cloud-todo-detail-title"]'), {
     value: RENAMED_ISSUE,
   })
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-    timeoutMs,
+  await control.command('press', scoped('[data-testid="cloud-todo-detail-title"]'), {
+    key: 'Enter',
   })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'), {
     text: RENAMED_ISSUE,
@@ -526,6 +522,10 @@ export async function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         }
       )
+      // Navigation renders the task before its asynchronous callback closes the inline panel.
+      await control.command('waitFor', 'body:not(:has([data-testid="ai-chat-modal"]))', {
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         Number(await control.command('getElementCount', '[data-testid="ai-chat-modal"]')),
         0,

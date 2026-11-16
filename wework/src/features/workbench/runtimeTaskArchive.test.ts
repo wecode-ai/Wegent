@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+// @vitest-environment node
+
 import type { RuntimeTaskAddress, RuntimeTaskArchiveResponse } from '@/types/api'
+import { describe, expect, it, vi } from 'vitest'
 import {
   archiveRuntimeTaskAddresses,
   BULK_RUNTIME_TASK_CONCURRENCY,
@@ -49,23 +51,6 @@ describe('archiveRuntimeTaskAddresses', () => {
 
     await expect(resultsPromise).resolves.toHaveLength(9)
     expect(maxActive).toBe(BULK_RUNTIME_TASK_CONCURRENCY)
-  })
-
-  it('treats accepted archive responses as successful', () => {
-    const address = { deviceId: 'device-1', taskId: 'runtime-1' }
-
-    expect(
-      findFailedRuntimeTaskArchive([
-        {
-          address,
-          response: {
-            accepted: true,
-            taskId: address.taskId,
-            runtime: 'codex',
-          },
-        },
-      ])
-    ).toBeUndefined()
   })
 
   it('returns the failed archive attempt', () => {

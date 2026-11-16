@@ -1,0 +1,21 @@
+{
+  "id": "project-view-switcher",
+  "name": "ProjectViewSwitcher",
+  "export": "ProjectViewSwitcher",
+  "source": "packages/collaboration/src/workspace-header/ProjectViewSwitcher.tsx",
+  "publicImport": "@wegent/collaboration",
+  "category": "navigation",
+  "storyFile": "packages/collaboration/src/workspace-header/ProjectViewSwitcher.stories.tsx",
+  "themes": ["light", "dark"],
+  "storybook": [
+    "GroupedWork",
+    "GroupedPlanTimeline",
+    "GroupedPlanMilestones",
+    "GroupedAdmin",
+    "GroupedAdminFilesOnly",
+    "GroupedPlanNoMilestones",
+    "UngroupedFallback",
+    "Compact",
+    "CompactOpen"
+  ]
+}

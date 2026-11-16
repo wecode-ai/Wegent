@@ -1,10 +1,33 @@
 import { useRef, useState } from 'react'
-import type { CollaborationMember } from '../types'
+import type { IssueDetailSearchableSelectOption } from './IssueDetailControls'
 import { issueCommentSubmission, type IssueMentionOption } from './issueCommentMentions'
+import type { CommentIssueActions } from './issueCommentActions'
 
+export interface CommentChildInput {
+  body: string
+  target: string
+  requestId: string
+  sourceMessageId?: string
+}
+export interface CommentSubmissionOptions {
+  commentOnly?: boolean
+}
 export interface CommentAssignment {
-  members: CollaborationMember[]
-  assign(userId: number): Promise<void>
+  options: IssueDetailSearchableSelectOption[]
+  canAssignCurrent?: boolean
+  assign(target: string): Promise<void>
+  createChild?(input: CommentChildInput): Promise<import('../types').CollaborationIssue>
+}
+
+function firstAssignableMention(
+  mentions: IssueMentionOption[],
+  options: IssueDetailSearchableSelectOption[]
+) {
+  return (
+    mentions
+      .map(mention => (mention.type === 'user' ? mention.id : `agent:${mention.id}`))
+      .find(target => options.some(option => option.value === target)) ?? ''
+  )
 }
 
 export function useCommentAssignment(
@@ -12,37 +35,145 @@ export function useCommentAssignment(
   assignment: CommentAssignment | undefined,
   onSubmit: (
     body: string,
-    mentions: IssueMentionOption[]
-  ) => void | boolean | Promise<void | boolean>
+    mentions: IssueMentionOption[],
+    options?: CommentSubmissionOptions
+  ) => void | boolean | Promise<void | boolean>,
+  actions?: CommentIssueActions
 ) {
-  const [manualTarget, setManualTarget] = useState<string | null>(null)
+  const [selectedTarget, setSelectedTarget] = useState('')
+  const [moveTarget, setMoveTarget] = useState('')
+  const [pendingToggle, setPendingToggle] = useState<boolean | null>(null)
+  const [commentCommitted, setCommentCommitted] = useState(false)
+  const committedBody = useRef<string | null>(null)
+  const [mode, setAssignmentMode] = useState<'current' | 'child'>(
+    assignment?.canAssignCurrent === false ? 'child' : 'current'
+  )
+  const effectiveMode = assignment?.createChild ? mode : 'current'
+  const [pendingChild, setPendingChild] = useState<CommentChildInput | null>(null)
+  const [sentSuggestion, setSentSuggestion] = useState('')
+  const [dismissedSuggestion, setDismissedSuggestion] = useState('')
+  const [focusedSuggestion, setFocusedSuggestion] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const submitting = useRef(false)
-  const members =
-    assignment?.members.filter(
-      member => member.can_be_assignee !== false && member.role !== 'Viewer'
-    ) ?? []
-  const mentioned = issueCommentSubmission(value).mentions.find(
-    mention =>
-      mention.type === 'user' && members.some(member => String(member.user_id) === mention.id)
+  const options = assignment?.options ?? []
+  const target = assignment ? selectedTarget : ''
+  const mentions = issueCommentSubmission(value).mentions
+  const mentioned = firstAssignableMention(mentions, options)
+  const focused = mentions.some(
+    mention => (mention.type === 'user' ? mention.id : `agent:${mention.id}`) === focusedSuggestion
   )
-  const target = assignment ? (manualTarget ?? mentioned?.id ?? '') : ''
+    ? focusedSuggestion
+    : ''
+  const candidate = focused || mentioned || (!value.trim() ? sentSuggestion : '')
+  const suggestion =
+    candidate !== target && candidate !== dismissedSuggestion
+      ? options.find(option => option.value === candidate)
+      : undefined
 
-  async function submit(draft: string) {
+  function setTarget(next: string) {
+    setError(null)
+    setSelectedTarget(next)
+    if (next && actions?.assigneeMoves?.includes(moveTarget)) setMoveTarget('')
+    if (!next && !moveTarget && pendingToggle === null) clearCommittedComment()
+  }
+
+  function setMove(next: string) {
+    setError(null)
+    setMoveTarget(next)
+    if (actions?.assigneeMoves?.includes(next)) setSelectedTarget('')
+    if (!next && !target && pendingToggle === null) clearCommittedComment()
+  }
+
+  function clearCommittedComment() {
+    committedBody.current = null
+    setCommentCommitted(false)
+  }
+
+  function setMode(next: 'current' | 'child') {
+    setAssignmentMode(next)
+    if (next === 'child') setMoveTarget('')
+  }
+
+  function acceptSuggestion() {
+    if (suggestion && !submitting.current) setTarget(suggestion.value)
+  }
+
+  function dismissSuggestion() {
+    setDismissedSuggestion(candidate)
+    setSentSuggestion('')
+  }
+
+  function suggestReference(reference: string): boolean {
+    const next = firstAssignableMention(issueCommentSubmission(reference).mentions, options)
+    if (!next || submitting.current) return false
+    setFocusedSuggestion(next)
+    setDismissedSuggestion('')
+    return true
+  }
+
+  async function submit(draft: string, closed?: boolean) {
     if (submitting.current) return
+    const { body, mentions } = issueCommentSubmission(draft)
+    const toggle = closed ?? pendingToggle
+    const creatingChild = effectiveMode === 'child' && toggle === null
+    const currentTarget = effectiveMode === 'child' && !creatingChild ? '' : target
+    if (
+      creatingChild
+        ? !body && !pendingChild
+        : !body && !currentTarget && !moveTarget && toggle === null
+    )
+      return
+    if (currentTarget && assignment?.canAssignCurrent === false && !creatingChild) return
+    if (closed !== undefined && !actions?.canToggle) return
     submitting.current = true
     setBusy(true)
     setError(null)
+    if (closed !== undefined) setPendingToggle(closed)
     try {
-      const { body, mentions } = issueCommentSubmission(draft)
-      if (body && (await onSubmit(body, mentions)) === false) return
-      if (target && assignment) {
-        // Keep the target after the host clears a successfully persisted comment.
-        setManualTarget(target)
-        await assignment.assign(Number(target))
+      if (creatingChild) {
+        if (!assignment?.createChild) return
+        let operation = pendingChild
+        if (!operation) {
+          if ((await onSubmit(body, mentions, { commentOnly: true })) === false) return
+          operation = { body, target, requestId: crypto.randomUUID() }
+          setPendingChild(operation)
+        }
+        await assignment.createChild(operation)
+        setPendingChild(null)
+        setSelectedTarget('')
+        setSentSuggestion('')
+        clearCommittedComment()
+        return
       }
-      setManualTarget(null)
+      if (body && committedBody.current !== body) {
+        const result =
+          actions && (currentTarget || moveTarget || toggle !== null)
+            ? await onSubmit(body, mentions, { commentOnly: true })
+            : await onSubmit(body, mentions)
+        if (result === false) return
+        committedBody.current = body
+        setCommentCommitted(true)
+        const submittedSuggestion = candidate || firstAssignableMention(mentions, options)
+        setSentSuggestion(submittedSuggestion === dismissedSuggestion ? '' : submittedSuggestion)
+        setDismissedSuggestion('')
+        setFocusedSuggestion('')
+      }
+      if (currentTarget && assignment) {
+        // Only an explicitly selected target participates in submission.
+        await assignment.assign(currentTarget)
+        setSelectedTarget('')
+        setSentSuggestion('')
+      }
+      if (moveTarget && actions) {
+        await actions.move(moveTarget)
+        setMoveTarget('')
+      }
+      if (toggle !== null && actions) {
+        await actions.toggle(toggle)
+        setPendingToggle(null)
+      }
+      clearCommittedComment()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -51,10 +182,23 @@ export function useCommentAssignment(
     }
   }
 
-  function setTarget(next: string) {
-    setError(null)
-    setManualTarget(next)
+  return {
+    mode: effectiveMode,
+    setMode,
+    pendingChild,
+    options,
+    target,
+    moveTarget,
+    setMove,
+    pendingToggle,
+    commentCommitted,
+    suggestion,
+    setTarget,
+    acceptSuggestion,
+    dismissSuggestion,
+    suggestReference,
+    busy,
+    error,
+    submit,
   }
-
-  return { members, target, setTarget, busy, error, submit }
 }

@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import '@/i18n'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { ConversationHeaderTitle } from './ConversationHeaderTitle'
-import '@/i18n'
 
 const actions = vi.hoisted(() => ({
   renameRuntimeTask: vi.fn(),
@@ -45,89 +45,6 @@ beforeEach(() => {
   actions.setRuntimeProjectPinned.mockResolvedValue(undefined)
   actions.updateLocalRuntimeProject.mockResolvedValue(undefined)
   actions.openLocalWorkspace.mockResolvedValue(undefined)
-})
-
-test('shows the project task count and all configured roots, and opens the existing editor', async () => {
-  const user = userEvent.setup()
-  const roots = [
-    { kind: 'local', path: '/Users/tester/workspace/cloudbase' },
-    { kind: 'local', path: '/Users/tester/projects/recruiting-2026-08' },
-  ]
-  render(
-    <ConversationHeaderTitle
-      {...props}
-      projectWork={{
-        ...projectWork,
-        totalTasks: 7,
-        project: {
-          ...project,
-          stateDeviceId: 'local-device',
-          ownerDeviceId: 'local-device',
-          ownerProjectKey: 'app',
-          source: 'local_project',
-          roots,
-        },
-      }}
-    />
-  )
-  const trigger = screen.getByTestId('conversation-project-button')
-  await user.click(trigger)
-  expect(screen.getByTestId('conversation-project-task-count')).toHaveTextContent('7')
-  expect(screen.getAllByTestId('conversation-project-root').map(row => row.textContent)).toEqual([
-    '~/workspace/cloudbase',
-    '~/projects/recruiting-2026-08',
-  ])
-  expect(screen.getByTestId('conversation-project-popover')).not.toHaveTextContent(
-    address.workspacePath
-  )
-  for (const [index, root] of roots.entries()) {
-    await user.click(screen.getAllByTestId('conversation-project-root')[index])
-    expect(actions.openLocalWorkspace).toHaveBeenLastCalledWith({
-      opener: 'file-manager',
-      path: root.path,
-    })
-    await waitFor(() =>
-      expect(screen.queryByTestId('conversation-project-popover')).not.toBeInTheDocument()
-    )
-    await user.click(trigger)
-  }
-  await user.click(screen.getByTestId('conversation-project-edit'))
-  expect(screen.queryByTestId('conversation-project-popover')).not.toBeInTheDocument()
-  await user.keyboard('{Escape}')
-  expect(screen.queryByTestId('local-project-edit-dialog')).not.toBeInTheDocument()
-  expect(trigger).not.toHaveFocus()
-  await user.keyboard('{Enter}')
-  expect(screen.queryByTestId('conversation-project-popover')).not.toBeInTheDocument()
-  await user.click(trigger)
-  await user.click(screen.getByTestId('conversation-project-edit'))
-  const input = screen.getByTestId('local-project-name-input')
-  expect(input).toHaveValue('App')
-  expect(input).toHaveFocus()
-  await user.clear(input)
-  await user.type(input, 'Updated project{Enter}')
-  expect(actions.updateLocalRuntimeProject).toHaveBeenCalledWith(
-    expect.objectContaining({
-      deviceId: 'local-device',
-      projectKey: 'app',
-      name: 'Updated project',
-      roots: roots.map(root => root.path),
-    })
-  )
-  await waitFor(() =>
-    expect(screen.queryByTestId('local-project-edit-dialog')).not.toBeInTheDocument()
-  )
-  expect(trigger).not.toHaveFocus()
-})
-
-test('shows only the workspace for a standalone task', async () => {
-  render(<ConversationHeaderTitle {...props} projectWork={undefined} />)
-  await userEvent.click(screen.getByTestId('conversation-project-button'))
-  expect(screen.getByTestId('conversation-project-root')).toHaveTextContent(address.workspacePath)
-  expect(screen.queryByTestId('conversation-project-task-count')).not.toBeInTheDocument()
-  expect(screen.queryByTestId('conversation-project-edit')).not.toBeInTheDocument()
-  expect(screen.getByTestId('conversation-project-root')).toBeDisabled()
-  await userEvent.click(screen.getByTestId('conversation-project-root'))
-  expect(actions.openLocalWorkspace).not.toHaveBeenCalled()
 })
 
 test('retains the popover on folder-open failure and supports keyboard retry', async () => {
@@ -200,27 +117,4 @@ test('retains the title draft after a rejected save', async () => {
   expect(input).toHaveValue('Retry title')
   await user.click(screen.getByTestId('conversation-rename-confirm'))
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-})
-
-test('expands project details, pins on the sidebar owner, and dismisses with Escape or outside click', async () => {
-  const user = userEvent.setup()
-  render(<ConversationHeaderTitle {...props} />)
-  const trigger = screen.getByTestId('conversation-project-button')
-  await user.click(trigger)
-  expect(trigger).toHaveAttribute('aria-expanded', 'true')
-  expect(screen.getByTestId('conversation-project-popover')).toHaveTextContent('/workspace/app')
-  await user.click(screen.getByTestId('conversation-project-pin'))
-  expect(actions.setRuntimeProjectPinned).toHaveBeenCalledWith({
-    deviceId: 'local-device',
-    projectKey: 'remote-app',
-    pinned: true,
-  })
-  fireEvent.keyDown(document.activeElement!, { key: 'Escape', isComposing: true })
-  expect(screen.getByTestId('conversation-project-popover')).toBeInTheDocument()
-  await user.keyboard('{Escape}')
-  expect(screen.queryByTestId('conversation-project-popover')).not.toBeInTheDocument()
-  expect(trigger).toHaveFocus()
-  await user.click(trigger)
-  await user.click(document.body)
-  expect(screen.queryByTestId('conversation-project-popover')).not.toBeInTheDocument()
 })

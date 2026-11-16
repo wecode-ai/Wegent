@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
+import { isTagNameTooLong } from '../tagging'
 import type {
   ProjectManageExtensionContext,
   ProjectManageHost,
@@ -42,6 +43,8 @@ export function ProjectTagsSection({
   deleteTag(tag: string): Promise<void>
 }) {
   const { Check, Pencil, Trash2, X } = host.icons
+  const tooLong = isTagNameTooLong(newTag)
+  const renameTooLong = isTagNameTooLong(renameValue)
   return (
     <section className={className}>
       <div className="flex items-start justify-between gap-4">
@@ -64,6 +67,7 @@ export function ProjectTagsSection({
             data-testid="cloud-project-tag-create-input"
             autoFocus
             value={newTag}
+            aria-invalid={tooLong}
             onChange={event => setNewTag(event.target.value)}
             onKeyDown={event => event.key === 'Enter' && void createTag()}
             placeholder={host.translate('todo.tag_name_placeholder', '输入标签名称')}
@@ -72,13 +76,23 @@ export function ProjectTagsSection({
           <button
             type="button"
             data-testid="cloud-project-tag-create-confirm"
-            disabled={!newTag.trim() || tagBusy}
+            disabled={!newTag.trim() || tooLong || tagBusy}
             onClick={() => void createTag()}
             className="h-9 rounded-lg bg-text-primary px-3.5 text-sm text-background disabled:bg-text-primary disabled:text-background"
           >
             {host.translate('todo.create_tag', '新建标签')}
           </button>
         </div>
+      )}
+      {tagComposerOpen && tooLong && (
+        <p role="alert" className="mt-1 text-xs text-error">
+          {host.translate('todo.tag_name_too_long', '标签名称不能超过 32 个字符')}
+        </p>
+      )}
+      {renamingTag && renameTooLong && (
+        <p role="alert" className="mt-1 text-xs text-error">
+          {host.translate('todo.tag_name_too_long', '标签名称不能超过 32 个字符')}
+        </p>
       )}
       <div className="mt-4 flex flex-wrap gap-2">
         {allTags.map(tag =>
@@ -88,6 +102,7 @@ export function ProjectTagsSection({
                 data-testid={`cloud-project-tag-rename-input-${tag}`}
                 autoFocus
                 value={renameValue}
+                aria-invalid={renameTooLong}
                 onChange={event => setRenameValue(event.target.value)}
                 onKeyDown={event => event.key === 'Enter' && void renameTag(tag)}
                 className="h-6 w-28 bg-transparent px-1 text-sm outline-none"
@@ -97,6 +112,7 @@ export function ProjectTagsSection({
                 children: (
                   <button
                     type="button"
+                    disabled={renameTooLong || !renameValue.trim() || tagBusy}
                     onClick={() => void renameTag(tag)}
                     aria-label={host.translate('todo.confirm_rename', '确认重命名')}
                   >
@@ -130,7 +146,7 @@ export function ProjectTagsSection({
                   testId: `cloud-project-tag-menu-${tag}`,
                   placement: 'bottom-end',
                   triggerClassName:
-                    'flex h-8 w-full items-center justify-center rounded-lg text-text-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
+                    'flex h-8 w-full items-center justify-center rounded-lg text-text-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30',
                   items: [
                     {
                       label: host.translate('todo.rename', '重命名'),
@@ -140,12 +156,14 @@ export function ProjectTagsSection({
                         setRenameValue(tag)
                       },
                       testId: `cloud-project-tag-rename-${tag}`,
+                      disabled: tagBusy,
                     },
                     {
                       label: host.translate('todo.delete_tag', '删除标签'),
                       icon: Trash2,
                       onSelect: () => deleteTag(tag),
                       testId: `cloud-project-tag-delete-${tag}`,
+                      disabled: tagBusy,
                       danger: true,
                     },
                   ],

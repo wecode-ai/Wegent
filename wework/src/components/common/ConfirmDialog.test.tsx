@@ -1,9 +1,31 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { ConfirmDialog } from './ConfirmDialog'
 
 describe('ConfirmDialog keyboard defaults', () => {
+  test('keeps cancellation available while confirmation prerequisites are unavailable', () => {
+    const onConfirm = vi.fn()
+    const onClose = vi.fn()
+    render(
+      <ConfirmDialog
+        open
+        title="Confirm"
+        description="Waiting for current state"
+        cancelLabel="Cancel"
+        confirmLabel="Confirm"
+        confirmTestId="confirm"
+        confirmDisabled
+        onConfirm={onConfirm}
+        onClose={onClose}
+      />
+    )
+    expect(screen.getByTestId('confirm')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('confirm'))
+    expect(onConfirm).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('confirm-cancel-button'))
+    expect(onClose).toHaveBeenCalledOnce()
+  })
   test('bounds long descriptions in a scrollable body without shrinking the action row', async () => {
     const onClose = vi.fn()
     const description = 'Very long unbroken description'.repeat(2000)

@@ -59,7 +59,7 @@ export interface AgentFormTestIds {
 }
 
 const fieldClassName =
-  'w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary shadow-sm outline-none transition-[border-color,box-shadow] placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/15 disabled:opacity-50'
+  'w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary shadow-sm outline-none transition-[border-color,box-shadow] placeholder:text-text-muted keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15 disabled:opacity-50'
 
 export function AgentFormDialog({
   advanced,

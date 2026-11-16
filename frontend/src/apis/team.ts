@@ -126,8 +126,8 @@ export interface CopyPreflightResponse {
 const pendingTeamCatalogs = new Map<string, Promise<TeamListResponse>>()
 
 export const teamApis = {
-  async getTeam(id: number): Promise<Team> {
-    return apiClient.get(`/teams/${id}`)
+  async getTeam(id: number, signal?: AbortSignal): Promise<Team> {
+    return apiClient.get(`/teams/${id}`, { signal })
   },
   getDefaultTeam(
     mode: 'chat' | 'code' | 'knowledge' | 'task',
@@ -233,7 +233,7 @@ export const teamApis = {
     return apiClient.post(`/teams/${id}/share`)
   },
   async getTeamShareInfo(shareToken: string): Promise<TeamShareInfoResponse> {
-    return apiClient.get(`/teams/share/info?share_token=${shareToken}`)
+    return apiClient.get(`/teams/share/info?share_token=${encodeURIComponent(shareToken)}`)
   },
   async joinSharedTeam(data: TeamShareJoinRequest): Promise<void> {
     return apiClient.post('/teams/share/join', data)

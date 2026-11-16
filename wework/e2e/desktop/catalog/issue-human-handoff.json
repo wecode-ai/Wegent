@@ -1,0 +1,6 @@
+{
+  "order": 130060,
+  "scenario": "./scenarios/issue-human-handoff.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 79600, "shard": 10, "position": 2600 } }
+}

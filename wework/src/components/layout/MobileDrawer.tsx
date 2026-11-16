@@ -7,7 +7,6 @@ import {
   FolderOpen,
   FolderPlus,
   GitCompareArrows,
-  Loader2,
   Monitor,
   RotateCw,
   Search,
@@ -16,7 +15,9 @@ import {
   X,
 } from 'lucide-react'
 import { useContext, useMemo, useRef, useState } from 'react'
-import { CompositedSpinner } from '@/components/common/CompositedSpinner'
+import { MobileRuntimeTaskRunningStatus } from './MobileRuntimeTaskRunningStatus'
+import { RuntimeWorkLoadStatus } from './RuntimeWorkLoadStatus'
+import type { RuntimeWorkLoadState } from '@/types/workbench'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
@@ -69,6 +70,7 @@ interface MobileDrawerProps {
   devices?: DeviceInfo[]
   projects: ProjectWithTasks[]
   runtimeWork?: RuntimeWorkListResponse | null
+  runtimeWorkLoad?: RuntimeWorkLoadState
   currentProjectId?: number
   currentRuntimeTask?: RuntimeTaskAddress | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
@@ -104,6 +106,7 @@ export function MobileDrawer({
   devices = [],
   projects,
   runtimeWork,
+  runtimeWorkLoad,
   currentProjectId,
   currentRuntimeTask,
   unreadRuntimeTaskKeys,
@@ -171,21 +174,6 @@ export function MobileDrawer({
   )
 
   if (!open) return null
-
-  const renderRuntimeTaskRunningStatus = (testId: string) => {
-    const label = t('workbench.runtime_task_running')
-    return (
-      <span
-        data-testid={testId}
-        role="status"
-        aria-label={label}
-        title={label}
-        className="ml-2 inline-flex h-7 w-7 shrink-0 items-center justify-center text-text-secondary"
-      >
-        <CompositedSpinner icon={Loader2} className="h-3.5 w-3.5" />
-      </span>
-    )
-  }
 
   const closeAfter = (action?: () => void) => {
     action?.()
@@ -382,7 +370,7 @@ export function MobileDrawer({
             type="button"
             data-testid="mobile-settings-button"
             onClick={() => closeAfter(onOpenSettings)}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-[#8E5BBE] text-sm font-semibold text-white"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-contrast wework:bg-[#8E5BBE] wework:text-white"
             aria-label={t('workbench.settings', '设置')}
           >
             {getUserInitials()}
@@ -438,6 +426,11 @@ export function MobileDrawer({
             transition: refreshing || pullDistance === 0 ? 'transform 0.2s ease' : undefined,
           }}
         >
+          <RuntimeWorkLoadStatus
+            load={runtimeWorkLoad}
+            hasSnapshot={runtimeWork != null}
+            onRetry={onRefreshWorkLists}
+          />
           <section>
             <div className="space-y-1">
               <div className="relative">
@@ -458,12 +451,14 @@ export function MobileDrawer({
                 </div>
                 <div className="space-y-1">
                   {chatTaskItems.length === 0 ? (
-                    <div
-                      data-testid="mobile-runtime-chat-empty"
-                      className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-base text-text-secondary"
-                    >
-                      {t('workbench.no_chats', '暂无会话')}
-                    </div>
+                    runtimeWorkLoad && runtimeWorkLoad.phase !== 'ready' ? null : (
+                      <div
+                        data-testid="mobile-runtime-chat-empty"
+                        className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-base text-text-secondary"
+                      >
+                        {t('workbench.no_chats', '暂无会话')}
+                      </div>
+                    )
                   ) : (
                     chatTaskItems.map(({ workspace, task }) => {
                       const selectedTask = isRuntimeTaskSelected(
@@ -511,9 +506,10 @@ export function MobileDrawer({
                             ) : lifecycleSnapshot.runningTaskKeys.has(
                                 getRuntimeTaskLifecycleKey(taskAddress)
                               ) ? (
-                              renderRuntimeTaskRunningStatus(
-                                `mobile-chat-runtime-task-running-${task.taskId}`
-                              )
+                              <MobileRuntimeTaskRunningStatus
+                                address={taskAddress}
+                                testId={`mobile-chat-runtime-task-running-${task.taskId}`}
+                              />
                             ) : visibleUnreadRuntimeTaskKeys.has(
                                 getRuntimeTaskReminderItemKey(workspace, task)
                               ) ? (
@@ -622,7 +618,7 @@ export function MobileDrawer({
                               setRenamingProjectId(null)
                             }
                           }}
-                          className="min-w-0 flex-1 select-text rounded-lg border border-border bg-background px-2 py-1 text-heading-sm leading-6 text-text-primary outline-none focus:border-focus"
+                          className="min-w-0 flex-1 select-text rounded-lg border border-border bg-background px-2 py-1 text-heading-sm leading-6 text-text-primary outline-none keyboard:focus:border-focus"
                         />
                       ) : (
                         <span className="min-w-0 flex-1 truncate">{project.name}</span>
@@ -654,7 +650,7 @@ export function MobileDrawer({
                           )
                           const hasHiddenTasks = hasHiddenRuntimeSidebarTaskItems(
                             taskItems,
-                            runtimeTaskVisibleLimit
+                            visibleTaskItems
                           )
                           const canCollapseTasks = hasExpandedRuntimeSidebarTaskItems(
                             taskItems,
@@ -709,9 +705,10 @@ export function MobileDrawer({
                                       ) : lifecycleSnapshot.runningTaskKeys.has(
                                           getRuntimeTaskLifecycleKey(taskAddress)
                                         ) ? (
-                                        renderRuntimeTaskRunningStatus(
-                                          `mobile-runtime-task-running-${task.taskId}`
-                                        )
+                                        <MobileRuntimeTaskRunningStatus
+                                          address={taskAddress}
+                                          testId={`mobile-runtime-task-running-${task.taskId}`}
+                                        />
                                       ) : visibleUnreadRuntimeTaskKeys.has(
                                           getRuntimeTaskReminderItemKey(workspace, task)
                                         ) ? (
@@ -771,7 +768,7 @@ export function MobileDrawer({
                                       }
                                       className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-text-secondary hover:bg-muted"
                                     >
-                                      {t('workbench.expand_display', '展开显示')}
+                                      {t('workbench.show_more', '显示更多')}
                                     </button>
                                   ) : (
                                     <button
@@ -786,7 +783,7 @@ export function MobileDrawer({
                                       }
                                       className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-text-secondary hover:bg-muted"
                                     >
-                                      {t('workbench.collapse_display', '折叠显示')}
+                                      {t('workbench.show_less', '收起')}
                                     </button>
                                   )}
                                 </div>
@@ -867,7 +864,7 @@ export function MobileDrawer({
               type="button"
               data-testid="mobile-remove-project-button"
               onClick={() => handleAction(() => onRemoveProject?.(projectActionTarget.id))}
-              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-heading-sm text-red-500 hover:bg-red-500/10"
+              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-heading-sm text-destructive hover:bg-destructive/10 wework:text-red-500 wework:hover:bg-red-500/10"
             >
               <X className="h-6 w-6 shrink-0" />
               <span>{t('workbench.remove_project', '移除')}</span>

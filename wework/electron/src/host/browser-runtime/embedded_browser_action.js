@@ -10,7 +10,9 @@
     if (!target.ok) return failure(action, target, startedAt, warnings)
 
     const before = observePage(target.element)
-    target.element.scrollIntoView?.({ block: 'center', inline: 'center' })
+    if (!target.summary?.coordinateTarget) {
+      target.element.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' })
+    }
 
     const preflight = inspectPreflight(target.element, action)
     warnings.push(...preflight.warnings)
@@ -81,6 +83,7 @@
       effect: emptyEffect(),
       elapsedMs: elapsed(startedAt),
       warnings,
+      diagnostics: requestDiagnostics(),
       error: {
         code: 'operation_failed',
         message: String(error?.stack || error?.message || error),
@@ -169,7 +172,9 @@
           frameId: resolved.frameId,
           role: resolved.role,
           name: resolved.name,
-          rect: resolved.rect,
+          rect: resolved.viewportRect || resolved.rect,
+          localRect: resolved.rect,
+          viewportRect: resolved.viewportRect,
         },
       }
     }
@@ -211,7 +216,7 @@
           'inspect'
         )
       }
-      const hit = deepestElementFromPoint(x, y)
+      const hit = deepestElementFromPoint(document, x, y)
       const element = closestActionable(hit)
       if (!element) {
         return errorResult(
@@ -226,7 +231,7 @@
       return {
         ok: true,
         element,
-        summary: { x, y },
+        summary: { x, y, coordinateTarget: true },
       }
     }
 
@@ -299,6 +304,7 @@
     if (!record.element || !record.element.isConnected) {
       return { ok: false, errorCode: 'stale_ref', message: 'Inspect target is detached.' }
     }
+    const viewportRect = viewportRectFor(record.element)
     return {
       ok: true,
       element: record.element,
@@ -308,7 +314,9 @@
       frameId: record.frameId,
       role: record.role,
       name: accessibleName(record.element),
-      rect: rectFor(record.element),
+      rect: viewportRect,
+      localRect: rectFor(record.element),
+      viewportRect,
     }
   }
 
@@ -317,10 +325,18 @@
       return errorResult('stale_ref', 'Target element is detached.', 'inspect')
     }
     const summary = summarizeElement(element)
-    const rect = rectFor(element)
-    const visibility = visibilityFor(element, rect)
+    const geometry = geometryFor(element)
+    const visibility = visibilityFor(element, geometry)
     const states = statesFor(element)
     const preflightWarnings = []
+    if (geometry.approximate) {
+      preflightWarnings.push(
+        warning(
+          'frame_transform_approximate',
+          'A parent frame uses a rotated or skewed transform; coordinates are approximate.'
+        )
+      )
+    }
 
     if (!visibility.visible) {
       return errorResult('element_not_visible', 'Target element is not visible.', 'inspect')
@@ -335,7 +351,9 @@
     if (visibility.occluded) {
       return errorResult(
         'element_occluded',
-        'Target element is covered by another element.',
+        visibility.occlusionStage === 'ancestor_frame'
+          ? 'The target frame is covered by another element in a parent document.'
+          : 'Target element is covered by another element.',
         'inspect'
       )
     }
@@ -357,7 +375,7 @@
         warning('actionability_heuristic', 'Click target actionability is heuristic.')
       )
     }
-    if (actionName === 'select' && !(element instanceof HTMLSelectElement)) {
+    if (actionName === 'select' && element.tagName?.toLowerCase() !== 'select') {
       return errorResult(
         'unsupported_select_target',
         'Select action requires a native select element.',
@@ -376,7 +394,12 @@
       ok: true,
       summary: {
         ...summary,
-        rect,
+        rect: geometry.viewportRect,
+        localRect: geometry.rect,
+        viewportRect: geometry.viewportRect,
+        framePath: geometry.framePath,
+        scaleX: geometry.scaleX,
+        scaleY: geometry.scaleY,
         visible: visibility.visible,
         inViewport: visibility.inViewport,
         actionable: true,
@@ -392,16 +415,63 @@
       const rect = rectFor(element)
       const clientX = rect.x + rect.width / 2
       const clientY = rect.y + rect.height / 2
-      for (const type of ['mouseover', 'mousemove', 'mousedown', 'mouseup']) {
+      const mouseInit = { bubbles: true, cancelable: true, composed: true, clientX, clientY }
+      const view = element.ownerDocument.defaultView || window
+      const PointerEventCtor = view.PointerEvent
+      const MouseEventCtor = view.MouseEvent || MouseEvent
+      if (typeof PointerEventCtor === 'function') {
+        for (const type of ['pointerover', 'pointerenter']) {
+          element.dispatchEvent(
+            new PointerEventCtor(type, {
+              ...mouseInit,
+              bubbles: type !== 'pointerenter',
+              pointerId: 1,
+              pointerType: 'mouse',
+              isPrimary: true,
+              buttons: 0,
+            })
+          )
+        }
+      }
+      element.dispatchEvent(new MouseEventCtor('mouseover', mouseInit))
+      if (typeof PointerEventCtor === 'function') {
         element.dispatchEvent(
-          new MouseEvent(type, {
-            bubbles: true,
-            cancelable: true,
-            clientX,
-            clientY,
+          new PointerEventCtor('pointermove', {
+            ...mouseInit,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true,
+            buttons: 0,
           })
         )
       }
+      element.dispatchEvent(new MouseEventCtor('mousemove', mouseInit))
+      if (typeof PointerEventCtor === 'function') {
+        element.dispatchEvent(
+          new PointerEventCtor('pointerdown', {
+            ...mouseInit,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true,
+            button: 0,
+            buttons: 1,
+          })
+        )
+      }
+      element.dispatchEvent(new MouseEventCtor('mousedown', { ...mouseInit, buttons: 1 }))
+      if (typeof PointerEventCtor === 'function') {
+        element.dispatchEvent(
+          new PointerEventCtor('pointerup', {
+            ...mouseInit,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true,
+            button: 0,
+            buttons: 0,
+          })
+        )
+      }
+      element.dispatchEvent(new MouseEventCtor('mouseup', mouseInit))
       element.click()
       return {
         ok: true,
@@ -409,7 +479,7 @@
           warning('synthetic_event', 'Click was dispatched with DOM synthetic events.'),
           warning(
             'trusted_input_not_available',
-            'WKWebView trusted input is not available in MVP.'
+            'The click used synthetic DOM events rather than trusted browser input.'
           ),
         ],
       }
@@ -441,7 +511,8 @@
 
     if (actionName === 'focus') {
       element.focus?.({ preventScroll: true })
-      if (document.activeElement !== element && !element.contains(document.activeElement)) {
+      const activeElement = element.ownerDocument.activeElement
+      if (activeElement !== element && !element.contains(activeElement)) {
         return {
           ok: false,
           error: errorObject('focus_rejected', 'Page did not keep focus on the target.', 'inspect'),
@@ -682,7 +753,7 @@
 
     if (element.isContentEditable) {
       if (replace) element.textContent = ''
-      const ok = document.execCommand?.('insertText', false, String(text))
+      const ok = element.ownerDocument.execCommand?.('insertText', false, String(text))
       if (!ok) {
         element.textContent = replace ? String(text) : `${element.textContent || ''}${text}`
       }
@@ -708,27 +779,30 @@
   }
 
   function setNativeValue(element, value) {
+    const view = element.ownerDocument.defaultView
     const prototype =
-      element instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : element instanceof HTMLSelectElement
-          ? HTMLSelectElement.prototype
-          : HTMLInputElement.prototype
+      element.tagName?.toLowerCase() === 'textarea'
+        ? view.HTMLTextAreaElement.prototype
+        : element.tagName?.toLowerCase() === 'select'
+          ? view.HTMLSelectElement.prototype
+          : view.HTMLInputElement.prototype
     const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
     if (setter) setter.call(element, value)
     else element.value = value
   }
 
   function observePage(element) {
-    const active = document.activeElement
+    const doc = element?.ownerDocument || document
+    const active = doc.activeElement
     return {
       url: location.href,
-      title: document.title || '',
-      readyState: document.readyState,
-      documentToken: documentTokenFor(document),
+      title: doc.title || '',
+      readyState: doc.readyState,
+      documentToken: documentTokenFor(doc),
       domRevision: Number(agent.domRevision || 0),
       viewportRevision: Number(agent.viewportRevision || 0),
-      bodyTextHash: hashText(document.body?.innerText || ''),
+      bodyTextHash: hashText(doc.body?.innerText || ''),
+      pageBodyTextHash: hashText(document.body?.innerText || ''),
       focused: active ? summarizeElement(active) : undefined,
       targetValue: element && element.isConnected ? valueFor(element) : undefined,
       targetChecked:
@@ -744,7 +818,7 @@
           : undefined,
       targetStillConnected: Boolean(element?.isConnected),
       targetRect: element && element.isConnected ? rectFor(element) : undefined,
-      dialogCount: visibleDialogs().length,
+      dialogCount: visibleDialogs(doc).length,
     }
   }
 
@@ -753,7 +827,9 @@
       urlChanged: before.url !== after.url,
       titleChanged: before.title !== after.title,
       domChanged:
-        before.domRevision !== after.domRevision || before.bodyTextHash !== after.bodyTextHash,
+        before.domRevision !== after.domRevision ||
+        before.bodyTextHash !== after.bodyTextHash ||
+        before.pageBodyTextHash !== after.pageBodyTextHash,
       focusChanged:
         JSON.stringify(before.focused || null) !== JSON.stringify(after.focused || null),
       valueChanged: before.targetValue !== after.targetValue,
@@ -785,7 +861,7 @@
   }
 
   function failure(actionName, result, start, actionWarnings, target, before) {
-    const targetSummary = target?.summary || {}
+    const targetSummary = { ...(target?.summary || {}), ...(result?.summary || {}) }
     const beforeObservation = before || observePage(target?.element || null)
     return {
       ok: false,
@@ -799,6 +875,7 @@
       effect: emptyEffect(),
       elapsedMs: elapsed(start),
       warnings: actionWarnings,
+      diagnostics: requestDiagnostics(),
       error:
         result.error || errorObject(result.errorCode, result.message, result.suggestedNextAction),
     }
@@ -921,7 +998,7 @@
   }
 
   function isSensitiveInput(element, text) {
-    if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+    if (!['input', 'textarea'].includes(element.tagName?.toLowerCase())) {
       return false
     }
     const type = inputType(element)
@@ -964,10 +1041,38 @@
     }
   }
 
+  function requestDiagnostics() {
+    const browserAgent = window.__WEWORK_BROWSER_AGENT__ || {}
+    const latestRegistry = Array.isArray(browserAgent.inspectRegistries)
+      ? browserAgent.inspectRegistries[0]
+      : null
+    const index = input.index ?? undefined
+    return {
+      request: {
+        action,
+        selector: input.selector || undefined,
+        index,
+        ref: input.ref || undefined,
+        inspectId: input.inspectId || undefined,
+        x: input.x ?? undefined,
+        y: input.y ?? undefined,
+      },
+      latestInspectId: browserAgent.latestInspectId || null,
+      availableInspectIds: Array.isArray(browserAgent.inspectRegistries)
+        ? browserAgent.inspectRegistries.map(registry => registry.inspectId)
+        : [],
+      latestIndexRef:
+        index === undefined ? null : (latestRegistry?.indexToRef?.[String(index)] ?? null),
+      latestIndexNode:
+        index === undefined ? null : (latestRegistry?.indexNodes?.[String(index)] ?? null),
+    }
+  }
+
   function errorCategory(code) {
     if (
       [
         'element_not_found',
+        'element_not_actionable',
         'ambiguous_target',
         'target_stale',
         'stale_ref',
@@ -1020,7 +1125,7 @@
   }
 
   function isValueElement(element) {
-    return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+    return ['input', 'textarea'].includes(element.tagName?.toLowerCase())
   }
 
   function isClickActionable(element) {
@@ -1028,42 +1133,64 @@
     if (['button', 'link', 'checkbox', 'radio', 'combobox', 'menuitem', 'tab'].includes(role)) {
       return true
     }
-    const style = getComputedStyle(element)
+    const style = element.ownerDocument.defaultView.getComputedStyle(element)
     return Boolean(element.onclick || element.tabIndex >= 0 || style.cursor === 'pointer')
   }
 
   function closestActionable(element) {
     let current = element
-    while (current && current !== document.documentElement) {
+    while (current) {
       if (isClickActionable(current) || isEditable(current)) return current
       if (current.parentElement) {
         current = current.parentElement
         continue
       }
-      const root = current.getRootNode()
-      current = root instanceof ShadowRoot ? root.host : null
+      const root = current.getRootNode?.()
+      if (root?.host) {
+        current = root.host
+        continue
+      }
+      const frame = safeFrameElement(current.ownerDocument?.defaultView)
+      current = frame || null
     }
     return null
   }
 
   function scrollOriginElement(request) {
     if (Number.isFinite(Number(request.x)) && Number.isFinite(Number(request.y))) {
-      return deepestElementFromPoint(Number(request.x), Number(request.y)) || document.body
+      return (
+        deepestElementFromPoint(document, Number(request.x), Number(request.y)) || document.body
+      )
     }
     return document.activeElement || document.body || document.documentElement
   }
 
   function nearestScrollContainer(element, axis = 'y') {
+    const doc = element?.ownerDocument || document
     let current = element
-    while (current && current !== document.documentElement) {
+    while (current && current !== doc.documentElement) {
       if (isScrollable(current, axis)) return current
       current = current.parentElement || current.getRootNode?.().host
     }
-    return document.scrollingElement || document.documentElement
+    return doc.scrollingElement || doc.documentElement
   }
 
-  function deepestElementFromPoint(x, y) {
-    let element = document.elementFromPoint(x, y)
+  function deepestElementFromPoint(doc, x, y, depth = 0) {
+    if (!doc || depth > 20) return null
+    const element = deepestElementInDocument(doc, x, y)
+    if (element?.tagName?.toLowerCase() === 'iframe') {
+      const childPoint = pointInFrameContent(element, x, y)
+      const childDoc = safeContentDocument(element)
+      if (childPoint && childDoc) {
+        const nested = deepestElementFromPoint(childDoc, childPoint.x, childPoint.y, depth + 1)
+        if (nested) return nested
+      }
+    }
+    return element
+  }
+
+  function deepestElementInDocument(doc, x, y) {
+    let element = doc.elementFromPoint(x, y)
     while (element?.shadowRoot) {
       const nested = element.shadowRoot.elementFromPoint(x, y)
       if (!nested || nested === element) break
@@ -1073,8 +1200,9 @@
   }
 
   function isScrollable(element, axis) {
-    if (!element || element === document.body || element === document.documentElement) return false
-    const style = getComputedStyle(element)
+    const doc = element?.ownerDocument
+    if (!element || element === doc?.body || element === doc?.documentElement) return false
+    const style = doc.defaultView.getComputedStyle(element)
     const overflow = axis === 'x' ? style.overflowX : style.overflowY
     const canOverflow = /(auto|scroll|overlay)/.test(overflow)
     const hasRoom =
@@ -1085,6 +1213,7 @@
   }
 
   function scrollStateFor(element) {
+    const doc = element?.ownerDocument || document
     return {
       tagName: element?.tagName?.toLowerCase() || 'document',
       id: element?.id || undefined,
@@ -1092,14 +1221,15 @@
       left: round(element?.scrollLeft || 0),
       height: round(element?.clientHeight || window.innerHeight),
       width: round(element?.clientWidth || window.innerWidth),
-      scrollHeight: round(element?.scrollHeight || document.documentElement.scrollHeight),
-      scrollWidth: round(element?.scrollWidth || document.documentElement.scrollWidth),
+      scrollHeight: round(element?.scrollHeight || doc.documentElement.scrollHeight),
+      scrollWidth: round(element?.scrollWidth || doc.documentElement.scrollWidth),
     }
   }
 
   function scrollWarnings(container, before, after) {
     const result = []
-    if (container === document.scrollingElement || container === document.documentElement) {
+    const doc = container?.ownerDocument || document
+    if (container === doc.scrollingElement || container === doc.documentElement) {
       result.push(warning('body_scroll_fallback', 'Scroll used the document scrolling element.'))
     } else {
       result.push(warning('nested_scroll_container_selected', 'Scroll used a nested container.'))
@@ -1134,13 +1264,17 @@
       element.scrollHeight > element.clientHeight * 4 &&
       children.length > 0 &&
       children.length < 40 &&
-      children.some(child => /translate(?:3d|y)?\(/i.test(getComputedStyle(child).transform || ''))
+      children.some(child =>
+        /translate(?:3d|y)?\(/i.test(
+          child.ownerDocument.defaultView.getComputedStyle(child).transform || ''
+        )
+      )
     )
   }
 
   function isCheckable(element) {
     return (
-      element instanceof HTMLInputElement &&
+      element.tagName?.toLowerCase() === 'input' &&
       ['checkbox', 'radio'].includes((element.getAttribute('type') || '').toLowerCase())
     )
   }
@@ -1175,9 +1309,10 @@
     return aliases[key] || key
   }
 
-  function visibilityFor(element, rect) {
-    const style = getComputedStyle(element)
-    const hasBox = rect.width > 0 && rect.height > 0
+  function visibilityFor(element, geometry) {
+    const view = element.ownerDocument.defaultView || window
+    const style = view.getComputedStyle(element)
+    const hasBox = geometry.rect.width > 0 && geometry.rect.height > 0
     const visible =
       hasBox &&
       style.display !== 'none' &&
@@ -1185,20 +1320,50 @@
       style.visibility !== 'collapse' &&
       Number(style.opacity || '1') > 0.01 &&
       !element.hidden
+    const rect = geometry.viewportRect
     const inViewport =
       rect.x + rect.width >= 0 &&
       rect.y + rect.height >= 0 &&
       rect.x <= window.innerWidth &&
       rect.y <= window.innerHeight
-    const hit = elementFromRect(rect)
-    const occluded = visible && inViewport && hit && !(hit === element || element.contains(hit))
-    return { visible, inViewport, occluded }
+    const hitTest = hitTestTarget(element)
+    const occluded = visible && inViewport && !hitTest.ok
+    return {
+      visible,
+      inViewport,
+      occluded,
+      occlusionStage: occluded ? hitTest.stage : undefined,
+    }
   }
 
-  function elementFromRect(rect) {
-    const x = Math.min(window.innerWidth - 1, Math.max(0, rect.x + rect.width / 2))
-    const y = Math.min(window.innerHeight - 1, Math.max(0, rect.y + rect.height / 2))
-    return deepestElementFromPoint(x, y)
+  function hitTestTarget(element) {
+    const doc = element.ownerDocument
+    const rect = element.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) {
+      return { ok: false, stage: 'target' }
+    }
+    const x = rect.x + rect.width / 2
+    const y = rect.y + rect.height / 2
+    const targetHit = deepestElementInDocument(doc, x, y)
+    if (!isHitAccepted(element, targetHit)) {
+      return { ok: false, stage: 'target', hit: summarizeElement(targetHit) }
+    }
+    const frames = frameChainFor(element)
+    let point = { x, y }
+    for (let index = frames.length - 1; index >= 0; index--) {
+      const frame = frames[index]
+      point = pointInParentFrame(frame, point)
+      const frameHit = deepestElementInDocument(frame.ownerDocument, point.x, point.y)
+      if (!isHitAccepted(frame, frameHit)) {
+        return {
+          ok: false,
+          stage: 'ancestor_frame',
+          frame: summarizeElement(frame),
+          hit: summarizeElement(frameHit),
+        }
+      }
+    }
+    return { ok: true, stage: 'none' }
   }
 
   function rectFor(element) {
@@ -1211,6 +1376,148 @@
     }
   }
 
+  function geometryFor(element) {
+    const localRect = element.getBoundingClientRect()
+    const frames = frameChainFor(element)
+    const framePath = []
+    let originX = 0
+    let originY = 0
+    let scaleX = 1
+    let scaleY = 1
+    let approximate = false
+    for (const frame of frames) {
+      const frameRect = frame.getBoundingClientRect()
+      const metrics = frameContentMetrics(frame, frameRect)
+      approximate = approximate || !isAxisAlignedTransform(frame)
+      framePath.push({
+        id: frame.id || undefined,
+        name: frame.title || frame.getAttribute?.('aria-label') || undefined,
+        rect: {
+          x: round(frameRect.x),
+          y: round(frameRect.y),
+          width: round(frameRect.width),
+          height: round(frameRect.height),
+        },
+        scaleX: round(metrics.scaleX),
+        scaleY: round(metrics.scaleY),
+      })
+      originX += scaleX * (frameRect.x + metrics.left * metrics.scaleX)
+      originY += scaleY * (frameRect.y + metrics.top * metrics.scaleY)
+      scaleX *= metrics.scaleX
+      scaleY *= metrics.scaleY
+    }
+    return {
+      rect: {
+        x: round(localRect.x),
+        y: round(localRect.y),
+        width: round(localRect.width),
+        height: round(localRect.height),
+      },
+      viewportRect: {
+        x: round(originX + scaleX * localRect.x),
+        y: round(originY + scaleY * localRect.y),
+        width: round(localRect.width * scaleX),
+        height: round(localRect.height * scaleY),
+      },
+      scaleX,
+      scaleY,
+      framePath,
+      approximate,
+    }
+  }
+
+  function viewportRectFor(element) {
+    return geometryFor(element).viewportRect
+  }
+
+  function frameChainFor(element) {
+    const frames = []
+    let doc = element?.ownerDocument
+    for (let depth = 0; doc && depth < 20; depth++) {
+      const frame = safeFrameElement(doc.defaultView)
+      if (!frame) break
+      frames.unshift(frame)
+      doc = frame.ownerDocument
+    }
+    return frames
+  }
+
+  function frameContentMetrics(frame, rect) {
+    const style = frame.ownerDocument.defaultView.getComputedStyle(frame)
+    const paddingLeft = Number.parseFloat(style.paddingLeft) || 0
+    const paddingRight = Number.parseFloat(style.paddingRight) || 0
+    const paddingTop = Number.parseFloat(style.paddingTop) || 0
+    const paddingBottom = Number.parseFloat(style.paddingBottom) || 0
+    const layoutWidth = Number(frame.offsetWidth) || rect.width
+    const layoutHeight = Number(frame.offsetHeight) || rect.height
+    return {
+      scaleX: layoutWidth > 0 && rect.width > 0 ? rect.width / layoutWidth : 1,
+      scaleY: layoutHeight > 0 && rect.height > 0 ? rect.height / layoutHeight : 1,
+      left: frame.clientLeft + paddingLeft,
+      top: frame.clientTop + paddingTop,
+      width: Math.max(0, frame.clientWidth - paddingLeft - paddingRight),
+      height: Math.max(0, frame.clientHeight - paddingTop - paddingBottom),
+    }
+  }
+
+  function pointInFrameContent(frame, x, y) {
+    const rect = frame.getBoundingClientRect()
+    const metrics = frameContentMetrics(frame, rect)
+    const localX = (x - rect.x) / metrics.scaleX - metrics.left
+    const localY = (y - rect.y) / metrics.scaleY - metrics.top
+    if (localX < 0 || localY < 0 || localX > metrics.width || localY > metrics.height) {
+      return null
+    }
+    return { x: localX, y: localY }
+  }
+
+  function pointInParentFrame(frame, point) {
+    const rect = frame.getBoundingClientRect()
+    const metrics = frameContentMetrics(frame, rect)
+    return {
+      x: rect.x + metrics.scaleX * (metrics.left + point.x),
+      y: rect.y + metrics.scaleY * (metrics.top + point.y),
+    }
+  }
+
+  function safeFrameElement(view) {
+    try {
+      return view?.frameElement || null
+    } catch {
+      return null
+    }
+  }
+
+  function safeContentDocument(frame) {
+    try {
+      return frame.contentDocument || null
+    } catch {
+      return null
+    }
+  }
+
+  function isAxisAlignedTransform(element) {
+    const view = element.ownerDocument?.defaultView
+    const transform = view?.getComputedStyle(element).transform
+    if (!transform || transform === 'none') return true
+    const values = transform.match(/matrix(3d)?\(([^)]+)\)/i)
+    if (!values) return true
+    const parts = values[2].split(',').map(value => Number(value.trim()))
+    if (!values[1]) return Math.abs(parts[1] || 0) < 0.001 && Math.abs(parts[2] || 0) < 0.001
+    return [1, 2, 3, 4, 7, 8, 11, 12, 13, 14].every(index => {
+      return Math.abs(parts[index] || 0) < 0.001
+    })
+  }
+
+  function isHitAccepted(element, hit) {
+    if (!hit) return false
+    if (hit === element || element.contains(hit)) return true
+    if (hit.tagName?.toLowerCase() === 'label' && hit.control === element) return true
+    if (element.tagName?.toLowerCase() === 'label' && element.contains(hit)) return true
+    const root = hit.getRootNode?.()
+    return Boolean(root?.host && (root.host === element || element.contains(root.host)))
+  }
+
   function summarizeElement(element) {
     if (!element) return undefined
     const role = inferRole(element)
@@ -1218,7 +1525,7 @@
       role,
       name: trimText(accessibleName(element, role), 120),
       tagName: element.tagName?.toLowerCase() || '',
-      inputType: element instanceof HTMLInputElement ? inputType(element) : undefined,
+      inputType: inputType(element) || undefined,
     }
   }
 
@@ -1229,7 +1536,7 @@
     if (element.getAttribute?.('aria-disabled') === 'true') states.push('aria-disabled')
     if (element.checked) states.push('checked')
     if (element.selected) states.push('selected')
-    if (document.activeElement === element) states.push('focused')
+    if (element.ownerDocument.activeElement === element) states.push('focused')
     return states
   }
 
@@ -1261,7 +1568,7 @@
     if (['textbox', 'checkbox', 'radio', 'combobox'].includes(role)) {
       const id = element.id
       if (id) {
-        const label = document.querySelector(`label[for="${cssEscape(id)}"]`)
+        const label = element.ownerDocument.querySelector(`label[for="${cssEscape(id)}"]`)
         if (label && normalizeWhitespace(label.innerText || label.textContent)) {
           return normalizeWhitespace(label.innerText || label.textContent)
         }
@@ -1279,7 +1586,7 @@
 
   function valueFor(element) {
     if (!element || !element.isConnected) return undefined
-    if (element instanceof HTMLSelectElement) {
+    if (element.tagName?.toLowerCase() === 'select') {
       return Array.from(element.selectedOptions || [])
         .map(option => option.value)
         .join(',')
@@ -1293,12 +1600,18 @@
     return undefined
   }
 
-  function visibleDialogs() {
-    return Array.from(
-      document.querySelectorAll('dialog[open], [role="dialog"], [role="alertdialog"]')
-    ).filter(element => {
-      const rect = rectFor(element)
-      return visibilityFor(element, rect).visible
+  function visibleDialogs(doc) {
+    const docs = []
+    let current = doc
+    for (let depth = 0; current && depth < 20; depth++) {
+      docs.push(current)
+      const frame = safeFrameElement(current.defaultView)
+      current = frame?.ownerDocument || null
+    }
+    return docs.flatMap(candidate => {
+      return Array.from(
+        candidate.querySelectorAll('dialog[open], [role="dialog"], [role="alertdialog"]')
+      ).filter(element => visibilityFor(element, geometryFor(element)).visible)
     })
   }
 
@@ -1314,7 +1627,7 @@
   }
 
   function inputType(element) {
-    return element instanceof HTMLInputElement
+    return element.tagName?.toLowerCase() === 'input'
       ? (element.getAttribute('type') || 'text').toLowerCase()
       : ''
   }

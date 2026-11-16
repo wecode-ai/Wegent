@@ -159,11 +159,19 @@ class SmartAppMarketplaceService:
         tags = marketplace_tag_service.validate_resource_tags(
             db, request.tags, require_nonempty=True
         )
-        icon = self._decode_image(request.iconDataUrl, icon=True)
-        screenshots = [
-            self._decode_image(data_url, icon=False)
-            for data_url in request.screenshotDataUrls
-        ]
+        icon = (
+            self._decode_image(request.iconDataUrl, icon=True)
+            if request.iconDataUrl
+            else None
+        )
+        screenshots = (
+            [
+                self._decode_image(data_url, icon=False)
+                for data_url in request.screenshotDataUrls
+            ]
+            if request.screenshotDataUrls is not None
+            else None
+        )
         extensions = self._validated_extensions(request.extensions, "extensions")
         release_extensions = self._validated_extensions(
             request.releaseExtensions, "releaseExtensions"
@@ -175,6 +183,8 @@ class SmartAppMarketplaceService:
             name=request.name,
             display_name=request.displayName,
         )
+        if icon is None and not app.icon_storage_key:
+            raise HTTPException(status_code=422, detail="Smart app icon is required")
         scope = request.scope or app.visibility
         targets = []
         if scope == "restricted":
@@ -211,14 +221,34 @@ class SmartAppMarketplaceService:
         asset_keys: list[dict[str, str]] = []
         created_keys: list[str] = []
         try:
-            icon_key = f"{prefix}/icon.{icon[1]}"
-            marketplace_artifact_storage.put(icon_key, icon[0], content_type=icon[2])
-            created_keys.append(icon_key)
-            for index, (data, extension, content_type) in enumerate(screenshots):
+            icon_metadata = None
+            if icon is not None:
+                icon_key = f"{prefix}/icon.{icon[1]}"
+                marketplace_artifact_storage.put(
+                    icon_key, icon[0], content_type=icon[2]
+                )
+                created_keys.append(icon_key)
+                icon_metadata = {"key": icon_key, "contentType": icon[2]}
+            for index, (data, extension, content_type) in enumerate(screenshots or []):
                 key = f"{prefix}/screenshot-{index + 1}.{extension}"
                 marketplace_artifact_storage.put(key, data, content_type=content_type)
                 created_keys.append(key)
                 asset_keys.append({"key": key, "contentType": content_type})
+            metadata: dict[str, Any] = {
+                "filename": request.filename,
+                "summary": request.summary,
+                "descriptionMd": request.descriptionMd,
+                "tags": tags,
+                "releaseNotes": request.releaseNotes,
+                "extensions": extensions,
+                "releaseExtensions": release_extensions,
+                "scope": scope,
+                "targets": [target.model_dump() for target in targets],
+            }
+            if icon_metadata is not None:
+                metadata["icon"] = icon_metadata
+            if screenshots is not None:
+                metadata["screenshots"] = asset_keys
             submission = SmartAppSubmission(
                 smart_app_id=app.id,
                 owner_user_id=user_id,
@@ -227,19 +257,7 @@ class SmartAppMarketplaceService:
                 staging_storage_key=package_key,
                 sha256=request.sha256.lower(),
                 size_bytes=request.sizeBytes,
-                metadata_json={
-                    "filename": request.filename,
-                    "summary": request.summary,
-                    "descriptionMd": request.descriptionMd,
-                    "tags": tags,
-                    "releaseNotes": request.releaseNotes,
-                    "extensions": extensions,
-                    "releaseExtensions": release_extensions,
-                    "icon": {"key": icon_key, "contentType": icon[2]},
-                    "screenshots": asset_keys,
-                    "scope": scope,
-                    "targets": [target.model_dump() for target in targets],
-                },
+                metadata_json=metadata,
             )
             db.add(submission)
             db.commit()

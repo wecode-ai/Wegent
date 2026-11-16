@@ -1,3 +1,4 @@
+import { assertMatrixReports } from './model-matrix-audit.mjs'
 import { access, readFile } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
@@ -11,14 +12,25 @@ import {
 } from './conversation-navigation.mjs'
 
 import {
+  setMatrixUpstreamProtocol,
   verifyCloudProjectFlow,
+  verifyConnectedModelsOnLocalExecution,
   verifyModelProtocolMatrix,
   verifyRetryFailureRestoration,
 } from './desktop-build-flows.mjs'
 
 import { WORKTREE_CHECKPOINTS, verifyCloudWorktreeCheckpoint } from './cloud-worktree-flows.mjs'
 import { verifyCloudDeviceLifecycleFlow } from './cloud-device-lifecycle-flow.mjs'
+import {
+  verifyCloudSidebarGitClone,
+  verifyGitCloneDeviceRecovery,
+} from './cloud-sidebar-project-flow.mjs'
+import { verifyGitCloneRecovery } from './git-clone-recovery-flow.mjs'
 import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-flow.mjs'
+import { verifyCloudFileChunkIntegrity } from './workspace-file-chunks-flow.mjs'
+import { verifyCloudGitReview } from './workspace-git-review-flow.mjs'
+import { verifyCloudConversationMenu } from './conversation-menu-flow.mjs'
+import { verifyCloudHtmlFileLinkPreview } from './markdown-file-preview.mjs'
 import {
   createCloudAttachmentVerification,
   verifyCloudWorkspacePathMentions,
@@ -62,6 +74,8 @@ import {
   SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  createSingleRootLocalProject,
+  fetchJson,
   join,
   mkdir,
   resultDir,
@@ -404,6 +418,8 @@ async function verifyCloudProjectCreationSources(
   await runChecked('git', ['rev-parse', '--is-inside-work-tree'], {
     cwd: clonedProjectPath,
   })
+  await verifyCloudSidebarGitClone(control, workspacePath, homePath)
+  await verifyGitCloneDeviceRecovery(control, workspacePath, cloudEnvironment)
 }
 
 async function waitForCloudProject(control, previousProjectMenus, message) {
@@ -453,9 +469,7 @@ async function waitForGitCloneProject(control, previousProjectMenus, targetPath,
     const projectAdded = snapshot.testIds.some(
       testId => testId.startsWith('project-menu-') && !previousProjectMenus.has(testId)
     )
-    const clonePending = snapshot.testIds.some(testId =>
-      testId.startsWith('git-clone-project-operation-')
-    )
+    const clonePending = snapshot.testIds.includes('remote-project-git-form')
     const targetExists = await access(targetPath)
       .then(() => true)
       .catch(() => false)
@@ -562,13 +576,28 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
   const [shareDialogBeforeSearch] = JSON.parse(
     await control.command('getElementMetrics', '[data-testid="plugin-share-dialog"]')
   )
+  // User search excludes the signed-in owner, so seed a real eligible recipient.
+  const recipient = await fetchJson(`${cloudEnvironment.backendUrl}/api/admin/users`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${cloudEnvironment.authToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      user_name: `plugin-share-recipient-${process.pid}`,
+      password: 'plugin-share-e2e-only',
+      role: 'user',
+      auth_source: 'password',
+    }),
+  })
   await control.command('fill', '[data-testid="plugin-share-search"]', {
-    value: 'admin',
+    value: recipient.user_name,
   })
-  await control.command('waitFor', '[data-testid="plugin-share-search-results"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await new Promise(resolve => setTimeout(resolve, 400))
+  await control.command(
+    'waitFor',
+    `[data-testid="plugin-share-search-results"] [data-testid="plugin-share-user-${recipient.id}"]`,
+    { text: recipient.user_name, visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
   const [shareDialogAfterSearch] = JSON.parse(
     await control.command('getElementMetrics', '[data-testid="plugin-share-dialog"]')
   )
@@ -756,7 +785,15 @@ async function verifyCloudCheckpoint({
     }
     setPhase('cloud-plugin-auto-update-without-codex-rpc')
     await cloudEnvironment.syncPluginAutoUpdatesToCloudDevice()
-    await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
+    try {
+      await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
+    } catch (error) {
+      console.error(
+        '[plugin-auto-update] object storage transport',
+        JSON.stringify(cloudEnvironment.pluginObjectStorage.transportEvents)
+      )
+      throw error
+    }
     return
   }
 
@@ -778,12 +815,32 @@ async function verifyCloudCheckpoint({
       restartDesktopApp,
       codexHome
     )
+    await verifyGitCloneRecovery(control, cloudEnvironment, setPhase)
     return
   }
 
   if (checkpoint === 'cloud-device-lifecycle') {
     setPhase('cloud-device-lifecycle')
     await verifyCloudDeviceLifecycleFlow(control, cloudEnvironment)
+    return
+  }
+
+  if (checkpoint === 'model-routing') {
+    setPhase('local-connected-model-routing')
+    await verifyConnectedModelsOnLocalExecution({
+      control,
+      cloudEnvironment,
+      workspacePath,
+      collectFailures: true,
+      setCodexUpstreamProtocol: protocol => setMatrixUpstreamProtocol(codexHome, protocol),
+    })
+  }
+
+  if (checkpoint === 'embedded-browser') {
+    assert.ok(desktopScenario, 'embedded-browser requires its desktop scenario module')
+    setPhase('cloud-connected-local-browser')
+    await createSingleRootLocalProject(control, workspacePath, 'embedded-browser-local-executor')
+    await desktopScenario.verify(control)
     return
   }
 
@@ -812,7 +869,7 @@ async function verifyCloudCheckpoint({
       return
     case 'priority-filter':
       setPhase('cloud-priority-filter')
-      await verifyPriorityFilter({ composerSelector, control })
+      await verifyPriorityFilter({ composerSelector, control, projectRowSelector })
       return
     case 'automation-lifecycle':
       setPhase('cloud-automation-lifecycle')
@@ -834,9 +891,12 @@ async function verifyCloudCheckpoint({
         newConversationSelector: `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
         readRuntimeTask: taskId => cloudEnvironment.runtimeTask(taskId),
         screenshotPrefix: 'cloud-model-routing',
+        startIndex: CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length,
+        collectFailures: true,
         setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
         workspacePath,
       })
+      assertMatrixReports(control)
       return
     case 'window-lifecycle':
       setPhase('cloud-window-lifecycle')
@@ -874,7 +934,11 @@ async function verifyCloudCheckpoint({
       return
     case 'supervisor-lifecycle':
       setPhase('cloud-supervisor-lifecycle')
-      await verifyTaskSupervisorLifecycle({ composerSelector, control })
+      await verifyTaskSupervisorLifecycle({
+        composerSelector,
+        control,
+        readRuntimeTask: taskId => cloudEnvironment.runtimeTask(taskId),
+      })
       return
     case 'resilience':
       setPhase('cloud-send-rejection')
@@ -914,6 +978,10 @@ async function verifyCloudCheckpoint({
         restartDesktopApp,
         workspacePath,
       })
+      // Reuse the real Cloud Issue fixture for the shared conversation scenario.
+      assert.ok(desktopScenario, 'conversation-state requires its desktop scenario module')
+      setPhase('cloud-conversation-mention')
+      await desktopScenario.verify(control)
       return
     }
     case 'workspace-attachments': {
@@ -927,6 +995,10 @@ async function verifyCloudCheckpoint({
       })
       setPhase('cloud-files-outside-workspace')
       await verifyCloudFileAccessOutsideWorkspace({ cloudEnvironment, workspacePath })
+      setPhase('cloud-file-chunk-integrity')
+      await verifyCloudFileChunkIntegrity({ cloudEnvironment, workspacePath })
+      setPhase('cloud-git-review')
+      await verifyCloudGitReview({ cloudEnvironment, workspacePath })
       setPhase('cloud-attachment-sidebar')
       await verifyAttachmentOnlySidebarLifecycle({
         app,
@@ -943,21 +1015,30 @@ async function verifyCloudCheckpoint({
         control,
         prepareConversation: verification.prepareConversation,
       })
+      const menuTask = await verification.verifySubmittedTask()
       setPhase('cloud-workspace-path-mentions')
       await verifyCloudWorkspacePathMentions(
         { composerSelector, control, workspacePath },
         verification.prepareConversation
       )
+      setPhase('cloud-conversation-menu')
+      await verifyCloudConversationMenu({ cloudEnvironment, address: menuTask, workspacePath })
       return
     }
     case 'rendering-extensions':
+      setPhase('cloud-html-file-link-preview')
+      await verifyCloudHtmlFileLinkPreview({
+        composerSelector,
+        control,
+        projectRowSelector,
+        workspacePath,
+      })
       setPhase('cloud-tool-block-order')
       await verifyToolBlockChronologicalOrder({ composerSelector, control })
       setPhase('cloud-view-image')
       await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
       return
     case 'browser-multi-tabs':
-    case 'embedded-browser':
       assert.ok(desktopScenario, `${checkpoint} requires its desktop scenario module`)
       setPhase(`cloud-${checkpoint}`)
       await desktopScenario.verify(control)

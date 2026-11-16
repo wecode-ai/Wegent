@@ -167,6 +167,24 @@ async function waitForPane(control, predicate, description, timeoutMs = DEFAULT_
   throw new Error(`${description}: ${JSON.stringify(pane?.transcript)}`)
 }
 
+async function openBoundTaskConversation(control, projectId, issueId, bindingId) {
+  await control.command('openWeworkScheme', 'body', {
+    value: `wework://boards/${projectId}/issues/${issueId}`,
+  })
+  // Scheme delivery is asynchronous; retained tabs must not satisfy these clicks.
+  const activeTab = '[data-workspace-tab-content][aria-hidden="false"]'
+  await control.command(
+    'clickWhenEnabled',
+    `${activeTab} [data-testid="cloud-todo-open-task-conversation-${bindingId}"]`,
+    { visible: true, timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+  )
+  await control.command(
+    'clickWhenEnabled',
+    `${activeTab} [data-testid="ai-chat-open-runtime-task"]`,
+    { visible: true }
+  )
+}
+
 /** Runs inside the existing CI cloud conversation-state checkpoint. */
 export function createCloudHistorySearchVerification() {
   let proxy
@@ -312,22 +330,17 @@ export function createCloudHistorySearchVerification() {
 
         await restartDesktopApp()
         await ensureExperimentalFeaturesEnabled(control)
-        await control.command('openWeworkScheme', 'body', {
-          value: `wework://boards/${project.id}/issues/${issue.id}`,
-        })
-        await control.command(
-          'clickWhenEnabled',
-          `[data-testid="cloud-todo-open-task-conversation-${bindings[0].id}"]`,
-          { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
-        )
-        await control.command('clickWhenEnabled', '[data-testid="ai-chat-open-runtime-task"]')
+        await openBoundTaskConversation(control, project.id, issue.id, bindings[0].id)
         await waitForPane(
           control,
           pane => pane?.currentRuntimeTask?.taskId === taskId && !pane.transcript.loading,
           'The bound cloud task did not open',
           WORKBENCH_READY_TIMEOUT_MS
         )
-        await control.command('waitFor', OLDER)
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`
+        )
         await control.command('waitFor', ANSWERS, { text: answer(TURN_COUNT - 1) })
         const original = await waitForPane(
           control,
@@ -362,8 +375,8 @@ export function createCloudHistorySearchVerification() {
           assert.equal(Number(await control.command('getElementCount', FIND_RETRY)), 0)
           await waitForHighlightedHistoryMatch(control, prompt(index))
         }
-        // Focus an existing pane button; Issue-owned executions have no composer.
-        await control.command('nativePress', OLDER, {
+        // The scrollbar accepts focus without scrolling the transcript; this pane has no composer.
+        await control.command('nativePress', `${ACTIVE_WORKBENCH_SELECTOR} [role="scrollbar"]`, {
           key: `${process.platform === 'darwin' ? 'Meta' : 'Control'}+F`,
         })
         const searchFault = arm('search', entry => entry.path === SEARCH_PATH)
@@ -460,15 +473,7 @@ export function createCloudHistorySearchVerification() {
           binding => binding.task_id === cachedTask.local_task_id
         )
         assert.ok(cachedBinding, 'The cached cloud history task was not bound to the Issue')
-        await control.command('openWeworkScheme', 'body', {
-          value: `wework://boards/${project.id}/issues/${issue.id}`,
-        })
-        await control.command(
-          'clickWhenEnabled',
-          `[data-testid="cloud-todo-open-task-conversation-${cachedBinding.id}"]`,
-          { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
-        )
-        await control.command('clickWhenEnabled', '[data-testid="ai-chat-open-runtime-task"]')
+        await openBoundTaskConversation(control, project.id, issue.id, cachedBinding.id)
         await waitForPane(
           control,
           pane =>
@@ -500,15 +505,7 @@ export function createCloudHistorySearchVerification() {
           binding => binding.task_id === nativeTaskId
         )
         assert.ok(nativeBinding, 'The native cloud history task was not bound to the Issue')
-        await control.command('openWeworkScheme', 'body', {
-          value: `wework://boards/${project.id}/issues/${issue.id}`,
-        })
-        await control.command(
-          'clickWhenEnabled',
-          `[data-testid="cloud-todo-open-task-conversation-${nativeBinding.id}"]`,
-          { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
-        )
-        await control.command('clickWhenEnabled', '[data-testid="ai-chat-open-runtime-task"]')
+        await openBoundTaskConversation(control, project.id, issue.id, nativeBinding.id)
         await waitForPane(
           control,
           pane => pane?.currentRuntimeTask?.taskId === nativeTaskId && !pane.transcript.loading,

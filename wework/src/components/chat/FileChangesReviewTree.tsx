@@ -3,7 +3,7 @@ import { Search } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { DiffFileSection } from './parseUnifiedDiff'
+import { getDiffFileStatus, type DiffFileSection } from './parseUnifiedDiff'
 
 const PIERRE_FILE_TREE_CSS = `
   :host {
@@ -27,16 +27,16 @@ const PIERRE_FILE_TREE_CSS = `
     --trees-scrollbar-thumb-override: rgb(var(--color-text-muted));
     --trees-search-bg-override: rgb(var(--color-bg-base));
     --trees-search-fg-override: rgb(var(--color-text-primary));
-    --trees-status-added-override: rgb(57 151 75);
-    --trees-status-modified-override: rgb(57 151 75);
-    --trees-status-renamed-override: rgb(57 151 75);
-    --trees-status-untracked-override: rgb(57 151 75);
-    --trees-status-deleted-override: rgb(210 57 57);
-    --trees-git-added-color-override: rgb(57 151 75);
-    --trees-git-modified-color-override: rgb(57 151 75);
-    --trees-git-renamed-color-override: rgb(57 151 75);
-    --trees-git-untracked-color-override: rgb(57 151 75);
-    --trees-git-deleted-color-override: rgb(210 57 57);
+    --trees-status-added-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
+    --trees-status-modified-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
+    --trees-status-renamed-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
+    --trees-status-untracked-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
+    --trees-status-deleted-override: rgb(var(--color-review-tree-removed, var(--color-diff-removed)));
+    --trees-git-added-color-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
+    --trees-git-modified-color-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
+    --trees-git-renamed-color-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
+    --trees-git-untracked-color-override: rgb(var(--color-review-tree-added, var(--color-diff-added)));
+    --trees-git-deleted-color-override: rgb(var(--color-review-tree-removed, var(--color-diff-removed)));
     --trees-file-icon-color: rgb(var(--color-text-muted));
     --trees-file-icon-color-default: rgb(var(--color-text-muted));
     --trees-icon-blue: rgb(var(--color-text-muted));
@@ -115,7 +115,7 @@ export function ReviewFileTree({
     () =>
       sections.map(section => ({
         path: section.path,
-        status: getPierreGitStatus(section),
+        status: getDiffFileStatus(section),
       })),
     [sections]
   )
@@ -214,11 +214,4 @@ function PierreReviewFileTree({
       }
     />
   )
-}
-
-function getPierreGitStatus(section: DiffFileSection) {
-  if (section.lines.some(line => line.startsWith('new file mode'))) return 'added' as const
-  if (section.lines.some(line => line.startsWith('deleted file mode'))) return 'deleted' as const
-  if (section.oldPath && section.oldPath !== section.path) return 'renamed' as const
-  return 'modified' as const
 }

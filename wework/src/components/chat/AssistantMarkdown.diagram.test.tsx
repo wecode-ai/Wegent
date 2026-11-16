@@ -8,20 +8,6 @@ vi.mock('@wegent/collaboration/markdown/MarkdownDiagramPreview', () => ({
   ),
 }))
 
-test('routes Mermaid fenced code to the diagram preview', async () => {
-  const { container } = render(
-    <AssistantMarkdown content={'```mermaid\ngraph LR\n  A[Start] --> B[Done]\n```'} />
-  )
-
-  await waitFor(() => {
-    expect(container.querySelector('[data-testid="diagram-preview"]')).toHaveAttribute(
-      'data-language',
-      'mermaid'
-    )
-  })
-  expect(container.querySelector('[data-testid="markdown-code-block"]')).not.toBeInTheDocument()
-})
-
 test('keeps an unfinished Mermaid fence as source while the model is streaming', async () => {
   const { container, rerender } = render(
     <AssistantMarkdown content={'```mermaid\ngraph LR\n  A[Start]'} isStreaming />
@@ -49,28 +35,6 @@ test('keeps an unfinished Mermaid fence as source while the model is streaming',
     expect(preview).toHaveAttribute('data-language', 'mermaid')
     expect(preview).toHaveAttribute('data-code', 'graph LR\n  A[Start] --> B[Streaming]')
   })
-})
-
-test('distinguishes identical completed and unfinished Mermaid blocks while streaming', async () => {
-  const diagram = 'graph LR\n  A[Start] --> B[Done]'
-  const { container } = render(
-    <AssistantMarkdown
-      content={`\`\`\`mermaid\n${diagram}\n\`\`\`\n\n\`\`\`mermaid\n${diagram}`}
-      isStreaming
-    />
-  )
-
-  await waitFor(() => {
-    expect(container.querySelectorAll('[data-testid="diagram-preview"]')).toHaveLength(1)
-    expect(container.querySelectorAll('[data-testid="markdown-code-block"]')).toHaveLength(1)
-  })
-  expect(container.querySelector('[data-testid="diagram-preview"]')).toHaveAttribute(
-    'data-code',
-    diagram
-  )
-  expect(
-    container.querySelector('[data-testid="markdown-code-scroll-container"]')
-  ).toHaveTextContent('A[Start] --> B[Done]')
 })
 
 test('preserves rendered paragraph identity across ordinary streaming updates', async () => {

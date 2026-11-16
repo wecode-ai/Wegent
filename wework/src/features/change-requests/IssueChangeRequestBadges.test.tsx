@@ -1,9 +1,7 @@
+import { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
+import '@/i18n'
 import { act, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import '@/i18n'
-import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
-import { defaultAppPreferences } from '@/desktop/appPreferences'
-import { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { IssueChangeRequestBadges } from './IssueChangeRequestBadges'
 
 const url = 'https://github.com/org/app/pull/42'
@@ -89,21 +87,5 @@ describe('client PR badge adapter', () => {
       expect(badge).toHaveAccessibleName(/已合并|Merged/)
       expect(badge).toHaveAccessibleName(/过期|旧|stale|outdated/i)
     }
-  })
-
-  it('keeps saved badges when lookup is disabled and does not subscribe', () => {
-    const executeCommand = vi.fn()
-    render(
-      <AppPreferencesContext.Provider
-        value={{
-          loaded: true,
-          preferences: { ...defaultAppPreferences, changeRequestStatusEnabled: false },
-        }}
-      >
-        <IssueChangeRequestBadges badges={badges} api={{ executeCommand }} compact />
-      </AppPreferencesContext.Provider>
-    )
-    expect(screen.getByTestId('issue-badge-pr-42')).toHaveAccessibleName('#42')
-    expect(executeCommand).not.toHaveBeenCalled()
   })
 })

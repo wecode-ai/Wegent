@@ -12,6 +12,6 @@ pub mod skill_download;
 
 mod skills_api;
 
-pub mod skills_unified;
+pub use wegent_capabilities::skills_unified;
 
 mod input;

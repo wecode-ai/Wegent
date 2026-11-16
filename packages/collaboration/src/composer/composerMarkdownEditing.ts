@@ -49,14 +49,29 @@ export function moveComposerTableCell(direction: 1 | -1): Command {
 // A final text position lets the user leave a table/code block with the keyboard.
 export const trailingComposerParagraph = new Plugin({
   appendTransaction(transactions, _oldState, state) {
-    if (
-      !transactions.some((transaction) => transaction.docChanged) ||
-      state.doc.lastChild?.type === composerSchema.nodes.paragraph
-    )
+    if (!transactions.some((transaction) => transaction.docChanged))
       return null;
-    return state.tr.insert(
-      state.doc.content.size,
-      composerSchema.nodes.paragraph.create({ trailing: true }),
-    );
+    const transaction = state.tr;
+    const lastPosition =
+      state.doc.content.size - (state.doc.lastChild?.nodeSize ?? 0);
+    state.doc.forEach((node, position) => {
+      if (
+        node.type === composerSchema.nodes.paragraph &&
+        node.attrs.trailing &&
+        (node.content.size > 0 || position !== lastPosition)
+      ) {
+        transaction.setNodeMarkup(position, undefined, {
+          ...node.attrs,
+          trailing: false,
+        });
+      }
+    });
+    if (transaction.doc.lastChild?.type !== composerSchema.nodes.paragraph) {
+      transaction.insert(
+        transaction.doc.content.size,
+        composerSchema.nodes.paragraph.create({ trailing: true }),
+      );
+    }
+    return transaction.docChanged ? transaction : null;
   },
 });

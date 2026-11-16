@@ -150,3 +150,15 @@ describe('collaboration issue card model', () => {
     expect(build(undefined)).toBe(false)
   })
 })
+
+it('displays the collaboration group that owns an automatically assigned issue', () => {
+  expect(
+    resolveIssueCardAssignee({
+      id: 'issue',
+      title: 'Requirement',
+      priority: 'none',
+      assignee_group_id: 'group',
+      assignee_group_name: '产品全流程小组',
+    })
+  ).toEqual({ assigneeKind: 'group', assigneeName: '产品全流程小组' })
+})

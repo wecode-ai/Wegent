@@ -8,15 +8,25 @@ import {
 import { WeworkSchemeBridge } from './WeworkSchemeBridge'
 import { openWeworkScheme } from './schemeEvents'
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+
+const experimentFeature = vi.hoisted(() => ({ enabled: false, loaded: true }))
+vi.mock('@/features/experimental-features/useAppPreferenceFeatureState', () => ({
+  useAppPreferenceFeatureState: () => experimentFeature,
+}))
 
 const {
   openTab,
+  openHarnessAppTab,
+  listHarnessApps,
   invokeDesktopHost,
   isElectronRuntime,
   getDesktopWindowLabel,
   subscribeDesktopHostEvents,
 } = vi.hoisted(() => ({
   openTab: vi.fn(),
+  openHarnessAppTab: vi.fn(),
+  listHarnessApps: vi.fn(),
   invokeDesktopHost: vi.fn(),
   isElectronRuntime: vi.fn(() => false),
   getDesktopWindowLabel: vi.fn(() => 'main'),
@@ -38,25 +48,173 @@ vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost,
   subscribeDesktopHostEvents,
 }))
+vi.mock('@/api/local/harnessApps', () => ({
+  harnessAppsApi: { list: listHarnessApps },
+}))
+vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
+  openHarnessAppTab,
+}))
 
 beforeEach(() => {
   vi.clearAllMocks()
   isElectronRuntime.mockReturnValue(false)
   getDesktopWindowLabel.mockReturnValue('main')
+  listHarnessApps.mockResolvedValue([])
   workspaceTabs.tabs = []
   workspaceTabs.activeTabId = ''
   workspaceTabs.openTab = openTab
+  experimentFeature.enabled = false
+  experimentFeature.loaded = true
 })
 afterEach(cleanup)
 
 describe('Wework scheme bridge', () => {
+  it('keeps existing project notifications on the original board when the experiment is disabled', () => {
+    workspaceTabs.tabs = [
+      {
+        id: 'fixed-collaboration-exp',
+        kind: 'auxiliary',
+        title: '协作 exp',
+        contentRoute: '/collaboration-exp?projectId=old',
+        fixed: true,
+      },
+    ]
+    render(<WeworkSchemeBridge />)
+    act(() => openWeworkScheme('wework://boards/local/local-project/issues/OFF-1'))
+    expect(openTab).toHaveBeenCalledExactlyOnceWith('board', {
+      contentRoute: expect.stringMatching(
+        /^\/todo\?projectStore=local&projectId=local-project&itemId=OFF-1&focusRequest=/
+      ),
+    })
+    expect(workspaceTabs.selectTab).not.toHaveBeenCalled()
+  })
+
+  it('reuses an already open experiment for existing project notifications and retains its view scope', () => {
+    experimentFeature.enabled = true
+    workspaceTabs.tabs = [
+      {
+        id: 'fixed-collaboration-exp',
+        kind: 'auxiliary',
+        title: '协作 exp',
+        contentRoute:
+          '/collaboration-exp?view=tasks&projectStore=local&projectId=old&issueId=old&nodeId=old&discussion=private&inspector=details&timelineFilter=attachments&projectView=plan&assistantDeviceId=device&assistantTaskId=task&search=release&status=in_progress&relevance=all&future=keep',
+        fixed: true,
+      },
+    ]
+    render(<WeworkSchemeBridge />)
+    act(() => {
+      openWeworkScheme('wework://boards/local/local-project/issues/OFF-1/comments/comment-1')
+      openWeworkScheme('wework://boards/local/other-project/issues/OFF-2')
+    })
+    expect(openTab).not.toHaveBeenCalled()
+    expect(workspaceTabs.selectTab).toHaveBeenCalledTimes(2)
+    for (const [index, projectId, issueId] of [
+      [0, 'local-project', 'OFF-1'],
+      [1, 'other-project', 'OFF-2'],
+    ] as const) {
+      const [tabId, updates] = workspaceTabs.selectTab.mock.calls[index]
+      expect(tabId).toBe('fixed-collaboration-exp')
+      const params = new URL(updates.contentRoute, 'https://local').searchParams
+      expect(Object.fromEntries(params)).toMatchObject({
+        view: 'tasks',
+        projectStore: 'local',
+        projectId,
+        issueId,
+        search: 'release',
+        status: 'in_progress',
+        relevance: 'all',
+        future: 'keep',
+      })
+      expect(params.has('nodeId')).toBe(false)
+      expect(params.has('discussion')).toBe(false)
+      for (const key of [
+        'inspector',
+        'timelineFilter',
+        'projectView',
+        'assistantDeviceId',
+        'assistantTaskId',
+      ])
+        expect(params.has(key)).toBe(false)
+    }
+  })
+
+  it('leaves legacy notifications on /todo until an experiment tab has been opened', () => {
+    experimentFeature.enabled = true
+    render(<WeworkSchemeBridge />)
+    act(() => openWeworkScheme('wework://boards/local/local-project/issues/OFF-1'))
+    expect(openTab).toHaveBeenCalledExactlyOnceWith('board', {
+      contentRoute: expect.stringMatching(/^\/todo\?/),
+    })
+  })
+
+  it('ignores explicit experiment schemes while disabled and reuses the experiment after enabling', () => {
+    const { rerender } = render(<WeworkSchemeBridge />)
+    act(() =>
+      openWeworkScheme('wework://collaboration-exp?projectStore=local&projectId=one&issueId=first')
+    )
+    expect(openTab).not.toHaveBeenCalled()
+    experimentFeature.enabled = true
+    workspaceTabs.tabs = [
+      {
+        id: 'fixed-collaboration-exp',
+        kind: 'auxiliary',
+        title: '协作 exp',
+        contentRoute: '/collaboration-exp?projectId=old',
+        fixed: true,
+      },
+    ]
+    rerender(<WeworkSchemeBridge />)
+    act(() =>
+      openWeworkScheme('wework://collaboration-exp?projectStore=local&projectId=two&issueId=second')
+    )
+    expect(workspaceTabs.selectTab).toHaveBeenCalledExactlyOnceWith('fixed-collaboration-exp', {
+      title: expect.any(String),
+      contentRoute: expect.stringMatching(
+        /^\/collaboration-exp\?projectStore=local&projectId=two&issueId=second&focusRequest=\d+-1$/
+      ),
+    })
+    expect(openTab).not.toHaveBeenCalled()
+  })
+
+  it('gives repeated explicit experiment targets a new focus request while preserving their query', () => {
+    experimentFeature.enabled = true
+    render(<WeworkSchemeBridge />)
+    const params = new URLSearchParams({
+      projectStore: 'local',
+      projectId: 'one',
+      issueId: 'first',
+      nodeId: 'canonical-node',
+      projectScope: JSON.stringify(['local', 'other']),
+      search: 'release',
+      future: 'keep',
+      focusRequest: 'old-token',
+    })
+    act(() => {
+      openWeworkScheme(`wework://collaboration-exp?${params}`)
+      openWeworkScheme(`wework://collaboration-exp?${params}`)
+    })
+    expect(openTab).toHaveBeenCalledTimes(2)
+    const tokens = new Set<string>()
+    for (const [, updates] of openTab.mock.calls) {
+      const actual = new URL(updates.contentRoute, 'https://local').searchParams
+      tokens.add(actual.get('focusRequest')!)
+      actual.delete('focusRequest')
+      const expected = new URLSearchParams(params)
+      expected.delete('focusRequest')
+      expect(Object.fromEntries(actual)).toEqual(Object.fromEntries(expected))
+    }
+    expect(tokens.size).toBe(2)
+    expect(tokens.has('old-token')).toBe(false)
+  })
   it('opens a local assignment even when cloud authentication is unavailable', () => {
     render(<WeworkSchemeBridge />)
     act(() => {
       openWeworkScheme('wework://boards/local/local-project-1/issues/OFF-1')
     })
     expect(openTab).toHaveBeenCalledExactlyOnceWith('board', {
-      contentRoute: '/todo?projectStore=local&projectId=local-project-1&itemId=OFF-1',
+      contentRoute: expect.stringMatching(
+        /^\/todo\?projectStore=local&projectId=local-project-1&itemId=OFF-1&focusRequest=\d+-1$/
+      ),
     })
   })
 
@@ -221,9 +379,142 @@ describe('Wework scheme bridge', () => {
       await waitFor(() =>
         expect(invokeDesktopHost).toHaveBeenCalledWith('navigation.acknowledgeScheme', { id: 3 })
       )
-      expect(openTab).toHaveBeenCalledExactlyOnceWith(kind, { contentRoute })
+      expect(openTab).toHaveBeenCalledOnce()
+      const route = new URL(openTab.mock.calls[0][1].contentRoute, 'https://local')
+      expect(route.searchParams.has('focusRequest')).toBe(kind === 'board')
+      route.searchParams.delete('focusRequest')
+      expect(openTab.mock.calls[0][0]).toBe(kind)
+      expect(`${route.pathname}${route.search}`).toBe(contentRoute)
     }
   )
+
+  it('opens a registered DSH app through the workspace tab navigator', async () => {
+    render(
+      <CloudConnectionContext.Provider
+        value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
+      >
+        <WeworkSchemeBridge />
+      </CloudConnectionContext.Provider>
+    )
+
+    act(() => {
+      openWeworkScheme('wework://apps/wegent')
+    })
+
+    await waitFor(() =>
+      expect(openTab).toHaveBeenCalledWith('agent', { contentRoute: '/app/wegent' })
+    )
+  })
+
+  it('rejects an unregistered DSH app without opening a route-shaped tab', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    render(<WeworkSchemeBridge />)
+
+    act(() => {
+      openWeworkScheme('wework://apps/harness-research-local')
+    })
+
+    await waitFor(() => expect(warn).toHaveBeenCalled())
+    expect(openTab).not.toHaveBeenCalled()
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+  })
+
+  it('keeps an app deep link pending until the DSH app slot loads', async () => {
+    const runtime = window.__WEWORK_DSH_UI__!
+    const originalGetEntries = runtime.getEntries
+    const originalSubscribe = runtime.subscribe
+    let notify = () => {}
+    runtime.getEntries = slotName =>
+      slotName === WEWORK_DSH_SLOTS.app ? [] : originalGetEntries(slotName)
+    runtime.subscribe = (slotName, listener) => {
+      if (slotName === WEWORK_DSH_SLOTS.app) notify = listener
+      return () => {}
+    }
+    try {
+      render(
+        <CloudConnectionContext.Provider
+          value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
+        >
+          <WeworkSchemeBridge />
+        </CloudConnectionContext.Provider>
+      )
+      act(() => {
+        openWeworkScheme('wework://apps/wegent')
+      })
+      await waitFor(() => expect(openTab).not.toHaveBeenCalled())
+
+      runtime.getEntries = originalGetEntries
+      act(() => notify())
+
+      await waitFor(() =>
+        expect(openTab).toHaveBeenCalledWith('agent', { contentRoute: '/app/wegent' })
+      )
+    } finally {
+      runtime.getEntries = originalGetEntries
+      runtime.subscribe = originalSubscribe
+    }
+  })
+
+  it('opens an installed Smart app returned by its marketplace identity', async () => {
+    const installation = {
+      id: 'research-local',
+      smartAppId: 42,
+      manifest: { displayName: 'Research desk' },
+      webUrl: 'http://127.0.0.1:3000',
+      state: 'running',
+    }
+    listHarnessApps.mockResolvedValue([installation])
+    render(<WeworkSchemeBridge />)
+
+    act(() => {
+      openWeworkScheme('wework://smart-apps/42')
+    })
+
+    await waitFor(() =>
+      expect(openHarnessAppTab).toHaveBeenCalledWith(expect.anything(), installation)
+    )
+    expect(openTab).not.toHaveBeenCalled()
+  })
+
+  it('routes a missing Smart app to the targeted installation prompt', async () => {
+    render(<WeworkSchemeBridge />)
+
+    act(() => {
+      openWeworkScheme('wework://smart-apps/42')
+    })
+
+    await waitFor(() =>
+      expect(openTab).toHaveBeenCalledWith('auxiliary', {
+        title: '智能工作台',
+        contentRoute: '/sites?app_type=smart_app&smartAppId=42',
+      })
+    )
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+  })
+
+  it('routes a stopped Smart app through its targeted start flow', async () => {
+    const installation = {
+      id: 'research-local',
+      smartAppId: 42,
+      manifest: { displayName: 'Research desk' },
+      webUrl: null,
+      state: 'installed',
+    }
+    listHarnessApps.mockResolvedValue([installation])
+    render(<WeworkSchemeBridge />)
+
+    act(() => {
+      openWeworkScheme('wework://smart-apps/42')
+    })
+
+    await waitFor(() =>
+      expect(openTab).toHaveBeenCalledWith('auxiliary', {
+        title: '智能工作台',
+        contentRoute: '/sites?app_type=smart_app&smartAppId=42',
+      })
+    )
+    expect(openHarnessAppTab).not.toHaveBeenCalled()
+  })
 
   it('acknowledges native links only after navigation, including StrictMode remounts', async () => {
     isElectronRuntime.mockReturnValue(true)
@@ -242,6 +533,50 @@ describe('Wework scheme bridge', () => {
     expect(openTab).toHaveBeenCalledExactlyOnceWith('task', {
       contentRoute: '/runtime-tasks?deviceId=device&taskId=task',
     })
+  })
+
+  it('retries only acknowledgement after a native navigation acknowledgement fails', async () => {
+    isElectronRuntime.mockReturnValue(true)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let requests = [
+      { id: 1, url: 'wework://tasks/device-1/task-1' },
+      { id: 2, url: 'wework://tasks/device-2/task-2' },
+    ]
+    let failedFirstAcknowledgement = false
+    invokeDesktopHost.mockImplementation(async (capability: string, input?: { id?: number }) => {
+      if (capability === 'navigation.pendingSchemes') return requests
+      if (capability === 'navigation.acknowledgeScheme' && input?.id === 1) {
+        if (!failedFirstAcknowledgement) {
+          failedFirstAcknowledgement = true
+          throw new Error('acknowledgement unavailable')
+        }
+      }
+      requests = requests.filter(request => request.id !== input?.id)
+      return undefined
+    })
+    render(<WeworkSchemeBridge />)
+
+    await waitFor(() =>
+      expect(invokeDesktopHost).toHaveBeenCalledWith('navigation.acknowledgeScheme', { id: 2 })
+    )
+    expect(openTab).toHaveBeenCalledTimes(2)
+
+    const handler = subscribeDesktopHostEvents.mock.calls[0][0]
+    act(() => handler({ type: 'wework-scheme-requested' }))
+
+    await waitFor(() =>
+      expect(
+        invokeDesktopHost.mock.calls.filter(
+          ([capability, input]) =>
+            capability === 'navigation.acknowledgeScheme' && (input as { id?: number }).id === 1
+        )
+      ).toHaveLength(2)
+    )
+    expect(openTab).toHaveBeenCalledTimes(2)
+    expect(error).toHaveBeenCalledWith(
+      '[Wework] Failed to acknowledge scheme navigation',
+      expect.any(Error)
+    )
   })
 
   it('keeps native board requests unacknowledged until authentication is restored', async () => {
@@ -297,7 +632,9 @@ describe('Wework scheme bridge', () => {
     )
     await waitFor(() =>
       expect(openTab).toHaveBeenCalledWith('board', {
-        contentRoute: '/todo?projectStore=backend&projectId=12&itemId=ISSUE-1',
+        contentRoute: expect.stringMatching(
+          /^\/todo\?projectStore=backend&projectId=12&itemId=ISSUE-1&focusRequest=\d+-1$/
+        ),
       })
     )
     expect(openTab).toHaveBeenCalledOnce()

@@ -4,7 +4,7 @@
 //! Search one owned or durably project-bound runtime transcript.
 
 mod access;
-mod request;
+pub(crate) mod request;
 mod rpc;
 
 use brz_http_server::StatusCode;

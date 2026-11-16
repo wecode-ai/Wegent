@@ -212,9 +212,10 @@ class TestHelpMessage:
         assert "/bind" in HELP_MESSAGE
         assert "/mode" in HELP_MESSAGE
         assert "/chat" in HELP_MESSAGE
-        assert "/task" in HELP_MESSAGE
-        assert "/switch" in HELP_MESSAGE
-        assert "/cancel" in HELP_MESSAGE
+        assert "/standin" in HELP_MESSAGE
+        assert "/task" not in HELP_MESSAGE
+        assert "/switch" not in HELP_MESSAGE
+        assert "/cancel" not in HELP_MESSAGE
 
     def test_help_message_mentions_index_support(self):
         """Test that help message mentions device index support."""

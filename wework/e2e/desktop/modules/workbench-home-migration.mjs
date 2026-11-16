@@ -1,3 +1,4 @@
+import { fetchLocalRuntime } from './runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import {
@@ -15,7 +16,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { DatabaseSync } from 'node:sqlite'
 
-import { CHECKPOINT_TASK_PROMPT, MODEL_PROVIDER_ID } from './shared.mjs'
+import { CHECKPOINT_TASK_PROMPT, MODEL_API_KEY, MODEL_PROVIDER_ID } from './shared.mjs'
 import { verifyNativeMcpEnvironment } from './native-mcp-environment.mjs'
 import { verifyNativeAgentMcp } from './native-agent-mcp.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
@@ -84,9 +85,25 @@ async function runNativeTurn(fixture, home, resumeId) {
         '--skip-git-repo-check',
         `${CHECKPOINT_TASK_PROMPT} ${NATIVE_SESSION_MARKER}`,
       ]
-  // Desktop startup may select a different default provider. Native migration
-  // probes must keep using the runner's model service when resuming a session.
-  args.push('-c', `model_provider=${JSON.stringify(MODEL_PROVIDER_ID)}`)
+  // Upgrade changes the persisted provider identity. Native CLI probes must use
+  // that identity too, while still addressing only the fixture model service.
+  const provider = resumeId ? '~' : MODEL_PROVIDER_ID
+  args.push('-c', `model_provider=${JSON.stringify(provider)}`)
+  if (resumeId) {
+    const profile = {
+      name: 'Workbench migration fixture',
+      base_url: `http://127.0.0.1:${process.env.WEWORK_E2E_MODEL_SERVER_PORT}/v1`,
+      experimental_bearer_token: MODEL_API_KEY,
+      wire_api: 'responses',
+      requires_openai_auth: false,
+    }
+    args.push(
+      '-c',
+      `model_providers.${provider}={${Object.entries(profile)
+        .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+        .join(',')}}`
+    )
+  }
   const execution = promisify(execFile)(fixture.codexBinary, args, {
     cwd: fixture.workspace,
     env: {
@@ -154,11 +171,11 @@ async function readPackagedNamespace(appBinary, environment) {
 
 async function requestExecutor(control, method, timeoutMs) {
   const origin = await control.command('getLocationOrigin', 'body')
-  const response = await fetch(`${origin}/wework/executor/v1/rpc`, {
+  const response = await fetchLocalRuntime(control, `${origin}/wework/executor/v1/rpc`, {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ id: `workbench-home-${method}`, method, params: {} }),
-    signal: AbortSignal.timeout(timeoutMs),
+    timeoutMs: timeoutMs,
   })
   assert.equal(response.ok, true, `${method} returned HTTP ${response.status}`)
   const payload = await response.json()
@@ -245,6 +262,8 @@ export function createWorkbenchHomeMigrationScenario({
     assert.equal(await realpath(fixture.legacyDatabase), database)
     const db = new DatabaseSync(database, { readOnly: true })
     try {
+      // The executor still writes this live database while migration is inspected.
+      db.exec('PRAGMA busy_timeout = 10000')
       assert.equal(db.prepare('SELECT value FROM migration_probe').get().value, 'before-upgrade')
       assert.equal(db.prepare('PRAGMA quick_check').get().quick_check, 'ok')
     } finally {

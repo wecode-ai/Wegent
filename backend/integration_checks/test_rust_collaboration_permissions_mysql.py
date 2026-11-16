@@ -22,7 +22,9 @@ SQL = (
 ).read_text()
 
 
-def test_cp02_cp03_cp04_cp05_cp06_cp07_cp18_rust_catalog_mysql_policy(mysql_url):
+def test_cp02_cp03_cp04_cp05_cp06_cp07_cp13_cp18_cp19_rust_catalog_mysql_policy(
+    mysql_url,
+):
     engine = sa.create_engine(mysql_url)
     Base.metadata.create_all(engine)
     try:
@@ -122,6 +124,19 @@ def test_cp02_cp03_cp04_cp05_cp06_cp07_cp18_rust_catalog_mysql_policy(mysql_url)
             assert priorities(member.id) == {}
             # Space ownership supplies project governance without a member row.
             assert priorities(owner.id) == {"1001": 1}
+            # A creator's explicit administration is Maintainer, never Owner.
+            direct_admin = grant("CloudProject", 1001, "user", member.id, "Maintainer")
+            assert priorities(member.id) == {"1001": 1}
+            db.delete(direct_admin)
+            # Transferring actual ownership moves inherited project authority;
+            # historical creator identity cannot preserve or elevate access.
+            space.user_id = member.id
+            assert priorities(owner.id) == {}
+            assert priorities(member.id) == {"1001": 1}
+            space.user_id = owner.id
+            assert priorities(owner.id) == {"1001": 1}
+            assert priorities(member.id) == {}
+            # A direct grant cannot downgrade the space owner's governance.
             owner_override = grant("CloudProject", 1001, "user", owner.id, "Viewer")
             assert priorities(owner.id) == {"1001": 1}
             db.delete(owner_override)

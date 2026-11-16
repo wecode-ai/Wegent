@@ -1,4 +1,5 @@
 import * as http from 'http'
+import { MockScopeStore, mockRequestScope, withMockScope } from './mock-scope'
 
 interface McpToolCall {
   timestamp: string
@@ -8,35 +9,53 @@ interface McpToolCall {
   isError: boolean
 }
 
-const toolCalls: McpToolCall[] = []
-const contentGates = new Map<
-  string,
-  { waiting: boolean; promise: Promise<void>; release: () => void }
->()
+const marketplaceServers = [
+  {
+    id: 'product-comparison',
+    name: '商品数据对比',
+    description: 'Compare product catalog data across marketplaces',
+    type: 'streamable-http',
+    base_url: 'http://127.0.0.1:9999/mcp',
+    is_active: true,
+    tags: ['商品', '数据'],
+  },
+  {
+    id: 'document-search',
+    name: '文档检索助手',
+    description: 'Search product documentation and internal knowledge',
+    type: 'streamable-http',
+    base_url: 'http://127.0.0.1:9999/mcp',
+    is_active: true,
+    tags: ['文档', '搜索'],
+  },
+]
+
+const states = new MockScopeStore(() => ({
+  toolCalls: [] as McpToolCall[],
+  contentGates: new Map<
+    string,
+    { waiting: boolean; promise: Promise<void>; release: () => void }
+  >(),
+  deniedNodeIds: new Set<string>(),
+  documentNames: { 'doc-d1': 'Doc-D1_新设计' } as Record<string, string>,
+  documentContents: {} as Record<string, string>,
+  nodeFailures: {} as Record<string, string>,
+  hiddenNodeIds: new Set<string>(),
+}))
 
 function setPausedContentNodes(nodeIds: string[]): void {
-  for (const [nodeId, gate] of contentGates) {
+  for (const [nodeId, gate] of states.current().contentGates) {
     if (!nodeIds.includes(nodeId)) {
-      contentGates.delete(nodeId)
+      states.current().contentGates.delete(nodeId)
       gate.release()
     }
   }
   for (const nodeId of nodeIds) {
-    if (contentGates.has(nodeId)) continue
+    if (states.current().contentGates.has(nodeId)) continue
     let release!: () => void
     const promise = new Promise<void>(resolve => (release = resolve))
-    contentGates.set(nodeId, { waiting: false, promise, release })
+    states.current().contentGates.set(nodeId, { waiting: false, promise, release })
   }
-}
-
-const state = {
-  deniedNodeIds: new Set<string>(),
-  documentNames: { 'doc-d1': 'Doc-D1_新设计' } as Record<string, string>,
-  // Import-scenario controls: content overrides, injected get_document_content
-  // failures, and nodes hidden from list_nodes.
-  documentContents: {} as Record<string, string>,
-  nodeFailures: {} as Record<string, string>,
-  hiddenNodeIds: new Set<string>(),
 }
 
 export const EXTERNAL_IMPORT_NODES = {
@@ -114,7 +133,24 @@ export function handleProviderMcpHttpRequest(
   body: string,
   port: number
 ): boolean {
+  return withMockScope(mockRequestScope(req), () => handleScopedRequest(req, res, body, port))
+}
+
+function handleScopedRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  body: string,
+  port: number
+): boolean {
   const url = new URL(req.url || '/', `http://localhost:${port}`)
+  if (url.pathname === '/mock-mcp-catalog/servers' && req.method === 'GET') {
+    writeControlJson(res, 200, {
+      success: true,
+      total: marketplaceServers.length,
+      servers: marketplaceServers,
+    })
+    return true
+  }
   if (url.pathname === '/mcp' && req.method === 'POST') {
     handleMcpRequest(req, res, body, port)
     return true
@@ -125,17 +161,17 @@ export function handleProviderMcpHttpRequest(
     return true
   }
   if (url.pathname === '/mcp-control/calls' && req.method === 'GET') {
-    writeControlJson(res, 200, toolCalls)
+    writeControlJson(res, 200, states.current().toolCalls)
     return true
   }
   if (url.pathname === '/mcp-control/reset' && req.method === 'POST') {
     setPausedContentNodes([])
-    toolCalls.length = 0
-    state.deniedNodeIds.clear()
-    state.documentNames = { 'doc-d1': 'Doc-D1_新设计' }
-    state.documentContents = {}
-    state.nodeFailures = {}
-    state.hiddenNodeIds.clear()
+    states.current().toolCalls.length = 0
+    states.current().deniedNodeIds.clear()
+    states.current().documentNames = { 'doc-d1': 'Doc-D1_新设计' }
+    states.current().documentContents = {}
+    states.current().nodeFailures = {}
+    states.current().hiddenNodeIds.clear()
     writeControlJson(res, 200, { status: 'reset' })
     return true
   }
@@ -152,31 +188,34 @@ export function handleProviderMcpHttpRequest(
     // an empty object clears that control. documentNames merges instead: it
     // layers display-name overrides on top of the defaults.
     if (config?.deniedNodeIds) {
-      state.deniedNodeIds = new Set(config.deniedNodeIds)
+      states.current().deniedNodeIds = new Set(config.deniedNodeIds)
     }
     if (config?.documentNames) {
-      state.documentNames = { ...state.documentNames, ...config.documentNames }
+      states.current().documentNames = {
+        ...states.current().documentNames,
+        ...config.documentNames,
+      }
     }
     if (config?.documentContents) {
-      state.documentContents = config.documentContents
+      states.current().documentContents = config.documentContents
     }
     if (config?.nodeFailures) {
-      state.nodeFailures = config.nodeFailures
+      states.current().nodeFailures = config.nodeFailures
     }
     if (config?.hiddenNodeIds) {
-      state.hiddenNodeIds = new Set(config.hiddenNodeIds)
+      states.current().hiddenNodeIds = new Set(config.hiddenNodeIds)
     }
     if (config?.pausedContentNodeIds) {
       setPausedContentNodes(config.pausedContentNodeIds)
     }
     writeControlJson(res, 200, {
-      deniedNodeIds: [...state.deniedNodeIds],
-      documentNames: state.documentNames,
-      documentContents: state.documentContents,
-      nodeFailures: state.nodeFailures,
-      hiddenNodeIds: [...state.hiddenNodeIds],
-      pausedContentNodeIds: [...contentGates.keys()],
-      waitingContentNodeIds: [...contentGates]
+      deniedNodeIds: [...states.current().deniedNodeIds],
+      documentNames: states.current().documentNames,
+      documentContents: states.current().documentContents,
+      nodeFailures: states.current().nodeFailures,
+      hiddenNodeIds: [...states.current().hiddenNodeIds],
+      pausedContentNodeIds: [...states.current().contentGates.keys()],
+      waitingContentNodeIds: [...states.current().contentGates]
         .filter(([, gate]) => gate.waiting)
         .map(([nodeId]) => nodeId),
     })
@@ -186,7 +225,7 @@ export function handleProviderMcpHttpRequest(
 }
 
 export function providerMcpToolCallCount(): number {
-  return toolCalls.length
+  return states.current().toolCalls.length
 }
 
 function handleMcpRequest(
@@ -237,7 +276,8 @@ async function handleMcpRequestAsync(
         ? (params.arguments as Record<string, unknown>)
         : {}
     const nodeId = String(args.nodeId || args.node_id || '')
-    const gate = name === 'get_document_content' ? contentGates.get(nodeId) : undefined
+    const gate =
+      name === 'get_document_content' ? states.current().contentGates.get(nodeId) : undefined
     if (gate) {
       gate.waiting = true
       await gate.promise
@@ -267,7 +307,7 @@ async function handleMcpRequestAsync(
     // Expose a tool call only after its MCP response has been fully flushed.
     // Deletion E2E scenarios use this as the provider-fetch completion signal
     // before observing the backend's guarded attachment-write stability window.
-    if (completedToolCall) toolCalls.push(completedToolCall)
+    if (completedToolCall) states.current().toolCalls.push(completedToolCall)
   })
 }
 
@@ -287,7 +327,7 @@ async function callTool(
   args: Record<string, unknown>
 ): Promise<{ result: unknown; isError: boolean }> {
   const nodeId = String(args.nodeId || args.node_id || '')
-  if (nodeId && state.deniedNodeIds.has(nodeId)) {
+  if (nodeId && states.current().deniedNodeIds.has(nodeId)) {
     return {
       result: { code: 'permission_denied', message: `No permission to read ${nodeId}` },
       isError: true,
@@ -328,7 +368,7 @@ async function callTool(
 }
 
 function visibleNodes(items: Record<string, unknown>[]): Record<string, unknown>[] {
-  return items.filter(item => !state.hiddenNodeIds.has(String(item.nodeId || '')))
+  return items.filter(item => !states.current().hiddenNodeIds.has(String(item.nodeId || '')))
 }
 
 function listNodes(args: Record<string, unknown>): Record<string, unknown> {
@@ -460,7 +500,7 @@ function documentInfo(nodeId: string) {
         result: {
           success: true,
           nodeId,
-          name: state.documentNames[nodeId] || document.name,
+          name: states.current().documentNames[nodeId] || document.name,
           nodeType: 'file',
           contentType: 'ALIDOC',
           extension: 'adoc',
@@ -472,7 +512,7 @@ function documentInfo(nodeId: string) {
 }
 
 function documentContent(nodeId: string) {
-  const failureCode = state.nodeFailures[nodeId]
+  const failureCode = states.current().nodeFailures[nodeId]
   if (failureCode) {
     return {
       result: { code: failureCode, message: `Injected failure for ${nodeId}` },
@@ -483,7 +523,7 @@ function documentContent(nodeId: string) {
   if (!document) {
     return { result: { code: 'not_found', message: `Unknown document ${nodeId}` }, isError: true }
   }
-  const content = state.documentContents[nodeId] ?? document.content
+  const content = states.current().documentContents[nodeId] ?? document.content
   return { result: { success: true, nodeId, markdown: content }, isError: false }
 }
 
@@ -495,7 +535,7 @@ function renameDocument(nodeId: string, args: Record<string, unknown>) {
       isError: true,
     }
   }
-  state.documentNames[nodeId] = newName
+  states.current().documentNames[nodeId] = newName
   return { result: { nodeId, name: newName, updated: true }, isError: false }
 }
 
@@ -508,7 +548,7 @@ function node(
 ): Record<string, unknown> {
   return {
     nodeId,
-    name: state.documentNames[nodeId] || name,
+    name: states.current().documentNames[nodeId] || name,
     nodeType: nodeType === 'doc' ? 'file' : 'folder',
     parentId,
     workspaceId,

@@ -184,7 +184,7 @@ export function SmartAppDevelopmentDialog({
           setName(smartAppSlug(event.target.value))
           setError(null)
         }}
-        className="h-9 rounded-lg border border-border/50 bg-background px-3 font-mono text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+        className="h-9 rounded-lg border border-border/50 bg-background px-3 font-mono text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
       />
       {mode === 'create' ? (
         <span className="text-xs">
@@ -246,7 +246,7 @@ export function SmartAppDevelopmentDialog({
                 if (!nameEdited) setName(smartAppSlug(value) || generatedName)
                 setError(null)
               }}
-              className="h-9 rounded-lg border border-border/50 bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+              className="h-9 rounded-lg border border-border/50 bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
             />
           </label>
 
@@ -259,7 +259,7 @@ export function SmartAppDevelopmentDialog({
                 disabled={submitting}
                 rows={3}
                 onChange={event => setDescription(event.target.value)}
-                className="resize-none rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+                className="resize-none rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
               />
             </label>
           ) : null}
@@ -296,7 +296,7 @@ export function SmartAppDevelopmentDialog({
                   setError(null)
                   setShowChooseLocation(false)
                 }}
-                className="h-9 min-w-0 flex-1 rounded-lg border border-border/50 bg-background px-3 font-mono text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-border/50 bg-background px-3 font-mono text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
               />
               <Button
                 type="button"
@@ -329,7 +329,7 @@ export function SmartAppDevelopmentDialog({
                 data-testid="smart-app-development-advanced-toggle"
                 disabled={submitting}
                 onClick={() => setAdvancedOpen(open => !open)}
-                className="flex w-full min-h-11 items-center justify-between rounded-lg text-left text-sm text-text-secondary hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-50"
+                className="flex w-full min-h-11 items-center justify-between rounded-lg text-left text-sm text-text-secondary hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-50"
               >
                 {t('workbench.smart_apps_advanced', '高级')}
                 <ChevronDown
@@ -359,7 +359,7 @@ export function SmartAppDevelopmentDialog({
                               data-testid={`smart-app-development-template-${option.value}`}
                               disabled={submitting}
                               onClick={() => setTemplate(option.value)}
-                              className={`min-h-11 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 ${
+                              className={`min-h-11 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 ${
                                 selected
                                   ? 'border-text-primary bg-muted text-text-primary'
                                   : 'border-border/50 text-text-secondary hover:bg-muted/50'

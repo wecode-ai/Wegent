@@ -1,8 +1,19 @@
+import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { join } from 'node:path'
 
+import { observeCommentNavigation } from '../modules/comment-navigation.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import {
+  reloadMainWindow,
+  waitForNativeCollaborationPlatform,
+} from '../modules/workspace-flows.mjs'
+import {
+  collaborationProjectViewSelector,
+  selectCollaborationProjectView,
+} from '../modules/collaboration-project-navigation.mjs'
 
 const PROJECT_NAME = '评论提及通知验收'
 const MENTIONER_NAME = 'desktop-e2e-mentioner'
@@ -13,7 +24,6 @@ const COMMENT_DOCUMENT_PATH = '/comment-link-fixture'
 const COMMENT_DOCUMENT_TEXT = 'Wework comment link fixture loaded'
 const COMMENT_LATEST_DOCUMENT_TEXT = 'Wework latest comment link fixture loaded'
 const CLIENT_MESSAGE_PREFIX = 'desktop-e2e-mention'
-const FLASH_ANIMATION = 'task-detail-comment-flash'
 
 /**
  * How long arriving at the mentioned comment may take.
@@ -81,7 +91,7 @@ async function waitForApiValue(load, predicate, message, timeoutMs) {
  * from the notification also verifies that both open in the Wework browser
  * without navigating the workbench itself.
  */
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutMs }) {
   let backendUrl = ''
   let ownerToken = ''
   let owner = null
@@ -141,21 +151,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     } finally {
       socket.disconnect()
     }
-  }
-
-  async function waitForFlash(control, selector, timeoutMs) {
-    const deadline = Date.now() + timeoutMs
-    let latest = ''
-    while (Date.now() < deadline) {
-      // The surface the notification opened can still be swapping in, so a
-      // missing comment means "not yet", not "never flashed".
-      latest = await control
-        .command('getComputedStyleValue', selector, { value: 'animation-name' })
-        .catch(() => '')
-      if (latest.includes(FLASH_ANIMATION)) return latest
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-    }
-    assert.fail(`The mentioned comment never flashed: animation-name=${latest}`)
   }
 
   async function waitForBrowserPage(control, label, expectedUrl, expectedText) {
@@ -486,6 +481,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       const activeSurface = '[data-workspace-tab-content][aria-hidden="false"]'
+      const closeIssue = async () => {
+        await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+        // The board remains covered until the drawer's exit animation commits.
+        await control.command(
+          'waitFor',
+          `${activeSurface} [data-testid="collaboration-issue-detail"]`,
+          { visible: false, timeoutMs: uiTimeoutMs }
+        )
+      }
       await control.command(
         'waitFor',
         `${activeSurface} [data-testid="collaboration-platform-root"]`,
@@ -505,7 +509,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         uiTimeoutMs
       )
       assert.equal(readEmptyIssue.activity_read_sequence, 0)
-      await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      await closeIssue()
+      await showAllCollaborationIssues(control, activeSurface)
       const emptyCard = `${activeSurface} [data-testid="cloud-todo-card-${emptyUnreadIssue.id}"]`
       const unreadDot = `${activeSurface} [data-testid="cloud-todo-card-unread-${emptyUnreadIssue.id}"]`
       await control.command('waitFor', emptyCard)
@@ -516,7 +521,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         (await ownerRequest(`/api/v1/loop-items/${emptyUnreadIssue.id}`)).is_unread,
         false
       )
-      await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
+      await closeIssue()
       await control.command('waitFor', unreadDot, { visible: false })
 
       const message = await postMentionComment(`${CLIENT_MESSAGE_PREFIX}-${Date.now()}`)
@@ -555,16 +560,28 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
         timeoutMs: uiTimeoutMs,
       })
-      const linkStartedAt = Date.now()
-      await control.command('openWeworkScheme', 'body', { value: saved.url })
-      const linkCommentMs = await waitForComment(
+      const navigation = {
         control,
-        { activeSurface, commentId: message.messageId, issueTitle: ISSUE_TITLE },
-        linkStartedAt,
-        uiTimeoutMs
-      )
-      await waitForFlash(control, commentSelectorFor(activeSurface, message.messageId), uiTimeoutMs)
-      const linkFlashMs = Date.now() - linkStartedAt
+        selector: commentSelectorFor(activeSurface, message.messageId),
+        prepare: () => waitForNativeCollaborationPlatform(control, activeSurface, uiTimeoutMs),
+        waitForComment: startedAt =>
+          waitForComment(
+            control,
+            { activeSurface, commentId: message.messageId, issueTitle: ISSUE_TITLE },
+            startedAt,
+            uiTimeoutMs
+          ),
+        timeoutMs: uiTimeoutMs,
+      }
+      const { commentMs: linkCommentMs, flashMs: linkFlashMs } = await observeCommentNavigation({
+        ...navigation,
+        navigate: () => control.command('openWeworkScheme', 'body', { value: saved.url }),
+        recordSample: sample =>
+          writeFile(
+            join(resultDir, 'comment-notification-link-frames.json'),
+            JSON.stringify(sample)
+          ),
+      })
       assertNavigationBudget('The DingTalk link', linkCommentMs, linkFlashMs)
       await verifyCommentLinks(control, activeSurface, message.messageId)
       await captureScreenshot(control, 'comment-notification-03-comment-links.png')
@@ -614,16 +631,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       assert.ok(summary.includes(PROJECT_NAME), `The inbox row must name its board: ${summary}`)
       await captureScreenshot(control, 'comment-notification-01-inbox.png')
 
-      const inboxStartedAt = Date.now()
-      await control.command('click', `[data-testid="wework-notification-${saved.id}"]`)
-      const inboxCommentMs = await waitForComment(
-        control,
-        { activeSurface, commentId: message.messageId, issueTitle: ISSUE_TITLE },
-        inboxStartedAt,
-        uiTimeoutMs
-      )
-      await waitForFlash(control, commentSelectorFor(activeSurface, message.messageId), uiTimeoutMs)
-      const inboxFlashMs = Date.now() - inboxStartedAt
+      const { commentMs: inboxCommentMs, flashMs: inboxFlashMs } = await observeCommentNavigation({
+        ...navigation,
+        navigate: () => control.command('click', `[data-testid="wework-notification-${saved.id}"]`),
+        recordSample: sample =>
+          writeFile(
+            join(resultDir, 'comment-notification-inbox-frames.json'),
+            JSON.stringify(sample)
+          ),
+      })
       assertNavigationBudget('Opening the inbox row', inboxCommentMs, inboxFlashMs)
       await captureScreenshot(control, 'comment-notification-02-comment-flashed.png')
 
@@ -634,14 +650,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       )
 
       // Extend the scenario after its original navigation and notification checks.
-      await control.command('click', `${activeSurface} [data-testid="cloud-todo-detail-close"]`)
-      await control.command(
-        'waitFor',
-        `${activeSurface} [data-testid="collaboration-issue-detail"]`,
-        {
-          visible: false,
-        }
-      )
+      await closeIssue()
       const boardMessage = await postMentionComment(`${CLIENT_MESSAGE_PREFIX}-board-${Date.now()}`)
       const boardNotification = await waitForApiValue(
         async () => {
@@ -663,8 +672,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('openWeworkScheme', 'body', {
         value: `wework://boards/${project.id}`,
       })
-      await control.command('waitFor', `${activeSurface} [data-testid="collaboration-tab-board"]`)
-      await control.command('click', `${activeSurface} [data-testid="collaboration-tab-board"]`)
+      await control.command('waitFor', collaborationProjectViewSelector(activeSurface, 'board'))
+      await selectCollaborationProjectView(control, activeSurface, 'board')
       const boardCard = `${activeSurface} [data-testid="cloud-todo-card-drop-${issue.id}"]`
       await control.command('waitFor', boardCard, { text: ISSUE_TITLE, visible: true })
       assert.equal(

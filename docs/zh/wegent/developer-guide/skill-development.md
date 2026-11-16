@@ -330,7 +330,7 @@ CREATE TABLE skill_binaries (
 
 ## 内置 Skills
 
-位于 `backend/init_data/skills/`：
+位于 `backend-rs/init_data/skills/`：
 
 | Skill | 描述 |
 |-------|------|

@@ -1,7 +1,14 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Readable } from 'node:stream'
-import { test } from 'vitest'
+import { EventEmitter } from 'node:events'
+import { onTestFinished, test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
+import { createDesktopScenario as createTemporaryChatScenario } from '../e2e/desktop/scenarios/temporary-chat.scenario.mjs'
 import {
   CLOUD_VISION_SIDECAR_CASE,
   LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
@@ -21,6 +28,118 @@ function predictionMetadata(requestKind = 'turn') {
     }),
   }
 }
+
+async function activeTemporaryChatScenario() {
+  const scenario = createTemporaryChatScenario({ uiTimeoutMs: 100 })
+  const stopBeforeUi = new Error('Stop before desktop UI setup')
+  await assert.rejects(
+    scenario.verify({
+      async command() {
+        throw stopBeforeUi
+      },
+    }),
+    error => error === stopBeforeUi
+  )
+  return scenario
+}
+
+function memoryResponse() {
+  return {
+    status: null,
+    output: '',
+    writeHead(status) {
+      this.status = status
+    },
+    flushHeaders() {
+      assert.fail('A prediction entered the held conversation response')
+    },
+    end(output) {
+      this.output = output
+    },
+    events() {
+      return this.output
+        .split('\n')
+        .filter(line => line.startsWith('data: '))
+        .map(line => JSON.parse(line.slice(6)))
+    },
+  }
+}
+
+test.each([
+  ['native turn', '/v1/responses', 'turn'],
+  ['native compaction', '/responses', 'compaction'],
+  ['converted messages', '/responses', null],
+])('routes %s predictions before temporary-chat history markers', async (_label, path, kind) => {
+  const scenario = await activeTemporaryChatScenario()
+  const history = [
+    'TEMPORARY_CHAT_SOURCE_CONVERSATION',
+    'TEMPORARY_CHAT_INITIAL_MESSAGE',
+    'TEMPORARY_CHAT_DIRECT_FOLLOW_UP',
+    'TEMPORARY_CHAT_AFTER_CAPABILITY_RESTART',
+    REPLY_PREDICTION_PROMPT,
+  ].map(content => ({ role: 'user', content }))
+  const body = kind
+    ? { client_metadata: predictionMetadata(kind), input: history }
+    : { messages: history }
+  const request = Readable.from([JSON.stringify(body)])
+  request.method = 'POST'
+  const response = memoryResponse()
+
+  assert.equal(await scenario.handleHttp(request, response, new URL(path, 'http://fixture')), true)
+  assert.equal(response.status, 200)
+  const events = response.events()
+  assert.equal(events.at(-1).type, 'response.completed')
+  const message = events.find(event => event.item?.type === 'message')
+  assert.deepEqual(JSON.parse(message.item.content[0].text), { suggestion: null })
+})
+
+test('preserves foreground temporary-chat responses after a prediction in history', async () => {
+  const scenario = await activeTemporaryChatScenario()
+  const request = Readable.from([
+    JSON.stringify({
+      messages: [
+        { role: 'user', content: REPLY_PREDICTION_PROMPT },
+        { role: 'assistant', content: '{"suggestion":null}' },
+        { role: 'user', content: 'TEMPORARY_CHAT_INITIAL_MESSAGE' },
+      ],
+    }),
+  ])
+  request.method = 'POST'
+  const response = memoryResponse()
+
+  assert.equal(
+    await scenario.handleHttp(request, response, new URL('http://fixture/v1/responses')),
+    true
+  )
+  const message = response.events().find(event => event.item?.type === 'message')
+  assert.equal(message.item.content[0].text, 'TEMPORARY_CHAT_INITIAL_COMPLETE')
+})
+
+test.each(['input', 'messages'])(
+  'routes recovered side-chat %s by its latest message instead of old markers',
+  async field => {
+    const scenario = await activeTemporaryChatScenario()
+    const request = Readable.from([
+      JSON.stringify({
+        [field]: [
+          { role: 'user', content: 'TEMPORARY_CHAT_SOURCE_CONVERSATION' },
+          { role: 'user', content: 'TEMPORARY_CHAT_INITIAL_MESSAGE' },
+          { role: 'user', content: 'TEMPORARY_CHAT_DIRECT_FOLLOW_UP' },
+          { role: 'user', content: 'TEMPORARY_CHAT_AFTER_CAPABILITY_RESTART' },
+        ],
+      }),
+    ])
+    request.method = 'POST'
+    const response = memoryResponse()
+
+    assert.equal(
+      await scenario.handleHttp(request, response, new URL('http://fixture/v1/responses')),
+      true
+    )
+    const message = response.events().find(event => event.item?.type === 'message')
+    assert.equal(message.item.content[0].text, 'TEMPORARY_CHAT_CAPABILITY_RESTART_COMPLETE')
+  }
+)
 
 function visionBody(context) {
   return {
@@ -98,6 +217,19 @@ test('recognizes converted Chat and Anthropic predictions without native metadat
   )
 })
 
+test('recognizes Responses predictions after the proxy omits native metadata', () => {
+  const prediction = {
+    role: 'user',
+    content: [{ type: 'input_text', text: REPLY_PREDICTION_PROMPT }],
+  }
+  assert.equal(isReplyPredictionRequest({ input: [prediction] }), true)
+  assert.equal(
+    isReplyPredictionRequest({ input: [prediction, { role: 'user', content: 'Continue' }] }),
+    false
+  )
+  assert.equal(isReplyPredictionRequest({ input: [{ ...prediction, role: 'assistant' }] }), false)
+})
+
 test('serves background predictions without advancing the active tool scenario', async () => {
   const server = new DesktopE2EServer('/tmp/reply-prediction-fixture')
   server.scenario = 'embedded_browser_setup'
@@ -128,6 +260,38 @@ test('serves background predictions without advancing the active tool scenario',
   assert.deepEqual(JSON.parse(message.item.content[0].text), { suggestion: null })
 })
 
+test.each([false, true])(
+  'routes prediction models before task handlers unless explicitly owned: %s',
+  async handlesReplyPredictions => {
+    let scenarioRequests = 0
+    const server = new DesktopE2EServer('/tmp/prediction-routing', undefined, {
+      handlesReplyPredictions,
+      async handleHttp(_request, response) {
+        scenarioRequests += 1
+        response.end('owned prediction')
+        return true
+      },
+    })
+    const request = Readable.from([
+      JSON.stringify({
+        client_metadata: predictionMetadata(),
+        input: [{ role: 'user', content: REPLY_PREDICTION_PROMPT }],
+      }),
+    ])
+    request.method = 'POST'
+    request.url = '/v1/responses'
+    request.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
+    server.url = 'http://fixture'
+    const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
+    await server.handle(request, response)
+    assert.equal(scenarioRequests, handlesReplyPredictions ? 1 : 0)
+    if (!handlesReplyPredictions) {
+      const message = response.events().find(event => event.item?.type === 'message')
+      assert.deepEqual(JSON.parse(message.item.content[0].text), { suggestion: null })
+    }
+  }
+)
+
 test('keeps prediction image descriptions separate from conversation cache assertions', async () => {
   const server = new DesktopE2EServer('/tmp/reply-prediction-vision-fixture')
   server.scenario = 'vision_sidecar'
@@ -155,37 +319,49 @@ test('keeps prediction image descriptions separate from conversation cache asser
   )
 })
 
-test('serves late prediction image descriptions without consuming the active protocol matrix', async () => {
-  const server = new DesktopE2EServer('/tmp/reply-prediction-late-vision-fixture')
-  server.setMatrixCase(
-    LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.find(model => model.protocol === 'responses')
-  )
-  const request = Readable.from([JSON.stringify(visionBody(REPLY_PREDICTION_PROMPT))])
-  request.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
-  let output
-  const response = {
-    writeHead(status) {
-      assert.equal(status, 200)
-    },
-    end(value) {
-      output = JSON.parse(value)
-    },
+test.each([
+  { label: 'blank line', context: REPLY_PREDICTION_PROMPT },
+  { label: 'single newline', context: `</skills_instructions>\n${REPLY_PREDICTION_PROMPT}` },
+])(
+  'serves late prediction image descriptions without consuming the active protocol matrix: $label',
+  async ({ context }) => {
+    const server = new DesktopE2EServer('/tmp/reply-prediction-late-vision-fixture')
+    server.setMatrixCase(
+      LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES.find(model => model.protocol === 'responses')
+    )
+    const initialStage = server.matrixState.stage
+    server.matrixEvidenceDirectory = mkdtempSync(join(tmpdir(), 'late-vision-matrix-'))
+    onTestFinished(() => rmSync(server.matrixEvidenceDirectory, { recursive: true, force: true }))
+    const request = Readable.from([JSON.stringify(visionBody(context))])
+    request.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
+    let output
+    const response = {
+      writeHead(status) {
+        assert.equal(status, 200)
+      },
+      end(value) {
+        output = JSON.parse(value)
+      },
+    }
+
+    await server.handleModelResponse(request, response, 'chat')
+
+    assert.ok(output.choices[0].message.content)
+    assert.equal(server.scenario, 'model_protocol_matrix')
+    assert.equal(server.matrixState.stage, initialStage)
+    assert.deepEqual(server.matrixState.requests, [])
+    assert.deepEqual(
+      server.visionSidecarRequests.map(row => row.kind),
+      ['prediction-vision']
+    )
+    const foreground = Readable.from([JSON.stringify(visionBody('Describe the attached image'))])
+    foreground.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
+    await server.handleModelResponse(foreground, { writeHead() {}, end() {} }, 'chat')
+    assert.equal(server.matrixState.failures.length, 1)
+    assert.match(
+      server.matrixState.failures[0].message,
+      /local-local-responses reached the wrong endpoint/
+    )
+    assert.equal(server.matrixReports[0].passed, false)
   }
-
-  await server.handleModelResponse(request, response, 'chat')
-
-  assert.ok(output.choices[0].message.content)
-  assert.equal(server.scenario, 'model_protocol_matrix')
-  assert.equal(server.matrixState.stage, 'text')
-  assert.deepEqual(server.matrixState.requests, [])
-  assert.deepEqual(
-    server.visionSidecarRequests.map(row => row.kind),
-    ['prediction-vision']
-  )
-  const foreground = Readable.from([JSON.stringify(visionBody('Describe the attached image'))])
-  foreground.headers = { authorization: `Bearer ${MODEL_API_KEY}` }
-  await assert.rejects(
-    server.handleModelResponse(foreground, response, 'chat'),
-    /local-local-responses reached the wrong endpoint/
-  )
-})
+)

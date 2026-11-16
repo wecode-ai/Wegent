@@ -4,6 +4,7 @@ import { HostCapabilityError } from './capability-router.js'
 const KEYS: Record<string, string> = {
   Tab: 'Tab',
   Enter: 'Enter',
+  Backspace: 'Backspace',
   Space: 'Space',
   Escape: 'Escape',
   ArrowUp: 'Up',
@@ -22,6 +23,7 @@ const KEYS: Record<string, string> = {
   T: 'T',
   W: 'W',
   x: 'x',
+  z: 'Z',
 }
 
 const MODIFIERS: Record<string, 'shift' | 'control' | 'alt' | 'meta'> = {
@@ -98,6 +100,6 @@ export async function sendE2EText(
   requireE2EControl(environment)
   requireAvailableContents(contents)
   await focusInputContents(contents, focusWindow)
-  contents.insertText(text)
+  await contents.insertText(text)
   return { backend: 'electron-insert-text', textLength: text.length }
 }

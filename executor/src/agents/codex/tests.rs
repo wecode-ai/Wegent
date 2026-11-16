@@ -7,6 +7,75 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn effective_git_credentials_are_pinned_in_app_server_and_tool_shells() {
+    let environment = HashMap::from([
+        ("GH_CONFIG_DIR".into(), "/device/git-auth/current/gh".into()),
+        (
+            "GLAB_CONFIG_DIR".into(),
+            "/device/git-auth/current/glab".into(),
+        ),
+        (
+            "GIT_CONFIG_GLOBAL".into(),
+            "/device/git-auth/current/gitconfig".into(),
+        ),
+    ]);
+    let mut config = CodexLaunchConfig::default();
+    apply_git_cli_environment(&mut config, &environment);
+    for (key, value) in &environment {
+        assert_eq!(config.env.get(key), Some(value));
+        assert!(config.config_overrides.contains(&format!(
+            "shell_environment_policy.set.{key}={}",
+            toml_value(value)
+        )));
+    }
+    let request: ExecutionRequest = serde_json::from_value(json!({})).unwrap();
+    let params = thread_start_params(&request, &config);
+    assert_eq!(
+        params["config"]["shell_environment_policy.set.GH_CONFIG_DIR"],
+        "/device/git-auth/current/gh"
+    );
+}
+
+#[test]
+fn cloud_config_bundle_failures_are_detected() {
+    assert!(is_codex_cloud_config_error(
+        "failed to load configuration: timed out refreshing cloud config bundle"
+    ));
+    assert!(is_codex_cloud_config_error(
+        "failed to reload config: timed out waiting for cloud config bundle after 20s"
+    ));
+    assert!(!is_codex_cloud_config_error("model not found"));
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // The shared env lock serializes process-global test env changes.
+async fn cloud_config_fallback_does_not_disrupt_other_active_threads() {
+    let _lock = crate::test_env::lock();
+    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "true");
+    let client = CodexAppServerClient::new("codex-cloud-config-active-thread-test");
+    client.mark_thread_active("thread-1").await;
+
+    let degraded = client
+        .degrade_auth_after_cloud_config_failure(
+            "model/list",
+            "failed to load configuration: timed out refreshing cloud config bundle",
+            None,
+            None,
+            false,
+        )
+        .await
+        .expect("fallback decision should not fail");
+
+    assert!(!degraded);
+    assert_eq!(
+        client.state.lock().await.auth_mode,
+        CodexAuthMode::LocalSubscription
+    );
+    client.mark_thread_idle("thread-1", false).await;
+}
+
+#[test]
 fn stand_in_approvals_never_grant_session_or_command_rule_permissions() {
     let mut message = json!({"id":1,"method":"item/commandExecution/requestApproval","params":{"availableDecisions":["accept","acceptForSession",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["touch"]}}]}});
     restrict_stand_in_approval(&mut message);
@@ -30,6 +99,145 @@ fn stand_in_approvals_never_grant_session_or_command_rule_permissions() {
         .unwrap()["decision"],
         "accept"
     );
+}
+
+#[test]
+fn runtime_notification_preparation_preserves_stand_in_approval_limits() {
+    let request = serde_json::from_value(json!({"origin": {
+        "type": "dingtalk_work", "initiatedBy": "stand_in", "askBeforeAct": true
+    }}))
+    .unwrap();
+    let mut message = json!({"id": 1, "method": "item/commandExecution/requestApproval", "params": {
+        "availableDecisions": ["accept", "acceptForSession", {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["touch"]}}]
+    }});
+    assert!(prepare_codex_runtime_notification(&request, &mut message));
+    assert_eq!(message["params"]["standInSingleApproval"], true);
+    let result = codex_approval_result(
+        &message,
+        &json!({"answers": {
+            "__codex_approval": {"answers": ["allow_session"]}
+        }}),
+    )
+    .unwrap();
+    assert_eq!(result["decision"], "decline");
+}
+
+#[tokio::test]
+async fn runtime_interaction_settlement_joins_the_native_mailbox_in_order() {
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    let mut observer = hub.subscribe_all();
+    hub.send(json!({"method": "turn/started"})).await;
+    let start = runtime.recv().await.unwrap();
+    observer.recv().await.unwrap();
+    let settled: CodexNotification = json!({"method": "wegent/mcpElicitation/settled"}).into();
+    let sequence = settled.sequence();
+    hub.send_runtime(settled).await;
+    hub.send(json!({"method": "turn/completed"})).await;
+    let observed = runtime.recv().await.unwrap();
+    assert_eq!(observed["method"], "wegent/mcpElicitation/settled");
+    assert_eq!(observed.sequence(), sequence);
+    assert!(start.sequence() < sequence);
+    let end = runtime.recv().await.unwrap();
+    assert_eq!(end["method"], "turn/completed");
+    assert!(sequence < end.sequence());
+    assert_eq!(observer.recv().await.unwrap()["method"], "turn/completed");
+}
+
+#[tokio::test]
+async fn native_subscription_survives_process_stop_and_replacement() {
+    let mut state = CodexAppServerSharedState::default();
+    let hub = CodexNotificationHub::for_runtime(
+        Arc::clone(&state.runtime_notifications),
+        Arc::clone(&state.thread_activity_changed),
+    );
+    let generation = hub.process_generation;
+    let mut runtime = hub.subscribe_runtime();
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().unwrap();
+    state.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::new(Mutex::new(HashMap::new())),
+        notifications: hub,
+        reader_task: tokio::spawn(std::future::pending()),
+    });
+    assert!(stop_codex_app_server_process(&mut state, None).await);
+    let exit = runtime.try_recv().unwrap();
+    assert_eq!(exit["method"], "codex/app-server/exited");
+    assert_eq!(exit.process_generation(), generation);
+    assert!(matches!(
+        runtime.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+
+    let replacement = CodexNotificationHub::for_runtime(
+        Arc::clone(&state.runtime_notifications),
+        Arc::clone(&state.thread_activity_changed),
+    );
+    assert_ne!(replacement.process_generation, generation);
+    replacement.send(json!({"method": "turn/started"})).await;
+    let start = runtime.try_recv().unwrap();
+    assert_eq!(start["method"], "turn/started");
+    assert_eq!(start.process_generation(), replacement.process_generation);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn isolated_process_native_ingress_does_not_depend_on_a_request_observer() {
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    let mut child = Command::new("sh")
+        .args(["-c", r#"printf '%s\n' '{"method":"turn/started","params":{"threadId":"named-thread","turn":{"id":"turn-1"}}}' '{"id":1,"result":{}}' '{"id":2,"method":"item/commandExecution/requestApproval","params":{"threadId":"named-thread","turnId":"turn-1","expiresAtUnixMs":0}}'"#])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn().unwrap();
+    let mut rpc = JsonRpcConnection::new(
+        child.stdin.take().unwrap(),
+        CodexStdout::new(child.stdout.take().unwrap(), None),
+        1,
+    )
+    .with_runtime_notifications(Some(hub.clone()));
+    let start = rpc.read_message().await.unwrap();
+    assert_eq!(start["method"], "turn/started");
+    let native_start = runtime.try_recv().unwrap();
+    assert_eq!(native_start["params"]["threadId"], "named-thread");
+    assert_eq!(native_start.process_generation(), hub.process_generation);
+    assert_eq!(rpc.read_message().await.unwrap()["id"], 1);
+    assert!(matches!(
+        runtime.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    let approval = rpc.read_message().await.unwrap();
+    assert_eq!(runtime.try_recv().unwrap()["id"], 2);
+    rpc.publish_runtime_notification(elicitation::settled(&approval, "expired", None))
+        .await;
+    let settled = runtime.try_recv().unwrap();
+    assert_eq!(settled["method"], "wegent/approval/settled");
+    assert_eq!(settled["params"]["interactionStatus"], "expired");
+    assert_eq!(
+        settled.process_generation(),
+        native_start.process_generation()
+    );
+    assert!(settled.sequence() > native_start.sequence());
+    assert!(child.wait().await.unwrap().success());
+}
+
+#[test]
+fn stand_in_project_coordinator_disables_native_global_memories() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request: ExecutionRequest = serde_json::from_value(
+        json!({"origin":{"type":"project_coordinator","initiatedBy":"project_coordinator"}}),
+    )
+    .unwrap();
+    let config = build_codex_launch_config(&request).unwrap();
+    for flag in [
+        "memories.use_memories=false",
+        "memories.generate_memories=false",
+    ] {
+        assert!(config.config_overrides.contains(&flag.to_owned()));
+    }
 }
 
 #[test]
@@ -98,7 +306,8 @@ approval_mode = "approve"
             fs::read_to_string(home.join("config.toml"))
                 .unwrap()
                 .contains("home_only"),
-            "The synthetic MCP fixture was overwritten during launch configuration"
+            "The synthetic MCP fixture was overwritten during launch configuration: home={} team_id={team_id} origin_type={origin_type}",
+            home.display()
         );
         assert!(config
             .config_overrides
@@ -151,30 +360,6 @@ fn named_home_rpc_clients_preserve_process_isolation() {
 pub(super) mod environment;
 
 #[test]
-fn inject_session_headers_adds_plain_header_for_direct_providers() {
-    let mut headers = vec![("user".to_owned(), "alice".to_owned())];
-    inject_session_headers(&mut headers, "123");
-    assert!(headers
-        .iter()
-        .any(|(key, value)| key == "wecode-session-id" && value == "123"));
-    assert!(!headers
-        .iter()
-        .any(|(key, _)| key == "X-Wegent-Upstream-Header-wecode-session-id"));
-}
-
-#[test]
-fn inject_session_headers_adds_upstream_variant_for_gateway() {
-    let mut headers = vec![("X-Wegent-Model-Type".to_owned(), "public".to_owned())];
-    inject_session_headers(&mut headers, "123");
-    assert!(headers
-        .iter()
-        .any(|(key, value)| key == "wecode-session-id" && value == "123"));
-    assert!(headers
-        .iter()
-        .any(|(key, value)| key == "X-Wegent-Upstream-Header-wecode-session-id" && value == "123"));
-}
-
-#[test]
 fn inject_session_headers_skips_empty_task_id_and_overrides_stale_value() {
     let mut headers = vec![("wecode-session-id".to_owned(), "explicit".to_owned())];
     inject_session_headers(&mut headers, "");
@@ -193,7 +378,7 @@ fn windows_router_auth_script_succeeds_after_reading_from_nul() {
     );
 }
 
-fn spawn_idle_app_server_child() -> Child {
+pub(super) fn spawn_idle_app_server_child() -> CodexAppServerChild {
     #[cfg(windows)]
     let mut command = {
         let mut command = Command::new("cmd");
@@ -214,6 +399,7 @@ fn spawn_idle_app_server_child() -> Child {
         .kill_on_drop(true)
         .spawn()
         .expect("the idle app-server child should start")
+        .into()
 }
 
 #[tokio::test]
@@ -251,6 +437,50 @@ async fn restarting_app_server_keeps_admission_locked_until_cleanup_finishes() {
         "new process admission raced with old process cleanup"
     );
     assert!(client.state.lock().await.process.is_none());
+}
+
+#[tokio::test]
+async fn explicit_unsubscribe_keeps_thread_admission_locked_until_the_native_response() {
+    use futures_util::task::noop_waker;
+    use std::{future::Future, task::Context};
+
+    let _environment = environment::LaunchEnvironment::new();
+    let _activation = crate::services::capability_activation::activate().await;
+    ensure_codex_mcp_endpoints().await.unwrap();
+    let mut client = CodexAppServerClient::new("explicit-unsubscribe-admission");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().unwrap();
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::clone(&pending),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(async {}),
+    });
+    client.state.lock().await.process_environment =
+        client.process_environment(&BTreeMap::new(), &BTreeMap::new());
+    let waker = noop_waker();
+    let mut context = Context::from_waker(&waker);
+    let mut unsubscribe = Box::pin(client.release_thread_subscription("thread-1"));
+    assert!(unsubscribe.as_mut().poll(&mut context).is_pending());
+    let mut admission = Box::pin(client.mark_thread_active("thread-1"));
+    let admission_blocked = admission.as_mut().poll(&mut context).is_pending();
+    let responses = std::mem::take(&mut *pending.lock().await);
+    assert_eq!(responses.len(), 1);
+    for (_, response) in responses {
+        response.sender.send(Ok(json!({}))).unwrap();
+    }
+    unsubscribe.await.unwrap();
+    if admission_blocked {
+        admission.await;
+    }
+    client.restart().await;
+    assert!(
+        admission_blocked,
+        "a new resume overtook the native unsubscribe response"
+    );
 }
 
 #[tokio::test]
@@ -338,6 +568,41 @@ async fn idle_restart_rejects_active_goal_recovery_before_a_turn_is_reported() {
     assert_eq!(result, Err((1, 0)));
     client.mark_thread_idle("recovering-goal", false).await;
     assert_eq!(client.restart_if_idle().await, Ok(()));
+}
+
+#[tokio::test]
+async fn idle_restart_preserves_pending_reads_until_the_native_response() {
+    let _environment = environment::LaunchEnvironment::new();
+    let _activation = crate::services::capability_activation::activate().await;
+    let mut client = CodexAppServerClient::new("codex-idle-restart-pending-read-test");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().unwrap();
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::clone(&pending),
+        notifications: CodexNotificationHub::new(),
+        reader_task: tokio::spawn(std::future::pending()),
+    });
+    client.state.lock().await.process_environment =
+        client.process_environment(&BTreeMap::new(), &BTreeMap::new());
+    let response = client
+        .start_existing_request("thread/list", json!({}))
+        .await
+        .unwrap();
+
+    assert_eq!(client.restart_if_idle().await, Err((0, 1)));
+    assert!(client.state.lock().await.process.is_some());
+    let responses = std::mem::take(&mut *pending.lock().await);
+    assert_eq!(responses.len(), 1);
+    for (_, sender) in responses {
+        sender.sender.send(Ok(json!({"data": []}))).unwrap();
+    }
+    assert_eq!(response.await.unwrap().unwrap(), json!({"data": []}));
+    assert_eq!(client.restart_if_idle().await, Ok(()));
+    assert!(client.state.lock().await.process.is_none());
 }
 
 #[tokio::test]
@@ -523,7 +788,8 @@ async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts()
                 "turnId": "turn-b",
                 "delta": index.to_string()
             }
-        }));
+        }))
+        .await;
     }
     hub.send(json!({
         "method": "turn/completed",
@@ -531,7 +797,8 @@ async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts()
             "threadId": "thread-a",
             "turn": {"id": "turn-a", "status": "completed"}
         }
-    }));
+    }))
+    .await;
 
     let message = thread_a
         .recv()
@@ -542,9 +809,36 @@ async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts()
 }
 
 #[tokio::test]
+async fn notification_hub_backpressures_runtime_without_losing_terminal_events() {
+    use futures_util::task::noop_waker;
+    use std::{future::Future, task::Context};
+
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    for index in 0..CODEX_GLOBAL_NOTIFICATION_CAPACITY {
+        hub.send(json!({"method": "item/started", "index": index}))
+            .await;
+    }
+    let mut terminal = Box::pin(hub.send(json!({"method": "turn/completed"})));
+    let waker = noop_waker();
+    let mut context = Context::from_waker(&waker);
+    assert!(terminal.as_mut().poll(&mut context).is_pending());
+    assert_eq!(runtime.recv().await.unwrap()["index"], 0);
+    terminal.await;
+    for index in 1..CODEX_GLOBAL_NOTIFICATION_CAPACITY {
+        assert_eq!(runtime.recv().await.unwrap()["index"], index);
+    }
+    assert_eq!(runtime.recv().await.unwrap()["method"], "turn/completed");
+    drop(runtime);
+    hub.send(json!({"method": "turn/started"})).await;
+    assert!(hub.runtime.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
     let hub = CodexNotificationHub::new();
     let mut all = hub.subscribe_all();
+    let mut runtime = hub.subscribe_runtime();
     let mut thread_a = hub.subscribe_thread("thread-a");
     let mut thread_b = hub.subscribe_thread("thread-b");
     let message = json!({
@@ -552,15 +846,18 @@ async fn notification_hub_keeps_global_and_thread_scoped_delivery() {
         "params": {"threadId": "thread-a", "turnId": "turn-a"}
     });
 
-    hub.send(message.clone());
+    hub.send(message.clone()).await;
 
     let global = all.recv().await.unwrap();
     let scoped = thread_a.recv().await.unwrap();
+    let owned = runtime.recv().await.unwrap();
     assert_eq!(*global, message);
     assert_eq!(*scoped, message);
+    assert_eq!(*owned, message);
+    assert_eq!(owned.sequence(), global.sequence());
     assert!(global.claim_runtime_delivery());
     assert!(!scoped.claim_runtime_delivery());
-    hub.send(message.clone());
+    hub.send(message.clone()).await;
     assert!(thread_a.recv().await.unwrap().claim_runtime_delivery());
     assert!(thread_b.try_recv().is_err());
 }
@@ -571,7 +868,7 @@ async fn notification_hub_delivers_unscoped_process_exit_to_each_thread() {
     let mut thread_a = hub.subscribe_thread("thread-a");
     let mut thread_b = hub.subscribe_thread("thread-b");
 
-    notify_shared_process_closed(&hub, "app-server stopped");
+    notify_shared_process_closed(&hub, "app-server stopped").await;
 
     for receiver in [&mut thread_a, &mut thread_b] {
         let message = receiver.recv().await.unwrap();
@@ -648,9 +945,13 @@ fn environment_change_diagnostics_report_keys_without_values() {
 
 #[test]
 fn shared_notification_lag_is_recoverable() {
-    let notification =
-        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None, false)
-            .expect("lagged notifications should keep the turn alive");
+    let notification = shared_notification_result(
+        Err(broadcast::error::RecvError::Lagged(37)),
+        None,
+        false,
+        false,
+    )
+    .expect("lagged notifications should keep the turn alive");
 
     assert!(matches!(notification, SharedNotification::Lagged(37)));
 }
@@ -658,9 +959,59 @@ fn shared_notification_lag_is_recoverable() {
 #[test]
 fn closed_notification_stream_reports_executor_shutdown() {
     assert!(matches!(
-        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true),
+        shared_notification_result(Err(broadcast::error::RecvError::Closed), None, true, false),
         Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
     ));
+}
+
+#[test]
+fn closed_notification_stream_does_not_reuse_an_earlier_outcome_during_shutdown() {
+    assert!(matches!(
+        shared_notification_result(
+            Err(broadcast::error::RecvError::Closed),
+            Some(ExecutionOutcome::Completed { content: "Earlier turn".into() }),
+            true,
+            true,
+        ),
+        Err(error) if error == CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+    ));
+}
+
+#[test]
+fn stopping_an_active_goal_does_not_complete_it_with_its_previous_turn() {
+    for shutdown in [false, true] {
+        let expected = if shutdown {
+            CODEX_APP_SERVER_EXECUTOR_SHUTDOWN
+        } else {
+            CODEX_APP_SERVER_ACTIVE_GOAL_INTERRUPTED
+        };
+        let previous = || {
+            Some(ExecutionOutcome::Completed {
+                content: "Earlier turn".into(),
+            })
+        };
+        assert!(matches!(
+            shared_notification_result(
+                Err(broadcast::error::RecvError::Closed), previous(), shutdown, true,
+            ),
+            Err(error) if error == expected
+        ));
+        assert_eq!(
+            stopped_shared_turn_outcome(previous(), shutdown, true, "app-server exited"),
+            Err(expected.to_owned())
+        );
+    }
+}
+
+#[test]
+fn stopping_after_a_finished_non_goal_turn_keeps_its_completed_outcome() {
+    let outcome = ExecutionOutcome::Completed {
+        content: "Finished turn".into(),
+    };
+    assert_eq!(
+        stopped_shared_turn_outcome(Some(outcome.clone()), false, false, "app-server exited"),
+        Ok(outcome)
+    );
 }
 
 #[tokio::test]
@@ -733,44 +1084,6 @@ async fn interaction_answer_router_rejects_waiters_after_channel_closes() {
 }
 
 #[test]
-fn normalize_reasoning_effort_preserves_supported_codex_levels() {
-    for effort in ["low", "medium", "high", "xhigh", "max", "ultra"] {
-        assert_eq!(normalize_reasoning_effort(Some(effort)), effort);
-    }
-}
-
-#[test]
-fn normalize_reasoning_effort_maps_aliases_to_supported_codex_levels() {
-    for (value, expected) in [
-        ("minimal", "low"),
-        ("轻度", "low"),
-        ("中等", "medium"),
-        ("extra high", "xhigh"),
-        ("x-high", "xhigh"),
-        ("最高", "max"),
-        ("maximum", "max"),
-        ("极高", "ultra"),
-    ] {
-        assert_eq!(normalize_reasoning_effort(Some(value)), expected);
-    }
-}
-
-#[test]
-fn normalize_reasoning_effort_uses_default_for_disabled_or_unknown_values() {
-    for value in [None, Some("off"), Some("unknown")] {
-        assert_eq!(normalize_reasoning_effort(value), DEFAULT_REASONING_EFFORT);
-    }
-}
-
-#[test]
-fn streaming_patch_overrides_enable_freeform_apply_patch() {
-    let overrides = codex_streaming_patch_config_overrides();
-    assert!(overrides.contains(&"features.apply_patch_streaming_events=true".to_owned()));
-    assert!(overrides.contains(&"features.apply_patch_freeform=true".to_owned()));
-    assert!(overrides.contains(&"suppress_unstable_features_warning=true".to_owned()));
-}
-
-#[test]
 fn persistent_app_server_uses_codex_deferred_mcp_tools() {
     let request_config = CodexLaunchConfig::default();
 
@@ -784,7 +1097,7 @@ fn persistent_app_server_uses_codex_deferred_mcp_tools() {
         .contains(&"features.tool_search_always_defer_mcp_tools=false".to_owned()));
     assert!(config
         .config_overrides
-        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+        .contains(&CODEX_ENABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
     assert!(config
         .config_overrides
         .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
@@ -793,15 +1106,38 @@ fn persistent_app_server_uses_codex_deferred_mcp_tools() {
         .contains(&CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned()));
 }
 
-#[test]
-fn codex_app_server_uses_codex_home_as_working_directory() {
-    let codex_home = unique_test_path("wework-codex-app-server-cwd");
-    let command = codex_app_server_command("codex", &codex_home, &CodexLaunchConfig::default());
+#[cfg(windows)]
+#[tokio::test]
+async fn codex_app_server_starts_beyond_windows_max_path() {
+    use std::os::windows::ffi::OsStrExt;
 
-    assert_eq!(
-        command.as_std().get_current_dir(),
-        Some(codex_home.as_path())
+    let root = tempfile::tempdir().unwrap();
+    let mut directory = crate::path_compat::strip_windows_verbatim_prefix(root.path());
+    while directory.as_os_str().encode_wide().count() < 280 {
+        directory.push("codex-long-path-component");
+    }
+    fs::create_dir_all(&directory).unwrap();
+    let binary = directory.join("codex.exe");
+    fs::copy(env::current_exe().unwrap(), &binary).unwrap();
+    assert!(binary.as_os_str().encode_wide().count() > 260);
+
+    let mut config = CodexLaunchConfig::default();
+    config.env.insert(
+        CODEX_HOME_ENV.to_owned(),
+        root.path().join("codex-home").display().to_string(),
     );
+    // The test binary treats app-server as a filter with no matching tests.
+    let mut child = spawn_codex_app_server(
+        binary.to_str().unwrap(),
+        &config,
+        Some(CodexAuthMode::WeworkRouter),
+    )
+    .unwrap();
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
 }
 
 #[test]
@@ -849,82 +1185,38 @@ fn mcp_thread_diagnostics_report_names_without_config_values() {
 }
 
 #[test]
-fn vision_sidecar_thread_start_forwards_selected_reasoning_effort() {
-    let _environment = environment::LaunchEnvironment::new();
-    let request = ExecutionRequest {
-        model_config: json!({
-            "model_id": "deepseek-v4-pro",
-            "codex_catalog_model_id": "wework-deepseek-v4-pro",
-            "codex_responses_compat_proxy": true,
-            "reasoning": {
-                "effort": "low",
-            },
-            "vision_sidecar": {
-                "model_id": "vision-model",
-                "request_url": "http://models.local/v1/responses",
-                "api_key": "test-key",
-            },
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-    let params = thread_start_params(&request, &launch_config);
-
-    assert_eq!(
-        codex_request_model(&request).as_deref(),
-        Some("wework-deepseek-v4-pro-vision-sidecar")
-    );
-    assert_eq!(launch_config.effort.as_deref(), Some("low"));
-    assert_eq!(params["config"]["model_reasoning_effort"], "low");
-}
-
-#[test]
-fn initialize_params_does_not_advertise_openai_form_elicitation_extension() {
-    let params = initialize_params();
-
-    assert_eq!(params["capabilities"]["experimentalApi"], true);
-    assert!(params["capabilities"]
-        .get("mcpServerOpenaiFormElicitation")
-        .is_none());
-}
-
-#[test]
-fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
-    let params = json!({
-        "serverName": "wegent-sites",
-        "mode": "form",
-        "message": "请选择内网访问范围。",
-        "requestedSchema": {
-            "type": "object",
-            "properties": {
-                "audience": {
-                    "type": "string",
-                    "title": "访问范围",
-                    "description": "请选择站点发布到内网后的访问范围。",
-                    "enum": ["all", "owner", "custom"],
-                    "enumNames": ["所有人", "仅自己", "指定人"]
-                }
-            },
-            "required": ["audience"]
-        }
+fn native_mcp_approval_preserves_its_exact_tool_arguments() {
+    let mut params = json!({
+        "serverName": "wework_stand_in", "mode": "form",
+        "message": "Allow the tool?", "requestedSchema": {"properties": {}},
+        "_meta": {"codex_approval_kind": "mcp_tool_call", "tool_name":"send_email", "tool_title": "Wework: Send email", "tool_params": {
+            "from": "owner@example.com", "to": "sender@example.com",
+            "subject": "Re: Review", "text": "Complete reply\nFinal paragraph"
+        }}
     });
-
-    let payload = mcp_server_elicitation_request_user_input_params(&params)
-        .expect("enum + enumNames form should map to request_user_input payload");
-
-    assert_eq!(payload["itemId"], "mcp_server_elicitation");
-    assert_eq!(payload["questions"][0]["id"], "audience");
-    assert_eq!(payload["questions"][0]["header"], "访问范围");
-    assert_eq!(
-        payload["questions"][0]["options"],
-        json!([
-            {"label": "所有人", "description": "all"},
-            {"label": "仅自己", "description": "owner"},
-            {"label": "指定人", "description": "custom"}
-        ])
-    );
+    let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
+    assert_eq!(payload["approvalKind"], "mcp_tool_call");
+    assert_eq!(payload["toolName"], "send_email");
+    assert_eq!(payload["toolTitle"], "Wework: Send email");
+    assert_eq!(payload["toolArguments"], params["_meta"]["tool_params"]);
+    assert_eq!(payload["questions"][0]["id"], "__mcp_approval");
+    params["_meta"]["tool_name"] = json!("reply");
+    params["_meta"]["tool_title"] = json!("Wework: Reply to source");
+    params["_meta"]["tool_params"] = json!({"messageId":"source-message", "text":"Exact reply"});
+    let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
+    assert_eq!(payload["serverName"], "wework_stand_in");
+    assert_eq!(payload["approvalKind"], "mcp_tool_call");
+    assert_eq!(payload["toolName"], "reply");
+    assert_eq!(payload["toolTitle"], "Wework: Reply to source");
+    assert_eq!(payload["toolArguments"], params["_meta"]["tool_params"]);
+    assert_eq!(payload["interactionKind"], "mcp_form");
+    assert_eq!(payload["questions"][0]["id"], "__mcp_approval");
+    params["_meta"]["codex_approval_kind"] = json!("other");
+    let payload = mcp_server_elicitation_request_user_input_params(&params).unwrap();
+    assert!(payload.get("toolArguments").is_none());
+    assert!(payload.get("toolName").is_none());
+    assert!(payload.get("toolTitle").is_none());
+    assert!(payload.get("approvalKind").is_none());
 }
 
 #[test]
@@ -1020,49 +1312,6 @@ async fn mcp_shared_url_elicitation_routes_consent_without_auto_approval() {
             .unwrap()
             .map(|outcome| outcome.result),
         Some(json!({"action": "cancel"}))
-    );
-}
-
-#[test]
-fn mcp_form_elicitation_returns_accepted_form_content() {
-    let message = json!({
-        "id": 73,
-        "method": "mcpServer/elicitation/request",
-        "params": {
-            "serverName": "wegent-sites",
-            "mode": "form",
-            "message": "请选择内网访问范围。",
-            "requestedSchema": {
-                "type": "object",
-                "properties": {
-                    "audience": {
-                        "type": "string",
-                        "title": "访问范围",
-                        "enum": ["all", "owner"],
-                        "enumNames": ["所有人", "仅自己"]
-                    }
-                },
-                "required": ["audience"]
-            }
-        }
-    });
-    let response = json!({
-        "requestId": 73,
-        "answers": {
-            "audience": {"answers": ["仅自己"]}
-        }
-    });
-
-    let result = mcp_server_elicitation_response(&message, Some(&response))
-        .expect("supported MCP form should be accepted");
-
-    assert_eq!(
-        result,
-        json!({
-            "action": "accept",
-            "content": {"audience": "owner"},
-            "_meta": Value::Null
-        })
     );
 }
 
@@ -1199,68 +1448,6 @@ fn mcp_business_form_is_not_treated_as_tool_call_approval() {
 }
 
 #[test]
-fn wework_codex_home_defaults_to_executor_home_codex() {
-    let _lock = crate::test_env::lock();
-    let home = unique_test_path("wework-codex-home-default");
-    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
-    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-
-    env::set_var("WEGENT_EXECUTOR_HOME", &home);
-    env::remove_var(WEGENT_CODEX_HOME_ENV);
-    env::set_var(
-        CODEX_HOME_ENV,
-        home.join("user-codex-should-not-be-wework-home"),
-    );
-
-    assert_eq!(wework_codex_home(), home.join("codex"));
-
-    let _ = fs::remove_dir_all(home);
-}
-
-#[test]
-fn wework_codex_home_ignores_empty_executor_home() {
-    let _lock = crate::test_env::lock();
-    let temp = tempfile::tempdir().unwrap();
-    let _platform_home = EnvRestore::capture("HOME");
-    let _workbench_home = EnvRestore::capture("WEGENT_WORKBENCH_HOME");
-    env::set_var("HOME", temp.path());
-    env::remove_var("WEGENT_WORKBENCH_HOME");
-    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
-    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-
-    env::set_var("WEGENT_EXECUTOR_HOME", "");
-    env::remove_var(WEGENT_CODEX_HOME_ENV);
-
-    let expected = temp
-        .path()
-        .join(".wegent")
-        .join("workbench")
-        .join("executor")
-        .join("codex");
-    assert_eq!(wework_codex_home(), expected);
-}
-
-#[test]
-fn wework_codex_home_prefers_explicit_wework_home() {
-    let _lock = crate::test_env::lock();
-    let executor_home = unique_test_path("wework-codex-home-executor");
-    let codex_home = unique_test_path("wework-codex-home-explicit");
-    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
-    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
-
-    env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
-    env::set_var(WEGENT_CODEX_HOME_ENV, &codex_home);
-    env::set_var(CODEX_HOME_ENV, executor_home.join("ignored-codex"));
-
-    assert_eq!(wework_codex_home(), codex_home);
-
-    let _ = fs::remove_dir_all(executor_home);
-    let _ = fs::remove_dir_all(codex_home);
-}
-
-#[test]
 fn prepare_wework_codex_home_links_user_auth() {
     let _lock = crate::test_env::lock();
     let root = unique_test_path("wework-codex-home-auth");
@@ -1363,6 +1550,39 @@ fn prepare_wework_codex_home_removes_existing_link_when_subscription_disabled() 
     prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
 
     assert!(!linked_auth.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn prepare_wework_codex_home_with_auth_removes_managed_link_for_router_mode() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-home-router-only");
+    let user_codex_home = root.join("user-codex");
+    let codex_home = root.join("wework-codex");
+    let source_auth = user_codex_home.join("auth.json");
+    let linked_auth = codex_home.join("auth.json");
+    let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+    let _subscription_env = EnvRestore::capture(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV);
+
+    fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
+        .expect("user Codex home should be created");
+    fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
+    env::set_var(CODEX_HOME_ENV, &user_codex_home);
+    env::set_var(WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV, "true");
+
+    prepare_wework_codex_home_with_auth(&codex_home, true)
+        .expect("Codex home should link managed auth");
+    assert_eq!(
+        fs::read_link(&linked_auth).expect("auth should be a symlink"),
+        source_auth
+    );
+
+    prepare_wework_codex_home_with_auth(&codex_home, false)
+        .expect("Codex home should remove managed auth");
+    assert!(!linked_auth.exists());
+    assert!(source_auth.is_file());
+
     let _ = fs::remove_dir_all(root);
 }
 
@@ -1516,35 +1736,6 @@ fn prepare_wework_codex_home_migrates_base_instruction_override() {
 }
 
 #[test]
-fn legacy_codex_instructions_take_precedence_over_developer_instructions() {
-    let _lock = crate::test_env::lock();
-    let root = unique_test_path("wework-codex-config-instruction-precedence");
-    let codex_home = root.join("codex");
-    fs::create_dir_all(&codex_home).expect("Codex home should be created");
-    fs::write(
-        codex_home.join("config.toml"),
-        "instructions = \"legacy user instructions\"\n\
-         developer_instructions = \"current user instructions\"\n",
-    )
-    .expect("legacy config should be written");
-
-    assert_eq!(
-        read_wework_codex_user_instructions(&codex_home)
-            .expect("user instructions should be readable"),
-        "legacy user instructions"
-    );
-
-    prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
-    let config = fs::read_to_string(codex_home.join("config.toml"))
-        .expect("normalized config should be readable");
-    assert!(!config
-        .lines()
-        .any(|line| line.starts_with("instructions =")));
-    assert!(config.contains("developer_instructions = \"legacy user instructions\""));
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
 fn codex_launch_config_error_cleans_generated_files() {
     let root = unique_test_path("codex-launch-config-cleanup");
     let generated_file = root.join("generated-image.png");
@@ -1559,163 +1750,6 @@ fn codex_launch_config_error_cleans_generated_files() {
     assert!(result.is_err());
     assert!(!generated_file.exists());
     let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn prepare_wework_codex_home_removes_repeated_browser_instructions() {
-    let _lock = crate::test_env::lock();
-    let root = unique_test_path("wework-codex-config-browser-migration");
-    let codex_home = root.join("codex");
-    fs::create_dir_all(&codex_home).expect("Codex home should be created");
-    fs::write(
-        codex_home.join("config.toml"),
-        r#"developer_instructions = """
-用中文回复
-
-Wework 内置浏览器 routing:
-- prior generated version
-
-Wework 内置浏览器 routing:
-- current generated version
-"""
-"#,
-    )
-    .expect("legacy config should be written");
-
-    prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
-
-    let config = fs::read_to_string(codex_home.join("config.toml"))
-        .expect("normalized config should be readable");
-    assert!(config.contains("用中文回复"));
-    assert!(!config.contains("Wework 内置浏览器 routing:"));
-    assert_eq!(
-        read_wework_codex_user_instructions(&codex_home)
-            .expect("user instructions should be readable"),
-        "用中文回复"
-    );
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn prepare_wework_codex_home_removes_browser_only_developer_instructions() {
-    let _lock = crate::test_env::lock();
-    let root = unique_test_path("wework-codex-config-browser-only-migration");
-    let codex_home = root.join("codex");
-    fs::create_dir_all(&codex_home).expect("Codex home should be created");
-    fs::write(
-        codex_home.join("config.toml"),
-        format!(
-            "developer_instructions = {instructions:?}\n",
-            instructions = WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS
-        ),
-    )
-    .expect("legacy config should be written");
-
-    prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
-
-    let config = fs::read_to_string(codex_home.join("config.toml"))
-        .expect("normalized config should be readable");
-    assert!(!config.contains("developer_instructions"));
-    assert!(!config.contains("Wework 内置浏览器 routing:"));
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn strip_wework_browser_instructions_removes_all_generated_versions() {
-    let instructions = "用中文回复\n\nWework 内置浏览器 routing:\n- prior generated version\
-        \n\nWework 内置浏览器 routing:\n- current generated version";
-
-    assert_eq!(
-        strip_wework_browser_instructions(instructions),
-        "用中文回复"
-    );
-}
-
-#[test]
-fn codex_launch_config_enables_streaming_patch_updates() {
-    let _environment = environment::LaunchEnvironment::new();
-    let request = ExecutionRequest {
-        prompt: Value::String("create a file".to_owned()),
-        model_config: json!({
-            "model_id": "gpt-5.5-codex",
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-
-    assert!(launch_config
-        .config_overrides
-        .contains(&CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned()));
-    assert!(launch_config
-        .config_overrides
-        .contains(&CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned()));
-    assert!(launch_config
-        .config_overrides
-        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
-    assert!(launch_config
-        .config_overrides
-        .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
-    assert!(launch_config
-        .config_overrides
-        .contains(&CODEX_ENABLE_DEFAULT_MODE_REQUEST_USER_INPUT_OVERRIDE.to_owned()));
-}
-
-#[test]
-fn project_launch_config_adds_project_plugins_without_disabling_global_plugins() {
-    let _lock = crate::test_env::lock();
-    let root = unique_test_path("project-plugin-isolation");
-    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    fs::create_dir_all(&root).expect("test Codex home should be created");
-    fs::write(
-        root.join("config.toml"),
-        "[plugins.\"global-only@team\"]\nenabled = true\n\
-         [plugins.\"project-tool@team\"]\nenabled = false\n",
-    )
-    .expect("plugin config should be written");
-    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
-    let mut request = ExecutionRequest {
-        runtime_project_key: Some("local:/repo".to_owned()),
-        ..ExecutionRequest::default()
-    };
-    request.extra.insert(
-        "project_plugin_ids".to_owned(),
-        json!(["project-tool@team"]),
-    );
-
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-
-    assert!(!launch_config
-        .config_overrides
-        .iter()
-        .any(|value| value.contains("global-only@team")));
-    assert!(launch_config
-        .config_overrides
-        .iter()
-        .any(|value| { value == "plugins.\"project-tool@team\".enabled=true" }));
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn non_project_launch_keeps_global_plugin_configuration() {
-    let request = ExecutionRequest::default();
-
-    assert!(project_plugin_config_overrides(&request).is_empty());
-}
-
-#[test]
-fn standalone_robot_launch_enables_configured_plugins() {
-    let mut request = ExecutionRequest::default();
-    request
-        .extra
-        .insert("project_plugin_ids".to_owned(), json!(["robot-tool@team"]));
-
-    assert_eq!(
-        project_plugin_config_overrides(&request),
-        vec!["plugins.\"robot-tool@team\".enabled=true"]
-    );
 }
 
 #[test]
@@ -1741,116 +1775,6 @@ fn project_plugin_overrides_reject_malformed_plugin_ids() {
             "plugins.\"valid-plugin@team\".enabled=true",
         ]
     );
-}
-
-#[test]
-fn custom_model_without_catalog_entry_uses_upstream_id() {
-    let request = ExecutionRequest {
-        model_config: json!({
-        "model_id": "kimi-for-coding",
-        "tool_profile": "function",
-        "codex_responses_compat_proxy": true
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    assert_eq!(
-        codex_request_model(&request).as_deref(),
-        Some("kimi-for-coding")
-    );
-}
-
-#[test]
-fn explicit_responses_upstream_preserves_native_app_tools_by_default() {
-    let upstream = explicit_codex_upstream(
-        &json!({
-            "model_id": "gpt-5.6-sol",
-            "upstream_api_format": "openai-responses"
-        }),
-        "https://example.com",
-        "secret",
-    );
-
-    assert!(!upstream.convert_custom_tools);
-    assert!(upstream.native_tool_search);
-    assert!(upstream.native_namespace_tools);
-}
-
-#[test]
-fn explicit_upstream_reads_standard_app_tool_compatibility() {
-    let upstream = explicit_codex_upstream(
-        &json!({
-            "model_id": "standard-responses-model",
-            "upstream_api_format": "openai-responses",
-            "native_tool_search": false,
-            "native_namespace_tools": false
-        }),
-        "https://example.com",
-        "secret",
-    );
-
-    assert!(!upstream.native_tool_search);
-    assert!(!upstream.native_namespace_tools);
-}
-
-#[test]
-fn function_tool_profile_enables_responses_tool_conversion() {
-    let upstream = explicit_codex_upstream(
-        &json!({
-            "model_id": "gateway-model",
-            "upstream_api_format": "openai-responses",
-            "tool_profile": "function"
-        }),
-        "https://example.com",
-        "secret",
-    );
-
-    assert!(upstream.convert_custom_tools);
-}
-
-#[test]
-fn parses_vision_sidecar_from_model_config() {
-    let sidecar = vision_sidecar_upstream(&json!({
-        "proxy": {"url": "http://127.0.0.1:7890"},
-        "vision_sidecar": {
-            "enabled": true,
-            "request_url": "https://vision.example/v1/chat/completions",
-            "api_format": "openai-chat-completions",
-            "api_key": "vision-key",
-            "model_id": "vision-model",
-            "max_descriptions_per_turn": 4,
-            "timeout_ms": 12_000
-        }
-    }))
-    .expect("valid vision sidecar")
-    .expect("configured vision sidecar");
-
-    assert_eq!(
-        sidecar.request_url,
-        "https://vision.example/v1/chat/completions"
-    );
-    assert_eq!(sidecar.api_format, "openai-chat-completions");
-    assert_eq!(sidecar.api_key, "vision-key");
-    assert_eq!(sidecar.model_id, "vision-model");
-    assert_eq!(sidecar.max_descriptions_per_turn, 4);
-    assert_eq!(sidecar.timeout, Duration::from_secs(12));
-    assert_eq!(sidecar.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
-}
-
-#[test]
-fn vision_sidecar_explicit_direct_does_not_inherit_primary_proxy() {
-    let sidecar = vision_sidecar_upstream(&json!({
-        "proxy": { "url": "http://external-proxy:3128" },
-        "vision_sidecar": {
-            "request_url": "https://internal.example/v1/responses",
-            "model_id": "vision-model",
-            "proxy": { "url": null }
-        }
-    }))
-    .expect("valid vision sidecar")
-    .expect("configured vision sidecar");
-
-    assert_eq!(sidecar.proxy_url, None);
 }
 
 #[test]
@@ -1915,81 +1839,6 @@ fn explicit_upstream_uses_configured_max_output_tokens() {
 }
 
 #[test]
-fn kimi_k3_profile_uses_the_built_in_catalog_entry() {
-    let request = ExecutionRequest {
-        model_config: json!({
-            "model_id": "kimi-k3",
-            "tool_profile": "function",
-            "codex_catalog_model_id": codex_model_catalog::KIMI_K3_MODEL,
-            "codex_responses_compat_proxy": true
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    assert_eq!(
-        codex_request_model(&request).as_deref(),
-        Some(codex_model_catalog::KIMI_K3_MODEL)
-    );
-}
-
-#[test]
-fn cloud_model_uses_provider_model_id_for_catalog_capabilities() {
-    let request = ExecutionRequest {
-        model_config: json!({
-            "model_id": "openai-gpt-5.6-luna(海外)",
-            "codex_catalog_model_id": "gpt-5.6-luna",
-            "codex_responses_compat_proxy": true
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    assert_eq!(
-        codex_request_model(&request).as_deref(),
-        Some("gpt-5.6-luna")
-    );
-}
-
-#[test]
-fn configured_vision_sidecar_derives_catalog_from_any_base_profile() {
-    let request = ExecutionRequest {
-        model_config: json!({
-            "model_id": "provider-model",
-            "codex_catalog_model_id": "wework-kimi-k2-7",
-            "codex_responses_compat_proxy": true,
-            "vision_sidecar": {
-                "enabled": true,
-                "request_url": "https://vision.example/v1/responses",
-                "model_id": "vision-model"
-            }
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    assert_eq!(
-        codex_request_model(&request).as_deref(),
-        Some("wework-kimi-k2-7-vision-sidecar")
-    );
-}
-
-#[test]
-fn disabled_vision_sidecar_keeps_the_base_catalog_profile() {
-    let request = ExecutionRequest {
-        model_config: json!({
-            "model_id": "provider-model",
-            "codex_catalog_model_id": "operator-catalog",
-            "codex_responses_compat_proxy": true,
-            "vision_sidecar": {"enabled": false}
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    assert_eq!(
-        codex_request_model(&request).as_deref(),
-        Some("operator-catalog")
-    );
-}
-
-#[test]
 fn malformed_vision_sidecar_keeps_the_base_catalog_profile() {
     let request = ExecutionRequest {
         model_config: json!({
@@ -2008,276 +1857,46 @@ fn malformed_vision_sidecar_keeps_the_base_catalog_profile() {
 }
 
 #[test]
-fn incomplete_vision_sidecar_keeps_the_base_catalog_profile() {
-    let invalid_sidecars = [
-        json!({"model_id": "vision-model"}),
-        json!({"request_url": "https://vision.example/v1/responses"}),
-        json!({
-            "request_url": "https://vision.example/v1/responses",
-            "model_id": "vision-model",
-            "api_format": "openai-embeddings"
-        }),
-    ];
-
-    for vision_sidecar in invalid_sidecars {
-        let request = ExecutionRequest {
-            model_config: json!({
-                "model_id": "provider-model",
-                "codex_catalog_model_id": "operator-catalog",
-                "codex_responses_compat_proxy": true,
-                "vision_sidecar": vision_sidecar
-            }),
-            ..ExecutionRequest::default()
-        };
-
-        assert_eq!(
-            codex_request_model(&request).as_deref(),
-            Some("operator-catalog")
-        );
-    }
-}
-
-#[test]
-fn shell_profile_uses_explicit_catalog_capabilities() {
-    let request = ExecutionRequest {
-        model_config: json!({
-            "model_id": "openai-gpt-5.6-luna(海外)",
-            "codex_catalog_model_id": "gpt-5.6-luna",
-            "tool_profile": "shell",
-            "codex_responses_compat_proxy": true
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    assert_eq!(
-        codex_request_model(&request).as_deref(),
-        Some("gpt-5.6-luna")
-    );
-}
-
-#[test]
-fn custom_shell_profile_without_catalog_entry_uses_upstream_id() {
-    let request = ExecutionRequest {
-        model_config: json!({
-            "model_id": "native-model",
-            "tool_profile": "shell",
-            "codex_responses_compat_proxy": true
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    assert_eq!(
-        codex_request_model(&request).as_deref(),
-        Some("native-model")
-    );
-}
-
-#[test]
-fn internal_catalog_provider_is_never_used_for_thread_inference() {
+fn stand_in_custom_provider_uses_authenticated_protocol_adapter() {
     let _lock = crate::test_env::lock();
-    let request = ExecutionRequest {
-        model_config: json!({
-            "model_id": "gpt-5.4",
-            "model_provider": "wework-catalog"
-        }),
-        ..ExecutionRequest::default()
-    };
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-
-    assert_eq!(launch_config.model_provider.as_deref(), Some("openai"));
-    for params in [
-        thread_start_params(&request, &launch_config),
-        thread_resume_params("thread-1", &request, &launch_config),
-        thread_fork_params("thread-1", None, &request, &launch_config),
-    ] {
-        assert_eq!(params["modelProvider"], "openai");
-    }
-}
-
-#[test]
-fn built_in_provider_does_not_emit_reserved_model_provider_overrides() {
-    let _lock = crate::test_env::lock();
-    let request = ExecutionRequest {
-        task_id: "project-ai-task".to_owned(),
-        model_config: json!({
-            "model_id": "gpt-6-luna",
-            "model_provider": "openai",
-            "default_headers": {
-                "X-Custom-Header": "custom-value"
-            },
-            "runtime_config": {
-                "codex": {
-                    "use_user_config": true,
-                    "configured": true
-                }
-            }
-        }),
-        extra: json!({
-            "project_id": "project-1"
-        })
-        .as_object()
-        .expect("extra must be an object")
-        .clone(),
-        ..ExecutionRequest::default()
-    };
-
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-
-    assert_eq!(launch_config.model_provider.as_deref(), Some("openai"));
-    assert!(!launch_config
-        .config_overrides
-        .iter()
-        .any(|value| value.starts_with("model_providers.openai.")));
-}
-
-#[test]
-fn configured_inference_provider_reads_the_unmodified_user_config() {
-    let root = unique_test_path("configured-inference-provider");
-    fs::create_dir_all(&root).expect("test directory should be created");
-    let config_path = root.join("config.toml");
+    let root = tempfile::tempdir().unwrap();
+    let _home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+    env::set_var(WEGENT_CODEX_HOME_ENV, root.path());
     fs::write(
-        &config_path,
-        "model_provider = \"wework-e2e\"\n[model_providers.wework-e2e]\nbase_url = \"http://127.0.0.1/v1\"\n",
+        root.path().join("config.toml"),
+        r#"model_provider = "openai"
+[model_providers.custom]
+base_url = "http://127.0.0.1:3456/v1"
+experimental_bearer_token = "synthetic-custom-token"
+upstream_api_format = "openai-chat-completions"
+wire_api = "responses"
+"#,
     )
-    .expect("config should be written");
-
+    .unwrap();
+    let model = json!({"runtime":"codex","provider":"custom","model_id":"custom-model"});
+    let catalog = json!({"models":[{
+        "runtime":"codex","provider":"custom","model_id":"custom-model",
+        "local_model_id":"custom-model"
+    }]});
+    let mut payload = json!({
+        "taskId":"stand-in-custom-provider", "message":"Reply OK",
+        "origin":{"initiatedBy":"stand_in"},
+        "runnerPolicy":{"runtime":"codex","execution_policy":{"mode":"fixed","environment_id":"mac"},"model_policy":{"mode":"user_select"}},
+        "runnerSelection":{"model":model}
+    });
+    crate::task_runtime::runner_routing::resolve_pending(&mut payload, Some(&catalog), "mac")
+        .unwrap();
+    let request: ExecutionRequest =
+        serde_json::from_value(payload["executionRequest"].clone()).unwrap();
+    let launch = build_codex_launch_config(&request).unwrap();
     assert_eq!(
-        configured_inference_model_provider_from_path(&config_path),
-        "wework-e2e"
-    );
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn user_configured_provider_routes_inference_through_the_local_router() {
-    let _lock = crate::test_env::lock();
-    let root = unique_test_path("configured-provider-router");
-    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
-    fs::create_dir_all(&root).expect("test directory should be created");
-    fs::write(
-        root.join("config.toml"),
-        "model_provider = \"wework-e2e\"\n[model_providers.wework-e2e]\nbase_url = \"http://127.0.0.1:3456/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\n",
-    )
-    .expect("config should be written");
-    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
-    env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
-    let request = ExecutionRequest {
-        model_config: json!({
-            "model_id": "gpt-test",
-            "runtime_config": {
-                "codex": {
-                    "use_user_config": true,
-                    "configured": true
-                }
-            }
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-
-    assert_eq!(
-        launch_config.model_provider.as_deref(),
+        launch.model_provider.as_deref(),
         Some(codex_model_catalog::PROVIDER_ID)
     );
-    assert!(launch_config.local_proxy_registration.is_some());
-    assert!(launch_config.config_overrides.iter().any(|value| {
-        value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && value.ends_with("/v1/codex-router\"")
-    }));
-    for params in [
-        thread_start_params(&request, &launch_config),
-        thread_resume_params("thread-1", &request, &launch_config),
-        thread_fork_params("thread-1", None, &request, &launch_config),
-    ] {
-        assert_eq!(params["modelProvider"], codex_model_catalog::PROVIDER_ID);
-    }
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn user_configured_responses_provider_preserves_native_app_tools_by_default() {
-    let _lock = crate::test_env::lock();
-    let root = unique_test_path("configured-provider-native-responses");
-    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
-    fs::create_dir_all(&root).expect("test directory should be created");
-    fs::write(
-        root.join("config.toml"),
-        "model_provider = \"wework-e2e\"\n[model_providers.wework-e2e]\nbase_url = \"http://127.0.0.1:3456/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nupstream_api_format = \"openai-responses\"\n",
-    )
-    .expect("config should be written");
-    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
-    env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
-
-    let upstream = configured_codex_provider("wework-e2e", Some("http://127.0.0.1:7890"))
-        .expect("configured provider");
-
-    assert_eq!(upstream.api_format, "openai-responses");
-    assert_eq!(
-        upstream.request_url.as_deref(),
-        Some("http://127.0.0.1:3456/v1/responses")
-    );
-    assert_eq!(upstream.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
-    assert!(!upstream.convert_custom_tools);
-    assert!(upstream.native_tool_search);
-    assert!(upstream.native_namespace_tools);
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn user_configured_provider_honors_standard_app_tool_compatibility() {
-    let _lock = crate::test_env::lock();
-    let root = unique_test_path("configured-openai-native-app-tools");
-    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
-    fs::create_dir_all(&root).expect("test directory should be created");
-    fs::write(
-        root.join("config.toml"),
-        "model_provider = \"standard-responses\"\n[model_providers.standard-responses]\nbase_url = \"https://api.example.com/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nnative_tool_search = false\nnative_namespace_tools = false\n",
-    )
-    .expect("config should be written");
-    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
-    env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
-
-    let upstream =
-        configured_codex_provider("standard-responses", None).expect("configured provider");
-
-    assert!(!upstream.native_tool_search);
-    assert!(!upstream.native_namespace_tools);
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn user_configured_provider_converts_tools_for_non_responses_upstreams() {
-    let _lock = crate::test_env::lock();
-    let root = unique_test_path("configured-provider-anthropic");
-    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
-    fs::create_dir_all(&root).expect("test directory should be created");
-    fs::write(
-        root.join("config.toml"),
-        "model_provider = \"wework-e2e\"\n[model_providers.wework-e2e]\nbase_url = \"http://127.0.0.1:3456/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\nupstream_api_format = \"anthropic-messages\"\n",
-    )
-    .expect("config should be written");
-    env::set_var(WEGENT_CODEX_HOME_ENV, &root);
-    env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
-
-    let upstream = configured_codex_provider("wework-e2e", None).expect("configured provider");
-
-    assert_eq!(upstream.api_format, "anthropic-messages");
-    assert_eq!(
-        upstream.request_url.as_deref(),
-        Some("http://127.0.0.1:3456/v1/messages")
-    );
-    assert!(upstream.convert_custom_tools);
-    let _ = fs::remove_dir_all(root);
+    assert!(launch.local_proxy_registration.is_some());
+    let upstream = configured_codex_provider("custom", None, &wework_codex_home()).unwrap();
+    assert_eq!(upstream.api_key, "synthetic-custom-token");
+    assert_eq!(upstream.api_format, "openai-chat-completions");
 }
 
 #[test]
@@ -2298,89 +1917,64 @@ fn configured_inference_provider_rejects_the_internal_catalog_provider() {
 
 #[test]
 fn header_overrides_do_not_redefine_builtin_codex_providers() {
-    for provider in ["openai", "amazon-bedrock", "ollama", "lmstudio"] {
+    let _environment = environment::LaunchEnvironment::new();
+    for provider in [
+        "openai",
+        "amazon-bedrock",
+        "amazon-bedrock-runtime",
+        "gcp",
+        "ollama",
+        "lmstudio",
+    ] {
+        let request = ExecutionRequest {
+            task_id: "task-1".into(),
+            model_config: json!({"model_provider":provider,"default_headers":{"X-Wegent-Test":"test-value"}}),
+            ..ExecutionRequest::default()
+        };
+        let launch = build_codex_launch_config(&request).unwrap();
         assert!(
-            header_overrides(
-                provider,
-                Some(&json!({"X-Wegent-Test": "test-value"})),
-                Some("42"),
-                "task-1",
-            )
-            .is_empty(),
+            !launch
+                .config_overrides
+                .iter()
+                .any(|value| value.starts_with(&format!("model_providers.{provider}."))),
             "built-in provider {provider} must not receive model_providers overrides"
+        );
+        let profile = native_provider::profile_for_test(&launch.config_overrides);
+        assert!(profile["http_headers"].get("X-Wegent-Test").is_none());
+        assert_eq!(
+            launch.model_provider.as_deref(),
+            Some(codex_model_catalog::PROVIDER_ID)
         );
     }
 }
 
 #[test]
 fn header_overrides_preserve_custom_provider_headers() {
-    let overrides = header_overrides(
-        "openai-custom",
-        Some(&json!({"X-Wegent-Test": "test-value"})),
-        Some("42"),
-        "task-1",
-    );
-
-    assert!(overrides
-        .iter()
-        .any(|value| value
-            == "model_providers.openai-custom.http_headers.X-Wegent-Test=\"test-value\""));
-    assert!(overrides
-        .iter()
-        .any(|value| value == "model_providers.openai-custom.http_headers.wecode-project=\"42\""));
-    assert!(overrides.iter().any(|value| {
-        value == "model_providers.openai-custom.http_headers.wecode-session-id=\"task-1\""
-    }));
-}
-
-#[test]
-fn codex_launch_config_forwards_web_search_mode() {
     let _environment = environment::LaunchEnvironment::new();
+    fs::create_dir_all(wework_codex_home()).unwrap();
+    fs::write(
+        wework_codex_home().join("config.toml"),
+        r#"
+[model_providers.openai-custom]
+name="Custom header fixture"
+base_url="https://synthetic.invalid/v1"
+auth={command="synthetic-credential-helper"}
+http_headers={X-Existing="preserved"}
+"#,
+    )
+    .unwrap();
     let request = ExecutionRequest {
-        prompt: Value::String("create a file".to_owned()),
-        model_config: json!({
-            "model_id": "gpt-5.5-codex",
-            "web_search": "disabled",
-            "image_generation": false,
-            "model_context_window": 128000,
-        }),
+        task_id: "task-1".into(),
+        model_config: json!({"model_provider":"openai-custom","default_headers":{"X-Wegent-Test":"test-value"}}),
+        extra: json!({"project_id":"42"}).as_object().unwrap().clone(),
         ..ExecutionRequest::default()
     };
-
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-    let params = thread_start_params(&request, &launch_config);
-    let config = params
-        .get("config")
-        .and_then(Value::as_object)
-        .expect("thread config should be present");
-
-    assert_eq!(config.get("web_search"), Some(&json!("disabled")));
-    assert_eq!(config.get("features.image_generation"), Some(&json!(false)));
-    assert_eq!(config.get("model_context_window"), Some(&json!(128000)));
-}
-
-#[test]
-fn codex_launch_config_preserves_catalog_context_window() {
-    let _environment = environment::LaunchEnvironment::new();
-    let request = ExecutionRequest {
-        prompt: Value::String("create a file".to_owned()),
-        model_config: json!({
-            "model_id": "gpt-6.1-sol",
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-    let params = thread_start_params(&request, &launch_config);
-    let config = params
-        .get("config")
-        .and_then(Value::as_object)
-        .expect("thread config should be present");
-
-    assert_eq!(config.get("model_context_window"), None);
-    assert_eq!(config.get("model_auto_compact_token_limit"), None);
+    let launch = build_codex_launch_config(&request).unwrap();
+    let profile = native_provider::profile_for_test(&launch.config_overrides);
+    assert_eq!(profile["http_headers"]["X-Existing"], "preserved");
+    assert_eq!(profile["http_headers"]["X-Wegent-Test"], "test-value");
+    assert_eq!(profile["http_headers"]["wecode-project"], "42");
+    assert_eq!(profile["http_headers"]["wecode-session-id"], "task-1");
 }
 
 #[test]
@@ -2422,7 +2016,110 @@ fn codex_launch_config_reserves_the_output_budget_from_the_auto_compact_limit() 
     assert_eq!(config.get("model_context_window"), Some(&json!(1_000_000)));
     assert_eq!(
         config.get("model_auto_compact_token_limit"),
-        Some(&json!(616_000))
+        Some(&json!(492_800))
+    );
+}
+
+#[test]
+fn codex_launch_config_keeps_the_model_budget_over_a_compatibility_catalog() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request = ExecutionRequest {
+        prompt: Value::String("review the current branch".to_owned()),
+        model_config: json!({
+            "model_id": "moonshot-kimi-k3.1-pro",
+            "codex_catalog_model_id": "wework-gpt-6.1-sol",
+            "codex_responses_compat_proxy": true,
+            "model_context_window": 1_048_576,
+            "max_output_tokens": 96_000,
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("thread config should be present");
+
+    assert_eq!(
+        codex_request_model(&request).as_deref(),
+        Some("wework-gpt-6.1-sol")
+    );
+    assert_eq!(config.get("model_context_window"), Some(&json!(1_048_576)));
+    let requested_limit = config
+        .get("model_auto_compact_token_limit")
+        .and_then(Value::as_i64)
+        .expect("auto-compact limit should be present");
+    assert_eq!(requested_limit, 762_060);
+    assert_eq!(requested_limit, (1_048_576 - 96_000) * 80 / 100);
+}
+
+#[test]
+fn auto_compact_limit_reserves_the_proxy_default_output_budget() {
+    for protocol in [
+        "openai-chat-completions",
+        "chat/completions",
+        "anthropic-messages",
+        "messages",
+    ] {
+        let model_config = json!({"upstream_api_format": protocol});
+        assert_eq!(codex_model_max_output_tokens(&model_config), Some(96_000));
+        assert_eq!(
+            codex_auto_compact_token_limit(&model_config, 1_048_576),
+            Some(762_060),
+            "unexpected budget for {protocol}"
+        );
+        assert_eq!(
+            codex_auto_compact_token_limit(
+                &json!({"upstream_api_format": protocol, "max_output_tokens": 8_000}),
+                1_000_000,
+            ),
+            Some(793_600)
+        );
+    }
+}
+
+#[test]
+fn auto_compact_limit_uses_catalog_context_when_no_override_was_saved() {
+    let _environment = environment::LaunchEnvironment::new();
+    let overrides = codex_model_config_overrides(&json!({
+        "codex_catalog_model_id": "wework-kimi-k3",
+        "upstream_api_format": "openai-chat-completions",
+    }));
+    assert!(overrides.contains(&"model_context_window=1048576".to_owned()));
+    assert!(overrides.contains(&"model_auto_compact_token_limit=762060".to_owned()));
+}
+
+#[test]
+fn auto_compact_limit_validates_aliases_and_handles_large_windows() {
+    let config = json!({
+        "model_context_window": 0,
+        "contextWindow": "1000000",
+        "max_output_tokens": false,
+        "maxOutputTokens": "32000",
+    });
+    assert_eq!(codex_model_context_window(&config), Some(1_000_000));
+    assert_eq!(
+        codex_auto_compact_token_limit(&config, 1_000_000),
+        Some(774_400)
+    );
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 1}), i64::MAX),
+        Some(((i128::from(i64::MAX) - 1) * 80 / 100) as i64)
+    );
+}
+
+#[test]
+fn auto_compact_limit_uses_80_percent_of_the_input_budget() {
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 128_000}), 1_000_000),
+        Some(697_600)
+    );
+    assert_eq!(
+        codex_auto_compact_token_limit(&json!({"max_output_tokens": 128_000}), 400_000),
+        Some(217_600)
     );
 }
 
@@ -2430,14 +2127,14 @@ fn codex_launch_config_reserves_the_output_budget_from_the_auto_compact_limit() 
 fn auto_compact_limit_requires_a_usable_output_budget() {
     let cases = [
         // The configured output ceiling leaves an input budget.
-        (json!({"max_output_tokens": 384_000}), Some(616_000)),
+        (json!({"max_output_tokens": 384_000}), Some(492_800)),
         // An output budget that consumes the whole window leaves nothing to compact for.
         (json!({"max_output_tokens": 1_000_000}), None),
         (json!({"max_output_tokens": 1_200_000}), None),
         // Without a configured output ceiling the provider keeps its own default.
         (json!({}), None),
         (json!({"max_output_tokens": 0}), None),
-        (json!({"maxOutputTokens": "384000"}), Some(616_000)),
+        (json!({"maxOutputTokens": "384000"}), Some(492_800)),
     ];
 
     for (model_config, expected) in cases {
@@ -2447,38 +2144,6 @@ fn auto_compact_limit_requires_a_usable_output_budget() {
             "unexpected auto-compact limit for {model_config}"
         );
     }
-}
-
-#[test]
-fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
-    let _environment = environment::LaunchEnvironment::new();
-    let request = ExecutionRequest {
-        prompt: Value::String("create a file".to_owned()),
-        model_config: json!({
-            "model_id": "mimo-v2.5-pro",
-            "base_url": "http://models.local/v1",
-            "api_key": "sk-local",
-            "api_format": "responses",
-            "codex_responses_compat_proxy": true,
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-
-    assert_eq!(
-        launch_config.model_provider.as_deref(),
-        Some(codex_model_catalog::PROVIDER_ID)
-    );
-    assert!(launch_config.config_overrides.iter().any(|override_value| {
-        override_value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
-            && override_value.ends_with("/v1/codex-router\"")
-    }));
-    assert!(!launch_config
-        .config_overrides
-        .iter()
-        .any(|override_value| override_value.contains("experimental_bearer_token")));
 }
 
 #[test]
@@ -2530,175 +2195,6 @@ fn fork_launch_config_owns_its_route_with_or_without_a_running_source() {
     assert_eq!(token(&resumed), token(&warm_fork));
     assert_ne!(token(&resumed), token(&source));
     let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn binds_an_idle_thread_to_the_task_model_route() {
-    let _lock = crate::test_env::lock();
-    let root = unique_test_path("idle-thread-route");
-    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
-    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
-    env::set_var("WEGENT_EXECUTOR_HOME", &root);
-    let request = ExecutionRequest {
-        task_id: "idle-thread-route-task".to_owned(),
-        subtask_id: "idle-thread-route-task-context-compact".to_owned(),
-        model_config: json!({
-            "model_id": "selected-model",
-            "base_url": "https://cloud-model.example/v1",
-            "api_key": "test-cloud-key",
-            "api_format": "responses",
-            "codex_responses_compat_proxy": true,
-        }),
-        ..ExecutionRequest::default()
-    };
-    assert!(
-        !local_model_proxy::thread_has_bound_route("idle-thread-route-thread"),
-        "an idle thread starts without a bound route"
-    );
-
-    let registration = bind_codex_thread_model_route(&request, "idle-thread-route-thread")
-        .expect("binding the task route should succeed")
-        .expect("payload providers must route through the local model proxy");
-    assert!(
-        local_model_proxy::thread_has_bound_route("idle-thread-route-thread"),
-        "the thread should resolve the task route"
-    );
-
-    // Action routes share the task scope with the turns that launched them.
-    let launch = build_codex_launch_config(&request).expect("launch config should register");
-    assert_eq!(
-        launch
-            .local_proxy_registration
-            .as_ref()
-            .expect("launch route")
-            .0,
-        registration.0
-    );
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn skips_the_local_route_for_providers_that_are_reached_directly() {
-    let _lock = crate::test_env::lock();
-    let root = unique_test_path("direct-provider-route");
-    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
-    env::set_var(WEGENT_CODEX_HOME_ENV, root.join("codex"));
-    env::set_var("WEGENT_EXECUTOR_HOME", &root);
-    let request = ExecutionRequest {
-        task_id: "direct-provider-route-task".to_owned(),
-        model_config: json!({
-            "model": "gpt-5.6-sol",
-            "api_key": "test-cloud-key",
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    assert!(
-        bind_codex_thread_model_route(&request, "direct-provider-thread")
-            .expect("a direct provider needs no local route")
-            .is_none()
-    );
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
-    let _environment = environment::LaunchEnvironment::new();
-    let task_id = "codex-launch-config-stable-model-switch-task".to_owned();
-    let luna_request = ExecutionRequest {
-        task_id: task_id.clone(),
-        model_config: json!({
-            "model_id": "gpt-5.6-luna",
-            "base_url": "http://luna.local/v1",
-            "api_key": "luna-key",
-            "api_format": "responses",
-            "codex_responses_compat_proxy": true,
-        }),
-        ..ExecutionRequest::default()
-    };
-    let sol_request = ExecutionRequest {
-        task_id,
-        model_config: json!({
-            "model_id": "gpt-5.6-sol",
-            "base_url": "http://sol.local/v1",
-            "api_key": "sol-key",
-            "api_format": "responses",
-            "codex_responses_compat_proxy": true,
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    let luna_config =
-        build_codex_launch_config(&luna_request).expect("Luna launch config should be built");
-    let sol_config =
-        build_codex_launch_config(&sol_request).expect("Sol launch config should be built");
-    let proxy_url = |config: &CodexLaunchConfig| {
-        config
-            .config_overrides
-            .iter()
-            .find(|value| value.starts_with("model_providers.wework-router.base_url="))
-            .expect("local proxy base URL")
-            .to_owned()
-    };
-
-    assert_eq!(proxy_url(&luna_config), proxy_url(&sol_config));
-    assert!(luna_config
-        .config_overrides
-        .contains(&"model=gpt-5.6-luna".to_owned()));
-    assert!(sol_config
-        .config_overrides
-        .contains(&"model=gpt-5.6-sol".to_owned()));
-}
-
-#[test]
-fn codex_launch_config_forwards_runtime_proxy_to_standalone_engine() {
-    let _environment = environment::LaunchEnvironment::new();
-    let request = ExecutionRequest {
-        prompt: Value::String("create a file".to_owned()),
-        model_config: json!({
-            "model_id": "gpt-5.5-codex",
-            "proxy": {
-                "url": "http://127.0.0.1:7890"
-            },
-            "runtime_config": {
-                "codex": {
-                    "use_proxy": true
-                }
-            }
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-
-    assert_eq!(
-        launch_config.env.get("HTTP_PROXY").map(String::as_str),
-        Some("http://127.0.0.1:7890")
-    );
-    assert_eq!(
-        launch_config.env.get("HTTPS_PROXY").map(String::as_str),
-        Some("http://127.0.0.1:7890")
-    );
-    assert_eq!(
-        launch_config.env.get("ALL_PROXY").map(String::as_str),
-        Some("http://127.0.0.1:7890")
-    );
-}
-
-#[test]
-fn required_loopback_hosts_are_merged_into_no_proxy() {
-    assert_eq!(
-        merge_required_no_proxy(Some("example.com, localhost")),
-        "example.com,localhost,127.0.0.1,::1,host.docker.internal"
-    );
-    assert_eq!(
-        merge_required_no_proxy(Some("LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL")),
-        "LOCALHOST,127.0.0.1,::1,HOST.DOCKER.INTERNAL"
-    );
-    assert_eq!(merge_required_no_proxy(None), DEFAULT_NO_PROXY);
 }
 
 #[test]
@@ -2836,28 +2332,6 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
 }
 
 #[test]
-fn codex_worktree_launch_config_sets_pnpm_environment() {
-    let _environment = environment::LaunchEnvironment::new();
-    let request = ExecutionRequest {
-        workspace_source: Some("git_worktree".to_owned()),
-        ..ExecutionRequest::default()
-    };
-
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-    let params = thread_start_params(&request, &launch_config);
-
-    assert_eq!(
-        params["config"]["shell_environment_policy.set.PNPM_CONFIG_IGNORE_SCRIPTS"],
-        "true"
-    );
-    assert_eq!(
-        params["config"]["shell_environment_policy.set.PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE"],
-        "false"
-    );
-}
-
-#[test]
 fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     let request_launch_config = CodexLaunchConfig {
         env: BTreeMap::from([("HTTP_PROXY".to_owned(), "http://127.0.0.1:7890".to_owned())]),
@@ -2880,6 +2354,10 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
 
     let launch_config = persistent_codex_app_server_launch_config(&request_launch_config);
 
+    assert!(launch_config
+        .config_overrides
+        .contains(&"features.multi_agent_v2.non_code_mode_only=false".to_owned()));
+
     assert_eq!(
         launch_config.env.get("HTTP_PROXY").map(String::as_str),
         Some("http://127.0.0.1:7890")
@@ -2887,7 +2365,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     assert!(launch_config
         .config_overrides
         .iter()
-        .any(|value| value == "model_provider=wework-router"));
+        .any(|value| value == &format!("model_provider={}", codex_model_catalog::PROVIDER_ID)));
     assert!(!launch_config
         .config_overrides
         .iter()
@@ -2928,145 +2406,6 @@ fn persistent_process_does_not_inherit_request_model_overrides() {
             ..CodexLaunchConfig::default()
         })
         .config_overrides
-    );
-}
-
-#[test]
-fn codex_run_state_uses_commentary_agent_delta_as_fallback_final_content() {
-    let mut state = CodexRunState::default();
-
-    assert!(state
-        .handle_message(&json!({
-            "method": "item/agentMessage/delta",
-            "params": {
-                "phase": "commentary",
-                "delta": "I will inspect."
-            }
-        }))
-        .is_none());
-
-    let outcome = state
-        .handle_message(&json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        }))
-        .expect("turn completion should produce an outcome");
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "I will inspect.".to_owned()
-        }
-    );
-    assert_eq!(
-        state.response_value_origin(),
-        CodexResponseValueOrigin::ProcessFallback
-    );
-}
-
-#[test]
-fn codex_run_state_uses_reclassified_commentary_as_fallback_final_content() {
-    let mut state = CodexRunState::default();
-
-    for message in [
-        json!({
-            "method": "item/started",
-            "params": {
-                "item": {
-                    "id": "msg-progress",
-                    "type": "agentMessage",
-                    "phase": "final_answer",
-                    "text": ""
-                }
-            }
-        }),
-        json!({
-            "method": "item/agentMessage/delta",
-            "params": {
-                "itemId": "msg-progress",
-                "delta": "I will inspect."
-            }
-        }),
-        json!({
-            "method": "item/completed",
-            "params": {
-                "item": {
-                    "id": "msg-progress",
-                    "type": "agentMessage",
-                    "phase": "commentary",
-                    "text": "I will inspect."
-                }
-            }
-        }),
-    ] {
-        assert!(state.handle_message(&message).is_none());
-    }
-
-    let outcome = state
-        .handle_message(&json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        }))
-        .expect("turn completion should produce an outcome");
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "I will inspect.".to_owned()
-        }
-    );
-}
-
-#[test]
-fn codex_run_state_uses_completed_commentary_without_item_ids_as_fallback() {
-    let mut state = CodexRunState::default();
-
-    for message in [
-        json!({
-            "method": "item/agentMessage/delta",
-            "params": {
-                "phase": "final_answer",
-                "delta": "Final answer."
-            }
-        }),
-        json!({
-            "method": "item/completed",
-            "params": {
-                "item": {
-                    "type": "agentMessage",
-                    "phase": "commentary",
-                    "text": "I will inspect."
-                }
-            }
-        }),
-    ] {
-        assert!(state.handle_message(&message).is_none());
-    }
-
-    let outcome = state
-        .handle_message(&json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        }))
-        .expect("turn completion should produce an outcome");
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "I will inspect.".to_owned()
-        }
     );
 }
 
@@ -3253,340 +2592,6 @@ fn goal_update_corrects_a_provisional_turn_before_the_user_item_starts() {
 }
 
 #[test]
-fn codex_run_state_uses_commentary_channel_delta_as_fallback_final_content() {
-    let mut state = CodexRunState::default();
-
-    assert!(state
-        .handle_message(&json!({
-            "method": "item/agentMessage/delta",
-            "params": {
-                "channel": "commentary",
-                "delta": "I will inspect."
-            }
-        }))
-        .is_none());
-
-    let outcome = state
-        .handle_message(&json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        }))
-        .expect("turn completion should produce an outcome");
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "I will inspect.".to_owned()
-        }
-    );
-}
-
-#[test]
-fn codex_run_state_keeps_completed_plan_out_of_final_content() {
-    let mut state = CodexRunState::default();
-
-    assert!(state
-        .handle_message(&json!({
-            "method": "item/completed",
-            "params": {
-                "item": {
-                    "id": "turn-1-plan",
-                    "type": "plan",
-                    "text": "# Plan\n\n- Execute the steps."
-                }
-            }
-        }))
-        .is_none());
-
-    let outcome = state
-        .handle_message(&json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        }))
-        .expect("turn completion should produce an outcome");
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: String::new()
-        }
-    );
-}
-
-#[test]
-fn codex_run_state_routes_item_id_deltas_by_started_phase() {
-    let mut state = CodexRunState::default();
-
-    assert!(state
-        .handle_message(&json!({
-            "method": "item/started",
-            "params": {
-                "item": {
-                    "id": "msg-commentary",
-                    "type": "agentMessage",
-                    "phase": "commentary",
-                    "text": ""
-                }
-            }
-        }))
-        .is_none());
-    assert!(state
-        .handle_message(&json!({
-            "method": "item/agentMessage/delta",
-            "params": {
-                "itemId": "msg-commentary",
-                "delta": "I will inspect."
-            }
-        }))
-        .is_none());
-    assert!(state
-        .handle_message(&json!({
-            "method": "item/started",
-            "params": {
-                "item": {
-                    "id": "msg-final",
-                    "type": "agentMessage",
-                    "phase": "final_answer",
-                    "text": ""
-                }
-            }
-        }))
-        .is_none());
-    assert!(state
-        .handle_message(&json!({
-            "method": "item/agentMessage/delta",
-            "params": {
-                "itemId": "msg-final",
-                "delta": "Done."
-            }
-        }))
-        .is_none());
-
-    let outcome = state
-        .handle_message(&json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        }))
-        .expect("turn completion should produce an outcome");
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "Done.".to_owned()
-        }
-    );
-}
-
-#[test]
-fn codex_run_state_keeps_unphased_agent_delta_as_final_content() {
-    let mut state = CodexRunState::default();
-
-    assert!(state
-        .handle_message(&json!({
-            "method": "item/agentMessage/delta",
-            "params": {
-                "delta": "Current directory: /tmp/project"
-            }
-        }))
-        .is_none());
-
-    let outcome = state
-        .handle_message(&json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        }))
-        .expect("turn completion should produce an outcome");
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "Current directory: /tmp/project".to_owned()
-        }
-    );
-}
-
-#[test]
-fn codex_run_state_uses_latest_completed_agent_message_in_same_turn() {
-    let mut state = CodexRunState::default();
-
-    for (id, text) in [
-        ("msg-before-tool", "I found the failing step."),
-        (
-            "msg-after-tool",
-            "The failure is caused by a stale lockfile.",
-        ),
-    ] {
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "id": id,
-                        "type": "agentMessage",
-                        "role": "assistant",
-                        "text": text
-                    }
-                }
-            }))
-            .is_none());
-    }
-
-    let outcome = state
-        .handle_message(&json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        }))
-        .expect("turn completion should produce an outcome");
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "The failure is caused by a stale lockfile.".to_owned()
-        }
-    );
-}
-
-#[test]
-fn codex_run_state_prefers_explicit_final_text_over_unphased_text() {
-    let mut state = CodexRunState::default();
-
-    for (id, phase, text) in [
-        ("msg-uncertain", None, "I may need another tool."),
-        ("msg-final", Some("final_answer"), "The task is complete."),
-    ] {
-        assert!(state
-            .handle_message(&json!({
-                "method": "item/completed",
-                "params": {
-                    "item": {
-                        "id": id,
-                        "type": "agentMessage",
-                        "role": "assistant",
-                        "phase": phase,
-                        "text": text
-                    }
-                }
-            }))
-            .is_none());
-    }
-
-    let outcome = state
-        .handle_message(&json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        }))
-        .expect("turn completion should produce an outcome");
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "The task is complete.".to_owned()
-        }
-    );
-    assert_eq!(
-        state.response_value_origin(),
-        CodexResponseValueOrigin::Final
-    );
-}
-
-#[test]
-fn codex_run_state_marks_empty_completed_output() {
-    let mut state = CodexRunState::default();
-
-    let outcome = state
-        .handle_message(&json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        }))
-        .expect("turn completion should produce an outcome");
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: String::new()
-        }
-    );
-    assert_eq!(
-        state.response_value_origin(),
-        CodexResponseValueOrigin::Empty
-    );
-}
-
-#[test]
-fn codex_run_state_does_not_duplicate_completed_text_after_matching_delta() {
-    let mut state = CodexRunState::default();
-
-    assert!(state
-        .handle_message(&json!({
-            "method": "item/agentMessage/delta",
-            "params": {
-                "itemId": "msg-final",
-                "delta": "Done."
-            }
-        }))
-        .is_none());
-    assert!(state
-        .handle_message(&json!({
-            "method": "item/completed",
-            "params": {
-                "item": {
-                    "id": "msg-final",
-                    "type": "agentMessage",
-                    "role": "assistant",
-                    "text": "Done."
-                }
-            }
-        }))
-        .is_none());
-
-    let outcome = state
-        .handle_message(&json!({
-            "method": "turn/completed",
-            "params": {
-                "turn": {
-                    "status": "completed"
-                }
-            }
-        }))
-        .expect("turn completion should produce an outcome");
-
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "Done.".to_owned()
-        }
-    );
-}
-
-#[test]
 fn turn_start_params_includes_plan_collaboration_mode_when_requested() {
     let mut request = ExecutionRequest {
         prompt: Value::String("plan this".to_owned()),
@@ -3662,6 +2667,7 @@ fn thread_collaboration_mode_update_params_skips_missing_mode() {
 
 #[test]
 fn single_collaboration_mode_disables_codex_native_subagents() {
+    let _environment = environment::LaunchEnvironment::new();
     let mut request = ExecutionRequest {
         model_config: json!({"model_id": "gpt-5.5-codex"}),
         ..ExecutionRequest::default()
@@ -3675,6 +2681,9 @@ fn single_collaboration_mode_disables_codex_native_subagents() {
 
     assert!(launch_config
         .config_overrides
+        .contains(&"agents.enabled=false".to_owned()));
+    assert!(launch_config
+        .config_overrides
         .contains(&"features.multi_agent=false".to_owned()));
     assert!(launch_config
         .config_overrides
@@ -3683,53 +2692,177 @@ fn single_collaboration_mode_disables_codex_native_subagents() {
 }
 
 #[test]
-fn turn_start_params_includes_client_user_message_id() {
+fn stand_in_identity_uses_native_v2_without_changing_other_task_defaults() {
+    for origin_type in ["stand_in_identity", "stand_in_task", "project_coordinator"] {
+        let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("origin".to_owned(), json!({"type": origin_type}));
+        let overrides = codex_collaboration_config_overrides(&request);
+        if origin_type == "stand_in_identity" {
+            assert_eq!(
+                overrides,
+                vec!["agents.enabled=true", CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE]
+            );
+        } else {
+            assert!(overrides.is_empty());
+        }
+    }
+    assert!(codex_collaboration_config_overrides(&ExecutionRequest::default()).is_empty());
+}
+
+#[test]
+fn issue_stand_in_delegation_survives_start_and_resume_without_a_user_spawn_request() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(
-        "client_user_message_id".to_owned(),
-        Value::String("runtime-local-pane-1".to_owned()),
+        "origin".into(),
+        json!({
+            "type":"issue_dispatch", "initiatedBy":"stand_in", "publicConversation":true
+        }),
     );
-
-    let params = turn_start_params(
-        "thread-1",
-        &request,
-        &CodexLaunchConfig::default(),
-        Vec::new(),
+    let config = CodexLaunchConfig {
+        config_overrides: [
+            codex_runtime_default_config_overrides(),
+            codex_collaboration_config_overrides(&request),
+        ]
+        .concat(),
+        ..Default::default()
+    };
+    let start = thread_start_params(&request, &config);
+    let resume = thread_resume_params("existing-issue", &request, &config);
+    let process = codex_app_server_command("codex", Path::new("/tmp"), &config);
+    assert!(
+        !process.as_std().get_args().any(|arg| arg
+            .to_string_lossy()
+            .contains("without requiring the user to request delegation")),
+        "Issue policy must not become a shared app-server startup default"
     );
-
-    assert_eq!(params["clientUserMessageId"], "runtime-local-pane-1");
-}
-
-#[test]
-fn turn_start_params_includes_output_schema() {
-    let mut request = ExecutionRequest::default();
-    let schema = json!({
-        "type": "object",
-        "properties": {
-            "accepted": {"type": "boolean"}
-        },
-        "required": ["accepted"],
-        "additionalProperties": false
-    });
+    assert!(
+        !process
+            .as_std()
+            .get_args()
+            .any(|arg| arg == "features.multi_agent_v2=true"),
+        "Issue agent family must also remain thread-scoped"
+    );
+    let ordinary = thread_start_params(&ExecutionRequest::default(), &config);
+    assert!(ordinary["config"]
+        .get("features.multi_agent_v2.multi_agent_mode_hint_text")
+        .is_none());
+    assert!(ordinary["config"]
+        .get("features.multi_agent_v2.usage_hint_text")
+        .is_none());
+    for params in [start, resume] {
+        assert_eq!(params["config"]["agents.enabled"], true);
+        assert_eq!(params["config"]["features.multi_agent_v2"], true);
+        let policy = params["config"]["features.multi_agent_v2.multi_agent_mode_hint_text"]
+            .as_str()
+            .unwrap();
+        assert!(policy.contains("without requiring the user to request delegation"));
+        assert!(policy.contains("If you are a delegated subagent"));
+        assert!(policy.contains("never expands native permissions"));
+        assert_eq!(
+            params["config"]["features.multi_agent_v2.root_agent_usage_hint_text"],
+            policy
+        );
+        assert_eq!(
+            params["config"]["features.multi_agent_v2.usage_hint_text"],
+            policy
+        );
+    }
+    for origin in [
+        json!({"type":"project_task"}),
+        json!({"type":"project_coordinator"}),
+        json!({"type":"stand_in_task"}),
+        json!({"type":"stand_in_task","initiatedBy":"stand_in","publicConversation":true}),
+    ] {
+        request.extra.insert("origin".into(), origin);
+        assert!(codex_collaboration_config_overrides(&request).is_empty());
+        assert!(collaboration::thread_config(&request).is_empty());
+    }
+    request.extra.insert(
+        "origin".into(),
+        json!({
+            "type":"issue_dispatch", "initiatedBy":"stand_in", "publicConversation":true
+        }),
+    );
     request
         .extra
-        .insert("output_schema".to_owned(), schema.clone());
-
-    let params = turn_start_params(
-        "thread-1",
-        &request,
-        &CodexLaunchConfig::default(),
-        Vec::new(),
+        .insert("collaborationMode".into(), json!("single"));
+    assert_eq!(
+        codex_collaboration_config_overrides(&request),
+        vec![
+            CODEX_DISABLE_AGENTS_OVERRIDE,
+            CODEX_DISABLE_MULTI_AGENT_OVERRIDE,
+            CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE,
+        ]
     );
-
-    assert_eq!(params["outputSchema"], schema);
+    assert!(collaboration::thread_config(&request).is_empty());
 }
 
 #[test]
-fn thread_start_uses_paginated_history_mode() {
-    let params = thread_start_params(&ExecutionRequest::default(), &CodexLaunchConfig::default());
+fn assigned_collaboration_agents_use_native_delegation_in_local_and_cloud_origins() {
+    for kind in [
+        "issue_dispatch",
+        "board_task",
+        "board_comment",
+        "project_automation",
+    ] {
+        for role in ["executor", "member", "manager"] {
+            let mut request = ExecutionRequest::default();
+            request
+                .extra
+                .insert("origin".into(), json!({"type":kind,"dispatchRole":role}));
+            let config = collaboration::thread_config(&request);
+            assert_eq!(config["agents.enabled"], true);
+            assert_eq!(config["features.multi_agent_v2"], true);
+            assert!(collaboration::thread_config(&request)
+                .contains_key("features.multi_agent_v2.multi_agent_mode_hint_text"));
+        }
+    }
+}
 
-    assert_eq!(params["historyMode"], "paginated");
+#[test]
+fn single_stand_in_identity_still_disables_both_native_agent_families() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("origin".to_owned(), json!({"type":"stand_in_identity"}));
+    request
+        .extra
+        .insert("collaboration_model".to_owned(), json!("single"));
+    assert_eq!(
+        codex_collaboration_config_overrides(&request),
+        vec![
+            CODEX_DISABLE_AGENTS_OVERRIDE,
+            CODEX_DISABLE_MULTI_AGENT_OVERRIDE,
+            CODEX_DISABLE_MULTI_AGENT_V2_OVERRIDE
+        ]
+    );
+}
+
+#[test]
+fn explicit_native_modes_restore_subagents_after_a_disabled_resume() {
+    for mode in ["default", "plan"] {
+        let mut request = ExecutionRequest::default();
+        request.extra.extend(
+            json!({"collaborationMode":mode,"collaboration_model":"single"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        assert_eq!(
+            codex_collaboration_config_overrides(&request),
+            vec!["agents.enabled=true", CODEX_ENABLE_MULTI_AGENT_V2_OVERRIDE]
+        );
+        let config = CodexLaunchConfig {
+            config_overrides: codex_collaboration_config_overrides(&request),
+            ..Default::default()
+        };
+        let params = thread_resume_params("existing-thread", &request, &config);
+        assert_eq!(params["threadId"], "existing-thread");
+        assert_eq!(params["config"]["agents.enabled"], true);
+        assert_eq!(params["config"]["features.multi_agent_v2"], true);
+    }
 }
 
 #[test]
@@ -3785,47 +2918,56 @@ fn stdio_mcp_environment_is_private_per_service_in_start_and_resume_rpc() {
 }
 
 #[test]
-fn codex_thread_plan_trims_and_prioritizes_direct_thread() {
-    let plan = codex_thread_plan(
-        Some("  direct-thread  "),
-        Some("fork-thread"),
-        Some("/tmp/fork.jsonl"),
-        Some("resume-thread"),
-        &ExecutionRequest::default(),
-        &CodexLaunchConfig::default(),
+fn temporary_tasks_persist_native_history_without_changing_auxiliary_threads() {
+    let launch = CodexLaunchConfig::default();
+    let mut request = ExecutionRequest {
+        ephemeral: true,
+        ..ExecutionRequest::default()
+    };
+    assert_eq!(thread_start_params(&request, &launch)["ephemeral"], true);
+    assert_eq!(
+        thread_fork_params("source", None, &request, &launch)["ephemeral"],
+        true
     );
 
-    match plan.start {
-        CodexThreadStart::Direct(thread_id) => assert_eq!(thread_id, "direct-thread"),
-        CodexThreadStart::Request { operation, .. } => {
-            panic!("expected direct thread, got {operation}")
-        }
-    }
-    assert!(plan.fork_requested);
-    assert!(plan.resume_requested);
+    request.persist_runtime_thread();
+    assert!(request.ephemeral, "the task must remain hidden");
+    assert!(thread_start_params(&request, &launch)
+        .get("ephemeral")
+        .is_none());
+    assert!(thread_fork_params("source", None, &request, &launch)
+        .get("ephemeral")
+        .is_none());
+
+    request.use_ephemeral_codex_thread();
+    assert!(request.uses_ephemeral_codex_thread());
+    assert!(request.extra.get("persist_runtime_thread").is_none());
+    assert_eq!(thread_start_params(&request, &launch)["ephemeral"], true);
+    assert_eq!(
+        thread_fork_params("source", None, &request, &launch)["ephemeral"],
+        true
+    );
 }
 
 #[test]
-fn codex_thread_plan_ignores_empty_direct_thread_and_prioritizes_fork() {
-    let plan = codex_thread_plan(
-        Some("   "),
-        Some("fork-thread"),
-        Some("/tmp/fork.jsonl"),
-        Some("resume-thread"),
-        &ExecutionRequest::default(),
-        &CodexLaunchConfig::default(),
+fn missing_legacy_temporary_threads_explain_how_to_continue() {
+    let mut request = ExecutionRequest {
+        ephemeral: true,
+        ..ExecutionRequest::default()
+    };
+    let original = "thread not found: old-thread".to_owned();
+    let error = temporary_thread_error(&request, Some("old-thread"), original.clone());
+    assert!(error.contains("Open a new temporary chat"));
+    assert!(error.contains(&original));
+    assert_eq!(
+        temporary_thread_error(&request, Some("another-thread"), original.clone()),
+        original
     );
-
-    match plan.start {
-        CodexThreadStart::Request { operation, params } => {
-            assert_eq!(operation, "thread/fork");
-            assert_eq!(params["threadId"], "fork-thread");
-            assert_eq!(params["path"], "/tmp/fork.jsonl");
-        }
-        CodexThreadStart::Direct(thread_id) => {
-            panic!("expected fork request, got direct thread {thread_id}")
-        }
-    }
+    request.persist_runtime_thread();
+    assert_eq!(
+        temporary_thread_error(&request, Some("old-thread"), original.clone()),
+        original
+    );
 }
 
 #[test]
@@ -3867,19 +3009,31 @@ fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
         &request,
         &CodexLaunchConfig::default(),
     );
-    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    let loaded = match &plan.start {
+        CodexThreadStart::Request { params, .. } => {
+            mcp_reload::thread_context_configuration(params)
+        }
+        CodexThreadStart::Direct(_) => panic!("expected a resume configuration"),
+    };
+    assert_eq!(
+        config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
+        None
+    );
     for identity in ["stand_in", "stand_in_identity"] {
         request.extra.insert(
             "origin".into(),
             json!({"initiatedBy":identity,"askBeforeAct":true}),
         );
         assert_eq!(
-            config_reload_resume_thread_id(&plan, &request),
+            config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
             Some("existing")
         );
     }
     request.extra.get_mut("origin").unwrap()["askBeforeAct"] = json!(false);
-    assert_eq!(config_reload_resume_thread_id(&plan, &request), None);
+    assert_eq!(
+        config_reload_resume_thread_id(&plan, &request, Some(&loaded)),
+        None
+    );
     let direct = codex_thread_plan(
         Some("existing"),
         None,
@@ -3888,29 +3042,10 @@ fn confirmed_stand_in_resumes_release_cached_thread_configuration() {
         &request,
         &CodexLaunchConfig::default(),
     );
-    assert_eq!(config_reload_resume_thread_id(&direct, &request), None);
-}
-
-#[test]
-fn codex_thread_plan_starts_new_thread_without_identifiers() {
-    let plan = codex_thread_plan(
-        None,
-        None,
-        None,
-        None,
-        &ExecutionRequest::default(),
-        &CodexLaunchConfig::default(),
+    assert_eq!(
+        config_reload_resume_thread_id(&direct, &request, Some(&loaded)),
+        None
     );
-
-    assert_eq!(thread_id_to_activate_before_start(&plan), None);
-    match plan.start {
-        CodexThreadStart::Request { operation, .. } => assert_eq!(operation, "thread/start"),
-        CodexThreadStart::Direct(thread_id) => {
-            panic!("expected start request, got direct thread {thread_id}")
-        }
-    }
-    assert!(!plan.resume_requested);
-    assert!(!plan.fork_requested);
 }
 
 #[test]
@@ -3986,34 +3121,6 @@ fn fork_launch_config_recreates_missing_local_model_route_for_restored_thread() 
 }
 
 #[test]
-fn thread_launch_params_include_execution_system_prompt_as_developer_instructions() {
-    let request = ExecutionRequest {
-        system_prompt: "Judge the supplied content without answering it.".to_owned(),
-        ..ExecutionRequest::default()
-    };
-    let launch_config = CodexLaunchConfig {
-        user_developer_instructions: "用中文回复".to_owned(),
-        ..CodexLaunchConfig::default()
-    };
-
-    let thread_start = thread_start_params(&request, &launch_config);
-    let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
-    let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
-
-    for params in [thread_start, thread_fork, thread_resume] {
-        let instructions = params["developerInstructions"]
-            .as_str()
-            .expect("developer instructions should be a string");
-        assert!(instructions
-            .starts_with("用中文回复\n\nJudge the supplied content without answering it."));
-        assert!(instructions.contains("Wework 内置浏览器 routing:"));
-        assert!(instructions.contains("browser_open"));
-        assert!(instructions.contains("Wework 项目空间 routing:"));
-        assert!(instructions.contains(local_connector_auth::INSTRUCTIONS));
-    }
-}
-
-#[test]
 fn thread_launch_params_always_include_space_routing() {
     let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig::default();
@@ -4026,13 +3133,18 @@ fn thread_launch_params_always_include_space_routing() {
         let instructions = params["developerInstructions"]
             .as_str()
             .expect("developer instructions should be a string");
-        assert!(instructions.contains("Wework 项目空间 routing:"));
+        assert_eq!(
+            instructions
+                .matches(WEWORK_SPACE_DEVELOPER_INSTRUCTIONS)
+                .count(),
+            1
+        );
         assert!(instructions.contains("get_current_context"));
-        assert!(instructions.contains("list_item_attachments"));
-        assert!(instructions.contains("read_item_attachment"));
-        assert!(instructions.contains("MCP resource listing"));
-        assert!(instructions.contains("list_board_items"));
-        assert!(instructions.contains("get_assignment_candidates"));
+        assert!(instructions.contains("list_spaces"));
+        assert!(instructions.contains("discover deferred tools"));
+        assert!(instructions.contains("Follow the discovered tool instructions"));
+        assert!(instructions.contains("Never use MCP resources, browser, Shell, `curl`"));
+        assert!(instructions.contains("bypass these tools or their access errors"));
     }
 }
 
@@ -4373,51 +3485,19 @@ fn codex_permissions_approval_returns_requested_profile_and_scope() {
 }
 
 #[test]
-fn codex_thread_launch_enables_user_input_in_default_mode() {
+fn codex_thread_launch_isolates_mcp_approvals_from_ordinary_user_input() {
     let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig {
         config_overrides: codex_runtime_default_config_overrides(),
         ..CodexLaunchConfig::default()
     };
 
-    for params in [
-        thread_start_params(&request, &launch_config),
-        thread_resume_params("thread-1", &request, &launch_config),
-        thread_fork_params("thread-1", None, &request, &launch_config),
-    ] {
-        assert_eq!(
-            params["config"]["features.default_mode_request_user_input"],
-            true
-        );
-        assert_eq!(
-            params["config"]["shell_environment_policy.exclude"],
-            json!([
-                "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION",
-                "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION",
-                "WEWORK_COMPUTER_USE_BRIDGE_URL",
-                "WEWORK_COMPUTER_USE_BRIDGE_TOKEN",
-            ])
-        );
-    }
-}
-
-#[test]
-fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
-    let request = ExecutionRequest::default();
-    let mut launch_config = CodexLaunchConfig::default();
-    launch_config
-        .config_overrides
-        .push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
-
     let thread_start = thread_start_params(&request, &launch_config);
     let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
     let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
 
     for params in [thread_start, thread_resume, thread_fork] {
-        assert_eq!(
-            params["config"]["features.tool_call_mcp_elicitation"],
-            false
-        );
+        assert_eq!(params["config"]["features.tool_call_mcp_elicitation"], true);
         assert_eq!(
             params["approvalPolicy"]["granular"]["mcp_elicitations"],
             true
@@ -4461,46 +3541,6 @@ fn codex_model_provider_validation_rejects_stale_loaded_provider() {
 }
 
 #[test]
-fn codex_model_provider_validation_accepts_requested_provider() {
-    let response = json!({
-        "modelProvider": "openai",
-        "thread": {"modelProvider": "openai"},
-    });
-
-    validate_codex_model_provider("thread/resume", &response, Some("openai")).unwrap();
-}
-
-#[test]
-fn turn_input_matches_shared_prompt_reference_cases() {
-    let cases: Vec<Value> = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../packages/chat-core/test-fixtures/prompt-mentions.json"
-    )))
-    .unwrap();
-    for case in cases {
-        let reference = case["reference"].as_str().unwrap();
-        let input = turn_input(&json!(reference));
-        if case["kind"].is_null() {
-            assert_eq!(input, vec![text_input(reference.to_owned())], "{reference}");
-            continue;
-        }
-        let expected = if case["kind"] == "skill" {
-            skill_input(
-                case["name"].as_str().unwrap(),
-                case["href"].as_str().unwrap(),
-            )
-        } else {
-            mention_input(
-                case["name"].as_str().unwrap(),
-                case["href"].as_str().unwrap(),
-            )
-        };
-        assert_eq!(input.len(), 2, "{reference}");
-        assert_eq!(input[1], expected, "{reference}");
-    }
-}
-
-#[test]
 fn turn_input_preserves_collaboration_references_as_text() {
     for scheme in [
         "wework-member",
@@ -4511,120 +3551,6 @@ fn turn_input_preserves_collaboration_references_as_text() {
         let reference = format!("[$test]({scheme}://test)");
         assert_eq!(turn_input(&json!(reference)), vec![text_input(reference)]);
     }
-}
-
-#[test]
-fn turn_input_expands_home_relative_skill_mentions_and_deduplicates_absolute_paths() {
-    let _lock = crate::test_env::lock();
-    let path = crate::local::command::configured_home_dir()
-        .expect("test user has a home directory")
-        .join(".agents")
-        .join("skills")
-        .join("test-skill")
-        .join("SKILL.md");
-    let input = turn_input(&Value::String(format!(
-        "[$test-skill](~/.agents/skills/test-skill/SKILL.md) then [$test-skill]({})",
-        path.display()
-    )));
-
-    assert_eq!(
-        input,
-        vec![
-            json!({"type": "text", "text": "$test-skill then $test-skill", "text_elements": []}),
-            json!({"type": "skill", "name": "test-skill", "path": path.to_string_lossy()}),
-        ]
-    );
-}
-
-#[test]
-fn turn_input_expands_absolute_skill_markdown_mentions_for_app_server() {
-    let input = turn_input(&Value::String(
-        "[$linear](/Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage".to_owned(),
-    ));
-
-    assert_eq!(
-        input,
-        vec![
-            json!({"type": "text", "text": "$linear triage", "text_elements": []}),
-            json!({
-                "type": "skill",
-                "name": "linear",
-                "path": "/Users/me/.codex/plugins/linear/skills/linear/SKILL.md",
-            }),
-        ]
-    );
-}
-
-#[test]
-fn turn_input_expands_legacy_skill_markdown_mentions_for_app_server() {
-    let input = turn_input(&Value::String(
-        "[$linear](skill:///Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage"
-            .to_owned(),
-    ));
-
-    assert_eq!(
-        input,
-        vec![
-            json!({"type": "text", "text": "$linear triage", "text_elements": []}),
-            json!({
-                "type": "skill",
-                "name": "linear",
-                "path": "/Users/me/.codex/plugins/linear/skills/linear/SKILL.md",
-            }),
-        ]
-    );
-}
-
-#[test]
-fn turn_input_deduplicates_legacy_and_absolute_references_to_the_same_skill() {
-    let input = turn_input(&Value::String(
-        "[$linear](skill:///Users/me/skills/linear/SKILL.md) then [$linear](/Users/me/skills/linear/SKILL.md)"
-            .to_owned(),
-    ));
-
-    assert_eq!(
-        input,
-        vec![
-            json!({
-                "type": "text",
-                "text": "$linear then $linear",
-                "text_elements": [],
-            }),
-            json!({
-                "type": "skill",
-                "name": "linear",
-                "path": "/Users/me/skills/linear/SKILL.md",
-            }),
-        ]
-    );
-}
-
-#[test]
-fn turn_input_expands_app_and_plugin_markdown_mentions_for_app_server() {
-    let input = turn_input(&Value::String(
-        "Use [$calendar](app://google-calendar) and [$sample](plugin://sample@test)".to_owned(),
-    ));
-
-    assert_eq!(
-        input,
-        vec![
-            json!({
-                "type": "text",
-                "text": "Use $calendar and @sample",
-                "text_elements": [],
-            }),
-            json!({
-                "type": "mention",
-                "name": "calendar",
-                "path": "app://google-calendar",
-            }),
-            json!({
-                "type": "mention",
-                "name": "sample",
-                "path": "plugin://sample@test",
-            }),
-        ]
-    );
 }
 
 #[test]
@@ -4655,103 +3581,63 @@ fn github_cli_input_does_not_activate_official_connector_or_plugin_skill() {
         vec![text_input("GitHub (gh)".to_owned())]
     );
     let instructions = codex_thread_developer_instructions("user settings", "task settings");
-    assert!(instructions.contains(github_cli::INSTRUCTIONS));
-    assert!(instructions.contains("connectorSlug=wework-github-cli"));
+    assert!(instructions.contains(host_skills::INSTRUCTIONS));
+    assert!(!instructions.contains("connectorSlug=wework-github-cli"));
+    assert!(!instructions.contains("artifact declare --path"));
 }
 
 #[test]
-fn turn_input_binds_managed_plugin_mentions_to_the_plugin_entry_skill() {
-    let root = unique_test_path("managed-plugin-skill-input");
-    let codex_home = root.join("codex");
-    let manifest_path = root.join("capabilities").join("manifest.json");
-    let plugin_root = codex_home
-        .join("plugins")
-        .join("cache")
-        .join("wegent")
-        .join("dingtalk")
-        .join("0.2.0");
-    let skill_path = plugin_root.join("skills").join("dws").join("SKILL.md");
-    fs::create_dir_all(skill_path.parent().expect("skill parent should exist"))
-        .expect("skill directory should be created");
-    fs::create_dir_all(plugin_root.join(".codex-plugin"))
-        .expect("plugin manifest directory should be created");
-    fs::write(
-        plugin_root.join(".codex-plugin").join("plugin.json"),
-        r#"{"name":"dingtalk","version":"0.2.0","skills":"./skills/"}"#,
-    )
-    .expect("plugin manifest should be written");
-    fs::write(
-        &skill_path,
-        "---\nname: dws\ndescription: DingTalk workspace\n---\n\n# DWS\n",
-    )
-    .expect("skill should be written");
-    fs::create_dir_all(
-        manifest_path
-            .parent()
-            .expect("capability manifest parent should exist"),
-    )
-    .expect("capability manifest directory should be created");
-    fs::write(
-        &manifest_path,
-        serde_json::to_vec(&json!({
-            "plugins": {
-                "dingtalk@wegent": {
-                    "enabled": true,
-                    "marketplace": "wegent",
-                    "name": "dingtalk",
-                    "version": "0.2.0"
-                }
-            }
-        }))
-        .expect("capability manifest should serialize"),
-    )
-    .expect("capability manifest should be written");
-
-    let plugin_skills = PluginSkillResolver::load(&codex_home, &manifest_path);
-    let input = turn_input_with_plugin_skills(
-        &Value::String("[$钉钉](plugin://dingtalk@wegent) 检查我有哪些文档？".to_owned()),
-        &plugin_skills,
+fn python_plugin_routing_is_present_only_on_managed_desktop_executors() {
+    let _lock = crate::test_env::lock();
+    let _url = EnvRestore::capture("WEWORK_PYTHON_RUNTIME_URL");
+    let _token = EnvRestore::capture("WEWORK_PYTHON_RUNTIME_TOKEN");
+    env::remove_var("WEWORK_PYTHON_RUNTIME_URL");
+    env::remove_var("WEWORK_PYTHON_RUNTIME_TOKEN");
+    assert!(
+        !codex_thread_developer_instructions("", "").contains(crate::plugin_python::INSTRUCTIONS)
     );
-
-    assert_eq!(
-        input,
-        vec![
-            json!({
-                "type": "text",
-                "text": "@钉钉 检查我有哪些文档？",
-                "text_elements": [],
-            }),
-            json!({
-                "type": "mention",
-                "name": "钉钉",
-                "path": "plugin://dingtalk@wegent",
-            }),
-            json!({
-                "type": "skill",
-                "name": "dingtalk:dws",
-                "path": skill_path.display().to_string(),
-            }),
-        ]
+    let mut request = ExecutionRequest::default();
+    assert!(!crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::plugin_python::INSTRUCTIONS)));
+    env::set_var(
+        "WEWORK_PYTHON_RUNTIME_URL",
+        "http://127.0.0.1:1234/runtime/python/ensure",
     );
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn turn_input_converts_composer_file_references_to_plain_paths() {
-    let input = turn_input(&Value::String(
-        "Inspect [$frontend](folder://%2FUsers%2Fme%2FMy%20Project%2Ffrontend) and [$auth.ts](file://%2FUsers%2Fme%2FMy%20Project%2Ffrontend%2Fauth.ts)"
-            .to_owned(),
-    ));
-
-    assert_eq!(
-        input,
-        vec![json!({
-            "type": "text",
-            "text": "Inspect \"/Users/me/My Project/frontend\" and \"/Users/me/My Project/frontend/auth.ts\"",
-            "text_elements": [],
-        })]
-    );
+    let instructions = codex_thread_developer_instructions("", "");
+    assert!(instructions.contains(crate::plugin_python::INSTRUCTIONS));
+    assert!(instructions.contains(host_skills::INSTRUCTIONS));
+    assert!(host_skills::INSTRUCTIONS.contains("visualization"));
+    assert!(crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::plugin_python::INSTRUCTIONS)));
+    request
+        .extra
+        .insert("runtimeDeviceId".into(), json!("python-control"));
+    request
+        .extra
+        .insert("runtimeLocalTaskId".into(), json!("caller"));
+    let claude = crate::agents::build_claude_command(&request, "claude");
+    for instructions in [
+        crate::plugin_python::INSTRUCTIONS,
+        crate::workbench_control::INSTRUCTIONS,
+        crate::artifact_cli::AGENT_INSTRUCTIONS,
+    ] {
+        assert!(claude.args().iter().any(|arg| arg.contains(instructions)));
+    }
+    request
+        .extra
+        .insert("enable_tools".to_owned(), json!(false));
+    assert!(!crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::plugin_python::INSTRUCTIONS)));
+    assert!(!crate::agents::build_claude_command(&request, "claude")
+        .args()
+        .iter()
+        .any(|arg| arg.contains(crate::workbench_control::INSTRUCTIONS)));
 }
 
 #[test]
@@ -4795,11 +3681,17 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         .iter()
         .find(|value| value.starts_with("skills.config="))
         .expect("skills config override should be present");
-    assert_eq!(
-        skills_override,
-        "skills.config=[{enabled=false,name=\"browser:control-in-app-browser\"},{enabled=false,name=\"chrome:control-chrome\"}]"
-    );
+    let parsed_override: Value = toml_edit::de::from_str(skills_override)
+        .expect("skills config override should be valid TOML");
+    assert_eq!(parsed_override["skills"]["config"], config["skills.config"]);
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
+    assert_eq!(config["features.multi_agent_v2.non_code_mode_only"], false);
+    let collaboration_hint = config["features.multi_agent_v2.root_agent_usage_hint_text"]
+        .as_str()
+        .expect("Code Mode collaboration hint");
+    assert!(collaboration_hint.contains("Use Code Mode to discover collaboration tools"));
+    assert!(collaboration_hint.contains("delegation is explicitly requested"));
+    assert!(!collaboration_hint.contains("cannot be called from inside"));
     assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
         config["mcp_servers.wework_browser.url"],
@@ -4816,7 +3708,7 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
     assert!(!config.contains_key("mcp_servers.wework_browser.command"));
     assert!(!config.contains_key("mcp_servers.wework_browser.args"));
     assert!(!config.contains_key("mcp_servers.wework_browser.startup_timeout_sec"));
-    assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
+    assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 120);
     assert_eq!(
         config["mcp_servers.wework_browser.default_tools_approval_mode"],
         "approve"
@@ -4842,100 +3734,79 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
 }
 
 #[test]
-fn codex_launch_config_omits_browser_mcp_without_local_bridge() {
-    let _lock = crate::test_env::lock();
-    let home = env::temp_dir().join(format!("codex-no-browser-bridge-{}", std::process::id()));
-    let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
-    let old_runtime_file = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
-    let old_url = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
-    let old_token = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
-    env::set_var("WEGENT_EXECUTOR_HOME", &home);
-    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
-    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
-    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
-
-    let request = ExecutionRequest {
-        task_id: "task:remote".to_owned(),
-        ..ExecutionRequest::default()
-    };
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-    let params = thread_start_params(&request, &launch_config);
-    let config = params
-        .get("config")
-        .and_then(Value::as_object)
-        .expect("thread config should be present");
-
-    assert!(!config.contains_key("mcp_servers.wework_browser.url"));
-    assert!(!config.contains_key("mcp_servers.wework_browser.command"));
-
-    for (name, value) in [
-        ("WEGENT_EXECUTOR_HOME", old_home),
-        (
-            "WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE",
-            old_runtime_file,
-        ),
-        ("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL", old_url),
-        ("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN", old_token),
-    ] {
-        if let Some(value) = value {
-            env::set_var(name, value);
-        } else {
-            env::remove_var(name);
+fn source_collaboration_approval_exemption_survives_start_resume_fork_and_turn() {
+    let _environment = environment::LaunchEnvironment::new();
+    for kind in ["connection_work", "dingtalk_work", "issue_dispatch"] {
+        for ask in [false, true] {
+            let mut value = json!({
+                "task_id":"source-collaboration-review",
+                "origin":{"type":kind,"initiatedBy":"stand_in","askBeforeAct":ask,
+                    "cloudProjectId":"project-1","loopItemId":"issue-1"}
+            });
+            if kind == "issue_dispatch" {
+                value["origin"]["dispatchRole"] = json!("executor");
+            }
+            let request = serde_json::from_value(value).unwrap();
+            let launch = build_codex_launch_config(&request).unwrap();
+            let key = "mcp_servers.wework_space.default_tools_approval_mode";
+            assert_eq!(
+                launch.config_overrides.iter().filter(|entry| entry.starts_with(&format!("{key}="))).count(),
+                2,
+                "One managed default and one source policy override; never apply source policy twice"
+            );
+            for params in [
+                thread_start_params(&request, &launch),
+                thread_resume_params("thread", &request, &launch),
+                thread_fork_params("thread", None, &request, &launch),
+            ] {
+                assert_eq!(params["config"][key], "approve");
+                assert_eq!(
+                    params["approvalsReviewer"],
+                    external_work::reviewer(&request)
+                );
+            }
+            let turn = turn_start_params("thread", &request, &launch, vec![]);
+            assert_eq!(turn["approvalsReviewer"], external_work::reviewer(&request));
         }
     }
 }
 
 #[test]
-fn codex_launch_config_includes_computer_use_mcp_server() {
-    let _lock = crate::test_env::lock();
-    let home = unique_test_path("codex-computer-use-mcp");
-    let runtime_path = home.join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
-    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
-    env::set_var("WEGENT_EXECUTOR_HOME", &home);
-    fs::create_dir_all(runtime_path.parent().expect("runtime parent should exist"))
-        .expect("runtime directory should be created");
-    fs::write(
-        &runtime_path,
-        br#"{"address":"127.0.0.1:43128","token":"computer-use-test-token"}"#,
-    )
-    .expect("computer use runtime record should be written");
-
-    let request = ExecutionRequest::default();
-    let launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-    let params = thread_start_params(&request, &launch_config);
-    let config = params["config"].as_object().expect("thread config");
-
-    assert_eq!(
-        config["mcp_servers.wework_computer.command"],
-        env::current_exe().unwrap().display().to_string()
-    );
-    assert_eq!(
-        config["mcp_servers.wework_computer.args"],
-        json!(["computer-use-mcp-server"])
-    );
-    assert_eq!(
-        config["mcp_servers.wework_computer.default_tools_approval_mode"],
-        "writes"
-    );
-    assert_eq!(
-        config["mcp_servers.wework_computer.env_vars"],
-        json!([
-            "WEWORK_COMPUTER_USE_BRIDGE_URL",
-            "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
-        ])
-    );
-    assert_eq!(
-        launch_config.env["WEWORK_COMPUTER_USE_BRIDGE_URL"],
-        "http://127.0.0.1:43128"
-    );
-    assert_eq!(
-        launch_config.env["WEWORK_COMPUTER_USE_BRIDGE_TOKEN"],
-        "computer-use-test-token"
-    );
-
-    let _ = fs::remove_dir_all(home);
+fn control_mcp_deadline_overrides_the_default_for_start_resume_and_fork() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request = ExecutionRequest {
+        task_id: "control-deadline".into(),
+        ..Default::default()
+    };
+    let mut launch = build_codex_launch_config(&request).unwrap();
+    for server in [
+        crate::workbench_control::SERVER_NAME,
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+    ] {
+        append_managed_mcp_config(
+            server,
+            crate::task_runtime::mcp::SpaceMcpClientConfig {
+                url: "http://127.0.0.1/control/mcp".into(),
+                headers: BTreeMap::new(),
+                auto_approve: true,
+            },
+            &mut launch.config_overrides,
+        );
+    }
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread", &request, &launch),
+        thread_fork_params("thread", None, &request, &launch),
+    ] {
+        assert_eq!(
+            params["config"]["mcp_servers.wework_control.tool_timeout_sec"],
+            180
+        );
+        assert_eq!(
+            params["config"]["mcp_servers.wework_space.tool_timeout_sec"],
+            60
+        );
+    }
 }
 
 #[test]
@@ -5027,7 +3898,7 @@ fn codex_thread_exposes_project_space_to_issue_automation_executor() {
 }
 
 #[test]
-fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
+fn codex_thread_discovers_project_space_without_a_project_binding() {
     let _environment = environment::LaunchEnvironment::new();
     let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
     let request = ExecutionRequest::default();
@@ -5037,8 +3908,18 @@ fn codex_thread_omits_unbound_project_space_for_generic_tasks() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert!(!config.contains_key("mcp_servers.wework_space.enabled"));
-    assert!(!config.contains_key("mcp_servers.wework_space.url"));
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
+    assert_eq!(config["mcp_servers.wework_space.url"], endpoint.url);
+    assert_eq!(
+        config["mcp_servers.wework_space.default_tools_approval_mode"],
+        "approve"
+    );
+    assert!(
+        !config["mcp_servers.wework_space.http_headers.X-Wework-Mcp-Context"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
     assert!(!config.contains_key("mcp_servers.wework_space.command"));
     assert!(!config.contains_key("mcp_servers.wework_space.args"));
     assert!(launch_config
@@ -5067,7 +3948,7 @@ fn codex_thread_exposes_notifications_without_project_context() {
     let params = thread_start_params(&request, &launch_config);
     let config = params["config"].as_object().expect("thread config");
 
-    assert!(!config.contains_key("mcp_servers.wework_space.enabled"));
+    assert_eq!(config["mcp_servers.wework_space.enabled"], true);
     assert_eq!(config["mcp_servers.wework_notifications.enabled"], true);
     assert_eq!(
         config["mcp_servers.wework_notifications.url"],
@@ -5093,6 +3974,19 @@ fn codex_thread_exposes_notifications_without_project_context() {
     let serialized = serde_json::to_string(&mcp_config).expect("serialized MCP config");
     assert!(!serialized.contains("https://wework.example.com"));
     assert!(!serialized.contains("runtime-token"));
+}
+
+#[test]
+fn codex_rejects_incomplete_dispatch_instead_of_exposing_personal_tools() {
+    let _environment = environment::LaunchEnvironment::new();
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "origin".into(),
+        json!({
+            "type":"issue_dispatch", "dispatchRole":"executor", "cloudProjectId":"space-1"
+        }),
+    );
+    assert!(build_codex_launch_config(&request).is_err());
 }
 
 #[test]
@@ -5169,60 +4063,6 @@ fn turn_start_params_includes_default_collaboration_mode_when_requested() {
         "medium"
     );
     assert!(params["collaborationMode"]["settings"]["developer_instructions"].is_null());
-}
-
-#[test]
-fn thread_goal_set_params_maps_initial_goal() {
-    let params = thread_goal_set_params(
-        "thread-1",
-        &json!({
-            "objective": "ship the feature",
-            "status": "paused",
-            "tokenBudget": 1200,
-        }),
-    )
-    .expect("initial goal should map to Codex goal params");
-
-    assert_eq!(
-        params,
-        json!({
-            "threadId": "thread-1",
-            "objective": "ship the feature",
-            "status": "paused",
-            "tokenBudget": 1200,
-        })
-    );
-}
-
-#[test]
-fn latest_in_progress_turn_id_uses_the_newest_running_turn() {
-    let response = json!({
-        "thread": {
-            "turns": [
-                {"id": "turn-complete", "status": "completed"},
-                {"id": "turn-running", "status": "inProgress"}
-            ]
-        }
-    });
-
-    assert_eq!(
-        latest_in_progress_turn_id(&response).as_deref(),
-        Some("turn-running")
-    );
-}
-
-#[test]
-fn latest_in_progress_turn_id_ignores_settled_turns() {
-    let response = json!({
-        "thread": {
-            "turns": [
-                {"id": "turn-complete", "status": "completed"},
-                {"id": "turn-failed", "status": "failed"}
-            ]
-        }
-    });
-
-    assert!(latest_in_progress_turn_id(&response).is_none());
 }
 
 #[test]
@@ -5635,6 +4475,25 @@ fn source_content_safety_applies_to_each_tool_enabled_thread_entry() {
 }
 
 #[test]
+fn all_task_launches_surface_business_decisions_through_structured_input() {
+    let request = ExecutionRequest::default();
+    let launch = CodexLaunchConfig::default();
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread-1", &request, &launch),
+        thread_fork_params("thread-1", None, &request, &launch),
+    ] {
+        let instructions = params["developerInstructions"].as_str().unwrap();
+        assert!(instructions.contains("raise a structured question using request_user_input_async"));
+        assert!(instructions.contains("the user may not have this conversation open"));
+        assert!(instructions
+            .contains("request_user_input_async when available, otherwise request_user_input"));
+        assert!(instructions.contains("Continue independent authorized work"));
+        assert!(instructions.contains("A business answer never grants execution permission"));
+    }
+}
+
+#[test]
 fn stand_in_launch_requests_native_confirmation_without_a_chat_round_trip() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(
@@ -5656,6 +4515,79 @@ fn stand_in_launch_requests_native_confirmation_without_a_chat_round_trip() {
         CODEX_READ_ONLY_PERMISSION_PROFILE
     );
     assert!(!codex_auto_approve_mcp_tool_calls(&request));
+}
+
+#[test]
+fn owner_identity_uses_native_guardian_without_bypassing_tool_review() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request: ExecutionRequest = serde_json::from_value(json!({
+        "task_id":"stand-in-chat-7-primary",
+        "origin":{"type":"stand_in_identity","initiatedBy":"stand_in_identity",
+            "userId":7,"standInId":"@primary","deviceId":"device","askBeforeAct":true}
+    }))
+    .unwrap();
+    let launch = build_codex_launch_config(&request).unwrap();
+    assert_eq!(launch.thread_config["approvals_reviewer"], "auto_review");
+    assert!(launch.thread_config["auto_review.extra_policy"]
+        .as_str()
+        .unwrap()
+        .contains(external_work::SOURCE_CONTENT_INSTRUCTIONS));
+    assert!(!codex_auto_approve_mcp_tool_calls(&request));
+    assert!(launch.config_overrides.contains(
+        &"mcp_servers.wework_stand_in.tools.schedule_task.approval_mode=\"writes\"".into()
+    ));
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread", &request, &launch),
+        thread_fork_params("thread", None, &request, &launch),
+        turn_start_params("thread", &request, &launch, Vec::new()),
+    ] {
+        assert_eq!(params["approvalsReviewer"], "auto_review");
+        assert_eq!(params["permissions"], CODEX_READ_ONLY_PERMISSION_PROFILE);
+        assert_eq!(
+            params["approvalPolicy"]["granular"]["mcp_elicitations"],
+            true
+        );
+    }
+    for params in [
+        json!({"mode":"url","url":"https://example.test/login"}),
+        json!({"mode":"form","requestedSchema":{"properties":{"decision":{"type":"string"}}}}),
+        json!({"mode":"form","requestedSchema":{"properties":{}},
+            "_meta":{"codex_approval_kind":"mcp_tool_call","tool_name":"schedule_task"}}),
+    ] {
+        let mut notification =
+            json!({"id":1,"method":"mcpServer/elicitation/request","params":params});
+        assert!(prepare_codex_runtime_notification(
+            &request,
+            &mut notification
+        ));
+    }
+}
+
+#[test]
+fn identity_guardian_keeps_external_source_and_delegation_review_policies() {
+    for (kind, ask, expected) in [
+        ("connection_work", true, "user"),
+        ("dingtalk_work", true, "user"),
+        ("stand_in_task", true, "user"),
+        ("connection_work", false, "auto_review"),
+    ] {
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "origin":{"type":kind,"initiatedBy":"stand_in","askBeforeAct":ask}
+        }))
+        .unwrap();
+        assert_eq!(stand_in_approval::native_reviewer(&request), Some(expected));
+    }
+    let delegated: ExecutionRequest = serde_json::from_value(json!({
+        "origin":{"type":"stand_in_identity","initiatedBy":"stand_in_identity","askBeforeAct":true},
+        "standInDelegation":{"askBeforeAct":true}
+    }))
+    .unwrap();
+    assert_eq!(stand_in_approval::native_reviewer(&delegated), Some("user"));
+    assert_eq!(
+        stand_in_approval::native_reviewer(&ExecutionRequest::default()),
+        None
+    );
 }
 
 #[test]
@@ -5712,7 +4644,19 @@ async fn stand_in_elicitation_preserves_deadline_and_rejects_persistent_answers(
 
 #[tokio::test]
 async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
-    let client = CodexAppServerClient::new("unused-expired-approval");
+    let mut client = CodexAppServerClient::new("expired-approval");
+    client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
+    let mut child = spawn_idle_app_server_child();
+    let stdin = child.stdin.take().expect("the child should expose stdin");
+    let hub = CodexNotificationHub::new();
+    let mut runtime = hub.subscribe_runtime();
+    client.state.lock().await.process = Some(CodexAppServerProcess {
+        child,
+        stdin: Arc::new(Mutex::new(stdin)),
+        pending: Arc::new(Mutex::new(HashMap::new())),
+        notifications: hub,
+        reader_task: tokio::spawn(async {}),
+    });
     let (_answer_tx, answer_rx) = mpsc::channel(1);
     let router = InteractionAnswerRouter::new(answer_rx);
     let (notifications, mut received) = mpsc::unbounded_channel();
@@ -5736,8 +4680,102 @@ async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
     assert_eq!(event["params"]["interactionStatus"], "expired");
     assert_eq!(event["params"]["expiresAtUnixMs"], 0);
     assert_eq!(event["params"]["approvalMethod"], request["method"]);
+    let native_event = runtime.try_recv().unwrap();
+    assert_eq!(native_event.sequence(), event.sequence());
+    assert_eq!(*native_event, *event);
     assert_eq!(
         codex_approval_result(&request, &json!({})).unwrap()["decision"],
         "decline"
     );
+    client.restart().await;
+}
+
+#[tokio::test]
+async fn stand_in_worker_cold_and_loaded_resume_register_only_general_read_tools() {
+    let _environment = environment::LaunchEnvironment::new();
+    ensure_codex_mcp_endpoints().await.unwrap();
+    let request:ExecutionRequest=serde_json::from_value(json!({"task_id":"worker","origin":{"type":"stand_in_task","userId":7,"deviceId":"mac","standInId":"@primary","sourceTaskId":"primary"}})).unwrap();
+    let mut previous = None;
+    for _ in 0..2 {
+        let mut launch = CodexLaunchConfig::default();
+        mcp_config::configure_task_mcp(&request, &mut launch).unwrap();
+        let mut params = Map::from_iter([("threadId".into(), json!("worker-thread"))]);
+        append_thread_launch_params(&mut params, &launch);
+        let configuration =
+            mcp_reload::thread_context_configuration(&Value::Object(params.clone()));
+        let plan = CodexThreadPlan {
+            start: CodexThreadStart::Request {
+                operation: "thread/resume",
+                params: Value::Object(params),
+            },
+            resume_requested: true,
+            fork_requested: false,
+        };
+        assert_eq!(
+            config_reload_resume_thread_id(&plan, &request, previous.as_ref()),
+            Some("worker-thread")
+        );
+        let field = |suffix: &str| {
+            configuration
+                .iter()
+                .find(|(key, _)| key.contains("wework_stand_in") && key.ends_with(suffix))
+                .unwrap()
+                .1
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        let url = field(".url");
+        let context = configuration
+            .iter()
+            .find(|(key, _)| {
+                key.contains("wework_stand_in") && key.contains("X-Wework-Mcp-Context")
+            })
+            .unwrap()
+            .1
+            .as_str()
+            .unwrap();
+        let client = reqwest::Client::new();
+        let initialized=client.post(&url).header("Authorization",&launch.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"]).header("X-Wework-Mcp-Context",context)
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}})).send().await.unwrap();
+        assert!(initialized.status().is_success());
+        let session = initialized.headers()["Mcp-Session-Id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let catalog = client
+            .post(&url)
+            .header(
+                "Authorization",
+                &launch.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"],
+            )
+            .header("Mcp-Session-Id", &session)
+            .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap();
+        let names: Vec<_> = catalog["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "list_tasks",
+                "read_task",
+                "search_context",
+                "list_connection_providers",
+                "read_source"
+            ]
+        );
+        let denied=client.post(&url).header("Authorization",&launch.env["WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION"]).header("Mcp-Session-Id",&session)
+            .json(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_task","arguments":{}}})).send().await.unwrap().json::<Value>().await.unwrap();
+        assert_eq!(denied["result"]["isError"], true);
+        previous = Some(configuration);
+    }
 }

@@ -77,7 +77,8 @@ export function useTaskReplyQueue({
       rootId: string,
       content: string,
       attachments: Attachment[],
-      mentions?: ProjectChatMention[]
+      mentions?: ProjectChatMention[],
+      interactionId?: string
     ) {
       store.update(cardScope(rootId), current => [
         ...current,
@@ -86,6 +87,7 @@ export function useTaskReplyQueue({
           content,
           attachments: persistAttachmentReferences(attachments),
           mentions,
+          ...(interactionId ? { interactionId } : {}),
           status: 'queued',
           createdAt: new Date().toISOString(),
         },

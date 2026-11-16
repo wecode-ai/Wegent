@@ -137,7 +137,11 @@ function SharedKnowledgeContent() {
 
       if (response.status === 'approved') {
         // User got immediate access, redirect to KB using virtual URL
-        router.push(buildKbUrl(kbData.namespace, kbData.name, false))
+        router.push(
+          buildKbUrl(kbData.namespace, kbData.name, false, undefined, {
+            knowledgeBaseId: kbData.id,
+          })
+        )
       } else if (response.status === 'pending') {
         setApplyStatus('pending')
       }
@@ -147,7 +151,11 @@ function SharedKnowledgeContent() {
 
       if (errorMessage.includes('Already have access')) {
         // User already has access, redirect to KB using virtual URL
-        router.push(buildKbUrl(kbData.namespace, kbData.name, false))
+        router.push(
+          buildKbUrl(kbData.namespace, kbData.name, false, undefined, {
+            knowledgeBaseId: kbData.id,
+          })
+        )
         return
       } else if (errorMessage.includes('already pending')) {
         setApplyStatus('pending')
@@ -165,7 +173,9 @@ function SharedKnowledgeContent() {
 
   const _handleEnterKnowledgeBase = () => {
     if (kbData) {
-      router.push(buildKbUrl(kbData.namespace, kbData.name, false))
+      router.push(
+        buildKbUrl(kbData.namespace, kbData.name, false, undefined, { knowledgeBaseId: kbData.id })
+      )
     }
   }
 

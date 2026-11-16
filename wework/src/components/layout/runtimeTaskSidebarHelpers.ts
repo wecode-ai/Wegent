@@ -1,4 +1,8 @@
 import type { RuntimeTaskSummary, RuntimeDeviceWorkspace, RuntimeTaskAddress } from '@/types/api'
+import {
+  isPrimaryStandInConversation,
+  isStandInMemoryReviewTask,
+} from '@/lib/runtime-task-visibility'
 
 export interface RuntimeSidebarTaskItem {
   workspace: RuntimeDeviceWorkspace
@@ -104,7 +108,11 @@ export function getRuntimeSidebarTaskItems(
   workspaces: RuntimeDeviceWorkspace[] = []
 ): RuntimeSidebarTaskItem[] {
   return sortRuntimeTaskItems(
-    workspaces.flatMap(workspace => workspace.tasks.map(task => ({ workspace, task })))
+    workspaces.flatMap(workspace =>
+      workspace.tasks
+        .filter(task => !isPrimaryStandInConversation(task) && !isStandInMemoryReviewTask(task))
+        .map(task => ({ workspace, task }))
+    )
   )
 }
 
@@ -164,10 +172,10 @@ export function getNextRuntimeSidebarTaskVisibleLimit(currentLimit: number, tota
 
 export function hasHiddenRuntimeSidebarTaskItems(
   items: RuntimeSidebarTaskItem[],
-  visibleLimit = RUNTIME_PROJECT_TASK_PREVIEW_LIMIT
+  visibleItems: RuntimeSidebarTaskItem[]
 ) {
-  const { unpinnedItems } = partitionRuntimeSidebarTaskItems(items)
-  return unpinnedItems.length > Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, visibleLimit)
+  const visibleUnpinnedItems = new Set(visibleItems.filter(item => !item.pinned))
+  return items.some(item => !item.pinned && !visibleUnpinnedItems.has(item))
 }
 
 export function hasExpandedRuntimeSidebarTaskItems(

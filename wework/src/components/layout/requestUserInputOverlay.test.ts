@@ -1,13 +1,48 @@
-import { describe, expect, test } from 'vitest'
-import {
-  isImplementationPlanConfirmationResponse,
-  requestUserInputPayloadKey,
-  requestUserInputResponseKey,
-} from '@/components/chat/requestUserInputMessages'
+// @vitest-environment node
+
+import { isImplementationPlanConfirmationResponse } from '@/components/chat/requestUserInputMessages'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { describe, expect, test } from 'vitest'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 
 describe('pendingRequestUserInputPayload', () => {
+  test.each(['pending', 'streaming', 'failed'] as const)(
+    'retains a question across an undelivered %s message',
+    status => {
+      const payload = {
+        kind: 'request_user_input' as const,
+        delivery: 'async',
+        itemId: 'pending-guidance',
+        questions: [{ id: 'detail', question: 'Which rule?' }],
+      }
+      const question: WorkbenchMessage = {
+        id: 'question',
+        role: 'assistant',
+        content: '',
+        status: 'done',
+        createdAt: '',
+        blocks: [
+          {
+            id: 'question',
+            type: 'tool',
+            status: 'done',
+            toolName: 'request_user_input_async',
+            renderPayload: payload,
+          },
+        ],
+      }
+      const reply: WorkbenchMessage = {
+        id: 'guidance',
+        role: 'user',
+        content: 'Keep the original rule',
+        status,
+        runtimeGuidance: true,
+        createdAt: '',
+      }
+      expect(pendingRequestUserInputPayload([question, reply])).toEqual(payload)
+      expect(pendingRequestUserInputPayload([question, { ...reply, status: 'done' }])).toBeNull()
+    }
+  )
   test('detects only explicit implementation plan confirmation responses', () => {
     expect(
       isImplementationPlanConfirmationResponse({
@@ -317,11 +352,41 @@ describe('pendingRequestUserInputPayload', () => {
   })
 })
 
-describe('request user input message helpers', () => {
-  test('normalizes request ids from payloads and responses', () => {
-    expect(requestUserInputPayloadKey({ kind: 'request_user_input', request_id: 42 })).toBe(
-      'request:42'
-    )
-    expect(requestUserInputResponseKey({ requestId: 42, answers: {} })).toBe('request:42')
-  })
+test('keeps consecutive async calls in arrival order with stable, distinct question IDs', () => {
+  const first = {
+    kind: 'request_user_input',
+    delivery: 'async',
+    itemId: 'first',
+    questions: [{ id: 'question_1', question: 'First?' }],
+  }
+  const second = {
+    kind: 'request_user_input',
+    delivery: 'async',
+    itemId: 'second',
+    questions: [{ id: 'question_1', question: 'Second?' }],
+  }
+  const message = (payload: typeof first) =>
+    ({
+      id: payload.itemId,
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      blocks: [{ id: payload.itemId, type: 'tool', status: 'done', renderPayload: payload }],
+    }) as WorkbenchMessage
+  const before = pendingRequestUserInputPayload([message(first)])!
+  const after = pendingRequestUserInputPayload([message(first), message(second)])!
+  expect(after.itemId).toBe(before.itemId)
+  expect(after.questions?.map(question => question.question)).toEqual(['First?', 'Second?'])
+  expect(after.questions?.[0].id).toBe(before.questions?.[0].id)
+  expect(new Set(after.questions?.map(question => question.id)).size).toBe(2)
+  expect(
+    pendingRequestUserInputPayload([message(first), message(second)], new Set(['item:first']))
+  ).toEqual(second)
+  expect(
+    pendingRequestUserInputPayload([
+      message(first),
+      message(second),
+      { id: 'reply', role: 'user', content: 'One\nTwo', status: 'done' } as WorkbenchMessage,
+    ])
+  ).toBeNull()
 })

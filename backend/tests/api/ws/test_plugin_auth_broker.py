@@ -1,5 +1,6 @@
 """Verify the native socket authorization boundary with synthetic data only."""
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -318,6 +319,96 @@ def test_native_requests_reject_identity_override_and_redact_validation():
             }
         )
     assert "synthetic-secret" not in str(error.value)
+
+
+@pytest.fixture
+def sync_exchange_db(monkeypatch):
+    db = Mock(info={})
+    monkeypatch.setattr(broker, "SessionLocal", lambda: nullcontext(db))
+    monkeypatch.setattr(broker, "configure_plugin_session", Mock())
+    monkeypatch.setattr(
+        broker,
+        "resolve_runtime_route_identity",
+        Mock(
+            return_value=SimpleNamespace(
+                runtime_device_id="runtime", runtime_instance_id="instance"
+            )
+        ),
+    )
+    return db
+
+
+def test_automatic_exchange_forwards_metadata_phase_and_exact_targets(
+    sync_exchange_db, monkeypatch
+):
+    reconcile = Mock(return_value={"packages": []})
+    monkeypatch.setattr(broker.plugin_auth_automation, "reconcile", reconcile)
+    target = {"installed_plugin_id": 42, "connector_slug": "native"}
+
+    result = broker._exchange_sync(
+        12,
+        "runtime",
+        "runtime",
+        "instance",
+        "automatic",
+        {"installed_plugin_ids": [42], "prepare_only": True, "targets": [target]},
+    )
+
+    assert result == {"success": True, "packages": []}
+    parameters = reconcile.call_args.kwargs
+    assert parameters["user_id"] == 12
+    assert parameters["device_id"] == "runtime"
+    assert parameters["installed_ids"] == [42]
+    assert parameters["prepare_only"] is True
+    assert [item.model_dump() for item in parameters["targets"]] == [target]
+
+
+@pytest.mark.parametrize("after_id", [0, 64])
+def test_revocations_exchange_keeps_identity_list_and_adds_matching_metadata(
+    sync_exchange_db, monkeypatch, after_id
+):
+    targets = [{"connection_id": "a" * 64, "package": None}]
+    pending = Mock(return_value={"revocations": targets, "next_cursor": None})
+    monkeypatch.setattr(broker.plugin_oauth_revocations, "pending", pending)
+
+    result = broker._exchange_sync(
+        12,
+        "runtime",
+        "runtime",
+        "instance",
+        "oauth_revocations",
+        {} if after_id == 0 else {"after_id": after_id},
+    )
+
+    assert result == {
+        "success": True,
+        "connection_ids": ["a" * 64],
+        "revocations": targets,
+        "next_cursor": None,
+    }
+    pending.assert_called_once_with(
+        sync_exchange_db, user_id=12, device_id="runtime", after_id=after_id
+    )
+    sync_exchange_db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"after_id": -1},
+        {"after_id": True},
+        {"after_id": "10"},
+        {"after_id": 2**63},
+        {"after_id": 0, "user_id": 999},
+    ],
+)
+def test_revocation_query_rejects_invalid_cursors_and_identity_override(payload):
+    from pydantic import ValidationError
+
+    from app.schemas.plugin_account_auth import PluginRevocationQuery
+
+    with pytest.raises(ValidationError):
+        PluginRevocationQuery.model_validate(payload)
 
 
 @pytest.mark.asyncio

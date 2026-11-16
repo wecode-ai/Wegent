@@ -277,6 +277,8 @@ def resolve_uploaded_media(
                 external = resolve_external_material(
                     attachment.type_data or {},
                     "video",
+                    user_id=user_id,
+                    attachment_id=attachment.id,
                 )
                 videos.append(
                     {**descriptor, **external}
@@ -290,6 +292,8 @@ def resolve_uploaded_media(
                 external = resolve_external_material(
                     attachment.type_data or {},
                     "audio",
+                    user_id=user_id,
+                    attachment_id=attachment.id,
                 )
                 audios.append(
                     {**descriptor, **external}
@@ -302,6 +306,23 @@ def resolve_uploaded_media(
         return images, videos, audios
     finally:
         db.close()
+
+
+def resolve_generation_reference_materials(
+    user_id: int,
+    reference_images: Optional[list[str | int]],
+    reference_videos: Optional[list[str | int]],
+    reference_audios: Optional[list[str | int]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Resolve tool references in a worker-owned session, including media staging."""
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as db:
+        return (
+            normalize_reference_materials(db, reference_images, "image", user_id),
+            normalize_reference_materials(db, reference_videos, "video", user_id),
+            normalize_reference_materials(db, reference_audios, "audio", user_id),
+        )
 
 
 def normalize_reference_materials(
@@ -351,6 +372,8 @@ def normalize_reference_materials(
         external = resolve_external_material(
             attachment.type_data or {},
             material_type,
+            user_id=user_id,
+            attachment_id=attachment.id,
         )
         if external is not None:
             descriptor.update(external)

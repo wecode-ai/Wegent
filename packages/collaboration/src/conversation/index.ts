@@ -21,6 +21,7 @@ export * from './UserMessageEditForm'
 export * from './UserMessage'
 export * from './MessageList'
 export * from './conversationScrollWrite'
+export { getScrollViewportElement } from './scrollViewportElement'
 export { ScrollableMessageArea } from './ScrollableMessageArea'
 export type { ScrollableMessageAreaProps } from './scrollableMessageTypes'
 export type { ConversationSearchTarget } from './useConversationSearchTarget'
@@ -30,3 +31,5 @@ export { projectConversationSearchRegion } from './conversationSearchProjection'
 export * from './TemporaryConversationLayout'
 
 export * from './ProcessingDurationLabel'
+
+export { AutomaticRetryStatus } from './AutomaticRetryStatus'

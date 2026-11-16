@@ -244,7 +244,7 @@ describe('HostPipeServer', () => {
         type: 'request',
         id: 'install-request',
         capability: 'appUpdate.install',
-        params: {},
+        params: { version: '0.2.7' },
       })}\n`
     )
 

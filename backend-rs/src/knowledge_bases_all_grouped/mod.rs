@@ -28,6 +28,7 @@
 //! 6. one `get_view_role_in_group` (`get_effective_role_in_group`) per
 //!    organization KB for the merged `my_role`.
 mod handler;
+pub(crate) use handler::all_grouped;
 pub(crate) mod membership;
 pub(crate) mod py_order;
 pub(crate) mod queries;
@@ -144,11 +145,37 @@ struct AllGroupedSummary {
 }
 
 #[derive(Debug, Serialize)]
-struct AllGroupedKnowledgeResponse {
+pub(crate) struct AllGroupedKnowledgeResponse {
     personal: AllGroupedPersonal,
     groups: Vec<AllGroupedTeamGroup>,
     organization: AllGroupedOrganization,
     summary: AllGroupedSummary,
+}
+
+impl AllGroupedKnowledgeResponse {
+    /// Every accessible knowledge base in the order
+    /// `KnowledgeBaseNameResolver._get_accessible_kb_lookups` inserts them:
+    /// personal created, personal shared, group knowledge bases, then
+    /// organization knowledge bases.
+    pub(crate) fn accessible_knowledge_bases(&self) -> Vec<(i64, String, String)> {
+        fn push(list: &[KbWithGroupInfo], refs: &mut Vec<(i64, String, String)>) {
+            for knowledge_base in list {
+                refs.push((
+                    knowledge_base.id,
+                    knowledge_base.namespace.clone(),
+                    knowledge_base.name.clone(),
+                ));
+            }
+        }
+        let mut refs = Vec::new();
+        push(&self.personal.created_by_me, &mut refs);
+        push(&self.personal.shared_with_me, &mut refs);
+        for group in &self.groups {
+            push(&group.knowledge_bases, &mut refs);
+        }
+        push(&self.organization.knowledge_bases, &mut refs);
+        refs
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -296,18 +323,23 @@ fn merge_roles(roles: &[Option<String>]) -> Option<String> {
 
 /// MySQL default string-literal escaping (mirrors the source's rendered
 /// COM_QUERY text).
+///
+/// Iterate Unicode scalar values, not bytes: pushing each byte as `char`
+/// reinterprets UTF-8 continuation bytes as Latin-1 code points, so a
+/// non-ASCII group name (for example `微博运营部`) would be sent as mojibake
+/// and never match the stored `namespace.name`.
 pub(crate) fn quote_literal(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('\'');
-    for byte in value.bytes() {
-        match byte {
-            b'\'' => out.push_str("\\'"),
-            b'\\' => out.push_str("\\\\"),
-            b'\0' => out.push_str("\\0"),
-            b'\n' => out.push_str("\\n"),
-            b'\r' => out.push_str("\\r"),
-            0x1a => out.push_str("\\Z"),
-            other => out.push(other as char),
+    for character in value.chars() {
+        match character {
+            '\'' => out.push_str("\\'"),
+            '\\' => out.push_str("\\\\"),
+            '\0' => out.push_str("\\0"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\u{1a}' => out.push_str("\\Z"),
+            other => out.push(other),
         }
     }
     out.push('\'');
@@ -636,5 +668,25 @@ mod tests {
         );
         assert_eq!(response.description, None);
         assert_eq!(response.kb_type, "notebook");
+    }
+}
+
+#[cfg(test)]
+mod unicode_quote_tests {
+    use super::*;
+
+    /// The inline literal must carry the exact UTF-8 scalar values.
+    #[test]
+    fn quote_literal_preserves_unicode_scalars() {
+        assert_eq!(quote_literal("微博运营部"), "'微博运营部'");
+        assert_eq!(quote_literal("默认组-α😀"), "'默认组-α😀'");
+    }
+
+    /// MySQL escapes stay escapes while Unicode survives.
+    #[test]
+    fn quote_literal_escapes_mysql_specials_and_keeps_unicode() {
+        let raw = "q'w\\e\0r\ns\rt\u{1a}u微博";
+        let expected = "'q\\'w\\\\e\\0r\\ns\\rt\\Zu微博'";
+        assert_eq!(quote_literal(raw), expected);
     }
 }

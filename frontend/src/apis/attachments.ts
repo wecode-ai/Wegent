@@ -457,6 +457,9 @@ export async function uploadAttachment(
   onProgress?: (progress: number) => void,
   storagePurpose: 'default' | 'video_reference' = 'default'
 ): Promise<AttachmentResponse> {
+  if (file.size === 0) {
+    throw new Error('File is empty')
+  }
   const token = getToken()
 
   // Validate file size before upload (generic 100 MB cap; KB video uploads

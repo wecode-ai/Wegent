@@ -118,3 +118,18 @@ async def test_mixed_targets_keep_independent_scopes_and_plans() -> None:
     assert scoped.execute.await_args.kwargs["scope"].document_ids == [7]
     assert scoped.execute.await_args.kwargs["query_plan"] == qa_plan
     empty.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_management_passes_document_scope_to_storage() -> None:
+    from shared.knowledge_contracts import RetrievalScope
+    from shared.knowledge_module import manage_index
+
+    store = MagicMock()
+    store.get_all_chunks.return_value = []
+    scope = RetrievalScope(document_ids=[12])
+    result = await manage_index(
+        store, operation="list_chunks", knowledge_id="1", scope=scope
+    )
+    assert result == {"chunks": [], "total": 0}
+    assert store.get_all_chunks.call_args.kwargs["scope"] == scope

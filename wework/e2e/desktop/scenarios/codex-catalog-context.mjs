@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { rejectModelWebSocketUpgrade } from '../modules/reject-model-upgrade.mjs'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -8,6 +9,11 @@ import {
   createSingleRootLocalProject,
   selectE2EModel,
 } from '../modules/shared.mjs'
+import {
+  configureCatalogReasoning,
+  selectCatalogEffort,
+  verifyCatalogReasoning,
+} from './codex-catalog-reasoning.mjs'
 import {
   codexRequestKind,
   createSse,
@@ -21,7 +27,7 @@ const PROMPT = 'WEWORK_CATALOG_CONTEXT_500K'
 
 function catalogRestartCompleted(log) {
   const write =
-    /app IPC request finished .* method=runtime\.codex\.catalog\.overrides\.write[^\n]* ok=true/.exec(
+    /app IPC request finished .* method=runtime\.codex\.catalog\.overrides\.(?:write|delete)[^\n]* ok=true/.exec(
       log
     )
   if (!write) return false
@@ -38,9 +44,20 @@ function catalogRestartCompleted(log) {
     if (!finished.endsWith(' ok=true')) continue
     const interval = pending.slice(0, finishedAt)
     const processStart = interval.indexOf('codex shared app-server process starting ')
+    const prepared = interval.indexOf('codex router model catalog prepared ')
+    const processId = /codex shared app-server process starting process_id=(\d+)/.exec(
+      interval
+    )?.[1]
+    const fileLoaded =
+      prepared >= 0 &&
+      prepared < processStart &&
+      processId &&
+      new RegExp(
+        `codex shared app-server process initialized process_id=${processId}(?:\\s|$)`
+      ).test(interval.slice(processStart))
     if (
       processStart >= 0 &&
-      interval.indexOf('codex router model catalog served ', processStart) >= 0
+      (fileLoaded || interval.indexOf('codex router model catalog served ', processStart) >= 0)
     ) {
       return true
     }
@@ -48,7 +65,7 @@ function catalogRestartCompleted(log) {
   return false
 }
 
-async function waitForCatalogRestart(control, executorLogPath, fromOffset) {
+export async function waitForCatalogRestart(control, executorLogPath, fromOffset) {
   const startedAt = Date.now()
   let confirmed = false
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -71,6 +88,15 @@ async function waitForCatalogRestart(control, executorLogPath, fromOffset) {
   throw new Error('The saved Catalog was not loaded by a restarted Codex app-server')
 }
 
+export async function saveCatalogAndWaitForRestart(control, executorLogPath) {
+  const restartLogOffset = (await readFile(executorLogPath, 'utf8')).length
+  await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+  await waitForCatalogRestart(control, executorLogPath, restartLogOffset)
+  await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
+    visible: false,
+  })
+}
+
 export function createCatalogContextVerification({
   workspacePath,
   modelId,
@@ -80,20 +106,15 @@ export function createCatalogContextVerification({
   let active = false
   let requests = 0
   let compactions = 0
+  let heldResponse
+  let expectedEffort
+  const reasoningRequests = []
 
   return {
     attachServer(server) {
       // The model fixture implements the HTTP Responses transport.
       server.on('upgrade', (_request, socket) => {
-        // Upgrade sockets leave HTTP's error handling. A client may reset the
-        // rejected connection while switching back to the HTTP transport.
-        socket.on('error', error => {
-          socket.destroy()
-          if (error.code !== 'ECONNRESET') server.emit('error', error)
-        })
-        socket.end(
-          'HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
-        )
+        rejectModelWebSocketUpgrade(server, socket)
       })
     },
     async handleHttp(request, response, url) {
@@ -120,6 +141,23 @@ export function createCatalogContextVerification({
       const prewarm = kind === 'prewarm'
       if (!prewarm) {
         assert.equal(body.model, modelId)
+        // Codex resolves Ultra to Max for inference and pins the context baseline.
+        const updates = body.input.filter(item => item.type === 'configuration_update')
+        reasoningRequests.push({
+          expectedEffort,
+          baseline: body.reasoning?.effort,
+          updates: updates.map(item => item.reasoning?.effort),
+        })
+        await writeFile(
+          join(resultDir, 'codex-catalog-reasoning.json'),
+          JSON.stringify(reasoningRequests, null, 2)
+        )
+        assert.equal(
+          updates.at(-1)?.reasoning?.effort ?? body.reasoning?.effort,
+          'max',
+          'The real Codex request must use the Catalog inference effort for Max and Ultra'
+        )
+        assert.equal(body.reasoning?.effort, 'max', 'The context effort baseline must stay pinned')
         assert.ok(JSON.stringify(body).includes(PROMPT), 'Catalog task lost its conversation')
         requests += 1
       }
@@ -137,7 +175,9 @@ export function createCatalogContextVerification({
         total_tokens: prewarm ? 0 : 300_020,
       }
       response.writeHead(200, { 'Content-Type': 'text/event-stream' })
-      response.end(createSse([...stream.start, ...stream.finish]))
+      response.write(createSse(stream.start))
+      if (!prewarm && heldResponse) await heldResponse.promise
+      response.end(createSse(stream.finish))
       return true
     },
     async verify(control, modelLabel) {
@@ -146,26 +186,28 @@ export function createCatalogContextVerification({
       await control.command('fill', '[data-testid="local-model-context-window-input"]', {
         value: '500000',
       })
+      await configureCatalogReasoning(control)
       const executorLogPath = join(resultDir, 'executor.log')
-      // A customized row confirms persistence before the optional restart confirmation.
-      const restartLogOffset = (await readFile(executorLogPath, 'utf8')).length
-      await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+      await saveCatalogAndWaitForRestart(control, executorLogPath)
       await control.command(
         'waitFor',
         `[data-testid="codex-official-model-row-openai-${modelId}"]`,
         { text: '已自定义' }
       )
-      await waitForCatalogRestart(control, executorLogPath, restartLogOffset)
       await control.command('navigate', 'body', { value: '/' })
       await createSingleRootLocalProject(control, workspacePath, 'catalog-context-500k')
       await selectE2EModel(control, modelId, modelLabel, '', 'openai')
+      await verifyCatalogReasoning(control)
       active = true
       try {
         for (let turn = 1; turn <= 2; turn += 1) {
+          expectedEffort = turn === 1 ? 'max' : 'ultra'
+          await selectCatalogEffort(control, expectedEffort)
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
             value: `${PROMPT} turn ${turn}`,
           })
           await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
+          const turnLogOffset = (await readFile(executorLogPath, 'utf8')).length
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
           await control.command('waitFor', '[data-testid="message-assistant"]', {
             text: `${PROMPT} complete ${turn}`,
@@ -181,10 +223,79 @@ export function createCatalogContextVerification({
           })
           assert.equal(compactions, 0, 'Catalog context was compacted at the obsolete 256k limit')
           assert.equal(requests, turn, 'The task made an unexpected model request')
+          const turnLog = (await readFile(executorLogPath, 'utf8')).slice(turnLogOffset)
+          assert.match(
+            turnLog,
+            new RegExp(
+              `codex shared thread request finished [^\\n]*reasoning_effort=${expectedEffort} `
+            ),
+            'The selected Catalog effort must reach the real native Codex thread unchanged'
+          )
         }
       } finally {
         active = false
       }
+    },
+    async verifyActiveRestartProtection(control) {
+      active = true
+      let release
+      heldResponse = {
+        promise: new Promise(resolve => {
+          release = resolve
+        }),
+      }
+      const expected = requests + 1
+      try {
+        await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+          value: `${PROMPT} active restart confirmation`,
+        })
+        await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot => requests === expected && snapshot.pane?.status?.isBusy === true,
+          'The active Catalog confirmation fixture never entered a real model turn'
+        )
+        const logPath = join(resultDir, 'executor.log')
+        const before =
+          (await readFile(logPath, 'utf8')).match(/codex shared app-server process starting /g)
+            ?.length ?? 0
+        const restart = JSON.parse(
+          await control.command('restartLocalCodexAppServerIfIdle', 'body')
+        )
+        assert.equal(
+          restart.restarted,
+          false,
+          'An active model task was restarted without confirmation'
+        )
+        assert.equal(restart.requiresConfirmation, true)
+        assert.ok(restart.activeTaskCount > 0, JSON.stringify(restart))
+        const after =
+          (await readFile(logPath, 'utf8')).match(/codex shared app-server process starting /g)
+            ?.length ?? 0
+        assert.equal(after, before, 'The active Codex process was replaced before confirmation')
+        await writeFile(
+          join(resultDir, 'codex-active-restart-protection.json'),
+          JSON.stringify(
+            { restart, processStartsBefore: before, processStartsAfter: after },
+            null,
+            2
+          )
+        )
+        await control.command('waitFor', '[data-testid="pause-response-button"]')
+      } finally {
+        release()
+        heldResponse = null
+      }
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: `${PROMPT} complete ${expected}`,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.pane?.status?.isBusy === false,
+        'The active Catalog task did not finish after declining an idle restart'
+      )
+      active = false
     },
   }
 }

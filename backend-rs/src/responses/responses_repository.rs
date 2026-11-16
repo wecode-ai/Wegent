@@ -23,6 +23,7 @@
 use brz_json::OpaqueJson;
 use brz_mysql::{Json, Mysql, MysqlResult, MysqlRow};
 use chrono::NaiveDateTime;
+use serde_json::Value;
 
 /// One `tasks`/`tasks_{:04}` row projection used by the response flow.
 #[derive(Debug)]
@@ -44,6 +45,19 @@ impl TaskRow {
             created_at: row.get("created_at")?,
         })
     }
+
+    /// Transactional task-store reads alias columns with the physical table name.
+    fn from_labeled_row(row: &MysqlRow) -> MysqlResult<Self> {
+        let position = |column| {
+            crate::task_store::task_column_index(column).expect("column in the task projection")
+        };
+        Ok(Self {
+            id: row.get_at(position("id"))?,
+            user_id: row.get_at(position("user_id"))?,
+            json: row.get_at(position("json"))?,
+            created_at: row.get_at(position("created_at"))?,
+        })
+    }
 }
 
 /// One `subtasks`/`subtasks_{:04}` row projection used for output items.
@@ -58,8 +72,10 @@ pub struct SubtaskRow {
     pub role: String,
     /// Status enum text (`PENDING` / `RUNNING` / ...).
     pub status: String,
-    /// `result` JSON column; SQL NULL stays `None`.
-    pub result: Option<Json<brz_json::JsonProjection<super::output_builder::ResultInput>>>,
+    /// `result` JSON column kept as the raw document: SQL NULL stays `None`
+    /// and any present value (object or not) is retained, so the builder can
+    /// apply the source's `isinstance(result, dict)` guard itself.
+    pub result: Option<Json<Value>>,
 }
 
 impl SubtaskRow {
@@ -72,6 +88,24 @@ impl SubtaskRow {
             role: row.get_required("role")?,
             status: row.get_required("status")?,
             result: row.get("result")?,
+        })
+    }
+
+    /// Decode one row of the labeled (`{table}_{column}`) subtask projection.
+    ///
+    /// The label prefix is the physical table name, which a routed store only
+    /// resolves at execution time (a sharded deployment renders
+    /// `subtasks_0025_id`, …), so the fields are read by projection position:
+    /// `id`, `user_id`, `task_id`, `role` (index 6), `status` (13), `result`
+    /// (15), following the `subtasks` column order.
+    fn from_labeled_row(row: &MysqlRow) -> MysqlResult<Self> {
+        Ok(Self {
+            id: row.get_at::<i64>(0)?,
+            user_id: row.get_at::<i32>(1)?,
+            task_id: row.get_at::<i64>(2)?,
+            role: row.get_at::<String>(6)?,
+            status: row.get_at::<String>(13)?,
+            result: row.get_at::<Option<Json<Value>>>(15)?,
         })
     }
 }
@@ -238,6 +272,21 @@ pub async fn list_subtasks_for_user_ordered(
     rows.iter().map(SubtaskRow::from_row).collect()
 }
 
+/// `subtask_store.list_by_task_for_user_ordered` for the queued/background
+/// response render (`openapi_responses._query_subtasks`): the Source issues
+/// the labeled task/user-scoped list read ordered by `message_id`, not the
+/// id-page batch behind [`list_subtasks_for_user_ordered`].
+pub async fn list_subtasks_for_user_ordered_labeled(
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+    user_id: i32,
+) -> MysqlResult<Vec<SubtaskRow>> {
+    let rows = task_store
+        .list_subtasks_for_user_ordered_labeled(task_id, user_id)
+        .await?;
+    rows.iter().map(SubtaskRow::from_labeled_row).collect()
+}
+
 /// Model string from a task row's CRD team reference:
 /// `{team_namespace}#{team_name}` plus `#{model_id}` when the `modelId` label
 /// is set; `unknown` when the row is absent or has no team reference. Shared
@@ -280,6 +329,21 @@ pub async fn get_task_by_states_active_owned(
         .get_active_task_owned(task_id, owner_user_id)
         .await?;
     row.as_ref().map(TaskRow::from_row).transpose()
+}
+
+/// [`get_task_by_states_active_owned`] on the caller's request transaction:
+/// the source resolves the `previous_response_id` Task on the request's own
+/// session, before team and model resolution.
+pub async fn get_task_by_states_active_owned_on(
+    sql: &mut dyn crate::request_sql::RequestSql,
+    task_store: &dyn crate::task_store::TaskStore,
+    task_id: i64,
+    owner_user_id: i32,
+) -> MysqlResult<Option<TaskRow>> {
+    let row = task_store
+        .get_active_task_owned_on(sql, task_id, owner_user_id)
+        .await?;
+    row.as_ref().map(TaskRow::from_labeled_row).transpose()
 }
 
 /// `resolve_task_ref_team` owner selector: an explicit `teamRef.user_id`
@@ -368,6 +432,42 @@ mod tests {
             "kinds.user_id must bind as an integer parameter"
         );
     }
+
+    #[tokio::test]
+    async fn continuation_decodes_the_task_store_labeled_projection() {
+        use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
+        use crate::task_store_statements::{TASK_MAPPED_COLUMNS, task_column_index};
+
+        let fixture = MysqlRows::start(|sql| {
+            assert!(sql.contains("tasks.id AS tasks_id"), "{sql}");
+            let mut row = vec![("unused", SqlValue::Null); TASK_MAPPED_COLUMNS.len()];
+            for (column, alias, value) in [
+                ("id", "tasks_id", SqlValue::I64(42)),
+                ("user_id", "tasks_user_id", SqlValue::I32(7)),
+                (
+                    "json",
+                    "tasks_json",
+                    SqlValue::Text(r#"{"status":{"status":"COMPLETED"}}"#.into()),
+                ),
+            ] {
+                row[task_column_index(column).unwrap()] = (alias, value);
+            }
+            row
+        })
+        .await;
+        let store = crate::task_store::DefaultTaskStore::new(fixture.mysql.clone());
+        let task = fixture
+            .mysql
+            .with_transaction(async |transaction| {
+                get_task_by_states_active_owned_on(transaction, &store, 42, 7).await
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((task.id, task.user_id), (42, 7));
+        assert_eq!(task.json.0.to_value()["status"]["status"], "COMPLETED");
+        assert!(task.created_at.is_none());
+    }
 }
 
 #[cfg(test)]
@@ -393,6 +493,9 @@ mod sql_tests {
         assert_eq!(queries[0].sql, queries[1].sql);
         assert_eq!(queries[2].first_integer, Some(7));
         assert!(queries[3].sql.ends_with("ORDER BY message_id ASC"));
+        assert!(queries[3].sql.starts_with("SELECT id FROM"));
+        assert!(queries[3].sql.contains("WHERE task_id = ? AND user_id = ?"));
+        assert_eq!(queries[3].args, 2);
         assert!(queries[4].sql.contains("is_active IN (1) AND user_id = ?"));
     }
 }

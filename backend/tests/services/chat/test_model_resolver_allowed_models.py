@@ -81,7 +81,7 @@ class TestAllowedModelsNoRestriction:
         db = _make_db_with_model("claude-3-5-sonnet")
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (MagicMock(), {"modelConfig": {}})
             model_kind, model_spec, model_name, raw_config = _resolve_model_for_bot(
@@ -105,7 +105,7 @@ class TestAllowedModelsNoRestriction:
         bot = _make_bot(agent_config)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (MagicMock(), {"modelConfig": {}})
             model_kind, model_spec, model_name, raw_config = _resolve_model_for_bot(
@@ -127,7 +127,7 @@ class TestAllowedModelsNoRestriction:
         bot = _make_bot(agent_config)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (MagicMock(), {"modelConfig": {}})
             model_kind, model_spec, model_name, raw_config = _resolve_model_for_bot(
@@ -161,7 +161,7 @@ class TestAllowedModelsWithWhitelist:
         bot = _make_bot(self._make_agent_config_with_whitelist())
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (MagicMock(), {"modelConfig": {}})
             model_kind, model_spec, model_name, raw_config = _resolve_model_for_bot(
@@ -179,7 +179,7 @@ class TestAllowedModelsWithWhitelist:
         bot = _make_bot(self._make_agent_config_with_whitelist())
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (MagicMock(), {"modelConfig": {}})
             model_kind, model_spec, model_name, raw_config = _resolve_model_for_bot(
@@ -197,7 +197,7 @@ class TestAllowedModelsWithWhitelist:
         bot = _make_bot(self._make_agent_config_with_whitelist())
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (MagicMock(), {"modelConfig": {}})
             model_kind, model_spec, model_name, raw_config = _resolve_model_for_bot(
@@ -261,7 +261,7 @@ class TestAllowedModelsWithWhitelist:
         bot = _make_bot(agent_config)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (MagicMock(), {"modelConfig": {}})
             # No override_model_name - should use bind_model (gpt-4o) without whitelist check
@@ -289,7 +289,7 @@ class TestAllowedModelsWithWhitelist:
         bot = _make_bot(agent_config)
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (MagicMock(), {"modelConfig": {}})
             model_kind, model_spec, model_name, raw_config = _resolve_model_for_bot(
@@ -327,7 +327,7 @@ class TestAllowedModelsWithWhitelist:
         bot = _make_bot({"bind_model": "pointer-model"})
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (
                 MagicMock(),
@@ -403,7 +403,7 @@ class TestAllowedModelNamesForBot:
         }
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (
                 MagicMock(),
@@ -419,7 +419,7 @@ class TestAllowedModelNamesForBot:
         bot = _make_bot({"bind_model": "pointer-model"})
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace"
+            "app.services.chat.config.model_lookup._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (
                 MagicMock(),
@@ -448,7 +448,7 @@ class TestAllowedModelNamesForBot:
             }
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            "app.services.chat.config.model_lookup._find_model_with_namespace",
             side_effect=_fake_find,
         ) as mock_find:
             allowed_names = allowed_model_names_for_bot(db, bot, 1)
@@ -545,7 +545,7 @@ class TestBoundModelPublicWhitelist:
         bot = self._make_bot_with_restricted_model_ref()
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            "app.services.chat.config.model_lookup._find_model_with_namespace",
             side_effect=self._fake_find_model_with_namespace,
         ):
             _, _, model_name, _ = _resolve_model_for_bot(
@@ -563,7 +563,7 @@ class TestBoundModelPublicWhitelist:
         bot = self._make_bot_with_restricted_model_ref()
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            "app.services.chat.config.model_lookup._find_model_with_namespace",
             side_effect=self._fake_find_model_with_namespace,
         ):
             assert allowed_model_names_for_bot(MagicMock(), bot, 1) is None
@@ -599,7 +599,7 @@ class TestBoundModelRestrictedTreatedAsNotFound:
         bot = self._make_bot_with_restricted_model_ref()
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            "app.services.chat.config.model_lookup._find_model_with_namespace",
             side_effect=self._deny_find,
         ):
             model_kind, model_spec, model_name, _ = _resolve_model_for_bot(
@@ -615,7 +615,7 @@ class TestBoundModelRestrictedTreatedAsNotFound:
         bot = self._make_bot_with_restricted_model_ref()
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            "app.services.chat.config.model_lookup._find_model_with_namespace",
             side_effect=self._deny_find,
         ):
             with pytest.raises(ValueError) as exc_info:
@@ -628,7 +628,7 @@ class TestBoundModelRestrictedTreatedAsNotFound:
         bot = _make_bot({})
 
         with patch(
-            "app.services.chat.config.model_resolver._find_model_with_namespace",
+            "app.services.chat.config.model_lookup._find_model_with_namespace",
             side_effect=self._deny_find,
         ):
             with pytest.raises(PublicModelAccessDeniedError) as exc_info:

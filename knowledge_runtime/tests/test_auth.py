@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -18,8 +21,13 @@ from knowledge_runtime.middleware.auth import (
 
 
 @pytest.fixture(autouse=True)
-def reset_settings_fixture():
-    """Reset settings before and after each test."""
+def reset_settings_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Keep authentication tests independent of deployment credentials."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("INTERNAL_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_RUNTIME_INTERNAL_SERVICE_TOKEN", raising=False)
     reset_settings()
     yield
     reset_settings()
@@ -143,3 +151,22 @@ def test_protected_endpoint_valid_token(test_app, monkeypatch):
     )
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.parametrize("prefixed_token", ["", "   "])
+def test_empty_prefixed_token_cannot_fall_back_to_legacy_token(
+    test_app: FastAPI, monkeypatch: pytest.MonkeyPatch, prefixed_token: str
+) -> None:
+    """An explicitly empty deployment token must still fail closed."""
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "legacy-test-token")
+    monkeypatch.setenv("KNOWLEDGE_RUNTIME_INTERNAL_SERVICE_TOKEN", prefixed_token)
+
+    with pytest.raises(RuntimeError, match="INTERNAL_SERVICE_TOKEN is required"):
+        require_internal_service_token_configured()
+    response = TestClient(test_app).get(
+        "/protected", headers={"Authorization": "Bearer legacy-test-token"}
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Internal service token is not configured"}
+    assert response.headers.get("WWW-Authenticate") == "Bearer"

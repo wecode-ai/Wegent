@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import assert from 'node:assert/strict'
 import { randomInt } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
@@ -52,6 +54,27 @@ test('reserves unique ports across parallel checkpoint processes', async () => {
   }
 })
 
+test('excludes the pinned MinIO console port from API service allocation', async () => {
+  const registryDir = await mkdtemp(join(tmpdir(), 'wework-e2e-minio-port-test-'))
+  const server = createServer()
+  try {
+    vi.mocked(randomInt).mockReturnValueOnce(13333 - 1024)
+    const port = await reservePort(registryDir, {
+      dynamicRange: [32768, 65535],
+      excludedPorts: [13333],
+    })
+    assert.notEqual(port, 13333)
+    await new Promise((resolvePromise, reject) => {
+      server.once('error', reject)
+      server.listen(port, '127.0.0.1', resolvePromise)
+    })
+    assert.equal(server.address().port, port)
+  } finally {
+    await new Promise(resolvePromise => server.close(resolvePromise))
+    await rm(registryDir, { recursive: true, force: true })
+  }
+})
+
 test('reserves bindable service ports outside the configured dynamic allocation range', async () => {
   const registryDir = await mkdtemp(join(tmpdir(), 'wework-e2e-service-port-test-'))
   const dynamicRange = [32768, 65535]
@@ -88,4 +111,35 @@ test('fails instead of allocating in an exhausted dynamic-only port range', asyn
     reservePort(undefined, { dynamicRange: [1024, 65535] }),
     /No E2E service ports available outside the kernel dynamic range/
   )
+})
+
+test('excludes occupied IPv6 ports when reserving a dual-stack service', async () => {
+  const registryDir = await mkdtemp(join(tmpdir(), 'wework-e2e-dual-stack-port-test-'))
+  const dynamicRange = [32768, 65535]
+  const occupied = createServer()
+  const ipv4 = createServer()
+  const ipv6 = createServer()
+  const listen = (server, port, host) =>
+    new Promise((resolvePromise, reject) => {
+      server.once('error', reject)
+      server.listen({ port, host, ipv6Only: true }, resolvePromise)
+    })
+  try {
+    const candidate = await reservePort(null, { dynamicRange })
+    await listen(occupied, candidate, '::1')
+    vi.mocked(randomInt).mockReturnValueOnce(candidate - 1024)
+    const port = await reservePort(registryDir, { dynamicRange, dualStack: true })
+    assert.notEqual(port, candidate)
+    await listen(ipv4, port, '127.0.0.1')
+    await listen(ipv6, port, '::1')
+    assert.equal(ipv4.address().port, port)
+    assert.equal(ipv6.address().port, port)
+  } finally {
+    await Promise.all(
+      [occupied, ipv4, ipv6].map(
+        server => new Promise(resolvePromise => server.close(resolvePromise))
+      )
+    )
+    await rm(registryDir, { recursive: true, force: true })
+  }
 })

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 
 import { useExternalDocumentSync } from '@/features/knowledge/document/hooks/useExternalDocumentSync'
 import type { KnowledgeDocument } from '@/types/knowledge'
@@ -119,5 +119,13 @@ describe('useExternalDocumentSync', () => {
 
     fireEvent.click(screen.getByTestId('preview-sync'))
     await waitFor(() => expect(mockSynchronizeExternalDocument).toHaveBeenCalledTimes(2))
+  })
+
+  it('returns the updated document so an off-page preview can start polling it', async () => {
+    const updated = createDocument({ index_generation: 2, index_status: 'queued' })
+    mockSynchronizeExternalDocument.mockResolvedValue(updated)
+    const { result } = renderHook(() => useExternalDocumentSync())
+
+    await expect(result.current.syncDocument(createDocument())).resolves.toEqual(updated)
   })
 })

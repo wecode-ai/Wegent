@@ -1,0 +1,12 @@
+{
+  "order": 57000,
+  "scenario": "./scenarios/collaboration-remote-agent-dispatch.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 50000,
+      "shard": 7,
+      "position": 3000
+    }
+  }
+}

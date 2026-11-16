@@ -30,7 +30,8 @@ export function extractFilePathsFromNativePayloads(payloads: readonly string[]):
   const seen = new Set<string>()
 
   const append = (candidate: string) => {
-    const path = fileUrlToPath(decodeXml(candidate.trim())) ?? absolutePath(candidate.trim())
+    const value = candidate.trim()
+    const path = fileUrlToPath(value) ?? absolutePath(value)
     if (!path || seen.has(path)) return
     seen.add(path)
     paths.push(path)
@@ -38,13 +39,15 @@ export function extractFilePathsFromNativePayloads(payloads: readonly string[]):
 
   for (const payload of payloads) {
     const normalized = payload.replaceAll('\0', '\n')
-    for (const match of normalized.matchAll(/<string>(.*?)<\/string>/gis)) {
-      append(match[1] ?? '')
+    const nativeStrings = /<string>(.*?)<\/string>/gis
+    for (const match of normalized.matchAll(nativeStrings)) {
+      append(decodeXml(match[1] ?? ''))
     }
-    for (const match of normalized.matchAll(/file:\/\/[^\s<>"']+/gi)) {
+    const plainPayload = normalized.replace(nativeStrings, '')
+    for (const match of plainPayload.matchAll(/file:\/\/[^\s<>"']+/gi)) {
       append(match[0])
     }
-    for (const line of normalized.split(/\r?\n/)) {
+    for (const line of plainPayload.split(/\r?\n/)) {
       append(line)
     }
   }
@@ -72,9 +75,9 @@ function absolutePath(value: string): string | null {
 
 function decodeXml(value: string): string {
   return value
-    .replaceAll('&amp;', '&')
     .replaceAll('&lt;', '<')
     .replaceAll('&gt;', '>')
     .replaceAll('&quot;', '"')
     .replaceAll('&apos;', "'")
+    .replaceAll('&amp;', '&')
 }

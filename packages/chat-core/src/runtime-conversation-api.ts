@@ -42,12 +42,15 @@ export function createRuntimeConversationApi(client: ConversationHttpClient) {
     listRuntimeWork(options?: {
       signal?: AbortSignal
       preferCached?: boolean
+      pendingOnly?: boolean
       deviceId?: string
       requireExplicitProjectRoots?: boolean
     }): Promise<RuntimeWorkListResponse> {
-      return options?.signal
-        ? client.get('/runtime-work', { signal: options.signal })
-        : client.get('/runtime-work')
+      const query = new URLSearchParams()
+      if (options?.pendingOnly) query.set('pending_only', 'true')
+      if (options?.deviceId) query.set('device_id', options.deviceId)
+      const path = `/runtime-work${query.size ? `?${query}` : ''}`
+      return options?.signal ? client.get(path, { signal: options.signal }) : client.get(path)
     },
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/send', data)

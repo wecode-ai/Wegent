@@ -27,6 +27,16 @@
     "issueStatus": "unchanged",
     "privateTranscript": "owner_only"
   },
+  "runtimeIdentity": {
+    "taskId": "stable-private-issue-conversation",
+    "eventPayload": { "executionId": "123456789" },
+    "cancelPayload": {
+      "taskId": "stable-private-issue-conversation",
+      "deviceId": "device-example",
+      "executionId": "123456789"
+    },
+    "staleExecution": "rejected_without_touching_new_assignment"
+  },
   "unavailable": {
     "dispatchState": "no_authorized_assistant",
     "endpointRef": null,

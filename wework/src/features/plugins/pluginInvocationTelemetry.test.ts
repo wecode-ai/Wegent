@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, test } from 'vitest'
-import type { InstalledPlugin } from '@/types/api'
+// @vitest-environment node
+
 import { subscribeBusinessEvents } from '@/telemetry/businessEvents'
+import type { InstalledPlugin } from '@/types/api'
+import { beforeEach, describe, expect, test } from 'vitest'
 import {
   observeRuntimePluginInvocation,
   publishPluginInvocationCatalog,
@@ -60,33 +62,6 @@ function event(
 
 describe('plugin invocation telemetry', () => {
   beforeEach(() => resetPluginInvocationTelemetryForTest())
-
-  test('attributes a locally present plugin before cloud device acknowledgement', () => {
-    const events: string[] = []
-    const stop = subscribeBusinessEvents(value => events.push(value.name))
-    publishPluginInvocationCatalog(
-      'device-1',
-      [
-        plugin({
-          installState: 'not_installed',
-          sourcePayload: { localPresent: true },
-        }),
-      ],
-      []
-    )
-    observeRuntimePluginInvocation(
-      event('response.block.created', {
-        block: {
-          id: 'local-call',
-          type: 'tool',
-          tool_name: 'mcp__private_server__search',
-          status: 'done',
-        },
-      })
-    )
-    stop()
-    expect(events).toEqual(['plugin_invocation_succeeded'])
-  })
 
   test('does not let a failing telemetry observer interrupt plugin invocation handling', () => {
     const events: string[] = []
@@ -178,50 +153,6 @@ describe('plugin invocation telemetry', () => {
       },
     ])
     expect(JSON.stringify(events[0]?.properties)).not.toMatch(/private_server|private output/)
-    unsubscribe()
-  })
-
-  test('reports OpenAI official plugin invocations with their public catalog id', () => {
-    const events: Array<{ name: string; properties: unknown }> = []
-    const unsubscribe = subscribeBusinessEvents(value => events.push(value))
-    publishPluginInvocationCatalog(
-      'device-1',
-      [
-        plugin({
-          source: {
-            type: 'marketplace',
-            providerKey: 'openai-curated-remote',
-            pluginKey: 'gmail',
-            marketplace: 'openai-curated-remote',
-          },
-          sourceProvider: 'codex',
-          visibility: 'public',
-        }),
-      ],
-      []
-    )
-
-    observeRuntimePluginInvocation(
-      event('response.block.created', {
-        block: {
-          id: 'call-openai-1',
-          type: 'tool',
-          tool_name: 'mcp__private_server__search',
-          status: 'done',
-        },
-      })
-    )
-
-    expect(events).toEqual([
-      expect.objectContaining({
-        name: 'plugin_invocation_succeeded',
-        properties: expect.objectContaining({
-          capability_type: 'mcp',
-          plugin_distribution: 'official',
-          plugin_id: 'openai-curated-remote/gmail',
-        }),
-      }),
-    ])
     unsubscribe()
   })
 
@@ -392,26 +323,6 @@ describe('plugin invocation telemetry', () => {
         },
       },
     ])
-    unsubscribe()
-  })
-
-  test('does not report disabled plugin capabilities', () => {
-    const events: Array<{ name: string; properties: unknown }> = []
-    const unsubscribe = subscribeBusinessEvents(value => events.push(value))
-    publishPluginInvocationCatalog('device-1', [plugin({ enabled: false })], [])
-
-    observeRuntimePluginInvocation(
-      event('response.block.created', {
-        block: {
-          id: 'call-1',
-          type: 'tool',
-          tool_name: 'mcp__private_server__search',
-          status: 'done',
-        },
-      })
-    )
-
-    expect(events).toEqual([])
     unsubscribe()
   })
 

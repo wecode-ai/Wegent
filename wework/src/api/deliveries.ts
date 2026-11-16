@@ -1,4 +1,8 @@
+import type { Milestone, MilestoneInput } from '@wegent/collaboration'
+import type { IssueAttachmentContext } from '@wegent/collaboration'
+import type { CollaborationAssignmentReceipt as IssueAssignmentReceipt } from '@wegent/collaboration'
 import type { RunnerSelection } from '@wegent/collaboration'
+import { deliveryUpdateForm } from '@wegent/collaboration'
 import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-api'
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
@@ -18,6 +22,8 @@ import type {
 } from '@/types/api'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
 
+export type { CollaborationAssignmentReceipt as IssueAssignmentReceipt } from '@wegent/collaboration'
+
 export type CloudProjectId = string
 type CloudProjectIdInput = CloudProjectId | number
 
@@ -32,6 +38,8 @@ export interface DeliveryAsset {
 }
 
 export interface Delivery {
+  title?: string
+  version?: number
   id: string
   loop_item_id: string
   created_by_user_id: number
@@ -50,6 +58,7 @@ export interface DeliveryDetail extends Delivery {
 }
 
 export interface DeliveryCreateInput {
+  title?: string
   markdown: string
   chat?: Record<string, unknown>
   source_task?: RuntimeTaskAddress
@@ -112,6 +121,9 @@ export interface DeliveryFinalizeInput {
 }
 
 export interface CloudLoopItem {
+  resource_participants?: CollaborationIssue['resource_participants']
+  human_requests?: CollaborationIssue['human_requests']
+  milestone_id?: string | null
   runner_binding?: { environment_id: string } | null
   human_task_binding?: CollaborationIssue['human_task_binding']
   human_assistant_dispatch?: CollaborationIssue['human_assistant_dispatch']
@@ -140,6 +152,8 @@ export interface CloudLoopItem {
   assignee_team_name?: string | null
   execution_id?: number | null
   execution_state?: string | null
+  processing_actor?: { kind: 'agent' | 'stand_in'; name: string } | null
+  human_waiting_since?: string | null
   execution_control_state?: string | null
   execution_observed_state?: string | null
   execution_sync_state?: string | null
@@ -318,6 +332,7 @@ export interface ProjectTaskAttachment extends CloudLoopItemAttachment {
 }
 
 export interface CloudProject {
+  board_views?: import('@wegent/collaboration').ProjectBoardViews | null
   id: CloudProjectId
   workspace_id?: string | null
   workspace_access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer' | null
@@ -613,9 +628,16 @@ export interface CloudUserSearchItem {
 }
 
 export interface CloudMyWorkItem extends CloudLoopItem {
+  attention_order?: [number, number, string] | null
   project_key: string
   project_name: string
   has_active_task: boolean
+  task_bindings?: LoopItemTaskBinding[]
+  assignment_context?: {
+    body: string
+    created_by_user_name: string | null
+    created_at: string
+  } | null
 }
 
 export const DEFAULT_WORK_ITEM_PROJECT_KEY = 'WORK'
@@ -718,6 +740,7 @@ export function createDeliveryApi(client: HttpClient) {
     updateCloudProject(
       projectId: CloudProjectIdInput,
       data: {
+        tag_change?: { source: string; target: string | null }
         name?: string
         description?: string
         tags?: string[]
@@ -727,6 +750,7 @@ export function createDeliveryApi(client: HttpClient) {
         default_issue_security?: 'open' | 'related'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
+        board_views?: CloudProject['board_views']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         collaboration_groups?: CloudProject['collaboration_groups']
@@ -768,8 +792,22 @@ export function createDeliveryApi(client: HttpClient) {
     archiveCloudProject(projectId: CloudProjectIdInput, version: number): Promise<void> {
       return client.delete(`/v1/cloud-projects/${projectId}?version=${version}`)
     },
-    listMyWork(): Promise<{ items: CloudMyWorkItem[] }> {
-      return client.get('/v1/cloud-work-items/my-work')
+    listMyWork(options?: {
+      cursor?: string
+      limit?: number
+      scope?: 'assigned' | 'created' | 'participating'
+      includeCompleted?: boolean
+      order?: 'recent' | 'attention' | 'activity' | 'assignment' | 'priority'
+      viewerIds?: readonly (string | number)[]
+    }): Promise<{ items: CloudMyWorkItem[]; errors?: string[]; next_cursor?: string | null }> {
+      const query = new URLSearchParams()
+      if (options?.cursor) query.set('cursor', options.cursor)
+      if (options?.limit != null) query.set('limit', String(options.limit))
+      if (options?.scope) query.set('scope', options.scope)
+      if (options?.order) query.set('order', options.order)
+      if (options?.includeCompleted != null)
+        query.set('include_completed', String(options.includeCompleted))
+      return client.get(`/v1/cloud-work-items/my-work${query.size ? `?${query}` : ''}`)
     },
     listLoopItems(
       projectId: CloudProjectIdInput,
@@ -890,10 +928,38 @@ export function createDeliveryApi(client: HttpClient) {
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
     },
-    markLoopItemRead(itemId: string, activitySequence?: number): Promise<CloudLoopItem> {
-      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`, {
-        activity_sequence: activitySequence ?? null,
-      })
+    async getIssueAssignmentReceipts(itemId: string): Promise<IssueAssignmentReceipt[]> {
+      const response = await client.get<{ items: IssueAssignmentReceipt[] }>(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/assignments`
+      )
+      return response.items.filter(row => row.target_type === 'human')
+    },
+    acknowledgeIssueAssignment(
+      itemId: string,
+      assignmentId: string,
+      userId: number
+    ): Promise<unknown> {
+      // Cloud identity comes from authentication; local adapters use this argument.
+      void userId
+      return client.post(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/assignments/${encodeURIComponent(assignmentId)}/receipt`,
+        { kind: 'human_read' }
+      )
+    },
+    async markLoopItemRead(
+      itemId: string,
+      activitySequence?: number,
+      contentRevision?: number
+    ): Promise<CloudLoopItem> {
+      const item = await client.post<CloudLoopItem>(
+        `/v1/loop-items/${encodeURIComponent(itemId)}/read`,
+        {
+          activity_sequence: activitySequence ?? null,
+          content_revision: contentRevision ?? null,
+        }
+      )
+      window.dispatchEvent(new Event('wework-notifications-changed'))
+      return item
     },
     findLoopItemForTask(task: RuntimeTaskAddress): Promise<CloudLoopItem> {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })
@@ -903,10 +969,39 @@ export function createDeliveryApi(client: HttpClient) {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })
       return client.get(`/v1/runtime-tasks/cloud-context?${query.toString()}`)
     },
+    getMilestonesCacheScope() {
+      return client.getCacheScope?.() ?? client
+    },
+    listMilestones(projectId: string): Promise<Milestone[]> {
+      return client.get(`/v1/cloud-projects/${encodeURIComponent(projectId)}/milestones`, {
+        cache: 'no-store',
+      })
+    },
+    createMilestone(projectId: string, input: MilestoneInput): Promise<Milestone> {
+      return client.post(`/v1/cloud-projects/${encodeURIComponent(projectId)}/milestones`, input)
+    },
+    updateMilestone(
+      projectId: string,
+      id: string,
+      input: MilestoneInput & { version: number }
+    ): Promise<Milestone> {
+      return client.patch(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(id)}`,
+        input
+      )
+    },
+    deleteMilestone(projectId: string, id: string, version: number): Promise<void> {
+      return client.delete(
+        `/v1/cloud-projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(id)}`,
+        { version }
+      )
+    },
     createLoopItem(
       projectId: CloudProjectIdInput,
       data: {
+        request_id?: string
         title: string
+        milestone_id?: string | null
         description?: string
         status?: CloudLoopItem['status']
         priority?: CloudLoopItem['priority']
@@ -921,6 +1016,7 @@ export function createDeliveryApi(client: HttpClient) {
         assignee_group_id?: string | null
         assignee_agent_id?: string | null
         notify_assignee?: boolean
+        personal_task?: boolean
       }
     ): Promise<CloudLoopItem> {
       return client.post(`/v1/cloud-projects/${projectId}/loop-items`, data)
@@ -942,6 +1038,7 @@ export function createDeliveryApi(client: HttpClient) {
           | 'due_at'
           | 'tags'
           | 'security_level'
+          | 'milestone_id'
         >
       > & {
         version: number
@@ -1040,18 +1137,30 @@ export function createDeliveryApi(client: HttpClient) {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/attachments`, form)
     },
     accessLoopItemAttachment(
-      attachmentId: string
+      attachmentId: string,
+      _context?: IssueAttachmentContext
     ): Promise<{ url: string; expires_in_seconds: number }> {
+      void _context
       return client.get(`/v1/loop-item-attachments/${attachmentId}/access`)
     },
-    readLoopItemAttachment(attachmentId: string): Promise<Blob> {
+    readLoopItemAttachment(attachmentId: string, _context?: IssueAttachmentContext): Promise<Blob> {
+      void _context
       return client.getBlob(`/v1/loop-item-attachments/${attachmentId}/content`)
     },
-    async downloadLoopItemAttachment(attachmentId: string, filename: string): Promise<void> {
+    async downloadLoopItemAttachment(
+      attachmentId: string,
+      filename: string,
+      _context?: IssueAttachmentContext
+    ): Promise<void> {
+      void _context
       const content = await client.getBlob(`/v1/loop-item-attachments/${attachmentId}/content`)
       await saveBlobToDownloads(content, filename)
     },
-    deleteLoopItemAttachment(attachmentId: string): Promise<void> {
+    deleteLoopItemAttachment(
+      attachmentId: string,
+      _context?: IssueAttachmentContext
+    ): Promise<void> {
+      void _context
       return client.delete(`/v1/loop-item-attachments/${attachmentId}`)
     },
     listTaskBindings(itemId: string): Promise<LoopItemTaskBinding[]> {
@@ -1176,6 +1285,15 @@ export function createDeliveryApi(client: HttpClient) {
     },
     createDelivery(itemId: string, data: DeliveryCreateInput): Promise<Delivery> {
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/deliveries`, data)
+    },
+    updateDelivery(
+      deliveryId: string,
+      input: import('@wegent/collaboration').WorkspaceDeliveryUpdate
+    ): Promise<DeliveryDetail> {
+      return client.patch(
+        `/v1/deliveries/${encodeURIComponent(deliveryId)}`,
+        deliveryUpdateForm(input)
+      )
     },
     addAsset(deliveryId: string, file: File, relativePath: string): Promise<DeliveryAsset> {
       const form = new FormData()

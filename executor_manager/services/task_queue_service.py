@@ -14,7 +14,10 @@ FIFO task queuing with support for multiple service pools.
 
 import json
 import os
+import time
 from typing import Any, Dict, List, Optional
+
+from redis.exceptions import WatchError
 
 from executor_manager.common.redis_factory import RedisClientFactory
 from shared.logger import setup_logger
@@ -24,6 +27,11 @@ logger = setup_logger(__name__)
 # Queue key prefix - configurable via environment variable for different environments
 # Default: "wegent:task_queue", can be set to e.g., "wegent:dev:task_queue" or "wegent:prod:task_queue"
 QUEUE_KEY_PREFIX = os.getenv("TASK_QUEUE_KEY_PREFIX", "wegent:task_queue")
+PENDING_KEY_TEMPLATE = f"{QUEUE_KEY_PREFIX}:pending:{{task_id}}"
+# Index of pending task ids ordered by their dispatch reference time, so the
+# stall monitor can range-scan instead of walking the whole Redis keyspace.
+PENDING_INDEX_KEY = f"{QUEUE_KEY_PREFIX}:pending_index"
+PENDING_KEY_TTL = int(os.getenv("TASK_QUEUE_PENDING_TTL", "3600"))
 
 # Retry configuration
 DEFAULT_MAX_RETRIES = 3
@@ -103,6 +111,7 @@ class TaskQueueService:
             task_json = json.dumps(task)
             self.redis_client.lpush(self.queue_key, task_json)
             task_id, subtask_id = self._get_task_ids(task)
+            self.mark_pending(task)
             logger.info(
                 f"[TaskQueue] Enqueued task task_id:{task_id} subtask_id:{subtask_id} to {self.queue_key}"
             )
@@ -110,6 +119,45 @@ class TaskQueueService:
         except Exception as e:
             logger.error(f"[TaskQueue] Failed to enqueue task: {e}")
             return False
+
+    def enqueue_pipeline_task(self, task: Dict[str, Any]) -> bool:
+        """A repeated handoff receives the original queue acknowledgement."""
+        client = self.redis_client
+        if client is None:
+            return False
+        task_id, subtask_id = self._get_task_ids(task)
+        now = time.time()
+        pending = json.dumps(
+            {
+                "task_id": str(task_id),
+                "subtask_id": str(subtask_id),
+                "queue_key": self.queue_key,
+                "enqueued_at": now,
+                "dequeued_at": None,
+            }
+        )
+        client.eval(
+            """
+            if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+            redis.call('LPUSH', KEYS[2], ARGV[1])
+            redis.call('SETEX', KEYS[3], ARGV[2], ARGV[3])
+            redis.call('ZADD', KEYS[4], ARGV[4], ARGV[5])
+            redis.call('SET', KEYS[1], '1', 'EX', ARGV[6])
+            return 1
+            """,
+            4,
+            f"{QUEUE_KEY_PREFIX}:pipeline-dispatched:{task_id}:{subtask_id}",
+            self.queue_key,
+            PENDING_KEY_TEMPLATE.format(task_id=task_id),
+            PENDING_INDEX_KEY,
+            json.dumps(task),
+            PENDING_KEY_TTL,
+            pending,
+            now,
+            str(task_id),
+            7 * 24 * 60 * 60,
+        )
+        return True
 
     def enqueue_tasks(self, tasks: List[Dict[str, Any]]) -> int:
         """Push multiple tasks to queue.
@@ -155,6 +203,7 @@ class TaskQueueService:
                 _, task_json = result
                 task = json.loads(task_json)
                 task_id, subtask_id = self._get_task_ids(task)
+                self.mark_dequeued(task)
                 logger.debug(
                     f"[TaskQueue] Dequeued task {task_id}/{subtask_id} from {self.queue_key}"
                 )
@@ -163,6 +212,88 @@ class TaskQueueService:
         except Exception as e:
             logger.error(f"[TaskQueue] Failed to dequeue task: {e}")
             return None
+
+    def mark_pending(self, task: Dict[str, Any]) -> None:
+        """Record a task as enqueued so a stalled dispatch can be detected."""
+        if not self.redis_client:
+            return
+        task_id, subtask_id = self._get_task_ids(task)
+        if task_id in (None, "unknown"):
+            return
+        payload = {
+            "task_id": str(task_id),
+            "subtask_id": str(subtask_id),
+            "queue_key": self.queue_key,
+            "enqueued_at": time.time(),
+            "dequeued_at": None,
+        }
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.setex(
+                    PENDING_KEY_TEMPLATE.format(task_id=task_id),
+                    PENDING_KEY_TTL,
+                    json.dumps(payload),
+                )
+                pipe.zadd(PENDING_INDEX_KEY, {str(task_id): payload["enqueued_at"]})
+                pipe.execute()
+        except Exception as e:
+            logger.warning(f"[TaskQueue] Failed to mark task pending: {e}")
+
+    def mark_dequeued(self, task: Dict[str, Any]) -> None:
+        """Record that a consumer picked the task up but has not started it yet."""
+        if not self.redis_client:
+            return
+        task_id, subtask_id = self._get_task_ids(task)
+        if task_id in (None, "unknown"):
+            return
+        key = PENDING_KEY_TEMPLATE.format(task_id=task_id)
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                payload = json.loads(raw) if raw else {}
+                if raw and str(payload.get("subtask_id")) != str(subtask_id):
+                    return
+                payload.update(
+                    {
+                        "task_id": str(task_id),
+                        "subtask_id": str(subtask_id),
+                        "queue_key": self.queue_key,
+                        "dequeued_at": time.time(),
+                    }
+                )
+                pipe.multi()
+                pipe.setex(key, PENDING_KEY_TTL, json.dumps(payload))
+                pipe.zadd(PENDING_INDEX_KEY, {str(task_id): payload["dequeued_at"]})
+                pipe.execute()
+        except WatchError:
+            logger.debug("[TaskQueue] Pending record changed for task %s", task_id)
+        except Exception as e:
+            logger.warning(f"[TaskQueue] Failed to mark task dequeued: {e}")
+
+    def clear_pending(self, task_id: Any, subtask_id: Any = None) -> None:
+        """Forget a pending record once the task started or reached a terminal state."""
+        if not self.redis_client or task_id in (None, "unknown"):
+            return
+        key = PENDING_KEY_TEMPLATE.format(task_id=task_id)
+        try:
+            if subtask_id is None:
+                self.redis_client.delete(key)
+                self.redis_client.zrem(PENDING_INDEX_KEY, str(task_id))
+                return
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                if not raw or str(json.loads(raw).get("subtask_id")) != str(subtask_id):
+                    return
+                pipe.multi()
+                pipe.delete(key)
+                pipe.zrem(PENDING_INDEX_KEY, str(task_id))
+                pipe.execute()
+        except WatchError:
+            logger.debug("[TaskQueue] Pending record changed for task %s", task_id)
+        except Exception as e:
+            logger.warning(f"[TaskQueue] Failed to clear pending task: {e}")
 
     def get_queue_length(self) -> int:
         """Get current queue length for monitoring.

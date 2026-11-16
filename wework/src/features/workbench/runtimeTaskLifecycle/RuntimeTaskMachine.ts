@@ -10,6 +10,8 @@ export class RuntimeTaskMachine {
   private state: RuntimeTaskLifecycleState
   private revision = 0
   private readonly observedTurnIds = new Set<string>()
+  private readonly settledTurnIds = new Set<string>()
+  private readonly retiredExecutorEpochs = new Set<string>()
 
   constructor(address: RuntimeTaskAddress, unread = false) {
     this.state = {
@@ -30,6 +32,14 @@ export class RuntimeTaskMachine {
   }
 
   dispatch(event: RuntimeTaskLifecycleEvent): boolean {
+    if (event.type === 'executor_replaced') {
+      const epoch = this.state.task?.executionState?.epoch
+      if (epoch) this.retiredExecutorEpochs.add(epoch)
+    }
+    if (event.type === 'executor_snapshot_received') {
+      const epoch = event.task.executionState?.epoch
+      if (epoch && this.retiredExecutorEpochs.has(epoch)) return false
+    }
     if (
       event.type === 'turn_settled' &&
       this.state.turnPhase !== 'idle' &&
@@ -40,8 +50,11 @@ export class RuntimeTaskMachine {
     }
     const previous = this.state
     this.state = reduceRuntimeTaskLifecycle(previous, event)
-    if (this.state.latestTurnId) this.observedTurnIds.add(this.state.latestTurnId)
+    if (this.state.latestTurnId) this.observeTurn(this.state.latestTurnId)
     const changed = this.state !== previous
+    if (changed && event.type === 'turn_settled' && this.state.latestTurnId) {
+      this.settledTurnIds.add(this.state.latestTurnId)
+    }
     if (changed) this.revision += 1
     return changed
   }
@@ -55,8 +68,18 @@ export class RuntimeTaskMachine {
     )
   }
 
+  observeTurn(turnId: string): void {
+    this.observedTurnIds.add(turnId)
+  }
+
+  isSettledTurn(turnId: string): boolean {
+    return this.settledTurnIds.has(turnId)
+  }
+
   mergeTurnHistory(previous: RuntimeTaskMachine): void {
     for (const turnId of previous.observedTurnIds) this.observedTurnIds.add(turnId)
+    for (const turnId of previous.settledTurnIds) this.settledTurnIds.add(turnId)
+    for (const epoch of previous.retiredExecutorEpochs) this.retiredExecutorEpochs.add(epoch)
   }
 
   getState(): RuntimeTaskLifecycleState {
@@ -83,7 +106,11 @@ export class RuntimeTaskMachine {
     const executionKnown = executionPhase !== 'unknown'
     const isQueued = executionPhase === 'queued'
     const isRunning =
-      executionPhase === 'starting' || executionPhase === 'running' || executionPhase === 'stopping'
+      executionPhase === 'starting' ||
+      executionPhase === 'running' ||
+      executionPhase === 'continuing' ||
+      executionPhase === 'recovering' ||
+      executionPhase === 'stopping'
     const isTurnActive = turnPhase !== 'idle'
     const isThinking = turnPhase === 'submitting' || turnPhase === 'awaiting'
     const isWaitingForUserInput = interactionStatus === 'waitingForUserInput'

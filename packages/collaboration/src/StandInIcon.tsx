@@ -1,17 +1,19 @@
-import { useId } from 'react'
+import { useId } from "react";
 
 /** The right-hand shadow separates into a faceless double. */
 export function StandInIcon({
   enabled = false,
-  className = 'h-7 w-7',
+  figure,
+  className = "h-7 w-7",
 }: {
-  enabled?: boolean
-  className?: string
+  figure?: "human" | "stand-in";
+  enabled?: boolean;
+  className?: string;
 }) {
-  const id = useId()
-  const figureId = `${id}-figure`
-  const shadowMaskId = `${id}-shadow`
-  const primaryTransform = 'translate(1.2 2.1) scale(0.85)'
+  const id = useId();
+  const figureId = `${id}-figure`;
+  const shadowMaskId = `${id}-shadow`;
+  const primaryTransform = "translate(1.2 2.1) scale(0.85)";
   return (
     <svg
       className={`stand-in-icon ${className}`}
@@ -22,7 +24,8 @@ export function StandInIcon({
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
-      data-state={enabled ? 'enabled' : 'disabled'}
+      data-figure={figure}
+      data-state={enabled ? "enabled" : "disabled"}
     >
       <defs>
         <g id={figureId}>
@@ -46,12 +49,22 @@ export function StandInIcon({
           />
         </mask>
       </defs>
-      <g className="text-text-primary" mask={`url(#${shadowMaskId})`}>
-        <g className="stand-in-icon-shadow">
-          <use href={`#${figureId}`} fill="currentColor" stroke="none" />
-        </g>
-      </g>
-      <use href={`#${figureId}`} transform={primaryTransform} />
+      {figure ? (
+        <use
+          href={`#${figureId}`}
+          transform="translate(4 -2)"
+          className={figure === "human" ? "fill-background" : "fill-current"}
+        />
+      ) : (
+        <>
+          <g className="text-text-primary" mask={`url(#${shadowMaskId})`}>
+            <g className="stand-in-icon-shadow">
+              <use href={`#${figureId}`} fill="currentColor" stroke="none" />
+            </g>
+          </g>
+          <use href={`#${figureId}`} transform={primaryTransform} />
+        </>
+      )}
     </svg>
-  )
+  );
 }

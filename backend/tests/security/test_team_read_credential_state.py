@@ -21,7 +21,8 @@ import tempfile
 import uuid
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text
@@ -30,6 +31,9 @@ from sqlalchemy.orm import Session, sessionmaker
 os.environ.setdefault("GIT_TOKEN_AES_KEY", "12345678901234567890123456789012")
 os.environ.setdefault("GIT_TOKEN_AES_IV", "1234567890abcdef")
 
+from app.api.dependencies import get_db
+from app.api.endpoints.adapter.teams import router as teams_router
+from app.core.security import get_current_user
 from app.db.base import Base
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -163,6 +167,36 @@ def test_shared_viewer_response_user_is_redacted(shared_team_db):
         stored = _stored_git_info(engine, owner_id)
         assert stored[0]["git_token"] not in serialized
         assert stored[1]["git_token"] not in serialized
+
+
+@pytest.mark.parametrize("system_team", [True, False], ids=["system", "deleted-owner"])
+def test_team_without_owner_returns_null_user(
+    shared_team_db, system_team: bool
+) -> None:
+    _, factory, (owner_id, viewer_id, team_id) = shared_team_db
+    with factory() as db:
+        team = db.get(Kind, team_id)
+        if system_team:
+            team.user_id = 0
+        else:
+            db.delete(db.get(User, owner_id))
+        db.commit()
+        assert userReader.get_by_id(db, team.user_id) is None
+
+        app = FastAPI()
+        app.include_router(teams_router, prefix="/api/teams")
+        app.dependency_overrides[get_db] = lambda: db
+        app.dependency_overrides[get_current_user] = lambda: db.get(User, viewer_id)
+
+        with TestClient(app) as client:
+            response = client.get(f"/api/teams/{team_id}")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["id"] == team_id
+        assert payload["name"] == team.name
+        assert payload["share_status"] == 2
+        assert payload["user"] is None
 
 
 def test_shared_read_leaves_attached_owner_state_clean(shared_team_db):

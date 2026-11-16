@@ -13,11 +13,11 @@
 //!
 //! All failures return `401 {"detail": ...}` with
 //! `WWW-Authenticate: Bearer`, matching the source FastAPI exceptions.
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::auth_error::AuthError;
+#[cfg(test)]
 use crate::auth::SessionClaims;
 use crate::config::AuthConfig;
 
@@ -150,26 +150,13 @@ fn decoding_keys(config: &AuthConfig) -> Vec<Vec<u8>> {
     keys
 }
 
-/// Algorithm from settings (`HS256`).
-fn algorithm(config: &AuthConfig) -> Algorithm {
-    match config.algorithm.as_str() {
-        "HS384" => Algorithm::HS384,
-        "HS512" => Algorithm::HS512,
-        _ => Algorithm::HS256,
-    }
-}
-
+/// Task-token decoding with the configured HMAC algorithm.
 fn decode_with_keys<T: for<'de> Deserialize<'de>>(config: &AuthConfig, token: &str) -> Option<T> {
-    let mut validation = Validation::new(algorithm(config));
-    // No audience is required by the source decoders.
-    validation.validate_aud = false;
-    decoding_keys(config)
-        .into_iter()
-        .find_map(|key_bytes| {
-            let key = DecodingKey::from_secret(&key_bytes);
-            decode::<T>(token, &key, &validation).ok()
-        })
-        .map(|token| token.claims)
+    crate::jwt_compat::decode_task(
+        token,
+        decoding_keys(config),
+        crate::auth::algorithm(config)?,
+    )
 }
 
 /// `extract_authorization_token`: `Bearer ` credential or the plain value.
@@ -244,7 +231,7 @@ async fn verify_jwt_token_with_db<M>(
 where
     M: brz_mysql::Mysql,
 {
-    let Some(claims) = decode_with_keys::<SessionClaims>(config, token) else {
+    let Some(claims) = crate::auth::decode_session_claims(config, token) else {
         return Ok(None);
     };
     let Some(user_name) = claims.username() else {
@@ -358,7 +345,7 @@ mod tests {
     fn session_payload_filter() {
         let claims = |scope: Option<serde_json::Value>, token_use: Option<&str>| SessionClaims {
             sub: Some("qindi".to_string()),
-            scope: scope.map(|_| serde::de::IgnoredAny),
+            scope,
             token_use: token_use.map(str::to_string),
             exp: None,
         };
@@ -374,5 +361,40 @@ mod tests {
             hex_sha256(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+}
+
+#[cfg(test)]
+mod task_jwt_compatibility {
+    #[test]
+    fn task_fallback_validates_pyjwt_claims() {
+        let config = crate::config::AuthConfig {
+            jwt_key: "test-key".to_string(),
+            legacy_jwt_keys: Vec::new(),
+            algorithm: "HS256".to_string(),
+        };
+        let now = jsonwebtoken::get_current_timestamp();
+        for (delta, expected) in [
+            (serde_json::json!({}), true),
+            (serde_json::json!({"exp":(now+600).to_string()}), true),
+            (serde_json::json!({"exp":now-30}), false),
+            (serde_json::json!({"nbf":now+300}), false),
+            (serde_json::json!({"iat":now+300}), false),
+            (serde_json::json!({"aud":"other-service"}), false),
+            (serde_json::json!({"jti":123}), false),
+        ] {
+            let mut claims = serde_json::json!({"type":"task_token","user_id":1,
+                "user_name":"u","task_id":1,"subtask_id":1});
+            claims
+                .as_object_mut()
+                .unwrap()
+                .extend(delta.as_object().unwrap().clone());
+            let token = crate::jwt_compat::tests::sign(&claims, b"test-key");
+            assert_eq!(
+                super::decode_with_keys::<serde_json::Value>(&config, &token).is_some(),
+                expected,
+                "{delta}"
+            );
+        }
     }
 }

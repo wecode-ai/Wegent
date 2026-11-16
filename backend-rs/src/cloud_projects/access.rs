@@ -141,6 +141,77 @@ pub(crate) fn project_access_point_statement(user_id: i32, project_id: i64) -> S
     )
 }
 
+pub(crate) fn project_permission_statement(user_id: i32, project_id: i64) -> String {
+    // The inherited branch's effective role, rendered once per use: the
+    // `priority` column and the `authority` class (inherited-admin vs
+    // inherited-member) both embed it, exactly like the source's SQLAlchemy
+    // rendering.
+    let inherited_role = format!(
+        "CASE WHEN (kinds.user_id = {user_id} OR anon_5.`role` = 'Maintainer') THEN 1 \
+         ELSE CASE anon_5.`role` WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 \
+         WHEN 'Developer' THEN 2 WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 \
+         WHEN 'RestrictedAnalyst' THEN 5 END END"
+    );
+    format!(
+        "SELECT {WORKSPACE_ID_COLUMN}, {LOOP_ITEMS_COLUMNS}, anon_3.priority AS anon_3_priority \n\
+         FROM loop_items INNER JOIN (SELECT anon_4.project_id AS project_id, \
+         coalesce(min(CASE WHEN (anon_4.authority = 0) THEN anon_4.priority END), \
+         min(CASE WHEN (anon_4.authority = 1) THEN anon_4.priority END), \
+         min(CASE WHEN (anon_4.authority = 2) THEN anon_4.priority END), \
+         min(CASE WHEN (anon_4.authority = 3) THEN anon_4.priority END)) AS priority \n\
+         FROM (SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, \
+         CASE CASE resource_members.`role` WHEN 'Owner' THEN 'Maintainer' WHEN 'Reporter' THEN 'Viewer' ELSE resource_members.`role` END \
+         WHEN 'Owner' THEN 0 WHEN 'Maintainer' THEN 1 WHEN 'Developer' THEN 2 \
+         WHEN 'Reporter' THEN 3 WHEN 'Viewer' THEN 4 WHEN 'RestrictedAnalyst' THEN 5 END AS priority, \
+         1 AS authority \n\
+         FROM resource_members \n\
+         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'user' \
+         AND resource_members.entity_id = '{user_id}' AND resource_members.status = 'approved' \
+         AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer', 'Reporter') \
+         AND resource_members.resource_id = {project_id} UNION ALL SELECT loop_items.id AS project_id, \
+         {inherited_role} AS priority, \
+         CASE WHEN ({inherited_role} = 1) THEN 0 ELSE 2 END AS authority \n\
+         FROM loop_items INNER JOIN (SELECT resource_members.resource_id AS project_id, \
+         CAST(min(resource_members.entity_id) AS SIGNED INTEGER) AS workspace_id \n\
+         FROM resource_members \n\
+         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'workspace' \
+         AND resource_members.status = 'approved' GROUP BY resource_members.resource_id \n\
+         HAVING count(distinct(resource_members.entity_id)) = 1) AS anon_6 \
+         ON anon_6.project_id = CAST(loop_items.id AS SIGNED INTEGER) INNER JOIN kinds ON kinds.id = anon_6.workspace_id \
+         LEFT OUTER JOIN (SELECT resource_members.resource_id AS resource_id, \
+         CASE resource_members.`role` WHEN 'Owner' THEN 'Maintainer' WHEN 'Reporter' THEN 'Viewer' \
+         ELSE resource_members.`role` END AS `role` \n\
+         FROM resource_members \n\
+         WHERE resource_members.resource_type = 'Workspace' AND resource_members.entity_type = 'user' \
+         AND resource_members.entity_id = '{user_id}' AND resource_members.status = 'approved' \
+         AND resource_members.`role` IN ('Owner', 'Maintainer', 'Developer', 'Viewer', 'Reporter')) AS anon_5 \
+         ON anon_5.resource_id = kinds.id \n\
+         WHERE kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true \
+         AND (kinds.user_id = {user_id} OR anon_5.`role` = 'Maintainer' OR anon_5.resource_id IS NOT NULL) \
+         AND (kinds.user_id = {user_id} OR anon_5.`role` = 'Maintainer' OR \
+         coalesce(CASE JSON_EXTRACT(loop_items.metadata, '$.\\\"membership_mode\\\"') WHEN 'null' THEN NULL \
+         ELSE JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, '$.\\\"membership_mode\\\"')) END, 'inherit') = 'inherit') \
+         AND loop_items.id = '{project_id}' AND loop_items.resource_type IN ('project') UNION ALL \
+         SELECT CAST(resource_members.resource_id AS CHAR(64)) AS project_id, 4 AS priority, 3 AS authority \n\
+         FROM resource_members \n\
+         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'authenticated_users' \
+         AND resource_members.entity_id = '*' AND resource_members.status = 'approved' \
+         AND resource_members.`role` IN ('Viewer', 'Developer') \
+         AND resource_members.resource_id = {project_id}) AS anon_4 GROUP BY anon_4.project_id) AS anon_3 \
+         ON loop_items.id = anon_3.project_id INNER JOIN (SELECT resource_members.resource_id AS project_id, \
+         CAST(min(resource_members.entity_id) AS SIGNED INTEGER) AS workspace_id \n\
+         FROM resource_members \n\
+         WHERE resource_members.resource_type = 'CloudProject' AND resource_members.entity_type = 'workspace' \
+         AND resource_members.status = 'approved' GROUP BY resource_members.resource_id \n\
+         HAVING count(distinct(resource_members.entity_id)) = 1) AS anon_7 \
+         ON anon_7.project_id = CAST(loop_items.id AS SIGNED INTEGER) INNER JOIN kinds ON kinds.id = anon_7.workspace_id \n\
+         WHERE loop_items.status = 'active' AND kinds.kind = 'CollaborationWorkspace' AND kinds.is_active IS true \
+         AND (EXISTS (SELECT users.id \n\
+         FROM users \n\
+         WHERE users.id = {user_id} AND users.is_active IS true)) AND loop_items.resource_type IN ('project') \n LIMIT 1"
+    )
+}
+
 #[cfg(test)]
 #[path = "access_tests.rs"]
 mod tests;

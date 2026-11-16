@@ -21,6 +21,7 @@ test('keeps delayed notification clicks alive across GC and releases completed n
         import { setImmediate } from 'node:timers/promises'
         const { showRetainedNotification } = await import(${JSON.stringify(moduleUrl)})
         const clicks = []
+        const replies = []
         const errors = []
         console.error = (...args) => errors.push(args)
         function createNotification(id, terminalEvent) {
@@ -51,12 +52,23 @@ test('keeps delayed notification clicks alive across GC and releases completed n
         first.deref().emit('click')
         second.deref().emit('click')
         assert.deepEqual(clicks, ['first', 'second'])
+        function createReplyNotification() {
+          const notification = new EventEmitter()
+          notification.show = () => {}
+          showRetainedNotification(notification, undefined, text => replies.push(text))
+          return new WeakRef(notification)
+        }
+        const reply = createReplyNotification()
+        await collectGarbage()
+        assert.ok(reply.deref(), 'Native reply delegate must survive GC')
+        reply.deref().emit('reply', { reply: ' Keep old behavior ' })
+        assert.deepEqual(replies, ['Keep old behavior'])
         const closed = createNotification('closed', 'close')
         const failed = createNotification('failed', 'failed')
         const thrown = createNotification('thrown', 'throw')
         assert.equal(errors.length, 1, 'Native delivery failures must be reported')
         await collectGarbage()
-        for (const ref of [first, second, closed, failed, thrown]) {
+        for (const ref of [first, second, closed, failed, thrown, reply]) {
           assert.equal(ref.deref(), undefined, 'A completed notification was retained')
         }
       `,

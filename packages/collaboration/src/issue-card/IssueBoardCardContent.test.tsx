@@ -49,38 +49,38 @@ function render(execution_state?: string | null): string {
 }
 
 describe("issue board card execution configuration", () => {
-  it('shows assistant dispatch separately while retaining the human assignee', () => {
+  it("shows assistant dispatch separately while retaining the human assignee", () => {
     const markup = renderToStaticMarkup(
       <IssueBoardCardContent
         item={{
-          id: 'issue-1',
-          title: 'Assigned to Ada',
-          priority: 'none',
-          assignee_name: 'Ada',
+          id: "issue-1",
+          title: "Assigned to Ada",
+          priority: "none",
+          assignee_name: "Ada",
           human_assistant_dispatch: {
             ownerUserId: 7,
-            endpointRef: 'device:default',
-            dispatchState: 'queued',
+            endpointRef: "device:default",
+            dispatchState: "queued",
             executionId: 42,
             reasonCode: null,
-            assignmentId: 'assignment-1',
+            assignmentId: "assignment-1",
             assignmentVersion: 1,
-            createdAt: '2026-11-16T00:00:00Z',
-            updatedAt: '2026-11-16T00:00:00Z',
+            createdAt: "2026-11-16T00:00:00Z",
+            updatedAt: "2026-11-16T00:00:00Z",
           },
         }}
         reference="PRJ-1"
         display={display}
         labels={labels}
         translate={translate}
-      />
-    )
-    expect(markup).toContain('cloud-todo-card-assignee-issue-1')
-    expect(markup).toContain('Ada')
-    expect(markup).toContain('默认助理')
-    expect(markup).toContain('排队中')
-    expect(markup).not.toContain('已完成')
-  })
+      />,
+    );
+    expect(markup).toContain("cloud-todo-card-assignee-issue-1");
+    expect(markup).toContain("Ada");
+    expect(markup).toContain("默认助理");
+    expect(markup).toContain("排队中");
+    expect(markup).not.toContain("已完成");
+  });
 
   it("shows the reason a robot-owned Issue is not running", () => {
     const markup = render("waiting_runtime");

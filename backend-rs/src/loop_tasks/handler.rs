@@ -13,7 +13,7 @@
 //! `list_task_bindings` first runs `LoopItemService.get`:
 //! `_get_item_row` (absent or deleted -> 404 "TODO not found") followed by
 //! `_require_item_access` (`require_cloud_project_role(Viewer)` plus
-//! `can_view_item`), then lists the binding rows newest first.
+//! `can_view_item`), then lists the caller-owned binding rows newest first.
 use chrono::NaiveDateTime;
 
 use super::http_error::HttpError;
@@ -56,7 +56,7 @@ async fn loop_item_tasks(
 
     // `list_task_bindings` rows.
     let bindings = LoopItemRepository::new(&state.mysql)
-        .list_task_bindings(item_id)
+        .list_task_bindings(item_id, user_id)
         .await
         .map_err(HttpError::internal)?;
     Ok(bindings.iter().map(binding_response).collect())
@@ -151,6 +151,10 @@ fn default_issue_security(project: &members::ProjectEntityRow) -> &'static str {
 /// Serialize one `LoopItemTaskBindingResponse`.
 #[derive(serde::Serialize)]
 struct BindingResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stand_in_pending: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stand_in_conversation_id: Option<String>,
     id: String,
     cloud_project_id: String,
     loop_item_id: Option<String>,
@@ -177,6 +181,8 @@ struct BindingResponse {
 
 fn binding_response(binding: &BindingRow) -> BindingResponse {
     BindingResponse {
+        stand_in_pending: binding.stand_in_pending(),
+        stand_in_conversation_id: binding.stand_in_conversation_id(),
         id: binding.id.clone(),
         cloud_project_id: binding.cloud_project_id.clone(),
         loop_item_id: normalize_empty_text(binding.loop_item_id.as_deref()),
@@ -333,6 +339,21 @@ mod tests {
             let value = binding_response(&binding(serde_json::json!({"execution_id": invalid})));
             assert_eq!(value["execution_id"], serde_json::Value::Null);
         }
+    }
+
+    #[test]
+    fn exposes_an_issue_conversation_reservation_without_changing_ordinary_bindings() {
+        let ordinary = binding_response(&binding(serde_json::json!({})));
+        assert!(ordinary.get("stand_in_conversation_id").is_none());
+        assert!(ordinary.get("stand_in_pending").is_none());
+        let reserved = binding_response(&binding(
+            serde_json::json!({"stand_in_conversation_id":"issue-role-one"}),
+        ));
+        assert_eq!(reserved["stand_in_conversation_id"], "issue-role-one");
+        let pending = binding_response(&binding(serde_json::json!({"stand_in_pending":true})));
+        assert_eq!(pending["stand_in_pending"], true);
+        let started = binding_response(&binding(serde_json::json!({"stand_in_pending":false})));
+        assert_eq!(started["stand_in_pending"], false);
     }
 
     #[test]

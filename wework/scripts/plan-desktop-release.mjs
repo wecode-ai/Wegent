@@ -81,6 +81,7 @@ function isWeworkReleasePath(path) {
     path === 'pnpm-lock.yaml' ||
     path === 'pnpm-workspace.yaml' ||
     path.startsWith('executor/') ||
+    path.startsWith('shared/rust/') ||
     path.startsWith('packages/chat-core/') ||
     path.startsWith('patches/') ||
     path.startsWith('wework/')

@@ -69,6 +69,127 @@ function setRichInputValue(testId: string, value: string) {
 }
 
 describe('weworkProjectAgentConfigurationHost', () => {
+  it.each([
+    ['active', true],
+    ['archived', true],
+    ['active', false],
+    ['archived', false],
+  ] as const)(
+    'edits a %s cloud project definition with routing configured=%s without changing execution bindings',
+    async (status, hasPolicies) => {
+      const agent = {
+        id: 'cloud-native-agent',
+        name: 'Imported Agent',
+        runtime: 'codex',
+        executionPolicy: hasPolicies ? { mode: 'fixed', environment_id: '1' } : undefined,
+        modelPolicy: hasPolicies ? { mode: 'fixed', model: codexModel } : undefined,
+        model: 'existing-model',
+        modelType: 'user',
+        capabilityMode: 'manual',
+        systemPrompt: 'Original prompt',
+        additionalSkills: [{ name: 'review', namespace: 'default' }],
+        mcpServers: { ReviewServer: { command: 'review', env: { API_KEY_NAME: 'value' } } },
+        plugins: [],
+        executionEnvironment: 'cloud',
+        executionMode: 'manual_approval',
+        executionDeviceId: 'cloud-device',
+        workspacePolicy: 'git_worktree',
+        maxConcurrentExecutions: 4,
+        visibility: 'creator_admin',
+        version: 7,
+        status,
+      }
+      const update = vi.fn<
+        (
+          projectId: string,
+          agentId: string,
+          input: Record<string, unknown>
+        ) => Promise<typeof agent>
+      >(async () => agent)
+      const list = vi.fn(async () => [agent])
+      const host = createWeworkProjectAgentConfigurationHost(
+        {
+          listEnvironments: runnerCatalog(),
+          listNativeModels: async (environment: RunnerEnvironment) => environment,
+          listModels: vi.fn(async () => []),
+        } as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { agents: { list, update, create: vi.fn() }, modelApi: {} as never, name: 'Cloud project' }
+      )
+      const onSaved = vi.fn(async () => undefined)
+      render(
+        host.renderProjectAgentEditor!({
+          projectId: 'cloud-project',
+          resourceId: agent.id,
+          onClose: vi.fn(),
+          onSaved,
+        })
+      )
+      await waitFor(() =>
+        expect(screen.getByTestId('cloud-project-chat-agent-display-name')).toHaveValue(agent.name)
+      )
+      fireEvent.change(screen.getByTestId('cloud-project-chat-agent-display-name'), {
+        target: { value: 'Edited Agent' },
+      })
+      setRichInputValue('cloud-project-chat-agent-system-prompt', 'Updated prompt')
+      update.mockRejectedValueOnce(new Error('Save temporarily unavailable'))
+      fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+      await waitFor(() =>
+        expect(screen.getByTestId('cloud-project-chat-agent-error')).toHaveTextContent(
+          'Save temporarily unavailable'
+        )
+      )
+      expect(onSaved).not.toHaveBeenCalled()
+      expect(screen.getByTestId('cloud-project-chat-agent-display-name')).toHaveValue(
+        'Edited Agent'
+      )
+      expect(screen.getByTestId('cloud-project-chat-agent-system-prompt')).toHaveValue(
+        'Updated prompt'
+      )
+      await waitFor(() => expect(screen.getByTestId('cloud-project-chat-agent-save')).toBeEnabled())
+      fireEvent.click(screen.getByTestId('cloud-project-chat-agent-save'))
+      await waitFor(() => expect(onSaved).toHaveBeenCalledOnce())
+      expect(list).toHaveBeenCalledWith('cloud-project', {
+        includeArchived: true,
+        forceRefresh: true,
+      })
+      expect(update).toHaveBeenCalledWith(
+        'cloud-project',
+        agent.id,
+        expect.objectContaining({
+          name: 'Edited Agent',
+          systemPrompt: 'Updated prompt',
+          version: 7,
+          capabilityMode: 'manual',
+          additionalSkills: agent.additionalSkills,
+          mcpServers: agent.mcpServers,
+          maxConcurrentExecutions: 4,
+        })
+      )
+      const input = update.mock.calls[0][2]
+      for (const field of [
+        'executionPolicy',
+        'modelPolicy',
+        'model',
+        'modelType',
+        'modelNamespace',
+        'executionEnvironment',
+        'executionMode',
+        'executionDeviceId',
+        'workspacePolicy',
+        'displayName',
+        'namespace',
+        'allowedModels',
+      ]) {
+        expect(input).not.toHaveProperty(field)
+      }
+      expect(host.renderLocalAgentCreator).toBeUndefined()
+    }
+  )
+
   it('creates an Agent from the basic tab using the first cloud model without device discovery', async () => {
     const cloudModel = {
       name: 'cloud-model',
@@ -851,7 +972,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
       } as never
     )
     const onSaved = vi.fn(async () => undefined)
-    render(host.renderLocalAgentEditor!({ resourceId: agent.id, onClose: vi.fn(), onSaved }))
+    render(host.renderProjectAgentEditor!({ resourceId: agent.id, onClose: vi.fn(), onSaved }))
     await waitFor(() =>
       expect(screen.getByTestId('cloud-project-chat-agent-display-name')).toHaveValue(
         agent.displayName
@@ -923,7 +1044,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
       } as never
     )
     render(
-      host.renderLocalAgentEditor!({
+      host.renderProjectAgentEditor!({
         resourceId: agent.id,
         onClose: vi.fn(),
         onSaved: vi.fn(async () => undefined),
@@ -965,3 +1086,222 @@ describe('weworkProjectAgentConfigurationHost', () => {
     )
   })
 })
+
+it('creates portable template resources without carrying source identity or credentials', async () => {
+  const createAgent = vi.fn(async () => ({ id: 98, name: 'new-agent' }))
+  const getAgent = vi.fn(async () => ({
+    runtime: 'Codex',
+    displayName: 'Reviewer',
+    name: 'reviewer',
+    systemPrompt: 'Check acceptance with evidence.',
+  }))
+  const host = createWeworkProjectAgentConfigurationHost({
+    createAgent,
+    getAgent,
+  } as unknown as ReturnType<typeof createAgentResourceApi>)
+  const created = await host.createTemplateAgent!(
+    {
+      key: 'review',
+      name: 'Reviewer',
+      runtime: 'codex',
+      systemPrompt: 'Check acceptance with evidence.',
+      capabilityDescription: 'Review',
+    },
+    'destination',
+    {
+      executionPolicy: { mode: 'fixed', environment_id: 'target' },
+      modelPolicy: {
+        mode: 'fixed',
+        model: { runtime: 'codex', provider: 'openai', model_id: 'target-default' },
+      },
+    }
+  )
+  expect(created).toEqual({ id: '98', name: 'Reviewer' })
+  expect(createAgent).toHaveBeenCalledWith(
+    expect.objectContaining({
+      namespace: 'destination',
+      runtime: 'Codex',
+      systemPrompt: 'Check acceptance with evidence.',
+      capabilityMode: 'follow_device',
+      model: { name: '' },
+      plugins: [],
+      mcpServers: {},
+    })
+  )
+  expect(await host.readTemplateAgent!(98)).toMatchObject({
+    name: 'Reviewer',
+    runtime: 'codex',
+    systemPrompt: 'Check acceptance with evidence.',
+  })
+})
+
+it('resolves explicit destination defaults instead of importing source model or device identities', async () => {
+  const local = {
+    listRunnerEnvironments: vi.fn(async () => [
+      {
+        id: 'destination',
+        device_key: 'destination',
+        models: [
+          {
+            runtime: 'codex',
+            provider: 'openai',
+            model_id: 'default-model',
+            is_default: true,
+            source: 'native',
+          },
+          { runtime: 'codex', provider: 'other', model_id: 'another-model', is_default: false },
+        ],
+      },
+    ]),
+  } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
+  const host = createWeworkProjectAgentConfigurationHost(undefined, local)
+  expect(await host.resolveTemplateAgentRouting!('codex', 'local', 'project')).toEqual({
+    executionPolicy: { mode: 'fixed', environment_id: 'destination' },
+    modelPolicy: {
+      mode: 'fixed',
+      model: { runtime: 'codex', provider: 'openai', model_id: 'default-model', source: 'native' },
+    },
+  })
+  await expect(
+    host.resolveTemplateAgentRouting!('claude_code', 'local', 'project')
+  ).rejects.toThrow('template_model_default_unavailable')
+})
+
+it.each([0, 2])(
+  'refuses to guess a model when %i destination defaults are configured',
+  async count => {
+    const local = {
+      listRunnerEnvironments: vi.fn(async () => [
+        {
+          id: 'destination',
+          models: Array.from({ length: 2 }, (_, index) => ({
+            runtime: 'codex',
+            provider: 'openai',
+            model_id: `model-${index}`,
+            is_default: index < count,
+          })),
+        },
+      ]),
+    } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
+    const host = createWeworkProjectAgentConfigurationHost(undefined, local)
+    await expect(host.resolveTemplateAgentRouting!('codex', 'local')).rejects.toThrow(
+      'template_model_default_unavailable'
+    )
+  }
+)
+
+it('does not authorize a current device that the destination cloud project has not granted', async () => {
+  const local = {
+    listRunnerEnvironments: vi.fn(async () => [
+      {
+        id: 'local-device',
+        device_key: 'device-key',
+        models: [{ runtime: 'codex', provider: 'openai', model_id: 'default', is_default: true }],
+      },
+    ]),
+  } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
+  const listEnvironments = vi.fn(async () => [
+    { id: '73', device_key: 'device-key', project_authorized: false, status: 'online' },
+  ])
+  const createAgent = vi.fn()
+  const host = createWeworkProjectAgentConfigurationHost(
+    { listEnvironments, createAgent } as unknown as ReturnType<typeof createAgentResourceApi>,
+    local
+  )
+  await expect(host.resolveTemplateAgentRouting!('codex', 'cloud')).resolves.toMatchObject({
+    executionPolicy: { mode: 'fixed', environment_id: '73' },
+  })
+  expect(listEnvironments).toHaveBeenCalledWith(undefined)
+  await expect(
+    host.resolveTemplateAgentRouting!('codex', 'cloud', 'private-project')
+  ).rejects.toThrow('template_environment_unavailable')
+  expect(listEnvironments).toHaveBeenCalledWith('private-project')
+  expect(createAgent).not.toHaveBeenCalled()
+})
+
+it('matches the current APP device through its app device id', async () => {
+  const local = {
+    listRunnerEnvironments: vi.fn(async () => [
+      {
+        id: 'electron-current',
+        device_key: 'electron-current',
+        models: [{ runtime: 'codex', provider: 'openai', model_id: 'default', is_default: true }],
+      },
+    ]),
+  } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
+  const listEnvironments = vi.fn(async () => [
+    {
+      id: '73',
+      device_key: 'app-record-73',
+      app_device_id: 'electron-current',
+      project_authorized: true,
+      status: 'online',
+    },
+  ])
+  const host = createWeworkProjectAgentConfigurationHost(
+    { listEnvironments, createAgent: vi.fn() } as unknown as ReturnType<
+      typeof createAgentResourceApi
+    >,
+    local
+  )
+
+  await expect(
+    host.resolveTemplateAgentRouting!('codex', 'cloud', 'private-project')
+  ).resolves.toMatchObject({
+    executionPolicy: { mode: 'fixed', environment_id: '73' },
+  })
+})
+
+it.each([
+  {
+    statuses: ['offline', 'online', 'offline'],
+    grants: [false, false, false],
+    projectId: undefined,
+    expectedId: '2',
+  },
+  { statuses: ['online', 'offline'], grants: [true, true], projectId: 'project', expectedId: '1' },
+  { statuses: ['offline'], grants: [true], projectId: undefined, expectedId: null },
+  { statuses: ['online', 'online'], grants: [true, true], projectId: undefined, expectedId: null },
+  {
+    statuses: ['offline', 'online'],
+    grants: [true, false],
+    projectId: 'project',
+    expectedId: null,
+  },
+])(
+  'resolves only a unique online authorized alias: $statuses / $grants',
+  async ({ statuses, grants, projectId, expectedId }) => {
+    const host = createWeworkProjectAgentConfigurationHost(
+      {
+        listEnvironments: vi.fn(async () =>
+          statuses.map((status, index) => ({
+            id: String(index + 1),
+            device_key: `app-record-${index + 1}`,
+            app_device_id: 'electron-current',
+            status,
+            project_authorized: grants[index],
+          }))
+        ),
+      } as unknown as ReturnType<typeof createAgentResourceApi>,
+      {
+        listRunnerEnvironments: vi.fn(async () => [
+          {
+            id: 'electron-current',
+            device_key: 'electron-current',
+            models: [
+              { runtime: 'codex', provider: 'openai', model_id: 'default', is_default: true },
+            ],
+          },
+        ]),
+      } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
+    )
+    const routing = host.resolveTemplateAgentRouting!('codex', 'cloud', projectId)
+    if (expectedId) {
+      await expect(routing).resolves.toMatchObject({
+        executionPolicy: { mode: 'fixed', environment_id: expectedId },
+      })
+    } else {
+      await expect(routing).rejects.toThrow('template_environment_unavailable')
+    }
+  }
+)

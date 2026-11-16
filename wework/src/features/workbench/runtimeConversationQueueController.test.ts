@@ -10,6 +10,7 @@ import {
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
+  reconcileRuntimeConversationQueueAfterTransportReplacement,
 } from './runtimeConversationCache'
 import {
   getRuntimeConversationQueueController,
@@ -17,6 +18,7 @@ import {
 } from './runtimeConversationQueueController'
 import type { RuntimeQueuedMessageSenderDependencies } from './runtimeQueuedMessageSender'
 import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStore'
+import { createRuntimeTaskStreamHandlers } from './runtimePaneMessages'
 
 type SendRuntimePaneMessage = RuntimeQueuedMessageSenderDependencies['sendRuntimePaneMessage']
 
@@ -129,6 +131,65 @@ describe('RuntimeConversationQueueController', () => {
     vi.restoreAllMocks()
   })
 
+  test.each([
+    undefined,
+    { startNewSession: true, expectedThreadId: 'previous-thread' },
+    { startNewSession: false, expectedThreadId: 'previous-thread' },
+  ])('preserves an explicit session boundary when sending %j', async boundary => {
+    const store = idleStore(taskA)
+    const send = acceptingTransport(store)
+    const { controller } = attach(taskA, store, send)
+    const item = { ...message('session-boundary'), ...boundary }
+    cacheRuntimeConversationQueuedMessages(taskA, [item])
+
+    await controller.send(item)
+
+    expect(send).toHaveBeenCalledOnce()
+    const request = send.mock.calls[0][0]
+    expect(request).toMatchObject({ address: taskA, message: item.content })
+    if (boundary) {
+      expect(request).toMatchObject(boundary)
+    } else {
+      expect(request).not.toHaveProperty('startNewSession')
+      expect(request).not.toHaveProperty('expectedThreadId')
+    }
+  })
+
+  test('never replays an unconfirmed send when an idle replacement returns no receipt', async () => {
+    const store = idleStore(taskA)
+    const send = acceptingTransport(store)
+    const pending: RuntimePaneQueuedMessage = {
+      ...message('accepted-before-turn-start'),
+      status: 'sending',
+      deliveryMode: 'message',
+      awaitingTurnStart: true,
+    }
+    const next = message('next-local-message')
+    cacheRuntimeConversationQueuedMessages(taskA, [pending, next])
+    attach(taskA, store, send)
+    await flushQueue()
+    expect(store.getTask(taskA)?.continuable).toBe(true)
+    expect(store.getTask(taskA)?.derived.isBusy).toBe(false)
+
+    reconcileRuntimeConversationQueueAfterTransportReplacement(taskA, [], {
+      acceptedClientUserMessageIds: [],
+    })
+    await flushQueue()
+
+    expect(send).not.toHaveBeenCalled()
+    expect(getRuntimeConversationQueuedMessages(taskA)).toEqual([pending, next])
+
+    reconcileRuntimeConversationQueueAfterTransportReplacement(taskA, [], {
+      acceptedClientUserMessageIds: [pending.id],
+    })
+    await flushQueue()
+
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ clientUserMessageId: next.id }),
+      expect.any(Object)
+    )
+  })
+
   test('preserves one controller before attachment and through an empty Activity detach and restore', async () => {
     const firstPane = getRuntimeConversationQueueController(taskA)
     const secondPane = getRuntimeConversationQueueController({ ...taskA })
@@ -208,6 +269,54 @@ describe('RuntimeConversationQueueController', () => {
         .filter(item => item.role === 'user')
         .map(item => item.id)
     ).toEqual(queue.map(item => item.id))
+  })
+
+  test('sends the next message despite a late running snapshot from a completed predecessor', async () => {
+    const store = idleStore(taskA)
+    const staleRunningTask = {
+      ...store.getTask(taskA)!.task!,
+      status: 'running',
+      running: true,
+      turnStatus: 'inProgress',
+      completedAt: null,
+      runtimeHandle: { lastTurnId: 'first-turn' },
+    }
+    store.syncRuntimeTask(taskA, staleRunningTask)
+    store.turnStarted(taskA, 'first-turn')
+    store.turnSettled(taskA, 'first-turn', 'succeeded')
+    store.executorSettled(taskA)
+    store.sendRequested(taskA)
+    store.sendAccepted(taskA)
+    store.turnStarted(taskA, 'second-turn')
+    const item = message('third-message')
+    const send = acceptingTransport(store)
+    cacheRuntimeConversationQueuedMessages(taskA, [item])
+    attach(taskA, store, send)
+    await flushQueue()
+    expect(send).not.toHaveBeenCalled()
+
+    store.turnSettled(taskA, 'second-turn', 'succeeded')
+    store.syncTranscript(taskA, {
+      messages: [],
+      running: false,
+      turns: [
+        { id: 'first-turn', status: 'done', items: [] },
+        { id: 'second-turn', status: 'done', items: [] },
+      ],
+    })
+    // The list response arrives before the scheduled queue pump reads lifecycle state.
+    store.syncRuntimeTask(taskA, staleRunningTask)
+    await flushQueue()
+
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ address: taskA, clientUserMessageId: item.id }),
+      expect.any(Object)
+    )
+    expect(getRuntimeConversationQueuedMessages(taskA)[0]).toMatchObject({
+      id: item.id,
+      status: 'sending',
+      awaitingTurnStart: true,
+    })
   })
 
   test('shares the send claim across pane attachments and manual sends while acceptance is pending', async () => {
@@ -629,6 +738,59 @@ describe('RuntimeConversationQueueController', () => {
       expect.objectContaining({ id: item.id, turnId: `turn-${item.id}` }),
     ])
   })
+
+  test.each([false, true])(
+    'joins native queue admission and RPC binding in either order, native first: %s',
+    async nativeFirst => {
+      const store = idleStore(taskA)
+      const item = { ...message('native-queued'), runtimeQueued: true }
+      const send = acceptingTransport(store)
+      cacheRuntimeConversationQueuedMessages(taskA, [item])
+      attach(taskA, store, send)
+      await flushQueue()
+      const handlers = createRuntimeTaskStreamHandlers(taskA, {
+        onMessageAction: action => applyRuntimeConversationAction(taskA, action),
+      })
+      const task = {
+        taskId: taskA.taskId,
+        workspacePath: '/workspace/queue-tests',
+        title: 'Queue test',
+        runtime: 'codex',
+        executionState: {
+          revision: '1',
+          phase: 'running' as const,
+          turnId: 'native-turn',
+          latestTurnId: 'native-turn',
+        },
+      }
+      const startNative = () =>
+        handlers.onRuntimeTurnUpdated?.({
+          ...taskA,
+          status: 'started',
+          turnId: 'native-turn',
+          task,
+        })
+      const bindRequest = () =>
+        handlers.onChatStart?.({
+          ...taskA,
+          subtaskId: 'native-turn',
+          clientUserMessageId: item.id,
+          task,
+        })
+      if (nativeFirst) startNative()
+      else bindRequest()
+      await flushQueue()
+      expect(getRuntimeConversationQueuedMessages(taskA)).toHaveLength(1)
+      if (nativeFirst) bindRequest()
+      else startNative()
+      await flushQueue()
+      expect(getRuntimeConversationQueuedMessages(taskA)).toEqual([])
+      expect(getRuntimeConversationMessages(taskA).filter(entry => entry.role === 'user')).toEqual([
+        expect.objectContaining({ id: item.id, turnId: 'native-turn' }),
+      ])
+      expect(send).not.toHaveBeenCalled()
+    }
+  )
 
   test('starts a queued initial goal between turns even when the task execution remains running', async () => {
     const store = idleStore(taskA)

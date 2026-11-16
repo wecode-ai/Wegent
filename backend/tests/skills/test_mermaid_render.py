@@ -22,7 +22,11 @@ import pytest
 
 # Add the skill directory to path for importing
 SKILL_DIR = (
-    Path(__file__).parent.parent.parent / "init_data" / "skills" / "mermaid-diagram"
+    Path(__file__).parent.parent.parent.parent
+    / "backend-rs"
+    / "init_data"
+    / "skills"
+    / "mermaid-diagram"
 )
 sys.path.insert(0, str(SKILL_DIR))
 

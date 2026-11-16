@@ -3,14 +3,15 @@ import {
   createDefaultLocalModelCatalogEntry,
   type LocalModelCatalogEntry,
 } from './localModelCatalog'
-import { codexCatalogModelIdForUpstream } from './codexCatalog'
+import { builtinCodexCatalogModel, codexCatalogModelIdForUpstream } from './codexCatalog'
+import { modelInterfaceToolProfile } from '../../../electron/src/host/model-interface-runtime'
 
-export const KIMI_CODING_CONTEXT_WINDOW = 262_144
-export const KIMI_K3_CONTEXT_WINDOW = 1_048_576
-export const DEEPSEEK_FLASH_MODEL_ID = 'deepseek-flash'
-export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
-export const DEEPSEEK_V4_PRO_MODEL_ID = 'deepseek-v4-pro'
-export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
+export * from './localModelConstants'
+import {
+  KIMI_CODING_CONTEXT_WINDOW,
+  KIMI_K3_CONTEXT_WINDOW,
+  DEEPSEEK_V4_CONTEXT_WINDOW,
+} from './localModelConstants'
 
 export interface LocalModelConfig {
   id: string
@@ -108,22 +109,20 @@ export function normalizeLocalModelCodexToolCompatibility(
   apiFormat: LocalModelApiFormat
 ): LocalModelCodexToolCompatibility {
   if (apiFormat !== 'openai-responses') return 'standard'
-  return value === 'standard' ? 'standard' : 'native'
+  return value === 'native' ? 'native' : 'standard'
 }
 
 export function defaultLocalModelToolProfile(
   apiFormat: LocalModelApiFormat
 ): LocalModelToolProfile {
-  return apiFormat === 'openai-responses' ? 'custom' : 'function'
+  return modelInterfaceToolProfile({ apiFormat })
 }
 
 export function normalizeLocalModelToolProfile(
   value: string | null | undefined,
   apiFormat: LocalModelApiFormat
 ): LocalModelToolProfile {
-  return value === 'custom' || value === 'function' || value === 'shell'
-    ? value
-    : defaultLocalModelToolProfile(apiFormat)
+  return modelInterfaceToolProfile({ apiFormat, toolProfile: value })
 }
 
 function validateLocalModelToolProfile(
@@ -210,10 +209,7 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
       ? 'minimax-global'
       : legacyConfig.providerProfileId
   const storedApiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
-  const deepSeekResponsesCatalogModelId = codexCatalogModelIdForUpstream(
-    [legacyConfig.modelId],
-    'openai-responses'
-  )
+  const deepSeekResponsesCatalogModelId = codexCatalogModelIdForUpstream([legacyConfig.modelId])
   const migrateDeepSeekResponses =
     legacyConfig.providerProfileId === 'deepseek' &&
     deepSeekResponsesCatalogModelId !== null &&
@@ -247,13 +243,18 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
   const isKimiOpenPlatformK3 = providerProfileId === 'kimi' && legacyConfig.modelId === 'kimi-k3'
   const providerCatalogModelId = isCustomProvider
     ? undefined
-    : (codexCatalogModelIdForUpstream([legacyConfig.modelId], apiFormat) ?? undefined)
+    : (codexCatalogModelIdForUpstream([legacyConfig.modelId]) ?? undefined)
+  const providerCatalogContextWindow = providerCatalogModelId
+    ? builtinCodexCatalogModel(providerCatalogModelId)?.context_window
+    : undefined
   const providerContextWindow = isKimiOpenPlatformK3
     ? KIMI_K3_CONTEXT_WINDOW
     : providerProfileId === 'kimi-coding' && providerCatalogModelId
       ? KIMI_CODING_CONTEXT_WINDOW
       : providerProfileId === 'deepseek' && providerCatalogModelId
-        ? DEEPSEEK_V4_CONTEXT_WINDOW
+        ? typeof providerCatalogContextWindow === 'number' && providerCatalogContextWindow > 0
+          ? providerCatalogContextWindow
+          : DEEPSEEK_V4_CONTEXT_WINDOW
         : undefined
   const nextConfig: LocalModelConfig = {
     id: legacyConfig.id,
@@ -267,9 +268,11 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
       legacyConfig.codexToolCompatibility,
       apiFormat
     ),
-    toolProfile: migrateDeepSeekResponses
-      ? 'custom'
-      : normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
+    toolProfile: modelInterfaceToolProfile({
+      apiFormat,
+      providerProfileId,
+      toolProfile: legacyConfig.toolProfile,
+    }),
     ...(legacyConfig.apiKey ? { apiKey: legacyConfig.apiKey } : {}),
     apiKeyConfigured: legacyConfig.apiKeyConfigured ?? Boolean(legacyConfig.apiKey),
     ...(providerContextWindow
@@ -287,13 +290,13 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     ...(legacyConfig.visionModelConfigId
       ? { visionModelConfigId: legacyConfig.visionModelConfigId }
       : {}),
-    ...(providerCatalogModelId ||
-    legacyConfig.codexCatalogModelId ||
+    ...(legacyConfig.codexCatalogModelId ||
+    providerCatalogModelId ||
     typeof catalogEntry?.slug === 'string'
       ? {
           codexCatalogModelId:
-            providerCatalogModelId ||
             legacyConfig.codexCatalogModelId ||
+            providerCatalogModelId ||
             (catalogEntry?.slug as string),
         }
       : {}),
@@ -522,10 +525,11 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const id = input.id?.trim() || createLocalModelConfigId()
   const existing = readStoredConfigs()
   const previous = existing.find(config => config.id === id)
-  const toolProfile = normalizeLocalModelToolProfile(
-    input.toolProfile ?? previous?.toolProfile,
-    apiFormat
-  )
+  const toolProfile = modelInterfaceToolProfile({
+    apiFormat,
+    providerProfileId: input.providerProfileId ?? previous?.providerProfileId,
+    toolProfile: input.toolProfile ?? previous?.toolProfile,
+  })
   const codexToolCompatibility = normalizeLocalModelCodexToolCompatibility(
     input.codexToolCompatibility ?? previous?.codexToolCompatibility,
     apiFormat
@@ -566,9 +570,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
       ? previous?.visionModelConfigId
       : input.visionModelConfigId?.trim() || undefined
   const enabled = input.enabled ?? previous?.enabled ?? true
-  const inferredCatalogModelId = isCustomProvider
-    ? null
-    : codexCatalogModelIdForUpstream([modelId], apiFormat)
+  const inferredCatalogModelId = isCustomProvider ? null : codexCatalogModelIdForUpstream([modelId])
   const codexCatalogModelId =
     input.codexCatalogModelId?.trim() ||
     inferredCatalogModelId ||

@@ -21,7 +21,24 @@ export interface RuntimeAdditionalContextEntry {
 
 export type RuntimeAdditionalContext = Record<string, RuntimeAdditionalContextEntry>
 
+export interface RuntimeExecutionState {
+  epoch?: string
+  revision: string
+  phase: 'queued' | 'starting' | 'running' | 'continuing' | 'idle' | 'recovering' | 'stopping'
+  turnId: string | null
+  continuation?: boolean
+  latestTurnId: string | null
+  startedAt?: number | null
+  completedAt?: number | null
+  durationMs?: number | null
+  error?: string | null
+  outcome: 'succeeded' | 'failed' | 'cancelled' | null
+  executionOutcome?: 'succeeded' | 'failed' | 'cancelled' | null
+}
+
 export interface RuntimeTaskSummary {
+  executionState?: RuntimeExecutionState
+
   taskId: string
   threadId?: string | null
   workspacePath: string
@@ -148,6 +165,7 @@ export interface RuntimeProjectWork {
 }
 
 export interface RuntimeWorkListResponse {
+  localIssueQuestionsPending?: boolean
   projects: RuntimeProjectWork[]
   chats: RuntimeDeviceWorkspace[]
   totalTasks: number
@@ -158,6 +176,10 @@ export interface RuntimeSendRequest {
   message: string
   clientUserMessageId?: string
   queueIfBusy?: boolean
+  /** Private discussion retains the task identity without automatic Issue writeback. */
+  conversationContext?: 'private_discussion'
+  startNewSession?: boolean
+  expectedThreadId?: string
   retrySourceTurnId?: string
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
@@ -192,6 +214,7 @@ export interface RuntimeSendResponse {
 export interface RuntimeGuidanceRequest {
   address: RuntimeTaskAddress
   message: string
+  conversationContext?: RuntimeSendRequest['conversationContext']
   attachmentIds?: number[]
   attachments?: Attachment[]
   clientGuidanceId?: string
@@ -224,6 +247,12 @@ export interface RuntimeGoalCreateInput {
 }
 
 export type RuntimeTaskOrigin = {
+  type: 'project_chat'
+  cloudProjectId: string
+  projectStore: 'local' | 'backend'
+  loopItemId?: never
+  [key: string]: unknown
+} | {
   type: 'board_comment' | 'board_task' | 'issue_dispatch' | 'project_automation'
   cloudProjectId: string
   loopItemId: string

@@ -1,20 +1,30 @@
+import { IssueCardMilestone } from "../issue-card/IssueCardMilestone";
+import type { Milestone } from "../milestones/types";
+import { unmatchedCreateDefaults } from "../project-board/projectBoardViews";
 import {
   projectBoardDnd,
   projectBoardCollisionDetection,
   projectBoardDrop,
-  projectBoardActiveItemId,
+  projectBoardDragItemId,
   useProjectBoardSensors,
 } from "../project-board/projectBoardDnd";
 import { ProjectBoardDragOverlay } from "../project-board/ProjectBoardDragOverlay";
+import {
+  IssueChildrenProgress,
+  collectIssueChildrenProgress,
+} from "../project-board/IssueChildrenProgress";
 import { BrowserIssueBoardCard } from "../issue-card/BrowserIssueBoardCard";
 import { useBrowserBoardRuntimeWork } from "./useBrowserBoardRuntimeWork";
 import type { SharedWorkspaceRuntimeApi } from "../ports/SharedWorkspaceApi";
 import type { CollaborationTranslate } from "../i18n";
+import { runnerEnvironmentError } from "../execution-environment/runnerEnvironmentError";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { findRuntimeTask } from "@wegent/chat-core/runtime-task-lookup";
+import { issueNeedsUser } from "../issueParticipation";
 
 import {
   IssueBoardCard,
@@ -25,8 +35,18 @@ import {
   createStandardCloudBoardColumns,
   createProjectBoardSortLabels,
   ProjectBoardBody,
+  isExecutionBoardColumn,
   ProjectBoardGroupPicker,
   useStandardCloudBoardController,
+  useBoardTagFilter,
+  useParentIssueBoard,
+  useSavedBoardViews,
+  savedBoardColumns,
+  BoardViewNavigation,
+  BoardViewNotice,
+  collectProjectTags,
+  boardDropHint,
+  type ProjectBoardViews,
   type ProjectBoardColumn,
   type ProjectBoardGroupBy,
   type StandardCloudBoardMutation,
@@ -67,6 +87,8 @@ export interface ProjectBoardAdapterLabels {
 export interface ProjectBoardIssueCardRenderContext {
   column: ProjectBoardColumn;
   defaultCard: ReactNode;
+  metadata?: ReactNode;
+  childrenAction?: ReactNode;
   display: {
     showAssignee: boolean;
     showDate: boolean;
@@ -87,25 +109,45 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
+  participationUserId?: import("../issueParticipation").IssueParticipationViewer;
+  parentGroupingEnabled?: boolean;
+  emptyState?: ReactNode;
+  filterAction?: ReactNode;
   toolbarAction?: ReactNode;
   runtime?: SharedWorkspaceRuntimeApi;
+  isIssueRunning?(
+    issue: CollaborationIssue,
+    bindings: WorkspaceTaskBinding[],
+  ): boolean;
   previewDisabled?: boolean;
   onMarkRead?(issue: CollaborationIssue): void;
   translate: CollaborationTranslate;
   boardError: string | null;
   agents: CollaborationAgent[];
   issues: CollaborationIssue[];
+  allIssues?: CollaborationIssue[];
+  milestones?: readonly Milestone[];
   labels: ProjectBoardAdapterLabels;
   members: CollaborationMember[];
   project: CollaborationProject;
   statuses: CollaborationStatus[];
   taskBindings: WorkspaceTaskBinding[];
   onCreateIssue(): void;
+  onCreateUnmatchedIssue?(
+    defaults: NonNullable<ReturnType<typeof unmatchedCreateDefaults>>,
+  ): void;
   onArchiveCompleted?(issues: CollaborationIssue[]): void;
   onOpenArchive?(): void;
-  onOpenBoardSettings?(): void;
-  onGroupByChange(groupBy: ProjectBoardGroupBy): Promise<void>;
-  onOpen(issue: CollaborationIssue): void;
+  onSaveViews?(
+    config: ProjectBoardViews,
+    settings?: import("../project-board/projectBoardViews").BoardViewSaveSettings,
+  ): Promise<void>;
+  onOpen(
+    issue: CollaborationIssue,
+    board?: import("../issue-detail/issueCommentActions").IssueCommentBoardContext,
+  ): void;
+  onOpenChildren?(issue: CollaborationIssue): void;
+  onCurrentParentIdChange?(parentId: string | null): void;
   onDeleteIssue?(issue: CollaborationIssue): void;
   onMove(
     issue: CollaborationIssue,
@@ -133,35 +175,125 @@ function issueSearchText(
 }
 
 export function ProjectBoardAdapter({
+  participationUserId,
+  parentGroupingEnabled = false,
+  emptyState,
+  filterAction,
   toolbarAction,
   runtime,
+  isIssueRunning,
   previewDisabled = false,
   translate,
   agents,
   boardError,
   issues,
+  allIssues = issues,
+  milestones = [],
   labels,
   members,
   onCreateIssue,
+  onCreateUnmatchedIssue,
   onArchiveCompleted,
   onOpenArchive,
   onMarkRead,
   onDeleteIssue,
-  onOpenBoardSettings,
-  onGroupByChange,
+  onSaveViews,
   onMove,
   onOpen,
+  onOpenChildren,
+  onCurrentParentIdChange,
   project,
   renderIssueCard,
   statuses,
   taskBindings,
 }: ProjectBoardAdapterProps) {
+  const handlingUserId = participationUserId ?? project.current_user_id;
+  const milestonesById = useMemo(
+    () => new Map(milestones.map((milestone) => [milestone.id, milestone])),
+    [milestones],
+  );
+  const renderMilestoneMetadata = (
+    issue: CollaborationIssue,
+    inline = false,
+  ) => {
+    const milestone =
+      issue.can_view_detail !== false && issue.milestone_id
+        ? milestonesById.get(issue.milestone_id)
+        : undefined;
+    return milestone ? (
+      <IssueCardMilestone
+        itemId={issue.id}
+        title={milestone.title}
+        label={translate("todo.milestone", "里程碑")}
+        inline={inline}
+      />
+    ) : null;
+  };
+  const childrenProgress = useMemo(
+    () => collectIssueChildrenProgress(allIssues),
+    [allIssues],
+  );
+  const savedViews = useSavedBoardViews({
+    projectKey: `${project.project_store}:${project.id}`,
+    config: project.board_views,
+    revision: project.version,
+    translate,
+    save: async (config, settings) => {
+      if (!onSaveViews) throw new Error(translate("saveFailed"));
+      await onSaveViews(config, settings);
+    },
+  });
   const supportsOrder = ["local", "native", "backend"].includes(
     project.task_provider,
   );
+  const canManageViews =
+    Boolean(onSaveViews) &&
+    (project.project_store === "local" ||
+      project.access_role === "Owner" ||
+      project.access_role === "Maintainer");
   const runtimeWork = useBrowserBoardRuntimeWork(
-    renderIssueCard ? undefined : runtime,
+    isIssueRunning && renderIssueCard ? undefined : runtime,
     taskBindings,
+  );
+  const filterScope = `${project.project_store}:${project.id}:${handlingUserId ?? "anonymous"}`;
+  const [personalFilter, setPersonalFilter] = useState({
+    scope: filterScope,
+    enabled: null as boolean | null,
+  });
+  if (personalFilter.scope !== filterScope) {
+    setPersonalFilter({ scope: filterScope, enabled: null });
+  }
+  const myIssues = useMemo(
+    () =>
+      issues.filter((issue) => {
+        if (handlingUserId == null) return false;
+        const bindings = taskBindings.filter(
+          (binding) => binding.issueId === issue.id,
+        );
+        const running = isIssueRunning
+          ? isIssueRunning(issue, bindings)
+          : bindings.some(
+              (binding) =>
+                findRuntimeTask(runtimeWork?.work ?? null, {
+                  deviceId: binding.deviceId,
+                  taskId: binding.taskId,
+                })?.running,
+            );
+        return issueNeedsUser(
+          running ? { ...issue, execution_state: "running" } : issue,
+          handlingUserId,
+        );
+      }),
+    [issues, handlingUserId, taskBindings, isIssueRunning, runtimeWork?.work],
+  );
+  const needsMyInput =
+    personalFilter.scope === filterScope
+      ? (personalFilter.enabled ?? myIssues.length > 0)
+      : myIssues.length > 0;
+  const visibleIssues = needsMyInput ? myIssues : issues;
+  const availableTags = useMemo(
+    () => collectProjectTags(project, issues),
+    [project, issues],
   );
   const createColumns = useCallback(
     (groupBy: ProjectBoardGroupBy): ProjectBoardColumn[] =>
@@ -202,7 +334,7 @@ export function ProjectBoardAdapter({
           },
           unassigned: labels.unassigned,
         },
-        tags: project.tags,
+        tags: availableTags,
       }),
     [
       agents,
@@ -211,7 +343,7 @@ export function ProjectBoardAdapter({
       labels.noTag,
       labels.unassigned,
       members,
-      project.tags,
+      availableTags,
       statuses,
     ],
   );
@@ -223,20 +355,47 @@ export function ProjectBoardAdapter({
     }),
     [project],
   );
+  const tagFilter = useBoardTagFilter({
+    scope: `${project.project_store}:${project.id}:${savedViews.view?.id ?? "default"}`,
+    tags: availableTags,
+    translate,
+  });
   const controller = useStandardCloudBoardController({
-    createColumns,
+    currentUserId: handlingUserId,
+    tagFilter: tagFilter.tags,
+    tagLimitError: translate(
+      "todo.tag_limit_exceeded",
+      "最多添加 20 个不同标签",
+    ),
+    view: savedViews.view,
+    viewScope: `${project.id}:${savedViews.view?.id ?? "default"}`,
+    defaultColumnSorts: savedViews.view?.sorts,
+    createColumns: (groupBy) =>
+      savedViews.view
+        ? savedBoardColumns(savedViews.view, statuses, createColumns("status"))
+        : createColumns(groupBy),
     defaultGroupBy: project.board_config?.group_by ?? "status",
     extensions,
     focusStorageKey: `collaboration-board-focus:${project.id}`,
-    items: issues,
+    items: visibleIssues,
+    hierarchyItems: allIssues,
+    onCurrentParentIdChange,
     supportsOrder,
-    onGroupByChange,
-    onMove: (issue, _column, _beforeItemId, mutation) =>
-      onMove(issue, mutation),
-    personalGroupStorageKey: null,
+    onMove: async (issue, _column, _beforeItemId, mutation) => {
+      try {
+        return await onMove(issue, mutation);
+      } catch (error) {
+        const message = runnerEnvironmentError(error, translate);
+        throw message ? new Error(message) : error;
+      }
+    },
+    personalGroupStorageKey:
+      project.current_user_id === undefined
+        ? null
+        : `collaboration-board-group:v1:${project.current_user_id}:${project.project_store}:${project.id}`,
     personalSortStorageKey:
       project.current_user_id != null
-        ? `collaboration-board-column-sort:v2:${project.current_user_id}:${project.id}`
+        ? `collaboration-board-column-sort:v2:${project.current_user_id}:${project.id}${savedViews.view ? `:view:${savedViews.view.id}` : ""}`
         : null,
   });
   const display = project.card_display ?? {
@@ -245,22 +404,134 @@ export function ProjectBoardAdapter({
     show_tags: true,
     show_date: true,
   };
-  const cardLabels = createIssueBoardCardLabels(translate);
+  const cardLabels = {
+    ...createIssueBoardCardLabels(translate),
+    statuses: Object.fromEntries(
+      statuses.map((status) => [status.id, status.name]),
+    ),
+  };
   const sensors = useProjectBoardSensors();
   const activeItem = issues.find(
     (issue) => issue.id === controller.activeDragItemId,
   );
+  const parentBoard = useParentIssueBoard({
+    scope: `${project.current_user_id ?? "anonymous"}:${project.project_store}:${project.id}:${savedViews.view?.id ?? "default"}`,
+    enabled: parentGroupingEnabled && supportsOrder,
+    items: issues,
+    columns: controller.columns,
+    currentParentId: controller.currentParentId,
+    state: controller.state,
+    getColumnItems: controller.getColumnItems,
+    translate,
+  });
 
+  const layerCount = controller.filteredItems.filter(
+    (issue) => issue.parent_id === controller.currentParentId,
+  ).length;
   return (
     <div
       data-testid={collaborationTestIds.board}
       className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <ProjectBoardBody<CollaborationIssue>
-        toolbarAction={toolbarAction}
+        translate={translate}
+        parentRows={
+          parentBoard.active
+            ? {
+                rows: parentBoard.rows,
+                scopeKey: parentBoard.scopeKey,
+                translate,
+                getParentTitle: (issue) => issue.title,
+                getParentKey: (issue) => issue.id,
+                renderParentMetadata: (issue) =>
+                  renderMilestoneMetadata(issue, true),
+                onOpenParent: onOpen,
+                onEnterParent: (issue) =>
+                  controller.setCurrentParentId(issue.id),
+              }
+            : undefined
+        }
+        emptyState={
+          issues.length === 0 && !savedViews.view ? emptyState : undefined
+        }
+        customView={Boolean(savedViews.view)}
+        dropFeedback={
+          controller.lastMove
+            ? {
+                ...controller.lastMove,
+                message: translate("todo.board_drop_success", undefined, {
+                  title:
+                    issues.find(
+                      (issue) => issue.id === controller.lastMove?.itemId,
+                    )?.title ?? "",
+                  action:
+                    controller.columns.find(
+                      (column) => column.key === controller.lastMove?.columnKey,
+                    )?.label ?? "",
+                }),
+              }
+            : null
+        }
+        viewNavigation={
+          <BoardViewNavigation
+            key={`${project.project_store}:${project.id}`}
+            controller={savedViews}
+            statuses={statuses}
+            tags={availableTags}
+            canManage={canManageViews}
+            settings={{
+              cardDisplay: project.card_display,
+              boardConfig: project.board_config,
+              canEditStatuses: project.task_provider === "local",
+            }}
+            translate={translate}
+          />
+        }
+        filterAction={
+          <>
+            {handlingUserId != null && (
+              <button
+                type="button"
+                data-testid="project-needs-my-input-filter"
+                aria-pressed={needsMyInput}
+                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-focus max-md:h-11 ${needsMyInput ? "border-text-primary bg-text-primary text-background hover:bg-text-primary/80" : "border-border bg-background text-text-secondary hover:bg-muted"}`}
+                onClick={() =>
+                  setPersonalFilter({
+                    scope: filterScope,
+                    enabled: !needsMyInput,
+                  })
+                }
+              >
+                {translate("todo.home_my_todos")}
+                <span
+                  className={`min-w-5 rounded-full px-1.5 text-center ${needsMyInput ? "bg-background/20 text-background" : "bg-muted text-text-primary"}`}
+                >
+                  {myIssues.length}
+                </span>
+              </button>
+            )}
+            {tagFilter.control}
+            {filterAction}
+          </>
+        }
+        toolbarAction={
+          <>
+            {parentBoard.toggle}
+            {toolbarAction}
+          </>
+        }
+        viewNotice={
+          <BoardViewNotice
+            controller={savedViews}
+            statuses={statuses}
+            translate={translate}
+          />
+        }
         state={controller.state}
         activeDragItemId={controller.activeDragItemId}
-        boardError={boardError ?? runtimeWork?.error ?? null}
+        boardError={
+          boardError ?? controller.moveError ?? runtimeWork?.error ?? null
+        }
         boardItemsLoading={false}
         breadcrumb={controller.breadcrumb}
         columns={controller.columns}
@@ -272,17 +543,21 @@ export function ProjectBoardAdapter({
           collisionDetection: projectBoardCollisionDetection,
           onDragStart: (
             event: Pick<Parameters<typeof projectBoardDrop>[0], "active">,
-          ) =>
+          ) => {
+            controller.setActiveSourceColumnKey(
+              event.active.data.current?.columnKey ?? null,
+            );
             controller.setActiveDragItemId(
-              projectBoardActiveItemId(event.active),
-            ),
+              projectBoardDragItemId(event.active),
+            );
+          },
           onDragCancel: () => controller.setActiveDragItemId(null),
           onDragEnd: (event: Parameters<typeof projectBoardDrop>[0]) => {
             controller.setActiveDragItemId(null);
             if (
               issues.some(
                 (issue) =>
-                  issue.id === projectBoardActiveItemId(event.active) &&
+                  issue.id === projectBoardDragItemId(event.active) &&
                   canEditCollaborationIssue(issue),
               )
             )
@@ -294,24 +569,56 @@ export function ProjectBoardAdapter({
         externalManagedLabel=""
         externalSearchPlaceholder=""
         focusLabels={{
-          enter: "展开进行中与待确认列",
-          exit: "退出执行阶段专注视图",
-          title: "专注视图",
+          enter: translate("todo.focus_view_description"),
+          exit: translate("todo.exit_focus_view_description"),
+          title: translate("todo.focus_view"),
         }}
         sortLabels={
           supportsOrder ? createProjectBoardSortLabels(translate) : undefined
         }
         getColumnDragHint={(column) =>
-          controller.activeDragItemId ? `移到这里：${column.label}` : undefined
+          activeItem
+            ? boardDropHint(
+                activeItem,
+                column,
+                controller.columns.find(
+                  (source) => source.key === controller.activeSourceColumnKey,
+                ),
+                controller.state.groupBy,
+                translate,
+              )
+            : undefined
         }
         getColumnEmptyState={(column) => ({
           hint: labels.noIssues,
-          ...(controller.state.groupBy === "status" && column.status === "inbox"
+          ...((column.type ?? controller.state.groupBy) === "status" &&
+          column.status === "inbox" &&
+          (!controller.currentParentId ||
+            (controller.currentParent &&
+              controller.currentParent.can_view_detail !== false &&
+              onCreateUnmatchedIssue))
             ? {
                 action: {
-                  ariaLabel: `在${column.label}中新建 Issue`,
-                  label: "创建第一个 Issue",
-                  onClick: onCreateIssue,
+                  ariaLabel: translate(
+                    "todo.board_create_in_column",
+                    undefined,
+                    {
+                      column: column.label,
+                    },
+                  ),
+                  label: translate("todo.board_create_first"),
+                  onClick: () => {
+                    if (controller.currentParent && onCreateUnmatchedIssue) {
+                      onCreateUnmatchedIssue({
+                        status: column.status ?? "inbox",
+                        tags: [],
+                        parent: controller.currentParent,
+                        draftScope: `board-column:${column.key}:${controller.currentParent.id}`,
+                      });
+                    } else {
+                      onCreateIssue();
+                    }
+                  },
                 },
               }
             : {}),
@@ -326,11 +633,7 @@ export function ProjectBoardAdapter({
         ]}
         isExternalBoard={false}
         isMyTasksBoard={false}
-        layerCount={
-          issues.filter(
-            (issue) => issue.parent_id === controller.currentParentId,
-          ).length
-        }
+        layerCount={layerCount}
         onBreadcrumbSelect={controller.setCurrentParentId}
         onSaveGlobalGroupBy={() => undefined}
         renderDragOverlay={() =>
@@ -374,36 +677,45 @@ export function ProjectBoardAdapter({
           />
         )}
         renderBoardSettingsAction={
-          onOpenBoardSettings || onOpenArchive
+          onOpenArchive
             ? () => (
-                <>
-                  {onOpenArchive ? (
-                    <button
-                      type="button"
-                      className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
-                      data-testid={collaborationTestIds.issueArchiveOpen}
-                      onClick={onOpenArchive}
-                    >
-                      {translate("todo.archive_box", "已归档")}
-                    </button>
-                  ) : null}
-                  {onOpenBoardSettings ? (
-                    <button
-                      type="button"
-                      className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
-                      data-testid="collaboration-board-settings"
-                      onClick={onOpenBoardSettings}
-                    >
-                      看板设置
-                    </button>
-                  ) : null}
-                </>
+                <button
+                  type="button"
+                  className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  data-testid={collaborationTestIds.issueArchiveOpen}
+                  onClick={onOpenArchive}
+                >
+                  {translate("todo.archive_box", "已归档")}
+                </button>
               )
             : undefined
         }
         renderColumnHeaderActions={(column, columnItems, state) => {
           if (
-            state.groupBy !== "status" ||
+            column.type === "unmatched" &&
+            savedViews.view &&
+            onCreateUnmatchedIssue
+          ) {
+            if (controller.currentParentId && !controller.currentParent)
+              return null;
+            const defaults = unmatchedCreateDefaults(
+              savedViews.view,
+              statuses,
+              controller.currentParent,
+            );
+            return defaults ? (
+              <button
+                type="button"
+                data-testid={`cloud-todo-column-add-${column.key}`}
+                className="flex min-h-11 items-center rounded-md px-2 text-xs text-text-muted hover:bg-background hover:text-text-primary md:h-6 md:min-h-0"
+                onClick={() => onCreateUnmatchedIssue(defaults)}
+              >
+                {translate("todo.board_view_create_unmatched")}
+              </button>
+            ) : null;
+          }
+          if (
+            (column.type ?? state.groupBy) !== "status" ||
             column.status !== "completed" ||
             !onArchiveCompleted
           ) {
@@ -430,16 +742,20 @@ export function ProjectBoardAdapter({
           ) : null;
         }}
         renderItem={(issue, column) => {
+          const focused =
+            controller.state.focusExecutionColumns &&
+            isExecutionBoardColumn(column, controller.state.groupBy);
           const issueDisplay = {
             showAssignee: display.show_assignee,
             showDate: display.show_date,
             showPriority: display.show_priority,
             showTags: display.show_tags,
           };
+          const metadata = renderMilestoneMetadata(issue);
           const cardProps = {
+            metadata,
             translate,
             item: issue,
-            columnKey: column.key,
             unread: false,
             reference: `${project.project_key}-${issue.sequence_number}`,
             labels: cardLabels,
@@ -454,20 +770,27 @@ export function ProjectBoardAdapter({
             archiveLabel: translate("todo.archive_issue", "归档任务"),
             articleTestId: collaborationTestIds.issue(issue.id),
             dragEnabled: canEditCollaborationIssue(issue),
-            onOpen: () => onOpen(issue),
+            onOpen: () =>
+              onOpen(issue, {
+                columns: controller.columns,
+                groupBy: controller.state.groupBy,
+                name: savedViews.view?.name ?? project.name,
+                sourceColumnKey: column.key,
+              }),
           };
-          const childrenAction = issues.some(
-            (candidate) => candidate.parent_id === issue.id,
-          ) ? (
-            <button
-              type="button"
-              data-testid={`collaboration-issue-children-${issue.id}`}
-              onClick={() => controller.setCurrentParentId(issue.id)}
-              className="mx-3 mb-3 text-xs text-text-secondary hover:text-text-primary"
-            >
-              查看子任务
-            </button>
-          ) : null;
+          const progress = childrenProgress.get(issue.id);
+          const childrenAction =
+            progress && issue.can_view_detail !== false ? (
+              <IssueChildrenProgress
+                itemId={issue.id}
+                progress={progress}
+                translate={translate}
+                onOpen={() => {
+                  onOpenChildren?.(issue);
+                  controller.setCurrentParentId(issue.id);
+                }}
+              />
+            ) : null;
           const defaultCard = (
             <IssueBoardCard {...cardProps} childrenAction={childrenAction} />
           );
@@ -475,10 +798,12 @@ export function ProjectBoardAdapter({
             renderIssueCard({
               column,
               defaultCard,
+              metadata,
+              childrenAction,
               display: issueDisplay,
-              focused: controller.state.focusExecutionColumns,
+              focused,
               issue,
-              onOpen: () => onOpen(issue),
+              onOpen: cardProps.onOpen,
               onDelete: cardProps.onArchive,
               previewDisabled,
               taskBindings: taskBindings.filter(
@@ -493,7 +818,7 @@ export function ProjectBoardAdapter({
               taskBindings={taskBindings.filter(
                 (binding) => binding.issueId === issue.id,
               )}
-              focused={controller.state.focusExecutionColumns}
+              focused={focused}
               previewDisabled={previewDisabled}
               childrenAction={childrenAction}
             />
@@ -503,7 +828,11 @@ export function ProjectBoardAdapter({
         }}
         renderSkeleton={() => null}
         rootLabel="Issue"
-        rootUnitLabel="个 Issue"
+        rootUnitLabel={translate(
+          layerCount === 1
+            ? "todo.board_issue_unit_one"
+            : "todo.board_issue_unit",
+        )}
         saveGlobalDisabled
         saveGlobalLabel=""
         searchPlaceholder={labels.search}

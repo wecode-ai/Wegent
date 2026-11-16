@@ -68,7 +68,7 @@ class GeminiInteractionClient:
     async def create_interaction(
         self,
         input_text: str,
-        agent: str = "deep-research-pro-preview-12-2025",
+        agent: str = "deep-research-preview-04-2026",
     ) -> dict[str, Any]:
         """Create a new research interaction (non-streaming).
 

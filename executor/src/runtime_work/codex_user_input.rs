@@ -67,7 +67,13 @@ pub(crate) fn async_question_payload_from_item(params: &Value) -> Option<Value> 
     }
     let questions = item.get("questions")?.as_array()?;
     let item_id = item_id(item, "request-user-input");
-    async_question_render_payload(&item_id, questions)
+    let mut payload = async_question_render_payload(&item_id, questions)?;
+    if let Some(turn_id) =
+        string_field(params, "turnId").or_else(|| string_field(params, "turn_id"))
+    {
+        payload["interactionScope"] = json!(turn_id);
+    }
+    Some(payload)
 }
 
 /// A `request_user_input_async` question: one prompt plus suggested answers.
@@ -133,27 +139,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalizes_title_and_plain_string_options() {
-        let payload = async_question_render_payload(
-            "call-1",
-            &[json!({
-                "title": "Which state jitters?",
-                "options": ["Following", "Reading", "Both"],
-            })],
-        )
-        .expect("payload");
-
-        assert_eq!(payload["kind"], "request_user_input");
-        assert_eq!(payload["delivery"], "async");
-        assert_eq!(payload["itemId"], "call-1");
-        assert_eq!(payload["questions"][0]["id"], "question_1");
-        assert_eq!(payload["questions"][0]["question"], "Which state jitters?");
-        assert_eq!(payload["questions"][0]["is_other"], true);
-        assert_eq!(payload["questions"][0]["options"][0]["label"], "Following");
-        assert_eq!(payload["questions"][0]["options"][2]["label"], "Both");
-    }
-
-    #[test]
     fn drops_blank_questions_and_blank_options() {
         let payload = async_question_render_payload(
             "call-2",
@@ -169,6 +154,37 @@ mod tests {
         assert_eq!(questions[0]["question"], "Pick one");
         assert_eq!(questions[0]["options"].as_array().map(Vec::len), Some(1));
         assert_eq!(questions[0]["options"][0]["label"], "Second");
+    }
+
+    #[test]
+    fn async_question_identity_survives_replay_and_remains_turn_scoped() {
+        let questions = json!([{"title": "Describe the expected result"}]);
+        let item = json!({"type": "agentMessage", "id": "same-call", "questions": questions});
+        for turn_id in ["turn-1", "turn-2"] {
+            let live = async_question_payload_from_item(&json!({
+                "turnId": turn_id, "item": item,
+            }))
+            .unwrap();
+            assert_eq!(live["interactionScope"], turn_id);
+            let call = json!({"type": "response_item", "payload": {
+                "type": "function_call", "call_id": "same-call",
+                "name": "request_user_input_async",
+                "arguments": json!({"questions": questions}).to_string(),
+            }});
+            for replay_item in [item.clone(), call] {
+                let thread = json!({"id": "thread-1", "turns": [{
+                    "id": turn_id, "status": "completed", "items": [replay_item],
+                }]});
+                let messages =
+                    crate::runtime_work::transcript::transcript_messages(&thread, "device-1");
+                let block = messages
+                    .iter()
+                    .flat_map(|message| message["blocks"].as_array().into_iter().flatten())
+                    .find(|block| block["tool_name"] == "request_user_input")
+                    .expect("replayed async question");
+                assert_eq!(block["render_payload"], live);
+            }
+        }
     }
 
     #[test]

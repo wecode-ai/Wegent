@@ -24,7 +24,7 @@ pub(super) struct AdapterResult {
 
 struct AdapterChild {
     child: Child,
-    tree: crate::process::ProcessTreeGuard,
+    tree: wegent_subprocess::ProcessTreeGuard,
     #[cfg(unix)]
     group_id: Option<u32>,
 }
@@ -44,6 +44,23 @@ impl Drop for AdapterChild {
     }
 }
 
+pub(super) fn adapter_uses_python(adapter: &NativeAdapter) -> bool {
+    adapter
+        .script
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("py"))
+}
+
+pub(super) async fn ensure_adapter_python(adapter: &NativeAdapter) -> Result<(), AuthError> {
+    if adapter_uses_python(adapter) {
+        crate::python_runtime::prepare_plugin_python(&adapter.root, true)
+            .await
+            .map_err(|_| AuthError("python_runtime_unavailable"))?;
+    }
+    Ok(())
+}
+
 pub(super) async fn invoke(
     adapter: &NativeAdapter,
     interpreter: &Path,
@@ -52,6 +69,7 @@ pub(super) async fn invoke(
     working_directory: Option<&Path>,
     deadline: Duration,
 ) -> Result<AdapterResult, AuthError> {
+    let requires_python = adapter_uses_python(adapter);
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .map_err(|_| AuthError("plugin_auth_transport_unavailable"))?;
@@ -61,15 +79,26 @@ pub(super) async fn invoke(
         .port();
     let mut nonce = [0u8; 32];
     getrandom::fill(&mut nonce).map_err(|_| AuthError("plugin_auth_transport_unavailable"))?;
-    let mut command = Command::new(interpreter);
+    let selected = if requires_python && crate::python_runtime::managed_python_bridge_configured() {
+        Some(
+            crate::python_runtime::ready_plugin_python(&adapter.root)
+                .await
+                .map_err(|_| AuthError("python_runtime_unavailable"))?,
+        )
+    } else {
+        None
+    };
+    let mut command = Command::new(
+        selected
+            .as_ref()
+            .map_or(interpreter, |python| python.path.as_path()),
+    );
     let local_configuration = super::local_configuration::capture(
         adapter.definition.local_environment.as_ref(),
         arguments.first().map(String::as_str),
     )?;
     crate::process::hide_windows_console(&mut command);
     command
-        .arg(&adapter.script)
-        .args(arguments)
         .current_dir(working_directory.unwrap_or(&adapter.root))
         .env_clear()
         .envs(native_environment())
@@ -80,6 +109,15 @@ pub(super) async fn invoke(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    if requires_python {
+        let result = if let Some(selected) = &selected {
+            selected.configure(&mut command)
+        } else {
+            crate::python_runtime::isolate_python_environment(&mut command)
+        };
+        result.map_err(|_| AuthError("python_runtime_unavailable"))?;
+    }
+    command.arg(&adapter.script).args(arguments);
     if let Some(configuration) = local_configuration {
         command.env("WEGENT_PLUGIN_AUTH_LOCAL_CONFIGURATION", configuration);
     }
@@ -92,7 +130,7 @@ pub(super) async fn invoke(
         .spawn()
         .map_err(|_| AuthError("plugin_auth_launch_failed"))?;
     let mut child = AdapterChild {
-        tree: crate::process::ProcessTreeGuard::new(spawned.id()),
+        tree: wegent_subprocess::ProcessTreeGuard::new(spawned.id()),
         #[cfg(unix)]
         group_id: spawned.id(),
         child: spawned,
@@ -186,7 +224,10 @@ pub(super) async fn invoke(
             .wait()
             .await
             .map_err(|_| AuthError("plugin_auth_execution_failed"))?;
-        child.tree.disarm();
+        child
+            .tree
+            .disarm()
+            .map_err(|_| AuthError("plugin_auth_execution_failed"))?;
         #[cfg(unix)]
         {
             child.group_id = None;

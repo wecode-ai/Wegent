@@ -1180,6 +1180,7 @@ def test_read_docs_preserves_scope_and_reader_identity(test_client, persist):
         knowledge_base_ids=[1],
         user_id=7,
         user_subtask_id=11 if persist else None,
+        entrypoint="kb_head",
     )
 
 
@@ -1218,3 +1219,83 @@ def test_read_docs_rejects_out_of_scope_before_reading(test_client, test_app):
     assert response.status_code == 403
     assert response.json()["detail"]["error_code"] == "document_scope_violation"
     read.assert_not_called()
+
+
+@pytest.mark.parametrize("response_fails", [False, True])
+def test_usage_observes_only_delivered_documents(test_client, mocker, response_fails):
+    from shared.event_reporting import register_event_receiver
+
+    events = []
+    receiver = mocker.Mock()
+    receiver.accepts.return_value = True
+    receiver.receive.side_effect = events.append
+    kb_ids = [1, 2]
+    records = [
+        {
+            "content": "chunk",
+            "title": "title",
+            "document_id": doc,
+            "knowledge_base_id": kb_ids[doc % 2],
+        }
+        for doc in range(1, 151)
+    ]
+    mocker.patch(
+        "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
+        return_value=_make_runtime_spec(
+            knowledge_base_ids=kb_ids, route_mode="rag_retrieval"
+        ),
+    )
+    mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_remote_response(
+            json_body={
+                "records": records + records[:1],
+                "total": 151,
+                "total_estimated_tokens": 151,
+            }
+        ),
+    )
+    if response_fails:
+        mocker.patch(
+            "app.api.endpoints.internal.rag._to_retrieve_record",
+            side_effect=ValueError("invalid response"),
+        )
+    register_event_receiver(receiver)
+    try:
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json={
+                "query": "test",
+                "knowledge_base_ids": kb_ids,
+                "user_id": 7,
+                "route_mode": "rag_retrieval",
+                "max_results": 151,
+            },
+            headers=_internal_headers(),
+        )
+    finally:
+        register_event_receiver(None)
+
+    documents = [
+        e for e in events if e["event_type"] == "knowledge.usage.document.recorded"
+    ]
+    bases = [e for e in events if e["event_type"] == "knowledge.usage.kb.recorded"]
+    (request,) = [
+        e for e in events if e["event_type"] == "knowledge.retrieval.request.finished"
+    ]
+    if response_fails:
+        assert response.status_code == 400
+        assert request["status"] == "failure"
+        assert documents == bases == []
+    else:
+        assert response.status_code == 200
+        assert len(response.json()["records"]) == 151
+        assert request["status"] == "success"
+        assert sorted(e["kb_id"] for e in bases) == kb_ids
+        assert len(documents) == 150
+        invocation = request["data"]["invocation_id"]
+        assert {e["fact_key_parts"] for e in documents} == {
+            (invocation, r["knowledge_base_id"], r["document_id"], "context_delivery")
+            for r in records
+        }
+        assert all(e["data"]["actor_user_id"] == 7 for e in documents + bases)

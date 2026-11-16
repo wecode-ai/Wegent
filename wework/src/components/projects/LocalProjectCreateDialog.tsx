@@ -132,7 +132,7 @@ function LocalProjectCreateDialogContent({
           </button>
         </div>
 
-        <label className="mt-5 flex h-11 items-center rounded-xl border border-border bg-background focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10">
+        <label className="mt-5 flex h-11 items-center rounded-xl border border-border bg-background keyboard:focus-within:border-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/10">
           <Folder className="mx-3 h-4 w-4 shrink-0 text-text-secondary" />
           <span className="h-full w-px bg-border" />
           <input
@@ -203,7 +203,7 @@ function LocalProjectCreateDialogContent({
           )}
         </div>
 
-        {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
+        {error && <p className="mt-3 text-sm text-destructive wework:text-red-500">{error}</p>}
         <div className="mt-5 flex justify-end gap-3">
           <button
             type="button"

@@ -13,7 +13,12 @@ vi.mock('@/lib/runtime-environment', () => ({
   isElectronRuntime: () => mocks.electron,
 }))
 
-import { migrateLegacyTaskSystemNotification } from './notificationPreferences'
+import {
+  cacheNotificationPreferences,
+  migrateLegacyTaskSystemNotification,
+  readActiveNotificationPreferences,
+  readCachedNotificationPreferences,
+} from './notificationPreferences'
 
 describe('notification preference migration', () => {
   beforeEach(() => {
@@ -42,5 +47,32 @@ describe('notification preference migration', () => {
     await migrateLegacyTaskSystemNotification('account-2', vi.fn())
 
     expect(mocks.invokeDesktopHost).not.toHaveBeenCalled()
+  })
+
+  test('enables stand-in alerts for existing records without changing task opt-outs', () => {
+    localStorage.setItem(
+      'wework.notification-preferences:local:1',
+      JSON.stringify({
+        tasks: { in_app: true, system: false, im: null },
+      })
+    )
+    const preferences = readCachedNotificationPreferences('local:1')
+    expect(preferences.stand_in).toEqual({ in_app: true, system: true, im: null })
+    expect(preferences.tasks.system).toBe(false)
+  })
+
+  test('preserves explicit stand-in opt-outs across active and account cache reloads', () => {
+    const preferences = readCachedNotificationPreferences('local:1')
+    cacheNotificationPreferences('local:1', {
+      ...preferences,
+      stand_in: { in_app: false, system: false, im: null },
+    })
+    expect(readCachedNotificationPreferences('local:1').stand_in).toEqual({
+      in_app: false,
+      system: false,
+      im: null,
+    })
+    expect(readActiveNotificationPreferences().stand_in.system).toBe(false)
+    expect(readCachedNotificationPreferences('other:2').stand_in.system).toBe(true)
   })
 })

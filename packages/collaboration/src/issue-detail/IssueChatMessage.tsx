@@ -220,6 +220,7 @@ export function IssueChatMessage({
   executionTestId,
   executionAliasTestId,
   message,
+  members = [],
   mine,
   compact = false,
   plain = false,
@@ -244,6 +245,7 @@ export function IssueChatMessage({
   executionTestId?: string;
   executionAliasTestId?: string;
   message: ProjectChatMessage;
+  members?: readonly { user_id: number; user_name: string }[];
   mine: boolean;
   compact?: boolean;
   /** Render inside a parent comment card without the outer card border. */
@@ -274,7 +276,20 @@ export function IssueChatMessage({
   const isManager = agentRole === "manager";
   const isManagerStatusComment =
     isManager && message.metadata.activity_type === "manager_status_comment";
-  const activityAuthor = message.sender.name;
+  const standIn = message.metadata.stand_in;
+  const ownerId =
+    isAgent && standIn && typeof standIn === "object" && "user_id" in standIn
+      ? standIn.user_id
+      : undefined;
+  const ownerName =
+    typeof ownerId === "number"
+      ? members
+          .find((member) => member.user_id === ownerId)
+          ?.user_name?.trim() || `#${ownerId}`
+      : undefined;
+  const activityAuthor = ownerName
+    ? `${ownerName} (${message.sender.name})`
+    : message.sender.name;
   const isSubagent = message.metadata.kind === "task_ai_subagent";
   const runId =
     typeof message.metadata.run_id === "string"
@@ -310,12 +325,10 @@ export function IssueChatMessage({
     !isManagerStatusComment &&
     !message.replyToMessageId
   ) {
-    const failed = displayStatus === "failed";
-    const completed = displayStatus === "succeeded";
     const presentation = managerActivityPresentation(
       t,
       message.metadata,
-      failed ? "failed" : completed ? "completed" : "running",
+      displayStatus ?? "unknown",
     );
     return (
       <div
@@ -335,11 +348,7 @@ export function IssueChatMessage({
         <div className="min-w-0 flex-1">
           <div className="flex items-start gap-2 text-sm">
             <div className="min-w-0 flex-1">
-              <span className="font-medium">{message.sender.name}</span>{" "}
-              <span className="text-xs text-text-muted">
-                {t("activity.task_activity_manager_role")}
-              </span>
-              {" · "}
+              <span className="font-medium">{activityAuthor}</span>{" "}
               {presentation.label}
             </div>
             {openExecution || onStopExecution ? (
@@ -388,7 +397,7 @@ export function IssueChatMessage({
         data-testid={`task-activity-run-event-${message.messageId}`}
       >
         <Bot className="h-4 w-4 shrink-0" />
-        <span className="min-w-0 truncate">{message.sender.name}</span>
+        <span className="min-w-0 truncate">{activityAuthor}</span>
         {isAgent ? (
           <div className="task-detail-thread-execution">
             <ExecutionStatusBadge
@@ -546,7 +555,7 @@ export function IssueChatMessage({
   );
   const avatar = (
     <IssueActivityAvatar
-      author={message.sender.name}
+      author={activityAuthor}
       agent={isAgent}
       compact={compact}
     />
@@ -568,7 +577,7 @@ export function IssueChatMessage({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="truncate text-sm font-semibold text-text-primary">
-                  {taskSummary?.title ?? message.sender.name}
+                  {taskSummary?.title ?? activityAuthor}
                 </span>
                 <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs text-text-muted">
                   {taskSummary?.stageName ??
@@ -727,7 +736,7 @@ export function IssueChatMessage({
         {avatar}
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-text-primary">
-            {message.sender.name}
+            {activityAuthor}
           </span>
           <span className="block text-xs text-text-muted">
             {isAgent

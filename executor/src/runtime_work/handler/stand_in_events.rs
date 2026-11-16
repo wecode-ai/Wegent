@@ -1,162 +1,52 @@
-//! Notifications wake assignment work; durable intents also recover after reconnection.
+//! Wework forwards received assignment notifications through the existing local RPC.
 use super::stand_in::settings_error;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn report_assistant_preflight_failure(
-        &self,
-        config: &Value,
-        issue: &Value,
-        error: &AppIpcError,
-    ) {
-        let Some(execution) = issue["human_assistant_dispatch"]["executionId"].as_str() else {
-            return;
-        };
-        let project = config["projectId"].as_str().unwrap_or_default();
-        let path = format!("/v1/cloud-projects/{project}/executions/{execution}/dispatch-failed");
-        let body =
-            json!({"error":error.message.chars().take(2000).collect::<String>(),"note":error.code});
-        if let Err(report_error) = self
-            .stand_in_http(reqwest::Method::POST, &path, Some(&body))
-            .await
-        {
-            log_executor_event(
-                "assistant preflight failure report failed",
-                &[
-                    ("execution_id", execution.to_owned()),
-                    ("error", report_error.message),
-                ],
-            );
-        }
-    }
-
-    pub(super) async fn recover_cloud_assistant_dispatches(&self) -> Result<(), AppIpcError> {
-        if self.backend_connection_snapshot()?.is_none() {
-            return Ok(());
-        }
-        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
-        let personal = store
-            .declared_personal_stand_ins(&self.device_id)
-            .map_err(settings_error)?;
-        if !personal.iter().any(|settings| {
-            settings["primary"]["enabled"] == true
-                && settings["primary"]["collaboration"]["enabled"] == true
-        }) {
-            return Ok(());
-        }
-        for config in self.cloud_assistant_recovery_configs(&personal).await? {
-            let project = config["projectId"].as_str().unwrap_or_default();
-            let user = config["userId"].as_i64().unwrap_or_default();
-            let path = format!(
-                "/v1/cloud-projects/{project}/loop-items?assignee_type=user&assignee_id={user}"
-            );
-            let items = match self.stand_in_http(reqwest::Method::GET, &path, None).await {
-                Ok(items) => items,
-                Err(error) => {
-                    log_executor_event(
-                        "assistant project recovery failed",
-                        &[("project_id", project.to_owned()), ("error", error.message)],
-                    );
-                    continue;
-                }
-            };
-            for issue in items["items"].as_array().into_iter().flatten() {
-                // Recovery only consumes durable intents; enabling a role never backfills history.
-                if !issue["human_assistant_dispatch"].is_object()
-                    || issue["cloud_project_id"] != project
-                    || issue["assignee_user_id"] != user
-                {
-                    continue;
-                }
-                if let Err(error) = self
-                    .start_cloud_stand_in_with_roles(std::slice::from_ref(&config), issue)
-                    .await
-                {
-                    log_executor_event(
-                        "assistant assignment recovery failed",
-                        &[
-                            ("issue_id", issue["id"].to_string()),
-                            ("error", error.message),
-                        ],
-                    );
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn cloud_assistant_recovery_configs(
-        &self,
-        personal: &[Value],
-    ) -> Result<Vec<Value>, AppIpcError> {
-        let connected = self
-            .stand_in_http(reqwest::Method::GET, "/users/me", None)
-            .await?;
-        let personal: Vec<Value> = personal
-            .iter()
-            .filter(|settings| settings["userId"] == connected["id"])
-            .cloned()
-            .collect();
-        let mut projects = std::collections::BTreeSet::new();
-        for settings in &personal {
-            let source = &settings["primary"]["collaboration"];
-            if source["allProjects"] == true {
-                match self
-                    .stand_in_http(reqwest::Method::GET, "/v1/cloud-projects", None)
-                    .await
-                {
-                    Ok(visible) => projects.extend(
-                        visible["items"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|project| project["id"].as_str().map(str::to_owned)),
-                    ),
-                    Err(error) => log_executor_event(
-                        "assistant project discovery failed",
-                        &[("error", error.message)],
-                    ),
-                }
-            }
-            projects.extend(
-                source["projects"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter(|project| project["store"] == "cloud")
-                    .filter_map(|project| project["id"].as_str().map(str::to_owned)),
-            );
-        }
-        Ok(projects
-            .into_iter()
-            .flat_map(|project| self.stand_in_project_configs(&personal, &project, "cloud"))
-            .filter(|config| {
-                config["id"] == "@primary"
-                    && config["enabled"] == true
-                    && config["handlingPolicy"]["automatic"] != false
-            })
-            .collect())
-    }
-
     pub(super) async fn handle_stand_in_assignment(
         &self,
         payload: Value,
     ) -> Result<(), AppIpcError> {
+        let connection = self.backend_connection_snapshot()?.ok_or_else(|| {
+            AppIpcError::new("cloud_unavailable", "Cloud connection is unavailable")
+        })?;
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let id = store
+            .queue_stand_in_dispatch(&json!({
+                "backendUrl":connection.backend_url,"deviceId":self.device_id,
+                "userId":payload["recipientUserId"],"notification":payload
+            }))
+            .map_err(settings_error)?;
+        let result = self.process_stand_in_assignment(payload).await;
+        self.settle_stand_in_dispatches(&[id], result.as_ref().err());
+        result
+    }
+
+    pub(super) async fn process_stand_in_assignment(
+        &self,
+        payload: Value,
+    ) -> Result<(), AppIpcError> {
+        if payload["commentId"].is_string() {
+            return self.process_stand_in_issue_mention(payload).await;
+        }
         let (Some(project), Some(issue_id), Some(assignment)) = (
             payload["projectId"].as_str(),
             payload["itemId"].as_str(),
             payload["assignmentId"].as_str(),
         ) else {
+            self.log_stand_in_decision(&json!({}), &json!({}), "notification_identity_missing", json!({"hasProjectId":payload["projectId"].is_string(),"hasItemId":payload["itemId"].is_string(),"hasAssignmentId":payload["assignmentId"].is_string()}));
             return Ok(());
         };
+        let context = json!({"projectId":project,"userId":payload["recipientUserId"]});
+        let event_issue = json!({"id":issue_id,"human_task_binding":{"assignmentId":assignment}});
+        self.log_stand_in_decision(&context, &event_issue, "notification_received", json!({}));
         let issue = self
-            .stand_in_http(
+            .runtime_http(
                 reqwest::Method::GET,
                 &format!("/v1/loop-items/{issue_id}"),
                 None,
             )
             .await?;
-        // An event is a hint, never authority to run a stale or reassigned Issue.
         if issue["cloud_project_id"] != project
             || issue["human_task_binding"]["assignmentId"] != assignment
         {
@@ -164,28 +54,69 @@ impl RuntimeWorkRpcHandler {
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         let personal = if issue["human_assistant_dispatch"].is_object() {
-            store.declared_personal_stand_ins(&self.device_id)
+            store
+                .declared_personal_stand_ins(&self.device_id)
+                .map(|settings| {
+                    settings
+                        .into_iter()
+                        .filter(|settings| settings["lifecycle"]["status"].is_null())
+                        .collect()
+                })
         } else {
             store.all_personal_stand_ins(&self.device_id)
         }
         .map_err(settings_error)?;
-        let configs: Vec<Value> = self
-            .stand_in_project_configs(&personal, project, "cloud")
-            .into_iter()
+        let project_configs = self.stand_in_project_configs(&personal, project, "cloud");
+        let configs: Vec<Value> = project_configs
+            .iter()
             .filter(|config| {
                 config["enabled"] == true
                     && config["handlingPolicy"]["automatic"] != false
                     && config["userId"] == payload["recipientUserId"]
             })
+            .cloned()
             .collect();
         if configs.is_empty() {
+            self.log_stand_in_decision(
+                &context,
+                &event_issue,
+                "no_automatic_project_role",
+                json!({"personalSettingsCount":personal.len(),"projectRoles":project_configs.iter().map(|role|json!({"roleId":role["id"],"userId":role["userId"],"enabled":role["enabled"],"automatic":role["handlingPolicy"]["automatic"]})).collect::<Vec<_>>()}),
+            );
             return Ok(());
         }
-        self.verify_stand_in_user(&configs[0]).await?;
-        if super::personal_stand_in::matching_personal_roles(&configs, &issue).is_empty() {
+        self.verify_runtime_user(&configs[0]).await?;
+        // An event is a hint, never authority to run a stale or reassigned Issue.
+        if issue["cloud_project_id"] != project
+            || issue["human_task_binding"]["assignmentId"] != assignment
+        {
+            self.log_stand_in_decision(&context, &issue, "notification_assignment_mismatch", json!({
+                "notificationAssignmentId":assignment,"actualProjectId":issue["cloud_project_id"]
+            }));
             return Ok(());
         }
-        self.start_cloud_stand_in_with_roles(&configs, &issue).await
+        if super::personal_stand_in::automatic_assignment_roles(&configs, &issue).is_empty() {
+            self.log_stand_in_decision(&context, &issue, "no_matching_role_tags", json!({}));
+            return Ok(());
+        }
+        if super::personal_stand_in::automatic_assignment_roles(&configs, &issue)
+            .iter()
+            .all(|role| {
+                self.stand_in_assignment_is_handled(
+                    role,
+                    &self.stand_in_task_id(role, &issue),
+                    &issue["human_task_binding"],
+                )
+            })
+        {
+            return Ok(());
+        }
+
+        // Explicit assignments use the existing native dispatch lifecycle, including
+        // devices without a DSH host. Ordinary source events remain plugin-routed.
+        self.start_cloud_stand_in_with_roles(&configs, &issue)
+            .await?;
+        Ok(())
     }
 }
 
@@ -201,8 +132,6 @@ mod tests {
         server: tokio::task::JoinHandle<()>,
         assignments: Arc<AtomicUsize>,
         bindings: Arc<AtomicUsize>,
-        issue: Arc<Mutex<Value>>,
-        issues: Arc<Mutex<Value>>,
     }
 
     impl Drop for Fixture {
@@ -217,23 +146,9 @@ mod tests {
         let assignment_calls = assignments.clone();
         let binding_calls = bindings.clone();
         let created_at = created_at.to_owned();
-        let issue = Arc::new(Mutex::new(
-            json!({"id":"issue","cloud_project_id":"project","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}}),
-        ));
-        let current_issue = issue.clone();
-        let issues = Arc::new(Mutex::new(json!([])));
-        let listed = issues.clone();
         let router = Router::new()
             .route("/api/users/me", get(|| async { Json(json!({"id":7})) }))
-            .route("/api/v1/cloud-projects", get(|| async { Json(json!({"items":[{"id":"project"}]})) }))
-            .route("/api/v1/cloud-projects/project/loop-items", get(move || {
-                let items = listed.lock().unwrap().clone();
-                async move { Json(json!({"items":items})) }
-            }))
-            .route("/api/v1/loop-items/issue", get(move || {
-                let issue = current_issue.lock().unwrap().clone();
-                async move { Json(issue) }
-            }))
+            .route("/api/v1/loop-items/issue", get(|| async { Json(json!({"id":"issue","cloud_project_id":"project","assignee_user_id":7,"human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}})) }))
             .route("/api/v1/loop-items/issue/assignments", get(move || {
                 assignment_calls.fetch_add(1, Ordering::SeqCst);
                 let timestamp = created_at.clone();
@@ -241,10 +156,7 @@ mod tests {
             }))
             .route("/api/v1/loop-items/issue/tasks", get(move || {
                 binding_calls.fetch_add(1, Ordering::SeqCst);
-                async { Json(json!([
-                    {"human_assignment_id":"human","device_id":"other","task_id":"stand-in-human-default"},
-                    {"human_assignment_id":"human","device_id":"other","task_id":"stand-in-human-@primary"}
-                ])) }
+                async { Json(json!([{"human_assignment_id":"human","device_id":"other","task_id":"stand-in-human-default"}])) }
             }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -267,8 +179,6 @@ mod tests {
             server,
             assignments,
             bindings,
-            issue,
-            issues,
         }
     }
 
@@ -277,7 +187,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn received_notification_validates_once_and_preserves_existing_binding() {
+    async fn explicit_assignment_cannot_overwrite_a_binding_on_another_device() {
+        let fixture = fixture("2099-01-01T00:00:00Z").await;
+        fixture
+            .handler
+            .handle_runtime_rpc(notification())
+            .await
+            .unwrap();
+        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 1);
+        let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
+        assert!(store.stand_in_events(7).unwrap().is_empty());
+        assert!(fixture.handler.local_task_links(true).is_empty());
+
+        let error = fixture
+            .handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.stand_in.run",
+                "payload": {
+                    "projectId": "project", "issueId": "issue", "userId": 7,
+                    "projectStore": "cloud", "standInId": "default"
+                }
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "wrong_device");
+        assert_eq!(
+            error.message,
+            "Open the existing Issue conversation on its owning device"
+        );
+        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 2);
+        assert!(fixture.handler.local_task_links(true).is_empty());
+    }
+
+    #[tokio::test]
+    async fn explicit_assignments_ignore_ordinary_source_delay_without_a_plugin_host() {
+        let fixture = fixture("2099-01-01T00:00:00Z").await;
+        let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
+        let mut settings = store.personal_stand_in(7, "mac").unwrap();
+        settings["roles"][0]["collaboration"]["policy"]["immediate"] = json!(false);
+        store.save_personal_stand_in(7, "mac", settings).unwrap();
+        for _ in 0..2 {
+            fixture
+                .handler
+                .handle_runtime_rpc(notification())
+                .await
+                .unwrap();
+        }
+        assert!(store.stand_in_events(7).unwrap().is_empty());
+        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 2);
+        assert!(fixture.handler.local_task_links(true).is_empty());
+    }
+
+    #[tokio::test]
+    async fn received_notification_dispatches_once_and_local_discovery_stays_local() {
         let fixture = fixture("2099-01-01T00:00:00Z").await;
         fixture
             .handler
@@ -331,6 +296,7 @@ mod tests {
         fixture.handler.upsert_local_task(RuntimeTaskLink {
             local_task_id: "stand-in-human-default".into(),
             status: "failed".into(),
+            runtime_handle: json!({"origin":{"type":"issue_dispatch","initiatedBy":"stand_in","standInId":"default","userId":7,"projectStore":"cloud","cloudProjectId":"project","loopItemId":"issue","humanAssignmentId":"human"}}),
             ..RuntimeTaskLink::default()
         });
         fixture
@@ -340,78 +306,5 @@ mod tests {
             .unwrap();
         assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
         assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn durable_notification_does_not_rebind_another_devices_authorization() {
-        let fixture = fixture("2099-01-01T00:00:00Z").await;
-        let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
-        let mut settings = store.personal_stand_in(7, "other").unwrap();
-        settings["primary"] = json!({"enabled":true,"prompt":"Private","preferences":"",
-            "collaboration":{"enabled":true,"allProjects":true,"projects":[],"excludedProjects":[],"tags":[]}});
-        store.save_personal_stand_in(7, "other", settings).unwrap();
-        fixture.issue.lock().unwrap()["human_assistant_dispatch"] =
-            json!({"dispatchId":"dispatch","dispatchState":"waiting_device"});
-        fixture
-            .handler
-            .handle_runtime_rpc(notification())
-            .await
-            .unwrap();
-        assert_eq!(
-            store.personal_stand_in(7, "").unwrap()["executionDeviceId"],
-            "other"
-        );
-        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 0);
-        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn recovery_consumes_only_durable_current_assignments_without_notification_or_backfill() {
-        let fixture = fixture("2020-01-01T00:00:00Z").await;
-        let store = LocalTaskStore::open(fixture.handler.task_store_path.as_ref()).unwrap();
-        let mut personal = store.personal_stand_in(7, "mac").unwrap();
-        personal["primary"] = json!({"enabled":true,"prompt":"Handle assigned work","preferences":"",
-            "collaboration":{"enabled":true,"allProjects":false,"projects":[{"id":"forbidden","store":"cloud"},{"id":"project","store":"cloud"}],"excludedProjects":[],"tags":[]}});
-        store.save_personal_stand_in(7, "mac", personal).unwrap();
-        let mut issue = json!({"id":"issue","cloud_project_id":"project","assignee_user_id":7,
-            "human_task_binding":{"humanAssignmentId":"human","assignmentId":"assignment"}});
-        *fixture.issues.lock().unwrap() = json!([issue.clone()]);
-        fixture
-            .handler
-            .recover_cloud_assistant_dispatches()
-            .await
-            .unwrap();
-        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 0);
-
-        issue["human_assistant_dispatch"] = json!({"dispatchState":"waiting_device"});
-        let mut batch =
-            vec![json!({"id":"history","cloud_project_id":"project","assignee_user_id":7}); 101];
-        batch.push(issue.clone());
-        *fixture.issues.lock().unwrap() = json!(batch);
-        fixture
-            .handler
-            .recover_cloud_assistant_dispatches()
-            .await
-            .unwrap();
-        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
-        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 1);
-        assert!(fixture.handler.local_task_links(true).is_empty());
-
-        for state in [
-            "no_authorized_assistant",
-            "cancelled",
-            "completed",
-            "running",
-        ] {
-            issue["human_assistant_dispatch"]["dispatchState"] = json!(state);
-            *fixture.issues.lock().unwrap() = json!([issue.clone()]);
-            fixture
-                .handler
-                .recover_cloud_assistant_dispatches()
-                .await
-                .unwrap();
-        }
-        assert_eq!(fixture.assignments.load(Ordering::SeqCst), 1);
-        assert_eq!(fixture.bindings.load(Ordering::SeqCst), 1);
     }
 }

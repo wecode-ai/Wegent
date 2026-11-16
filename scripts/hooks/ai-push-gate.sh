@@ -20,7 +20,8 @@ set +e
 
 # Create temp directory for storing check outputs (reduces memory usage)
 TEMP_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR" EXIT
+# Background shells may receive a signal before replacing their inherited traps.
+trap 'if [ "$BASH_SUBSHELL" -eq 0 ]; then rm -rf "$TEMP_DIR"; fi' EXIT
 
 # Colors for output
 RED='\033[0;31m'
@@ -76,7 +77,8 @@ collect_wework_check_scope() {
             wework/src/*.[cm][jt]s|wework/src/*.[cm][jt]sx|wework/src/*.js|wework/src/*.jsx|wework/src/*.ts|wework/src/*.tsx)
                 WEWORK_RENDERER_CHANGED=1
                 if [ ! -e "$changed_file" ] ||
-                    [ "$changed_file" = "wework/src/test/setup.ts" ]; then
+                    [ "$changed_file" = "wework/src/test/setup.ts" ] ||
+                    [ "$changed_file" = "wework/src/test/setup.dom.ts" ]; then
                     WEWORK_RENDERER_FULL_TESTS=1
                 else
                     WEWORK_RELATED_FILES+=("${changed_file#wework/}")
@@ -145,34 +147,75 @@ format_worker_count() {
     fi
 }
 
+wait_wework_renderer_shard() {
+    local shard_pid="$1"
+    local shard_log="$2"
+    local shard_name="${shard_log##*/}"
+    (
+        local sleep_pid=""
+        trap 'exit 0' TERM
+        trap 'if [ -n "$sleep_pid" ]; then kill "$sleep_pid" 2>/dev/null; fi' EXIT
+        while kill -0 "$shard_pid" 2>/dev/null; do
+            sleep 15 &
+            sleep_pid=$!
+            wait "$sleep_pid"
+            if kill -0 "$shard_pid" 2>/dev/null; then
+                completed=$(
+                    sed $'s/\033\\[[0-9;]*m//g' "$shard_log" |
+                        grep -cE '^[[:space:]]*✓[[:space:]]+[^[:space:]]+\.(test|spec)\.[cm]?[jt]sx?[[:space:]]+\(' || true
+                )
+                echo "   Renderer ${shard_name%.log}: ${completed:-0} files passed (${SECONDS}s elapsed)"
+            fi
+        done
+    ) &
+    local progress_pid=$!
+    wait "$1"
+    local shard_exit=$?
+    kill "$progress_pid" 2>/dev/null
+    wait "$progress_pid" 2>/dev/null
+    echo "   Renderer ${shard_name%.log}: finished (exit $shard_exit)"
+    cat "$2" >> "$TEMP_DIR/wework_test.log"
+    return "$shard_exit"
+}
+
 run_wework_full_renderer_tests() {
     local test_workers="$1"
     local test_timeout_ms="${WEWORK_PRE_PUSH_TEST_TIMEOUT_MS:-15000}"
     local shard_count=2
+    local shard_concurrency="${WEWORK_PRE_PUSH_RENDERER_SHARD_CONCURRENCY:-2}"
     local shard
-    local shard_exit=0
     local test_exit=0
     local shard_pids=()
     local shard_logs=()
 
+    case "$shard_concurrency" in
+        1|2) ;;
+        *)
+            echo "Invalid renderer shard concurrency: $shard_concurrency (expected 1 or 2)"
+            return 1
+            ;;
+    esac
+    echo "   Renderer shard concurrency: $shard_concurrency"
     for ((shard = 1; shard <= shard_count; shard++)); do
         shard_logs+=("$TEMP_DIR/wework_test_shard_${shard}.log")
         pnpm --filter wework exec vitest run --dir src --pool=threads \
             --maxWorkers "$test_workers" \
             --testTimeout "$test_timeout_ms" \
+            --reporter=default \
             --shard="$shard/$shard_count" \
             > "${shard_logs[$((shard - 1))]}" 2>&1 &
         shard_pids+=("$!")
-    done
-
-    for ((shard = 1; shard <= shard_count; shard++)); do
-        wait "${shard_pids[$((shard - 1))]}"
-        shard_exit=$?
-        cat "${shard_logs[$((shard - 1))]}" >> "$TEMP_DIR/wework_test.log"
-        if [ "$shard_exit" -ne 0 ]; then
-            test_exit=1
+        if [ "$shard_concurrency" = "1" ]; then
+            wait_wework_renderer_shard "$!" "${shard_logs[$((shard - 1))]}" || test_exit=1
         fi
     done
+
+    if [ "$shard_concurrency" = "2" ]; then
+        for ((shard = 1; shard <= shard_count; shard++)); do
+            wait_wework_renderer_shard \
+                "${shard_pids[$((shard - 1))]}" "${shard_logs[$((shard - 1))]}" || test_exit=1
+        done
+    fi
 
     return "$test_exit"
 }
@@ -242,6 +285,7 @@ run_wework_unit_tests() {
                 echo -e "   Running focused renderer unit tests with $(format_worker_count "$test_workers")..."
                 if ! pnpm --filter wework exec vitest run --pool=threads \
                     --maxWorkers "$test_workers" \
+                    --testTimeout "${WEWORK_PRE_PUSH_TEST_TIMEOUT_MS:-15000}" \
                     "${WEWORK_FOCUSED_TEST_FILES[@]}" \
                     >> "$TEMP_DIR/wework_test.log" 2>&1; then
                     test_exit=1
@@ -253,8 +297,10 @@ run_wework_unit_tests() {
     fi
 
     if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ] && [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
-        echo -e "   Running Electron unit tests..."
-        if ! pnpm --dir wework/electron test >> "$TEMP_DIR/wework_test.log" 2>&1; then
+        local electron_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
+        echo -e "   Running Electron unit tests with $(format_worker_count "$electron_workers")..."
+        if ! pnpm --dir wework/electron test --maxWorkers "$electron_workers" \
+            >> "$TEMP_DIR/wework_test.log" 2>&1; then
             test_exit=1
         fi
     fi
@@ -326,10 +372,22 @@ maybe_run_full_python_tests() {
     local test_cmd="$2"
     local log_file="$3"
     local failed_check_name="$4"
+    local worker_count="${5:-}"
 
     if ! should_run_full_tests; then
         echo -e "   ${YELLOW}↪ Pytest: SKIPPED in pre-push (set AI_PUSH_FULL_TESTS=1 to run full suite)${NC}"
         return 0
+    fi
+
+    if [ -n "$worker_count" ]; then
+        if [[ ! "$worker_count" =~ ^[0-9]+$ ]]; then
+            echo 'Invalid BACKEND_PRE_PUSH_TEST_WORKERS: expected a non-negative integer' > "$log_file"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("$failed_check_name")
+            FAILED_LOGS+=("$log_file")
+            return 1
+        fi
+        test_cmd="$test_cmd -n $worker_count"
     fi
 
     echo -e "   Running pytest..."
@@ -434,6 +492,31 @@ get_changed_files() {
 
 # Get list of changed files in the commits being pushed
 CHANGED_FILES=$(get_changed_files)
+
+# Git exports checkout-local context to hooks. Preserve it for the pushed diff,
+# then isolate checks so their temporary repositories cannot target this checkout.
+PROJECT_ROOT=$(git rev-parse --show-toplevel)
+while IFS= read -r git_env_name; do
+    unset "$git_env_name"
+done < <(git rev-parse --local-env-vars)
+# Checks own their runtime identity and data; never attach test executors to
+# the workbench that invoked this hook.
+while IFS= read -r check_env_name; do
+    case "$check_env_name" in
+        WEGENT_APP_*|WEGENT_RUNTIME_INSTANCE_ID|WEGENT_TASK_ID|WEGENT_TASK_WORKSPACE|WEGENT_PLUGIN_RUNTIME_TARGET|WEGENT_CAPABILITIES_HOME)
+            unset "$check_env_name"
+            ;;
+    esac
+done < <(compgen -e)
+unset CODEX_HOME CLAUDE_CONFIG_DIR
+export WEGENT_WORKBENCH_HOME="$TEMP_DIR/workbench"
+export WEGENT_EXECUTOR_HOME="$TEMP_DIR/executor"
+export WEGENT_CODEX_HOME="$TEMP_DIR/codex"
+export WEGENT_CLAUDE_HOME="$TEMP_DIR/claude"
+export WEGENT_EXECUTOR_PROJECTS_DIR="$TEMP_DIR/projects"
+export LOCAL_WORKSPACE_ROOT="$TEMP_DIR/projects"
+export WORKSPACE_ROOT="$TEMP_DIR/projects"
+cd "$PROJECT_ROOT" || exit 1
 
 if [ -z "$CHANGED_FILES" ]; then
     echo -e "${GREEN}✅ No files changed, skipping checks${NC}"
@@ -605,11 +688,12 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         
         # Unit tests (output to temp file to reduce memory usage)
         echo -e "   Running unit tests..."
-        pnpm --filter @wegent/chat-core test > "$TEMP_DIR/test.log" 2>&1
-        CORE_TEST_EXIT=$?
-        # Bound JSDOM workers, as with Wework, to avoid CPU and memory
+        # Bound both shared-core and frontend workers, as with Wework, to avoid
         # contention turning short UI interactions into test timeouts.
         FRONTEND_TEST_WORKERS="${FRONTEND_PRE_PUSH_TEST_WORKERS:-2}"
+        pnpm --filter @wegent/chat-core test --maxWorkers "$FRONTEND_TEST_WORKERS" \
+            > "$TEMP_DIR/test.log" 2>&1
+        CORE_TEST_EXIT=$?
         pnpm --filter wecode-ai-assistant run test --passWithNoTests \
             --maxWorkers "$FRONTEND_TEST_WORKERS" >> "$TEMP_DIR/test.log" 2>&1
         TEST_EXIT=$?
@@ -642,7 +726,7 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         WARNINGS+=("Wework: node_modules not found, checks skipped")
     else
         collect_wework_check_scope
-        echo -e "   Running static checks and unit tests in parallel..."
+        echo -e "   Running static checks in parallel before unit tests..."
 
         run_wework_lint &
         ESLINT_PID=$!
@@ -669,9 +753,6 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             fi
         fi
 
-        run_wework_unit_tests &
-        WEWORK_TEST_PID=$!
-
         wait "$ESLINT_PID"
         ESLINT_EXIT=$?
 
@@ -680,7 +761,8 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             TSC_EXIT=$?
         fi
 
-        wait "$WEWORK_TEST_PID"
+        # Let jsdom workers use the renderer budget after static checks release resources.
+        run_wework_unit_tests
         TEST_EXIT=$?
 
         if [ $ESLINT_EXIT -eq 0 ]; then
@@ -755,7 +837,8 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             "Backend" \
             "pytest tests/ --tb=short -q" \
             "$TEMP_DIR/backend_pytest.log" \
-            "Backend Pytest"
+            "Backend Pytest" \
+            "${BACKEND_PRE_PUSH_TEST_WORKERS:-}"
         
         # Python syntax check
         # Python syntax check
@@ -818,7 +901,8 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             "Backend" \
             "uv run pytest tests/ --tb=short -q" \
             "$TEMP_DIR/backend_pytest.log" \
-            "Backend Pytest"
+            "Backend Pytest" \
+            "${BACKEND_PRE_PUSH_TEST_WORKERS:-}"
         # Python syntax check (output to temp file)
         echo -e "   Running Python syntax check..."
         SYNTAX_ERROR=0
@@ -971,19 +1055,9 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_LOGS+=("$TEMP_DIR/executor_fmt.log")
         fi
 
-        echo -e "   Running cargo test --all-features --lib..."
-        if cargo test --all-features --lib > "$TEMP_DIR/executor_test.log" 2>&1; then
-            echo -e "   ${GREEN}✅ cargo test: PASSED${NC}"
-        else
-            echo -e "   ${RED}❌ cargo test: FAILED${NC}"
-            CHECK_FAILED=1
-            FAILED_CHECKS+=("Executor cargo test")
-            FAILED_LOGS+=("$TEMP_DIR/executor_test.log")
-        fi
-
         if should_run_full_tests; then
-            echo -e "   Running full cargo test --all-features..."
-            if cargo test --all-features > "$TEMP_DIR/executor_full_test.log" 2>&1; then
+            echo -e "   Running full cargo test --all-features --no-fail-fast..."
+            if cargo test --all-features --no-fail-fast > "$TEMP_DIR/executor_full_test.log" 2>&1; then
                 echo -e "   ${GREEN}✅ full cargo test: PASSED${NC}"
             else
                 echo -e "   ${RED}❌ full cargo test: FAILED${NC}"
@@ -992,7 +1066,15 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
                 FAILED_LOGS+=("$TEMP_DIR/executor_full_test.log")
             fi
         else
-            echo -e "   ${YELLOW}↪ Full cargo test: SKIPPED in pre-push (set AI_PUSH_FULL_TESTS=1 to run full suite)${NC}"
+            echo -e "   Running cargo test --all-features --lib..."
+            if cargo test --all-features --lib > "$TEMP_DIR/executor_test.log" 2>&1; then
+                echo -e "   ${GREEN}✅ cargo test: PASSED${NC}"
+            else
+                echo -e "   ${RED}❌ cargo test: FAILED${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Executor cargo test")
+                FAILED_LOGS+=("$TEMP_DIR/executor_test.log")
+            fi
         fi
 
         echo -e "   Running cargo clippy..."

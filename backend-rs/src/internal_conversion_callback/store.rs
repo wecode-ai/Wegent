@@ -259,19 +259,11 @@ pub(crate) async fn refresh_converted_context<M>(
 where
     M: Mysql,
 {
-    mysql
-        .fetch_optional(
-            "SELECT subtask_contexts.id, subtask_contexts.subtask_id, \
-             subtask_contexts.user_id, subtask_contexts.context_type, \
-             subtask_contexts.name, subtask_contexts.status, \
-             subtask_contexts.error_message, subtask_contexts.binary_data, \
-             subtask_contexts.image_base64, subtask_contexts.extracted_text, \
-             subtask_contexts.text_length, subtask_contexts.type_data, \
-             subtask_contexts.created_at, subtask_contexts.updated_at \n\
-             FROM subtask_contexts \nWHERE subtask_contexts.id = ?",
-            (context_id,),
-        )
+    // The converted row was committed by this request and may still be absent
+    // from the replica. Reuse the upload's primary refresh for this reload too.
+    crate::attachments::upload::refresh_context(mysql, context_id)
         .await
+        .map(|row| row.map(|row| ConvertedContext { id: row.id }))
 }
 
 /// `doc.converted_attachment_id = id; db.flush()`: SQLAlchemy writes only the

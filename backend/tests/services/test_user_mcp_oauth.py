@@ -32,6 +32,11 @@ TOKEN_URL = "https://mcp-gw2.dingtalk.com/oauth/token"
 AUTHORIZE_URL = "https://mcp-gw2.dingtalk.com/oauth/authorize"
 
 
+@pytest.fixture
+def test_db(mcp_test_db: Session) -> Session:
+    return mcp_test_db
+
+
 def _metadata() -> dict:
     return {
         "resource": RESOURCE_URL,
@@ -229,6 +234,7 @@ async def test_oauth_session_registers_client_and_stores_encrypted_tokens(
 
     assert message.startswith("Connected")
     assert result["status"] == "success"
+    test_db.refresh(test_user)
     credentials = user_mcp_service.get_service_oauth_credentials(
         test_user.preferences, "dingtalk", "ai_table"
     )
@@ -475,6 +481,7 @@ def test_ensure_access_token_sync_refreshes_expiring_token(
     assert token == "refreshed-access"
     assert _StubClient.last["url"] == TOKEN_URL
     assert _StubClient.last["data"]["grant_type"] == "refresh_token"
+    test_db.refresh(test_user)
     credentials = user_mcp_service.get_service_oauth_credentials(
         test_user.preferences, "dingtalk", "ai_table"
     )
@@ -506,6 +513,8 @@ def test_rejected_refresh_grant_is_reported_and_cleared(
 
     assert token == ""
     assert "invalid_grant" in caplog.text
+    assert "HTTP 400" in caplog.text
+    test_db.refresh(test_user)
     credentials = user_mcp_service.get_service_oauth_credentials(
         test_user.preferences, "dingtalk", "ai_table"
     )

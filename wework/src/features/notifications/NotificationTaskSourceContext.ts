@@ -5,12 +5,13 @@ import type { RuntimeTaskAddress, DeviceInfo } from '@/types/api'
 
 export type TaskSource = Pick<
   RuntimeTaskReminderState,
-  'items' | 'unreadTaskKeys' | 'markRuntimeTaskRead'
+  'items' | 'unreadTaskKeys' | 'markRuntimeTaskRead' | 'unreadMessageCounts'
 > & {
   services?: WorkbenchServices
   devices?: DeviceInfo[]
   currentAddress?: RuntimeTaskAddress | null
   userId?: number
+  refresh?: () => Promise<unknown>
 }
 
 /**

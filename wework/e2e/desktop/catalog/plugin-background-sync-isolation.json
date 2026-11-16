@@ -1,0 +1,12 @@
+{
+  "order": 121000,
+  "scenario": "./scenarios/plugin-background-sync-isolation.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "cloud": {
+      "order": 46000,
+      "shard": 7,
+      "position": 4000
+    }
+  }
+}

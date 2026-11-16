@@ -1,0 +1,61 @@
+{
+  "revision": "b1c2d3e4f607",
+  "parents": [
+    "b1c2d3e4f5g6"
+  ],
+  "source": "20260326_b1c2d3e4f607_add_knowledge_document_index_state.py",
+  "upgrade": [
+    {
+      "sql": [
+        "ALTER TABLE knowledge_documents MODIFY index_status VARCHAR(32) NOT NULL DEFAULT 'not_indexed'"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='knowledge_documents' AND COLUMN_NAME='index_status'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE knowledge_documents ADD COLUMN index_status VARCHAR(32) NOT NULL DEFAULT 'not_indexed'"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='knowledge_documents' AND COLUMN_NAME='index_status'",
+        "nonzero": false
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE knowledge_documents ADD COLUMN index_generation INTEGER NOT NULL DEFAULT '0'"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='knowledge_documents' AND COLUMN_NAME='index_generation'",
+        "nonzero": false
+      }
+    },
+    {
+      "sql": [
+        "UPDATE knowledge_documents\n            SET\n                index_status = CASE\n                    WHEN is_active = 1 THEN 'success'\n                    WHEN COALESCE(index_generation, 0) = 0 THEN 'not_indexed'\n                    ELSE index_status\n                END,\n                index_generation = CASE\n                    WHEN is_active = 1 AND COALESCE(index_generation, 0) = 0 THEN 1\n                    ELSE COALESCE(index_generation, 0)\n                END"
+      ]
+    }
+  ],
+  "downgrade": [
+    {
+      "sql": [
+        "ALTER TABLE knowledge_documents DROP COLUMN index_generation"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='knowledge_documents' AND COLUMN_NAME='index_generation'",
+        "nonzero": true
+      }
+    },
+    {
+      "sql": [
+        "ALTER TABLE knowledge_documents DROP COLUMN index_status"
+      ],
+      "when": {
+        "query": "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='knowledge_documents' AND COLUMN_NAME='index_status'",
+        "nonzero": true
+      }
+    }
+  ]
+}

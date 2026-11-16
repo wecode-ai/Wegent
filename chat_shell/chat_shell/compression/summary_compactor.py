@@ -150,13 +150,18 @@ def _extract_text(message: BaseMessage) -> str:
 def _is_context_too_long_error(exc: Exception) -> bool:
     """Best-effort classifier for compact-task overflow failures.
 
-    Matches by HTTP status (400/413), English markers, and common Chinese /
-    heteroglyph phrasings from non-OpenAI providers.
+    Matches by HTTP status (413 is unconditional), English markers, and common
+    Chinese / heteroglyph phrasings from non-OpenAI providers. The wecode
+    gateway reports an over-long input as ``400`` ("Input exceeds the context
+    limit") or a custom ``460`` ("对话内容太长"), so those shapes must be
+    recognized too: a compact task that is itself too long can only shed
+    history and retry when the failure is classified as an overflow.
     """
-    # 413 (payload too large) is unconditionally an overflow. A bare 400 is
-    # ambiguous (invalid params, bad model config, malformed request), so it
-    # only counts as overflow when a length marker is also present — otherwise a
-    # non-overflow 400 would trigger a remove-one-message-and-retry storm.
+    # 413 (payload too large) is unconditionally an overflow. Other statuses,
+    # including a bare 400, are ambiguous (invalid params, bad model config,
+    # malformed request), so they only count as overflow when a length marker
+    # is also present — otherwise a non-overflow 400 would trigger a
+    # remove-one-message-and-retry storm.
     status = getattr(exc, "status_code", None)
     if isinstance(status, int) and status == 413:
         return True
@@ -169,9 +174,11 @@ def _is_context_too_long_error(exc: Exception) -> bool:
         "prompt is too long",
         "input is too long",
         "maximum context length",
+        "exceeds the context limit",
         "request too large",
         "maximum number of tokens",
         "token limit exceeded",
+        "对话内容太长",
         "输入长度超过",
         "输入过长",
         "请求体过大",

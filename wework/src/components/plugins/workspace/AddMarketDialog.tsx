@@ -118,7 +118,7 @@ export function AddMarketDialog({
                 href="https://developers.openai.com/plugins/build/plugins"
                 target="_blank"
                 rel="noreferrer"
-                className="font-medium text-blue-600 hover:underline"
+                className="font-medium text-focus hover:underline wework:text-blue-600"
               >
                 {t('common.learn_more', '了解更多')}
               </a>
@@ -129,7 +129,7 @@ export function AddMarketDialog({
             onClick={onClose}
             disabled={isSubmitting}
             data-testid="plugins-marketplace-close-button"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20 disabled:opacity-50"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20 disabled:opacity-50"
             aria-label={t('common.close', '关闭')}
           >
             <X className="h-4 w-4" />
@@ -154,17 +154,17 @@ export function AddMarketDialog({
                 onChange={event => onChange({ ...formData, source: event.target.value })}
                 placeholder="openai/plugins 或 git@github.com:org/repo.git"
                 className={[
-                  'h-10 w-full rounded-lg border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:ring-2',
+                  'h-10 w-full rounded-lg border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted',
                   sourceError
-                    ? 'border-red-500/70 focus:border-red-500 focus:ring-red-500/15'
-                    : 'border-border/45 focus:border-focus/70 focus:ring-focus/15',
+                    ? 'border-destructive/70 focus:border-destructive focus:ring-2 focus:ring-destructive/15 wework:border-red-500/70 wework:focus:border-red-500 wework:focus:ring-red-500/15'
+                    : 'border-border/45 keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15',
                 ].join(' ')}
               />
               <span
                 id="plugins-marketplace-source-note"
                 className={[
                   'mt-1.5 block text-xs leading-4',
-                  sourceError ? 'text-red-600' : 'text-text-muted',
+                  sourceError ? 'text-destructive wework:text-red-600' : 'text-text-muted',
                 ].join(' ')}
               >
                 {sourceError
@@ -190,7 +190,7 @@ export function AddMarketDialog({
                 value={formData.gitRef}
                 onChange={event => onChange({ ...formData, gitRef: event.target.value })}
                 placeholder={t('workbench.plugins_market_git_ref_placeholder', '主分支')}
-                className="h-10 w-full rounded-lg border border-border/45 bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                className="h-10 w-full rounded-lg border border-border/45 bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
               />
             </label>
 
@@ -203,7 +203,7 @@ export function AddMarketDialog({
                 value={formData.subPath}
                 onChange={event => onChange({ ...formData, subPath: event.target.value })}
                 placeholder="plugins/codex"
-                className="min-h-[78px] w-full resize-y rounded-lg border border-border/45 bg-background px-3 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                className="min-h-[78px] w-full resize-y rounded-lg border border-border/45 bg-background px-3 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
               />
             </label>
           </div>

@@ -46,6 +46,26 @@ export function useBrowserConversationActions(
     hidden: Set<string>
   } | null>(null)
   const current = result?.owner === session ? result : null
+  const [retryProgress, setRetryProgress] = useState<{
+    owner: Session
+    clientMessageId: string
+    queued: boolean
+  } | null>(null)
+  const isRetryPending =
+    retryProgress?.owner === session &&
+    (!retryProgress.queued ||
+      !session
+        .getSnapshot()
+        .turns.some(
+          turn =>
+            turn.clientUserMessageId === retryProgress.clientMessageId ||
+            turn.items.some(
+              item =>
+                item.type === 'user_message' &&
+                (item.id === retryProgress.clientMessageId ||
+                  item.message.id === retryProgress.clientMessageId)
+            )
+        ))
   function setError(error: string | null) {
     if (owner.current !== session) return
     setResult(previous => ({
@@ -56,13 +76,18 @@ export function useBrowserConversationActions(
   }
   return {
     error: current?.error ?? null,
+    isRetryPending,
     hiddenRequestUserInputIds: current?.hidden ?? emptyHidden,
     onRetryFailedMessage: retryRequest
       ? async (message: WorkbenchMessage): Promise<boolean> => {
-          if (pending.current.has(session)) return false
+          if (pending.current.has(session) || isRetryPending) return false
           pending.current.add(session)
           setError(null)
+          let queued = false
           try {
+            const turnIdsBeforeSend = new Set(
+              session.getSnapshot().turns.flatMap(turn => (turn.id ? [turn.id] : []))
+            )
             await retryRuntimeConversation({
               messageId: message.id,
               messages: session.getSnapshot().messages,
@@ -72,13 +97,24 @@ export function useBrowserConversationActions(
                 missing: translate('workbench.retry_message_missing'),
                 failed: translate('workbench.retry_failed'),
               },
-              addUserMessage: session.addUserMessage,
-              removeUserMessage: session.removeUserMessage,
+              acceptUserMessage: (message, turnId) =>
+                session.acceptUserMessage(message, turnIdsBeforeSend, turnId),
               async send(request) {
+                // Retry creates this identity before invoking the host transport.
+                const clientMessageId = request.clientUserMessageId!
+                if (owner.current === session)
+                  setRetryProgress({ owner: session, clientMessageId, queued: false })
                 const result = await runtime.work.sendRuntimeMessage(request)
                 if (!result.accepted)
                   throw new Error(result.error || translate('workbench.retry_failed'))
-                return true
+                queued = result.status === 'queued'
+                if (queued && owner.current === session)
+                  setRetryProgress({ owner: session, clientMessageId, queued: true })
+                return {
+                  accepted: true,
+                  queued,
+                  turnId: result.turnId ?? result.turn_id,
+                }
               },
             })
             return true
@@ -87,6 +123,7 @@ export function useBrowserConversationActions(
             return false
           } finally {
             pending.current.delete(session)
+            if (!queued && owner.current === session) setRetryProgress(null)
           }
         }
       : undefined,

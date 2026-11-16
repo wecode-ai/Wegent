@@ -21,6 +21,11 @@ def test_web_runtime_guidance_describes_local_device_and_file_access():
     assert "View the task files" in system_prompt
     assert "查看任务文件" in system_prompt
     assert "Do not assume the user can access local paths" in system_prompt
+    assert "artifact declaration or file-delivery instructions" in system_prompt
+    assert "Writing a file alone does not publish an artifact card" in system_prompt
+    assert "After successful delivery" in system_prompt
+    assert "only for browsing workspace files" in system_prompt
+    assert 'tell the user to click "View the task files"' not in system_prompt
 
 
 def test_web_runtime_guidance_describes_disposable_managed_sandbox():

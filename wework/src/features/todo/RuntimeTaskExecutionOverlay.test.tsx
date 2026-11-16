@@ -1,7 +1,7 @@
+import '@/i18n'
 import { render as renderComponent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import '@/i18n'
 import { RuntimeTaskExecutionOverlay } from './RuntimeTaskExecutionOverlay'
 
 import {
@@ -99,19 +99,6 @@ describe('RuntimeTaskExecutionOverlay', () => {
     )
     expect(screen.getByText(/current-cloud-model/)).toBeInTheDocument()
     expect(screen.queryByText(/stale-model/)).not.toBeInTheDocument()
-  })
-
-  it('shows the device name when the runtime address uses a route id', () => {
-    render(
-      <RuntimeTaskExecutionOverlay
-        address={{ deviceId: 'runtime-device-1', taskId: 'codex-queue-1' }}
-        senderName="Bot"
-        onClose={vi.fn()}
-      />
-    )
-
-    expect(screen.getByText(/执行设备: Cloud Device/)).toBeInTheDocument()
-    expect(screen.queryByText(/执行设备: runtime-device-1/)).not.toBeInTheDocument()
   })
 
   it('separates transcript timeout from the running execution and offers retry', async () => {

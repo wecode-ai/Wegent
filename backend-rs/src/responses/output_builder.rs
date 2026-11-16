@@ -19,131 +19,16 @@ use super::generation_output::{
     ImageGenerationCallItem, VideoGenerationCallItem, build_generation_output_item_from_block,
 };
 use super::http_error::HttpError;
+use super::output_result::{ResultInput, extract_text_content};
 use super::python_json::python_json_dumps;
 use super::responses_repository::TaskRow;
 use super::shell_output::{ShellCallItem, ShellInput, build_shell_item, shell_call_status};
 use crate::config::AuthConfig;
 
-/// One persisted subtask `result` document
-/// (`_build_items_from_messages_chain` / `_build_items_from_blocks` inputs).
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
-pub struct ResultInput {
-    value: ResultText,
-    reasoning_content: Option<String>,
-    messages_chain: Option<Vec<Option<ChainEntry>>>,
-    blocks: Option<Vec<Option<ToolOrTextBlock>>>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
-struct ChainEntry {
-    role: Option<String>,
-    content: Option<MessageContent>,
-    reasoning_content: Option<MessageContent>,
-    tool_calls: Option<Vec<Option<ChainToolCall>>>,
-}
-
-/// One `messages_chain` tool call: `{"id", "function": {"name",
-/// "arguments"}}` with a string-or-object arguments value.
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
-struct ChainToolCall {
-    id: Option<String>,
-    function: Option<ChainFunction>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
-struct ChainFunction {
-    name: Option<String>,
-    arguments: Option<ArgumentsText>,
-}
-
-/// `function.arguments` arrives either as a pre-serialized JSON string or as
-/// the object itself; `_dump_arguments` keeps strings verbatim and renders
-/// non-strings with `json.dumps(ensure_ascii=False)`.
-#[derive(Debug, Default, Clone)]
-struct ArgumentsText(String);
-
-impl<'de> serde::Deserialize<'de> for ArgumentsText {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = match Value::deserialize(deserializer)? {
-            Value::Null => String::new(),
-            Value::String(text) => text,
-            other => python_json_dumps(&other),
-        };
-        Ok(Self(text))
-    }
-}
-
-/// A persisted `blocks` entry: `tool`, `text`, `thinking`, an `image`/`video`
-/// generation block, or an unknown kind that contributes nothing.
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
-pub(super) struct ToolOrTextBlock {
-    #[serde(rename = "type")]
-    pub(super) kind: Option<String>,
-    pub(super) id: Option<String>,
-    pub(super) status: Option<String>,
-    pub(super) content: Option<String>,
-    pub(super) tool_use_id: Option<String>,
-    pub(super) tool_name: Option<String>,
-    pub(super) tool_protocol: Option<String>,
-    pub(super) server_label: Option<String>,
-    /// The raw `tool_input` document, kept verbatim for the blocks path's
-    /// `_dump_arguments` rendering (unknown keys and field order retained).
-    #[serde(rename = "tool_input")]
-    pub(super) tool_input_json: Option<Value>,
-    pub(super) tool_output: Option<Value>,
-    /// Generation-block fields (`type` `image`/`video`), read verbatim so the
-    /// output item preserves the block's own number forms.
-    pub(super) is_placeholder: Option<bool>,
-    pub(super) video_url: Option<Value>,
-    pub(super) video_attachment_id: Option<Value>,
-    pub(super) video_duration: Option<Value>,
-    pub(super) video_progress: Option<Value>,
-    pub(super) video_thumbnail: Option<Value>,
-    pub(super) image_urls: Option<Vec<Value>>,
-    pub(super) image_download_urls: Option<Vec<Value>>,
-    pub(super) image_attachment_ids: Option<Vec<Value>>,
-    pub(super) image_count: Option<Value>,
-    pub(super) image_size: Option<Value>,
-    pub(super) image_download_url_expires_in_seconds: Option<Value>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-enum MessageContent {
-    Text(String),
-    Blocks(Vec<Option<ContentBlock>>),
-}
-
-/// One chain message content block: `text`/`output_text`/`reasoning`
-/// blocks carry their payload under `text` (reasoning-only blocks carry it
-/// under `reasoning` and contribute nothing, matching the source).
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
-struct ContentBlock {
-    #[serde(rename = "type")]
-    kind: Option<String>,
-    text: Option<String>,
-}
-
-/// The legacy result.value conversion retains strings verbatim and renders
-/// every other non-null value as compact JSON, including false, 0, [] and {}.
-#[derive(Debug, Default)]
-struct ResultText(String);
-impl<'de> serde::Deserialize<'de> for ResultText {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = match Value::deserialize(deserializer)? {
-            Value::Null => String::new(),
-            Value::String(text) => text,
-            other => other.to_string(),
-        };
-        Ok(Self(text))
-    }
-}
+/// The per-block and per-subtask renderer reads the raw result document
+/// through [`super::output_result`]; `ToolOrTextBlock` stays re-exported
+/// here for the generation and shell item builders.
+pub(super) use super::output_result::ToolOrTextBlock;
 
 /// `normalize_tool_output`: a JSON-string payload parses (and drops the
 /// legacy `pending_user_input` keys on objects); anything else is passed
@@ -475,23 +360,22 @@ pub fn build_output_items_for_subtask(
     content_override: &str,
     status_override: Option<&'static str>,
 ) -> Result<Vec<OutputItem>, HttpError> {
-    let result = subtask
-        .result
-        .as_ref()
-        .and_then(|result| result.0.value.as_ref());
-    let Some(result) = result else {
-        return Ok(Vec::new());
-    };
+    // `result = subtask.result if isinstance(subtask.result, dict) else {}`:
+    // a SQL NULL column and a non-object document both behave like the empty
+    // dict and render from the caller's override; a present object is used as
+    // the source uses it, and its malformed values keep the source's error
+    // path instead of degrading to that fallback.
+    let result = ResultInput::from_document(subtask.result.as_ref().map(|result| &result.0))?;
     let message_status: &'static str =
         status_override.unwrap_or_else(|| subtask_status_to_message_status(&subtask.status));
 
     if let Some(items) =
-        build_items_from_messages_chain(subtask, result, message_status, content_override)
+        build_items_from_messages_chain(subtask, &result, message_status, content_override)
     {
         return Ok(items);
     }
     if let Some(items) =
-        build_items_from_blocks(subtask, result, message_status, config, content_override)?
+        build_items_from_blocks(subtask, &result, message_status, config, content_override)?
     {
         return Ok(items);
     }
@@ -499,11 +383,11 @@ pub fn build_output_items_for_subtask(
     // Plain `value`/`reasoning_content` result (`build_output_items_for_subtask`
     // tail): one message with the bare subtask id.
     let text = if content_override.is_empty() {
-        result.value.0.as_str()
+        result.value.as_str()
     } else {
         content_override
     };
-    let reasoning = result.reasoning_content.as_deref().unwrap_or("");
+    let reasoning = result.reasoning_content.as_str();
     if text.is_empty() && reasoning.is_empty() {
         return Ok(Vec::new());
     }
@@ -536,27 +420,25 @@ fn build_items_from_messages_chain(
 
     let mut items: Vec<OutputItem> = Vec::new();
     let mut built_message = false;
-    for entry in chain.iter().filter_map(|entry| entry.as_ref()) {
-        if entry.role.as_deref() != Some("assistant") {
-            continue;
-        }
-        for tool_call in entry.tool_calls.iter().flatten().filter_map(|c| c.as_ref()) {
-            let call_id = tool_call.id.as_deref().unwrap_or("");
+    // `output_result` keeps only assistant entries, matching the source's
+    // role guard before any other field is read.
+    for entry in chain.iter() {
+        for tool_call in entry.tool_calls.iter() {
+            let call_id = tool_call.id.as_str();
             let function = tool_call.function.as_ref();
             let tool_name = function
-                .and_then(|function| function.name.as_deref())
+                .map(|function| function.name.as_str())
                 .unwrap_or("");
             let arguments = function
-                .and_then(|function| function.arguments.as_ref())
-                .map(|arguments| arguments.0.as_str())
+                .map(|function| function.arguments.as_str())
                 .unwrap_or("");
             let block = find_tool_block_for_tool_call(call_id, tool_name, blocks);
             items.push(build_tool_item_from_tool_call(
                 call_id, tool_name, arguments, block,
             ));
         }
-        let text = extract_text_content(entry.content.as_ref());
-        let reasoning = extract_text_content(entry.reasoning_content.as_ref());
+        let text = extract_text_content(&entry.content);
+        let reasoning = extract_text_content(&entry.reasoning_content);
         if text.is_empty() && reasoning.is_empty() {
             continue;
         }
@@ -577,11 +459,11 @@ fn build_items_from_messages_chain(
         // in `build_output_items_for_subtask`), so tool-only chains do not
         // short-circuit.
         let final_text = if content_override.is_empty() {
-            result.value.0.as_str()
+            result.value.as_str()
         } else {
             content_override
         };
-        let final_reasoning = result.reasoning_content.as_deref().unwrap_or("");
+        let final_reasoning = result.reasoning_content.as_str();
         if !final_text.is_empty() || !final_reasoning.is_empty() {
             items.push(OutputItem::Message(OutputMessage {
                 kind: "message",
@@ -600,12 +482,11 @@ fn build_items_from_messages_chain(
 fn find_tool_block_for_tool_call<'a>(
     call_id: &str,
     tool_name: &str,
-    blocks: &'a [Option<ToolOrTextBlock>],
+    blocks: &'a [ToolOrTextBlock],
 ) -> Option<&'a ToolOrTextBlock> {
     let tool_blocks = || {
         blocks
             .iter()
-            .filter_map(|block| block.as_ref())
             .filter(|block| block.kind.as_deref() == Some("tool"))
     };
     if !call_id.is_empty()
@@ -695,7 +576,7 @@ fn build_items_from_blocks(
     let mut emitted_text = false;
     let mut emitted_reasoning = false;
     let mut emitted_media = false;
-    for block in blocks.iter().filter_map(|block| block.as_ref()) {
+    for block in blocks.iter() {
         if block.kind.as_deref() == Some("tool") {
             let tool_use_id = block
                 .tool_use_id
@@ -776,11 +657,11 @@ fn build_items_from_blocks(
     let final_text = if emitted_text || emitted_media {
         String::new()
     } else if content_override.is_empty() {
-        result.value.0.clone()
+        result.value.clone()
     } else {
         content_override.to_string()
     };
-    let final_reasoning = result.reasoning_content.clone().unwrap_or_default();
+    let final_reasoning = result.reasoning_content.clone();
     if !final_text.is_empty() || (!final_reasoning.is_empty() && !emitted_reasoning) {
         let reasoning = if emitted_reasoning {
             ""
@@ -874,29 +755,5 @@ pub(super) fn nonempty_or(value: &str, fallback: &str) -> String {
         fallback.to_string()
     } else {
         value.to_string()
-    }
-}
-
-/// `_extract_text_content`: string passthrough, or the `text` fields of
-/// `text`/`output_text`/`reasoning`-typed content blocks joined with `\n`.
-/// (A `reasoning`-typed block carries its text under `reasoning`, not
-/// `text`, so it contributes nothing — matching the source extraction.)
-fn extract_text_content(value: Option<&MessageContent>) -> String {
-    match value {
-        Some(MessageContent::Text(text)) => text.clone(),
-        Some(MessageContent::Blocks(blocks)) => blocks
-            .iter()
-            .filter_map(|block| block.as_ref())
-            .filter(|block| {
-                matches!(
-                    block.kind.as_deref(),
-                    Some("text" | "output_text" | "reasoning")
-                )
-            })
-            .filter_map(|block| block.text.as_deref())
-            .filter(|text| !text.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n"),
-        None => String::new(),
     }
 }

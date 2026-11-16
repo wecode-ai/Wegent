@@ -37,6 +37,14 @@ Devices on the same account negotiate independently. Installation initiated from
 - Identical requests with the same generation share in-flight results. Different generations recheck ordering and local health, including installation–removal–reinstallation sequences.
 - Persistent ordering state is scoped to the active authentication binding. Previous handlers in the process cannot take control back after an account switch.
 
+## Session capability refresh
+
+Executor compares effective plugin contents, configuration and independent skills before and after synchronization. Record fields such as synchronization generations and installation timestamps do not advance the capability revision. Reconnection or repeated synchronization with unchanged effective capabilities does not require rebuilding Codex. Content changes and repairs to runtime files, configuration or permissions still take effect. Logs identify changed plugins and skills.
+
+Boolean toggles for known plugin skills update native Codex skill configuration and reload it. Subsequent turns use the new setting without terminating the current turn. Changes that cannot be confirmed as skill toggles use the existing invalidation and idle rebuild flow. Partially failed batches wait for every write, invalidate caches and reread actual state before returning the original error.
+
+Connector authorization renewal is scheduled ahead of the token's absolute expiry. Token-only changes do not advance the activation capability revision, but accepted authorization updates, including renewals, advance the connector state revision `revision` and invalidate older in-flight tool discovery. `sync_apps` rejects late results when either the state revision `revision` or request generation `sync_generation` changes. Normalized complete tool definitions still detect changes, including descriptions and parameter schemas of tools with unchanged names. MCP child processes read current authorization when calling tools.
+
 ## Cache reuse and timing
 
 A trusted SHA256 triggers local shared-package verification before download. Changed checksums, missing packages or damaged content require download and validation. Downloads without a trusted checksum remain necessary.

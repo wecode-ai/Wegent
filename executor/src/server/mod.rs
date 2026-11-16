@@ -5,22 +5,21 @@
 use std::{
     collections::HashMap,
     env, fs,
-    future::Future,
     io::Read,
     net::SocketAddr,
     path::{Path, PathBuf},
-    pin::Pin,
     process::Stdio,
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-pub(crate) mod codex_model_catalog;
-mod codex_responses_proxy_transform;
+#[cfg(test)]
+mod artifact_tests;
+pub(crate) use wegent_model_proxy::codex_model_catalog;
 mod config;
-pub(crate) mod harness_context;
-pub(crate) mod local_decision_proxy;
-pub(crate) mod local_model_proxy;
+pub(crate) use wegent_model_proxy::harness_context;
+pub(crate) use wegent_model_proxy::local_decision_proxy;
+pub(crate) use wegent_model_proxy::local_model_proxy;
 
 use axum::{
     body::{Body, Bytes},
@@ -48,41 +47,14 @@ use crate::{
     local::session::terminal_metrics_snapshot,
     logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
     process_environment,
-    protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
+    protocol::{ExecutionRequest, OpenAIResponsesRequest, TaskStatus},
     runner::BackgroundTaskRunner,
     workspace_paths::{task_workspace_dir, workspace_root},
 };
 
 pub use config::{ServerConfig, ServerConfigError};
 
-pub trait TaskRunner: Clone + Send + Sync + 'static {
-    type SubmitFuture: Future<Output = RunnerResult> + Send + 'static;
-
-    fn submit(&self, request: ExecutionRequest) -> Self::SubmitFuture;
-
-    fn cancel(
-        &self,
-        _task_id: String,
-        _subtask_id: Option<String>,
-    ) -> Pin<Box<dyn Future<Output = bool> + Send>> {
-        Box::pin(async { false })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunnerResult {
-    pub status: TaskStatus,
-    pub message: Option<String>,
-}
-
-impl RunnerResult {
-    pub fn accepted(status: TaskStatus) -> Self {
-        Self {
-            status,
-            message: None,
-        }
-    }
-}
+pub use wegent_execution_contracts::{RunnerResult, TaskRunner};
 
 #[derive(Debug, Clone)]
 pub struct AppState<R> {
@@ -163,6 +135,7 @@ where
         .route("/v1/runtime/bind", post(bind_runtime::<R>))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))
+        .route("/filesystem/artifact", get(download_workspace_artifact))
         .route(
             "/filesystem.Filesystem/ListDir",
             post(connect_list_workspace_directory),
@@ -509,7 +482,39 @@ async fn download_workspace_file(
         status: StatusCode::BAD_REQUEST,
         detail: "missing path".to_owned(),
     })?;
-    let path = resolve_workspace_path(raw_path)?;
+    workspace_file_response(resolve_workspace_path(raw_path)?).await
+}
+
+async fn download_workspace_artifact(
+    Query(query): Query<crate::artifact_workspace::ArtifactQuery>,
+) -> Result<Response, HttpError> {
+    let root = crate::artifact_workspace::resolve(&query).map_err(|detail| HttpError {
+        status: StatusCode::FORBIDDEN,
+        detail,
+    })?;
+    let Some(raw_path) = query.path.as_deref() else {
+        return Ok(Json(json!({"workspace_root": root})).into_response());
+    };
+    if query.root_path.is_none() {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: "missing captured workspace root".into(),
+        });
+    }
+    let path = crate::local::workspace_files::resolve_workspace_file(&root, raw_path).map_err(
+        |detail| HttpError {
+            status: if detail.contains("outside workspace") {
+                StatusCode::FORBIDDEN
+            } else {
+                StatusCode::NOT_FOUND
+            },
+            detail,
+        },
+    )?;
+    workspace_file_response(path).await
+}
+
+async fn workspace_file_response(path: PathBuf) -> Result<Response, HttpError> {
     let metadata = fs::metadata(&path).map_err(|_| HttpError {
         status: StatusCode::NOT_FOUND,
         detail: "File not found".to_owned(),
@@ -1139,13 +1144,7 @@ fn is_sensitive_log_key(key: &str) -> bool {
         || normalized == "authorization"
 }
 
-fn truncate_log_value(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_owned();
-    }
-    let truncated = value.chars().take(max_chars).collect::<String>();
-    format!("{truncated}...")
-}
+use wegent_runtime_logging::truncate_log_value;
 
 #[derive(Debug, Serialize)]
 struct OpenAIBackgroundResponse {
@@ -2121,20 +2120,7 @@ fn header_value(headers: &HeaderMap, name: header::HeaderName) -> String {
         .to_owned()
 }
 
-#[derive(Debug)]
-struct HttpError {
-    status: StatusCode,
-    detail: String,
-}
-
-impl From<ProtocolError> for HttpError {
-    fn from(error: ProtocolError) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            detail: error.to_string(),
-        }
-    }
-}
+use wegent_model_proxy::HttpError;
 
 impl From<RuntimeHeartbeatActivationError> for HttpError {
     fn from(error: RuntimeHeartbeatActivationError) -> Self {
@@ -2154,16 +2140,9 @@ impl From<RuntimeHeartbeatActivationError> for HttpError {
     }
 }
 
-impl IntoResponse for HttpError {
-    fn into_response(self) -> Response {
-        log_executor_event(
-            "http error response",
-            &[
-                ("status", self.status.as_u16().to_string()),
-                ("detail", self.detail.clone()),
-            ],
-        );
-        (self.status, Json(json!({ "detail": self.detail }))).into_response()
+impl<R> axum::extract::FromRef<AppState<R>> for local_decision_proxy::DecisionProxyState {
+    fn from_ref(state: &AppState<R>) -> Self {
+        Self::new(Arc::clone(&state.decision_runtime))
     }
 }
 

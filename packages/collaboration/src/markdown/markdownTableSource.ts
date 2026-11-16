@@ -44,7 +44,12 @@ export function createTableMarkdownRehypePlugins(): StreamdownProps['rehypePlugi
           ...defaultSchema.protocols,
           // Link protocols are validated by transformMarkdownUrl after parsing.
           href: undefined,
-          src: [...(defaultSchema.protocols?.src ?? []), 'file', ...WINDOWS_DRIVE_PROTOCOLS],
+          src: [
+            ...(defaultSchema.protocols?.src ?? []),
+            'file',
+            'wegent',
+            ...WINDOWS_DRIVE_PROTOCOLS,
+          ],
         },
         attributes: {
           ...defaultSchema.attributes,

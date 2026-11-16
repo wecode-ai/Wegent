@@ -3,15 +3,18 @@
 
 use super::*;
 
-pub(super) fn install_native_history(
+pub(in crate::runtime_work::handler) fn install_native_history(
     handler: &mut RuntimeWorkRpcHandler,
     root: &std::path::Path,
     turns: Vec<Value>,
     next_cursor: Option<&str>,
 ) {
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
     fs::create_dir_all(root).unwrap();
+    fs::write(
+        root.join("bundled_models.json"),
+        crate::test_env::CODEX_BUNDLED_CATALOG,
+    )
+    .unwrap();
     let terminal_boundary = |turn: &Value| {
         matches!(
             turn["status"].as_str(),
@@ -52,6 +55,7 @@ pub(super) fn install_native_history(
     }
     for (method, response) in [
         ("initialize", json!({"userAgent":"test"})),
+        ("thread_list", json!({"data":[],"nextCursor":null})),
         (
             "thread_read",
             json!({"thread":{"id":"thread-1","cwd":"/tmp/project","historyMode":"paginated"}}),
@@ -67,45 +71,23 @@ pub(super) fn install_native_history(
     ] {
         fs::write(root.join(format!("{method}.json")), response.to_string()).unwrap();
     }
-    let directory = format!("'{}'", root.display().to_string().replace('\'', "'\"'\"'"));
-    let binary = root.join("native-history.sh");
-    fs::write(
-        &binary,
-        format!(
-            r#"#!/bin/sh
-cd /
-while IFS= read -r line; do
-  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  [ -n "$id" ] || continue
-  method=$(printf '%s\n' "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p' | tr '/' '_')
-  if [ "$method" = "test_stop" ]; then
-    printf '{{"id":%s,"result":{{}}}}\n' "$id"
-    exit 0
-  fi
-  error_file={directory}/"$method".error-once.json
-  if [ -f "$error_file" ]; then
-    printf '{{"id":%s,"error":' "$id"
-    cat "$error_file"
-    rm "$error_file"
-    printf '}}\n'
-    continue
-  fi
-  printf '{{"id":%s,"result":' "$id"
-  cat {directory}/"$method".json
-  printf '}}\n'
-done
-"#
-        ),
-    )
-    .unwrap();
     #[cfg(unix)]
-    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    let binary = {
+        // Never execute a freshly written inode: concurrent forks can retain its
+        // writer descriptor until exec and cause ETXTBSY on Linux.
+        let binary = root.join("native-history.sh");
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/native-history.sh");
+        std::os::unix::fs::symlink(fixture, &binary).unwrap();
+        binary
+    };
     #[cfg(windows)]
     let binary = {
         let script = root.join("native-history.ps1");
         fs::write(
             script,
             r#"while ($null -ne ($line = [Console]::ReadLine())) {
+  [IO.File]::AppendAllText((Join-Path $PSScriptRoot 'requests.jsonl'), $line + [Environment]::NewLine)
   $request = ConvertFrom-Json $line
   if ($null -eq $request.id) { continue }
   if ($request.method -eq 'test/stop') {
@@ -113,6 +95,7 @@ done
     break
   }
   $method = $request.method.Replace('/', '_')
+  if ($method -eq 'thread_list' -and $request.params.cursor -eq 'page-2') { $method = 'thread_list_page2' }
   $errorFile = Join-Path $PSScriptRoot ($method + '.error-once.json')
   if (Test-Path $errorFile) {
     $failure = ConvertFrom-Json ([IO.File]::ReadAllText($errorFile))
@@ -120,13 +103,17 @@ done
     [Console]::WriteLine((@{id=$request.id;error=$failure} | ConvertTo-Json -Depth 100 -Compress))
     continue
   }
+  $notificationFile = Join-Path $PSScriptRoot ($method + '.notifications.jsonl')
+  if (Test-Path $notificationFile) {
+    foreach ($notification in [IO.File]::ReadLines($notificationFile)) { [Console]::WriteLine($notification) }
+  }
   $result = ConvertFrom-Json ([IO.File]::ReadAllText((Join-Path $PSScriptRoot ($method + '.json'))))
   [Console]::WriteLine((@{id=$request.id;result=$result} | ConvertTo-Json -Depth 100 -Compress))
 }"#,
         )
         .unwrap();
         let binary = root.join("native-history.cmd");
-        fs::write(&binary, "@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0native-history.ps1\"\r\n").unwrap();
+        fs::write(&binary, "@echo off\r\nif \"%~1\"==\"debug\" (\r\n  type \"%~dp0bundled_models.json\"\r\n  exit /b 0\r\n)\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0native-history.ps1\"\r\n").unwrap();
         binary
     };
     handler.codex_app_server =

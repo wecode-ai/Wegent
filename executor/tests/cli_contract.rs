@@ -85,6 +85,33 @@ fn binary_version_exits_without_runtime_startup() {
     assert!(output.stderr.is_empty());
 }
 
+#[cfg(unix)]
+#[test]
+fn informational_cli_does_not_arm_an_inherited_app_watchdog() {
+    use std::os::unix::process::CommandExt;
+
+    for flag in ["--version", "--help"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
+            .arg(flag)
+            .env("WEGENT_EXECUTOR_VERSION", "7.8.9")
+            .env("WEGENT_APP_LIFECYCLE_FD", "99")
+            .process_group(0)
+            .output()
+            .expect("run informational CLI with an inherited lifecycle descriptor");
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let expected = if flag == "--version" {
+            "7.8.9".to_owned()
+        } else {
+            CliArgs::usage().to_owned()
+        };
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            expected.trim()
+        );
+    }
+}
+
 #[test]
 fn app_sidecar_reserves_stdout_for_jsonl_before_backend_startup() {
     let executor_home =

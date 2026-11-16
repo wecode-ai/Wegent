@@ -11,6 +11,11 @@
     "load_failed": "Could not load conversation history",
     "retry": "Retry"
   },
+  "visualization": {
+    "loading": "Loading visualization…",
+    "load_failed": "Could not load visualization",
+    "retry": "Retry"
+  },
   "table": {
     "expand": "Expand table",
     "close": "Close expanded table",
@@ -68,6 +73,7 @@
   },
   "tool_activity": {
     "reconnecting": "Connection interrupted. Reconnecting…",
+    "rate_limit_wait": "Model rate limited. Waiting to retry…",
     "chatgpt_network_unavailable": "The current model uses ChatGPT, but the network is unavailable. Would you like to configure a proxy?",
     "open_proxy_settings": "Configure proxy",
     "summary_one": "Called {{count}} tool",
@@ -115,7 +121,15 @@
     "edited_file": "Edited {{filename}}",
     "created_file": "Created {{filename}}",
     "deleted_file": "Deleted {{filename}}",
-    "renamed_file": "Renamed {{filename}}"
+    "renamed_file": "Renamed {{filename}}",
+    "overload_retry_in": "Model at capacity. Retrying the same model in {{remaining}}…",
+    "overload_retrying": "Model at capacity. Retrying the same model…",
+    "overload_waiting": "Model at capacity. Waiting to retry the same model automatically.",
+    "quota_waiting": "Usage limit reached. Waiting to continue with the same model automatically.",
+    "quota_wait_unknown": "Usage limit reached. Checking the reset time to continue with the same model.",
+    "cancel_automatic_recovery": "Cancel automatic recovery",
+    "quota_wait_until": "Usage limit reached. Continuing with the same model in {{remaining}}.",
+    "quota_checking": "Checking usage availability to continue with the same model…"
   },
   "assistant_status": {
     "working": "Working",
@@ -238,7 +252,6 @@
     "previous_turn_label": "Previous turn",
     "branch_label": "Branch",
     "branch_unknown": "Current workspace",
-    "large_diff_single_file_notice": "This diff is large, so only one file is shown at a time",
     "file_list_label": "Changed files",
     "file_search_placeholder": "Filter files...",
     "file_search_empty": "No matching files",
@@ -251,6 +264,7 @@
       "collapse_file_diff": "Collapse file diff",
       "expand_file_diff": "Expand file diff",
       "copy_git_apply": "Copy git apply command",
+      "copied_git_apply": "Copied",
       "hide_files": "Hide files",
       "show_files": "Show files",
       "show_split": "Switch to split view",

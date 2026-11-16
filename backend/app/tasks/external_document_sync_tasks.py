@@ -17,6 +17,10 @@ from app.services.knowledge.external_document_sync import (
     SyncReport,
     external_document_sync_module,
 )
+from shared.event_reporting.catalogs.knowledge import (
+    emit_external_event,
+    error_code_for,
+)
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
@@ -87,23 +91,71 @@ def sync_external_documents_task() -> dict[str, object]:
     if not settings.EXTERNAL_DOC_SYNC_ENABLED:
         return {"status": "disabled"}
     started_at = time.perf_counter()
-    with distributed_lock.acquire_watchdog_context(
-        _LOCK_NAME,
-        expire_seconds=settings.EXTERNAL_DOC_SYNC_LOCK_TTL_SECONDS,
-        extend_interval_seconds=max(
-            10, settings.EXTERNAL_DOC_SYNC_LOCK_TTL_SECONDS // 3
-        ),
-    ) as acquired:
-        if not acquired:
-            return {"status": "locked"}
-        with SessionLocal() as db:
-            report = asyncio.run(
-                external_document_sync_module.run_daily_sync(
-                    db,
-                    scan_limit=settings.EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE,
-                    max_documents=settings.EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS,
-                    time_budget_seconds=settings.EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS,
+    from celery import current_task
+
+    operation_id = getattr(current_task.request, "id", None) if current_task else None
+    emit_external_event(
+        "knowledge.external.sync.started",
+        kb_id=None,
+        document_id=None,
+        status="started",
+        operation_id=operation_id,
+        data={"trigger": "scheduled"},
+    )
+    try:
+        with distributed_lock.acquire_watchdog_context(
+            _LOCK_NAME,
+            expire_seconds=settings.EXTERNAL_DOC_SYNC_LOCK_TTL_SECONDS,
+            extend_interval_seconds=max(
+                10, settings.EXTERNAL_DOC_SYNC_LOCK_TTL_SECONDS // 3
+            ),
+        ) as acquired:
+            if not acquired:
+                emit_external_event(
+                    "knowledge.external.sync.finished",
+                    kb_id=None,
+                    document_id=None,
+                    status="skipped",
+                    operation_id=operation_id,
+                    data={"trigger": "scheduled", "reason": "lock_not_acquired"},
                 )
-            )
+                return {"status": "locked"}
+            with SessionLocal() as db:
+                report = asyncio.run(
+                    external_document_sync_module.run_daily_sync(
+                        db,
+                        scan_limit=settings.EXTERNAL_DOC_SYNC_SCAN_BATCH_SIZE,
+                        max_documents=settings.EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS,
+                        time_budget_seconds=(
+                            settings.EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS
+                        ),
+                    )
+                )
+    except Exception as error:
+        emit_external_event(
+            "knowledge.external.sync.finished",
+            kb_id=None,
+            document_id=None,
+            status="failure",
+            operation_id=operation_id,
+            data={
+                "provider": "all",
+                "trigger": "scheduled",
+            },
+            error_code=error_code_for(error),
+        )
+        raise
+
     _log_sync_report(report, time.perf_counter() - started_at)
+    emit_external_event(
+        "knowledge.external.sync.finished",
+        kb_id=None,
+        document_id=None,
+        status="completed",
+        operation_id=operation_id,
+        data={
+            "provider": "all",
+            "trigger": "scheduled",
+        },
+    )
     return {"status": "completed", **asdict(report)}

@@ -4,8 +4,9 @@ import {
   cacheConversationScrollSnapshot,
   getConversationScrollSnapshot,
   type ConversationScrollSnapshot,
+  type ConversationViewportAnchor,
 } from './conversationViewportCache'
-import { getDistanceFromBottom } from './bottomOriginScroll'
+import { getDistanceFromBottom } from './conversationViewportScroll'
 import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
   recordConversationScrollWrite,
@@ -56,13 +57,23 @@ export function createUserViewportAnchor(
   const message = visibleAnchor.closest<HTMLElement>('[data-message-id]')
   const messageId = message?.dataset.messageId
   if (!message || !messageId) return null
-  const anchors = Array.from(message.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR))
-  const anchorIndex = anchors.indexOf(visibleAnchor)
+  const item = visibleAnchor.closest<HTMLElement>(
+    '[data-runtime-item-id], [data-processing-block-id]'
+  )
+  const itemId = item?.dataset.runtimeItemId ?? item?.dataset.processingBlockId ?? null
+  const chunk = visibleAnchor.closest<HTMLElement>('[data-markdown-chunk-index]')
+  const scope = chunk ?? item ?? message
+  const anchorIndex = Array.from(
+    scope.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR)
+  ).indexOf(visibleAnchor)
   if (anchorIndex < 0) return null
   const textPosition = getViewportTextPosition(visibleAnchor, scrollerRect)
 
   return {
     messageId,
+    itemId,
+    chunkIndex: chunk?.dataset.markdownChunkIndex ?? null,
+    text: visibleAnchor.textContent ?? '',
     element: visibleAnchor,
     anchorIndex,
     offsetFromScrollerTop:
@@ -79,9 +90,61 @@ export function findUserViewportAnchor(
   // Windowed Markdown inserts and removes preceding semantic anchors as chunks render. An ordinal
   // can then identify another paragraph even though the reader's original node is still mounted.
   const element = anchor.element
-  if (!content.contains(element) || !element.matches(SCROLL_ANCHOR_SELECTOR)) return null
   const message = element.closest<HTMLElement>('[data-message-id]')
-  return message?.dataset.messageId === anchor.messageId ? element : null
+  const currentItem = element.closest<HTMLElement>(
+    '[data-runtime-item-id], [data-processing-block-id]'
+  )
+  const sameItem =
+    (currentItem?.dataset.runtimeItemId ?? currentItem?.dataset.processingBlockId ?? null) ===
+    anchor.itemId
+  if (
+    content.contains(element) &&
+    message?.dataset.messageId === anchor.messageId &&
+    element.matches(SCROLL_ANCHOR_SELECTOR) &&
+    sameItem
+  )
+    return element
+  if (anchor.itemId === null && anchor.chunkIndex === null) return null
+  return findConversationViewportAnchor(content, anchor)
+}
+
+function findConversationViewportAnchor(
+  content: HTMLElement,
+  anchor: ConversationViewportAnchor
+): HTMLElement | null {
+  const item = findMessageItem(content, anchor.messageId, anchor.itemId)
+  const scope =
+    anchor.chunkIndex === null
+      ? item
+      : Array.from(item?.querySelectorAll<HTMLElement>('[data-markdown-chunk-index]') ?? []).find(
+          chunk => chunk.dataset.markdownChunkIndex === anchor.chunkIndex
+        )
+  const candidate = scope?.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR)[anchor.anchorIndex]
+  // Resolve only the same paragraph in the same item/chunk; a message-wide
+  // ordinal can identify unrelated text after preceding Markdown chunks mount.
+  // Appending streamed text preserves all previously sampled character positions.
+  const text = candidate?.textContent
+  return text === anchor.text || (anchor.text.length > 0 && text?.startsWith(anchor.text))
+    ? (candidate ?? null)
+    : null
+}
+
+function findMessageItem(
+  content: HTMLElement,
+  messageId: string,
+  itemId: string | null
+): HTMLElement | null {
+  const message = Array.from(content.querySelectorAll<HTMLElement>('[data-message-id]')).find(
+    element => element.dataset.messageId === messageId
+  )
+  if (!message || itemId === null) return message ?? null
+  return (
+    Array.from(
+      message.querySelectorAll<HTMLElement>('[data-runtime-item-id], [data-processing-block-id]')
+    ).find(
+      element => (element.dataset.runtimeItemId ?? element.dataset.processingBlockId) === itemId
+    ) ?? null
+  )
 }
 
 export function getViewportTextPosition(
@@ -157,32 +220,27 @@ export function getTextOffsetRect(
   return null
 }
 
-export function createScrollSnapshot(
-  scroller: HTMLElement,
-  bottomOrigin: boolean
-): ConversationScrollSnapshot {
-  const distanceFromBottomPx = getDistanceFromBottom(scroller, bottomOrigin)
+export function createScrollSnapshot(scroller: HTMLElement): ConversationScrollSnapshot {
+  const distanceFromBottomPx = getDistanceFromBottom(scroller)
   const pinnedToBottom = distanceFromBottomPx <= SCROLLED_TO_BOTTOM_THRESHOLD
   const sample = pinnedToBottom ? null : createUserViewportAnchor(scroller, scroller)
-  const root = sample?.element.closest<HTMLElement>(
-    '[data-runtime-item-id], [data-processing-block-id], [data-message-id]'
-  )
-  const viewport = root ? scroller.getBoundingClientRect() : null
-  const textPosition = root && viewport ? getViewportTextPosition(root, viewport) : null
+  const anchor = sample ? snapshotViewportAnchor(sample) : undefined
   return {
     distanceFromBottomPx,
     pinnedToBottom,
-    ...(sample && root && viewport
-      ? {
-          anchor: {
-            messageId: sample.messageId,
-            itemId: root.dataset.runtimeItemId ?? root.dataset.processingBlockId ?? null,
-            textOffset: textPosition?.offset ?? null,
-            offsetFromScrollerTop:
-              (textPosition?.rect.top ?? root.getBoundingClientRect().top) - viewport.top,
-          },
-        }
-      : {}),
+    ...(anchor ? { anchor } : {}),
+  }
+}
+
+function snapshotViewportAnchor(anchor: UserViewportAnchor): ConversationViewportAnchor {
+  return {
+    messageId: anchor.messageId,
+    itemId: anchor.itemId,
+    chunkIndex: anchor.chunkIndex,
+    anchorIndex: anchor.anchorIndex,
+    text: anchor.text,
+    textOffset: anchor.textOffset,
+    offsetFromScrollerTop: anchor.offsetFromScrollerTop,
   }
 }
 
@@ -192,21 +250,7 @@ export function restoreConversationAnchor(
 ): boolean {
   const anchor = snapshot.anchor
   if (!anchor || snapshot.pinnedToBottom) return false
-  const message = Array.from(scroller.querySelectorAll<HTMLElement>('[data-message-id]')).find(
-    element => element.dataset.messageId === anchor.messageId
-  )
-  if (!message) return false
-  const root =
-    anchor.itemId === null
-      ? message
-      : Array.from(
-          message.querySelectorAll<HTMLElement>(
-            '[data-runtime-item-id], [data-processing-block-id]'
-          )
-        ).find(
-          element =>
-            (element.dataset.runtimeItemId ?? element.dataset.processingBlockId) === anchor.itemId
-        )
+  const root = findConversationViewportAnchor(scroller, anchor)
   if (!root) return false
   const rect =
     anchor.textOffset === null

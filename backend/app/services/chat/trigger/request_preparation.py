@@ -6,7 +6,7 @@
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from fastapi import HTTPException, status
 
@@ -29,6 +29,7 @@ from app.services.video_generation_params import apply_video_generation_params
 from app.services.wework_model_config import (
     merge_model_reasoning,
     wework_model_config_options,
+    wework_model_token_limits,
 )
 from shared.codex_model_catalog import (
     codex_catalog_model_id_for_upstream,
@@ -247,17 +248,8 @@ def _catalog_model_id_from_model_spec(
     explicit_catalog_model_id = _catalog_model_id_from_model_options(env)
     if explicit_catalog_model_id:
         return explicit_catalog_model_id
-    upstream_api_format = _canonical_codex_upstream_api_format(
-        str(
-            model_spec.get("apiFormat")
-            or model_config.get("apiFormat")
-            or model_spec.get("protocol")
-            or model_config.get("protocol")
-            or ""
-        )
-    )
     return codex_catalog_model_id_for_upstream(
-        env.get("model_id") or env.get("modelId"), upstream_api_format
+        env.get("model_id") or env.get("modelId")
     )
 
 
@@ -459,10 +451,7 @@ def _build_codex_runtime_model_config(
     effective_catalog_model_id = (
         catalog_model_id
         or resolved_config.get("codex_catalog_model_id")
-        or codex_catalog_model_id_for_upstream(
-            resolved_config.get("model_id"),
-            resolved_config.get("upstream_api_format"),
-        )
+        or codex_catalog_model_id_for_upstream(resolved_config.get("model_id"))
     )
     if effective_catalog_model_id:
         resolved_config["codex_catalog_model_id"] = effective_catalog_model_id
@@ -590,7 +579,7 @@ def _build_cloud_gateway_model_config(
         "upstream_api_format": upstream_api_format,
         # This selects Codex capability metadata; model_id remains the exact
         # authorized cloud resource sent to the gateway.
-        "codex_catalog_model_id": catalog_model_id or "wework-gpt-5.6-sol",
+        "codex_catalog_model_id": catalog_model_id or "wework-gpt-6.1-sol",
         "base_url": f"{backend_base}/api/runtime-work/llm-responses-proxy",
         "api_key": token,
         "default_headers": {
@@ -602,6 +591,10 @@ def _build_cloud_gateway_model_config(
         },
         "runtime_config": {"codex": {"use_user_config": False, "configured": True}},
     }
+    # The executor derives the Claude Code auto-compact budget from these
+    # values, so they must come from the Model CRD instead of relying on
+    # client-side model options that a web-started task never sends.
+    config.update(wework_model_token_limits(model_spec or {}, provider_config))
     config.update(model_options)
     return config
 
@@ -629,12 +622,10 @@ def build_wework_runtime_model_config(
         return resolved
     resolved_catalog_model_id = resolved.get(
         "codex_catalog_model_id"
-    ) or codex_catalog_model_id_for_upstream(
-        resolved.get("model_id"), resolved.get("upstream_api_format")
-    )
+    ) or codex_catalog_model_id_for_upstream(resolved.get("model_id"))
     if resolved_catalog_model_id:
         gateway_config["codex_catalog_model_id"] = resolved_catalog_model_id
-    gateway_config["tool_profile"] = "custom"
+    gateway_config["tool_profile"] = "function"
     gateway_config["codex_responses_compat_proxy"] = True
     return gateway_config
 

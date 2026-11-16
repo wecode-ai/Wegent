@@ -687,6 +687,13 @@ class ChatNamespace(socketio.AsyncNamespace):
             f"[WS] User {user_id} joined task room {payload.task_id} (room={task_room}, sid={sid})"
         )
 
+        # Resolve streaming before reading messages. Completion can persist the
+        # final response and clear Redis while this join is in flight.
+        logger.info(
+            f"[WS] task:join checking for active streaming, task_id={payload.task_id}"
+        )
+        streaming_info = await get_active_streaming(payload.task_id)
+
         # Get subtasks for immediate message sync
         # If after_message_id is provided, only fetch messages after that ID (incremental sync)
         # Otherwise, fetch all messages (initial join)
@@ -711,11 +718,6 @@ class ChatNamespace(socketio.AsyncNamespace):
         except Exception as e:
             logger.exception(f"[WS] task:join error fetching subtasks: {e}")
 
-        # Check for active streaming
-        logger.info(
-            f"[WS] task:join checking for active streaming, task_id={payload.task_id}"
-        )
-        streaming_info = await get_active_streaming(payload.task_id)
         logger.info(f"[WS] task:join get_active_streaming returned: {streaming_info}")
 
         if streaming_info:

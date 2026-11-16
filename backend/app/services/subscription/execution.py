@@ -33,6 +33,10 @@ from app.services.subscription.helpers import (
     resolve_prompt_template,
     validate_subscription_for_read,
 )
+from app.services.subscription.notification_directives import (
+    append_group_notification_instruction,
+    strip_notification_directives,
+)
 from app.services.subscription.state_machine import (
     OptimisticLockError,
     is_terminal_state,
@@ -121,6 +125,9 @@ class BackgroundExecutionManager:
                 f"Prompt template resolved to empty string for subscription {subscription.id} ({subscription.name}). "
                 f"Template: '{subscription_crd.spec.promptTemplate}'"
             )
+        resolved_prompt = append_group_notification_instruction(
+            resolved_prompt, subscription.json
+        )
 
         execution = BackgroundExecution(
             user_id=user_id,
@@ -532,6 +539,7 @@ class BackgroundExecutionManager:
         end_date: Optional[datetime] = None,
         include_following: bool = True,
         include_silent: bool = False,
+        preview_chars: Optional[int] = None,
     ) -> Tuple[List[BackgroundExecutionInDB], int]:
         """
         List BackgroundExecution records (timeline view).
@@ -551,6 +559,9 @@ class BackgroundExecutionManager:
             end_date: Optional filter by end date
             include_following: Include executions from followed subscriptions
             include_silent: Include COMPLETED_SILENT executions (default False)
+            preview_chars: When set, cut prompt and result_summary of the user's
+                own executions to this many characters and flag the truncation
+                (default None keeps full text)
 
         Returns:
             Tuple of (list of BackgroundExecutionInDB, total count)
@@ -708,6 +719,19 @@ class BackgroundExecutionManager:
             owner_user_id = sub_info.get("owner_user_id")
             exec_dict["can_delete"] = owner_user_id == user_id
 
+            # Only the viewer's own executions are cut: GET /executions/{id}
+            # serves the owner alone, so that is the only case the caller can
+            # load in full again. Followed and public items stay whole.
+            if preview_chars is not None and exec.user_id == user_id:
+                if len(exec_dict["prompt"]) > preview_chars:
+                    exec_dict["prompt"] = exec_dict["prompt"][:preview_chars]
+                    exec_dict["prompt_truncated"] = True
+
+                result_summary = exec_dict["result_summary"]
+                if result_summary is not None and len(result_summary) > preview_chars:
+                    exec_dict["result_summary"] = result_summary[:preview_chars]
+                    exec_dict["result_summary_truncated"] = True
+
             result.append(BackgroundExecutionInDB(**exec_dict))
 
         return result, total
@@ -850,6 +874,10 @@ class BackgroundExecutionManager:
         # Use UTC for all timestamps
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
+        raw_result_summary = result_summary
+        if result_summary:
+            result_summary = strip_notification_directives(result_summary)
+
         # Build atomic update values
         update_values = {
             "status": status.value,
@@ -934,9 +962,10 @@ class BackgroundExecutionManager:
         else:
             logger.debug(", ".join(log_parts))
 
-        # Emit WebSocket event to notify frontend of the status update
+        # Emit WebSocket event to notify frontend of the status update.
+        # Log only the summary length: a completion reply can be very large.
         logger.debug(
-            f"[Subscription] Emitting WS event for execution {execution_id}, user_id={execution.user_id}, summary={result_summary}"
+            f"[Subscription] Emitting WS event for execution {execution_id}, user_id={execution.user_id}, summary_chars={len(result_summary or '')}"
         )
         emit_background_execution_update(
             db=db,
@@ -952,12 +981,12 @@ class BackgroundExecutionManager:
         # Skip if caller will handle notifications separately (e.g., Chat Shell tasks)
         if status == BackgroundExecutionStatus.COMPLETED and not skip_notifications:
             logger.info(
-                f"[Subscription] Dispatching completion notifications for execution {execution_id}, result_summary={result_summary}"
+                f"[Subscription] Dispatching completion notifications for execution {execution_id}, summary_chars={len(result_summary or '')}"
             )
             self._dispatch_completion_notifications(
                 db=db,
                 execution=execution,
-                result_summary=result_summary or "",
+                result_summary=raw_result_summary or "",
                 status=status.value,
             )
 

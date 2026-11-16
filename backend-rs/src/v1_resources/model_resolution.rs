@@ -25,6 +25,7 @@ pub async fn model_resolves<M>(
     mysql: &M,
     erp: &ErpContext<'_, brz_redis::RedisService>,
     _redis: Option<&brz_redis::RedisService>,
+    resolvers: &crate::permissions::EntityResolvers<brz_redis::RedisService>,
     user: &UserRow,
     model_name: &str,
 ) -> bool
@@ -43,7 +44,7 @@ where
         return true;
     }
     // Step 3: the user's accessible group namespaces (`get_user_groups`).
-    let resolved = match user_group_memberships(mysql, erp, user_id).await {
+    let resolved = match user_group_memberships(mysql, erp, resolvers, user_id).await {
         Ok(resolved) => resolved,
         Err(error) => {
             tracing::warn!(%error, "[v1_resources] group membership resolution failed");
@@ -77,7 +78,7 @@ where
         // `db.query(User).filter(User.id == user_id).first()`: the source
         // re-reads the whitelisted user rather than reusing the caller row.
         let user_name = load_user_name(mysql, user_id).await;
-        let whitelist_ok = crate::teams::public_model_access::allowed_for_user_name(
+        let whitelist_ok = wegent_access::public_models::allowed_for_user_name(
             &OpaqueJson::from(model.json.0.clone()),
             user_name.as_deref(),
         );

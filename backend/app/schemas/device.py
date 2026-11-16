@@ -14,14 +14,13 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StrictInt,
     ValidationError,
     field_validator,
     model_serializer,
     model_validator,
 )
-
-from app.schemas.personal_assistant_dispatch import PersonalAssistantDispatchFeatures
 
 
 class DeviceStatusEnum(str, Enum):
@@ -151,6 +150,21 @@ def register_runtime_feature_normalizer(
     _runtime_feature_normalizers[name] = normalizer
 
 
+class RuntimeRemoteTaskAccessFeatures(BaseModel):
+    """Target-local consent; missing or malformed metadata grants no access."""
+
+    version: Literal[1]
+    enabled: StrictBool
+    task_creation: StrictBool = Field(default=False, alias="taskCreation")
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, value: Any) -> int:
+        if type(value) is not int or value != 1:
+            raise ValueError("Unsupported remote task access version")
+        return value
+
+
 class RuntimeFeatures(BaseModel):
     """Online features implemented by the currently connected Runtime."""
 
@@ -172,20 +186,17 @@ class RuntimeFeatures(BaseModel):
     plugin_sync: Optional[RuntimePluginSyncFeatures] = Field(
         default=None, alias="pluginSync"
     )
-    personal_assistant_dispatch: Optional[PersonalAssistantDispatchFeatures] = Field(
-        default=None, alias="personalAssistantDispatch"
+    remote_task_access: Optional[RuntimeRemoteTaskAccessFeatures] = Field(
+        default=None, alias="remoteTaskAccess"
     )
 
-    @field_validator("personal_assistant_dispatch", mode="before")
+    @field_validator("remote_task_access", mode="before")
     @classmethod
-    def normalize_personal_assistant_dispatch(
-        cls, value: Any
-    ) -> PersonalAssistantDispatchFeatures:
-        # An invalid explicit declaration revokes authority from earlier heartbeats.
+    def normalize_remote_task_access(cls, value: Any) -> Any:
         try:
-            return PersonalAssistantDispatchFeatures.model_validate(value)
+            return RuntimeRemoteTaskAccessFeatures.model_validate(value)
         except ValidationError:
-            return PersonalAssistantDispatchFeatures(version=1, roles=[])
+            return None
 
     @field_validator("plugin_sync", mode="before")
     @classmethod
@@ -211,9 +222,9 @@ class RuntimeFeatures(BaseModel):
         if self.plugin_sync is None:
             result.pop("pluginSync", None)
             result.pop("plugin_sync", None)
-        if self.personal_assistant_dispatch is None:
-            result.pop("personalAssistantDispatch", None)
-            result.pop("personal_assistant_dispatch", None)
+        if self.remote_task_access is None:
+            result.pop("remoteTaskAccess", None)
+            result.pop("remote_task_access", None)
         return result
 
     @model_validator(mode="before")
@@ -223,8 +234,6 @@ class RuntimeFeatures(BaseModel):
         if not isinstance(value, dict):
             return value
         normalized = dict(value)
-        if "personalAssistantDispatch" in normalized:
-            normalized.pop("personal_assistant_dispatch", None)
         known = set(cls.model_fields)
         known.update(field.alias for field in cls.model_fields.values() if field.alias)
         for name in tuple(normalized):
@@ -252,17 +261,9 @@ def _normalize_runtime_features(value: Any) -> Optional[RuntimeFeatures]:
         editing_key = next(
             (key for key in ("projectEditing", "project_editing") if key in value), None
         )
-        assistant_key = next(
-            (
-                key
-                for key in ("personalAssistantDispatch", "personal_assistant_dispatch")
-                if key in value
-            ),
-            None,
-        )
-        if editing_key is None and assistant_key is None:
+        if editing_key is None:
             return None
-        editing = value.get(editing_key)
+        editing = value[editing_key]
         denied_flags = (
             {key: False for key, flag in editing.items() if flag is False}
             if isinstance(editing, dict)
@@ -279,12 +280,9 @@ def _normalize_runtime_features(value: Any) -> Optional[RuntimeFeatures]:
             schema_version = header.schema_version
         except ValidationError:
             schema_version = 1
-        conservative = {"schemaVersion": schema_version}
-        if editing_key is not None:
-            conservative["projectEditing"] = denied_flags
-        if assistant_key is not None:
-            conservative["personalAssistantDispatch"] = {"version": 1, "roles": []}
-        return RuntimeFeatures.model_validate(conservative)
+        return RuntimeFeatures.model_validate(
+            {"schemaVersion": schema_version, "projectEditing": denied_flags}
+        )
 
 
 class DeviceInfo(BaseModel):

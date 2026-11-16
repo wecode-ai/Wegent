@@ -1,12 +1,24 @@
 import type { LocalModelToolProfile } from './localModelSettings'
-import GPT_DEFAULT_INSTRUCTIONS from '../../../../shared/assets/gptDefaultInstructions.md?raw'
+import type { ProviderModel } from '../../../electron/src/host/model-configuration-contract'
+
+/** Resolve the same catalog metadata for desktop and phone provider models. */
+export function providerModelCatalogEntry(
+  model: ProviderModel
+): LocalModelCatalogEntry | undefined {
+  return (
+    model.catalog_entry ??
+    ((model.provider_profile_id ?? 'custom') === 'custom'
+      ? createDefaultLocalModelCatalogEntry({
+          id: model.id,
+          displayName: model.display_name || model.model_id,
+          toolProfile: model.tool_profile ?? 'function',
+          contextWindow: model.context_window,
+        })
+      : undefined)
+  )
+}
 
 export type LocalModelCatalogEntry = Record<string, unknown>
-
-export const DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS = GPT_DEFAULT_INSTRUCTIONS.replace(
-  'You are Codex, an agent based on GPT-5.',
-  'You are Codex, a coding agent.'
-)
 
 function catalogSlug(id: string): string {
   const normalized = id
@@ -38,9 +50,7 @@ export function createDefaultLocalModelCatalogEntry(input: {
     default_service_tier: null,
     availability_nux: null,
     upgrade: null,
-    base_instructions: DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS,
     model_messages: null,
-    include_skills_usage_instructions: false,
     supports_reasoning_summaries: true,
     supports_reasoning_summary_parameter: true,
     default_reasoning_summary: 'auto',
@@ -61,7 +71,7 @@ export function createDefaultLocalModelCatalogEntry(input: {
     supports_search_tool: true,
     use_responses_lite: false,
     auto_review_model_override: null,
-    tool_mode: null,
+    tool_mode: 'code_mode_only',
     multi_agent_version: null,
   }
 }

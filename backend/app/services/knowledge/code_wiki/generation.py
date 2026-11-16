@@ -163,6 +163,7 @@ class StartedGeneration:
     generation: Optional[WikiGeneration]
     decision: RunModeDecision
     seeded_pages: int = 0
+    reclaimed_generation_ids: tuple[int, ...] = ()
 
     @property
     def started(self) -> bool:
@@ -315,7 +316,11 @@ def start_generation(
         logger.info(
             "[code_wiki] kb %s needs no run: %s", knowledge_base.id, decision.reason
         )
-        return StartedGeneration(generation=None, decision=decision)
+        return StartedGeneration(
+            generation=None,
+            decision=decision,
+            reclaimed_generation_ids=reclaimed,
+        )
 
     generation = WikiGeneration(
         project_id=project_id,
@@ -358,7 +363,10 @@ def start_generation(
         seeded,
     )
     return StartedGeneration(
-        generation=generation, decision=decision, seeded_pages=seeded
+        generation=generation,
+        decision=decision,
+        seeded_pages=seeded,
+        reclaimed_generation_ids=reclaimed,
     )
 
 
@@ -385,6 +393,9 @@ def finish_generation(
         The publish outcome, or ``None`` when the run failed.
     """
     finished = (now or datetime.now(timezone.utc)).replace(tzinfo=None)
+    from .reporting import generation_snapshot, report_generation
+
+    event_snapshot = generation_snapshot(generation)
 
     if not succeeded:
         generation.status = WikiGenerationStatus.FAILED
@@ -396,6 +407,15 @@ def finish_generation(
             generation.id,
             knowledge_base.id,
             error_message or "no reason given",
+        )
+        report_generation(
+            event_snapshot,
+            (
+                "cancelled"
+                if failure_code == FailureCode.CANCELLED_BY_USER
+                else "failure"
+            ),
+            error_code=failure_code or "generation_failed",
         )
         return None
 
@@ -430,6 +450,11 @@ def finish_generation(
             result.reason,
         )
 
+    report_generation(
+        event_snapshot,
+        "success" if result.published else "failure",
+        error_code=None if result.published else FailureCode.PUBLISH_REFUSED,
+    )
     _collect_old_versions(db, knowledge_base)
     return result
 

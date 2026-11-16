@@ -1,9 +1,11 @@
 import { appendAcceptedRuntimeConversationUser } from "./runtime-turn-updates";
 import { projectRuntimePaneTranscript } from "./runtime-transcript-page";
+import { getLatestRuntimeLiveActivityFromTurns } from "./runtime-thinking";
 import { describe, expect, it, vi } from "vitest";
 import type {
   RuntimeConversationItem,
   RuntimeConversationTurn,
+  RuntimePaneMessageAction,
 } from "./runtime-conversation";
 import {
   hydrateRuntimeConversationTurns,
@@ -27,6 +29,102 @@ const ids = (turns: RuntimeConversationTurn[]) =>
   turns[0].items.map((item) => item.id);
 
 describe("native conversation ordering contract", () => {
+  it("keeps streamed commentary after a late native user without persisted positions", () => {
+    const live = turn([
+      {
+        id: "commentary",
+        type: "block",
+        block: {
+          id: "commentary",
+          type: "text",
+          content: "Reply is running",
+          status: "done",
+          createdAt: "2026-11-16T07:00:30Z",
+        },
+      },
+    ]);
+    const snapshot = turn([
+      {
+        id: "native-reply-user",
+        type: "user_message",
+        message: {
+          id: "native-reply-user",
+          role: "user",
+          content: "Continue the task",
+          status: "done",
+          createdAt: "2026-11-16T07:00:29Z",
+        },
+      },
+    ]);
+    const merged = mergeRuntimeConversationTurns([live], [snapshot]);
+    expect(ids(merged)).toEqual(["native-reply-user", "commentary"]);
+    expect(getLatestRuntimeLiveActivityFromTurns(merged)).toMatchObject({
+      active: true,
+      processText: "Reply is running",
+    });
+  });
+  const recovery: RuntimePaneMessageAction = {
+    type: "block_created",
+    subtaskId: "turn",
+    block: {
+      id: "reconnecting-turn",
+      type: "tool",
+      toolName: "runtime_reconnecting",
+      status: "streaming",
+      createdAt: 2,
+    },
+  };
+  const overloaded = (): RuntimeConversationTurn => ({
+    ...turn([item("native-progress", 1)]),
+    status: "failed",
+    error: "Selected model is at capacity.",
+    completedAt: "2026-10-23T00:00:01Z",
+  });
+
+  it.each([false, true])(
+    "keeps live recovery over an in-flight failure snapshot (applied: %s)",
+    (alreadyApplied) => {
+      const local = [turn([])];
+      const observed = alreadyApplied
+        ? reduceRuntimeConversationTurns(local, recovery)
+        : local;
+      const result = hydrateRuntimeConversationTurns(
+        observed,
+        [overloaded()],
+        [recovery],
+        alreadyApplied,
+      );
+
+      expect(result[0].status).toBe("streaming");
+      expect(result[0].error).toBeUndefined();
+      expect(result[0].completedAt).toBeUndefined();
+      expect(ids(result)).toContain("native-progress");
+      expect(ids(result)).toContain("reconnecting-turn");
+
+      const terminal = { ...overloaded(), error: "Permission denied" };
+      const refreshed = hydrateRuntimeConversationTurns(result, [terminal], []);
+      expect(refreshed[0].status).toBe("failed");
+      expect(refreshed[0].error).toBe("Permission denied");
+    },
+  );
+
+  it("preserves a terminal live error after recovery instead of an older overload", () => {
+    const result = hydrateRuntimeConversationTurns(
+      [turn([])],
+      [overloaded()],
+      [
+        recovery,
+        {
+          type: "assistant_error",
+          subtaskId: "turn",
+          error: "Permission denied",
+        },
+      ],
+    );
+    expect(result[0].status).toBe("failed");
+    expect(result[0].error).toBe("Permission denied");
+  });
+
   it.each(["mcp_form", "mcp_url"])(
     "does not alias a pending %s turn to an answered turn that reused its request id",
     (interactionKind) => {
@@ -139,6 +237,29 @@ describe("native conversation ordering contract", () => {
         startedAt: 42_000,
       })[0],
     ).toMatchObject({ id: "turn", startedAt: 40_000 });
+  });
+  it("binds a metadata-only pending user without starting or replacing its observed interval", () => {
+    const pending: RuntimeConversationTurn = {
+      id: null,
+      clientUserMessageId: "user",
+      status: "pending",
+      startedAt: 40_000,
+      items: [],
+    };
+    const bound = reduceRuntimeConversationTurns([pending], {
+      type: "assistant_bound",
+      subtaskId: "turn",
+      clientUserMessageId: "user",
+    });
+    expect(bound).toEqual([{ ...pending, id: "turn" }]);
+    expect(
+      reduceRuntimeConversationTurns(bound, {
+        type: "assistant_started",
+        subtaskId: "turn",
+        clientUserMessageId: null,
+        startedAt: 42_000,
+      }),
+    ).toEqual([{ ...pending, id: "turn", status: "streaming" }]);
   });
   it("freezes the observed interval without reconstructing a millisecond endpoint from rounded native timestamps", () => {
     vi.spyOn(Date, "now").mockReturnValue(58_200);
@@ -351,6 +472,56 @@ describe("native conversation ordering contract", () => {
     ]);
   });
 
+  it("uses a snapshot's observed trailing output after its native user boundary", () => {
+    const reply: RuntimeConversationItem = {
+      ...item("reply", 2),
+      position: undefined,
+    };
+    const user: RuntimeConversationItem = {
+      id: "native-user",
+      type: "user_message",
+      message: {
+        id: "client-user",
+        role: "user",
+        content: "Prompt",
+        status: "done",
+      },
+    };
+    const merged = mergeRuntimeConversationTurns(
+      [turn([reply, user])],
+      [turn([{ ...user, position: 1 }, reply])],
+    );
+    expect(ids(merged)).toEqual(["native-user", "reply"]);
+    const page = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      messages: [],
+      turns: merged,
+      runtimeTurns: [],
+    });
+    expect(
+      page.messages.map((message) => [message.role, message.status]),
+    ).toEqual([
+      ["user", "done"],
+      ["assistant", "streaming"],
+    ]);
+  });
+
+  it("retains an observed gap when a later delta carries no native boundary", () => {
+    const reply: RuntimeConversationItem = {
+      ...item("reply", 1),
+      position: undefined,
+    };
+    expect(
+      ids(
+        mergeRuntimeConversationTurns(
+          [turn([reply, item("native", 2)])],
+          [turn([reply])],
+        ),
+      ),
+    ).toEqual(["reply", "native"]);
+  });
+
   it("materializes the accepted user when turn start supplied only its identity", () => {
     const turns: RuntimeConversationTurn[] = [
       {
@@ -494,11 +665,49 @@ describe("native conversation ordering contract", () => {
       "Original prompt",
     ]);
     expect(page.turns).toHaveLength(1);
-    expect(page.turns[0]).toMatchObject({ id: null, status: "done" });
+    expect(page.turns[0]).toMatchObject({ id: null, status: "pending" });
     expect(page.turns[0].items[0]).toMatchObject({
       type: "user_message",
       message: { content: "Original prompt" },
     });
+  });
+  it("cannot complete a running member from its user-only preview before native binding", () => {
+    const message = {
+      id: "member-request",
+      role: "user" as const,
+      content: "Assigned work",
+    };
+    const preview = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      running: true,
+      turns: [],
+      runtimeTurns: [],
+      messages: [message],
+    });
+    const native = projectRuntimePaneTranscript({
+      runtime: "codex",
+      workspacePath: "/repo",
+      running: true,
+      messages: [message],
+      turns: [
+        {
+          id: "member-turn",
+          status: "streaming",
+          items: [
+            {
+              id: message.id,
+              type: "user_message",
+              message,
+            },
+          ],
+        },
+      ],
+    });
+    const merged = mergeRuntimeConversationTurns(preview.turns, native.turns);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ id: "member-turn", status: "streaming" });
+    expect(preview.turns[0]).toMatchObject({ id: null, status: "pending" });
   });
   it("preserves a legacy display projection when the remote schema returns no runtime overlay", () => {
     const page = projectRuntimePaneTranscript({

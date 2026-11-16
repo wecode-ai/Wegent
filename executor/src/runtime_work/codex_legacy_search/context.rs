@@ -10,6 +10,11 @@ use crate::runtime_work::codex_transcript_page::{CodexTranscriptDirection, Codex
 const CONTEXT_CURSOR_PREFIX: &str = "wework-codex-legacy-context:";
 const CONTEXT_PAGE_SIZE: usize = ITEM_RADIUS * 2;
 
+#[path = "context/page.rs"]
+mod page;
+
+pub(in super::super) use page::{is_legacy_page_cursor, load_legacy_transcript_page};
+
 pub(in super::super) fn parse_legacy_context_cursor(
     cursor: &str,
 ) -> Result<Option<LegacySearchCursor>, String> {

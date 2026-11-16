@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
+import { verifyVoiceToolbar } from '../modules/voice-toolbar-flow.mjs'
+import { readVoiceProfileDiagnostics } from '../modules/voice-profile-diagnostics.mjs'
 
-export async function createDesktopScenario() {
+export async function createDesktopScenario({ resultDir, electronUserDataDirectory }) {
   let restartDesktopApp
   return {
+    diagnostics() {
+      return { profile: readVoiceProfileDiagnostics(electronUserDataDirectory) }
+    },
     setRestartDesktopApp(value) {
       restartDesktopApp = value
     },
@@ -30,6 +35,7 @@ export async function createDesktopScenario() {
       await control.command('waitFor', '[data-testid="new-chat-button"]')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', `${voice} button:not(:disabled)`)
+      await verifyVoiceToolbar({ control, resultDir, restartDesktopApp })
     },
   }
 }

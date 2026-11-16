@@ -6,6 +6,7 @@ import { DshSlotSurface } from './DshSlotSurface'
 import type { WeworkDshRoute } from './dshRoutes'
 import { WEWORK_DSH_SLOTS } from './dshUiSlots'
 import { getLoadedDshUiModule, importDshUiModule } from './dshUiModules'
+import { DshSurfaceLoading } from './DshSurfaceLoading'
 
 interface DshRouteModuleProps {
   onNavigate?: (path: string) => void
@@ -49,7 +50,7 @@ export function DshRouteSurface({
 
   if (route.module) {
     return (
-      <Suspense fallback={<div className="h-full min-h-0" data-testid="dsh-route-loading" />}>
+      <Suspense fallback={<DshSurfaceLoading testId="dsh-route-loading" />}>
         <DshRouteModuleLoader module={route.module} onNavigate={onNavigate} search={search} />
       </Suspense>
     )

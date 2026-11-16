@@ -1,7 +1,7 @@
-import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
-import { afterEach, expect, test, vi } from 'vitest'
-import { AssistantMarkdown, MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import { useDesktopMarkdownServices } from '@/components/chat/useDesktopMarkdownServices'
+import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
+import { AssistantMarkdown, MarkdownServicesProvider } from '@wegent/collaboration/markdown'
+import { afterEach, expect, test, vi } from 'vitest'
 import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
 
 const mocks = vi.hoisted(() => ({
@@ -16,24 +16,6 @@ afterEach(() => {
   delete window.__WEWORK_RUNTIME_CONFIG__
   vi.clearAllMocks()
   vi.restoreAllMocks()
-})
-
-test('routes both comment link types through desktop link preferences', () => {
-  const { result } = renderHook(useCollaborationMarkdownServices)
-  render(
-    <MarkdownServicesProvider value={result.current}>
-      <AssistantMarkdown content="[wecode-ai/Wegent#3966](https://github.com/wecode-ai/Wegent/pull/3966)\n\n[docs](https://example.com/docs)" />
-    </MarkdownServicesProvider>
-  )
-
-  fireEvent.click(screen.getByTestId('composer-link-chip'))
-  fireEvent.click(screen.getByTestId('assistant-markdown-link'))
-
-  expect(mocks.openExternalUrl).toHaveBeenNthCalledWith(
-    1,
-    'https://github.com/wecode-ai/Wegent/pull/3966'
-  )
-  expect(mocks.openExternalUrl).toHaveBeenNthCalledWith(2, 'https://example.com/docs')
 })
 
 test.each(['composer-link-chip', 'assistant-markdown-link'])(
@@ -70,7 +52,7 @@ test.each(['composer-link-chip', 'assistant-markdown-link'])(
   }
 )
 
-test('does not grant collaboration content access to desktop files or visualizations', () => {
+test('does not grant collaboration content access to desktop files or visualizations', async () => {
   window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
   const { result } = renderHook(useCollaborationMarkdownServices)
   render(
@@ -79,10 +61,12 @@ test('does not grant collaboration content access to desktop files or visualizat
     </MarkdownServicesProvider>
   )
 
-  expect(screen.getAllByTestId('assistant-markdown-image-loading')).toHaveLength(2)
+  await waitFor(() =>
+    expect(screen.getAllByTestId('assistant-markdown-image-error')).toHaveLength(2)
+  )
+  expect(screen.queryByTestId('assistant-markdown-image-loading')).not.toBeInTheDocument()
   expect(mocks.readLocalFile).not.toHaveBeenCalled()
   expect(result.current.readLocalFile).toBeUndefined()
-  expect(result.current.openHtmlFile).toBeUndefined()
   expect(result.current.renderVisualization).toBeUndefined()
 })
 
@@ -93,6 +77,5 @@ test('preserves local file capabilities for desktop conversations', async () => 
   await result.current.readLocalFile?.('C:/Users/viewer/private.png')
 
   expect(mocks.readLocalFile).toHaveBeenCalledWith('C:/Users/viewer/private.png')
-  expect(result.current.openHtmlFile).toEqual(expect.any(Function))
   expect(result.current.renderVisualization).toEqual(expect.any(Function))
 })

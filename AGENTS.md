@@ -44,11 +44,11 @@ The checked-in default route table is the inventory of active Rust-owned APIs,
 including migrated and newly added routes; every other request is forwarded to
 Python. Use the following ownership rules for every API change:
 
-| Change | Where to implement it |
-| --- | --- |
-| New Backend API | `backend-rs/`; add the handler, active route entry, and focused tests together. |
-| Existing API not selected for Rust | `backend/` |
-| Existing API already selected for and implemented by Rust | `backend-rs/` |
+| Change                                                    | Where to implement it                                                           |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| New Backend API                                           | `backend-rs/`; add the handler, active route entry, and focused tests together. |
+| Existing API not selected for Rust                        | `backend/`                                                                      |
+| Existing API already selected for and implemented by Rust | `backend-rs/`                                                                   |
 
 ### Finding Rust-owned APIs
 
@@ -86,9 +86,13 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 ## Engineering rules
 
+- Respect diverse user workflows. Do not add restrictions based on implementation convenience, an assumed happy path, or guesses about how users should work. Every restriction must be justified by an explicit user requirement or a concrete security boundary; remove unjustified restrictions instead of making users follow a prescribed sequence.
+
 - Collaboration permission changes must follow [the permission contract](docs/en/wegent/developer-guide/collaboration-permissions.md) and preserve its CP invariants. Update the architecture transaction and contract tests together; changing an invariant requires explicit user authorization. Never weaken, skip, or delete security assertions to make an incompatible implementation pass.
 
 - Diagnose problems from logs, actual code, and other concrete evidence first. When evidence is insufficient, add focused diagnostic logging before changing behavior; do not guess.
+- If repeated attempts fail to fix the same problem, promptly stop adding patches. Complete root-cause investigation and analysis, obtain concrete evidence of the cause, and only then resume fixing it.
+- Wework must remain openable when application-managed startup checks fail, including data corruption, missing credentials, and failed updates or migrations. Isolate the affected operation or capability; never use data or credential protection as a reason to prevent opening the entire application. Follow the [startup availability contract](wework/AGENTS.md#startup-availability-and-fault-isolation).
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.
@@ -110,12 +114,23 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 ## Testing and verification
 
-Prioritize fast, iterative development. Run E2E tests and `ai:verify` only when the user explicitly requests them. This execution policy overrides automatic E2E and real-Electron verification requirements in scoped guides; those guides still define how to verify when requested.
+Prioritize fast, iterative development. Run E2E tests and `ai:verify` only when the user explicitly requests them, except for changes to desktop updating, rollback, upgrade data migration, or their packaging and release gates: those changes require focused real packaged-Electron upgrade and rollback E2E verification. This execution policy overrides other automatic E2E and real-Electron verification requirements in scoped guides; those guides still define how to verify when requested.
 
-Run focused tests before committing; run broader tests when risk warrants it. E2E tests may mock only model services; every other component and integration must be real. They may not silently skip or fail gracefully, and failures must be fixed rather than skipped.
+Desktop update eligibility uses interval compatibility: a CI-verified A-to-D package pair permits published sources B with A <= B < D to upgrade directly to D in the same platform, architecture, and channel catalog. Intermediate direct pairs are accepted without separate verification; never fabricate evidence for them. A target's minimum source version remains a constraint, never proof by itself. Preserve revocations and required intermediate packages, and only publish evidence records backed by successful upgrade and rollback verification of the delivered package hashes. See `wework/AGENTS.md` for the maintenance contract.
+
+The explicit release-gate exception is macOS x64: it adopts successful arm64 version paths with matching source revisions and declared architecture-equivalence evidence, while retaining x64 package hashes. See the scoped maintenance contract for this exception; Windows x64 remains independently verified.
+
+Run focused tests before committing; run broader tests when risk warrants it. E2E tests may mock only model services; every other component and integration must be real. Never weaken assertions, skip scenarios, or tolerate failures to obtain a pass; fix failures instead.
+Use focused unit/component tests for local presentation or component state changes. Add or extend real E2E coverage for new cross-boundary features or changes to core flows, permissions, persistence, or critical state; the local E2E execution policy above still applies.
+Modify existing E2E tests only when a complete chain of log evidence proves the original test logic is wrong.
+Reuse unified E2E suites, runners, services, and build artifacts. Do not introduce increased total resource usage or substantial execution-time regressions without explicit user acceptance.
+Any change expected to significantly increase CI runtime requires explicit human confirmation before implementation. Explain the cause and estimated runtime impact when requesting confirmation.
 Treat intermittent test failures as defects: investigate and fix them immediately before proceeding; never use reruns or retries to obtain a passing result or hide the underlying problem.
 Every E2E scenario must be invoked by GitHub CI. Focused local E2E commands may exist for debugging, but they must also be included by a CI-covered suite; do not add dead E2E coverage that CI never runs.
 Long desktop E2E flows must expose registered checkpoints through the shared runner. A checkpoint must establish its own minimal prerequisites so both one-checkpoint and from-checkpoint runs are valid; do not depend on state created only by an earlier skipped checkpoint.
+DingTalk group chats and message delivery do not require real external E2E tests. Cover these behaviors with protocol-level integration tests and test doubles; do not require production or test-tenant group IDs, staff IDs, robot credentials, or real message delivery for this coverage.
+
+DingTalk document testing exception: CI may simulate external OAuth, MCP, and file downloads for document import and refresh without real accounts. Keep Wegent internals real except model services, and reuse existing suites and CI jobs. Reports and PR descriptions must label these as protocol integration tests and state that real DingTalk compatibility remains unverified.
 
 ```bash
 cd backend && uv run pytest
@@ -127,7 +142,8 @@ pnpm --dir frontend test
 
 - Branches: `<type>/<description>` where type is `feature`, `fix`, `refactor`, `docs`, `test`, or `chore`.
 - Commits use Conventional Commits: `<type>[scope]: <description>`.
-- Respect Husky output; never use `--no-verify`.
+- The first push for a branch must run the hooks and complete the full test suite successfully; do not use `--no-verify`. For subsequent fix commits, assess the scope of the code changes and choose whether to use `git push --no-verify` to skip the push hooks. This exception does not waive required focused tests or allow bypassing commit hooks.
+- Do not commit temporary screenshots, logs, dumps, or build artifacts. If required for delivery, explain their purpose and obtain explicit user authorization.
 - Pull the latest main branch and resolve conflicts before opening a PR. Run `git push` in an isolated background process because pre-push checks are expensive.
 
 ## Module quick reference

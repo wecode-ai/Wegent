@@ -1,0 +1,12 @@
+{
+  "order": 192100,
+  "scenario": "./scenarios/streaming-subagent-guidance.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 139100,
+      "shard": 1,
+      "position": 12100
+    }
+  }
+}

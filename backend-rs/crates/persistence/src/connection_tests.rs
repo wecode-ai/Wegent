@@ -1,0 +1,54 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+#[path = "connection_pool_tests.rs"]
+mod pool;
+
+use std::time::Duration;
+
+#[test]
+fn public_pool_keeps_the_source_statement_horizon() {
+    // Arrange: the source session (`app/db/session.py`) sets `pool_timeout` and
+    // PyMySQL charset/`init_command` only, so a running statement is never
+    // killed by a shorter driver-side deadline.
+    let options = super::pool_options();
+
+    // Act + Assert: the statement deadline keeps the source's only database
+    // deadline (`DB_POOL_TIMEOUT`, 30s) instead of the driver default (3s).
+    assert_eq!(options.query_timeout, Duration::from_secs(30));
+    assert_eq!(options.acquire_timeout, Duration::from_secs(30));
+    assert!(options.slow_acquire_threshold <= options.acquire_timeout);
+}
+
+#[test]
+fn pool_acquisition_waits_as_long_as_the_source_pool_timeout() {
+    // Arrange + Act: the pool options the application builds.
+    let options = super::pool_options();
+
+    // Assert: Source waits `DB_POOL_TIMEOUT` (30s) for a free slot. The driver
+    // default is 2s, which killed a legitimate replay-served read while another
+    // statement held a connection.
+    assert_eq!(options.acquire_timeout, Duration::from_secs(30));
+    assert_eq!(options.query_timeout, Duration::from_secs(30));
+}
+
+#[tokio::test]
+async fn public_master_and_slave_pools_allow_256_connections_each() {
+    let mysql = super::connect_read_write(
+        "mysql://writer:secret@127.0.0.1:3306/wegent",
+        Some("mysql://reader:secret@127.0.0.2:3306/wegent"),
+    )
+    .unwrap();
+    assert_eq!(mysql.pool_stats().max_connections, 256);
+    assert_eq!(mysql.read_pool_stats().max_connections, 256);
+    mysql.close().await;
+}
+
+/// The public deployment binds no routing policy, so its handles issue plain
+/// statements; the pool still backs every injected clone. The routed
+/// behaviour is the internal deployment's and is covered by its own suite.
+#[tokio::test]
+async fn public_pool_is_shared_with_injected_handles() {
+    pool::assert_plain_shared_pool().await;
+}

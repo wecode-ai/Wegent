@@ -18,6 +18,7 @@ from app.services import plugin_device_sync, plugin_write_operations
 from app.services.plugin_device_installation_service import (
     PluginDeviceInstallationService,
 )
+from app.services.plugin_write_errors import PluginWriteError
 from tests.services.test_plugin_marketplace_v2 import _device_install
 
 
@@ -248,7 +249,7 @@ async def test_single_plugin_ack_preserves_unrelated_removal_queue(
     dispatch = AsyncMock(return_value=response)
     monkeypatch.setattr(
         plugin_device_sync.device_capability_sync_service,
-        "sync_installed_plugin_to_device",
+        "sync_installed_plugin_to_device_result",
         dispatch,
     )
 
@@ -285,6 +286,65 @@ async def test_single_plugin_ack_preserves_unrelated_removal_queue(
     assert rows[unrelated_id].state == "uninstalling"
     assert rows[installed_id].state == "installed"
     assert rows[installed_id].actual_release_id == release_id
+
+
+@pytest.mark.asyncio
+async def test_background_plugin_sync_closes_its_session_when_dispatch_fails(
+    monkeypatch, caplog
+):
+    db = Mock()
+
+    @contextmanager
+    def session():
+        try:
+            yield db
+        finally:
+            db.close()
+
+    enumerate_devices = AsyncMock(side_effect=RuntimeError("device unavailable"))
+    monkeypatch.setattr(plugin_device_sync, "get_db_session", session)
+    monkeypatch.setattr(
+        plugin_device_sync.device_service, "get_online_devices", enumerate_devices
+    )
+    schedule = Mock()
+    monkeypatch.setattr(plugin_device_sync, "schedule_other_devices", schedule)
+
+    await plugin_device_sync.sync_plugin_to_other_devices_after_change(7, 17, "desktop")
+
+    enumerate_devices.assert_awaited_once_with(db, 7)
+    schedule.assert_not_called()
+    db.close.assert_called_once_with()
+    assert (
+        "Background plugin sync failed: user_id=7 installed_plugin_id=17" in caplog.text
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_stage", ["eligibility", "dispatch"])
+async def test_current_device_snapshot_coordination_failure_is_deferred_once(
+    monkeypatch, failure_stage
+):
+    error = PluginWriteError("plugin_write_lease_lost")
+    operation = AsyncMock(
+        side_effect=error if failure_stage == "eligibility" else None,
+        return_value=True,
+    )
+    dispatch = AsyncMock(side_effect=error)
+    monkeypatch.setattr(plugin_device_sync, "run_plugin_operation", operation)
+    monkeypatch.setattr(
+        plugin_device_sync.device_capability_sync_service,
+        "sync_installed_plugin_to_device_result",
+        dispatch,
+    )
+
+    result = await plugin_device_sync.ensure_installed_plugin_on_device(
+        Mock(), user_id=7, device_id="desktop", installed_id=17
+    )
+
+    assert result.success is False
+    assert result.errors == [{"code": error.code, "stage": "snapshot"}]
+    operation.assert_awaited_once()
+    assert dispatch.await_count == (1 if failure_stage == "dispatch" else 0)
 
 
 @pytest.mark.asyncio

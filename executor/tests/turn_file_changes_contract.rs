@@ -17,6 +17,9 @@ use wegent_executor::services::turn_file_changes::{
     ClaudeToolFileChangeTracker, NativeTurnFileChangeTracker, TurnFileChangeTracker,
 };
 
+#[path = "turn_file_changes_contract/task_baseline.rs"]
+mod task_baseline;
+
 const LOCAL_GIT_ENV_VARS: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
@@ -50,6 +53,115 @@ fn tracker_excludes_changes_that_preexist_the_turn() {
     let summary = tracker.finalize();
 
     assert_eq!(file_paths(&summary), vec!["agent.txt"]);
+}
+
+#[test]
+fn tracker_distinguishes_unchanged_git_from_unavailable_capture() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = init_repo(root.path(), false);
+    let mut tracker = TurnFileChangeTracker::new(repo, 10, 21, root.path().join("home"), None)
+        .with_task_baseline();
+
+    assert!(tracker.start());
+    let fields = tracker.finalize();
+    let changes = summary_changes(&fields);
+
+    assert_eq!(changes["files"], json!([]));
+    assert_eq!(changes["file_count"], 0);
+    assert_eq!(changes["diff"], "");
+    assert_eq!(changes["diff_truncated"], false);
+    assert!(changes["artifact_id"].is_null());
+    assert_eq!(fields["task_file_changes"]["status"], "active");
+    assert_eq!(fields["task_file_changes"]["files"], json!([]));
+    assert_eq!(fields["task_file_changes"]["diff"], "");
+    assert_eq!(tracker.finalize(), json!({}));
+}
+
+#[test]
+fn tracker_keeps_committed_changes_after_switching_branches() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = init_repo(root.path(), true);
+    write(repo.join("source.txt"), "before\n");
+    commit_all(&repo, "baseline");
+    let mut tracker =
+        TurnFileChangeTracker::new(repo.clone(), 10, 22, root.path().join("home"), None);
+
+    assert!(tracker.start());
+    run_git(&repo, ["checkout", "-b", "agent/changes"], None);
+    write(repo.join("source.txt"), "after\n");
+    commit_all(&repo, "agent change");
+    assert!(run_git(&repo, ["status", "--porcelain"], None).is_empty());
+    let changes = summary_changes(&tracker.finalize());
+
+    assert_eq!(changes["files"][0]["path"], "source.txt");
+    assert!(changes["diff"]
+        .as_str()
+        .unwrap()
+        .contains("-before\n+after\n"));
+}
+
+#[test]
+fn tracker_bounds_inline_patch_and_retains_complete_artifact() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = init_repo(root.path(), true);
+    let home = root.path().join("home");
+    let mut tracker = TurnFileChangeTracker::new(repo.clone(), 10, 23, home.clone(), None);
+
+    assert!(tracker.start());
+    write(repo.join("large.txt"), "大行\n".repeat(90_000));
+    let changes = summary_changes(&tracker.finalize());
+
+    assert_eq!(changes["diff_truncated"], true);
+    assert!(changes["diff"].as_str().unwrap().len() <= 512 * 1024);
+    assert!(!changes["diff"].as_str().unwrap().contains('\u{fffd}'));
+    let full_patch = read_gzip(home.join("artifacts/turn-file-changes/10/23/changes.patch.gz"));
+    assert!(full_patch.len() > changes["diff"].as_str().unwrap().len());
+}
+
+#[test]
+fn tracker_preserves_unicode_nested_paths_with_spaces_in_summary_and_diff() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = init_repo(root.path(), true);
+    let path = "目录/子 目录/文件.txt";
+    write(repo.join(path), "before\n");
+    commit_all(&repo, "unicode baseline");
+    let mut tracker =
+        TurnFileChangeTracker::new(repo.clone(), 10, 24, root.path().join("home"), None);
+
+    assert!(tracker.start());
+    write(repo.join(path), "after\n");
+    let changes = summary_changes(&tracker.finalize());
+
+    assert_eq!(changes["files"][0]["path"], path);
+    assert_eq!(changes["additions"], 1);
+    assert_eq!(changes["deletions"], 1);
+    assert!(changes["diff"].as_str().unwrap().contains(path));
+}
+
+#[test]
+fn tracker_reports_snapshot_failure_and_excessive_patch_as_error() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = init_repo(root.path(), true);
+    let mut tracker =
+        TurnFileChangeTracker::new(repo.clone(), 10, 25, root.path().join("home"), None)
+            .with_task_baseline();
+    fs::remove_dir_all(repo.join(".git/objects")).unwrap();
+    fs::create_dir(repo.join(".git/objects")).unwrap();
+
+    assert!(!tracker.start());
+    let fields = tracker.finalize();
+    let changes = summary_changes(&fields);
+    assert_eq!(changes["status"], "error");
+    assert_eq!(changes["files"], json!([]));
+    assert_eq!(changes["diff"], "");
+    assert_eq!(fields["task_file_changes"]["status"], "error");
+
+    let repo = init_repo(&root.path().join("oversized"), true);
+    let mut tracker =
+        TurnFileChangeTracker::new(repo.clone(), 10, 26, root.path().join("home"), None);
+    assert!(tracker.start());
+    write(repo.join("huge.txt"), "x".repeat(9 * 1024 * 1024));
+    assert_eq!(summary_changes(&tracker.finalize())["status"], "error");
 }
 
 #[test]

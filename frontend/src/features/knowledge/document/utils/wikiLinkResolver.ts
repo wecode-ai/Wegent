@@ -92,7 +92,8 @@ export async function resolveWikiLink(
         currentNamespace,
         currentKbName,
         currentIsOrganization,
-        docPath || undefined
+        docPath || undefined,
+        { knowledgeBaseId: currentKbId }
       )
     }
 
@@ -129,7 +130,8 @@ export async function resolveWikiLink(
         currentNamespace,
         currentKbName,
         currentIsOrganization,
-        docPath || undefined
+        docPath || undefined,
+        { knowledgeBaseId: currentKbId }
       )
     }
 
@@ -140,5 +142,7 @@ export async function resolveWikiLink(
     return buildKbUrl(targetNamespace, targetKbName, false, docPath || undefined)
   }
   // Resolved path escaped the virtual root entirely - treat as same KB fallback
-  return buildKbUrl(currentNamespace, currentKbName, currentIsOrganization)
+  return buildKbUrl(currentNamespace, currentKbName, currentIsOrganization, undefined, {
+    knowledgeBaseId: currentKbId,
+  })
 }

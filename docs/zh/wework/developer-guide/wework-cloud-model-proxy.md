@@ -50,7 +50,7 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 | 值              | 行为                                                                                                                                                                |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto` 或未配置 | 保持现有按协议适配行为；Responses 的原生工具能力仍可用已有开关单独设置。                                                                                            |
+| `auto` 或未配置 | 默认将 custom、namespace 和 `tool_search` 转换为普通 function 工具；原生能力须通过已有开关显式开启，不根据厂商、模型名或 Responses 协议推断。                       |
 | `standard`      | 使用标准 function 工具格式，转换 `tool_search`、namespace 和 custom tools，并恢复返回给 Codex 的工具身份。适用于不支持 Codex 原生工具类型的 Kimi Responses 等服务。 |
 | `passthrough`   | 仅替换路由所需的模型 ID 和鉴权信息；其余请求业务字段原样保留，响应流也不做协议改写。仅适用于 OpenAI Responses 上游。                                                |
 
@@ -81,6 +81,29 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 `standard` 模式只向上游提供客户端可执行的 function tools，不提供 `web_search`、`image_generation` 等服务端内置工具。若请求通过 `tool_choice` 强制选择服务端工具，代理返回 HTTP 400；`auto` 和 `passthrough` 继续保留这些工具。
 
+#### 通用 Responses 工具兼容
+
+所有模型流共用 executor 的 SSE 分帧和数据解析模块，包括 Responses 工具桥接、普通 Responses、透传检查、Chat Completions、Anthropic Messages、工具历史记录和 Harness 适配器。解析按流中的先后顺序处理 LF、CRLF 和 CR 边界，跨块 CRLF 仍作为一个换行；拼接同一事件的全部 `data:` 行，并在网络块之间保留未完整接收的 UTF-8 字符。Responses 的工具分发和终态识别以 JSON `type` 为准，不依赖可选的 SSE `event:` 字段；重写事件时替换全部旧数据行，同时保留事件元数据。透传检查和历史记录不会修改转发的数据块。
+
+`model-sse-parsing` 桌面 E2E 复用真实 Electron、executor 和 Codex，仅模拟模型服务，覆盖 Responses function 桥接、原生 Responses、Chat Completions 和 Anthropic Messages。场景发送多行 JSON、混合换行、跨块中文和误导性事件头，要求真实 Code Mode 工具写入文件、读取文件，并将成功结果传入下一轮模型历史。Responses 工具响应在收到真实工具结果前保持 HTTP 流开启，验证完整 CR 终止帧无需等待 EOF 就能触发工具执行。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
+
+本机模型接口、云端模型、分身和配置的 Codex provider 使用相同默认策略：`tool_profile: "function"`，原生 `tool_search` 和 namespace 默认关闭。没有 profile 或工具能力字段的已有配置同样生效，无需重建模型。显式 `tool_profile: "custom"` 保留原生 custom 工具；本机 `codex_tool_compatibility: "native"` 或云端单项能力开关开启原生 namespace 和工具搜索。云端 `codex_request_mode: "passthrough"` 保留完整原生请求，`standard` 始终转换为 function 工具。
+
+`tool_profile: "function"` 同样适用于原生 namespace 内的 custom 工具。开启 `native_namespace_tools` 时，代理保留 namespace 及其描述，将内部的 `exec` 等 custom 工具转换为带字符串 `input` 参数的 function 工具；历史调用、工具结果和强制工具选择使用同一协议。关闭原生 namespace 时，代理展开 namespace，并为其中的 custom 工具保留相同的输入包装。返回给 Codex 的 SSE 恢复原始工具名、namespace 和原始输入，避免同名工具串线。
+
+namespace 内的内置工具类型会返回请求校验错误，避免错误定义导致代理崩溃；省略类型的既有 function 定义仍按原有规则转换。
+
+`responses-tool-compatibility` 桌面 E2E 使用真实 Electron、Backend、executor 和 Codex，只模拟模型服务。模拟服务拒绝未转换的 custom `exec`，校验 function 参数，并要求本机和云端模型真实执行命令、重载后读取文件以及保留工具历史，同时验证显式原生配置。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
+
+#### 旧 DeepSeek 配置
+
+旧配置已保存 `tool_profile: "custom"` 时，仅更改默认值不能修复 `exec` 被拒绝的问题。
+直接调用 `api.deepseek.com` Responses 且模式为 `auto` 时，仍遵循其实际工具能力：
+保留原生 `apply_patch`，将其他 custom 工具、namespace 和客户端工具搜索转换为可逆
+function 协议。没有旧 profile 的配置使用上述通用 function 默认策略。
+规则按实际端点匹配，不猜测模型名称，也不失败后重试。显式 `standard` 和 `passthrough`
+模式仍各自优先；其他网关使用通用策略。
+
 #### Kimi K3 Chat Completions 兼容
 
 云端 Model CRD 配置为 OpenAI Chat Completions，且 provider 模型名称包含不区分大小写的 `kimi-k3`（例如 `moonshot-kimi-k3`）时，如果 Model CRD 未配置 `codex_catalog_model_id` 或 `codexCatalogModelId`，Wework 会自动选择上下文窗口为 1,048,576 tokens 的 `wework-kimi-k3` Codex 模型目录。显式配置的模型目录始终优先于 Kimi K3 自动选择。Codex 内部仍使用 Responses 协议，executor 在边界将请求转换为 Chat Completions，并为 Kimi K3 进行以下兼容处理：
@@ -94,13 +117,23 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 云端或远端设备执行任务时，模型选择器同时展示当前桌面端配置的本地模型。首次使用或配置变化后，Wework 会要求用户确认，将自定义 Codex 模型目录同步到目标 Executor，并在设备空闲时重启其 Codex app-server、校验模型已加载，然后再发送任务。Codex 内置模型和云端 Model CRD 仍可直接用于本机或云端执行。
 
-通用云端模型可以复用 Wework 的 GPT 5.6 兼容目录作为能力基线，并由云端模型元数据覆盖上下文窗口。兼容目录不得通过 `max_context_window` 固定限制云端模型的有效窗口；该字段保持为空，由运行时采用云端下发的窗口配置。Codex 官方 GPT 5.6 目录仍保留自身明确的最大窗口限制。
+通用云端模型使用 `wework-gpt-6.1-sol` 共享兼容目录作为能力基线，沿用原来 `wework-gpt-5.6-sol` 的目录获取与云端模型调用链路，无需登录官方账号。共享目录保留原有的协议能力，不强制添加推理档位，不启用官方专用的 code mode 或 Responses Lite。云端模型元数据可以覆盖上下文窗口；兼容目录的 `max_context_window` 保持为空，不固定限制云端模型的有效窗口。Codex 官方模型仍保留各自的能力和窗口限制。
 
 ### 模型限流重试
 
 executor 的 Codex compat proxy 在上游尚未开始返回响应流、且模型服务返回 HTTP `429 Too Many Requests` 时，会自动重发同一模型请求。默认最多重试 5 次，退避等待依次为 1 秒、5 秒、10 秒、30 秒和 60 秒。
 
 如果上游返回标准 `Retry-After` 响应头，proxy 会优先采用该等待时间，并将单次等待限制在 60 秒以内。非 429 响应不会触发这项策略；重试耗尽后，proxy 会把最后一次 429 状态和错误正文返回给 Codex。已经开始输出的流不会通过这项机制重放，避免重复生成或重复执行工具。
+
+### 重试状态展示
+
+收到 Codex 或模型代理的重试事件后，会话顶部立即显示“正在自动重试…”，
+不再只显示思考状态。限流等待保留“模型限流，等待自动重试…”提示。
+恢复输出或任务结束后，重试状态自动清除。持续中断时仍会展示详细的重连提示，
+ChatGPT 模型同时提供代理设置入口。
+
+该状态以运行时事件为依据；Codex 内部未上报的请求层重试或被隐藏的首次
+WebSocket 重试，暂时无法由界面识别。
 
 ### Codex 直连模型过载恢复
 
@@ -111,9 +144,11 @@ app-server 报告结构化 `serverOverloaded` 错误后，executor 会等待该�
 
 恢复使用原生 `turn/start` 的空 `input`，继续已保存的会话历史，不重发原任务、
 附件、用户消息 ID 或已合并的 additional context。已经完成的工具结果仍留在
-历史中。等待期间任务保持运行并显示重连状态；用户取消会立即终止等待，恢复
-耗尽后才向用户返回最终失败。额度不足、认证错误、上下文超限、子智能体失败，
-以及 Codex 自己正在重试的错误不会触发这项恢复。
+历史中。等待期间任务保持运行并显示重连状态；在重试请求发出前，executor 会
+发送恢复事件，让已打开的界面立即清除该轮次的终止错误状态，而不是继续显示
+过期的失败卡片。用户取消会立即终止等待，恢复耗尽后才向用户返回最终失败。
+额度不足、认证错误、上下文超限、子智能体失败，以及 Codex 自己正在重试的
+错误不会触发这项恢复。
 
 executor 持久化已进入恢复的失败轮次 ID。读取原生或缓存历史时，仅清除这些
 轮次的终止错误状态，保留用户消息和工具输出，避免重新打开任务后出现已处理
@@ -150,7 +185,7 @@ Codex 向 OpenAI Responses API 发送工具时，可以使用 `type: "namespace"
 
 Wework 不应在新会话的第一次模型请求中注入所有 App 和浏览器子工具的完整 schema。Codex 启动配置只启用 Remote Apps 和 `tool_search`，由模型先搜索需要的 namespace，再把搜索结果中的子工具加入后续模型请求：
 
-- 原生支持 Codex `tool_search` 和 namespace tools 的 Responses 模型直接使用原协议，executor 不重复转换。
+- 显式启用原生 Codex `tool_search` 和 namespace tools 的 Responses 模型使用原协议，executor 不重复转换。
 - OpenAI Chat Completions、Anthropic Messages 等不支持 namespace tools 的模型由 executor 在协议边界展开本次 `tool_search` 已命中的 namespace。未命中的 App 工具不能出现在请求中。
 - executor 必须同时转换当前工具列表、历史 tool call、tool result 和显式 `tool_choice`，并在返回 Codex 前恢复原 namespace 身份。
 - 普通消息只携带精简的 `tool_search` 入口；新增 App 或浏览器工具时，不得让首次请求大小随全部工具 schema 线性增长。

@@ -8,7 +8,7 @@ const accountSources = (environment: RunnerEnvironment) =>
   [...new Set(environment.models.map(model => model.account_label).filter(Boolean))].join(', ')
 
 const selectClass =
-  'wework-native-select h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:ring-2 focus:ring-focus/20 disabled:opacity-50 md:h-9'
+  'wework-native-select h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:ring-2 keyboard:focus:ring-focus/20 disabled:opacity-50 md:h-9'
 
 export function AgentEnvironmentFields({
   routing,
@@ -162,9 +162,13 @@ export function AgentModelFields({
             <option value="user_select">{t('workbench.runner_user_select')}</option>
           )}
           {routing.model && !routing.modelAvailable && (
-            <option value={runnerModelKey(routing.model)} disabled>
+            <option
+              value={runnerModelKey(routing.model)}
+              disabled={!routing.persistedModelSupported}
+            >
               {routing.model.model_id}
-              {!routing.loading &&
+              {!routing.persistedModelSupported &&
+                !routing.loading &&
                 !routing.nativeLoading &&
                 ` · ${t('workbench.runner_model_unavailable')}`}
             </option>
@@ -229,6 +233,7 @@ export function AgentModelFields({
         routing.modelMode === 'fixed' &&
         routing.model &&
         !routing.modelAvailable &&
+        !routing.persistedModelSupported &&
         !(routing.nativeLoading && routing.model.source !== 'cloud') &&
         !routing.loading && (
           <p role="alert" className="text-xs text-destructive">

@@ -1,0 +1,17 @@
+[package]
+name = "wegent-celery"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Celery protocol-v2 publication over Redis"
+
+[dependencies]
+base64 = "0.23.1"
+brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+getrandom = "0.2"
+md-5 = "0.10"
+serde_json = { version = "1", features = ["preserve_order"] }
+tracing = "0.1"
+wegent-python-compat = { path = "../python-compat" }

@@ -5,6 +5,7 @@ import {
   getModelDisplayLabel,
   isSameModelSelection,
 } from "./model-ui";
+import { reasoningOption } from "./model-reasoning";
 import type { ModelOptions, UnifiedModel } from "@wegent/chat-core/models";
 import { ReasoningSlider } from "./ReasoningSlider";
 import {
@@ -65,9 +66,13 @@ export function ModelPowerSlider({
         const targetReasoningControl = getControlsForModel(setting.model).find(
           (candidate) => candidate.id === "reasoning",
         );
-        const targetReasoningOption = targetReasoningControl?.options.find(
-          (option) => option.value === setting.reasoningEffort,
-        );
+        const targetReasoningOption =
+          targetReasoningControl?.options.find(
+            (option) => option.value === setting.reasoningEffort,
+          ) ??
+          (setting.reasoningEffort
+            ? reasoningOption(setting.reasoningEffort)
+            : undefined);
         const reasoningLabel = targetReasoningOption
           ? targetReasoningOption.labelKey
             ? resolveLabel(
@@ -85,6 +90,7 @@ export function ModelPowerSlider({
             .filter(Boolean)
             .join(" "),
           dataTestId: `model-power-setting-${setting.id.replace(/[^a-z0-9]+/giu, "-")}`,
+          ultra: setting.reasoningEffort === "ultra",
         };
       }),
     [powerSettings, resolveLabel],

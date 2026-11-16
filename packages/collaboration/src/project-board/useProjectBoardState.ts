@@ -19,6 +19,8 @@ export type ProjectBoardGroupBy = "status" | "priority" | "assignee" | "tag";
 export interface ProjectBoardStateOptions {
   defaultGroupBy: ProjectBoardGroupBy;
   defaultSort?: ProjectBoardSort;
+  defaultColumnSorts?: ProjectBoardColumnSorts;
+  viewScope?: string;
   focusStorageKey: string | null;
   personalGroupStorageKey: string | null;
   personalSortStorageKey?: string | null;
@@ -27,6 +29,8 @@ export interface ProjectBoardStateOptions {
 export function useProjectBoardState({
   defaultGroupBy,
   defaultSort = defaultProjectBoardSort,
+  defaultColumnSorts,
+  viewScope,
   focusStorageKey,
   personalGroupStorageKey,
   personalSortStorageKey = null,
@@ -58,7 +62,7 @@ export function useProjectBoardState({
     setGroupFilter("");
     setQuery("");
     setQuickCreateStatus(null);
-  }, [defaultGroupBy, personalGroupStorageKey]);
+  }, [defaultGroupBy, personalGroupStorageKey, viewScope]);
 
   useEffect(() => {
     const refresh = () =>
@@ -89,8 +93,10 @@ export function useProjectBoardState({
 
   const getColumnSort = useCallback(
     (columnKey: string): ProjectBoardSort =>
-      columnSorts[JSON.stringify([groupBy, columnKey])] ?? defaultSort,
-    [columnSorts, defaultSort, groupBy],
+      columnSorts[JSON.stringify([groupBy, columnKey])] ??
+      defaultColumnSorts?.[columnKey] ??
+      defaultSort,
+    [columnSorts, defaultColumnSorts, defaultSort, groupBy],
   );
 
   const selectColumnSort = useCallback(

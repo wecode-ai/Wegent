@@ -12,6 +12,8 @@ export function localCodexModelSource(model: {
   providerId: string
   providerName: string
   providerType: CodexModelProviderType
+  defaultReasoningEffort?: string | null
+  supportedReasoningEfforts?: string[]
 }) {
   return {
     provider: 'local',
@@ -21,11 +23,18 @@ export function localCodexModelSource(model: {
       codexProviderName: model.providerName,
       codexProviderType: model.providerType,
       ui: {
+        controls: ['speed'],
         family:
           model.providerType === 'provider'
             ? `codex-provider:${encodeURIComponent(model.providerId.toLowerCase())}`
             : 'codex-official',
         ...(model.providerType === 'provider' ? { familyLabel: model.providerName } : {}),
+        ...(model.defaultReasoningEffort
+          ? { defaultReasoningEffort: model.defaultReasoningEffort }
+          : {}),
+        ...(model.supportedReasoningEfforts
+          ? { reasoningEfforts: model.supportedReasoningEfforts }
+          : {}),
       },
     },
   } satisfies Pick<UnifiedModel, 'provider' | 'config'>
@@ -76,9 +85,6 @@ export function localCodexModel(
       ui: {
         ...source.config.ui,
         modelLabel,
-        reasoningEfforts: model.supportedReasoningEfforts,
-        defaultReasoningEffort: model.defaultReasoningEffort,
-        controls: ['speed'],
       },
     },
     runtime: {

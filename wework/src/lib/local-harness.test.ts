@@ -1,10 +1,11 @@
+// @vitest-environment node
+
 import { describe, expect, test } from 'vitest'
 import {
   buildLocalHarnessLaunchArgs,
   isMeaningfulLocalHarnessTitle,
   localHarnessPluginRootFromSkillPath,
   normalizeLocalHarnessPreferences,
-  parseLocalHarnessArgs,
   parseLocalHarnessEnv,
 } from './local-harness'
 
@@ -137,21 +138,6 @@ describe('local harness settings', () => {
       '/Users/me/.agents'
     )
     expect(localHarnessPluginRootFromSkillPath('/Users/me/review/SKILL.md')).toBeNull()
-  })
-
-  test('parses arguments and environment without shell evaluation', () => {
-    expect(parseLocalHarnessArgs("--model\n'quoted value'\n\n--verbose")).toEqual([
-      '--model',
-      "'quoted value'",
-      '--verbose',
-    ])
-    expect(parseLocalHarnessEnv('API_URL=https://example.test?a=b\nEMPTY=')).toEqual({
-      env: {
-        API_URL: 'https://example.test?a=b',
-        EMPTY: '',
-      },
-      error: null,
-    })
   })
 
   test('reports the invalid environment line', () => {

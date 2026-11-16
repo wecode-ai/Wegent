@@ -9,12 +9,14 @@ use crate::{protocol::ExecutionRequest, runtime_work::runtime_task_title};
 
 pub(super) const TASK_SCOPED_ENV_KEYS: &[&str] = &[
     "AUTH_TOKEN",
+    "WEGENT_BACKEND_TASK_ID",
     "WEGENT_EXECUTOR_BINARY",
     "WEGENT_EXECUTOR_HOME",
     "WEGENT_PLUGIN_AUTH_BROKER",
     "WEGENT_PLUGIN_AUTH_BROKER_TOKEN",
     "WEGENT_PLUGIN_AUTH_MODE",
     "WEGENT_RUNTIME_AUTH_TOKEN",
+    "WEGENT_RUNTIME_BACKEND_URL",
     "WEGENT_SKILL_IDENTITY_TOKEN",
     "WEGENT_SKILL_USER_NAME",
     "WEGENT_TASK_ID",
@@ -22,9 +24,19 @@ pub(super) const TASK_SCOPED_ENV_KEYS: &[&str] = &[
     "WEWORK_PARENT_TITLE",
 ];
 
+pub(super) fn is_backend_task(request: &ExecutionRequest) -> bool {
+    request.task_id.trim().parse::<i64>().is_ok_and(|id| id > 0)
+}
+
 pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.extend(crate::plugin_account_auth::broker::environment());
+    if is_backend_task(request) {
+        env.insert(
+            "WEGENT_BACKEND_TASK_ID".to_owned(),
+            request.task_id.trim().to_owned(),
+        );
+    }
     let task_id = request
         .extra
         .get("runtimeLocalTaskId")
@@ -42,12 +54,7 @@ pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, 
 
     if !task_id.is_empty() {
         env.insert("WEGENT_TASK_ID".to_owned(), task_id.to_owned());
-        let workspace_root = std::env::var("WORKSPACE_ROOT")
-            .ok()
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/workspace"));
+        let workspace_root = crate::workspace_paths::workspace_root();
         let task_workspace = request
             .cwd()
             .map(PathBuf::from)
@@ -76,6 +83,9 @@ pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, 
             runtime_auth_token.to_owned(),
         );
     }
+    if let Some(backend_url) = super::request_backend_url(request) {
+        env.insert("WEGENT_RUNTIME_BACKEND_URL".to_owned(), backend_url);
+    }
     if let Some(token) = non_empty(request.skill_identity_token.as_deref()) {
         env.insert("WEGENT_SKILL_IDENTITY_TOKEN".to_owned(), token.to_owned());
     }
@@ -95,41 +105,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn uses_materialized_workspace_path_for_task_workspace() {
-        let mut request = ExecutionRequest {
-            task_id: "task-1".to_owned(),
-            project_workspace_path: Some("/runtime/workspaces/task-1".to_owned()),
-            ..ExecutionRequest::default()
-        };
-        request.extra.insert(
-            "runtimeTaskTitle".to_owned(),
-            serde_json::json!("Identify local development instances"),
-        );
-
-        let env = task_identity_env(&request);
-
-        assert_eq!(env.get("WEGENT_TASK_ID"), Some(&"task-1".to_owned()));
-        assert_eq!(
-            env.get("WEGENT_TASK_WORKSPACE"),
-            Some(&"/runtime/workspaces/task-1".to_owned())
-        );
-        assert_eq!(
-            env.get("WEWORK_PARENT_TITLE"),
-            Some(&"Identify local development instances".to_owned())
-        );
-        assert!(env
-            .keys()
-            .all(|key| TASK_SCOPED_ENV_KEYS.contains(&key.as_str())));
-    }
-
-    #[test]
     fn runtime_local_task_id_stabilizes_thread_identity() {
         let _lock = crate::test_env::lock();
         let previous_workspace_root = std::env::var_os("WORKSPACE_ROOT");
         // SAFETY: the shared test environment lock serializes environment mutation.
         unsafe { std::env::set_var("WORKSPACE_ROOT", "/workspace") };
         let mut request = ExecutionRequest {
-            task_id: "execution-1".to_owned(),
+            task_id: "123".to_owned(),
             ..ExecutionRequest::default()
         };
         request.extra.insert(
@@ -150,6 +132,8 @@ mod tests {
             env.get("WEGENT_TASK_ID"),
             Some(&"conversation-1".to_owned())
         );
+        assert_eq!(env.get("WEGENT_BACKEND_TASK_ID"), Some(&"123".to_owned()));
+        assert!(TASK_SCOPED_ENV_KEYS.contains(&"WEGENT_BACKEND_TASK_ID"));
         assert_eq!(
             env.get("WEGENT_TASK_WORKSPACE"),
             Some(
@@ -159,5 +143,17 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn runtime_only_task_does_not_claim_a_backend_identity() {
+        let request = ExecutionRequest {
+            task_id: "runtime-928710216".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let env = task_identity_env(&request);
+
+        assert_eq!(env.get("WEGENT_TASK_ID"), Some(&request.task_id));
+        assert!(!env.contains_key("WEGENT_BACKEND_TASK_ID"));
     }
 }

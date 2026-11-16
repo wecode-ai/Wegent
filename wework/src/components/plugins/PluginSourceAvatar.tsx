@@ -8,6 +8,7 @@ interface PluginSourceAvatarProps {
   distribution?: PluginDistribution
   imageTestId?: string
   logoUrl: string
+  loading?: 'eager' | 'lazy'
   name: string
   testId?: string
   /** When true (or logo is missing/failed), show the first character of `name`. */
@@ -20,6 +21,7 @@ export function PluginSourceAvatar({
   distribution,
   imageTestId,
   logoUrl,
+  loading,
   name,
   testId,
   useInitial = false,
@@ -49,6 +51,8 @@ export function PluginSourceAvatar({
       ) : (
         <img
           src={trimmedLogoUrl}
+          loading={loading}
+          decoding={loading === 'lazy' ? 'async' : undefined}
           alt=""
           data-testid={imageTestId}
           onError={() => setFailedLogoUrl(trimmedLogoUrl)}

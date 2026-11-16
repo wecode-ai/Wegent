@@ -1,0 +1,18 @@
+[package]
+name = "wegent-socket-events"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+license = "Apache-2.0"
+description = "Socket.IO Redis event publication and request acknowledgement lifecycle"
+
+[dependencies]
+anyhow = "1"
+brz-redis = { version = "=0.0.18", features = ["metrics", "slow-log"] }
+bytes = "1"
+getrandom = "0.2"
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+wegent-backend-config = { path = "../config" }
+wegent-python-compat = { path = "../python-compat" }

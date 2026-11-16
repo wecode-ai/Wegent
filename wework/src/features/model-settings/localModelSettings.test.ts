@@ -27,7 +27,7 @@ describe('localModelSettings', () => {
     saveLocalModelConfig({ ...input, maxOutputTokens: '' })
     expect(listLocalModelConfigs()[0].maxOutputTokens).toBeUndefined()
   })
-  test('defaults tool profiles by API format and rejects incompatible combinations', () => {
+  test('defaults to function tools and rejects incompatible explicit native settings', () => {
     const responses = saveLocalModelConfig({
       modelId: 'responses-model',
       baseUrl: 'https://responses.example/v1',
@@ -39,8 +39,8 @@ describe('localModelSettings', () => {
       apiFormat: 'openai-chat-completions',
     })
 
-    expect(responses.toolProfile).toBe('custom')
-    expect(responses.codexToolCompatibility).toBe('native')
+    expect(responses.toolProfile).toBe('function')
+    expect(responses.codexToolCompatibility).toBe('standard')
     expect(chat.toolProfile).toBe('function')
     expect(chat.codexToolCompatibility).toBe('standard')
     expect(() =>
@@ -70,6 +70,21 @@ describe('localModelSettings', () => {
 
     expect(model.codexToolCompatibility).toBe('standard')
     expect(listLocalModelConfigs()[0].codexToolCompatibility).toBe('standard')
+  })
+
+  test('preserves explicitly enabled native Responses capabilities for any provider', () => {
+    const model = saveLocalModelConfig({
+      modelId: 'my-native-model',
+      baseUrl: 'https://native.example/v1',
+      apiFormat: 'openai-responses',
+      toolProfile: 'custom',
+      codexToolCompatibility: 'native',
+    })
+    expect(listLocalModelConfigs()[0]).toMatchObject({
+      id: model.id,
+      toolProfile: 'custom',
+      codexToolCompatibility: 'native',
+    })
   })
 
   beforeEach(() => {
@@ -433,6 +448,68 @@ describe('localModelSettings', () => {
     ])
   })
 
+  test('prefers the stored catalog override during normalization', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'stored-catalog',
+          providerProfileId: 'deepseek',
+          displayName: 'DeepSeek V4 Flash',
+          modelId: 'deepseek-v4-flash',
+          baseUrl: 'https://api.deepseek.com',
+          apiFormat: 'openai-responses',
+          toolProfile: 'custom',
+          requestPath: '/responses',
+          codexCatalogModelId: 'operator-selected-catalog',
+          webSearchMode: 'disabled',
+          imageGenerationEnabled: false,
+          enabled: true,
+          updatedAt: '2026-07-30T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()).toEqual([
+      expect.objectContaining({
+        id: 'stored-catalog',
+        codexCatalogModelId: 'operator-selected-catalog',
+        toolProfile: 'custom',
+      }),
+    ])
+  })
+
+  test('uses the resolved DeepSeek V4.1 catalog context window', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'existing-deepseek-v41',
+          providerProfileId: 'deepseek',
+          displayName: 'DeepSeek V4.1 Flash',
+          modelId: 'deepseek-v4.1-flash',
+          baseUrl: 'https://api.deepseek.com',
+          apiFormat: 'openai-responses',
+          toolProfile: 'custom',
+          requestPath: '/responses',
+          contextWindow: 1_048_576,
+          webSearchMode: 'disabled',
+          imageGenerationEnabled: false,
+          enabled: true,
+          updatedAt: '2026-07-30T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()).toEqual([
+      expect.objectContaining({
+        id: 'existing-deepseek-v41',
+        contextWindow: 1_000_000,
+        codexCatalogModelId: 'wework-deepseek-v4-1-flash',
+      }),
+    ])
+  })
+
   test('migrates managed DeepSeek Flash configs to the native Responses API', () => {
     localStorage.setItem(
       'wework.localModelSettings.v1',
@@ -459,7 +536,7 @@ describe('localModelSettings', () => {
       expect.objectContaining({
         id: 'existing-deepseek',
         apiFormat: 'openai-responses',
-        toolProfile: 'custom',
+        toolProfile: 'function',
         requestPath: '/responses',
         contextWindow: 1_048_576,
         codexCatalogModelId: 'wework-deepseek-v4-flash',

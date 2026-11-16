@@ -7,6 +7,7 @@ import type { ModelSelectionConfig } from "@wegent/chat-core/runtime-stream-type
 import type {
   CollaborationAgent,
   CollaborationAssignment,
+  CollaborationAssignmentReceipt,
   CollaborationAttachment,
   CollaborationBoardSnapshot,
   CollaborationComment,
@@ -49,6 +50,7 @@ export interface WorkspaceProjectCreateInput {
 
 export interface WorkspaceProjectUpdateInput {
   version: number;
+  tagChange?: { source: string; target: string | null };
   name?: string;
   description?: string;
   tags?: string[];
@@ -58,6 +60,7 @@ export interface WorkspaceProjectUpdateInput {
   defaultIssueSecurity?: "open" | "related";
   providerConfig?: Record<string, unknown>;
   boardConfig?: CollaborationProject["board_config"];
+  boardViews?: CollaborationProject["board_views"];
   cardDisplay?: CollaborationProject["card_display"];
   pullRequestAutomation?: Record<string, unknown>;
   workflowDefinition?: Record<string, unknown>;
@@ -80,10 +83,16 @@ export interface WorkspaceProjectUpdateInput {
 }
 
 export interface WorkspaceMyWorkItem extends CollaborationIssue {
+  attention_order?: [number, number, string] | null;
   project_key: string;
   project_name: string;
   has_active_task: boolean;
   is_unread?: boolean;
+  task_bindings?: WorkspaceTaskBinding[];
+  assignment_context?: Pick<
+    CollaborationAssignment,
+    "body" | "created_by_user_name" | "created_at"
+  > | null;
 }
 
 export interface WorkspaceMessageImportInput {
@@ -109,6 +118,7 @@ export interface WorkspaceIssuePageInput {
 }
 
 export interface WorkspaceTaskBinding {
+  standInPending?: boolean | null;
   id: string;
   projectId: string;
   issueId: string | null;
@@ -130,7 +140,7 @@ export interface WorkspaceTaskBinding {
   dispatchId?: string | null;
   dispatchRoundId?: string | null;
   assignmentId?: string | null;
-  executionId?: string | null
+  executionId?: string | null;
   linkedAt: string;
 }
 
@@ -139,6 +149,9 @@ export interface WorkspaceBoardSnapshot extends CollaborationBoardSnapshot {
 }
 
 export interface WorkspaceIssueCreateInput {
+  requestId?: string;
+  personalTask?: boolean;
+  milestoneId?: string | null;
   title: string;
   description?: string;
   status?: string;
@@ -156,6 +169,7 @@ export interface WorkspaceIssueCreateInput {
 }
 
 export interface WorkspaceIssueUpdateInput {
+  milestoneId?: string | null;
   position?: { beforeItemId: string | null };
   version: number;
   securityLevel?: "open" | "related";
@@ -283,6 +297,10 @@ export interface WorkspaceDeliveryAsset {
 }
 
 export interface WorkspaceDelivery {
+  title?: string;
+  version?: number;
+  sourceTaskSnapshot?: Record<string, unknown> | null;
+  createdByUserId?: number | null;
   id: string;
   issueId: string;
   status: "draft" | "delivered";
@@ -321,6 +339,7 @@ export interface WorkspaceAutomationRule {
   eventType: import("../automation/types").AutomationEventType | null;
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
+  workdayOnly?: boolean;
   timezone: string;
   runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
@@ -343,6 +362,7 @@ export interface WorkspaceAutomationInput {
   eventType: import("../automation/types").AutomationEventType | null;
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
+  workdayOnly?: boolean;
   timezone: string;
   runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
@@ -478,6 +498,14 @@ export interface SharedWorkspaceProjectsApi {
 
 export interface SharedWorkspaceMyWorkApi {
   list(): Promise<WorkspaceMyWorkItem[]>;
+  page?(input?: {
+    cursor?: string;
+    limit?: number;
+    scope?: "assigned" | "created" | "participating";
+    includeCompleted?: boolean;
+    order?: "recent" | "attention" | "activity" | "assignment" | "priority";
+    viewerIds?: readonly (string | number)[];
+  }): Promise<WorkspacePage<WorkspaceMyWorkItem>>;
 }
 
 export interface SharedWorkspaceIssuesApi {
@@ -534,12 +562,17 @@ export interface SharedWorkspaceIssuesApi {
   markRead(
     issueId: string,
     activitySequence?: number,
+    contentRevision?: number,
   ): Promise<CollaborationIssue>;
 }
 
 export interface SharedWorkspaceCommentsApi {
   list(issueId: string): Promise<CollaborationComment[]>;
-  create(issueId: string, body: string): Promise<CollaborationComment>;
+  create(
+    issueId: string,
+    body: string,
+    options?: { clientMessageId?: string },
+  ): Promise<CollaborationComment>;
 }
 
 export interface SharedWorkspaceAssignmentsApi {
@@ -586,6 +619,11 @@ export interface SharedCollaborationWorkspacesApi {
     input: WorkspaceMemberUpdateInput,
   ): Promise<CollaborationWorkspaceMember>;
   removeMember(workspaceId: string, userId: number): Promise<void>;
+  createTemplateAgent?(
+    workspaceId: string,
+    agent: import("../templates/types").TemplateAgent,
+    routing: import("../templates/types").TemplateAgentRouting,
+  ): Promise<WorkspaceProjectAgent>;
   listAgents(
     workspaceId: string,
     options?: { forceRefresh?: boolean },
@@ -633,6 +671,7 @@ export interface SharedCollaborationResourcesApi {
     cloud?(): Promise<CollaborationExecutionEnvironment[]>;
   };
   removeAgent?(agent: CollaborationOwnedAgent): Promise<void>;
+  removeDevice?(device: CollaborationExecutionEnvironment): Promise<void>;
 }
 
 /**
@@ -669,6 +708,11 @@ export interface SharedWorkspaceGitRepositoriesApi {
   ): Promise<WorkspaceGitBranch[]>;
 }
 
+export interface IssueAttachmentContext {
+  projectId: string;
+  issueId: string;
+}
+
 export interface SharedWorkspaceAttachmentsApi {
   list(issueId: string): Promise<CollaborationAttachment[]>;
   listProjectTaskAttachments(
@@ -679,10 +723,17 @@ export interface SharedWorkspaceAttachmentsApi {
     issueId: string,
     contextIds: number[],
   ): Promise<CollaborationAttachment[]>;
-  access(attachmentId: string): Promise<WorkspaceBinaryAccess>;
-  read(attachmentId: string): Promise<Blob>;
-  download?(attachmentId: string, filename: string): Promise<void>;
-  remove(attachmentId: string): Promise<void>;
+  access(
+    attachmentId: string,
+    context?: IssueAttachmentContext,
+  ): Promise<WorkspaceBinaryAccess>;
+  read(attachmentId: string, context?: IssueAttachmentContext): Promise<Blob>;
+  download?(
+    attachmentId: string,
+    filename: string,
+    context?: IssueAttachmentContext,
+  ): Promise<void>;
+  remove(attachmentId: string, context?: IssueAttachmentContext): Promise<void>;
 }
 
 export interface SharedWorkspaceCollaboratorsApi {
@@ -750,6 +801,7 @@ export interface SharedWorkspaceDeliveriesApi {
   create(
     issueId: string,
     input: {
+      title?: string;
       markdown: string;
       chat?: Record<string, unknown>;
       sourceTask?: WorkspaceRuntimeTaskAddress;
@@ -765,6 +817,19 @@ export interface SharedWorkspaceDeliveriesApi {
     input: { fulfillments: Array<Record<string, unknown>> },
   ): Promise<WorkspaceDelivery>;
   discardDraft(deliveryId: string): Promise<void>;
+  update?(
+    deliveryId: string,
+    input: WorkspaceDeliveryUpdate,
+  ): Promise<WorkspaceDelivery>;
+}
+
+export interface WorkspaceDeliveryUpdate {
+  title: string;
+  version: number;
+  markdown: string;
+  chat: Record<string, unknown> | null;
+  retained_asset_ids: string[];
+  files: Array<{ relative_path: string; file: File }>;
 }
 
 export interface SharedWorkspaceExecutionsApi {
@@ -940,7 +1005,6 @@ export interface WorkspaceStandInSettings {
   id?: string;
   name?: string;
   tags?: string[];
-  agentId?: string | null;
   enabled: boolean;
   prompt: string;
   executionDeviceId: string;
@@ -948,6 +1012,7 @@ export interface WorkspaceStandInSettings {
 }
 
 export interface SharedWorkspaceApi {
+  milestones?: import("../milestones/types").MilestonesApi;
   standIn?: {
     run?(
       projectId: string,
@@ -978,6 +1043,14 @@ export interface SharedWorkspaceApi {
   issues: SharedWorkspaceIssuesApi;
   comments: SharedWorkspaceCommentsApi;
   assignments?: SharedWorkspaceAssignmentsApi;
+  assignmentReceipts?: {
+    list(issueId: string): Promise<CollaborationAssignmentReceipt[]>;
+    acknowledge(
+      issueId: string,
+      assignmentId: string,
+      userId: number,
+    ): Promise<unknown>;
+  };
   attachments: SharedWorkspaceAttachmentsApi;
   collaborators: SharedWorkspaceCollaboratorsApi;
   taskBindings: SharedWorkspaceTaskBindingsApi;

@@ -27,6 +27,7 @@ import type {
 } from '@/api/local/localDelivery'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
 import type { RuntimeBackgroundTerminalsApi } from '@/api/runtimeBackgroundTerminals'
+import type { RuntimeMcpAppsApi } from '@/api/mcpApps'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
@@ -84,7 +85,21 @@ export interface WorkspaceSessionApi {
 
 export type ProjectSpaceLocation = 'local' | 'cloud'
 export type DeliveryApi = ReturnType<typeof createDeliveryApi>
+export interface LocalProjectMigrationSnapshot {
+  version: number
+  fingerprint: string
+  archived: boolean
+  migration_target: string | null
+  migration_fingerprint: string | null
+}
 export type LocalProjectSpaceApi = DeliveryApi & {
+  readProjectMigrationSnapshot?(projectId: string): Promise<LocalProjectMigrationSnapshot>
+  archiveMigratedProject?(
+    projectId: string,
+    version: number,
+    fingerprint: string,
+    target: string
+  ): Promise<void>
   importLocalCodeProject?(input: {
     runtimeProjectKey: string
     name: string
@@ -155,7 +170,17 @@ export interface LocalDecisionRouterApi {
   unregister(token: string): Promise<void>
 }
 
+/** Local participation discovery, not cloud authorization or a global user alias. */
+export interface LocalParticipationIdentity {
+  readonly nativeOwnerUserId: 0
+  readonly currentUser: Readonly<Pick<User, 'id' | 'user_name'>>
+  readonly viewerUserIds: readonly number[]
+}
+
 export interface WorkbenchServices {
+  localParticipationIdentity?: LocalParticipationIdentity
+  issueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi
+  localIssueHumanRequestsApi?: import('@/api/issueHumanRequests').IssueHumanRequestsApi
   standInApi?: import('@/api/standIn').StandInExecutorApi
   /** Read the current healthy local IPC identity, independently of the device catalog. */
   getLocalRuntimeSidebarIdentity?: () => Promise<LocalRuntimeSidebarIdentity | null>
@@ -202,7 +227,10 @@ export interface WorkbenchServices {
   projectSpaceApis?: ProjectSpaceApis
   projectSpaceDetailServices?: ProjectSpaceDetailServiceMap
   imSessionApi?: ReturnType<typeof createImSessionApi>
-  runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi> & Partial<RuntimeBackgroundTerminalsApi>
+  runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi> &
+    Partial<RuntimeBackgroundTerminalsApi & RuntimeMcpAppsApi> & {
+      getRuntimeTask?: ExecutorClient['runtime']['getRuntimeTask']
+    }
   /** Backend-free execution ports for locally owned projects in a connected workbench. */
   localExecutionServices?: Pick<WorkbenchServices, 'runtimeWorkApi' | 'deviceApi'>
   composerCatalogApi?: Pick<ReturnType<typeof createRuntimeComposerApi>, 'readCatalog'>
@@ -231,7 +259,8 @@ export interface WorkbenchServices {
     resolveLaunch: (
       harnessId: LocalHarnessId,
       option: LocalHarnessModelOption | null,
-      scope?: string
+      scope?: string,
+      includeContext?: boolean
     ) => Promise<LocalHarnessModelLaunchConfig | null>
     unregisterProxy: (token: string) => Promise<void>
     unregisterContext: (token: string) => Promise<void>
@@ -354,6 +383,9 @@ export function createDefaultWorkbenchServices(
   const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
   return {
     ...cloudServices,
+    localParticipationIdentity: localServices.localParticipationIdentity,
+    localIssueHumanRequestsApi: localServices.localIssueHumanRequestsApi,
+    localProjectChatClient: localServices.localProjectChatClient,
     aitableApi: localServices.aitableApi,
     dwsApi: localServices.dwsApi,
     externalIssueApi: localServices.externalIssueApi,

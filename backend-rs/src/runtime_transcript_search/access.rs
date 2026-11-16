@@ -46,6 +46,7 @@ pub(super) async fn resolve(
     require_issue(state, caller, project_id, issue_id).await?;
     bound_target(
         &state.mysql,
+        i64::from(caller),
         project_id,
         issue_id,
         &request.device_id,
@@ -165,6 +166,22 @@ impl Execution {
             == Some("collaboration_group_dispatch")
     }
 
+    pub(super) fn require_reader(&self, user_id: i64) -> Result<(), FastApiError> {
+        let intent = self.intent();
+        let executor_type = intent
+            .get("runtime_selection")
+            .filter(|selection| selection.is_object())
+            .unwrap_or(&intent)
+            .get("executor_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        crate::runtime_work_transcript_access::require_execution_reader(
+            user_id,
+            self.executor_owner_user_id,
+            executor_type,
+        )
+    }
+
     fn origin(&self) -> Value {
         self.intent()
             .get("origin_context")
@@ -208,6 +225,7 @@ pub(super) struct Activity {
 
 pub(super) async fn bound_target<M: Mysql>(
     mysql: &M,
+    user_id: i64,
     project_id: &str,
     issue_id: &str,
     device: &str,
@@ -242,6 +260,9 @@ pub(super) async fn bound_target<M: Mysql>(
         .iter()
         .filter(|row| execution_matches(row, task, &aliases))
         .collect();
+    for execution in &executions {
+        execution.require_reader(user_id)?;
+    }
     let mut owners: BTreeSet<i64> = executions
         .iter()
         .map(|row| row.executor_owner_user_id)

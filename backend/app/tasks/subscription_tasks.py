@@ -34,6 +34,25 @@ from shared.telemetry.decorators import capture_trace_context, trace_background
 
 logger = logging.getLogger(__name__)
 
+_subscription_event_handlers_registered = False
+
+
+def _ensure_subscription_task_event_handlers_registered() -> None:
+    """Register in-process event handlers required by subscription executions."""
+    global _subscription_event_handlers_registered
+
+    from app.core.events import TaskCompletedEvent, get_event_bus
+    from app.services.subscription.task_completion_handler import handle_task_completed
+
+    event_bus = get_event_bus()
+    handlers = getattr(event_bus, "_handlers", {}).get(TaskCompletedEvent, [])
+    if handle_task_completed not in handlers:
+        event_bus.subscribe(TaskCompletedEvent, handle_task_completed)
+
+    _subscription_event_handlers_registered = True
+    logger.info("[subscription_tasks] Subscription TaskCompletedEvent handler ready")
+
+
 # Prometheus metrics
 SUBSCRIPTION_EXECUTIONS_TOTAL = Counter(
     "subscription_executions_total",
@@ -914,6 +933,16 @@ def _dispatch_due_subscription(
     try:
         subscription_crd = validate_subscription_for_read(subscription.json)
 
+        cron = subscription_crd.spec.trigger.cron if trigger_type == "cron" else None
+        if trigger_type == "cron" and cron and cron.workday_only:
+            from shared.utils.workday import is_china_workday
+
+            if not is_china_workday(datetime.now(timezone.utc)):
+                _advance_due_subscription(
+                    db, subscription, subscription_crd, trigger_type
+                )
+                return False
+
         trigger_reason = _get_trigger_reason(subscription_crd, trigger_type)
         execution = subscription_service.create_execution(
             db,
@@ -1522,6 +1551,32 @@ def _update_next_execution_time(
     db.commit()
 
 
+def _cancel_non_workday_execution(
+    db: Session, ctx: SubscriptionExecutionContext
+) -> bool:
+    """Stop scheduled work delayed in the queue until a China rest day."""
+    if ctx.execution.trigger_type != "cron":
+        return False
+    cron = ctx.subscription_crd.spec.trigger.cron
+    if not cron or not cron.workday_only:
+        return False
+
+    from app.schemas.subscription import BackgroundExecutionStatus
+    from app.services.subscription import subscription_service
+    from shared.utils.workday import is_china_workday
+
+    if is_china_workday(datetime.now(timezone.utc)):
+        return False
+    subscription_service.update_execution_status(
+        db,
+        execution_id=ctx.execution.id,
+        status=BackgroundExecutionStatus.CANCELLED,
+        error_message="Scheduled execution cancelled: today is not a China statutory workday",
+        skip_notifications=True,
+    )
+    return True
+
+
 @celery_app.task(
     bind=True,
     name="app.tasks.subscription_tasks.execute_subscription_task",
@@ -1554,6 +1609,7 @@ def execute_subscription_task(
     """
     from app.db.session import get_db_session
 
+    _ensure_subscription_task_event_handlers_registered()
     start_time = time.time()
     trigger_type = "unknown"
 
@@ -1583,6 +1639,12 @@ def execute_subscription_task(
                 }
 
             trigger_type = ctx.trigger_type
+
+            if _cancel_non_workday_execution(db, ctx):
+                return {
+                    "status": "cancelled",
+                    "message": "Not a China statutory workday",
+                }
 
             # Generate task title
             task_title = _generate_task_title(
@@ -1946,6 +2008,7 @@ def execute_subscription_task_sync(
     """
     from app.db.session import get_db_session
 
+    _ensure_subscription_task_event_handlers_registered()
     start_time = time.time()
     trigger_type = "unknown"
 
@@ -1975,6 +2038,12 @@ def execute_subscription_task_sync(
                 }
 
             trigger_type = ctx.trigger_type
+
+            if _cancel_non_workday_execution(db, ctx):
+                return {
+                    "status": "cancelled",
+                    "message": "Not a China statutory workday",
+                }
 
             # Generate task title
             task_title = _generate_task_title(

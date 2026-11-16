@@ -24,8 +24,8 @@ from app.schemas.device import DeviceType
 DEFAULT_REMOTE_DEVICE_IMAGE = "ghcr.io/wecode-ai/wegent-device:latest"
 DEFAULT_REMOTE_DEVICE_BACKEND_URL = ""
 DEFAULT_REMOTE_DEVICE_EXECUTOR_INSTALL_URL = (
-    "https://github.com/wecode-ai/Wegent/releases/latest/download/"
-    "local_executor_install.sh"
+    "https://raw.githubusercontent.com/wecode-ai/Wegent/main/"
+    "executor/scripts/local_executor_install.sh"
 )
 # The executor home identity is consumed by the container image entrypoint,
 # which refuses to reuse a volume recorded under a different device. Host

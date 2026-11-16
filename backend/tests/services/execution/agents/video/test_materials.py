@@ -9,9 +9,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.context import context_service
+from app.services.execution.agents.video import extensions
 from app.services.execution.agents.video.materials import (
     determine_image_mode,
     normalize_reference_materials,
+    resolve_generation_reference_materials,
     resolve_uploaded_media,
     validate_reference_materials,
 )
@@ -255,3 +257,74 @@ def test_uploaded_media_preserves_requested_attachment_order() -> None:
         )
 
     assert [image["attachment_id"] for image in images] == [11, 22]
+
+
+def test_tool_reference_resolution_owns_its_database_session() -> None:
+    db = MagicMock()
+    with (
+        patch("app.db.session.SessionLocal") as factory,
+        patch(
+            "app.services.execution.agents.video.materials.normalize_reference_materials",
+            side_effect=[[{"id": "image"}], [{"id": "video"}], []],
+        ) as normalize,
+    ):
+        factory.return_value.__enter__.return_value = db
+        result = resolve_generation_reference_materials(7, [1], [2], [])
+    assert result == ([{"id": "image"}], [{"id": "video"}], [])
+    assert [call.args for call in normalize.call_args_list] == [
+        (db, [1], "image", 7),
+        (db, [2], "video", 7),
+        (db, [], "audio", 7),
+    ]
+    factory.return_value.__exit__.assert_called_once()
+
+
+@pytest.mark.parametrize("media_type", ["video", "audio"])
+@pytest.mark.parametrize("entrypoint", ["chat", "tool"])
+def test_hosted_reference_receives_owner_context_without_public_url(
+    monkeypatch: pytest.MonkeyPatch, media_type: str, entrypoint: str
+) -> None:
+    extension = ".mp4" if media_type == "video" else ".mp3"
+    attachment = SimpleNamespace(
+        id=51,
+        user_id=7,
+        storage_backend="media_hosting",
+        storage_key="",
+        type_data={"provider_reference": {"id": "media-123"}},
+        updated_at=datetime(2026, 10, 27),
+        original_filename=f"reference{extension}",
+        file_extension=extension,
+        file_size=100,
+        mime_type=f"{media_type}/test",
+    )
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = attachment
+
+    class HostedReference:
+        def resolve_material(self, **context: object) -> dict:
+            assert context == {
+                "type_data": attachment.type_data,
+                "media_type": media_type,
+                "user_id": 7,
+                "attachment_id": 51,
+            }
+            return {"external_reference": {"id": "media-123"}}
+
+    monkeypatch.setattr(extensions, "_extensions", [HostedReference()])
+    monkeypatch.setattr("app.db.session.SessionLocal", lambda: db)
+    monkeypatch.setattr(
+        context_service, "get_attachments_by_subtask", lambda *_args: [attachment]
+    )
+    monkeypatch.setattr(
+        "app.services.execution.agents.video.materials.settings.ATTACHMENT_PUBLIC_BASE_URL",
+        "",
+    )
+
+    if entrypoint == "chat":
+        _, videos, audios = resolve_uploaded_media(10, 7, [51])
+        descriptors = videos if media_type == "video" else audios
+    else:
+        descriptors = normalize_reference_materials(db, [51], media_type, 7)
+
+    assert descriptors[0]["external_reference"] == {"id": "media-123"}
+    assert "url" not in descriptors[0]

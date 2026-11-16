@@ -39,12 +39,7 @@ pub(super) struct Question {
     pub criteria: Option<Value>,
 }
 
-pub(super) fn valid_model_id(value: &str) -> bool {
-    (1..=128).contains(&value.len())
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._/:-".contains(&byte))
-}
+use wegent_resource_store::decision_model::valid_model_id;
 
 fn structured(value: &Value) -> bool {
     matches!(value, Value::String(_) | Value::Object(_) | Value::Array(_))

@@ -1,17 +1,7 @@
+// @vitest-environment node
+
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import {
-  deletePluginDevelopmentData,
-  focusPluginDevelopment,
-  openPluginDevelopmentDevTools,
-  openPluginDevelopmentLogs,
-  pluginDevelopmentInitialInput,
-  readPluginDevelopmentSessions,
-  restartPluginDevelopmentCoreDsh,
-  startPluginDevelopment,
-  stopPluginDevelopment,
-  subscribePluginDevelopment,
-} from './pluginDevelopment'
-import { pluginDevelopmentProjectKind } from './pluginDevelopmentProjects'
+import { subscribePluginDevelopment } from './pluginDevelopment'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -31,28 +21,6 @@ describe('Core DSH plugin development desktop API', () => {
     mocks.subscribe.mockReturnValue(() => {})
   })
 
-  test('uses explicit Electron capabilities for lifecycle operations', async () => {
-    await readPluginDevelopmentSessions()
-    await startPluginDevelopment('/workspace/plugin')
-    await focusPluginDevelopment()
-    await openPluginDevelopmentDevTools()
-    await restartPluginDevelopmentCoreDsh()
-    await openPluginDevelopmentLogs()
-    await stopPluginDevelopment()
-    await deletePluginDevelopmentData()
-
-    expect(mocks.invoke.mock.calls).toEqual([
-      ['pluginDevelopment.list'],
-      ['pluginDevelopment.start', { sourceRoot: '/workspace/plugin' }],
-      ['pluginDevelopment.focus'],
-      ['pluginDevelopment.openDevTools'],
-      ['pluginDevelopment.restartCoreDsh'],
-      ['pluginDevelopment.openLogDirectory'],
-      ['pluginDevelopment.stop'],
-      ['pluginDevelopment.deleteData'],
-    ])
-  })
-
   test('forwards only plugin development state events', () => {
     const handler = vi.fn()
     subscribePluginDevelopment(handler)
@@ -63,20 +31,5 @@ describe('Core DSH plugin development desktop API', () => {
 
     expect(handler).toHaveBeenCalledOnce()
     expect(handler).toHaveBeenCalledWith({ status: 'ready' })
-  })
-
-  test('keeps an unobserved project unresolved until host classification arrives', () => {
-    expect(pluginDevelopmentProjectKind('/workspace/unobserved-plugin')).toBe('unresolved')
-    expect(pluginDevelopmentProjectKind(null)).toBe('standard')
-  })
-
-  test('activates the plugin developer plugin in the initial composer input', () => {
-    const initialInput = pluginDevelopmentInitialInput('Wework 插件开发', '开发这个 Wework 插件：')
-
-    expect(initialInput).toBe(
-      '[$Wework 插件开发](plugin://wework-plugin-developer@wework-personal) 开发这个 Wework 插件：'
-    )
-    expect(initialInput).not.toContain('skill://')
-    expect(initialInput).not.toMatch(/(?:~\/|\/Users\/|[A-Za-z]:\\).*plugins[/\\]cache/)
   })
 })

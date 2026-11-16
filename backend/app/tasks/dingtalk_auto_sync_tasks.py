@@ -6,6 +6,7 @@
 
 import logging
 from dataclasses import dataclass
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,10 @@ from app.services.knowledge.dingtalk_auto_sync import (
     refresh_dingtalk_copy,
 )
 from app.services.knowledge.index_state_machine import ACTIVE_INDEX_STATUSES
+from shared.event_reporting.catalogs.knowledge import (
+    emit_external_event,
+    error_code_for,
+)
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
@@ -51,7 +56,20 @@ def scan_dingtalk_copies(self, knowledge_base_id: int | None = None) -> int:
     """
     from app.core.distributed_lock import distributed_lock
 
-    task_id = _task_id(self.request, "direct")
+    task_id = str(self.request.id or uuid4())
+    batch = {
+        "provider": "dingtalk",
+        "trigger": "dingtalk_auto_sync",
+        "operation_id": task_id,
+    }
+    emit_external_event(
+        "knowledge.external.sync.started",
+        kb_id=knowledge_base_id,
+        document_id=None,
+        status="started",
+        operation_id=task_id,
+        data=batch,
+    )
     with distributed_lock.acquire_context(
         f"scan_dingtalk_copies:{knowledge_base_id or 'all'}", expire_seconds=60 * 60
     ) as acquired:
@@ -62,8 +80,31 @@ def scan_dingtalk_copies(self, knowledge_base_id: int | None = None) -> int:
                 knowledge_base_id,
                 task_id,
             )
+            emit_external_event(
+                "knowledge.external.sync.finished",
+                kb_id=knowledge_base_id,
+                document_id=None,
+                status="skipped",
+                operation_id=task_id,
+                data={
+                    **batch,
+                    "reason": "lock_not_acquired",
+                },
+            )
             return 0
-        result = _dispatch_copies(knowledge_base_id, task_id)
+        try:
+            result = _dispatch_copies(knowledge_base_id, task_id)
+        except Exception as error:
+            emit_external_event(
+                "knowledge.external.sync.finished",
+                kb_id=knowledge_base_id,
+                document_id=None,
+                status="failure",
+                operation_id=task_id,
+                data=batch,
+                error_code=error_code_for(error),
+            )
+            raise
     logger.info(
         "[DingTalk Sync] scan done kb_id=%s task_id=%s copies_examined=%s "
         "copies_dispatched=%s",
@@ -71,6 +112,18 @@ def scan_dingtalk_copies(self, knowledge_base_id: int | None = None) -> int:
         task_id,
         result.examined,
         result.dispatched,
+    )
+    status = "completed"
+    if result.dispatched < result.examined:
+        status = "partial" if result.dispatched else "failure"
+    emit_external_event(
+        "knowledge.external.sync.finished",
+        kb_id=knowledge_base_id,
+        document_id=None,
+        status=status,
+        operation_id=task_id,
+        error_code=None if status == "completed" else "refresh_dispatch_failed",
+        data=batch,
     )
     return result.dispatched
 
@@ -104,7 +157,10 @@ def _dispatch_copies(
         while True:
             rows = _eligible_copies_query(db, knowledge_base_id, cursor).all()
             if not rows:
-                return _ScanResult(examined=examined, dispatched=dispatched)
+                return _ScanResult(
+                    examined=examined,
+                    dispatched=dispatched,
+                )
             examined += len(rows)
             for document_id, generation in rows:
                 try:

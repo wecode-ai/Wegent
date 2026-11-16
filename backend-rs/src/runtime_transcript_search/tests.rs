@@ -254,7 +254,7 @@ async fn project_grants_use_cp_catalog_policy_without_creator_or_device_catalog_
 async fn absent_binding_queries_only_the_exact_project_issue_and_active_manual_bindings() {
     let mysql = crate::sql_test_support::KindQueryCapture::default();
     assert_eq!(
-        access::bound_target(&mysql, "1001", "issue-1", "device-1", "private-task")
+        access::bound_target(&mysql, 52, "1001", "issue-1", "device-1", "private-task")
             .await
             .err()
             .unwrap()
@@ -277,6 +277,28 @@ async fn absent_binding_queries_only_the_exact_project_issue_and_active_manual_b
     assert!(binding.sql.contains("deleted_at IS NULL"));
     assert!(binding.sql.contains("unlinked_at IS NULL"));
     assert!(mysql.writes().is_empty());
+}
+
+#[test]
+fn assistant_search_requires_the_owner_without_changing_shared_execution_reads() {
+    let mut row = execution();
+    row.execution_payload =
+        json!({"runtime_selection": {"executor_kind": "human_assistant"}}).to_string();
+    assert!(row.require_reader(52).is_ok());
+    assert_eq!(
+        row.require_reader(2300).unwrap_err().status(),
+        StatusCode::NOT_FOUND,
+    );
+    for executor_type in [
+        "generic_robot",
+        "project_robot",
+        "wegent_team",
+        "collaboration_group_dispatch",
+    ] {
+        row.execution_payload =
+            json!({"runtime_selection": {"executor_kind": executor_type}}).to_string();
+        assert!(row.require_reader(2300).is_ok());
+    }
 }
 
 fn activity(metadata: Value, task: &str) -> Activity {

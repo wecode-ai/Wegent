@@ -41,6 +41,7 @@ class ContextType(str, PyEnum):
     KNOWLEDGE_BASE = "knowledge_base"
     SELECTED_DOCUMENTS = "selected_documents"  # Selected documents from notebook mode for direct injection
     EXTERNAL_KNOWLEDGE = "external_knowledge"
+    REMOTE_WORKSPACE_ARTIFACT = "remote_workspace_artifact"
     CONVERSATION = (
         "conversation"  # A previous task referenced as untrusted background context
     )

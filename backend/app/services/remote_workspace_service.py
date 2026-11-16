@@ -512,11 +512,12 @@ class RemoteWorkspaceService:
         executor_name: str,
         executor_namespace: Optional[str] = None,
     ) -> bool:
-        """Return False only when executor_manager confirms the pod is gone.
+        """Return False when executor_manager confirms the pod cannot run tasks.
 
         Mirrors ``_get_executor_payload`` but interprets the result:
         - 200 + status=success  → True
         - 200 + "No pod found"   → False (pod confirmed missing)
+        - 200 + terminal phase   → False (pod exists but exited; recreate it)
         - Any other failure path → True (treat as alive; let dispatch surface the real error)
 
         Used by dispatch to soft-verify a subtask whose ``executor_deleted_at``
@@ -531,6 +532,16 @@ class RemoteWorkspaceService:
             return True
         if str(payload.get("status", "")).lower() == "success":
             return True
+        phase = str(payload.get("phase") or "")
+        if phase in {"Succeeded", "Failed"}:
+            logger.info(
+                "[remote_workspace] executor pod terminal executor_name=%s "
+                "executor_namespace=%s phase=%s",
+                executor_name,
+                executor_namespace,
+                phase,
+            )
+            return False
         error_msg = str(payload.get("error_msg") or "")
         if "No pod found for executor" in error_msg:
             logger.info(

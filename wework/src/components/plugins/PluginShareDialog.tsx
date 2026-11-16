@@ -74,7 +74,7 @@ export function PluginShareDialog({
             type="button"
             data-testid="plugin-share-close"
             aria-label={t('common.close', '关闭')}
-            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20 sm:h-8 sm:w-8"
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20 sm:h-8 sm:w-8"
             onClick={onClose}
           >
             <X className="h-4 w-4" />
@@ -159,7 +159,7 @@ export function PluginShareDialog({
                 type="checkbox"
                 checked={allowCopy}
                 data-testid="plugin-share-allow-copy"
-                className="h-4 w-4 accent-neutral-900"
+                className="h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
                 onChange={event => setAllowCopy(event.target.checked)}
               />
             </label>
@@ -173,7 +173,7 @@ export function PluginShareDialog({
           )}
         </p>
         {error && (
-          <p role="alert" className="mt-3 text-sm text-red-600">
+          <p role="alert" className="mt-3 text-sm text-destructive wework:text-red-600">
             {error}
           </p>
         )}

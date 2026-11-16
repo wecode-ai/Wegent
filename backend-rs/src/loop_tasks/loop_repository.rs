@@ -29,6 +29,8 @@ pub struct ProjectMetadata {
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct BindingMetadata {
+    pub stand_in_pending: Option<bool>,
+    pub stand_in_conversation_id: Option<String>,
     pub workflow_node_id: Option<String>,
     pub model_selection: Option<serde_json::Value>,
     pub execution_context: Option<serde_json::Value>,
@@ -37,6 +39,7 @@ pub struct BindingMetadata {
     pub dispatch_round_id: Option<String>,
     pub assignment_id: Option<String>,
     pub execution_id: Option<serde_json::Value>,
+    pub issue_assignment_id: Option<String>,
     pub change_requests: Option<serde_json::Value>,
 }
 
@@ -48,6 +51,7 @@ pub struct BindingMetadata {
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct ItemMetadata {
+    pub milestone_id: Option<String>,
     pub content_revision: Option<serde_json::Value>,
     pub read_revisions: Option<serde_json::Value>,
     pub activity_read_sequences: Option<serde_json::Value>,
@@ -75,6 +79,7 @@ pub struct ItemMetadata {
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct AssignmentMetadata {
+    pub automation: Option<serde_json::Value>,
     pub event_type: Option<String>,
     pub action: Option<String>,
     pub assignment_event_id: Option<String>,
@@ -83,6 +88,11 @@ pub struct AssignmentMetadata {
     pub target_name: Option<serde_json::Value>,
     pub workflow_step: Option<String>,
     pub trigger: Option<String>,
+    pub receipt_tracking: Option<bool>,
+    pub human_read_at: Option<String>,
+    pub stand_in_received_at: Option<String>,
+    pub human_assistant_dispatch: Option<serde_json::Value>,
+    pub assignment_version: Option<i64>,
 }
 
 /// Whether a datetime equals the unset sentinel or is NULL
@@ -247,6 +257,21 @@ impl TaskItemFullRow {
     }
 }
 
+/// One labeled `loop_items` point read with the raw metadata document.
+#[derive(Debug, FromMysqlRow)]
+pub struct RawLoopItemRow {
+    #[mysql(rename = "loop_items_id")]
+    pub id: String,
+    #[mysql(rename = "loop_items_cloud_project_id")]
+    pub cloud_project_id: String,
+    #[mysql(rename = "loop_items_created_by_user_id")]
+    pub created_by_user_id: Option<i64>,
+    #[mysql(rename = "loop_items_assignee_user_id")]
+    pub assignee_user_id: Option<i64>,
+    #[mysql(rename = "loop_items_metadata")]
+    pub metadata: Option<Json<serde_json::Value>>,
+}
+
 /// `db.query(LoopItemComment).filter(loop_item_id == ...)`: one comment row
 /// selected with the same labeled `loop_items` projection.
 #[allow(
@@ -393,6 +418,18 @@ impl BindingRow {
             .and_then(|json| json.0.value.as_ref())
     }
 
+    pub fn stand_in_pending(&self) -> Option<bool> {
+        self.metadata()
+            .and_then(|metadata| metadata.stand_in_pending)
+    }
+
+    pub fn stand_in_conversation_id(&self) -> Option<String> {
+        self.metadata()
+            .and_then(|metadata| metadata.stand_in_conversation_id.as_deref())
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    }
+
     /// `LoopItemTaskBinding.workflow_node_id`: the metadata value when it is
     /// a non-empty string, otherwise `None`.
     pub fn workflow_node_id(&self) -> Option<String> {
@@ -494,6 +531,28 @@ pub fn has_permission(user_role: &str, required_role: &str) -> bool {
     role_level(user_role) <= role_level(required_role)
 }
 
+/// Shared ordered assignment-event query for transactional and ordinary reads.
+pub(crate) fn item_comments_query() -> String {
+    ordered_comments_query(false)
+}
+
+fn ordered_comments_query(assignments_only: bool) -> String {
+    let assignment_filter = if assignments_only {
+        "AND JSON_UNQUOTE(JSON_EXTRACT(loop_items.metadata, '$.event_type')) = 'assignment' "
+    } else {
+        ""
+    };
+    format!(
+        "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
+                     WHERE loop_items.loop_item_id = ? \
+                     AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
+                         ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
+                     AND loop_items.resource_type IN ('comment') \
+                     {assignment_filter}\
+                     ORDER BY loop_items.created_at, loop_items.id",
+    )
+}
+
 /// Loop-item repositories for the task-binding read path.
 pub struct LoopItemRepository<'a, M> {
     mysql: &'a M,
@@ -515,6 +574,31 @@ pub(crate) fn visible_item_filter_sql(user_id: i32, default_security: &str) -> S
 }
 
 /// The five related-item branches share the current single-table schema.
+pub(crate) async fn is_related_item_on(
+    query: &mut impl crate::plugins_marketplace::query::PluginQuery,
+    item_id: &str,
+    user_id: i32,
+) -> MysqlResult<bool> {
+    #[derive(Debug, FromMysqlRow)]
+    struct ExistsRow {
+        #[mysql(rename = "loop_items_id")]
+        #[allow(dead_code, reason = "presence-only probe")]
+        id: String,
+    }
+    let row: Option<ExistsRow> = query
+        .fetch_optional(
+            &format!(
+                "SELECT loop_items.id AS loop_items_id FROM loop_items \
+                     WHERE loop_items.id = ? AND ({}) \
+                     AND loop_items.resource_type IN ('task') LIMIT 1",
+                related_item_predicate_sql(user_id),
+            ),
+            (item_id,),
+        )
+        .await?;
+    Ok(row.is_some())
+}
+
 fn related_item_predicate_sql(user_id: i32) -> String {
     format!(
         "loop_items.created_by_user_id = {user_id} \
@@ -576,24 +660,28 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
         })
     }
 
-    /// `LoopItemService.list_task_bindings`: active bindings for the item,
+    /// Caller-owned active bindings for the item,
     /// newest first, selected with the source's labeled `loop_items`
     /// projection. The recorded contract filters `resource_type='execution'`
     /// bindings whose `unlinked_at` is unset; it does not filter
     /// `deleted_at`, so the statement stays compatible with the recorded
     /// exchange.
-    pub async fn list_task_bindings(&self, item_id: &str) -> MysqlResult<Vec<BindingRow>> {
+    pub async fn list_task_bindings(
+        &self,
+        item_id: &str,
+        user_id: i32,
+    ) -> MysqlResult<Vec<BindingRow>> {
         self.mysql
             .fetch_all(
                 &format!(
                     "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
-                     WHERE loop_items.loop_item_id = ? \
+                     WHERE loop_items.loop_item_id = ? AND loop_items.task_user_id = ? \
                      AND (loop_items.unlinked_at IS NULL OR loop_items.unlinked_at IN \
                          ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
                      AND loop_items.resource_type IN ('execution') \
                      ORDER BY loop_items.linked_at DESC, loop_items.id DESC",
                 ),
-                (item_id,),
+                (item_id, user_id),
             )
             .await
     }
@@ -630,6 +718,27 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
                     "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
                      WHERE loop_items.id = '{item_id}' \
                      AND loop_items.resource_type IN ('task')",
+                ),
+                (),
+            )
+            .await
+    }
+
+    /// The same labeled `loop_items` point read as
+    /// [`Self::get_task_item_full`], kept for the execution authority checks:
+    /// they read the raw `metadata` document (which the typed task row only
+    /// decodes into known fields) and can address any resource type.
+    pub async fn get_loop_item_raw(
+        &self,
+        item_id: &str,
+        resource_type: &str,
+    ) -> MysqlResult<Option<RawLoopItemRow>> {
+        self.mysql
+            .fetch_optional(
+                &format!(
+                    "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
+                     WHERE loop_items.id = '{item_id}' \
+                     AND loop_items.resource_type IN ('{resource_type}')",
                 ),
                 (),
             )
@@ -727,18 +836,31 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
     /// activity order.
     pub async fn list_item_comments(&self, item_id: &str) -> MysqlResult<Vec<CommentRow>> {
         self.mysql
-            .fetch_all(
-                &format!(
-                    "SELECT {CLOUD_CONTEXT_COLUMNS} \nFROM loop_items \n\
-                     WHERE loop_items.loop_item_id = ? \
-                     AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN \
-                         ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-                     AND loop_items.resource_type IN ('comment') \
-                     ORDER BY loop_items.created_at, loop_items.id",
-                ),
-                (item_id,),
-            )
+            .fetch_all(item_comments_query(), (item_id,))
             .await
+    }
+
+    /// Read assignment history without initializing or locking the active index.
+    pub async fn list_assignment_comments(&self, item_id: &str) -> MysqlResult<Vec<CommentRow>> {
+        self.mysql
+            .fetch_all(ordered_comments_query(true), (item_id,))
+            .await
+    }
+
+    /// Test oracle for the materialized index still maintained by assignment writes.
+    #[cfg(test)]
+    pub async fn list_active_assignment_comments(
+        &self,
+        item_id: &str,
+    ) -> MysqlResult<Vec<CommentRow>> {
+        self.mysql.fetch_all(format!(
+            "SELECT {CLOUD_CONTEXT_COLUMNS} FROM loop_items active \
+             JOIN loop_items ON loop_items.id = active.loop_item_id \
+             WHERE active.parent_id = ? AND active.resource_type = 'assignment_index' \
+             AND loop_items.resource_type = 'comment' \
+             AND (loop_items.deleted_at IS NULL OR loop_items.deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) \
+             ORDER BY active.sort_order, loop_items.id"
+        ), (item_id,)).await
     }
 
     /// `LoopItemService.list_comments`: the item's comment rows ordered by
@@ -799,25 +921,8 @@ impl<'a, M: Mysql> LoopItemRepository<'a, M> {
     /// through ownership, assignment, an active runtime-task binding, a
     /// collaborator row, or an owned project agent.
     pub async fn is_related_item(&self, item_id: &str, user_id: i32) -> MysqlResult<bool> {
-        #[derive(Debug, FromMysqlRow)]
-        struct ExistsRow {
-            #[mysql(rename = "loop_items_id")]
-            #[allow(dead_code, reason = "presence-only probe")]
-            id: String,
-        }
-        let row: Option<ExistsRow> = self
-            .mysql
-            .fetch_optional(
-                &format!(
-                    "SELECT loop_items.id AS loop_items_id FROM loop_items \
-                     WHERE loop_items.id = ? AND ({}) \
-                     AND loop_items.resource_type IN ('task') LIMIT 1",
-                    related_item_predicate_sql(user_id),
-                ),
-                (item_id,),
-            )
-            .await?;
-        Ok(row.is_some())
+        let mut query = self.mysql;
+        is_related_item_on(&mut query, item_id, user_id).await
     }
 
     /// `db.get(ProjectChatAgent, id)`: the chat-agent row when it exists. The

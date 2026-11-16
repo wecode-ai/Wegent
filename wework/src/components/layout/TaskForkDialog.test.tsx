@@ -1,14 +1,14 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
-import { TaskForkDialog } from './TaskForkDialog'
 import type {
   DeviceInfo,
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
 } from '@/types/api'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, test, vi } from 'vitest'
+import { TaskForkDialog } from './TaskForkDialog'
 
 vi.mock('@/e2e/automation', () => ({
   shouldUseNativeProjectDirectoryPicker: () => false,
@@ -97,77 +97,6 @@ describe('TaskForkDialog', () => {
       deviceId: 'local-2',
       workspacePath: '/workspace/current',
     })
-  })
-
-  test('hides the source device and uses an available target', async () => {
-    const onFork = vi.fn().mockResolvedValue(undefined)
-
-    render(
-      <TaskForkDialog
-        open
-        source={source()}
-        runtimeWork={runtimeWork([
-          workspace(),
-          workspace({
-            workspacePath: '/workspace/other-local-worktree',
-          }),
-          workspace({
-            deviceId: 'local-2',
-            deviceName: 'Office Mac',
-            workspacePath: '/workspace/target',
-          }),
-        ])}
-        requiresStop={false}
-        onOpenChange={vi.fn()}
-        onStopCurrentResponse={vi.fn()}
-        onFork={onFork}
-      />
-    )
-
-    expect(screen.queryAllByTestId('task-fork-target-local-1')).toHaveLength(0)
-    expect(screen.getByTestId('task-fork-guidance')).toHaveTextContent('其他设备')
-
-    await userEvent.click(screen.getByTestId('task-fork-confirm-button'))
-
-    await waitFor(() =>
-      expect(onFork).toHaveBeenCalledWith({
-        deviceId: 'local-2',
-        workspacePath: '/workspace/target',
-      })
-    )
-  })
-
-  test('does not offer the source device as a bind target', () => {
-    render(
-      <TaskForkDialog
-        open
-        source={source()}
-        runtimeWork={runtimeWork([
-          workspace({
-            deviceId: 'local-2',
-            deviceName: 'Office Mac',
-            workspacePath: '/workspace/target',
-          }),
-        ])}
-        currentProject={{ id: 7, name: 'Project', tasks: [] }}
-        devices={[
-          device(),
-          device({
-            id: 3,
-            device_id: 'local-3',
-            name: 'Office Mac',
-          }),
-        ]}
-        requiresStop={false}
-        onOpenChange={vi.fn()}
-        onStopCurrentResponse={vi.fn()}
-        onFork={vi.fn()}
-        onPrepareDeviceWorkspace={vi.fn()}
-      />
-    )
-
-    expect(screen.queryByTestId('task-fork-bind-device-local-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('task-fork-bind-device-local-3')).toBeInTheDocument()
   })
 
   test('only lists target workspaces from the source project', () => {

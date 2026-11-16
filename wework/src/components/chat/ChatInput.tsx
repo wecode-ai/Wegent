@@ -2,6 +2,8 @@ import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
 import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
 import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
 import { ComposerErrorBanner } from '@wegent/collaboration/composer'
+import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
+import { QuotaWaitStatus } from './QuotaWaitStatus'
 import {
   forwardRef,
   useContext,
@@ -21,6 +23,7 @@ import type {
   LocalDeviceApp,
   LocalDeviceSkill,
   ModelOptions,
+  ModelSelectionConfig,
   PluginPathComponent,
   ProjectExecutionMode,
   ProjectWithTasks,
@@ -58,7 +61,7 @@ import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
-import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
+import { requiresNewConversationForModelSwitch } from '@/features/workbench/runtimeModelSelection'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -70,6 +73,12 @@ export interface ProjectChatControls {
   skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
+  activeModelSelection?: ModelSelectionConfig | null
+  activeModelProvider?: string | null
+  supportsModelProviderSwitch?: boolean
+  modelSwitchMode?: 'session'
+  requiresNewSession?: boolean
+  onSessionStartConfirmed?(model: UnifiedModel): void
   selectedModelOptions: ModelOptions
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
@@ -105,6 +114,7 @@ export interface ProjectChatControls {
   toggleSkill: (skill: SkillRef) => void
   handleFileSelect: (files: File | File[]) => Promise<void>
   removeAttachment: (attachmentId: number) => Promise<void>
+  dismissAttachmentError?: (filename: string) => void
   listLocalSkills: () => Promise<LocalDeviceSkill[]>
   listLocalApps?: () => Promise<LocalDeviceApp[]>
 }
@@ -160,6 +170,7 @@ export interface ChatInputProps {
     options?: ChatSubmitOptions
   ) => void | boolean | Promise<void | boolean>
   disabled: boolean
+  showPluginPicker?: boolean
   pluginPickerIconOnly?: boolean
   submitDisabled?: boolean
   requireText?: boolean
@@ -171,6 +182,8 @@ export interface ChatInputProps {
   nativeEmptyCaret?: boolean
   submitButtonTestId?: string
   submitLabel?: string
+  showSubmitButton?: boolean
+  showAttachmentActions?: boolean
   variant?: 'compact' | 'desktop'
   collapseWhenIdle?: boolean
   alwaysShowComposerToolbar?: boolean
@@ -251,34 +264,11 @@ interface PendingModelSelection {
   model: UnifiedModel | null
   options?: ModelOptions
   continueInNewConversation: boolean
+  onSessionStartConfirmed?: (model: UnifiedModel) => void
 }
 
 function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel | null): boolean {
   return left?.name === right?.name && left?.type === right?.type
-}
-
-function codexConversationProvider(
-  model: UnifiedModel | null | undefined
-): 'openai' | 'router' | null {
-  if (!model || model.name === CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME) return null
-  const configuredKind =
-    typeof model.config?.weworkModelKind === 'string'
-      ? model.config.weworkModelKind
-      : typeof (model.config?.ui as Record<string, unknown> | undefined)?.family === 'string'
-        ? ((model.config?.ui as Record<string, unknown>).family as string)
-        : ''
-  if (configuredKind === 'codex-official') return 'openai'
-  if (configuredKind === 'codex-provider' || configuredKind === 'model-interface') return 'router'
-  return model.provider && model.provider !== 'local' ? 'router' : null
-}
-
-function requiresNewConversationForModelSwitch(
-  activeModel: UnifiedModel | null | undefined,
-  targetModel: UnifiedModel | null
-): boolean {
-  const activeProvider = codexConversationProvider(activeModel)
-  const targetProvider = codexConversationProvider(targetModel)
-  return Boolean(activeProvider && targetProvider && activeProvider !== targetProvider)
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
@@ -317,6 +307,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     onCompositionEnd,
     onSubmit,
     disabled,
+    showPluginPicker = true,
     pluginPickerIconOnly = false,
     submitDisabled = false,
     requireText = false,
@@ -328,6 +319,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     nativeEmptyCaret = false,
     submitButtonTestId,
     submitLabel,
+    showSubmitButton,
+    showAttachmentActions,
     variant = 'compact',
     collapseWhenIdle = false,
     alwaysShowComposerToolbar = false,
@@ -513,18 +506,27 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
 
   const requestModelSelection = (model: UnifiedModel | null, options?: ModelOptions) => {
     const selectionChangesModel = !isSameModel(controls.selectedModel, model)
+    const continueInNewConversation =
+      (controls.modelSwitchMode === 'session' && Boolean(controls.requiresNewSession && model)) ||
+      requiresNewConversationForModelSwitch(
+        controls.activeModel,
+        model,
+        controls.activeModelSelection,
+        controls.activeModelProvider,
+        controls.supportsModelProviderSwitch
+      )
     if (
-      selectionChangesModel &&
-      controls.activeModel &&
-      !isSameModel(controls.activeModel, model)
+      (controls.modelSwitchMode === 'session' && continueInNewConversation) ||
+      (selectionChangesModel &&
+        ((controls.activeModel && !isSameModel(controls.activeModel, model)) ||
+          continueInNewConversation))
     ) {
       setPendingModelSelection({
         model,
         options,
-        continueInNewConversation: requiresNewConversationForModelSwitch(
-          controls.activeModel,
-          model
-        ),
+        continueInNewConversation,
+        onSessionStartConfirmed:
+          controls.modelSwitchMode === 'session' ? controls.onSessionStartConfirmed : undefined,
       })
       return false
     }
@@ -534,9 +536,10 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
 
   const confirmModelSelection = () => {
     if (!pendingModelSelection) return
-    const { model, options, continueInNewConversation } = pendingModelSelection
+    const { model, options, continueInNewConversation, onSessionStartConfirmed } =
+      pendingModelSelection
     setPendingModelSelection(null)
-    if (continueInNewConversation && model) {
+    if (continueInNewConversation && controls.modelSwitchMode !== 'session' && model) {
       if (controls.continueInNewConversation) {
         controls.continueInNewConversation(model, options, { draft: value })
       } else {
@@ -550,6 +553,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
       }
       return
     }
+    if (continueInNewConversation && model) onSessionStartConfirmed?.(model)
     applyModelSelection(model, options)
   }
   const cancelModelSelection = () => {
@@ -606,6 +610,8 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     nativeEmptyCaret,
     submitButtonTestId,
     submitLabel,
+    showSubmitButton,
+    showAttachmentActions,
     onOpenSkillFile,
     workspaceTarget,
     workspaceFileApi,
@@ -622,6 +628,15 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     isStreaming,
   }
   const errorBanner = <ComposerErrorBanner error={error} />
+  const quotaWaitStatus = (
+    <QuotaWaitStatus
+      onCancel={onPause}
+      wait={
+        findRuntimeTask(projectWork?.runtimeWork, projectWork?.currentRuntimeTask)?.runtimeHandle
+          ?.quotaWait
+      }
+    />
+  )
   const queuePanel = (
     <ConversationQueuePanel
       queuedMessages={queuedMessages}
@@ -653,7 +668,12 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
         pendingModelSelection.model?.name ||
         t('workbench.model_auto_select', 'Auto select')
       }
-      continueInNewConversation={pendingModelSelection.continueInNewConversation}
+      continueInNewConversation={
+        pendingModelSelection.continueInNewConversation && controls.modelSwitchMode !== 'session'
+      }
+      startNewSession={
+        pendingModelSelection.continueInNewConversation && controls.modelSwitchMode === 'session'
+      }
       onCancel={cancelModelSelection}
       onConfirm={confirmModelSelection}
     />
@@ -665,6 +685,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
         <div className="w-full">
           <TaskPlanProgress plan={taskPlan} />
           {queuePanel}
+          {quotaWaitStatus}
           {errorBanner}
           <PluginTrialTemplateStrip
             translate={(key, fallback, options) => t(key, fallback ?? key, options)}
@@ -689,35 +710,11 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             onApplyRefinedPrompt={applyRefinedPrompt}
             onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
           />
-          {(contextHeader || (displayedGoal && !goalDraftActive)) && (
-            <div
-              data-testid="composer-context-rail"
-              className={[
-                'mb-2 min-w-0 items-center divide-x divide-border/70 overflow-hidden rounded-xl border border-border/60 bg-muted/45 px-1 [&>*]:min-w-0 [&>*]:overflow-hidden',
-                contextHeader && displayedGoal && !goalDraftActive
-                  ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
-                  : 'flex',
-              ].join(' ')}
-            >
-              {displayedGoal && !goalDraftActive && (
-                <GoalStatusBar
-                  integrated
-                  goal={displayedGoal}
-                  continuing={goalContinuing}
-                  executionStatus={goalExecutionStatus}
-                  onEditGoal={onEditGoal}
-                  onPauseGoal={onPauseGoal}
-                  onResumeGoal={onResumeGoal}
-                  onClearGoal={onClearGoal}
-                />
-              )}
-              {contextHeader}
-            </div>
-          )}
           <ProjectChatComposer
             composerScopeKey={controls.scopeKey}
             ref={composerRef}
             {...composerProps}
+            showPluginPicker={showPluginPicker}
             pluginPickerIconOnly={pluginPickerIconOnly}
             models={controls.models}
             selectedModel={controls.selectedModel}
@@ -730,6 +727,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             codeComments={codeComments}
             uploadingFiles={controls.uploadingFiles}
             attachmentErrors={controls.errors}
+            onDismissAttachmentError={controls.dismissAttachmentError}
             contextUsage={controls.contextUsage}
             onSelectModel={model => requestModelSelection(model)}
             onSelectModelAndOptions={(model, options) => requestModelSelection(model, options)}
@@ -786,6 +784,33 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             showWorkspaceMenu={showWorkspaceMenu}
             collapseWhenIdle={collapseWhenIdle}
             alwaysShowComposerToolbar={alwaysShowComposerToolbar}
+            contextHeader={
+              (contextHeader || (displayedGoal && !goalDraftActive)) && (
+                <div
+                  data-testid="composer-context-rail"
+                  className={[
+                    'mb-1 min-w-0 items-center text-sm text-text-secondary [&>*]:min-w-0 [&>*]:max-w-full',
+                    contextHeader && displayedGoal && !goalDraftActive
+                      ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
+                      : 'flex',
+                  ].join(' ')}
+                >
+                  {displayedGoal && !goalDraftActive && (
+                    <GoalStatusBar
+                      integrated
+                      goal={displayedGoal}
+                      continuing={goalContinuing}
+                      executionStatus={goalExecutionStatus}
+                      onEditGoal={onEditGoal}
+                      onPauseGoal={onPauseGoal}
+                      onResumeGoal={onResumeGoal}
+                      onClearGoal={onClearGoal}
+                    />
+                  )}
+                  {contextHeader}
+                </div>
+              )
+            }
             inputLeadingContext={inputLeadingContext}
             onDismissInputLeadingContext={onDismissInputLeadingContext}
             toolbarLeadingContext={toolbarLeadingContext}
@@ -802,6 +827,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
       <div className="w-full">
         <TaskPlanProgress plan={taskPlan} />
         {queuePanel}
+        {quotaWaitStatus}
         {errorBanner}
         <PluginTrialTemplateStrip
           translate={(key, fallback, options) => t(key, fallback ?? key, options)}
@@ -844,6 +870,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
           codeComments={codeComments}
           uploadingFiles={controls.uploadingFiles}
           attachmentErrors={controls.errors}
+          onDismissAttachmentError={controls.dismissAttachmentError}
           onFileSelect={files => controls.handleFileSelect(files)}
           planModeActive={planModeActive}
           onSetPlanMode={handleSetPlanMode}
@@ -950,7 +977,7 @@ function QueueResumeDialog({
             size="sm"
             data-testid="paused-queue-send-clear-button"
             onClick={onClear}
-            className="h-8 rounded-md border-red-200 bg-base px-3 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+            className="h-8 rounded-md border-destructive/30 bg-base px-3 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive wework:border-red-200 wework:text-red-600 wework:hover:bg-red-50 wework:hover:text-red-700"
           >
             {t('queue.send_with_paused_clear')}
           </Button>
@@ -975,12 +1002,14 @@ function ModelSwitchWarningDialog({
   t,
   targetModelLabel,
   continueInNewConversation,
+  startNewSession,
   onCancel,
   onConfirm,
 }: {
   t: ReturnType<typeof useTranslation>['t']
   targetModelLabel: string
   continueInNewConversation: boolean
+  startNewSession: boolean
   onCancel: () => void
   onConfirm: () => void
 }) {
@@ -1006,7 +1035,7 @@ function ModelSwitchWarningDialog({
           id="model-switch-warning-dialog-description"
           className="mt-2 text-sm leading-5 text-text-secondary"
         >
-          {continueInNewConversation
+          {continueInNewConversation || startNewSession
             ? t(
                 'workbench.model_switch_new_conversation_description',
                 '{{model}} uses a different model provider, so it cannot continue this Codex thread directly.',
@@ -1019,15 +1048,20 @@ function ModelSwitchWarningDialog({
               )}
         </p>
         <p className="mt-2 text-sm leading-5 text-text-secondary">
-          {continueInNewConversation
+          {startNewSession
             ? t(
-                'workbench.model_switch_new_conversation_effect',
-                'Wework will open a new conversation, reference this conversation, and preserve the current draft.'
+                'workbench.model_switch_new_session_effect',
+                'Your next message will start a new session here. Earlier messages and the current draft will remain available.'
               )
-            : t(
-                'workbench.model_switch_warning_effect',
-                'The new model will be used for the next message. If a response is in progress, it will continue with the current model.'
-              )}
+            : continueInNewConversation
+              ? t(
+                  'workbench.model_switch_new_conversation_effect',
+                  'Wework will open a new conversation, reference this conversation, and preserve the current draft.'
+                )
+              : t(
+                  'workbench.model_switch_warning_effect',
+                  'The new model will be used for the next message. If a response is in progress, it will continue with the current model.'
+                )}
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button

@@ -65,7 +65,11 @@ export async function initializeWorkbenchModePreference(
     DEVELOPMENT_COMMANDS.map(command => probeCommand(command, environment))
   )
   const mode: WorkbenchMode = results.some(Boolean) ? 'developer' : 'focus'
-  await preferences.update({ workbenchMode: mode })
+  try {
+    await preferences.update({ workbenchMode: mode })
+  } catch (error) {
+    console.warn('[workbench-mode] Could not persist the detected mode', error)
+  }
   return mode
 }
 

@@ -32,6 +32,7 @@ pub(super) fn prepare(
         crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
         crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
         crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
+        crate::workbench_control::SERVER_NAME,
     ] {
         servers.remove(name);
     }
@@ -234,7 +235,9 @@ mod tests {
         )
         .unwrap();
         let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        assert_eq!(config["mcpServers"].as_object().unwrap().len(), 2);
+        assert_eq!(config["mcpServers"].as_object().unwrap().len(), 3);
+        assert_eq!(config["mcpServers"]["keep"], json!({"command": "keep"}));
+        assert_eq!(config["mcpServers"]["wework_space"]["type"], "http");
         assert_eq!(
             config["mcpServers"]["replace"],
             json!({"type": "stdio", "command": "new"})
@@ -257,10 +260,11 @@ mod tests {
         let config = json!({"mcpServers": {
             (crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME): {"type": "http", "url": "https://stale.example", "headers": {"Authorization": "old-grant"}},
             (crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME): {"type": "http", "url": "https://stale.example"},
+            (crate::workbench_control::SERVER_NAME): {"type": "http", "url": "https://stale.example", "headers": {"Authorization": "old-control-grant"}},
             "skill-tool": {"command": "keep"}
         }});
         fs::write(&path, config.to_string()).unwrap();
-        prepare(
+        let spec = prepare(
             home.path(),
             &ExecutionRequest::default(),
             &BTreeMap::new(),
@@ -269,10 +273,25 @@ mod tests {
         .unwrap();
         let content = fs::read_to_string(path).unwrap();
         assert!(!content.contains("old-grant"));
-        let config: Value = serde_json::from_str(&content).unwrap();
+        assert!(!content.contains("stale.example"));
+        let mut config: Value = serde_json::from_str(&content).unwrap();
+        super::super::mcp_environment::resolve_context(&mut config, spec.envs()).unwrap();
+        let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint().unwrap();
+        let server = &config["mcpServers"]["wework_space"];
+        assert_eq!(server["type"], "http");
+        assert_eq!(server["url"], endpoint.url);
         assert_eq!(
-            config["mcpServers"],
-            json!({"skill-tool": {"command": "keep"}})
+            server["headers"]["Authorization"],
+            format!("Bearer {}", endpoint.token)
+        );
+        assert!(!server["headers"]["X-Wework-Mcp-Context"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+        assert_eq!(config["mcpServers"].as_object().unwrap().len(), 2);
+        assert_eq!(
+            config["mcpServers"]["skill-tool"],
+            json!({"command": "keep"})
         );
     }
 

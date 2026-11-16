@@ -79,7 +79,7 @@ export function NotificationFeedRow({
           data-testid={testId}
           data-unread={unread ? 'true' : undefined}
           disabled={busy}
-          className="block min-h-11 w-full text-left after:absolute after:inset-0 after:z-0 after:content-[''] focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-focus disabled:opacity-50 md:min-h-6"
+          className="block min-h-11 w-full text-left after:absolute after:inset-0 after:z-0 after:content-[''] focus-visible:outline-none keyboard:focus-visible:after:ring-2 keyboard:focus-visible:after:ring-inset keyboard:focus-visible:after:ring-focus disabled:opacity-50 md:min-h-6"
           onClick={onClick}
         >
           <span className="flex items-baseline justify-between gap-3">

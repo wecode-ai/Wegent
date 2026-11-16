@@ -25,8 +25,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use brz_http::Client as HttpClient;
 
-use crate::attachments::minio_client::{self, MinioConfig};
-use crate::attachments::s3_signing;
+use wegent_storage::minio_client::{self, MinioConfig};
+use wegent_storage::s3_signing;
 
 /// `settings.DELIVERY_S3_BUCKET` default.
 const DEFAULT_BUCKET: &str = "wegent-deliveries";
@@ -58,6 +58,27 @@ fn config_from_env() -> Option<MinioConfig> {
         .filter(|bucket| !bucket.is_empty())
         .unwrap_or_else(|| DEFAULT_BUCKET.to_string());
     Some(config)
+}
+
+/// Write a new object without overwriting an active delivery revision.
+pub async fn write_object(
+    client: &HttpClient,
+    key: &str,
+    bytes: &[u8],
+) -> Result<(), DeliveryReadError> {
+    let config = config_from_env().ok_or(DeliveryReadError::Unavailable)?;
+    ensure_bucket(client, &config).await?;
+    minio_client::put_object(client, &config, key, bytes)
+        .await
+        .map_err(|_| DeliveryReadError::Unavailable)
+}
+
+/// Remove abandoned staging objects or objects superseded by a committed save.
+pub async fn delete_object(client: &HttpClient, key: &str) -> Result<(), DeliveryReadError> {
+    let config = config_from_env().ok_or(DeliveryReadError::Unavailable)?;
+    minio_client::delete_object(client, &config, key)
+        .await
+        .map_err(|_| DeliveryReadError::Unavailable)
 }
 
 /// `DeliveryStorage.get_bytes(object_key)`: ensure the bucket once per process,

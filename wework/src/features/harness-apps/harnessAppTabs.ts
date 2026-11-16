@@ -70,6 +70,23 @@ export function storeHarnessAppProxyToken(installationId: string, token: string)
   return invokeDesktopHost<void>('smartApps.storeProxyToken', { installationId, token })
 }
 
+export async function takeHarnessAppAdditionalProxyTokens(
+  installationId: string
+): Promise<string[]> {
+  const tokens = await invokeDesktopHost<string[] | null | undefined>(
+    'smartApps.takeAdditionalProxyTokens',
+    { installationId }
+  )
+  return Array.isArray(tokens) ? tokens : []
+}
+
+export function storeHarnessAppAdditionalProxyTokens(
+  installationId: string,
+  tokens: string[]
+): Promise<void> {
+  return invokeDesktopHost<void>('smartApps.storeAdditionalProxyTokens', { installationId, tokens })
+}
+
 export function takeHarnessAppContextToken(installationId: string): Promise<string | null> {
   return invokeDesktopHost<string | null>('smartApps.takeContextToken', { installationId })
 }

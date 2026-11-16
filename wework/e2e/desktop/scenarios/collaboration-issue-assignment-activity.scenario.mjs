@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
 import { verifyCommentAssignment } from '../modules/comment-assignment.mjs'
+import { verifyIssueCommentWorkflow } from '../modules/issue-comment-workflow.mjs'
+import { verifyAssignmentActivityReceipts } from '../modules/assignment-activity-receipts.mjs'
+import { verifyIssueWebLink, verifyLocalIssueHasNoWebLink } from '../modules/issue-web-link.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT_NAME = '负责人分配动态验收'
@@ -28,7 +32,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   let issue
   let commentId
 
-  async function request(path, options = {}, token = ownerToken) {
+  async function request(path, options = {}, token = ownerToken, expectedStatus) {
     const response = await fetch(`${backendUrl}${path}`, {
       ...options,
       headers: {
@@ -38,7 +42,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       },
     })
     const text = await response.text()
-    assert.equal(response.ok, true, `${path}: HTTP ${response.status}: ${text}`)
+    assert.equal(
+      expectedStatus === undefined ? response.ok : response.status === expectedStatus,
+      true,
+      `${path}: HTTP ${response.status}: ${text}`
+    )
     return text ? JSON.parse(text) : null
   }
 
@@ -77,6 +85,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
 
   async function changeAssignee(control, userId, historyLength, notify = true) {
     await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
+    const notifyToggle = '[data-testid="cloud-todo-assignee-notify"]'
+    await control.command('waitFor', notifyToggle)
+    const enabled = Number(await control.command('getElementCount', `${notifyToggle}:checked`)) > 0
+    if (enabled !== notify) await control.command('click', notifyToggle)
     const target = userId ? `user:${userId}` : 'empty'
     await control.command('click', `[data-testid="cloud-todo-detail-assignee-option-${target}"]`)
     assert.equal(
@@ -84,22 +96,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command('getElementCount', '[data-testid="wework-assignment-notify-confirm"]')
       ),
       0,
-      'Assignee selection must use the save menu instead of a notification dialog'
+      'Assignee selection must save directly without a notification confirmation dialog'
     )
-    if (notify) {
-      await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-        timeoutMs: uiTimeoutMs,
-      })
-    } else {
-      await control.command('click', scoped('[data-testid="cloud-todo-save-options"]'))
-      await control.command('click', '[data-testid="cloud-todo-save-without-notification"]', {
-        visible: true,
-      })
-    }
-    await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
-      visible: false,
-      timeoutMs: uiTimeoutMs,
-    })
     await control.command('waitFor', assignmentEvent(historyLength - 1), {
       timeoutMs: uiTimeoutMs,
     })
@@ -136,7 +134,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   async function verifyLocalProject(control) {
     await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
     await createLocalCollaborationProject(control, CONTENT, LOCAL_PROJECT)
-    await control.command('click', scoped('[data-testid="collaboration-tab-board"]'))
+    await selectCollaborationProjectView(control, CONTENT, 'board')
     await control.command('click', scoped('[data-testid="collaboration-empty-project-create"]'))
     await control.command('fill', scoped('[data-testid="cloud-todo-title"]'), {
       value: LOCAL_ISSUE,
@@ -155,18 +153,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     assert.equal(await control.command('getValue', title), LOCAL_ISSUE)
     const expected = [{ name: localOwner, action: '指派' }]
     await verifyAssignments(control, expected, null)
+    await verifyAssignmentActivityReceipts(control, '本人已读')
 
     await control.command('click', scoped('[data-testid="cloud-todo-detail-assignee"]'))
     await control.command('click', '[data-testid="cloud-todo-detail-assignee-option-empty"]')
-    await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-save"]'), {
-      timeoutMs: uiTimeoutMs,
-    })
     await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
       visible: false,
       timeoutMs: uiTimeoutMs,
     })
     expected.push({ name: '未指派', action: '取消指派' })
     await verifyAssignments(control, expected, null)
+    await verifyAssignmentActivityReceipts(control, null)
     const activityId = await control.command(
       'getAttribute',
       scoped('section[data-testid^="cloud-task-activity-"]'),
@@ -183,6 +180,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     assert.equal(await control.command('getValue', title), LOCAL_ISSUE)
     await verifyAssignments(control, expected, null)
     await captureScreenshot(control, 'assignment-activity-02-local-persisted.png', CONTENT)
+    await verifyLocalIssueHasNoWebLink(control)
+    await verifyAssignmentActivityReceipts(control, null)
   }
 
   return {
@@ -248,6 +247,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await openIssue(control)
       const expected = [{ name: owner.user_name, action: '指派' }]
       await verifyAssignments(control, expected)
+      await verifyAssignmentActivityReceipts(control, '本人已读')
 
       const comment = await request(
         `/api/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`,
@@ -276,6 +276,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await changeAssignee(control, member.id, 2, false)
       expected.push({ name: member.user_name, action: '转派' })
       await verifyAssignments(control, expected)
+      await verifyAssignmentActivityReceipts(control, '未读')
       const notifications = await request('/api/v1/wework-notifications', {}, memberToken)
       assert.deepEqual(
         notifications.items.map(notification => notification.id).sort(),
@@ -286,23 +287,34 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await changeAssignee(control, null, 3)
       expected.push({ name: '未指派', action: '取消指派' })
       await verifyAssignments(control, expected)
+      await verifyAssignmentActivityReceipts(control, null)
 
       await changeAssignee(control, owner.id, 4)
       expected.push({ name: owner.user_name, action: '转派' })
       await verifyAssignments(control, expected)
+      await verifyAssignmentActivityReceipts(control, '本人已读')
       await verifyTimeline(control)
       const savedHistory = issue.assignment_history
 
       await reloadMainWindow(control, 'The desktop did not reconnect after assignment reload')
       await openIssue(control)
       await verifyAssignments(control, expected)
+      await verifyAssignmentActivityReceipts(control, '本人已读')
       await verifyTimeline(control)
       const persisted = await request(`/api/v1/loop-items/${issue.id}`)
       assert.deepEqual(persisted.assignment_history, savedHistory)
       assert.equal(String(persisted.assignee_user_id), String(owner.id))
       assert.deepEqual(await request(`/api/v1/loop-items/${issue.id}/tasks`), [])
       await captureScreenshot(control, 'assignment-activity-01-cloud-persisted.png', CONTENT)
-      await verifyCommentAssignment(control, { request, project, owner, member })
+      await verifyIssueWebLink(control, { request, project, issue })
+      await verifyCommentAssignment(control, {
+        request,
+        project,
+        owner,
+        member,
+        memberRequest: (path, expectedStatus) => request(path, {}, memberToken, expectedStatus),
+      })
+      await verifyIssueCommentWorkflow(control, { request, project, member, uiTimeoutMs })
       await verifyLocalProject(control)
     },
 

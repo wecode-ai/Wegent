@@ -13,10 +13,17 @@ Pre-push checks run the complete frontend unit suite with two Jest workers by de
 The project includes comprehensive unit testing support across all modules:
 
 - **Backend** (FastAPI): pytest + pytest-asyncio + pytest-cov + pytest-mock
-- **Executor** (AI Agent Engine): pytest + pytest-mock + pytest-asyncio
+- **Executor** (Rust workspace): Cargo unit tests and protocol integration tests
 - **Executor Manager** (Task Management): pytest + pytest-mock + pytest-cov
 - **Shared** (Utilities): pytest + pytest-cov
 - **Frontend** (Next.js + React 19): Jest + @testing-library/react
+- **Wework** (Electron + React): Vitest + @testing-library/react and the Node.js test runner
+
+## Maintaining Wework Unit Tests
+
+Run related tests with `pnpm --filter wework test <test-file>`. Count expanded parameterized cases when measuring reductions, rather than files or `test()` declarations. Do not reduce the count by skipping cases, merging tests, or changing discovery rules.
+
+Prioritize behavior coverage for task creation and sending, permissions and resource ownership, persistence, failure recovery, state machines, and upgrade or rollback. Tests with identical inputs, actions, and assertions can be removed; independent checks of colors, spacing, icons, and ordinary display formatting can be trimmed according to maintenance needs. Coverage evidence helps detect omissions but cannot alone establish behavioral equivalence. Run affected tests and review assertions after cleanup, preserving security assertions and distinct critical boundary cases.
 
 ## Current Test Coverage
 
@@ -31,9 +38,8 @@ The project includes comprehensive unit testing support across all modules:
 
 ### Executor (`executor/`)
 
-- ✅ Agent factory
-- ✅ Base agent classes
-- ✅ Mocked AI client interactions (Anthropic, OpenAI)
+- Unit tests for permissions, credential isolation, task state, persistence, and failure recovery
+- Process, HTTP, and runtime protocol integration tests in `executor/tests/`
 
 ### Executor Manager (`executor_manager/`)
 
@@ -134,24 +140,18 @@ markers =
 
 ```bash
 cd executor
-pytest tests/ --cov=agents
+cargo test --locked -p wegent-executor --lib <module-or-test-name>
+cargo test --locked -p <workspace-package> --lib
+cargo test --locked --test <integration-test-file>
 ```
 
-### Test Structure
+### Maintaining Tests
 
-```
-executor/tests/
-├── conftest.py              # Executor-specific fixtures
-└── agents/                  # Agent tests
-```
+Workspace unit tests live in `executor/src/` and `executor/crates/*/src/`; integration tests live in `executor/tests/`. Tests embedded in source files can also exercise real processes or HTTP integrations, so determine their role from their behavior.
 
-### Key Fixtures
+Prioritize independent tests of ordinary parameter mapping, display formatting, catalog metadata, and text projection when trimming unit tests. Removing distinct cases accepts reduced coverage and must not be described as equivalent deduplication. Preserve critical boundaries for permissions and ownership, credential isolation, concurrency, persistence, recovery, and upgrade or rollback. A fixed reduction ratio does not replace coverage judgment. Remove unused test helpers and empty modules together; do not reduce counts through `ignore`, merged cases, or discovery changes.
 
-- `mock_anthropic_client`: Mocked Anthropic API client for testing Claude models
-- `mock_openai_client`: Mocked OpenAI API client for testing GPT models
-- `mock_callback_client`: Mocked callback HTTP client for agent responses
-- `suppress_resource_warnings`: Session-scoped fixture to suppress ResourceWarning messages
-- `cleanup_logging`: Session-scoped fixture to clean up logging handlers and prevent daemon thread errors
+Check compilation and unit tests for affected packages after cleanup, and retain independent protocol integration and E2E coverage. Push hooks and CI run full checks according to repository rules.
 
 ## Executor Manager Tests
 
@@ -231,6 +231,13 @@ frontend/src/__tests__/
 
 ## Wework Unit Tests
 
+Focus unit coverage on task state and message consistency, account and permission
+boundaries, persistence, device and runtime routing, input submission, and failure
+recovery. Do not add standalone cases for CSS classes, icons, copy ordering, source
+keywords, fixed metadata, or diagnostic log formatting. Keep mixed scenarios focused
+on business outcomes. Retain telemetry consent, opt-out, redaction, and account
+isolation coverage rather than separate analytics-label or debug-snapshot tests.
+
 Run the complete Wework unit test suite from the repository root:
 
 ```bash
@@ -249,6 +256,36 @@ For compatibility, the test script removes one standalone leading `--`, then
 passes all remaining file filters and Vitest options through unchanged. For a
 focused run, confirm that the reported `Test Files` count matches the intended
 scope so an accidental full-suite run is caught immediately.
+
+Pure logic tests without DOM dependencies should declare `// @vitest-environment node`
+at the top of the file. These tests do not load the browser mocks, storage, or plugin UI
+fixtures in `src/test/setup.dom.ts`. Tests exercising browser behavior keep the default
+jsdom environment. Component tests import plugin UI helpers from `@/test/setup.dom`.
+
+Wework CI runs tests without collecting coverage by default to avoid Istanbul
+instrumentation overhead. Collect focused coverage when needed with
+`pnpm --dir wework exec vitest run <test-file> --coverage`.
+Full renderer push checks report the current shard's passed file count every 15 seconds;
+complete diagnostics remain in the logs.
+
+A running Executor writes to `tasks.sqlite` concurrently. Desktop E2E fixtures that
+write directly to this database must set `PRAGMA busy_timeout = 10000` on their
+independent connection so normal write transactions can release their locks.
+Keep this wait scoped to the fixture connection and preserve business assertions
+and global UI timeout budgets.
+
+### Async Question Model Fixtures
+
+The desktop E2E async question fixture recognizes only an exact expected answer
+in a user message after the matching `function_call_output` acknowledgement,
+using the shared parser to remove runtime context wrappers from the reply.
+AGENTS.md and environment context can also arrive with `role=user`; scanning the
+whole request or matching an answer substring cannot establish a user reply.
+
+`desktop-async-input-fixture.test.mjs` covers injected context, historical answers,
+tool output, and actual replies. Existing desktop async question scenarios retain
+the distracting word `Complete` in their prompt and assert both the waiting
+message before an answer and the completion message afterward.
 
 ## Wework Desktop Cloud Device Tests
 
@@ -287,8 +324,30 @@ module test, the platform E2E suite, Wework browser and desktop E2E, and the
 Wework macOS memory gate. This is useful when changed paths might not capture
 the full blast radius of a change. All three test workflows respond to label
 events; without `ci:all`, test selection still follows the changed paths.
-The Wework macOS memory gate runs only for non-draft PRs carrying `ci:memory` or `ci:all`;
+The Wework macOS memory gate runs only for non-draft PRs carrying `ci:all`;
 Regular PRs, scheduled runs, and manual runs do not trigger memory E2E.
+
+Windows desktop builds share the `build-wework-windows-e2e` action between PRs
+and main-branch cache warmup. Only `main` writes shared caches. Complete packages
+require an exact match of source inputs, Node, Rust, and runner image versions;
+prefix matching is not used. A hit validates and uploads the original package,
+preserving its producer identity. A miss builds with shared pnpm, Codex, Electron,
+Executor, and Backend compilation caches. These are E2E builds, not evidence of
+upgrade compatibility.
+
+Windows Core independently balances serial shards using median successful
+checkpoint durations in `.github/ci/wework-windows-checkpoint-durations.json`,
+which records the source Actions runs. Linux grouping stays unchanged. Scheduling
+preserves the ten-runner budget, two exclusive benchmark shards, and every
+checkpoint. A shard containing an unmeasured checkpoint remains intact until
+successful logs provide evidence. Failed and cancelled checkpoints are excluded.
+Checkpoints sharing CLI, Electron, or object-storage preparation stay together,
+preserving the original number of preparation jobs.
+Loads also include measured conditional preparation costs with a source job link,
+so cold object-storage compilation does not sit on an otherwise full shard.
+Cache hits may reduce these costs.
+Estimated loads omit runner queues, common setup, and cleanup; validate actual
+savings with a complete CI run.
 
 Feature-branch pushes do not run a duplicate CI suite; the `pull_request` event
 validates the branch after a PR is opened. A newer commit to the same PR or to
@@ -298,6 +357,15 @@ unrelated modules do not make the summary fail.
 
 CI reliability depends on these invariants:
 
+- Desktop E2E element mounting and subsequent value polling each use the shared
+  step budget. Mounting must not consume the entire value loop before its first
+  read; retain actual-value diagnostics and exact-match assertions.
+- After routing control commands back from another window, explicitly restore
+  native window focus before checking virtualized content. Control routing does
+  not bring a native window to the foreground.
+- Desktop teardown observes both exit events and operating-system liveness and
+  always checks the entire process group. Timeouts retain the PID, exit status,
+  and Linux kernel process state without relaxing cleanup assertions.
 - The platform E2E MySQL service must allow enough startup grace for its first
   initialization. Its health-check `start-period` should cover a cold start on
   a shared runner before the interval and retry count determine failure; reruns
@@ -362,6 +430,13 @@ runs may restore the default-branch cache, but they do not save another copy:
 - Outside Wework E2E, Executor and Electron system dependency installers first
   check packages already present on the runner. Only `main` writes the APT
   download cache; PRs restore it read-only.
+- The real Electron update-transport probe on Linux isolates both Xvfb and D-Bus
+  sessions so an invalid inherited session-bus address cannot interfere with native
+  startup or exit. Keep its startup count, lifecycle assertions, and timeouts unchanged.
+- Before parallel desktop checkpoints launch their Xvfb servers, the parent runner
+  prepares the shared X11 Unix socket directory to avoid concurrent `EEXIST` failures.
+  Redis readiness failures retain the last output, log-read error, and process state;
+  readiness deadlines are not extended to hide startup defects.
 
 `.github/workflows/ci-cache-warmup.yml` runs after related source, dependency
 lockfile, or cache implementation changes enter `main`, and rejects manual
@@ -655,3 +730,58 @@ pnpm --dir frontend test -- src/__tests__/utils/test_example.test.ts
 - [Testing Library](https://testing-library.com/)
 - [Jest documentation](https://jestjs.io/)
 - [GitHub Actions](https://docs.github.com/en/actions)
+
+## E2E resource reuse and shard allocation
+
+Platform E2E checks its content-addressed GHCR image before starting Buildx, and starts the builder and publishes an image only when that image is missing. A registry hit does not download BuildKit, avoiding an unnecessary Docker Hub dependency. Knowledge tests use the official `gcr.io/etcd-development/etcd:v3.5.16` image to avoid the 502 errors observed on the previous Quay download path.
+
+Shard 4's knowledge test entry point owns the on-demand Milvus and etcd containers, reusing the existing network and MinIO; other shards do not start these services. Startup checks etcd `/health` and MinIO `/minio/health/ready` before starting Milvus and polling its actual `/healthz`, within the existing 180-second budget. Container exit fails immediately, test failures preserve their exit code, and every path records container state, health-check configuration/history and complete logs before cleanup. Evidence is uploaded as `knowledge-provider-lifecycle-e2e`. This addresses the pre-checkout service failure in [40609610685](https://github.com/wecode-ai/Wegent/actions/runs/40609610685), where subsequent steps could not capture health details. The four runners and both knowledge test entry points remain unchanged.
+
+Platform E2E keeps its four existing shards. S3 uploads reuse shard 2's MySQL, Redis and MinIO; media hosting reuses the same services in shard 3. Test entry points, assertions and evidence artifacts are preserved. Redis uses a separate logical database, and media tools are installed in the shared image. Replication starts its dedicated replica and broker only in shard 3, saves logs and removes the containers on success or failure. The replica health probe authenticates over TCP and executes `SELECT 1`, so the entrypoint's temporary socket-only server cannot satisfy readiness. Remote knowledge indexing moves to shard 4.
+
+The allocation uses successful runs [40548056927](https://github.com/wecode-ai/Wegent/actions/runs/40548056927) and [40547828678](https://github.com/wecode-ai/Wegent/actions/runs/40547828678): shard 1's remote indexing took 149–164 seconds, replication 20–26 seconds, media hosting 24–26 seconds, and S3 uploads about 6 seconds. Extra work moves off shard 1 onto lighter existing shards without adding machines. Reassess using actual test-step duration and cumulative runner time, excluding queue time.
+
+Ordinary label events do not classify Platform E2E changes; only the `ci:all` label requests full regression. Selected desktop Plugins scenarios run sequentially in one job while retaining independent initialization and failure results. The shared macOS job is named `Wework Desktop macOS E2E`: Inspector coverage runs for affected paths, while the memory step remains limited to PRs with `ci:all`. Scheduled and manual runs do not execute the memory step automatically.
+
+In the first integration run [40558717377](https://github.com/wecode-ai/Wegent/actions/runs/40558717377), the five test jobs consumed 44m20s of cumulative runner execution time, compared with 48m18s and 51m53s for the two seven-job baselines. Timing starts at each job's first step and excludes queues. Provider-native logical shard 1 took 120 seconds while logical shard 3 was effectively empty, so they are assigned to physical shards 3 and 1 respectively. Other provider shards, ordinary browser shards and per-machine user identities remain unchanged. A matrix contract enforces four physical shards and exactly one execution of each provider shard.
+
+While an install or uninstall is in flight, background device repair and explicit refresh reconciliation share the foreground mutation's busy state. Intermediate pending membership must not trigger a second complete capability dispatch. Genuine device gaps remain eligible for repair after the foreground mutation settles. Component coverage holds the install response while publishing pending membership, then verifies repair resumes after settlement; the original multi-Runtime E2E assertions requiring one dispatch per device remain unchanged.
+
+When reinstall overlaps old uninstall cleanup, a newer snapshot may advance the device watermark before the reinstall acknowledgement is persisted. Single-plugin synchronization sends current desired state again only when a successful acknowledgement was fenced by a newer watermark and the device installation is still unconfirmed, with a three-attempt limit. Persistent conflicts return `plugin_write_conflict`; device failures are not immediately retried. `test_plugin_sync_recording.py` covers convergence, persistent conflicts, device failures, and already-confirmed newer acknowledgements using real database rows and watermarks. Desktop `plugin-write-coordination` retains its assertion that the reinstall response contains a confirmed installed device.
+
+Before creating the standard test account, the Windows desktop runner prepares a 1920×1080 display and checks for a working area of at least 1440×960. This prevents the default 1024×768 display from clamping Electron into compact layout. Directory-publication fault injection holds a native directory handle without delete sharing; an open child file does not guarantee that renaming its parent fails. Regression run [42033008185](https://github.com/wecode-ai/Wegent/actions/runs/42033008185) retains evidence for both compact-layout failures and the incorrect directory-lock assumption. Claude configuration publication also covers isolated paths exceeding Windows `MAX_PATH`. History-search component coverage verifies that the virtualizer receives the new search offset before native scroll events arrive.
+
+Stand-in list and standalone-preview approval scenarios share `shell-command-response.mjs`. Direct calls and `code_mode` must preserve identical one-time escalation arguments. The preview fixture in [42048584579](https://github.com/wecode-ai/Wegent/actions/runs/42048584579) recognized only direct shell tools; a protocol test reproduces its exact exception with `code_mode` input. Shared call generation now covers both scenarios. Unknown tools remain fatal and retain tool schemas, request types, and input-role diagnostics without request text or authentication headers.
+
+The same Windows run exposed two later issues. A project lookup finishing after a switch to a task updates its owning board tab's title and route, replacing the URL only while that tab is active; closed tabs stay closed. Component coverage checks background completion, reselection, and late callbacks after closure, while notification E2E retains exact route assertions. Cached-history search captures its baseline from the same settled snapshot after bottom layout and pagination complete. An intermediate `loadingMoreBefore=true` state cannot be compared with pagination completed during search; all message and pagination equality assertions remain intact.
+
+Executor restart logs in [42061132998](https://github.com/wecode-ai/Wegent/actions/runs/42061132998) show a history-loss event arriving before RPC negotiation completes, causing the sole recovery request to fail. After authenticating the event connection, the HTTP entry point checks RPC readiness and returns 503 while unavailable. Existing SSE reconnection retains its cursor and rereads the executor journal without prematurely consuming the recovery event. Protocol coverage verifies withholding events until readiness and replaying from the original cursor. Human-interaction evidence also shows that reloading after the dismissal marker but before archive persistence loses history. Dismissal now commits the archive under its history lock before saving the handled marker; component coverage blocks that lock and verifies that the question remains unsuppressed until commit. The Windows directory-holder fixture constructs its extended path prefix with native PowerShell formatting to avoid `String.Concat` overload binding failures.
+
+Async project callbacks must read current tab state when invoked rather than the tab list and selection captured when the request started. Regression coverage retains the old callback across selection and closure, checking that it neither changes the current task URL nor recreates a closed tab. If redispatch throws after a superseded successful plugin acknowledgement, synchronization returns an explicit failed response and stops the loop instead of reusing stale success. Database coverage verifies exactly two calls and the `plugin_device_sync_failed` result.
+
+Assignment-control and activity receipt timestamps must be compared in one DOM read. Windows logs in [42072191562](https://github.com/wecode-ai/Wegent/actions/runs/42072191562) place the separate reads at 17:42:02.912 and .977. An intervening Issue status update reloaded the version-scoped control receipt, leaving the second read empty; the subsequent page snapshot shows matching timestamps. The assertion now waits for both receipts to load in one snapshot before comparing their exact text. Protocol tests cover the intervening refresh and genuinely different timestamps, which must still fail.
+
+The public stand-in Beta button leaves project headers using their existing
+width-based tab or compact-select navigation. Cloud shard 1 in
+[CI 42196630424](https://github.com/wecode-ai/Wegent/actions/runs/42196630424)
+recorded missing `collaboration-tab-manage` controls in both
+`plugin-source-continuation-evidence.json` and
+`plugin-detail-resilience-evidence.json`. The
+`plugin-detail-resilience-healthy-before-fault.png` capture shows the real
+execution-environment page with a Project settings select in its header.
+`ProjectViewSwitcher` renders only `collaboration-project-view-select` in compact
+mode. Both plugin scenarios therefore reuse `selectCollaborationProjectView`
+instead of assuming an inline Manage tab. Healthy baselines, persistent plugin
+bindings, fault injection, permission and recovery assertions remain intact;
+timeouts and scenario coverage are unchanged.
+
+Long-conversation switching retains its original assertions and wait budgets.
+[CI 42199573796](https://github.com/wecode-ai/Wegent/actions/runs/42199573796/job/127832839476)
+timed out before the initial body following 520 progress messages. The executor
+history already contained that body. Mapping `conversation-switching-initial.cpuprofile`
+through the matching build's source maps identified repeated shared-footer height
+reads from `MessageList` layout callbacks, accounting for about 1.9 seconds of
+synchronous layout. Footer measurement now runs on controller commits and observed
+resizes; virtual rows retain their existing positioning logic. Component coverage
+checks that 520 row updates do not remeasure the footer, while size changes,
+unmounting and remounting still update its height.

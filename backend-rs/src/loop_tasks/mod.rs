@@ -4,6 +4,8 @@
 
 //! `GET /api/v1/loop-items/{item_id}/tasks`.
 
+pub(crate) mod assignment_index;
+mod assignment_receipts;
 pub mod assignment_repository;
 pub mod assignments;
 pub mod auth;
@@ -12,6 +14,7 @@ pub mod cloud_context;
 pub mod collaborators;
 pub mod comments;
 pub mod http_error;
+mod human_requests;
 pub mod human_task_binding;
 pub mod item_response;
 pub(crate) mod loop_columns;

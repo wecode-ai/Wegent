@@ -153,6 +153,8 @@ def _validate_execution_target(
     actual_type = device.json.get("spec", {}).get(
         "deviceType", SubscriptionExecutionTargetType.LOCAL.value
     )
+    if actual_type == "app":
+        actual_type = SubscriptionExecutionTargetType.LOCAL.value
     if actual_type != execution_target.type.value:
         raise HTTPException(
             status_code=400,
@@ -188,6 +190,26 @@ class SubscriptionService:
                     detail=f"Interval must be at least {min_interval} minutes",
                 )
         elif trigger_type == SubscriptionTriggerType.CRON:
+            if "workday_only" in trigger_config and not isinstance(
+                trigger_config["workday_only"], bool
+            ):
+                raise HTTPException(
+                    status_code=400, detail="workday_only must be a boolean"
+                )
+            if trigger_config.get("workday_only", False):
+                from app.schemas.subscription import CronTriggerConfig
+
+                try:
+                    validated = CronTriggerConfig.model_validate(trigger_config)
+                    if (
+                        calculate_next_execution_time(
+                            trigger_type, validated.model_dump()
+                        )
+                        is None
+                    ):
+                        raise ValueError("Invalid cron expression for workday schedule")
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
             # Validate cron expression minimum interval
             try:
                 from croniter import croniter
@@ -428,14 +450,6 @@ class SubscriptionService:
             if not s.json.get("_internal", {}).get("is_rental", False)
         ]
 
-        # Filter by enabled status if specified
-        if enabled is not None:
-            subscriptions = [
-                s
-                for s in subscriptions
-                if s.json.get("_internal", {}).get("enabled", True) == enabled
-            ]
-
         # Filter by trigger_type if specified
         if trigger_type is not None:
             subscriptions = [
@@ -469,6 +483,15 @@ class SubscriptionService:
 
         if expired_updated:
             db.commit()
+
+        # Filter by enabled status after expiration updates so totals and pages
+        # reflect the subscriptions' current state.
+        if enabled is not None:
+            subscriptions = [
+                s
+                for s in subscriptions
+                if s.json.get("_internal", {}).get("enabled", True) == enabled
+            ]
 
         total = len(subscriptions)
         subscriptions = subscriptions[skip : skip + limit]

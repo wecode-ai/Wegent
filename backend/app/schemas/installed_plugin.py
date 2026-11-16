@@ -407,6 +407,7 @@ class PluginSubmissionInitRequest(BaseModel):
     filename: str
     sha256: str = Field(min_length=64, max_length=64)
     sizeBytes: int = Field(gt=0, le=50 * 1024 * 1024)
+    releaseNotes: str | None = Field(default=None, min_length=1, max_length=2000)
     listingType: Literal["plugin", "skill"] = "plugin"
     purpose: Literal["marketplace_publish", "restricted_share"] = "restricted_share"
     # Legacy submissions are retained only for personal ACL sharing. Enterprise
@@ -414,6 +415,16 @@ class PluginSubmissionInitRequest(BaseModel):
     visibility: Optional[Literal["personal", "workspace", "public"]] = None
     targets: List["PluginAccessTarget"] = Field(default_factory=list)
     allowCopy: bool = False
+
+    @field_validator("releaseNotes")
+    @classmethod
+    def validate_release_notes(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
 
     @model_validator(mode="after")
     def resolve_purpose_from_visibility(self) -> "PluginSubmissionInitRequest":

@@ -96,14 +96,25 @@ def _mysql_set_user_cursor(
     )
 
 
-def _mysql_mark_read_expression(metadata: object, user_id: int) -> object:
+def _mysql_mark_read_expression(
+    metadata: object, user_id: int, observed_content_revision: int | None = None
+) -> object:
     """Build one atomic JSON expression that also repairs legacy metadata."""
 
+    current = _mysql_read_revision_expression(metadata, f"$.{CONTENT_REVISION_KEY}")
+    observed = (
+        current
+        if observed_content_revision is None
+        else func.least(current, observed_content_revision)
+    )
+    existing = _mysql_read_revision_expression(
+        metadata, f'$.{READ_REVISIONS_KEY}."{user_id}"', 0
+    )
     return _mysql_set_user_cursor(
         metadata,
         READ_REVISIONS_KEY,
         user_id,
-        _mysql_read_revision_expression(metadata, f"$.{CONTENT_REVISION_KEY}"),
+        func.greatest(func.least(existing, current), observed),
     )
 
 
@@ -113,6 +124,7 @@ def mark_loop_item_read(
     item_id: str,
     user_id: int,
     activity_sequence: int | None = None,
+    observed_content_revision: int | None = None,
 ) -> None:
     """Atomically advance one user's read cursor without touching item version/time."""
 
@@ -122,7 +134,9 @@ def mark_loop_item_read(
     dialect = db.get_bind().dialect.name
     if dialect == "mysql":
         metadata = func.coalesce(LoopItem.metadata_json, func.json_object())
-        next_metadata = _mysql_mark_read_expression(metadata, user_id)
+        next_metadata = _mysql_mark_read_expression(
+            metadata, user_id, observed_content_revision
+        )
         if activity_sequence is not None:
             existing_sequence = _mysql_read_revision_expression(
                 metadata, activity_path, 0
@@ -138,7 +152,15 @@ def mark_loop_item_read(
         revision = func.coalesce(
             func.json_extract(metadata, revision_path), INITIAL_CONTENT_REVISION
         )
-        next_metadata = func.json_set(metadata, path, revision)
+        observed = (
+            revision
+            if observed_content_revision is None
+            else func.min(revision, observed_content_revision)
+        )
+        existing = cast(func.coalesce(func.json_extract(metadata, path), 0), Integer)
+        next_metadata = func.json_set(
+            metadata, path, func.max(func.min(existing, revision), observed)
+        )
         if activity_sequence is not None:
             existing_sequence = func.coalesce(
                 func.json_extract(metadata, activity_path), 0

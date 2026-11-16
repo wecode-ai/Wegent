@@ -18,6 +18,8 @@ interface DesktopEmptyTaskLauncherProps {
   composerInputTestId?: string
   compact?: boolean
   searchActive?: boolean
+  /** Home contributions render translucent surfaces when the workbench background is visible. */
+  showWorkbenchBackground?: boolean
 }
 
 export function DesktopEmptyTaskLauncher({
@@ -29,6 +31,7 @@ export function DesktopEmptyTaskLauncher({
   composerInputTestId = 'chat-message-input',
   compact = false,
   searchActive = false,
+  showWorkbenchBackground = false,
 }: DesktopEmptyTaskLauncherProps) {
   const { t } = useTranslation('common')
   const find = useConversationFind(EMPTY_CONVERSATION, searchActive)
@@ -63,7 +66,7 @@ export function DesktopEmptyTaskLauncher({
               data-testid="empty-project-title-button"
               onClick={event => onOpenProjectSelector(event.currentTarget)}
               title={t('workbench.change_project', '更改项目')}
-              className="max-w-[18rem] truncate align-bottom underline decoration-text-muted decoration-dotted underline-offset-4 transition-colors hover:text-text-secondary focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+              className="max-w-[18rem] truncate align-bottom underline decoration-text-muted decoration-dotted underline-offset-4 transition-colors hover:text-text-secondary focus-visible:rounded focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
             >
               {projectName}
             </button>{' '}
@@ -93,7 +96,7 @@ export function DesktopEmptyTaskLauncher({
           <DshContributionSlotSurface
             attachedClassName="w-full"
             slot={WEWORK_DSH_SLOTS.home}
-            props={{ heading, onSelectSuggestion: selectSuggestion }}
+            props={{ heading, onSelectSuggestion: selectSuggestion, showWorkbenchBackground }}
           />
         </div>
       )}

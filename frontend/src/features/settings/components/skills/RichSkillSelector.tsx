@@ -216,6 +216,7 @@ export function RichSkillSelector({
       elements.push(
         <div
           key={`${skill.name}:${skill.namespace}:${skill.id}`}
+          data-testid={`skill-selector-option-${skill.id}`}
           className="px-4 py-3 cursor-pointer hover:bg-muted transition-colors border-b border-border last:border-b-0"
           onClick={() => handleSelect(skill)}
           role="button"
@@ -293,6 +294,7 @@ export function RichSkillSelector({
         <button
           ref={triggerRef}
           type="button"
+          data-testid="skill-selector-trigger"
           className="flex w-full h-9 items-center justify-between rounded-md border border-border/50 bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={disabled}
         >

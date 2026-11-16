@@ -8,6 +8,7 @@ import {
 import { collaborationTestIds } from "../testIds";
 
 interface IssueConversationDrawersProps {
+  embedded?: boolean;
   label: string;
   children: (close: () => void) => ReactNode;
   conversation: ReactNode;
@@ -18,6 +19,7 @@ interface IssueConversationDrawersProps {
 
 /** One overlay owns both panes, so the conversation cannot fall behind its Issue. */
 export function IssueConversationDrawers({
+  embedded = false,
   label,
   children,
   conversation,
@@ -68,8 +70,7 @@ export function IssueConversationDrawers({
         if (closeCommittedRef.current) return;
         closeCommittedRef.current = true;
         onCloseRef.current();
-      }
-      else setRetainedConversation(null);
+      } else setRetainedConversation(null);
     };
     void finishExit();
     return () => {
@@ -110,10 +111,10 @@ export function IssueConversationDrawers({
   return (
     <div
       ref={containerRef}
-      className="issue-conversation-drawers-backdrop"
+      className={`issue-conversation-drawers-backdrop${embedded ? " issue-conversation-drawers-embedded" : ""}`}
       data-testid={collaborationTestIds.issueDetail}
-      role="dialog"
-      aria-modal="true"
+      role={embedded ? "region" : "dialog"}
+      aria-modal={embedded ? undefined : true}
       aria-label={label}
       onMouseDown={(event) => {
         if (event.currentTarget === event.target) {
@@ -132,7 +133,7 @@ export function IssueConversationDrawers({
           if (hasConversation) onCloseConversation();
           else requestClose();
         }
-        if (event.key !== "Tab") return;
+        if (embedded || event.key !== "Tab") return;
         const focusable = Array.from(
           event.currentTarget.querySelectorAll<HTMLElement>(
             'button, a[href], input, textarea, select, summary, [tabindex], [contenteditable="true"]',

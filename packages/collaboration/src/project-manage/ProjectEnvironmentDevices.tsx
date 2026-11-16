@@ -218,7 +218,7 @@ export function ProjectEnvironmentDevices({
                           {isWorkspaceScope ||
                           (environment.device_id != null &&
                             workspaceDeviceIds?.has(environment.device_id))
-                            ? translate('todo.workspace_shared', '空间共享')
+                            ? translate('todo.workspace_shared', '分组共享')
                             : translate('todo.project_direct', '项目直接添加')}
                         </>
                       ) : null}
@@ -296,11 +296,11 @@ export function ProjectEnvironmentDevices({
                   {isWorkspaceScope
                     ? translate(
                         'todo.select_workspace_environment',
-                        '从我的资源中选择设备，授权给这个空间共享使用。'
+                        '从我的资源中选择设备，授权给这个分组共享使用。'
                       )
                     : translate(
                         'todo.select_project_environment',
-                        '从我的资源或空间共享资源中选择设备，授权给这个项目使用。'
+                        '从我的资源或分组共享资源中选择设备，授权给这个项目使用。'
                       )}
                 </p>
               </div>
@@ -368,7 +368,7 @@ export function ProjectEnvironmentDevices({
                             {executionEnvironmentStatusLabel(environment.status, translate)}
                             {' · '}
                             {isShared
-                              ? translate('todo.workspace_shared', '空间共享')
+                              ? translate('todo.workspace_shared', '分组共享')
                               : translate('todo.personal_resource', '我的资源')}
                           </span>
                           {needsSharing ? (
@@ -379,7 +379,7 @@ export function ProjectEnvironmentDevices({
                             >
                               {translate(
                                 'todo.execution_environment_share_scope_hint',
-                                '共享后，空间成员可为其他项目授权使用；仍使用此环境的账号和额度。'
+                                '共享后，分组成员可为其他项目授权使用；仍使用此环境的账号和额度。'
                               )}
                             </span>
                           ) : null}

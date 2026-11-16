@@ -11,6 +11,8 @@ export type RuntimeTaskExecutionPhase =
   | 'queued'
   | 'starting'
   | 'running'
+  | 'continuing'
+  | 'recovering'
   | 'stopping'
 
 export type RuntimeTaskTurnPhase = 'idle' | 'submitting' | 'awaiting' | 'streaming'
@@ -73,6 +75,7 @@ export interface RuntimeTaskLifecycleSnapshot {
 }
 
 export type RuntimeTaskLifecycleEvent =
+  | { type: 'executor_replaced' }
   | {
       type: 'executor_snapshot_received'
       address: RuntimeTaskAddress

@@ -22,6 +22,7 @@ from app.schemas.dingtalk_doc import (
     build_dingtalk_tree,
 )
 from app.services.dingtalk_doc_service import DingTalkDocService
+from app.services.user_mcp_service import MCPPreferencesError
 
 router = APIRouter()
 
@@ -66,6 +67,8 @@ async def sync_dingtalk_docs(
         return DingtalkSyncResult(**result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except MCPPreferencesError:
+        raise
     except Exception as e:
         logger.exception("Failed to sync DingTalk documents: %s", e)
         raise HTTPException(

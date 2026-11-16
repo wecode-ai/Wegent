@@ -330,7 +330,7 @@ The `spec.visible` field on public Skills controls whether the Skill is shown in
 
 ## Built-in Skills
 
-Located in `backend/init_data/skills/`:
+Located in `backend-rs/init_data/skills/`:
 
 | Skill | Description |
 |-------|-------------|

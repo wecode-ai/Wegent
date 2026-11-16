@@ -13,7 +13,9 @@
 
 'use client'
 
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import { COMPANY_SPACE_FILTER, PERSONAL_SPACE_FILTER, getListedPermission } from '../navigation'
+import { Input } from '@/components/ui/input'
 import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
   ArrowLeft,
@@ -22,9 +24,7 @@ import {
   Star,
   ChevronDown,
   ChevronUp,
-  Pencil,
-  Trash2,
-  FolderOutput,
+  SlidersHorizontal,
 } from 'lucide-react'
 import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
 import {
@@ -33,8 +33,17 @@ import {
   type KnowledgeBaseCategory,
 } from './KnowledgeBaseCategoryFilter'
 import { AdvancedKnowledgeToggle } from './AdvancedKnowledgeToggle'
+import { KnowledgeLibraryFilter, type KnowledgeTeamOption } from './KnowledgeLibraryFilter'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
   Table,
@@ -50,15 +59,17 @@ import type {
   KnowledgeBaseType,
   KnowledgeBaseWithGroupInfo,
   KbGroupInfo,
-  MemberRole,
 } from '@/types/knowledge'
-import { ROLE_DISPLAY_NAMES } from '@/types/base-role'
+import { KnowledgeBaseActions } from './KnowledgeBaseActions'
+import { KnowledgeMobileList } from './KnowledgeMobileList'
 import { hasAdvancedKnowledgeBases } from '../hooks/useAdvancedKnowledgeMode'
 
 /** Union type for KB data that can be either KnowledgeBase or KnowledgeBaseWithGroupInfo */
 export type KbDataItem = KnowledgeBase | KnowledgeBaseWithGroupInfo
 
 export interface KnowledgeGroupListPageProps {
+  mobile?: boolean
+  onViewPermissions?: (kb: KbDataItem) => void
   /** Group ID (null for "All" mode) */
   groupId: string | null
   /** Group display name */
@@ -75,6 +86,7 @@ export interface KnowledgeGroupListPageProps {
   onSelectKb: (kb: KbDataItem) => void
   /** Create a new knowledge base */
   onCreateKb?: (kbType: KnowledgeBaseType) => void
+  onCreateKbInSpace?: (kbType: KnowledgeBaseType) => void
   /** Whether advanced knowledge bases exist or are enabled by runtime config */
   hasAdvancedKnowledge?: boolean
   /** Whether advanced knowledge bases (code wikis) are visible */
@@ -95,12 +107,13 @@ export interface KnowledgeGroupListPageProps {
   getKbGroupInfo?: (kb: KbDataItem) => KbGroupInfo
   /** Whether this is "All" mode */
   isAllMode?: boolean
-  /** Filter by group ID (for "All" mode) */
+  showCompanySpace?: boolean
+  /** Selected team identity or personal-space filter (for "All" mode). */
   filterGroupId?: string | null
   /** Set filter group ID (for "All" mode) */
   onFilterGroupChange?: (groupId: string | null) => void
   /** Available groups for filter (for "All" mode) */
-  availableGroups?: Array<{ id: string; name: string; displayName: string }>
+  availableGroups?: Omit<KnowledgeTeamOption, 'kbCount'>[]
   /** Whether this is "Personal" mode (to show created/shared sections) */
   isPersonalMode?: boolean
   /** Knowledge bases created by current user (for personal mode) */
@@ -164,8 +177,19 @@ function formatDateTime(dateStr: string | undefined, locale: string): string {
   }
 }
 
+function matchesSpaceFilter(kb: KbDataItem, spaceId: string): boolean {
+  const level = 'namespace_level' in kb ? kb.namespace_level : null
+  if (spaceId === COMPANY_SPACE_FILTER) return level === 'organization'
+  if (spaceId === PERSONAL_SPACE_FILTER) {
+    return level ? level === 'personal' : kb.namespace === 'default'
+  }
+  return (!level || level === 'group') && kb.namespace === spaceId.replace(/^group-/, '')
+}
+
 export function KnowledgeGroupListPage({
-  groupId: _groupId,
+  mobile = false,
+  onViewPermissions,
+  groupId,
   groupName,
   knowledgeBases,
   knowledgeBasesWithGroupInfo,
@@ -173,6 +197,7 @@ export function KnowledgeGroupListPage({
   onBack,
   onSelectKb,
   onCreateKb,
+  onCreateKbInSpace,
   hasAdvancedKnowledge = false,
   showAdvancedKnowledge = false,
   onShowAdvancedKnowledgeChange,
@@ -183,9 +208,10 @@ export function KnowledgeGroupListPage({
   isFavorite,
   getKbGroupInfo,
   isAllMode = false,
+  showCompanySpace = false,
   filterGroupId,
-  onFilterGroupChange: _onFilterGroupChange,
-  availableGroups: _availableGroups,
+  onFilterGroupChange,
+  availableGroups,
   isPersonalMode = false,
   personalCreatedByMe = [],
   personalSharedWithMe = [],
@@ -196,13 +222,18 @@ export function KnowledgeGroupListPage({
 }: KnowledgeGroupListPageProps) {
   const isGroupSectionMode = groupNativeKbs.length > 0 || groupSharedKbs.length > 0
   const { t } = useTranslation('knowledge')
+  const [search, setSearch] = useState('')
+  const resultHeadingRef = useRef<HTMLHeadingElement>(null)
   const [sortBy, setSortBy] = useState<SortBy>('created')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [category, setCategory] = useState<KnowledgeBaseCategory>('all')
+  const searchQuery = search.trim().toLocaleLowerCase()
+  const supportsSpaceFilter = isAllMode && groupId !== 'organization'
+  const spaceFilter = supportsSpaceFilter ? filterGroupId : null
   // Determine which data source to use
   // Prefer knowledgeBasesWithGroupInfo when available (has my_role field)
   const dataSource = useMemo(() => {
-    if (knowledgeBasesWithGroupInfo && knowledgeBasesWithGroupInfo.length > 0) {
+    if (knowledgeBasesWithGroupInfo) {
       return knowledgeBasesWithGroupInfo
     }
     return knowledgeBases
@@ -230,7 +261,7 @@ export function KnowledgeGroupListPage({
   )
 
   useEffect(() => {
-    if (!showCodeCategory && category === 'code') {
+    if (!showCodeCategory && category !== 'all') {
       setCategory('all')
     }
   }, [category, showCodeCategory])
@@ -240,13 +271,8 @@ export function KnowledgeGroupListPage({
     [category]
   )
 
-  // Helper function to get my_role from KB
-  const getKbRole = useCallback((kb: KbDataItem): string | null | undefined => {
-    if ('my_role' in kb) {
-      return kb.my_role
-    }
-    return undefined
-  }, [])
+  const getKbRole = getListedPermission
+  const showPermissionInfo = dataSource.some(kb => getListedPermission(kb) !== null)
 
   // Sort function for knowledge bases
   const sortKbs = useCallback(
@@ -291,33 +317,40 @@ export function KnowledgeGroupListPage({
     [sortBy, sortOrder, getKbGroupInfo, getKbRole]
   )
 
-  // Filter and sort knowledge bases
-  const filteredKbs = useMemo(() => {
-    let result = [...dataSource]
-
-    // Filter by group (for "All" mode)
-    if (isAllMode && filterGroupId) {
-      result = result.filter(kb => {
-        if (getKbGroupInfo) {
-          const groupInfo = getKbGroupInfo(kb)
-          return groupInfo.groupId === filterGroupId
-        }
-        return true
-      })
-    }
-
-    result = filterByCategory(result)
-
-    // Dedup by ID as a safety measure against duplicate data
+  // Facet counts and rows share one deduplicated scope before the team filter.
+  const candidateKbs = useMemo(() => {
     const seen = new Set<number>()
-    result = result.filter(kb => {
+    return filterByCategory(dataSource).filter(kb => {
+      if (!kb.name.toLocaleLowerCase().includes(searchQuery)) return false
       if (seen.has(kb.id)) return false
       seen.add(kb.id)
       return true
     })
+  }, [dataSource, filterByCategory, searchQuery])
 
-    return sortKbs(result)
-  }, [dataSource, isAllMode, filterGroupId, getKbGroupInfo, filterByCategory, sortKbs])
+  const filterGroups = useMemo(
+    () =>
+      (availableGroups ?? []).map(group => ({
+        ...group,
+        kbCount: candidateKbs.filter(kb => matchesSpaceFilter(kb, group.id)).length,
+      })),
+    [availableGroups, candidateKbs]
+  )
+
+  const filteredKbs = useMemo(
+    () => sortKbs(candidateKbs.filter(kb => !spaceFilter || matchesSpaceFilter(kb, spaceFilter))),
+    [candidateKbs, spaceFilter, sortKbs]
+  )
+  const hasActiveFilters = Boolean(searchQuery || category !== 'all' || spaceFilter)
+  const canClearFilters = Boolean(
+    searchQuery || category !== 'all' || (spaceFilter && onFilterGroupChange)
+  )
+  const clearFilters = () => {
+    setSearch('')
+    setCategory('all')
+    onFilterGroupChange?.(null)
+    resultHeadingRef.current?.focus()
+  }
 
   // Determine whether to show the "from" column
   const showFromColumn = !isPersonalMode && !isAllMode
@@ -379,7 +412,7 @@ export function KnowledgeGroupListPage({
   ) => (
     <TableHeader className="sticky top-0 bg-surface">
       <TableRow className="text-left text-sm text-text-secondary">
-        <TableHead className="h-auto px-6 py-3 font-medium w-[30%]">
+        <TableHead className="h-auto px-4 py-2 font-medium">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('name')}
@@ -389,7 +422,7 @@ export function KnowledgeGroupListPage({
           </button>
         </TableHead>
         {showGroupColumn && (
-          <TableHead className="h-auto px-6 py-3 font-medium w-[15%]">
+          <TableHead className="h-auto px-4 py-2 font-medium w-[15%]">
             <button
               className="flex items-center hover:text-text-primary transition-colors"
               onClick={() => handleSort('group')}
@@ -400,14 +433,16 @@ export function KnowledgeGroupListPage({
           </TableHead>
         )}
         {showFromColumn && (
-          <TableHead className="h-auto px-6 py-3 font-medium w-[12%]">
+          <TableHead className="h-auto px-4 py-2 font-medium w-[12%]">
             {t('document.table.from', '来自')}
           </TableHead>
         )}
-        <TableHead className="h-auto px-6 py-3 font-medium w-[10%]">
-          {t('document.table.permission', '权限')}
-        </TableHead>
-        <TableHead className="h-auto px-6 py-3 font-medium w-[12%]">
+        {showPermissionInfo && (
+          <TableHead className="h-auto w-24 px-3 py-2 font-medium">
+            {t('document.table.permission', '权限')}
+          </TableHead>
+        )}
+        <TableHead className="h-auto w-28 px-3 py-2 font-medium">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('created')}
@@ -416,7 +451,7 @@ export function KnowledgeGroupListPage({
             <SortIcon column="created" />
           </button>
         </TableHead>
-        <TableHead className="h-auto px-6 py-3 font-medium w-[12%]">
+        <TableHead className="hidden h-auto w-28 px-3 py-2 font-medium xl:table-cell">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('updated')}
@@ -425,7 +460,7 @@ export function KnowledgeGroupListPage({
             <SortIcon column="updated" />
           </button>
         </TableHead>
-        <TableHead className="h-auto px-6 py-3 font-medium w-[9%] text-right">
+        <TableHead className="h-auto w-28 px-2 py-2 font-medium text-right">
           {t('document.table.actions', '操作')}
         </TableHead>
       </TableRow>
@@ -444,11 +479,13 @@ export function KnowledgeGroupListPage({
           key={kb.id}
           kb={kb}
           onClick={() => onSelectKb(kb)}
+          onPermissions={onViewPermissions ? () => onViewPermissions(kb) : undefined}
           onEdit={onEditKb && canManageKb?.(kb) ? () => onEditKb(kb) : undefined}
           onDelete={onDeleteKb && canManageKb?.(kb) ? () => onDeleteKb(kb) : undefined}
           onMigrate={onMigrateKb ? () => onMigrateKb(kb) : undefined}
           onToggleFavorite={onToggleFavorite ? e => handleToggleFavorite(e, kb) : undefined}
           isFavorite={isFavorite?.(kb.id)}
+          showPermissionInfo={showPermissionInfo}
           showGroupInfo={showGroupColumn}
           showFromInfo={showFromColumn}
           groupInfo={getKbGroupInfo?.(kb)}
@@ -459,22 +496,43 @@ export function KnowledgeGroupListPage({
   )
 
   const renderEmptyState = () => {
-    const emptyTitle =
-      category === 'code'
-        ? t('document.knowledgeBase.categoryFilter.emptyCode')
-        : category === 'document'
-          ? t('document.knowledgeBase.categoryFilter.emptyDocument')
-          : t('document.knowledgeBase.empty', '暂无知识库')
+    const emptyTitle = hasActiveFilters
+      ? t('document.navigation.noFilteredKnowledge')
+      : groupId === 'shared'
+        ? t('document.navigation.emptyShared')
+        : groupId === 'organization'
+          ? t('document.navigation.emptyCompany')
+          : t('document.knowledgeBase.empty')
 
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
         <FolderOpen className="w-12 h-12 text-text-muted mb-4" />
         <h3 className="text-lg font-medium text-text-primary mb-2">{emptyTitle}</h3>
-        {category === 'all' && (
-          <p className="text-sm text-text-muted mb-4">
-            {t('document.knowledgeBase.createDesc', '点击上方按钮创建第一个知识库')}
+        {hasActiveFilters ? (
+          <>
+            <p className="mb-4 text-sm text-text-muted">{t('document.navigation.refineFilters')}</p>
+            {canClearFilters && (
+              <Button
+                variant="outline"
+                className="min-h-11 min-w-11"
+                data-testid="knowledge-clear-filters"
+                onClick={clearFilters}
+              >
+                {t('document.navigation.clearFilters')}
+              </Button>
+            )}
+          </>
+        ) : groupId === 'shared' || groupId === 'organization' ? (
+          <p className="text-sm text-text-muted">
+            {t(
+              groupId === 'shared'
+                ? 'document.navigation.emptySharedHint'
+                : 'document.navigation.emptyCompanyHint'
+            )}
           </p>
-        )}
+        ) : onCreateKb ? (
+          <p className="text-sm text-text-muted mb-4">{t('document.knowledgeBase.createDesc')}</p>
+        ) : null}
       </div>
     )
   }
@@ -492,12 +550,12 @@ export function KnowledgeGroupListPage({
       <div className="space-y-6">
         {/* Created by me section */}
         <div>
-          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+          <h3 className="px-4 py-2 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
             {t('document.personalGroups.createdByMe', '我创建的')}
             <span className="ml-2 text-text-muted">({sortedCreatedByMe.length})</span>
           </h3>
           {hasCreated ? (
-            <Table className="w-full table-fixed min-w-0">
+            <Table className="w-full min-w-[720px] table-fixed">
               {renderTableHeader(false, false)}
               {renderTableRows(sortedCreatedByMe, false, false)}
             </Table>
@@ -513,12 +571,12 @@ export function KnowledgeGroupListPage({
 
         {/* Shared with me section */}
         <div>
-          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+          <h3 className="px-4 py-2 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
             {t('document.personalGroups.sharedWithMe', '分享给我的')}
             <span className="ml-2 text-text-muted">({sortedSharedWithMe.length})</span>
           </h3>
           {hasShared ? (
-            <Table className="w-full table-fixed min-w-0">
+            <Table className="w-full min-w-[720px] table-fixed">
               {renderTableHeader(true, true, t('document.table.belongsTo', '归属'))}
               {renderTableRows(sortedSharedWithMe, true, true)}
             </Table>
@@ -551,12 +609,12 @@ export function KnowledgeGroupListPage({
       <div className="space-y-6">
         {/* Native group KBs section */}
         <div>
-          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+          <h3 className="px-4 py-2 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
             {t('document.groupSections.native', '创建')}
             <span className="ml-2 text-text-muted">({sortedNative.length})</span>
           </h3>
           {hasNative ? (
-            <Table className="w-full table-fixed min-w-0">
+            <Table className="w-full min-w-[720px] table-fixed">
               {renderTableHeader(false, false)}
               {renderTableRows(sortedNative, false, false)}
             </Table>
@@ -569,12 +627,12 @@ export function KnowledgeGroupListPage({
 
         {/* Shared-into-group KBs section */}
         <div>
-          <h3 className="px-6 py-3 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
+          <h3 className="px-4 py-2 text-sm font-medium text-text-secondary bg-surface-hover border-b border-border">
             {t('document.groupSections.shared', '分享')}
             <span className="ml-2 text-text-muted">({sortedShared.length})</span>
           </h3>
           {hasShared ? (
-            <Table className="w-full table-fixed min-w-0">
+            <Table className="w-full min-w-[720px] table-fixed">
               {renderTableHeader(false, true)}
               {renderTableRows(sortedShared, false, true)}
             </Table>
@@ -588,56 +646,199 @@ export function KnowledgeGroupListPage({
     )
   }
 
+  const renderFilterControls = () => (
+    <>
+      <KnowledgeBaseCategoryFilter
+        value={category}
+        onValueChange={setCategory}
+        showCode={showCodeCategory}
+      />
+      {hasAdvancedKnowledge && onShowAdvancedKnowledgeChange && (
+        <AdvancedKnowledgeToggle
+          id="show-advanced-knowledge"
+          testId="show-advanced-knowledge-toggle"
+          checked={showAdvancedKnowledge}
+          onCheckedChange={onShowAdvancedKnowledgeChange}
+        />
+      )}
+      {mobile && (
+        <div className="flex max-w-full items-center gap-2">
+          <Select value={sortBy} onValueChange={value => setSortBy(value as SortBy)}>
+            <SelectTrigger
+              className="min-h-11 min-w-11 w-32 max-w-full bg-base"
+              data-testid="knowledge-sort"
+              aria-label={t('document.navigation.sortLabel')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent
+              collisionPadding={8}
+              className="max-h-[min(16rem,var(--radix-select-content-available-height))]"
+            >
+              {(['name', 'group', 'permission', 'created', 'updated'] as SortBy[]).map(value => (
+                <SelectItem
+                  key={value}
+                  value={value}
+                  className="min-h-11"
+                  data-testid={`knowledge-sort-option-${value}`}
+                >
+                  {t('document.navigation.sort.' + value)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            className="min-h-11 min-w-11"
+            data-testid="knowledge-sort-direction"
+            aria-label={t(
+              sortOrder === 'asc'
+                ? 'document.navigation.ascending'
+                : 'document.navigation.descending'
+            )}
+            onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+          >
+            {sortOrder === 'asc' ? <ChevronUp /> : <ChevronDown />}
+          </Button>
+        </div>
+      )}
+    </>
+  )
+
   return (
     <div
-      className="flex flex-col h-full overflow-hidden pl-4"
+      className={`flex flex-col h-full overflow-hidden ${mobile ? '' : 'pl-4'}`}
       data-testid="knowledge-group-list-page"
     >
       {/* Header */}
-      <div className="flex flex-wrap items-center gap-3 px-6 py-4 border-b border-border ml-2">
-        {/* Back button - only show in group mode */}
-        {!isAllMode && onBack && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onBack}
-            className="flex-shrink-0"
-            data-testid="back-button"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-        )}
-        <h2 className="text-lg font-semibold flex-1 min-w-[160px] truncate">
-          {isAllMode ? t('document.allKnowledgeBases', '全部知识库') : groupName}
-        </h2>
-        <KnowledgeBaseCategoryFilter
-          value={category}
-          onValueChange={setCategory}
-          showCode={showCodeCategory}
-        />
-        {hasAdvancedKnowledge && onShowAdvancedKnowledgeChange && (
-          <AdvancedKnowledgeToggle
-            id="show-advanced-knowledge"
-            testId="show-advanced-knowledge-toggle"
-            checked={showAdvancedKnowledge}
-            onCheckedChange={onShowAdvancedKnowledgeChange}
+      <div
+        className={`flex flex-col gap-3 py-4 border-b border-border ${mobile ? 'px-4' : 'px-6 ml-2'}`}
+      >
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-40 flex-1 items-center gap-2">
+            {/* Back button - only show in group mode */}
+            {!isAllMode && onBack && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onBack}
+                className="flex-shrink-0"
+                data-testid="back-button"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+            )}
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <h2
+                ref={resultHeadingRef}
+                tabIndex={-1}
+                data-testid="knowledge-result-title"
+                className="truncate text-lg font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              >
+                {groupName}
+              </h2>
+              <span
+                className="shrink-0 text-sm tabular-nums text-text-muted"
+                data-testid="knowledge-result-count"
+              >
+                {filteredKbs.length}
+              </span>
+            </div>
+          </div>
+          <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
+            {onCreateKbInSpace && (
+              <Button
+                variant="primary"
+                className={mobile ? 'min-h-11 min-w-11' : ''}
+                data-testid="create-space-kb-button"
+                onClick={() => onCreateKbInSpace('notebook')}
+              >
+                {t('document.navigation.createInSpace')}
+              </Button>
+            )}
+            {onCreateKb && (
+              <Button
+                variant="primary"
+                size="sm"
+                className={mobile ? 'min-h-11 min-w-11' : ''}
+                onClick={() => onCreateKb('notebook')}
+                data-testid="create-kb-button"
+              >
+                <Plus className="w-4 h-4 mr-1" />
+                {t('document.knowledgeBase.create', '新建知识库')}
+              </Button>
+            )}
+          </div>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <Input
+            data-testid="knowledge-search"
+            aria-label={t('document.navigation.search')}
+            placeholder={t('document.navigation.search')}
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            className={
+              mobile
+                ? groupId === 'organization'
+                  ? 'min-h-11 min-w-0 flex-1'
+                  : 'min-h-11 w-full'
+                : 'h-9 w-48'
+            }
           />
-        )}
-        {onCreateKb && (
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => onCreateKb('notebook')}
-            data-testid="create-kb-button"
-          >
-            <Plus className="w-4 h-4 mr-1" />
-            {t('document.knowledgeBase.create', '新建知识库')}
-          </Button>
-        )}
+          {supportsSpaceFilter && onFilterGroupChange && (
+            <div className={mobile ? 'min-w-0 flex-1' : undefined}>
+              <KnowledgeLibraryFilter
+                groups={filterGroups}
+                personalCount={
+                  candidateKbs.filter(kb => matchesSpaceFilter(kb, PERSONAL_SPACE_FILTER)).length
+                }
+                companyCount={
+                  showCompanySpace
+                    ? candidateKbs.filter(kb => matchesSpaceFilter(kb, COMPANY_SPACE_FILTER)).length
+                    : undefined
+                }
+                value={spaceFilter ?? null}
+                onValueChange={onFilterGroupChange}
+                mobile={mobile}
+              />
+            </div>
+          )}
+          {mobile ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="min-h-11 min-w-11 w-auto shrink-0 px-2"
+                  aria-label={t('document.navigation.typeAndSort')}
+                  title={t('document.navigation.typeAndSort')}
+                  data-testid="knowledge-mobile-filters"
+                >
+                  <SlidersHorizontal className="h-4 w-4" />
+                  {category !== 'all' && (
+                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
+                      {t(`document.knowledgeBase.categoryFilter.${category}`)}
+                    </span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="end"
+                collisionPadding={8}
+                aria-label={t('document.navigation.typeAndSort')}
+                className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw_-_2rem)] overflow-y-auto"
+              >
+                <div className="space-y-4">{renderFilterControls()}</div>
+              </PopoverContent>
+            </Popover>
+          ) : (
+            renderFilterControls()
+          )}
+        </div>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
+      <div className="flex-1 overflow-auto min-w-0">
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Spinner />
@@ -650,8 +851,24 @@ export function KnowledgeGroupListPage({
           renderGroupSectionContent()
         ) : filteredKbs.length === 0 ? (
           renderEmptyState()
+        ) : mobile ? (
+          <KnowledgeMobileList
+            items={filteredKbs}
+            onSelect={onSelectKb}
+            getSpace={getKbGroupInfo}
+            renderActions={kb => (
+              <KnowledgeBaseActions
+                mobile
+                kbId={kb.id}
+                onPermissions={onViewPermissions ? () => onViewPermissions(kb) : undefined}
+                onMigrate={onMigrateKb && canMigrate?.(kb) ? () => onMigrateKb(kb) : undefined}
+                onEdit={onEditKb && canManageKb?.(kb) ? () => onEditKb(kb) : undefined}
+                onDelete={onDeleteKb && canManageKb?.(kb) ? () => onDeleteKb(kb) : undefined}
+              />
+            )}
+          />
         ) : (
-          <Table className="w-full table-fixed min-w-0">
+          <Table className="w-full min-w-[720px] table-fixed">
             {renderTableHeader(isAllMode, showFromColumn)}
             {renderTableRows(filteredKbs, isAllMode, showFromColumn)}
           </Table>
@@ -665,11 +882,13 @@ export function KnowledgeGroupListPage({
 interface KnowledgeBaseRowProps {
   kb: KbDataItem
   onClick: () => void
+  onPermissions?: () => void
   onEdit?: () => void
   onDelete?: () => void
   onMigrate?: () => void
   onToggleFavorite?: (e: React.MouseEvent) => void
   isFavorite?: boolean
+  showPermissionInfo?: boolean
   showGroupInfo?: boolean
   showFromInfo?: boolean
   groupInfo?: KbGroupInfo
@@ -677,6 +896,7 @@ interface KnowledgeBaseRowProps {
 }
 
 function KnowledgeBaseRow({
+  onPermissions,
   kb,
   onClick,
   onEdit,
@@ -684,6 +904,7 @@ function KnowledgeBaseRow({
   onMigrate,
   onToggleFavorite: _onToggleFavorite,
   isFavorite,
+  showPermissionInfo,
   showGroupInfo,
   showFromInfo,
   groupInfo,
@@ -697,7 +918,7 @@ function KnowledgeBaseRow({
       data-testid={`kb-row-${kb.id}`}
     >
       {/* Name column */}
-      <TableCell className="px-6 py-3 overflow-hidden">
+      <TableCell className="px-4 py-2 overflow-hidden">
         <div className="flex items-center gap-3 min-w-0">
           <KnowledgeBaseIcon kbType={kb.kb_type} className="w-5 h-5 flex-shrink-0" />
           <span className="text-sm font-medium text-text-primary truncate" title={kb.name}>
@@ -709,84 +930,47 @@ function KnowledgeBaseRow({
 
       {/* Group column - only in "All" mode */}
       {showGroupInfo && (
-        <TableCell className="px-6 py-3 text-text-secondary overflow-hidden">
+        <TableCell className="px-4 py-2 text-text-secondary overflow-hidden">
           <span className="truncate block">{groupInfo ? groupInfo.groupName : '--'}</span>
         </TableCell>
       )}
 
       {/* From column - shows who shared the KB */}
       {showFromInfo && (
-        <TableCell className="px-6 py-3 text-text-secondary overflow-hidden">
+        <TableCell className="px-4 py-2 text-text-secondary overflow-hidden">
           <span className="truncate block">
             {'group_type' in kb ? getKbShareSourceText(kb as KnowledgeBaseWithGroupInfo) : '--'}
           </span>
         </TableCell>
       )}
 
-      {/* Permission column */}
-      <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
-        {'my_role' in kb && kb.my_role ? ROLE_DISPLAY_NAMES[kb.my_role as MemberRole] : '--'}
-      </TableCell>
+      {showPermissionInfo && (
+        <TableCell className="px-3 py-2 text-text-secondary whitespace-nowrap">
+          {getListedPermission(kb)
+            ? t(`document.permission.role.${getListedPermission(kb)}`)
+            : null}
+        </TableCell>
+      )}
 
       {/* Created at column */}
-      <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
+      <TableCell className="px-3 py-2 text-text-secondary whitespace-nowrap">
         {formatDateTime(kb.created_at, i18n.language)}
       </TableCell>
 
       {/* Updated at column */}
-      <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
+      <TableCell className="hidden px-3 py-2 text-text-secondary whitespace-nowrap xl:table-cell">
         {formatDateTime(kb.updated_at, i18n.language)}
       </TableCell>
 
       {/* Actions column - Migrate, Edit and Delete */}
-      <TableCell className="px-6 py-3">
-        <div className="flex items-center justify-end gap-1">
-          {canMigrate && onMigrate && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={e => {
-                e.stopPropagation()
-                onMigrate()
-              }}
-              title={t('document.migrate.title', '迁移到群组')}
-              data-testid={`migrate-kb-${kb.id}`}
-            >
-              <FolderOutput className="w-4 h-4 text-text-muted hover:text-primary transition-colors" />
-            </Button>
-          )}
-          {onEdit && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={e => {
-                e.stopPropagation()
-                onEdit()
-              }}
-              title={t('document.table.edit', '编辑')}
-              data-testid={`edit-kb-${kb.id}`}
-            >
-              <Pencil className="w-4 h-4 text-text-muted" />
-            </Button>
-          )}
-          {onDelete && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={e => {
-                e.stopPropagation()
-                onDelete()
-              }}
-              title={t('document.table.delete', '删除')}
-              data-testid={`delete-kb-${kb.id}`}
-            >
-              <Trash2 className="w-4 h-4 text-text-muted hover:text-error" />
-            </Button>
-          )}
-        </div>
+      <TableCell className="px-2 py-2">
+        <KnowledgeBaseActions
+          kbId={kb.id}
+          onPermissions={onPermissions}
+          onMigrate={canMigrate ? onMigrate : undefined}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
       </TableCell>
     </TableRow>
   )

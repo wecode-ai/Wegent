@@ -4,7 +4,9 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { WebContents } from 'electron'
+import { PythonRuntimeDownloadTimeoutError } from '../runtime/python-runtime-downloads.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
+import type { VerificationDevtools } from './verification-devtools.js'
 
 const MAX_BODY_BYTES = 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 10_000
@@ -44,6 +46,16 @@ export interface WeworkDesktopControlBridgeOptions {
   registryDirectory: string
   window: () => DesktopWindow | null
   smartApps?: () => SmartAppControlService | null
+  ensurePython?: () => Promise<unknown>
+  pythonStatus?: () => Promise<unknown>
+  pythonDownloads?: () => Promise<unknown>
+  prewarmPython?: () => Promise<unknown>
+  resolvePython?: (
+    pluginRoot: string,
+    allowSystemFallback: boolean,
+    prepare: boolean
+  ) => Promise<unknown>
+  devtools?: VerificationDevtools
 }
 
 export interface SmartAppControlService {
@@ -67,15 +79,19 @@ interface RuntimeRecord {
 export class WeworkDesktopControlBridge {
   private server: Server | null = null
   private runtimePath: string | null = null
+  private pythonEnvironment: NodeJS.ProcessEnv = {}
+  private lifecycleGeneration = 0
   private readonly scripts = new Map<string, string>()
 
   constructor(private readonly options: WeworkDesktopControlBridgeOptions) {}
 
   async start(): Promise<void> {
     if (this.server) return
+    const generation = this.lifecycleGeneration
     const token = randomBytes(32).toString('base64url')
+    const pythonToken = this.options.ensurePython ? randomBytes(32).toString('base64url') : null
     const server = createServer((request, response) => {
-      void this.handleRequest(request, response, token)
+      void this.handleRequest(request, response, token, pythonToken)
     })
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -84,6 +100,10 @@ export class WeworkDesktopControlBridge {
         resolve()
       })
     })
+    if (generation !== this.lifecycleGeneration) {
+      await new Promise<void>(resolve => server.close(() => resolve()))
+      return
+    }
     const address = server.address()
     if (!address || typeof address === 'string') {
       server.close()
@@ -109,15 +129,37 @@ export class WeworkDesktopControlBridge {
       server.close()
       throw error
     }
+    if (generation !== this.lifecycleGeneration) {
+      await Promise.all([
+        rm(runtimePath, { force: true }),
+        new Promise<void>(resolve => server.close(() => resolve())),
+      ])
+      return
+    }
     this.server = server
     this.runtimePath = runtimePath
+    this.pythonEnvironment = pythonToken
+      ? {
+          WEWORK_PYTHON_RUNTIME_URL: `http://127.0.0.1:${address.port}/runtime/python/ensure`,
+          WEWORK_PYTHON_RUNTIME_TOKEN: pythonToken,
+        }
+      : {}
+  }
+
+  environment(): NodeJS.ProcessEnv {
+    return { ...this.pythonEnvironment }
   }
 
   async stop(): Promise<void> {
+    this.lifecycleGeneration += 1
+    this.options.devtools?.close()
     const server = this.server
     const runtimePath = this.runtimePath
     this.server = null
     this.runtimePath = null
+    this.pythonEnvironment = {}
+    // Pending runtime downloads must not keep application shutdown waiting on HTTP clients.
+    server?.closeAllConnections()
     await Promise.allSettled([
       runtimePath ? rm(runtimePath, { force: true }) : Promise.resolve(),
       server ? new Promise<void>(resolve => server.close(() => resolve())) : Promise.resolve(),
@@ -127,9 +169,77 @@ export class WeworkDesktopControlBridge {
   private async handleRequest(
     request: import('node:http').IncomingMessage,
     response: import('node:http').ServerResponse,
-    token: string
+    token: string,
+    pythonToken: string | null
   ): Promise<void> {
     response.setHeader('content-type', 'application/json; charset=utf-8')
+    if (request.method === 'POST' && request.url === '/runtime/python/downloads') {
+      if (!pythonToken || request.headers.authorization !== `Bearer ${pythonToken}`) {
+        writeResponse(response, 401, { ok: false, error: 'Unauthorized Python download request' })
+        return
+      }
+      request.resume()
+      try {
+        if (!this.options.pythonDownloads) throw new Error('Python downloads are unavailable')
+        writeResponse(response, 200, { ok: true, data: await this.options.pythonDownloads() })
+      } catch (error) {
+        const code =
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'python_runtime_login_required'
+            ? error.code
+            : 'python_runtime_download_unavailable'
+        console.warn('[python-runtime]', {
+          event: 'parent-python-downloads-failed',
+          reason: error instanceof PythonRuntimeDownloadTimeoutError ? error.code : code,
+        })
+        writeResponse(response, 200, { ok: false, code, error: code })
+      }
+      return
+    }
+    if (request.method === 'POST' && request.url === '/runtime/python/resolve') {
+      if (!pythonToken || request.headers.authorization !== `Bearer ${pythonToken}`) {
+        writeResponse(response, 401, { ok: false, error: 'Unauthorized Python runtime request' })
+        return
+      }
+      try {
+        const input = await readJsonBody(request)
+        if (typeof input.pluginRoot !== 'string' || !isAbsolute(input.pluginRoot))
+          throw new Error('An absolute plugin root is required')
+        if (!this.options.resolvePython) throw new Error('Plugin Python selection is unavailable')
+        const data = await this.options.resolvePython(
+          input.pluginRoot,
+          input.allowSystemFallback === true,
+          input.prepare !== false
+        )
+        writeResponse(response, 200, { ok: true, data })
+      } catch (error) {
+        writeResponse(response, 200, { ok: false, error: errorMessage(error) })
+      }
+      return
+    }
+    const pythonOperation =
+      request.method === 'POST' && request.url === '/runtime/python/ensure'
+        ? this.options.ensurePython
+        : request.method === 'GET' && request.url === '/runtime/python/status'
+          ? this.options.pythonStatus
+          : request.method === 'POST' && request.url === '/runtime/python/prewarm'
+            ? this.options.prewarmPython
+            : undefined
+    if (pythonOperation) {
+      if (!pythonToken || request.headers.authorization !== `Bearer ${pythonToken}`) {
+        writeResponse(response, 401, { ok: false, error: 'Unauthorized Python runtime request' })
+        return
+      }
+      request.resume()
+      try {
+        writeResponse(response, 200, { ok: true, data: await pythonOperation() })
+      } catch (error) {
+        writeResponse(response, 200, { ok: false, error: errorMessage(error) })
+      }
+      return
+    }
     if (request.headers.authorization !== `Bearer ${token}`) {
       writeResponse(response, 401, { ok: false, error: 'Unauthorized Wework desktop request' })
       return
@@ -142,6 +252,14 @@ export class WeworkDesktopControlBridge {
       if (request.method === 'POST' && request.url === '/smart-app') {
         const input = await readJsonBody(request)
         writeResponse(response, 200, { ok: true, data: await this.dispatchSmartApp(input) })
+        return
+      }
+      if (request.method === 'POST' && request.url === '/devtools' && this.options.devtools) {
+        const input = await readJsonBody(request)
+        writeResponse(response, 200, {
+          ok: true,
+          data: await this.options.devtools.dispatch(input),
+        })
         return
       }
       if (request.method !== 'POST' || request.url !== '/desktop') {

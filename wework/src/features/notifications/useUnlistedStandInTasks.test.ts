@@ -42,6 +42,19 @@ beforeEach(() => {
 })
 afterEach(() => vi.useRealTimers())
 describe('unlisted stand-in task discovery', () => {
+  it('discovers hidden identity conversations initiated by stand_in_identity', async () => {
+    getRuntimeTranscript.mockResolvedValue({
+      origin: { type: 'stand_in_identity', initiatedBy: 'stand_in_identity', userId: 7 },
+      messages: [],
+      turns: [],
+    })
+    const current = snapshot(true)
+    const hook = renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))
+    await waitFor(() => expect(hook.result.current).toHaveLength(1))
+    expect(hook.result.current[0].task.runtimeHandle?.origin).toMatchObject({
+      type: 'stand_in_identity',
+    })
+  })
   it('projects current completion while independently loaded metadata is still running', async () => {
     const current = snapshot(true)
     const hook = renderHook(() => useUnlistedStandInTasks([], current, reader, runtimeApi))

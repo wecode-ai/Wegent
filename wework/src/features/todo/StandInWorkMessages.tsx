@@ -1,3 +1,4 @@
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, useState } from 'react'
 import { ArrowRight, GripVertical, Split } from 'lucide-react'
 import type { StandInExecutorApi, StandInInboxMessage, StandInInboxWork } from '@/api/standIn'
@@ -59,7 +60,7 @@ export function StandInWorkMessages({
         }
       })
       .catch(cause => {
-        if (active) setError(String(cause))
+        if (active) setError(getStandInErrorMessage(cause))
       })
     return () => {
       active = false

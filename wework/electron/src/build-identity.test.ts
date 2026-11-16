@@ -11,6 +11,7 @@ import identityModule from '../scripts/build-identity.cjs'
 const { DEFAULT_IDENTITY, resolveBuildIdentity } = identityModule
 const require = createRequire(import.meta.url)
 const builderConfigPath = require.resolve('../electron-builder.config.cjs')
+const launcherName = `wework-launcher${process.platform === 'win32' ? '.exe' : ''}`
 
 test('uses the public Electron identity by default', () => {
   expect(resolveBuildIdentity({})).toEqual(DEFAULT_IDENTITY)
@@ -112,7 +113,7 @@ test.each([
   {
     name: 'unsigned',
     signingIdentity: '',
-    signIgnore: ['/Contents/Resources/wework-core-plugins/'],
+    signIgnore: [],
   },
   {
     name: 'signed',
@@ -121,9 +122,6 @@ test.each([
       '/Contents/Resources/harness-runtime/',
       '/Contents/Resources/bin/',
       '/Contents/Resources/codex/',
-      '/Contents/Resources/wework-core-plugins/',
-      '/Contents/Resources/wework-app-static/',
-      '/Contents/Resources/bundled-plugins/',
     ],
   },
 ])(
@@ -233,6 +231,7 @@ process.stdout.write(JSON.stringify({
   expect(config.output).toBe('release-online-update')
   expect(config.compression).toBe('normal')
   expect(config.resources).toEqual([
+    { from: `resources/${launcherName}`, to: launcherName },
     { from: 'resources/components.json', to: 'components.json' },
     { from: '../resources/licenses', to: 'licenses' },
     { from: '../resources/icons', to: 'icons' },
@@ -268,12 +267,13 @@ process.stdout.write(JSON.stringify(config.extraResources.map(resource => resour
   )
 
   expect(config).toEqual([
+    launcherName,
     'harness-runtime',
     'bin',
     'codex',
-    'wework-core-plugins',
-    'wework-app-static',
-    'bundled-plugins',
+    'wework-core-plugins.tar.gz',
+    'wework-app-static.tar.gz',
+    'bundled-plugins.tar.gz',
     'components.json',
     'licenses',
     'icons',

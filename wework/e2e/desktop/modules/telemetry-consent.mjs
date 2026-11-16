@@ -3,6 +3,7 @@ const TELEMETRY_CONSENT_CHECKPOINTS = new Set([
   'harness-app-development',
   'harness-app-lifecycle',
   'native-window-startup',
+  'core-dsh-ui-plugin-composition',
   'plugin-marketplace-lifecycle',
   'plugin-lifecycle',
 ])

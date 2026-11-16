@@ -16,6 +16,43 @@ import {
 } from "./workspaceDtoMappers";
 
 describe("workspace DTO mappers", () => {
+  it("preserves the explicit system-default identity without inferring it from a name", () => {
+    expect(
+      mapCollaborationWorkspaceDto({
+        id: "default",
+        name: "Renamed",
+        is_system_default: true,
+      }).is_system_default,
+    ).toBe(true);
+    expect(
+      mapCollaborationWorkspaceDto({
+        id: "business",
+        name: "默认空间",
+        is_default: true,
+      }).is_system_default,
+    ).toBeUndefined();
+    expect(
+      mapCollaborationWorkspaceDto({ id: "business", is_system_default: false })
+        .is_system_default,
+    ).toBe(false);
+  });
+  it.each(["available", "unavailable", "unchecked"])(
+    "preserves the explicit %s readiness state",
+    (status) => {
+      expect(mapCollaborationOwnedAgentDto({ id: 12, status }).status).toBe(
+        status,
+      );
+    },
+  );
+
+  it("does not treat an absent or unknown readiness state as selectable", () => {
+    for (const status of [undefined, null, "other"]) {
+      expect(mapCollaborationOwnedAgentDto({ id: 12, status }).status).toBe(
+        "unavailable",
+      );
+    }
+  });
+
   it("maps v1 read-only roles without manufacturing ownership capabilities", () => {
     const workspace = mapCollaborationWorkspaceDto({
       id: "old-space",
@@ -102,7 +139,7 @@ describe("workspace DTO mappers", () => {
           task_id: "task-1",
           task_title: "Task",
           backend_task_id: "99",
-          execution_id: '101',
+          execution_id: "101",
           modelSelection: {
             modelName: "gpt-5.6-sol",
             modelType: "runtime",
@@ -129,7 +166,7 @@ describe("workspace DTO mappers", () => {
       dispatchId: null,
       dispatchRoundId: null,
       assignmentId: null,
-      executionId: '101',
+      executionId: "101",
       modelSelection: {
         modelName: "gpt-5.6-sol",
         modelType: "runtime",
@@ -175,6 +212,7 @@ describe("workspace DTO mappers", () => {
       mapWorkspaceDeliveryDto({
         id: "delivery-1",
         loop_item_id: "issue-1",
+        created_by_user_id: 8,
         status: "delivered",
         markdown: "# Result",
         chat: { message: "done" },
@@ -196,6 +234,7 @@ describe("workspace DTO mappers", () => {
     ).toMatchObject({
       id: "delivery-1",
       issueId: "issue-1",
+      createdByUserId: 8,
       status: "delivered",
       markdown: "# Result",
       assets: [{ displayName: "report.txt", sizeBytes: 12 }],

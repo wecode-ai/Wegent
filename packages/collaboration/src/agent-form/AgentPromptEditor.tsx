@@ -55,7 +55,7 @@ export function AgentPromptEditor({
       <ComposerAutocompleteInput
         catalogEvents={catalogEvents}
         canSend={false}
-        className="min-h-24 max-h-48 overflow-y-auto rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary shadow-sm outline-none transition-[border-color,box-shadow] placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/15"
+        className="min-h-24 max-h-48 overflow-y-auto rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-text-primary shadow-sm outline-none transition-[border-color,box-shadow] placeholder:text-text-muted keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
         disabled={busy || field.disabled}
         onChange={field.onChange}
         onListLocalApps={listPlugins}

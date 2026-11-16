@@ -84,6 +84,60 @@ impl ExecutionEvent {
         }
     }
 
+    /// `ExecutionEvent.from_dict` for one callback-channel payload
+    /// (`shared/models/execution.py`). Missing members keep the dataclass
+    /// defaults, matching the source constructor.
+    pub(crate) fn from_value(value: &Value) -> Self {
+        fn text(value: &Value, key: &str) -> Option<String> {
+            value.get(key).and_then(Value::as_str).map(str::to_string)
+        }
+        fn integer(value: &Value, key: &str) -> Option<i64> {
+            value.get(key).and_then(Value::as_i64)
+        }
+        Self {
+            event_type: text(value, "type").unwrap_or_default(),
+            task_id: integer(value, "task_id").unwrap_or_default(),
+            subtask_id: integer(value, "subtask_id").unwrap_or_default(),
+            content: value
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            offset: integer(value, "offset").unwrap_or_default(),
+            result: value
+                .get("result")
+                .filter(|result| !result.is_null())
+                .cloned(),
+            progress: integer(value, "progress").unwrap_or_default(),
+            status: value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            error: text(value, "error"),
+            error_code: text(value, "error_code"),
+            tool_name: text(value, "tool_name"),
+            tool_use_id: text(value, "tool_use_id"),
+            tool_input: value
+                .get("tool_input")
+                .filter(|input| !input.is_null())
+                .cloned(),
+            tool_output: value
+                .get("tool_output")
+                .filter(|output| !output.is_null())
+                .cloned(),
+            message_id: integer(value, "message_id"),
+            executor_name: text(value, "executor_name"),
+            executor_namespace: text(value, "executor_namespace"),
+            timestamp: text(value, "timestamp"),
+            data: value
+                .get("data")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
+
     /// `ExecutionEvent.to_dict()` with `asdict` field order.
     pub(crate) fn to_value(&self) -> Value {
         let mut map = Map::new();

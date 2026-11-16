@@ -6,14 +6,61 @@
 from datetime import datetime, timedelta
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem, LoopItemTaskBinding
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    LoopItemTaskBinding,
+    loop_datetime_is_unset,
+)
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.delivery import LoopItemTaskBind
 from app.services.loop_items.service import loop_item_service
 from tests.utils.collaboration import authorize_project
+
+
+def test_project_owner_cannot_bind_change_requests_to_another_users_task(
+    test_db: Session, test_user: User, issue_device: tuple[LoopItem, Kind]
+) -> None:
+    from app.api.endpoints.deliveries import bind_change_request
+    from app.schemas.project_incoming_hook import ChangeRequestBindingInput
+
+    issue, _ = issue_device
+    other = User(user_name="binding-other-user", password_hash="unused", is_active=True)
+    test_db.add(other)
+    test_db.flush()
+    foreign = LoopItemTaskBinding(
+        id="900000000000001",
+        cloud_project_id=issue.cloud_project_id,
+        loop_item_id=issue.id,
+        task_user_id=other.id,
+        linked_by_user_id=other.id,
+        device_id="other-device",
+        task_id="private-task",
+    )
+    test_db.add(foreign)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as denied:
+        bind_change_request(
+            issue.id,
+            int(foreign.id),
+            ChangeRequestBindingInput(
+                provider="github",
+                url="https://github.com/wecode-ai/Wegent/pull/1",
+                number=1,
+                source="manual",
+            ),
+            db=test_db,
+            current_user=test_user,
+        )
+
+    assert denied.value.status_code == 404
+    test_db.refresh(foreign)
+    assert not (foreign.metadata_json or {}).get("change_requests")
 
 
 @pytest.fixture
@@ -246,9 +293,16 @@ def test_binding_does_not_reuse_another_users_matching_alias(
         LoopItemTaskBind(deviceId="electron-device", taskId="runtime-task"),
         test_user.id,
     )
-    assert loop_item_service.list_task_bindings(test_db, issue.id, test_user.id) == [
-        other_binding
-    ]
+    assert loop_item_service.list_task_bindings(test_db, issue.id, test_user.id) == []
+    assert (
+        test_db.query(LoopItemTaskBinding)
+        .filter(
+            LoopItemTaskBinding.id == other_binding.id,
+            loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+        )
+        .one()
+        == other_binding
+    )
 
 
 def test_binding_does_not_merge_an_ambiguous_installation_alias(
@@ -360,3 +414,28 @@ def test_duplicate_alias_bindings_are_all_disconnected_or_moved(
         assert moved.loop_item_id == other_issue.id
 
     assert loop_item_service.list_task_bindings(test_db, issue.id, test_user.id) == []
+
+
+def test_assistant_reservation_becomes_openable_only_after_runtime_creation(
+    test_db: Session, test_user: User, issue_device: tuple[LoopItem, Kind]
+) -> None:
+    from app.schemas.delivery import LoopItemTaskBindingResponse
+
+    issue, device = issue_device
+    payload = dict(deviceId=device.name, taskId="assistant-task", taskTitle="Review")
+    reserved = loop_item_service.bind_task(
+        test_db,
+        issue.id,
+        LoopItemTaskBind(**payload, standInPending=True),
+        test_user.id,
+    )
+    assert LoopItemTaskBindingResponse.model_validate(reserved).stand_in_pending is True
+    original_id = reserved.id
+    started = loop_item_service.bind_task(
+        test_db,
+        issue.id,
+        LoopItemTaskBind(**payload, standInPending=False),
+        test_user.id,
+    )
+    assert started.id == original_id
+    assert LoopItemTaskBindingResponse.model_validate(started).stand_in_pending is False

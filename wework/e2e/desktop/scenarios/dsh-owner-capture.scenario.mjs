@@ -1,13 +1,15 @@
+import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { waitForEmbeddedBrowserVisibility } from '../modules/embedded-browser-visibility.mjs'
 
 const HOST_INVOKE_PATH = '/wework/electron-host/v1/invoke'
 const MODEL_LABEL = 'Desktop E2E Chat'
 
-async function postInvoke(origin, capability, params) {
+async function postInvoke(control, origin, capability, params) {
   const endpoint = `${origin}${HOST_INVOKE_PATH}`
-  const response = await fetch(endpoint, {
+  const response = await fetchLocalRuntime(control, endpoint, {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     body: JSON.stringify({ capability, params }),
@@ -15,8 +17,8 @@ async function postInvoke(origin, capability, params) {
   return { response, payload: await response.json() }
 }
 
-async function invoke(origin, capability, params = {}) {
-  const { response, payload } = await postInvoke(origin, capability, params)
+async function invoke(control, origin, capability, params = {}) {
+  const { response, payload } = await postInvoke(control, origin, capability, params)
   assert.equal(
     response.ok,
     true,
@@ -26,8 +28,8 @@ async function invoke(origin, capability, params = {}) {
   return payload.result
 }
 
-async function invokeFailure(origin, capability, params = {}) {
-  const { response, payload } = await postInvoke(origin, capability, params)
+async function invokeFailure(control, origin, capability, params = {}) {
+  const { response, payload } = await postInvoke(control, origin, capability, params)
   assert.equal(response.ok, false, `${capability} unexpectedly returned HTTP success`)
   assert.equal(payload.ok, false, `${capability} unexpectedly succeeded`)
   return payload.error
@@ -42,9 +44,9 @@ async function enableExperimentalFeatures(control) {
   await control.command('waitFor', `${selector}[aria-checked="true"]`, { stableMs: 300 })
 }
 
-async function verifyMicrophoneDiagnostics(origin) {
+async function verifyMicrophoneDiagnostics(control, origin) {
   const capability = 'deviceDiagnostics.microphone'
-  const initial = await invoke(origin, capability)
+  const initial = await invoke(control, origin, capability)
   assert.equal(initial.schemaVersion, 1)
   assert.equal(initial.platform, process.platform)
   assert.equal(initial.inputDeviceKind, 'unknown')
@@ -61,9 +63,9 @@ async function verifyMicrophoneDiagnostics(origin) {
   } else {
     assert.equal(initial.code, 'MICROPHONE_DIAGNOSTICS_UNSUPPORTED')
   }
-  const invalid = await invokeFailure(origin, capability, { inputDeviceKind: 'default' })
+  const invalid = await invokeFailure(control, origin, capability, { inputDeviceKind: 'default' })
   assert.equal(invalid.code, 'invalid_params')
-  const recovered = await invoke(origin, capability, { inputDeviceKind: 'external' })
+  const recovered = await invoke(control, origin, capability, { inputDeviceKind: 'external' })
   assert.equal(recovered.inputDeviceKind, 'external')
   assert.equal(recovered.checks.permission, initial.checks.permission)
   assert.equal(
@@ -73,11 +75,11 @@ async function verifyMicrophoneDiagnostics(origin) {
   return { initial, invalid, recovered }
 }
 
-export function createDesktopScenario({ resultDir }) {
+export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
   return {
     async verify(control) {
       const origin = await control.command('getLocationOrigin', 'body')
-      const workbench = await invoke(origin, 'smartApps.createDirectory', {
+      const workbench = await invoke(control, origin, 'smartApps.createDirectory', {
         parentPath: resultDir,
         name: 'dsh-owner-capture-bridge',
         displayName: 'DSH owner capture bridge',
@@ -101,6 +103,12 @@ export function createDesktopScenario({ resultDir }) {
         })
         const startSelector = `[data-testid="harness-app-start-${workbench.id}"]`
         await control.command('waitFor', startSelector, { enabled: true })
+        const previousTabTestId = await control.command(
+          'getAttribute',
+          '[data-testid^="workspace-tab-select-"][aria-selected="true"]',
+          { value: 'data-testid' }
+        )
+        assert.ok(previousTabTestId, 'The workbench did not have an active workspace tab')
         await control.command('clickWhenEnabled', startSelector)
         const appView = `[data-testid="app-iframe-harness-${workbench.id}"]`
         await control.command('waitFor', appView, { timeoutMs: 600_000 })
@@ -110,16 +118,21 @@ export function createDesktopScenario({ resultDir }) {
         })
         assert.ok(webUrl, 'Workbench DSH did not expose a URL')
         assert.equal(ownerLabel, `smart-app:${workbench.id}`)
+        const ownerTabId = await control.command('getAttribute', appView, {
+          value: 'data-workspace-tab-id',
+        })
+        assert.ok(ownerTabId, 'The Smart App did not expose its workspace tab')
+        const ownerTabSelector = `[data-testid="workspace-tab-select-${ownerTabId}"]`
 
         const workbenchOrigin = new URL(webUrl).origin
         const microphoneDiagnostics = {
-          core: await verifyMicrophoneDiagnostics(origin),
-          workbench: await verifyMicrophoneDiagnostics(workbenchOrigin),
+          core: await verifyMicrophoneDiagnostics(control, origin),
+          workbench: await verifyMicrophoneDiagnostics(control, workbenchOrigin),
         }
-        const capabilities = await invoke(workbenchOrigin, 'dshCapture.capabilities')
+        const capabilities = await invoke(control, workbenchOrigin, 'dshCapture.capabilities')
         assert.deepEqual(capabilities, { available: true })
 
-        const capture = await invoke(workbenchOrigin, 'dshCapture.ownerRect', {
+        const capture = await invoke(control, workbenchOrigin, 'dshCapture.ownerRect', {
           x: 0,
           y: 0,
           width: 128,
@@ -127,7 +140,7 @@ export function createDesktopScenario({ resultDir }) {
         })
         assert.match(capture.dataUrl, /^data:image\/png;base64,/)
 
-        const invalid = await invokeFailure(workbenchOrigin, 'dshCapture.ownerRect', {
+        const invalid = await invokeFailure(control, workbenchOrigin, 'dshCapture.ownerRect', {
           x: -1,
           y: 0,
           width: 128,
@@ -135,12 +148,20 @@ export function createDesktopScenario({ resultDir }) {
         })
         assert.equal(invalid.code, 'invalid_params')
 
-        await invoke(origin, 'browser.setBounds', {
-          label: ownerLabel,
-          bounds: { x: 0, y: 0, width: 1, height: 1 },
-          visible: false,
+        // The renderer owns visibility; keep the owner inactive while testing rejection.
+        await control.command('click', `[data-testid="${previousTabTestId}"]`)
+        await control.command('waitFor', `${ownerTabSelector}[aria-selected="false"]`)
+        await waitForEmbeddedBrowserVisibility(
+          control,
+          ownerLabel,
+          false,
+          uiTimeoutMs,
+          'Switching tabs did not hide the Smart App owner view'
+        )
+        assert.deepEqual(await invoke(control, workbenchOrigin, 'dshCapture.capabilities'), {
+          available: false,
         })
-        const hidden = await invokeFailure(workbenchOrigin, 'dshCapture.ownerRect', {
+        const hidden = await invokeFailure(control, workbenchOrigin, 'dshCapture.ownerRect', {
           x: 0,
           y: 0,
           width: 1,
@@ -148,17 +169,40 @@ export function createDesktopScenario({ resultDir }) {
         })
         assert.equal(hidden.code, 'owner_view_hidden')
 
+        await control.command('click', ownerTabSelector)
+        await control.command('waitFor', `${ownerTabSelector}[aria-selected="true"]`)
+        await waitForEmbeddedBrowserVisibility(
+          control,
+          ownerLabel,
+          true,
+          uiTimeoutMs,
+          'Returning to the Smart App did not restore its owner view'
+        )
+        assert.deepEqual(await invoke(control, workbenchOrigin, 'dshCapture.capabilities'), {
+          available: true,
+        })
+        const recovered = await invoke(control, workbenchOrigin, 'dshCapture.ownerRect', {
+          x: 0,
+          y: 0,
+          width: 128,
+          height: 96,
+        })
+        assert.match(recovered.dataUrl, /^data:image\/png;base64,/)
+
         await writeFile(
           join(resultDir, 'dsh-owner-capture.json'),
-          `${JSON.stringify({ captured: true, invalidRejected: true, hiddenRejected: true, microphoneDiagnostics }, null, 2)}\n`,
+          `${JSON.stringify({ captured: true, invalidRejected: true, hiddenRejected: true, captureRecovered: true, microphoneDiagnostics }, null, 2)}\n`,
           'utf8'
         )
       } finally {
-        await invoke(origin, 'smartApps.stop', { installationId: workbench.id })
-        await invoke(origin, 'smartApps.delete', {
-          installationId: workbench.id,
-          deleteData: true,
-        })
+        try {
+          await invoke(control, origin, 'smartApps.stop', { installationId: workbench.id })
+        } finally {
+          await invoke(control, origin, 'smartApps.delete', {
+            installationId: workbench.id,
+            deleteData: true,
+          })
+        }
       }
     },
   }

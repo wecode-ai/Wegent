@@ -11,84 +11,40 @@
 //! `ClaudeCode` through a zero-row private read, a zero-row referenced read,
 //! and the public Shell, so its `shell_type` comes from the public Shell CRD's
 //! `spec.shellType`.
-use brz_mysql::{Mysql, MysqlResult};
+use brz_mysql::{MysqlResult, MysqlService};
+use brz_redis::Redis;
 
-use super::resolution::{KIND_COLUMNS, KindRow};
-use crate::teams::teams_repository::placeholders;
+use super::resolution::{KindRow, named_kind_rows_statement};
+use crate::permissions::EntityResolvers;
 
-/// `get_shell_by_name`: the owner's private Shell.
-pub fn shell_by_owner_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = ? \
-         AND kinds.kind = 'Shell' AND kinds.name = ? AND kinds.namespace = ? \
-         AND kinds.is_active = true \n LIMIT 1"
-    )
-}
+mod batch;
+pub(crate) use batch::resolve_shells;
 
-/// `get_referenced_capability(kind='Shell')`: a Shell shared into the caller's
-/// namespace through an approved membership.
-pub fn shell_referenced_statement() -> String {
-    format!(
-        "SELECT resource_members.entity_type AS resource_members_entity_type, \
-         resource_members.entity_id AS resource_members_entity_id, \
-         {KIND_COLUMNS} \nFROM resource_members \
-         INNER JOIN kinds ON kinds.id = resource_members.resource_id \n\
-         WHERE resource_members.resource_type = 'Shell' \
-         AND resource_members.status = 'approved' \
-         AND resource_members.entity_type = 'user' \
-         AND resource_members.entity_id IN ({entity}) \
-         AND kinds.kind = 'Shell' AND kinds.user_id != 0 \
-         AND kinds.is_active IS true \nORDER BY kinds.id",
-        entity = placeholders(1)
-    )
-}
-
-/// `get_shell_by_name`: a group Shell in one namespace (non-default).
-pub fn shell_group_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.kind = 'Shell' \
-         AND kinds.name = ? AND kinds.namespace = ? AND kinds.is_active = true \n LIMIT 1"
-    )
-}
-
-/// `get_shell_by_name`: the public Shell (`user_id = 0`, `default`).
-pub fn shell_public_statement() -> String {
-    format!(
-        "SELECT {KIND_COLUMNS} \nFROM kinds \nWHERE kinds.user_id = 0 \
-         AND kinds.kind = 'Shell' AND kinds.name = ? AND kinds.namespace = 'default' \
-         AND kinds.is_active = true \n LIMIT 1"
+/// `get_shell_by_name`'s public read (`user_id = 0`, `default`), through the
+/// requested-names relation.
+pub fn shell_named_public_statement(name_count: usize) -> String {
+    named_kind_rows_statement(
+        name_count,
+        "kinds.kind = 'Shell' AND kinds.user_id = 0 AND kinds.namespace = 'default'",
     )
 }
 
 /// `get_shell_by_name`'s search, returning the resolved Shell row.
-pub async fn resolve_shell<M: Mysql>(
-    mysql: &M,
+pub async fn resolve_shell<R: Redis>(
+    mysql: &MysqlService,
+    resolvers: &EntityResolvers<R>,
+    redis: Option<&R>,
     user_id: i64,
     name: &str,
     namespace: &str,
 ) -> MysqlResult<Option<KindRow>> {
-    if let Some(shell) = mysql
-        .fetch_optional::<_, _, KindRow>(shell_by_owner_statement(), (user_id, name, namespace))
-        .await?
-    {
-        return Ok(Some(shell));
-    }
-    if let Some(shell) = mysql
-        .fetch_optional::<_, _, KindRow>(shell_referenced_statement(), (user_id.to_string(),))
-        .await?
-    {
-        return Ok(Some(shell));
-    }
-    if namespace != "default"
-        && let Some(shell) = mysql
-            .fetch_optional::<_, _, KindRow>(shell_group_statement(), (name, namespace))
+    let key = (user_id, name.to_owned(), namespace.to_owned());
+    Ok(
+        resolve_shells(mysql, resolvers, redis, std::slice::from_ref(&key))
             .await?
-    {
-        return Ok(Some(shell));
-    }
-    mysql
-        .fetch_optional::<_, _, KindRow>(shell_public_statement(), (name,))
-        .await
+            .remove(&key)
+            .map(std::sync::Arc::unwrap_or_clone),
+    )
 }
 
 /// `_resolve_shell_info`'s extraction from the Shell CRD: `spec.shellType`
@@ -118,23 +74,15 @@ mod tests {
     }
 
     #[test]
-    fn shell_reads_match_the_recorded_statements() {
-        let owner = normalize(&shell_by_owner_statement());
-        assert!(owner.contains(
-            "WHERE kinds.user_id = ? AND kinds.kind = 'Shell' AND kinds.name = ? \
-             AND kinds.namespace = ? AND kinds.is_active = true LIMIT 1"
+    fn public_shell_reads_keep_the_requested_name_relation() {
+        let public = normalize(&shell_named_public_statement(1));
+        assert!(public.starts_with("SELECT anon_1.name AS anon_1_name, kinds.id AS kinds_id"));
+        assert!(public.contains("FROM (SELECT ? AS name) AS anon_1"));
+        assert!(public.contains("INNER JOIN kinds ON kinds.name = anon_1.name"));
+        assert!(public.contains(
+            "AND kinds.kind = 'Shell' AND kinds.user_id = 0 AND kinds.namespace = 'default'"
         ));
-        let public = normalize(&shell_public_statement());
-        assert!(public.contains("WHERE kinds.user_id = 0 AND kinds.kind = 'Shell'"));
-        assert!(public.contains("AND kinds.namespace = 'default'"));
-        let referenced = normalize(&shell_referenced_statement());
-        assert!(referenced.contains(
-            "FROM resource_members INNER JOIN kinds ON kinds.id = resource_members.resource_id"
-        ));
-        assert!(referenced.contains("resource_members.resource_type = 'Shell'"));
-        assert!(referenced.contains("resource_members.entity_id IN (?)"));
-        assert!(referenced.contains("kinds.user_id != 0"));
-        assert!(referenced.contains("ORDER BY kinds.id"));
+        assert!(public.ends_with("ORDER BY kinds.id"));
     }
 
     #[test]

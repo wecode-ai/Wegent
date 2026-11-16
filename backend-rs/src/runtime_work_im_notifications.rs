@@ -105,15 +105,15 @@ use brz_json::adapters::python_truthy;
 
 /// `IMGlobalNotificationSettings` parsed from the cached document.
 #[derive(Debug, Default, PartialEq, Eq)]
-struct GlobalNotification {
-    enabled: bool,
-    session_key: Option<String>,
+pub(crate) struct GlobalNotification {
+    pub(crate) enabled: bool,
+    pub(crate) session_key: Option<String>,
 }
 
 impl GlobalNotification {
     /// A non-object cache value renders the source's dataclass defaults
     /// (`enabled=False`, `session_key=None`).
-    fn from_value(value: Option<&OpaqueJson>) -> Self {
+    pub(crate) fn from_value(value: Option<&OpaqueJson>) -> Self {
         let Some(object) = value.map(OpaqueJson::to_value) else {
             return Self::default();
         };
@@ -133,19 +133,32 @@ impl GlobalNotification {
     }
 }
 
-/// The subset of `IMPrivateSession` the response needs. Its required fields are
-/// the dataclass fields without defaults, so a payload missing one fails to
-/// deserialize exactly like `IMPrivateSession(**values)` raising `TypeError`.
-#[derive(Debug, Deserialize)]
-struct PrivateSession {
-    session_key: String,
-    user_id: i64,
-    channel_type: String,
-    channel_id: i64,
-    conversation_id: String,
-    sender_id: String,
+/// The subset of `IMPrivateSession` the notification paths need. Its required
+/// fields are the dataclass fields without defaults, so a payload missing one
+/// fails to deserialize exactly like `IMPrivateSession(**values)` raising
+/// `TypeError`.
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct PrivateSession {
+    pub(crate) session_key: String,
+    pub(crate) user_id: i64,
+    pub(crate) channel_type: String,
+    pub(crate) channel_id: i64,
+    pub(crate) conversation_id: String,
+    pub(crate) sender_id: String,
     #[serde(default)]
-    display_name: String,
+    pub(crate) display_name: String,
+    #[serde(default)]
+    pub(crate) proactive_recipient_id: Option<String>,
+    /// `IMPrivateSession.from_dict` keeps the value only when it is a dict.
+    #[serde(default)]
+    pub(crate) active_runtime_task: Option<Value>,
+}
+
+impl PrivateSession {
+    /// `active_runtime_task if isinstance(..., dict) else None`.
+    pub(crate) fn active_runtime_task_object(&self) -> Option<&serde_json::Map<String, Value>> {
+        self.active_runtime_task.as_ref().and_then(Value::as_object)
+    }
 }
 
 /// `RuntimeIMNotificationSession`, serialized with the source aliases and field
@@ -184,11 +197,18 @@ impl SessionView {
     }
 }
 
+/// `IMPrivateSession.from_dict` for one cached document. Any non-object,
+/// unparsable, or field-incomplete payload is `None`, exactly like
+/// `get_session` returning `None`.
+pub(crate) fn parse_private_session(value: Option<&OpaqueJson>) -> Option<PrivateSession> {
+    value?.project()
+}
+
 /// Parse one cached `channel:private_session` document into a view owned by
 /// `user_id`. `None` mirrors `get_session`/`_load_user_im_session` rejecting a
 /// non-object payload, an unparsable session, or a foreign owner.
 fn session_view(value: Option<&OpaqueJson>, user_id: i64) -> Option<SessionView> {
-    let session: PrivateSession = value?.project()?;
+    let session = parse_private_session(value)?;
     (session.user_id == user_id).then(|| SessionView::from_session(&session))
 }
 
@@ -252,7 +272,7 @@ struct SettingsResponse {
 
 /// `_get_runtime_task_subscriptions`: keep keys whose value is a list,
 /// preserving document order and filtering non-string or empty items.
-fn normalize_subscriptions(value: Option<&OpaqueJson>) -> Vec<(String, Vec<String>)> {
+pub(crate) fn normalize_subscriptions(value: Option<&OpaqueJson>) -> Vec<(String, Vec<String>)> {
     let Some(document) = value.map(OpaqueJson::to_value) else {
         return Vec::new();
     };
@@ -276,21 +296,24 @@ fn normalize_subscriptions(value: Option<&OpaqueJson>) -> Vec<(String, Vec<Strin
         .collect()
 }
 
-fn global_notification_key(user_id: i64) -> String {
+pub(crate) fn global_notification_key(user_id: i64) -> String {
     format!("{GLOBAL_NOTIFICATION_PREFIX}{user_id}")
 }
 
-fn private_session_key(session_key: &str) -> String {
+pub(crate) fn private_session_key(session_key: &str) -> String {
     format!("{PRIVATE_SESSION_PREFIX}{session_key}")
 }
 
-fn runtime_task_subscriptions_key(user_id: i64) -> String {
+pub(crate) fn runtime_task_subscriptions_key(user_id: i64) -> String {
     format!("{RUNTIME_TASK_SUBSCRIPTIONS_PREFIX}{user_id}")
 }
 
 /// One `cache_manager.get`: a missing key, a read error, or an undecodable
 /// value all render `None`.
-async fn cache_get(redis: Option<&brz_redis::RedisService>, key: &str) -> Option<OpaqueJson> {
+pub(crate) async fn cache_get(
+    redis: Option<&brz_redis::RedisService>,
+    key: &str,
+) -> Option<OpaqueJson> {
     let redis = redis?;
     match redis.get::<_, RedisBytes>(key).await {
         Ok(Some(bytes)) => decode_json(bytes.as_ref()),
@@ -473,7 +496,7 @@ struct PresenceResponse {
 }
 
 /// `_im_notification_presence_key`.
-fn presence_key(user_id: i64) -> String {
+pub(crate) fn presence_key(user_id: i64) -> String {
     format!("{USER_IM_NOTIFICATION_PRESENCE_PREFIX}{user_id}")
 }
 
@@ -484,7 +507,7 @@ fn presence_member(client_id: &str, state: &str) -> String {
 
 /// `_presence_members_are_away`: away when no fresh member is foregrounded,
 /// detected by the source's `\0active` member suffix.
-fn presence_members_are_away(members: &[String]) -> bool {
+pub(crate) fn presence_members_are_away(members: &[String]) -> bool {
     let active_suffix = presence_member("", IM_NOTIFICATION_PRESENCE_ACTIVE);
     !members
         .iter()
@@ -492,7 +515,7 @@ fn presence_members_are_away(members: &[String]) -> bool {
 }
 
 /// Source `time.time()`: the current Unix time in seconds.
-fn unix_seconds() -> f64 {
+pub(crate) fn unix_seconds() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |elapsed| elapsed.as_secs_f64())
@@ -558,7 +581,7 @@ async fn update_presence(
 
 /// A `RedisError` describing an unconfigured application cache client, so the
 /// missing dependency renders the same 500 body as a failed command.
-fn missing_redis_error() -> brz_redis::RedisError {
+pub(crate) fn missing_redis_error() -> brz_redis::RedisError {
     brz_redis::RedisError::new(
         brz_redis::ErrorKind::ClientError,
         "IM notification presence Redis client is not configured",

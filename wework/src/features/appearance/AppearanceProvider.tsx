@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { applyAppearance, resolveAppearanceMode } from './applyAppearance'
+import {
+  applyAppearance,
+  resolveAppearanceMode,
+  resolveAppearanceThemeVariables,
+} from './applyAppearance'
 import { AppearanceContext } from './context'
 import { defaultAppearance } from './presets'
 import {
   clearStoredAppearance,
+  APPEARANCE_STORAGE_KEY,
   mergeAppearance,
   readStoredAppearance,
   writeStoredAppearance,
@@ -11,7 +16,12 @@ import {
 import type { AppearanceConfig, AppearanceUpdate, ResolvedAppearanceMode } from './types'
 import { WEWORK_RESET_FONT_SIZE_EVENT, WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
 import { normalizeCodeFontSize, normalizeUiFontSize } from './typography'
-import { updateAppPreferences } from '@/desktop/appPreferences'
+import {
+  APP_PREFERENCES_CHANGED_EVENT,
+  getAppPreferences,
+  updateAppPreferences,
+  type AppPreferences,
+} from '@/desktop/appPreferences'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 
 function getInitialState(): {
@@ -42,14 +52,29 @@ export function AppearanceProvider({
 
   useEffect(() => {
     if (!persist || !isElectronRuntime()) return
-    void updateAppPreferences({ appearanceMode: state.appearance.mode }).catch(error => {
-      console.error('[Wework] Failed to persist the startup appearance mode:', error)
+    const appearance = state.appearance
+    void updateAppPreferences({
+      appearanceMode: appearance.mode,
+      appearanceThemeSnapshot: {
+        light: {
+          themeId: appearance.lightThemeId,
+          variables: resolveAppearanceThemeVariables(appearance, 'light'),
+        },
+        dark: {
+          themeId: appearance.darkThemeId,
+          variables: resolveAppearanceThemeVariables(appearance, 'dark'),
+        },
+      },
+    }).catch(error => {
+      console.error('[Wework] Failed to persist the desktop appearance:', error)
     })
-  }, [persist, state.appearance.mode])
+  }, [persist, state.appearance])
 
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
-      if (event.key !== null && event.key !== 'wework.appearance') return
+      // Auxiliary-window bootstrap clears and restores origin storage. Its
+      // transient clear is not a request to reset the selected appearance.
+      if (event.key !== APPEARANCE_STORAGE_KEY) return
       const appearance = readStoredAppearance()
       setState({
         appearance,
@@ -62,6 +87,36 @@ export function AppearanceProvider({
   }, [])
 
   useEffect(() => {
+    if (persist || !isElectronRuntime()) return
+    let active = true
+    let receivedChange = false
+    const applyMode = (mode: unknown) => {
+      if (mode !== 'light' && mode !== 'dark' && mode !== 'system') return
+      setState(current => {
+        if (current.appearance.mode === mode) return current
+        const appearance = mergeAppearance({ ...current.appearance, mode })
+        return { appearance, resolvedMode: resolveAppearanceMode(mode) }
+      })
+    }
+    const handlePreferencesChanged = (event: Event) => {
+      receivedChange = true
+      applyMode((event as CustomEvent<AppPreferences>).detail?.appearanceMode)
+    }
+    window.addEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
+    void getAppPreferences()
+      .then(preferences => {
+        if (active && !receivedChange) applyMode(preferences.appearanceMode)
+      })
+      .catch(error => {
+        console.error('[Wework] Failed to read the auxiliary window appearance mode:', error)
+      })
+    return () => {
+      active = false
+      window.removeEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
+    }
+  }, [persist])
+
+  useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
@@ -69,7 +124,7 @@ export function AppearanceProvider({
       setState(current => {
         if (current.appearance.mode !== 'system') return current
         return {
-          ...current,
+          appearance: mergeAppearance(current.appearance),
           resolvedMode: resolveAppearanceMode(current.appearance.mode),
         }
       })
@@ -116,9 +171,23 @@ export function AppearanceProvider({
 
   const setAppearance = useCallback((update: AppearanceUpdate) => {
     setState(current => {
+      const mode = current.resolvedMode
+      const themeOverrides = { ...current.appearance.themeOverrides, ...update.themeOverrides }
+      if (update.accentColor !== undefined) {
+        themeOverrides[mode] = { ...themeOverrides[mode], accentColor: update.accentColor }
+      }
+      for (const paletteMode of ['light', 'dark'] as const) {
+        if (update[paletteMode]) {
+          themeOverrides[paletteMode] = {
+            ...themeOverrides[paletteMode],
+            palette: { ...themeOverrides[paletteMode].palette, ...update[paletteMode] },
+          }
+        }
+      }
       const appearance = mergeAppearance({
         ...current.appearance,
         ...update,
+        themeOverrides,
         light: update.light
           ? { ...current.appearance.light, ...update.light }
           : current.appearance.light,

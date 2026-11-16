@@ -357,7 +357,8 @@ export class TaskStateMachine {
     messageId?: number,
     sources?: UnifiedMessage['sources'],
     hasError?: boolean,
-    errorMessage?: string
+    errorMessage?: string,
+    contexts?: UnifiedMessage['contexts']
   ): void {
     this.dispatch({
       type: 'CHAT_DONE',
@@ -368,6 +369,7 @@ export class TaskStateMachine {
       sources,
       hasError,
       errorMessage,
+      contexts,
     })
   }
 
@@ -468,10 +470,7 @@ export class TaskStateMachine {
     }
   }
 
-  private shouldJoinOrResume(
-    server: TaskRuntimeVerifyResult,
-    reason: TaskRecoveryReason
-  ): boolean {
+  private shouldJoinOrResume(server: TaskRuntimeVerifyResult, reason: TaskRecoveryReason): boolean {
     // Socket.IO room membership is connection-scoped. A reconnect always needs
     // a fresh task:join, including for terminal chat tasks whose async cards may
     // still be progressing after the assistant response has completed.

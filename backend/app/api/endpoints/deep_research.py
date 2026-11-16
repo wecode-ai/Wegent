@@ -66,7 +66,7 @@ class DeepResearchCreateRequest(BaseModel):
     )
     input: str = Field(..., description="Research query")
     agent: str = Field(
-        "deep-research-pro-preview-12-2025", description="Agent model to use"
+        "deep-research-preview-04-2026", description="Agent model to use"
     )
     metadata: Optional[DeepResearchMetadata] = Field(
         None, description="Optional metadata"
