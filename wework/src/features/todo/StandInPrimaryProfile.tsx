@@ -1,14 +1,5 @@
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
-import { getStandInErrorMessage, reportStandInError } from '@/lib/stand-in-error-message'
-import {
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-  type Ref,
-  type ReactNode,
-} from 'react'
+import { useCallback, useImperativeHandle, useRef, useState, type Ref, type ReactNode } from 'react'
 import { dequal } from 'dequal'
 import {
   connectionChangeEnablesIdentity,
@@ -25,11 +16,13 @@ import {
   StandInSettingsHeader,
   StandInSettingsActions,
   StandInSettingsEntry,
+  StandInSettingsError,
 } from './StandInSettingsLayout'
 import { StandInComposer } from './StandInComposer'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import type { DeviceInfo } from '@/types/api'
+import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -110,30 +103,10 @@ export function StandInPrimaryProfile({
     [onCalendarViewChange]
   )
   const [discard, setDiscard] = useState(false)
-  const [runtimeWork, setRuntimeWork] = useState<RuntimeWorkListResponse | null>(null)
-  const [runtimeError, setRuntimeError] = useState<string | null>(null)
-  const [reload, setReload] = useState(0)
-  useEffect(() => {
-    if (!services.runtimeWorkApi) return
-    let active = true
-    void services.runtimeWorkApi
-      .listRuntimeWork({ deviceId: settings.executionDeviceId })
-      .then(value => {
-        if (active) {
-          setRuntimeWork(value)
-          setRuntimeError(null)
-        }
-      })
-      .catch(cause => {
-        if (active) {
-          reportStandInError('load_environment', cause, settings.executionDeviceId)
-          setRuntimeError(getStandInErrorMessage(cause, 'load_environment_failed'))
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [services.runtimeWorkApi, settings.executionDeviceId, reload])
+  const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
+    services.runtimeWorkApi,
+    settings.executionDeviceId
+  )
   const [scheduleDirty, setScheduleDirty] = useState(false)
   const [connectionDraftDirty, setConnectionDraftDirty] = useState(false)
   const dirty = !dequal(original, draft) || scheduleDirty || connectionDraftDirty
@@ -328,19 +301,10 @@ export function StandInPrimaryProfile({
           <p className="text-xs text-text-secondary">
             {t('standIn.workspace.execution_device_help')}
           </p>
-          {runtimeError && (
-            <div role="alert" className="text-sm text-error">
-              <p>{runtimeError}</p>
-              <button
-                type="button"
-                data-testid="stand-in-primary-environment-retry"
-                className="min-h-11 min-w-11 underline md:min-h-8"
-                onClick={() => setReload(value => value + 1)}
-              >
-                {t('standIn.reload')}
-              </button>
-            </div>
-          )}
+          <StandInSettingsError
+            error={runtimeError}
+            retry={{ testId: 'stand-in-primary-environment-retry', onClick: retryRuntimeWork }}
+          />
         </section>
       )}
       <ConfirmDialog
@@ -383,19 +347,19 @@ export function StandInPrimaryProfile({
           }
         >
           {error && (
-            <div role="alert" className="w-full text-sm text-destructive">
-              <p>{error}</p>
-              {onReload && (
-                <button
-                  type="button"
-                  data-testid="stand-in-primary-settings-retry"
-                  disabled={saving}
-                  onClick={onReload}
-                  className="min-h-11 min-w-11 underline md:min-h-8"
-                >
-                  {t('standIn.reload')}
-                </button>
-              )}
+            <div className="w-full">
+              <StandInSettingsError
+                error={error}
+                retry={
+                  onReload
+                    ? {
+                        testId: 'stand-in-primary-settings-retry',
+                        disabled: saving,
+                        onClick: onReload,
+                      }
+                    : undefined
+                }
+              />
             </div>
           )}
         </StandInSettingsActions>

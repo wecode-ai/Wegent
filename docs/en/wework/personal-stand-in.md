@@ -307,6 +307,10 @@ The project conversation uses the existing collaboration group leader. Its heade
 
 Roles can receive personal events or all subscribable repository events. The plugin provides capabilities; role instructions determine behavior. Cloud buffers repository Webhooks while the execution device is offline. External writes retain per-operation native approval. See [GitHub and GitLab connections](git-connections.md).
 
+<a id="assistant-settings-recovery"></a>
+
+**Settings errors and retry**: If the execution environment cannot load, choose **Reload** beside that error to retry only the device's project and workspace directory while retaining your settings draft. Reloading saved settings after a save failure asks before discarding unsaved changes. Choose **Keep editing** to retain your input, or confirm discard to read the saved configuration.
+
 <a id="assistant-first-use"></a>
 
 ## Set up your stand-in

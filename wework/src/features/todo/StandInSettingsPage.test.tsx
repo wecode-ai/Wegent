@@ -71,6 +71,50 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it('retries a failed environment request without reloading settings or losing the role draft', async () => {
+    const { props, personalGet } = fixture()
+    const listRuntimeWork = vi
+      .fn(async () => ({ projects: [], chats: [] }))
+      .mockRejectedValueOnce(new Error('Environment unavailable'))
+    props.services = {
+      ...props.services,
+      runtimeWorkApi: { listRuntimeWork } as unknown as WorkbenchServices['runtimeWorkApi'],
+    }
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    const name = await screen.findByRole('textbox', { name: '助理名称' })
+    await user.clear(name)
+    await user.type(name, 'Retained draft')
+    await user.click(screen.getByTestId('stand-in-advanced-open'))
+    await screen.findByRole('alert')
+    await user.click(screen.getByRole('button', { name: '重新加载' }))
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
+    expect(personalGet).toHaveBeenCalledOnce()
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    await user.click(screen.getByTestId('stand-in-back'))
+    expect(screen.getByRole('textbox', { name: '助理名称' })).toHaveValue('Retained draft')
+  })
+
+  it('protects a failed save draft before explicitly reloading saved settings', async () => {
+    const { props, personalSave, personalGet } = fixture()
+    personalSave.mockRejectedValueOnce(new Error('Save unavailable'))
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    const name = await screen.findByRole('textbox', { name: '助理名称' })
+    await user.clear(name)
+    await user.type(name, 'Retained draft')
+    await user.click(screen.getByTestId('stand-in-save'))
+    await screen.findByRole('alert')
+    await user.click(screen.getByTestId('stand-in-reload'))
+    await user.click(screen.getByTestId('stand-in-keep-editing'))
+    expect(name).toHaveValue('Retained draft')
+    expect(personalGet).toHaveBeenCalledOnce()
+    await user.click(screen.getByTestId('stand-in-reload'))
+    await user.click(screen.getByTestId('stand-in-discard'))
+    await waitFor(() => expect(personalGet).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('textbox', { name: '助理名称' })).toHaveValue('')
+  })
+
   it('keeps configured project scope visible when receiving is paused', async () => {
     const role = newStandInRole('mac', 'default')
     role.collaboration.enabled = false

@@ -29,7 +29,7 @@ import {
   type StandInRole,
 } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import type { DeviceInfo } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -44,9 +44,11 @@ import {
   StandInSettingsHeader,
   StandInSettingsActions,
   StandInSettingsEntry,
+  StandInSettingsError,
 } from './StandInSettingsLayout'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
+import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { saveStandInRoleDevice } from './saveStandInRoleDevice'
 
@@ -121,7 +123,6 @@ function StandInSettingsEditor({
   const [notice, setNotice] = useState(false)
   const [roleNameError, setRoleNameError] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
-  const [runtimeWork, setRuntimeWork] = useState<RuntimeWorkListResponse | null>(null)
   const projectRef = useMemo(
     () =>
       initialProject && {
@@ -158,21 +159,11 @@ function StandInSettingsEditor({
   useEffect(() => {
     onSavingChange?.(saving)
   }, [saving, onSavingChange])
-  useEffect(() => {
-    if (view !== 'advanced' || !executionDeviceId || !services.runtimeWorkApi) return
-    let active = true
-    void services.runtimeWorkApi
-      .listRuntimeWork({ deviceId: executionDeviceId })
-      .then(value => {
-        if (active) setRuntimeWork(value)
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [view, executionDeviceId, services, setError])
+  const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
+    services.runtimeWorkApi,
+    executionDeviceId,
+    view === 'advanced'
+  )
 
   const openView = (next: View) => {
     setRoleNameError(false)
@@ -687,20 +678,20 @@ function StandInSettingsEditor({
                   services={services}
                 />
               )}
-              {state.error && (
-                <div role="alert" className="text-sm text-error">
-                  <p>{state.error}</p>
-                  <button
-                    type="button"
-                    data-testid="stand-in-reload"
-                    disabled={saving}
-                    onClick={state.reload}
-                    className="mt-1 underline"
-                  >
-                    {t('standIn.reload')}
-                  </button>
-                </div>
+              {view === 'advanced' && (
+                <StandInSettingsError
+                  error={runtimeError}
+                  retry={{ testId: 'stand-in-role-environment-retry', onClick: retryRuntimeWork }}
+                />
               )}
+              <StandInSettingsError
+                error={state.error}
+                retry={{
+                  testId: 'stand-in-reload',
+                  disabled: saving,
+                  onClick: () => requestLeave(state.reload),
+                }}
+              />
               {notice && (
                 <p
                   role="status"
@@ -834,16 +825,11 @@ function StandInSettingsEditor({
             )}
           </>
         ) : (
-          <div className="px-5 pb-5" role="alert">
-            <p className="text-error">{state.error}</p>
-            <button
-              type="button"
-              data-testid="stand-in-reload"
-              onClick={state.reload}
-              className="mt-2 underline"
-            >
-              {t('standIn.reload')}
-            </button>
+          <div className="px-5 pb-5">
+            <StandInSettingsError
+              error={state.error}
+              retry={{ testId: 'stand-in-reload', onClick: state.reload }}
+            />
           </div>
         )}
       </div>

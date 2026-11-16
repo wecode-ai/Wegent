@@ -2,6 +2,33 @@ import type { ReactNode } from 'react'
 import { ArrowLeft, ChevronRight, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 
+export function StandInSettingsError({
+  error,
+  retry,
+}: {
+  error: string | null
+  retry?: { testId: string; disabled?: boolean; onClick(): void }
+}) {
+  const { t } = useTranslation('common')
+  if (!error) return null
+  return (
+    <div role="alert" className="text-sm text-error">
+      <p>{error}</p>
+      {retry && (
+        <button
+          type="button"
+          data-testid={retry.testId}
+          disabled={retry.disabled}
+          onClick={retry.onClick}
+          className="mt-1 min-h-11 min-w-11 underline md:min-h-8"
+        >
+          {t('standIn.reload')}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function StandInSettingsHeader({
   title,
   description,

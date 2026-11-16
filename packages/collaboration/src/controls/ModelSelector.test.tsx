@@ -774,6 +774,9 @@ describe("model controls without a desktop host", () => {
       act(() => element("model-selector-button").click());
 
       const reasoningSlider = element("model-control-reasoning-track");
+      expect(reasoningSlider.getAttribute("aria-label")).toBe(
+        translate("workbench.reasoning_level", "Reasoning"),
+      );
       expect(reasoningSlider.getAttribute("aria-valuetext")).toBe(
         translate("workbench.local_model_reasoning_high", "High"),
       );
