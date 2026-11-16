@@ -100,6 +100,24 @@ describe('ArchivedConversationsSettingsPage', () => {
     vi.restoreAllMocks()
   })
 
+  test('keeps archived rows mounted and actionable during a background refresh', async () => {
+    render(<ArchivedConversationsSettingsPage />)
+    const button = await screen.findByTestId('archived-delete-button-device-1-codex-1')
+    let completeRefresh!: (value: { items: ArchivedConversationItem[] }) => void
+    listArchivedConversations.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          completeRefresh = resolve
+        })
+    )
+    await act(async () => notifyWorkbenchCloudArchivesChanged())
+    expect(screen.getByTestId('archived-delete-button-device-1-codex-1')).toBe(button)
+    await userEvent.click(button)
+    expect(screen.getByTestId('archived-delete-confirm-dialog-confirm-button')).toBeInTheDocument()
+    await act(async () => completeRefresh({ items: [archivedItem] }))
+    expect(screen.getByTestId('archived-delete-button-device-1-codex-1')).toBe(button)
+  })
+
   test('shows a current deletion error alongside an earlier task cleanup failure', async () => {
     reportArchivedCleanupFailure('another-task', 'Earlier cleanup failure')
     deleteArchivedConversationsBulk.mockRejectedValueOnce(new Error('Current deletion failed'))

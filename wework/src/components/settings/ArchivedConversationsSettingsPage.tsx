@@ -800,7 +800,7 @@ export function ArchivedConversationsSettingsPage({
       )}
 
       <div className="mt-3">
-        {loading ? (
+        {loading && !hasArchivedItems ? (
           <div
             data-testid="archived-loading"
             className="flex h-40 items-center justify-center text-text-secondary"
