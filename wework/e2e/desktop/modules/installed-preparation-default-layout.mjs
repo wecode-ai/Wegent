@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join, parse } from 'node:path'
 
 import { INSTALLED_PREPARATION_ARGUMENT } from '../../../electron/src/runtime/installed-preparation-contract.mjs'
@@ -20,7 +21,10 @@ export async function verifyDefaultLayoutInstalledPreparation({
   resultDir,
 }) {
   const root = join(resultDir, 'default-layout-install-preparation')
-  const home = join(root, 'home')
+  // Windows resolves nested Chromium and runtime paths below HOME. Keep the
+  // synthetic profile short so this exercises default-layout behavior rather
+  // than the length of the CI evidence directory.
+  const home = await mkdtemp(join(tmpdir(), 'wework-default-layout-'))
   const appData =
     process.platform === 'darwin'
       ? join(home, 'Library', 'Application Support')
@@ -32,7 +36,7 @@ export async function verifyDefaultLayoutInstalledPreparation({
   const namespace = (await readPackagedNamespace(appBinary, appEnvironment)) || 'default'
   const userData = join(home, '.wegent', 'workbench', 'wework', namespace, 'user-data')
   const source = join(appData, applicationId)
-  await Promise.all([mkdir(home, { recursive: true }), mkdir(appData, { recursive: true })])
+  await mkdir(appData, { recursive: true })
   if (process.platform === 'win32') await mkdir(localAppData, { recursive: true })
   await assert.rejects(lstat(userData), { code: 'ENOENT' })
   const environment = {
@@ -149,5 +153,6 @@ export async function verifyDefaultLayoutInstalledPreparation({
     join(resultDir, 'default-layout-install-preparation.json'),
     `${JSON.stringify(evidence, null, 2)}\n`
   )
+  await rm(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   return evidence
 }
