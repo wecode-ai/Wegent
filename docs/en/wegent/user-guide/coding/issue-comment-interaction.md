@@ -4,16 +4,18 @@ sidebar_position: 11
 
 # Issue activity comment composer interaction contract
 
-This contract covers the main composer in issue activity. Inline reply composers always scroll with their cards.
+This contract covers the main composer in issue activity. Timeline replies reuse the bottom composer; inline replies in the non-timeline layout scroll with their cards.
 “Per frame” means geometry invariants on every rendered frame, not a timed animation. All dimensions are CSS pixels.
 
 ## Collaboration Issue activity and execution
 
 Descriptions initially preview up to `240px`, preserving goal text and acceptance context, with expansion for longer content.
 When the editable title scrolls out of view while reading activity, the header retains a compact Issue title and current status.
+When the linked-task entry scrolls away, Create task becomes a compact header action without consuming another row of reading space.
+Descriptions expose a keyboard-accessible Edit description action that focuses the editor. Loading and normalizing Markdown alone does not mark the content as unsaved.
 Titles and properties save immediately; description edits use Save. A shared header indicator reports unsaved changes, saving, saved, or failure. Failed changes remain available for retry.
 Replies to ordinary human discussions say they continue the discussion. Only discussions with execution records promise execution continuation; stand-in conversations and human work assignments retain their own reply explanations.
-Comment editors expose accessible names, and timestamps use the readable secondary text color.
+Comment editors expose accessible names. Property labels, input hints, and timestamps use the readable secondary text color.
 
 Opening an Issue from the Collaboration board shows creation, status changes, and comments in time order in the right detail drawer. An execution belongs to the comment that started it: the comment shows its run status, and its task entry opens the linked transcript, workspace, Terminal, and files. The execution page is read-only and does not expose a second reply composer. Return to the source Issue and reply in the corresponding discussion to add instructions.
 

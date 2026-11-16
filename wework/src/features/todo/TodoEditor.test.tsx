@@ -47,6 +47,30 @@ const baseItem = {
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
+  it('offers a keyboard action for editing a read-only description', async () => {
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+      />
+    )
+    const editor = await screen.findByTestId('cloud-todo-detail-description')
+    expect(editor).toHaveAttribute('contenteditable', 'false')
+    const edit = screen.getByRole('button', { name: '编辑描述' })
+    edit.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(editor).toHaveAttribute('contenteditable', 'true')
+    expect(editor).toHaveFocus()
+    expect(screen.getByTestId('cloud-todo-save')).toBeDisabled()
+  })
+
   it.each([true, false])('shows an empty description hint with can_edit=%s', async canEdit => {
     const item = { ...baseItem, description: '', can_edit: canEdit }
     render(
@@ -564,15 +588,15 @@ describe('TodoEditor external item sync', () => {
     reportPosition(1000)
     expect(screen.queryByTestId('issue-persistent-task-action')).not.toBeInTheDocument()
     reportPosition(-1)
-    expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
-      '让 AI 帮我处理'
-    )
-    expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
-      '基于当前 Issue 创建任务，并在当前电脑上运行'
+    expect(screen.getByTestId('cloud-todo-personal-task-start')).toHaveAccessibleName('创建任务')
+    expect(screen.getByTestId('cloud-todo-personal-task-start')).toHaveAttribute(
+      'title',
+      '让 AI 帮我处理 · 基于当前 Issue 创建任务，并在当前电脑上运行'
     )
     const persistentAction = screen.getByTestId('issue-persistent-task-action')
     expect(persistentAction).toContainElement(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(screen.getByTestId('cloud-todo-detail-scroll')).not.toContainElement(persistentAction)
+    expect(persistentAction.closest('header')).not.toBeNull()
     expect(screen.getAllByTestId('cloud-todo-personal-task-start')).toHaveLength(1)
     await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(onCreateTask).toHaveBeenCalledOnce()

@@ -2952,6 +2952,14 @@ export function TodoEditor(props: TodoEditorProps) {
                     : t("todo.saved")}
             </span>
           ) : null}
+          {personalTaskAction && personalTaskActionPinned ? (
+            <div
+              className="task-detail-persistent-action shrink-0"
+              data-testid="issue-persistent-task-action"
+            >
+              {personalTaskAction}
+            </div>
+          ) : null}
           {props.headerActions}
           {workspacePanel && item && editable && props.onDelete ? (
             <IssuePropertiesPopover
@@ -3048,15 +3056,6 @@ export function TodoEditor(props: TodoEditorProps) {
             </>
           ) : null}
         </header>
-
-        {personalTaskAction && personalTaskActionPinned ? (
-          <div
-            className="task-detail-persistent-action shrink-0 border-b border-border bg-background px-4 py-2"
-            data-testid="issue-persistent-task-action"
-          >
-            {personalTaskAction}
-          </div>
-        ) : null}
 
         <div
           className={cn(
@@ -3530,6 +3529,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     )}
                   </div>
                   {!readFirst ||
+                  (workspacePanel && editable) ||
                   editingContent ||
                   descriptionOverflowing ||
                   descriptionExpanded ? (
@@ -3568,6 +3568,17 @@ export function TodoEditor(props: TodoEditorProps) {
                       >
                         {t("todo.issue_markdown_hint")}
                       </p>
+                      {workspacePanel && editable && !editingContent ? (
+                        <span className="task-detail-desc-actions">
+                          <button
+                            type="button"
+                            data-testid="issue-description-edit"
+                            onClick={() => beginContentEditing("description")}
+                          >
+                            {t("todo.edit_description", "编辑描述")}
+                          </button>
+                        </span>
+                      ) : null}
                       {workspacePanel && editingContent ? (
                         <span
                           className="task-detail-desc-actions"

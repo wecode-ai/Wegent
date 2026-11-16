@@ -441,7 +441,7 @@
 
 .task-detail-workspace-layout .task-detail-rail-key {
   width: 92px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: var(--text-sm);
   font-weight: 400;
   line-height: 18px;
@@ -673,7 +673,7 @@
 }
 
 .task-detail-property dt {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-weight: 400;
 }
 
@@ -979,49 +979,8 @@
 }
 
 .task-detail-personal-task {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-  padding: 8px 0;
-  color: rgb(var(--color-text-secondary));
-}
-
-.task-detail-persistent-action > .task-detail-personal-task {
-  margin-top: 0;
-  padding: 4px 0;
-}
-
-.task-detail-personal-task-icon {
   display: inline-flex;
-  width: 24px;
-  height: 24px;
   align-items: center;
-  justify-content: center;
-  color: rgb(var(--color-text-muted));
-}
-
-.task-detail-personal-task-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.task-detail-personal-task-copy strong {
-  color: rgb(var(--color-text-primary));
-  font-size: var(--text-sm);
-  font-weight: 500;
-}
-
-.task-detail-personal-task-copy small {
-  overflow: hidden;
-  color: rgb(var(--color-text-muted));
-  font-size: var(--text-xs);
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .task-detail-personal-task > button {
@@ -1049,17 +1008,6 @@
   > button:focus-visible {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
-}
-
-@media (max-width: 767px) {
-  .task-detail-personal-task {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .task-detail-personal-task > button {
-    min-height: 44px;
-    grid-column: 1 / -1;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1269,14 +1217,14 @@
 
 .task-detail-workspace-description
   .task-detail-desc-actions
-  > button:last-child {
+  > button.task-detail-assignment-save {
   color: rgb(var(--color-bg-base));
   background: rgb(var(--color-text-primary));
 }
 
 .task-detail-workspace-description
   .task-detail-desc-actions
-  > button:last-child:hover:not(:disabled) {
+  > button.task-detail-assignment-save:hover:not(:disabled) {
   color: rgb(var(--color-bg-base));
   background: rgb(var(--color-text-primary));
   opacity: 0.9;
@@ -2708,7 +2656,7 @@
 }
 
 .task-detail-comment-editor.composer-prosemirror-placeholder {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary)) !important;
 }
 
 .task-detail-new-comment-actions,
@@ -3093,6 +3041,26 @@
   margin: 0;
 }
 
+@media (max-height: 600px) and (pointer: fine) {
+  .task-detail-workspace-panel .task-detail-new-comment[data-workflow="true"] {
+    padding: 6px 10px;
+  }
+
+  .task-detail-workspace-panel .task-detail-comment-editor {
+    min-height: 24px;
+    max-height: 48px;
+  }
+
+  .task-detail-workspace-panel .task-detail-new-comment-actions > button {
+    min-width: 28px;
+    min-height: 28px;
+  }
+
+  .task-detail-workspace-panel .task-detail-comment-reply-context-row {
+    min-height: 28px;
+  }
+}
+
 .task-detail-comment-chat-input {
   width: 100%;
 }
@@ -3128,8 +3096,7 @@
 }
 
 .task-detail-workspace-panel .task-detail-comments {
-  /* The sticky composer must use the complete detail column as its containing block. */
-  display: contents;
+  margin-top: 12px;
 }
 
 .task-detail-workspace-panel .task-detail-thread.is-timeline {
@@ -3266,7 +3233,6 @@
 
 .task-detail-workspace-panel .task-detail-comments-head {
   gap: 8px;
-  margin-top: 12px;
   min-height: 0;
   padding: 0 0 10px;
 }
@@ -3478,7 +3444,7 @@
 }
 
 .task-detail-slim-rail .task-detail-rail-key {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .task-detail-slim-rail .task-detail-rail-value {

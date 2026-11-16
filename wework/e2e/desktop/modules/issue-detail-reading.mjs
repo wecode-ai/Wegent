@@ -54,6 +54,36 @@ async function verifyComposerVisible(control) {
   )
 }
 
+async function verifyConstrainedDiscussion(control, captureScreenshot) {
+  const previous = JSON.parse(
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 720, height: 450 }),
+    })
+  )
+  try {
+    const action = scope('[data-testid="issue-persistent-task-action"]')
+    await control.command('waitFor', action, { visible: true, stableMs: 300 })
+    await verifyComposerVisible(control)
+    const selectors = [
+      scope('[data-testid="cloud-todo-detail"] > header'),
+      action,
+      scope('[data-testid="cloud-todo-detail-scroll"]'),
+      scope('[data-testid="issue-reply-composer"]'),
+    ].join(', ')
+    const [header, taskAction, scroll, reply] = JSON.parse(
+      await control.command('getElementMetrics', selectors, { value: 'includeText' })
+    )
+    assert.ok(taskAction.top >= header.top && taskAction.bottom <= header.bottom)
+    assert.ok(
+      scroll.height - reply.height - 16 >= scroll.height / 2,
+      'At least half the constrained discussion viewport must remain available for reading'
+    )
+    await captureScreenshot(control, 'issue-detail-reading-03-constrained.png')
+  } finally {
+    await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previous) })
+  }
+}
+
 export async function verifyIssueDetailReading(control, { captureScreenshot, uiTimeoutMs }) {
   await control.command('click', scope('[data-testid="cloud-todo-detail-close"]'))
   await control.command('waitFor', scope('[data-testid="cloud-todo-detail"]'), { visible: false })
@@ -90,7 +120,9 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
   await control.command('waitFor', `${toggle}[aria-expanded="false"]`)
   await captureScreenshot(control, 'issue-detail-reading-01-description.png')
 
-  await control.command('click', description)
+  await control.command('nativePress', scope('[data-testid="issue-description-edit"]'), {
+    key: 'Enter',
+  })
   const save = scope('[data-testid="cloud-todo-save"]')
   await control.command('waitFor', `${save}:disabled`, { visible: true, stableMs: 300 })
   assert.doesNotMatch(
@@ -152,5 +184,6 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
     '回复此讨论…'
   )
   await captureScreenshot(control, 'issue-detail-reading-02-reply.png')
+  await verifyConstrainedDiscussion(control, captureScreenshot)
   await control.command('click', scope('[data-testid="issue-reply-cancel"]'))
 }

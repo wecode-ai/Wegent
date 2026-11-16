@@ -4,7 +4,7 @@ import {
 } from './IssueAssignmentReceipts'
 import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { LockKeyhole, Send } from 'lucide-react'
+import { Send } from 'lucide-react'
 import {
   TodoEditor as SharedIssueDetailEditor,
   type CollaborationAssignment,
@@ -330,26 +330,20 @@ export function TodoEditor(props: TodoEditorProps) {
       showPersonalTaskAction && props.onCreateTask
         ? ({ onCreateTask }) => {
             return (
-              <section
+              <span
                 className="task-detail-personal-task"
                 data-testid="cloud-todo-personal-task-action"
               >
-                <span className="task-detail-personal-task-icon" aria-hidden="true">
-                  <LockKeyhole size={14} />
-                </span>
-                <span className="task-detail-personal-task-copy">
-                  <strong>{t('todo.personal_task_title')}</strong>
-                  <small>{t('todo.personal_task_description')}</small>
-                </span>
                 <button
                   type="button"
                   data-testid="cloud-todo-personal-task-start"
+                  title={`${t('todo.personal_task_title')} · ${t('todo.personal_task_description')}`}
                   onClick={onCreateTask}
                 >
                   <Send aria-hidden="true" size={14} />
                   {t('todo.create_personal_task')}
                 </button>
-              </section>
+              </span>
             )
           }
         : undefined,

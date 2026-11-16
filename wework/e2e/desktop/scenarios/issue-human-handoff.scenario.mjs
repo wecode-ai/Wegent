@@ -577,9 +577,17 @@ export function createDesktopScenario({
             `${surface} ${testId('request-user-input-submit-button')}`,
           ]) {
             const [metrics] = JSON.parse(await control.command('getElementMetrics', target))
+            if (!fullyVisible(metrics)) {
+              await recordSurface(control, 'issue-handoff-narrow-control-obscured', [
+                surface,
+                target,
+                scoped('cloud-todo-detail-scroll'),
+                scoped('issue-reply-composer'),
+              ])
+            }
             assert.ok(
               fullyVisible(metrics),
-              `The narrow question control must actually be visible: ${target}`
+              `The narrow question control must actually be visible: ${target}; metrics=${JSON.stringify(metrics)}`
             )
             assert.ok(metrics.width >= 44 && metrics.height >= 44)
           }
