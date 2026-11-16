@@ -70,6 +70,19 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
       await rename(staged, source)
     }
     let nativeWatcher
+    const restoreMethodObservers = []
+    const observeMethod = (owner, name) => {
+      const ownDescriptor = Object.getOwnPropertyDescriptor(owner, name)
+      const original = owner[name]
+      owner[name] = function (...args) {
+        record('native-method', name, args[0])
+        return Reflect.apply(original, this, args)
+      }
+      restoreMethodObservers.push(() => {
+        if (ownDescriptor) Object.defineProperty(owner, name, ownDescriptor)
+        else delete owner[name]
+      })
+    }
     const sourceVersion = () => {
       try {
         const stat = statSync(source, { bigint: true })
@@ -87,6 +100,7 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
       failedBuild.resolve(error)
     })
     const build = vi.fn(async () => {
+      record('build-start')
       const snapshot = await readFile(source, 'utf8')
       snapshots.push(snapshot)
       record(`build-read-${['one', 'invalid', 'two', ''].indexOf(snapshot)}`)
@@ -117,6 +131,9 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
               interval: 20,
               binaryInterval: 20,
             })
+            observeMethod(nativeWatcher, '_remove')
+            observeMethod(nativeWatcher, '_closeFile')
+            observeMethod(nativeWatcher._nodeFsHandler, '_watchWithNodeFs')
             nativeWatcher.on('error', error =>
               record('native-error', { name: error.name, code: error.code, message: error.message })
             )
@@ -142,7 +159,12 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
     })
     record('watch-ready', nativeWatcher.getWatched())
     onTestFinished(async () => {
-      await watcher.close()
+      record('watch-close-start')
+      try {
+        await watcher.close()
+      } finally {
+        for (const restore of restoreMethodObservers.reverse()) restore()
+      }
       await rm(temporary, { recursive: true, force: true })
       console.info(
         '[development-build-watch-phases]',
