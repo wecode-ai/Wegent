@@ -34,8 +34,16 @@ Path(os.environ['FIXTURE_RECORDS'], role + '.json').write_text(json.dumps({
     'dotenv': os.environ.get('WEGENT_BACKEND_RS_ENV_FILE'),
     'db_owner': os.environ.get('DB_INITIALIZATION_OWNER'),
 }))
-signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-signal.signal(signal.SIGUSR1, lambda *_: sys.exit(int(os.environ['FIXTURE_EXIT_CODE'])))
+def exit_on_signal(signum, _frame):
+    status = 0 if signum == signal.SIGTERM else int(os.environ['FIXTURE_EXIT_CODE'])
+    try:
+        Path(os.environ['FIXTURE_RECORDS'], role + '.exit.json').write_text(json.dumps({
+            'pid': os.getpid(), 'signal': signum, 'exit_code': status,
+        }))
+    finally:
+        sys.exit(status)
+signal.signal(signal.SIGTERM, exit_on_signal)
+signal.signal(signal.SIGUSR1, exit_on_signal)
 if os.environ.get('FIXTURE_HOLD_ROLE') == role:
     while not Path(os.environ['FIXTURE_RECORDS'], role + '.start').exists():
         time.sleep(0.01)
@@ -160,14 +168,49 @@ def _launch(tmp_path: Path, *, production: bool = True) -> Iterator[tuple]:
         yield process, env, _wait_ready(process, env)
 
 
-def _wait_fixture(process: subprocess.Popen, predicate: Callable[[], bool]) -> None:
+def _fixture_diagnostics(tmp_path: Path, role: str) -> str:
+    sections: list[str] = []
+    state: dict[str, str] = {}
+    for filename in ["launcher.log", "state", f"{role}.exit.json"]:
+        try:
+            contents = (tmp_path / filename).read_text()
+            if filename == "state":
+                state = dict(line.split("=", 1) for line in contents.splitlines())
+        except (OSError, ValueError) as error:
+            contents = f"{type(error).__name__}: {error}"
+        sections.append(f"{filename}:\n{contents}")
+    pid = state.get(role, "")
+    if pid.isdigit():
+        try:
+            result = subprocess.run(
+                ["ps", "-o", "pid=,ppid=,stat=,comm=", "-p", pid],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            sections.append(
+                f"target PID {pid} (ps exit {result.returncode}):\n"
+                f"{result.stdout}{result.stderr}"
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            sections.append(f"target PID {pid}: {type(error).__name__}: {error}")
+    return "\n".join(sections)
+
+
+def _wait_fixture(
+    process: subprocess.Popen,
+    predicate: Callable[[], bool],
+    diagnostics: Callable[[], str] | None = None,
+) -> None:
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         assert process.poll() is None, "launcher exited before fixture checkpoint"
         if predicate():
             return
         time.sleep(0.01)
-    pytest.fail("launcher did not reach fixture checkpoint")
+    details = f"\n{diagnostics()}" if diagnostics is not None else ""
+    pytest.fail(f"launcher did not reach fixture checkpoint{details}")
 
 
 def _port_ready(env: dict[str, str], role: str) -> bool:
@@ -269,11 +312,16 @@ def test_startup_exit_preserves_child_failure_and_cleans_up(
     """Observe listener readiness while the supervisor is still in its startup poll."""
     env = _hold_poll(tmp_path, role)
     env["FIXTURE_EXIT_CODE"] = str(exit_code)
+
+    def diagnostics() -> str:
+        return _fixture_diagnostics(tmp_path, role)
+
     with _running_launcher(tmp_path, env) as process:
         _wait_fixture(
             process,
             lambda: (tmp_path / f"{role}.polling").exists()
             and (tmp_path / f"{role}.json").exists(),
+            diagnostics,
         )
         state = dict(
             line.split("=", 1)
@@ -283,10 +331,10 @@ def test_startup_exit_preserves_child_failure_and_cleans_up(
         assert not _port_ready(env, role)
         if listening:
             (tmp_path / f"{role}.start").touch()
-            _wait_fixture(process, lambda: _port_ready(env, role))
+            _wait_fixture(process, lambda: _port_ready(env, role), diagnostics)
         child_signal = signal.SIGKILL if exit_code == 137 else signal.SIGUSR1
         os.kill(int(state[role]), child_signal)
-        _wait_fixture(process, lambda: _process_stopped(int(state[role])))
+        _wait_fixture(process, lambda: _process_stopped(int(state[role])), diagnostics)
         (tmp_path / f"{role}.release").touch()
         assert process.wait(timeout=10) == (exit_code or 1)
         log = (tmp_path / "launcher.log").read_text()
