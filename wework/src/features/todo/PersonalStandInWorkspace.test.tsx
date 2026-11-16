@@ -584,7 +584,7 @@ it.each(['protocol_mismatch', 'unsupported_method'])(
       const devices = await screen.findByTestId('stand-in-view-devices')
       expect(window.location.href).toBe(location)
       expect(screen.getByRole('alert')).toHaveTextContent('版本不兼容')
-      expect(screen.getByRole('alert')).toHaveTextContent('云端工作查看设备情况')
+      expect(screen.getByRole('alert')).toHaveTextContent('前往云端工作重启设备，然后重新检查版本')
       expect(screen.getByRole('alert')).not.toHaveTextContent('private transport details')
       expect(devices).toHaveAccessibleName('查看设备情况')
       await userEvent.click(devices)

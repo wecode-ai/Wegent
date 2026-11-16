@@ -1,12 +1,22 @@
 import {
   CLOUD_DEVICE_ID,
   CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION,
+  CLOUD_PUBLIC_MODEL_NAME,
+  CLOUD_PUBLIC_MODEL_OPTIONS,
   DEFAULT_STEP_TIMEOUT_MS,
+  MODEL_REQUEST_TIMEOUT_MS,
+  REMOTE_DOCKER_DEVICE_ID as SANDBOX_SIBLING_ID,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
+  fetchJson,
+  join,
+  mkdir,
 } from './shared.mjs'
-import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
+import { MANAGED_CLOUD_SANDBOX_ID } from './cloud-environment.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
+
+const BUSY_MODEL_SCENARIO = 'cloud_device_restart_busy'
+const RESTART_DIALOG = '[data-testid="confirm-restart-device-dialog"]'
 
 async function waitForCondition(predicate, timeoutMs, message) {
   const startedAt = Date.now()
@@ -18,115 +28,269 @@ async function waitForCondition(predicate, timeoutMs, message) {
   throw new Error(message)
 }
 
-export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) {
-  const deviceCard = `[data-testid="connection-device-${CLOUD_DEVICE_ID}"]`
-  const upgradeBadge = `[data-testid="connection-upgrade-badge-${CLOUD_DEVICE_ID}"]`
-  const restartStatus = `[data-testid="connection-device-restart-status-${CLOUD_DEVICE_ID}"]`
-  const terminalButton = `[data-testid="connection-terminal-button-${CLOUD_DEVICE_ID}"]`
-  const moreButton = `[data-testid="connection-more-button-${CLOUD_DEVICE_ID}"]`
-  const restartRetry = `[data-testid="connection-device-restart-retry-${CLOUD_DEVICE_ID}"]`
-  const restartRequestCount = remoteDeviceE2EExtension.supportsStatusRecovery
-    ? cloudEnvironment.nevisRestartRequestCount()
-    : null
-  const currentDevice = await cloudEnvironment.device(CLOUD_DEVICE_ID)
-  assert.ok(currentDevice?.executor_version, 'The cloud lifecycle fixture has no Executor version')
-  assert.equal(
-    currentDevice?.status,
-    'online',
-    'The cloud lifecycle fixture did not start with an online Executor'
+function jsonPost(authToken, body) {
+  return {
+    method: 'POST',
+    headers: {
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  }
+}
+
+async function createNonOwner(cloud) {
+  const userName = `cloud-restart-non-owner-${process.pid}`
+  const password = 'cloud-restart-e2e-password'
+  await fetchJson(
+    `${cloud.backendUrl}/api/admin/users`,
+    jsonPost(cloud.authToken, {
+      user_name: userName,
+      password,
+      role: 'user',
+      auth_source: 'password',
+    })
   )
-  assert.ok(
-    currentDevice?.runtime_instance_id,
-    'The cloud lifecycle fixture did not expose a Runtime identity'
+  const login = await fetchJson(
+    `${cloud.backendUrl}/api/auth/login`,
+    jsonPost(null, { user_name: userName, password })
   )
-  const testLatestVersion = CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION
-  await control.command('navigate', 'body', { value: '/settings/general' })
+  assert.ok(login.access_token, 'The non-owner must have a valid session')
+  return login.access_token
+}
+
+function runtimeSettings(cloud, deviceId) {
+  return fetchJson(
+    `${cloud.backendUrl}/api/devices/${encodeURIComponent(deviceId)}/runtime-settings`,
+    { headers: { Authorization: `Bearer ${cloud.authToken}` } }
+  )
+}
+
+async function startBusySiblingTask(control, cloud) {
+  const teams = await fetchJson(`${cloud.backendUrl}/api/teams?page=1&limit=100`, {
+    headers: { Authorization: `Bearer ${cloud.authToken}` },
+  })
+  const teamId = teams.items?.[0]?.id
+  assert.ok(teamId, 'The cloud lifecycle checkpoint requires an existing Team')
+  const workspacePath = join(cloud.workspacePath, 'cloud-sandbox-restart-task')
+  await mkdir(workspacePath, { recursive: true })
+  const task = await fetchJson(
+    `${cloud.backendUrl}/api/runtime-work/create`,
+    jsonPost(cloud.authToken, {
+      deviceId: SANDBOX_SIBLING_ID,
+      workspacePath,
+      teamId,
+      runtime: 'codex',
+      message: 'Keep this cloud restart E2E task running until the sandbox is restarted.',
+      title: 'Sandbox restart task protection',
+      modelId: CLOUD_PUBLIC_MODEL_NAME,
+      modelType: 'public',
+      modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,
+      modelSelection: {
+        modelName: CLOUD_PUBLIC_MODEL_NAME,
+        modelType: 'public',
+        options: CLOUD_PUBLIC_MODEL_OPTIONS,
+      },
+    })
+  )
+  assert.equal(task.accepted, true, `The same-sandbox task was not accepted: ${task.error}`)
+  assert.ok(task.taskId, 'The sibling executor did not return the runtime task ID')
+  await control.awaitScenarioRequestCount(BUSY_MODEL_SCENARIO, 1, MODEL_REQUEST_TIMEOUT_MS)
   await waitForCondition(
     async () => {
-      const refreshedDevice = await cloudEnvironment.device(CLOUD_DEVICE_ID)
-      return refreshedDevice?.latest_version === testLatestVersion ? refreshedDevice : null
+      const [sibling, runtimeTask] = await Promise.all([
+        runtimeSettings(cloud, SANDBOX_SIBLING_ID),
+        cloud.runtimeTask(task.taskId),
+      ])
+      return (
+        sibling.active_tasks > 0 &&
+        (runtimeTask?.running === true || runtimeTask?.status === 'running')
+      )
     },
     DEFAULT_STEP_TIMEOUT_MS,
-    'The cloud lifecycle fixture did not expose the overridden latest Executor version'
+    'The real sibling Executor did not report an active task and an occupied slot'
   )
+}
 
-  await control.command('navigate', 'body', { value: '/cloud-work' })
-  await control.command('waitFor', deviceCard, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await control.command('waitFor', upgradeBadge, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await captureVerificationScreenshot(control, 'cloud-device-01-online.png')
-  const upgradeLabel = await control.command('getText', upgradeBadge)
-  assert.match(
-    upgradeLabel,
-    /有新版本|update available/i,
-    'The cloud device card did not expose the Backend-reported available update'
+async function expectUpgradeRejected(cloud, authToken, body, status, detail) {
+  const response = await fetch(
+    `${cloud.backendUrl}/api/devices/${encodeURIComponent(CLOUD_DEVICE_ID)}/upgrade`,
+    jsonPost(authToken, body)
   )
-  await control.command('click', upgradeBadge)
-  await control.command('waitFor', '[data-testid="confirm-upgrade-device-dialog"]', {
-    text: testLatestVersion,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const upgradeConfirmation = await control.command(
-    'getText',
-    '[data-testid="confirm-upgrade-device-dialog"]'
-  )
-  assert.match(
-    upgradeConfirmation,
-    new RegExp(currentDevice.executor_version.replaceAll('.', '\\.')),
-    'The upgrade confirmation did not show the current Executor version'
-  )
-  assert.match(
-    upgradeConfirmation,
-    new RegExp(testLatestVersion.replaceAll('.', '\\.')),
-    'The upgrade confirmation did not show the latest Executor version'
-  )
-  assert.match(
-    upgradeConfirmation,
-    /短暂离线|temporarily go offline/i,
-    'The upgrade confirmation did not warn about temporary offline status'
-  )
-  await captureVerificationScreenshot(control, 'cloud-device-upgrade-confirmation.png')
-  await control.command('click', '[data-testid="cancel-upgrade-device-button"]')
-  await cloudEnvironment.setExecutorLatestVersion(currentDevice.executor_version)
+  const payload = await response.json()
+  assert.equal(response.status, status, JSON.stringify(payload))
+  assert.match(payload.detail, detail)
+}
 
-  await control.command('click', moreButton)
-  await control.command('click', `[data-testid="connection-restart-menu-item-${CLOUD_DEVICE_ID}"]`)
-  const confirmationText = await control.command(
-    'getText',
-    '[data-testid="confirm-restart-device-dialog"]'
+async function waitForRestartStatus(control, selector, pattern, message) {
+  await waitForCondition(
+    async () => pattern.test(await control.command('getText', selector).catch(() => '')),
+    DEFAULT_STEP_TIMEOUT_MS,
+    message
   )
-  assert.match(
-    confirmationText,
-    /短暂离线|temporarily go offline/i,
-    'The cloud restart confirmation did not warn about temporary offline status'
-  )
-  assert.match(
-    confirmationText,
-    /终端|terminal/i,
-    'The cloud restart confirmation did not explain session interruption'
-  )
+}
 
+async function verifyUnconfiguredRestart(control, cloud, controls) {
+  const { deviceCard, restartStatus, terminalButton, moreButton } = controls
+  await expectUpgradeRejected(
+    cloud,
+    cloud.authToken,
+    { force_stop_tasks: true },
+    501,
+    /device restart is not configured in this deployment/i
+  )
   await control.command('click', '[data-testid="confirm-restart-device-button"]')
-  if (!remoteDeviceE2EExtension.supportsStatusRecovery) {
-    await waitForCondition(
-      async () => {
-        try {
-          const text = await control.command('getText', restartStatus)
-          return /重启请求发送失败|could not send the restart request/i.test(text) ? text : null
-        } catch {
-          return null
-        }
-      },
-      DEFAULT_STEP_TIMEOUT_MS,
-      'The public Backend rejection did not surface as a restart error'
-    )
-    await control.command('waitFor', restartRetry, {
+  await waitForRestartStatus(
+    control,
+    restartStatus,
+    /重启请求发送失败|could not send the restart request/i,
+    'The unconfigured public Backend did not surface a restart error'
+  )
+  const restartRetry = `[data-testid="connection-device-restart-retry-${CLOUD_DEVICE_ID}"]`
+  for (const selector of [restartRetry, terminalButton, moreButton]) {
+    await control.command('waitFor', selector, {
       enabled: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
+  }
+  const deviceStatus = await control.command(
+    'getText',
+    `${deviceCard} [data-testid="connection-device-status"]`
+  )
+  assert.match(deviceStatus, /在线|online/i, 'The rejected restart did not leave the UI online')
+  assert.equal((await cloud.device(CLOUD_DEVICE_ID))?.status, 'online')
+  assert.equal(cloud.sandboxRestartRequestCount(), 0, 'The unconfigured request reached a provider')
+  await captureVerificationScreenshot(control, 'cloud-device-restart-unavailable.png')
+  console.log(
+    '[cloud-device-lifecycle] Unconfigured restart rejected; device stayed online and actions remained enabled'
+  )
+}
+
+export async function verifyCloudDeviceLifecycleFlow(control, cloud) {
+  const deviceCard = `[data-testid="connection-device-${CLOUD_DEVICE_ID}"]`
+  const versionBadge = `[data-testid="connection-upgrade-badge-${CLOUD_DEVICE_ID}"]`
+  const restartStatus = `[data-testid="connection-device-restart-status-${CLOUD_DEVICE_ID}"]`
+  const terminalButton = `[data-testid="connection-terminal-button-${CLOUD_DEVICE_ID}"]`
+  const moreButton = `[data-testid="connection-more-button-${CLOUD_DEVICE_ID}"]`
+  const currentDevice = await cloud.device(CLOUD_DEVICE_ID)
+  const sibling = await cloud.device(SANDBOX_SIBLING_ID)
+  const testLatestVersion = CLOUD_DEVICE_LIFECYCLE_LATEST_VERSION
+  for (const device of [currentDevice, sibling]) {
+    assert.equal(device?.status, 'online', 'Both sandbox Executors must start online')
+    assert.ok(device.runtime_instance_id, 'The Executor did not register a Runtime identity')
+    assert.equal(device.cloud_config?.sandboxId, MANAGED_CLOUD_SANDBOX_ID)
+  }
+  assert.notEqual(currentDevice.runtime_instance_id, sibling.runtime_instance_id)
+  assert.ok(currentDevice.executor_version, 'The lifecycle fixture has no Executor version')
+
+  await control.command('navigate', 'body', { value: '/settings/general' })
+  await waitForCondition(
+    async () => (await cloud.device(CLOUD_DEVICE_ID))?.latest_version === testLatestVersion,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The lifecycle fixture did not expose the overridden latest Executor version'
+  )
+  await control.command('navigate', 'body', { value: '/cloud-work' })
+  await control.command('waitFor', deviceCard, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('waitFor', versionBadge, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  await captureVerificationScreenshot(control, 'cloud-device-01-online.png')
+  assert.match(await control.command('getText', versionBadge), /有新版本|update available/i)
+
+  await control.command('click', moreButton)
+  await control.command('click', `[data-testid="connection-restart-menu-item-${CLOUD_DEVICE_ID}"]`)
+  const menuConfirmation = await control.command('getText', RESTART_DIALOG)
+  assert.match(menuConfirmation, /短暂离线|temporarily go offline/i)
+  assert.match(menuConfirmation, /终端|terminal/i)
+  if (cloud.usePublicSandboxController) {
+    await verifyUnconfiguredRestart(control, cloud, {
+      deviceCard,
+      restartStatus,
+      terminalButton,
+      moreButton,
+    })
+    await cloud.configurePublicSandboxRestart()
+  } else {
+    await control.command('click', '[data-testid="cancel-restart-device-button"]')
+  }
+
+  const nonOwnerToken = await createNonOwner(cloud)
+  const restart = cloud.armSandboxRestart()
+  control.setScenario(BUSY_MODEL_SCENARIO)
+  control.holdScenarioResponse(BUSY_MODEL_SCENARIO)
+  try {
+    await startBusySiblingTask(control, cloud)
+    assert.equal(
+      (await runtimeSettings(cloud, CLOUD_DEVICE_ID)).active_tasks,
+      0,
+      'The restart target must be idle'
+    )
+    await expectUpgradeRejected(cloud, cloud.authToken, {}, 400, /cloud device has running tasks/i)
+    console.log(
+      '[cloud-device-lifecycle] Owner request rejected because its sandbox sibling is busy'
+    )
+    await expectUpgradeRejected(
+      cloud,
+      nonOwnerToken,
+      { force_stop_tasks: true },
+      404,
+      /access denied/i
+    )
+    console.log('[cloud-device-lifecycle] Forced request rejected for a non-owner')
+    assert.equal(cloud.sandboxRestartRequestCount(), 0, 'A rejected request reached the sandbox')
+
+    await control.command('click', versionBadge)
+    await control.command('waitFor', RESTART_DIALOG, {
+      text: testLatestVersion,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const confirmation = await control.command('getText', RESTART_DIALOG)
+    assert.ok(
+      confirmation.includes(currentDevice.executor_version.replace(/^v/i, '')),
+      'Current Executor version missing'
+    )
+    assert.ok(confirmation.includes(testLatestVersion), 'Latest Executor version missing')
+    assert.match(confirmation, /短暂离线|temporarily go offline/i)
+    await captureVerificationScreenshot(control, 'cloud-device-restart-confirmation.png')
+    await control.command('click', '[data-testid="confirm-restart-device-button"]')
+    await waitForRestartStatus(
+      control,
+      restartStatus,
+      /短暂离线|briefly go offline/i,
+      'The forced request did not show the temporary offline reminder'
+    )
+    assert.equal((await cloud.waitForSandboxRestartRequest()).sandboxId, MANAGED_CLOUD_SANDBOX_ID)
+    assert.equal(cloud.sandboxRestartRequestCount(), 1)
+    console.log('[cloud-device-lifecycle] Version badge confirmed a forced sandbox restart')
+    await assert.rejects(control.command('click', terminalButton), /disabled/)
+    await assert.rejects(control.command('click', moreButton), /disabled/)
+    await captureVerificationScreenshot(control, 'cloud-device-restart-pending.png')
+
+    restart.allowShutdown()
+    await waitForRestartStatus(
+      control,
+      restartStatus,
+      /处于离线状态|is restarting and offline/i,
+      'Wework did not observe the real Executor going offline'
+    )
+    for (const deviceId of [CLOUD_DEVICE_ID, SANDBOX_SIBLING_ID]) {
+      await cloud.waitForDeviceStatus(
+        deviceId,
+        'offline',
+        deviceId === CLOUD_DEVICE_ID
+          ? cloud.remoteExecutorLogPath
+          : cloud.remoteDockerExecutorLogPath
+      )
+    }
+    await assert.rejects(control.command('click', terminalButton), /disabled/)
+    await assert.rejects(control.command('click', moreButton), /disabled/)
+    await captureVerificationScreenshot(control, 'cloud-device-restart-offline.png')
+
+    restart.allowStartup()
+    await waitForRestartStatus(
+      control,
+      restartStatus,
+      /重新在线|back online/i,
+      'The cloud device card did not report recovery after the Executor reconnected'
+    )
     await control.command('waitFor', terminalButton, {
       enabled: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -135,79 +299,25 @@ export async function verifyCloudDeviceLifecycleFlow(control, cloudEnvironment) 
       enabled: true,
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
-    const deviceStatus = await control.command(
-      'getText',
-      `${deviceCard} [data-testid="connection-device-status"]`
+    await captureVerificationScreenshot(control, 'cloud-device-restart-recovered.png')
+
+    const completed = await restart.finish()
+    assert.equal(completed?.sibling.status, 'online')
+    assert.equal(completed?.sibling.runtime_instance_id, sibling.runtime_instance_id)
+    const recoveredDevice = await cloud.device(CLOUD_DEVICE_ID)
+    assert.equal(recoveredDevice?.status, 'online')
+    assert.equal(
+      recoveredDevice?.update_available,
+      true,
+      'Restart must preserve the available update'
     )
-    assert.match(
-      deviceStatus,
-      /在线|online/i,
-      'A rejected restart request incorrectly presented the cloud device as offline'
-    )
-    await captureVerificationScreenshot(control, 'cloud-device-restart-unavailable.png')
-    return
+    assert.equal(recoveredDevice?.executor_version, currentDevice.executor_version)
+    assert.equal(recoveredDevice?.runtime_instance_id, currentDevice.runtime_instance_id)
+    console.log('[cloud-device-lifecycle] Both sandbox Executors went offline and recovered')
+  } finally {
+    control.releaseScenarioResponse(BUSY_MODEL_SCENARIO)
+    control.setScenario('initial')
+    await restart.finish()
+    await cloud.setExecutorLatestVersion(currentDevice.executor_version)
   }
-
-  const restartRequest = await cloudEnvironment.waitForNevisRestartRequest(restartRequestCount)
-  assert.equal(
-    restartRequest.sandboxId,
-    'wework-e2e-managed-cloud-sandbox',
-    'The restart action targeted the Executor device ID instead of the managed Sandbox ID'
-  )
-  await control.command('waitFor', restartStatus, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await waitForCondition(
-    async () => {
-      const text = await control.command('getText', restartStatus)
-      return /短暂离线|briefly go offline/i.test(text) ? text : null
-    },
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The accepted restart request did not show the temporary offline reminder'
-  )
-  await assert.rejects(
-    control.command('click', terminalButton),
-    /disabled/,
-    'Terminal remained enabled while the cloud device restart was pending'
-  )
-  await assert.rejects(
-    control.command('click', moreButton),
-    /disabled/,
-    'Cloud lifecycle actions remained enabled while restart was pending'
-  )
-  await captureVerificationScreenshot(control, 'cloud-device-restart-pending.png')
-
-  const restartedExecutor = await cloudEnvironment.restartCloudExecutor()
-  await waitForCondition(
-    async () => {
-      try {
-        const text = await control.command('getText', restartStatus)
-        return /重新在线|back online/i.test(text) ? text : null
-      } catch {
-        return null
-      }
-    },
-    DEFAULT_STEP_TIMEOUT_MS,
-    'The cloud device card did not report recovery after the Executor reconnected'
-  )
-  await control.command('waitFor', terminalButton, {
-    enabled: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', moreButton, {
-    enabled: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const recoveredDevice = await cloudEnvironment.device(CLOUD_DEVICE_ID)
-  assert.equal(
-    recoveredDevice?.status,
-    'online',
-    'The restarted cloud Executor did not recover its online Backend state'
-  )
-  assert.equal(
-    recoveredDevice?.runtime_instance_id,
-    restartedExecutor.runtimeInstanceId,
-    'The recovered device card and restarted Executor resolved to different Runtime identities'
-  )
-  await captureVerificationScreenshot(control, 'cloud-device-restart-recovered.png')
 }

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import type { DeviceInfo } from '@/apis/devices'
 import { DeviceCard } from '@/features/devices/components/DeviceCard'
@@ -94,6 +94,40 @@ describe('DeviceCard Wework badge', () => {
     fireEvent.click(screen.getByTestId('device-upgrade-badge'))
     expect(onUpgrade).toHaveBeenCalledWith(device)
   })
+  it('confirms a cloud restart from the version badge and allows retry when unavailable', async () => {
+    const onUpgrade = jest.fn()
+    const onRestart = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('Restart unavailable'))
+      .mockResolvedValueOnce(undefined)
+    const device: DeviceInfo = {
+      ...baseDevice,
+      device_type: 'cloud',
+      executor_version: '1.6.4',
+      latest_version: '2.0.21',
+      update_available: true,
+      slot_used: 1,
+    }
+    render(
+      <DeviceCard device={device} {...callbacks} onRestart={onRestart} onUpgrade={onUpgrade} />
+    )
+    fireEvent.click(screen.getByTestId('cloud-device-restart-version-badge'))
+    expect(screen.getByTestId('cloud-device-restart-dialog')).toHaveTextContent('restart.busy')
+    expect(onRestart).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('confirm-cloud-device-restart'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Restart unavailable')
+    expect(onRestart).toHaveBeenCalledTimes(1)
+    expect(onRestart).toHaveBeenCalledWith(device)
+
+    fireEvent.click(screen.getByTestId('confirm-cloud-device-restart'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('cloud-device-restart-dialog')).not.toBeInTheDocument()
+    )
+    expect(onRestart).toHaveBeenCalledTimes(2)
+    expect(onUpgrade).not.toHaveBeenCalled()
+  })
+
   it('shows the Wework badge on app devices', () => {
     render(<DeviceCard device={{ ...baseDevice, device_type: 'app' }} {...callbacks} />)
     expect(screen.getByTestId('wework-device-badge')).toHaveTextContent('wework_device_badge')
