@@ -4911,6 +4911,130 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }, 30_000)
 
+  test.each([undefined, 2])(
+    'temporary chat opens a file preview in its workspace (line: %s)',
+    async lineStart => {
+      const user = userEvent.setup({ delay: null })
+      const address: RuntimeTaskAddress = {
+        deviceId: 'workspace-cloud-device',
+        taskId: 'runtime-side-chat-file',
+        workspacePath: '/workspace/project',
+      }
+      const file = {
+        path: '/workspace/project/nested/preview page.html',
+        name: 'preview page.html',
+        content: '<!doctype html>\n<h1>Temporary chat file</h1>',
+        truncated: false,
+        size: 45,
+        modifiedAt: null,
+      }
+      const secondFile = {
+        ...file,
+        path: '/workspace/project/other/preview page.html',
+        content: '<!doctype html>\n<h1>Another temporary chat file</h1>',
+      }
+      const readWorkspaceTextFile = vi
+        .fn()
+        .mockImplementation((_device, path) =>
+          Promise.resolve(path === file.path ? file : secondFile)
+        )
+      createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+        await openOptimisticTemporaryRuntimeTask(address, options)
+        return address
+      })
+      renderWorkspacePanelLayout({
+        workspaceFileApi: {
+          listWorkspaceEntries: vi
+            .fn()
+            .mockResolvedValue({ path: address.workspacePath, entries: [] }),
+          readWorkspaceTextFile,
+        },
+      })
+      await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await user.click(await screen.findByTestId('right-workspace-chat-option'))
+      const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+      const chatTabId = within(screen.getByTestId('right-workspace-tabbar'))
+        .getByRole('tab', { name: /临时聊天/ })
+        .getAttribute('data-testid')!
+      setComposerValue(sideChat, 'Create a preview')
+      await user.click(within(sideChat).getByTestId('send-message-button'))
+      await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledOnce())
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_started',
+          subtaskId: 'file-turn',
+        })
+        applyRuntimeConversationAction(address, {
+          type: 'assistant_chunk',
+          subtaskId: 'file-turn',
+          itemId: 'file-response',
+          content: `[Preview](nested/preview%20page.html${lineStart ? ':2' : ''})\n\n[Other file](other/preview%20page.html)`,
+        })
+        applyRuntimeConversationAction(address, { type: 'assistant_done', subtaskId: 'file-turn' })
+      })
+      const [link] = await within(sideChat).findAllByTestId('assistant-markdown-link')
+      expect(link).toBeEnabled()
+
+      await user.click(link)
+
+      await waitFor(() =>
+        expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+          address.deviceId,
+          file.path,
+          address.workspacePath
+        )
+      )
+      if (lineStart) {
+        await waitFor(() =>
+          expect(getWorkspaceCodeText()).toContain(file.content.replaceAll('\n', ''))
+        )
+        expect(screen.queryByTestId('workspace-html-file-preview')).not.toBeInTheDocument()
+      } else {
+        const preview = await screen.findByTestId('workspace-html-file-preview')
+        expect(within(preview).getByTitle(file.name)).toHaveAttribute('srcdoc', file.content)
+      }
+      const firstTab = screen.getByRole('tab', { name: /preview page\.html/ })
+      const firstTabId = firstTab.getAttribute('data-testid')!
+      expect(firstTab).toHaveAttribute('aria-selected', 'true')
+      await user.click(screen.getByTestId(chatTabId))
+      expect(within(sideChat).getAllByTestId('assistant-markdown-link')[0]).toBeEnabled()
+      const previousReadCount = readWorkspaceTextFile.mock.calls.length
+      await user.click(within(sideChat).getAllByTestId('assistant-markdown-link')[0])
+      await waitFor(() =>
+        expect(readWorkspaceTextFile.mock.calls.length).toBeGreaterThan(previousReadCount)
+      )
+      expect(screen.getAllByRole('tab', { name: /preview page\.html/ })).toHaveLength(1)
+      expect(screen.getByTestId(firstTabId)).toHaveAttribute('aria-selected', 'true')
+
+      await user.click(screen.getByTestId(chatTabId))
+      await user.click(within(sideChat).getAllByTestId('assistant-markdown-link')[1])
+      await waitFor(() =>
+        expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+          address.deviceId,
+          secondFile.path,
+          address.workspacePath
+        )
+      )
+      expect(screen.getAllByRole('tab', { name: /preview page\.html/ })).toHaveLength(2)
+      expect(screen.getByTestId(firstTabId)).toHaveAttribute('aria-selected', 'false')
+      const secondPreview = await screen.findByTestId('workspace-html-file-preview')
+      await waitFor(() =>
+        expect(within(secondPreview).getByTitle(file.name)).toHaveAttribute(
+          'srcdoc',
+          secondFile.content
+        )
+      )
+
+      await user.click(screen.getByTestId(chatTabId))
+      await user.click(within(sideChat).getAllByTestId('assistant-markdown-link')[0])
+      expect(screen.getAllByRole('tab', { name: /preview page\.html/ })).toHaveLength(2)
+      expect(screen.getByTestId(firstTabId)).toHaveAttribute('aria-selected', 'true')
+      await waitFor(() =>
+        expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(file.path)
+      )
+    }
+  )
+
   test('temporary chat queues a follow-up while its current response is running', async () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
@@ -5437,7 +5561,7 @@ describe('DesktopWorkbenchLayout', () => {
     }
   )
 
-  test('right workspace panel shows file tree and read-only preview', async () => {
+  test('right workspace file tree reuses its preview tab for message links', async () => {
     const user = userEvent.setup()
     const workspacePanelState = createCloudWorkspacePanelState()
     const listWorkspaceEntries = vi.fn().mockResolvedValueOnce({
@@ -5471,6 +5595,15 @@ describe('DesktopWorkbenchLayout', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
+        messages={[
+          {
+            id: 'reopen-tree-file',
+            role: 'assistant',
+            content: '[Reopen file](./README.md:1)',
+            status: 'done',
+            createdAt: '',
+          },
+        ]}
         workspaceFileApi={{
           listWorkspaceEntries,
           readWorkspaceTextFile,
@@ -5492,7 +5625,7 @@ describe('DesktopWorkbenchLayout', () => {
     await user.click(screen.getByTestId('right-workspace-file-option'))
 
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
-    await user.click(await screen.findByText('README.md'))
+    await user.click(within(screen.getByTestId('workspace-file-tree')).getByText('README.md'))
 
     expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('hello world')
     expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(
@@ -5504,6 +5637,16 @@ describe('DesktopWorkbenchLayout', () => {
       'md:h-8',
       'md:min-w-0'
     )
+    const previousReadCount = readWorkspaceTextFile.mock.calls.length
+    const messageLink = screen.getByTestId('assistant-markdown-link')
+    expect(messageLink.tagName).toBe('BUTTON')
+    expect(messageLink).toBeEnabled()
+    await user.click(messageLink)
+    await waitFor(() =>
+      expect(readWorkspaceTextFile.mock.calls.length).toBeGreaterThan(previousReadCount)
+    )
+    expect(screen.getAllByRole('tab', { name: /README\.md/ })).toHaveLength(1)
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
   })
 
   test('keeps project-root breadcrumbs and opens dropdown files in distinct reusable tabs', async () => {

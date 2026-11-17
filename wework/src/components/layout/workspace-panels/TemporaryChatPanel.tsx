@@ -158,6 +158,7 @@ interface TemporaryChatPanelProps {
   onRestoreConversation?: () => void
   onFillSelectionToAnswer?: (text: string) => void
   initialScrollPosition?: 'restore' | 'latest'
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   coordinateUserInput?: boolean
   focusedRequest?: RequestUserInputPayload | null
@@ -207,6 +208,7 @@ export function TemporaryChatPanel({
   onRestoreConversation,
   onFillSelectionToAnswer,
   initialScrollPosition = 'restore',
+  onOpenWorkspaceFile,
   onOpenRuntimeTask,
   coordinateUserInput = false,
   focusedRequest,
@@ -1569,7 +1571,9 @@ export function TemporaryChatPanel({
             : undefined
         }
         onOpenFileChangesReview={onOpenRuntimeTask ? openRuntimeTask : undefined}
-        onOpenWorkspaceFile={onOpenRuntimeTask ? openWorkspaceFile : undefined}
+        onOpenWorkspaceFile={
+          onOpenWorkspaceFile ?? (onOpenRuntimeTask ? openWorkspaceFile : undefined)
+        }
         onOpenLocalSkillFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
         onRequestUserInputSubmit={
           address && active && !readOnly ? submitRequestUserInput : undefined
