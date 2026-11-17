@@ -7,6 +7,7 @@ export class DesktopErrorCollector {
   constructor(path, appLogPath) {
     this.path = path
     this.appLogPath = appLogPath
+    this.assertions = []
     writeFileSync(path, '', { mode: 0o600 })
   }
 
@@ -49,8 +50,26 @@ export class DesktopErrorCollector {
       const key = JSON.stringify([source, type, level])
       counts.set(key, (counts.get(key) ?? 0) + 1)
     }
+    const errors = records.filter(entry => entry.level === 'error')
+    const identity = entry => JSON.stringify([entry.instanceId, entry.sequence])
+    const asserted = new Set()
+    const acknowledged = new Set()
+    for (const receipt of this.assertions.filter(receipt => receipt.passed)) {
+      for (const entry of receipt.errors) {
+        asserted.add(identity(entry))
+        if (receipt.checkpoint) acknowledged.add(identity(entry))
+      }
+    }
+    const assertedErrors = errors.filter(entry => asserted.has(identity(entry))).length
     return {
       records: records.length,
+      assertions: this.assertions,
+      assertionCoverage: {
+        errors: errors.length,
+        assertedErrors,
+        acknowledgedErrors: errors.filter(entry => acknowledged.has(identity(entry))).length,
+        unassertedErrors: errors.length - assertedErrors,
+      },
       acknowledged: false,
       groups: [...counts].map(([key, count]) => {
         const [source, type, level] = JSON.parse(key)
@@ -60,14 +79,7 @@ export class DesktopErrorCollector {
   }
 
   query({ after = 0, before, source, type, level, byteLength } = {}) {
-    return this.records({ byteLength })
-      .slice(after, before)
-      .filter(
-        entry =>
-          (source === undefined || entry.source === source) &&
-          (type === undefined || entry.type === type) &&
-          (level === undefined || entry.level === level)
-      )
+    return selectRecords(this.records({ byteLength }), { after, before, source, type, level })
   }
 
   assertHealthy({ sources = [], byteLength, instanceId } = {}) {
@@ -99,6 +111,10 @@ export class DesktopErrorCollector {
 
   /** Every matching event must be accounted for exactly once; no ignore list. */
   assertErrors(expected = [], options = {}) {
+    return this.#assertErrors(expected, options, null)
+  }
+
+  #assertErrors(expected, options, checkpoint) {
     assert.ok(
       Number.isSafeInteger(options.after ?? 0) && (options.after ?? 0) >= 0,
       'Error assertions require a nonnegative interval mark'
@@ -118,17 +134,32 @@ export class DesktopErrorCollector {
         (Number.isSafeInteger(options.before) && options.before >= (options.after ?? 0)),
       'Error interval end must follow its start'
     )
-    const errors = this.query({ ...options, level: 'error' })
-    const remaining = [...errors]
-    for (const { match, count = 1, description } of expected) {
-      assert.equal(typeof match, 'function', 'An error expectation needs a predicate')
-      assert.ok(Number.isSafeInteger(count) && count > 0, 'Expected count must be positive')
-      const matches = remaining.filter(match)
-      assert.equal(matches.length, count, description ?? 'Unexpected error count')
-      for (const entry of matches) remaining.splice(remaining.indexOf(entry), 1)
+    const errors = selectRecords(records, { ...options, level: 'error' })
+    const receipt = {
+      after: options.after ?? 0,
+      before: options.before ?? records.length,
+      source: options.source ?? null,
+      type: options.type ?? null,
+      expectedCounts: expected.map(entry => entry.count ?? 1),
+      checkpoint,
+      errors: errors.map(({ instanceId, sequence }) => ({ instanceId, sequence })),
+      passed: false,
     }
-    assert.deepEqual(remaining, [], 'Unexpected Wework errors')
-    return errors
+    try {
+      const remaining = [...errors]
+      for (const { match, count = 1, description } of expected) {
+        assert.equal(typeof match, 'function', 'An error expectation needs a predicate')
+        assert.ok(Number.isSafeInteger(count) && count > 0, 'Expected count must be positive')
+        const matches = remaining.filter(match)
+        assert.equal(matches.length, count, description ?? 'Unexpected error count')
+        for (const entry of matches) remaining.splice(remaining.indexOf(entry), 1)
+      }
+      assert.deepEqual(remaining, [], 'Unexpected Wework errors')
+      receipt.passed = true
+      return errors
+    } finally {
+      this.assertions.push(receipt)
+    }
   }
 
   async assertCollectedErrors(control, expected = [], options = {}) {
@@ -154,12 +185,20 @@ export class DesktopErrorCollector {
         .every(entry => entry.instanceId === checkpoint.instanceId),
       'Cannot certify collection across collector instances; assert before restarting and mark the new interval'
     )
-    return this.assertErrors(expected, {
-      ...options,
-      before: index + 1,
-      byteLength: checkpoint.byteLength,
-      instanceId: checkpoint.instanceId,
-    })
+    return this.#assertErrors(
+      expected,
+      {
+        ...options,
+        before: index + 1,
+        byteLength: checkpoint.byteLength,
+        instanceId: checkpoint.instanceId,
+      },
+      {
+        instanceId: checkpoint.instanceId,
+        sequence: checkpoint.sequence,
+        byteLength: checkpoint.byteLength,
+      }
+    )
   }
 
   async waitForRecord(match, { after = 0, timeoutMs }) {
@@ -173,4 +212,15 @@ export class DesktopErrorCollector {
       await pollInterval(Math.min(25, remaining))
     }
   }
+}
+
+function selectRecords(records, { after = 0, before, source, type, level } = {}) {
+  return records
+    .slice(after, before)
+    .filter(
+      entry =>
+        (source === undefined || entry.source === source) &&
+        (type === undefined || entry.type === type) &&
+        (level === undefined || entry.level === level)
+    )
 }

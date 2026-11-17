@@ -33,6 +33,12 @@ test('accounts for all errors exactly, supports phase marks and app restarts', t
     ],
     { after }
   )
+  assert.deepEqual(collector.summary().assertionCoverage, {
+    errors: 2,
+    assertedErrors: 2,
+    acknowledgedErrors: 0,
+    unassertedErrors: 0,
+  })
   assert.equal(collector.query({ source: 'renderer' }).length, 1)
   assert.throws(
     () => collector.assertErrors([{ match: event => event.type === 'missing' }]),
@@ -125,4 +131,80 @@ test('a current process acknowledgment cannot certify an earlier process after r
     collector.assertCollectedErrors(control, [], { after, sources: ['main'] }),
     /Missing error source: main/
   )
+})
+
+test('assertion receipts distinguish unasserted errors, failed assertions and acknowledged coverage', async t => {
+  const { collector, record, path } = fixture(t)
+  record('first', 1)
+  record('first', 2, 'renderer', 'injected', 'error')
+  record('first', 3, 'renderer', 'unexpected', 'error')
+  const expected = [{ match: event => event.type === 'injected' }]
+  const options = { source: 'renderer', type: 'injected' }
+  collector.assertErrors(expected, options)
+  collector.assertErrors(expected, options)
+  assert.throws(
+    () => collector.assertErrors([], { source: 'renderer', type: 'unexpected' }),
+    /Unexpected Wework errors/
+  )
+  assert.deepEqual(collector.summary().assertionCoverage, {
+    errors: 2,
+    assertedErrors: 1,
+    acknowledgedErrors: 0,
+    unassertedErrors: 1,
+  })
+  record('first', 4, 'collector', 'checkpoint')
+  const checkpoint = {
+    enabled: true,
+    instanceId: 'first',
+    sequence: 4,
+    failedWrites: 0,
+    byteLength: statSync(path).size,
+  }
+  await collector.assertCollectedErrors(
+    { command: async () => JSON.stringify(checkpoint) },
+    expected,
+    options
+  )
+  const summary = collector.summary()
+  assert.equal(summary.acknowledged, false)
+  assert.deepEqual(summary.assertionCoverage, {
+    errors: 2,
+    assertedErrors: 1,
+    acknowledgedErrors: 1,
+    unassertedErrors: 1,
+  })
+  assert.equal(summary.assertions.length, 4)
+  assert.equal(summary.assertions[2].passed, false)
+  assert.deepEqual(summary.assertions[3].checkpoint, {
+    instanceId: 'first',
+    sequence: 4,
+    byteLength: checkpoint.byteLength,
+  })
+  assert.deepEqual(summary.assertions[3].errors, [{ instanceId: 'first', sequence: 2 }])
+})
+
+test('assertion receipts retain record identities without copying failure details or descriptions', t => {
+  const { collector, record, path } = fixture(t)
+  record('first', 1)
+  appendFileSync(
+    path,
+    JSON.stringify({
+      instanceId: 'first',
+      sequence: 2,
+      source: 'runtime',
+      type: 'injected',
+      level: 'error',
+      details: { message: 'synthetic-private-detail' },
+    }) + '\n'
+  )
+  assert.throws(() =>
+    collector.assertErrors([
+      { match: () => true, count: 2, description: 'synthetic-private-description' },
+    ])
+  )
+  const summary = collector.summary()
+  assert.equal(summary.assertionCoverage.assertedErrors, 0)
+  assert.equal(summary.assertionCoverage.unassertedErrors, 1)
+  assert.doesNotMatch(JSON.stringify(summary.assertions), /synthetic-private/)
+  assert.deepEqual(summary.assertions[0].errors, [{ instanceId: 'first', sequence: 2 }])
 })

@@ -133,6 +133,8 @@ async function verifyLocalOperation(control, operationAndWaitForResult) {
 
 正常 transcript 取消通过实际 AbortSignal 及对应拒绝对象识别，各调用层保留取消和原始拒绝，避免重复记成故障；信号已取消时发生的其他错误仍必须报告。乐观任务打开时，goal 与项目关联读取等待同一个真实创建 Promise 持久化完成，已离开的视图取消自身读取，独立任务不受影响。新增 `runtime-task-readiness` 复用现有 Core CI，实际挂起创建请求，证明读者已到达屏障且尚未发出 RPC，释放后验证真实模型结果和 goal 响应，不使用固定等待证明就绪。
 
+`errors-summary.json` 的 `assertions` 保存错误匹配断言的范围、成功／失败、预期数量和记录编号；仅经原生采集检查点确认的断言附带检查点身份与字节偏移。`assertionCoverage` 按 `level=error` 的记录去重统计已断言、原生确认以及未断言数量。重复断言不重复计算，失败断言不提供通过证据；摘要不复制错误内容或描述，不把一个范围的确认推广为全局无错。旧产物没有这些字段时，断言覆盖保持未知。
+
 ## 空闲 Executor 请求回归
 
 `idle-executor-requests` 使用无任务、断开云端的隔离真实 Electron 和 Executor，复用共享 runner 的首次遥测拒绝流程，然后重新加载主窗口并观测请求。启动后的工作树能力发现、遥测配置和共享 SSE 订阅必须各一次；前台与关闭到后台各观察 6.5 秒，跨过 5 秒轮询周期，要求继续发现待处理交互并保留 Runtime 身份检查，禁止全量任务目录轮询和重复启动配置。异步插件等已知启动请求允许完成，不以固定延时推断启动完成。
