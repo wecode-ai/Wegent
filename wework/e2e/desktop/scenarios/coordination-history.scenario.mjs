@@ -15,6 +15,8 @@ const USER = 9001
 const ROLE = 'history-owner'
 const MARKER = 'COORDINATION_HISTORY_NEW_WORK'
 const HISTORY_COUNT = 80_000
+// Each resource kind can consume a separate minute-spaced maintenance pass.
+const RETENTION_TIMEOUT_MS = 3 * 60_000 + 10_000
 
 function seedHistory(database) {
   const current = new Date().toISOString()
@@ -124,8 +126,8 @@ export function createDesktopScenario({
 }) {
   let workTurns = 0
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-  async function until(load, ready, label) {
-    const deadline = Date.now() + modelResponseTimeoutMs
+  async function until(load, ready, label, timeoutMs = modelResponseTimeoutMs) {
+    const deadline = Date.now() + timeoutMs
     let latest
     while (Date.now() < deadline) {
       latest = await load()
@@ -218,22 +220,19 @@ export function createDesktopScenario({
         )
         assert.equal(workTurns, 1)
         await until(
-          async () =>
-            database
+          async () => ({
+            event: database
               .prepare("SELECT metadata FROM loop_items WHERE id='history-settled-event'")
               .get(),
-          row => JSON.parse(row.metadata).compacted === true,
-          'Scheduled maintenance must compact expired event payloads'
-        )
-        await until(
-          async () =>
-            database
+            expired: database
               .prepare(
                 "SELECT count(*) AS count FROM loop_items WHERE id IN ('history-expired-action','history-expired-route','history-legacy-expired-stand_in_event','history-legacy-expired-stand_in_action','history-legacy-expired-stand_in_route')"
               )
               .get().count,
-          count => count === 0,
-          'Scheduled maintenance must finish deleting expired actions, routes and legacy records'
+          }),
+          ({ event, expired }) => JSON.parse(event.metadata).compacted === true && expired === 0,
+          'Scheduled maintenance must compact indexed events and delete expired actions, routes and legacy records',
+          RETENTION_TIMEOUT_MS
         )
         assert.equal(
           database
