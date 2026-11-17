@@ -144,12 +144,20 @@ projectTest(
     await publish(unknown)
     expect((await webApi<CollaborationMetrics>(page, endpoint)).delivery.denominator).toBe(9)
 
-    const privateIssue = await webApi<Resource>(
+    const createdPrivateIssue = await webApi<Resource>(
       page,
       `/api/v1/cloud-projects/${projectId}/loop-items`,
       {
         method: 'POST',
-        body: { title: 'Private metric provenance', security_level: 'related' },
+        body: { title: 'Private metric provenance' },
+      }
+    )
+    const privateIssue = await webApi<Resource>(
+      page,
+      `/api/v1/loop-items/${createdPrivateIssue.id}`,
+      {
+        method: 'PATCH',
+        body: { version: createdPrivateIssue.version, security_level: 'related' },
       }
     )
     await publish(
@@ -169,6 +177,7 @@ projectTest(
     expect((await memberApi.login(REGULAR_USER.username, REGULAR_USER.password, 1)).status).toBe(
       200
     )
+    expect((await memberApi.get(`/api/v1/loop-items/${privateIssue.id}`)).status).toBe(404)
     expect(
       (
         await memberApi.post(

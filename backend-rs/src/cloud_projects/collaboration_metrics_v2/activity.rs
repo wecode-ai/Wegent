@@ -42,7 +42,7 @@ fn covered(runs: Runs) -> f64 {
     covered_ranges(active)
         .into_iter()
         .map(|(start, end, _)| seconds(start, end))
-        .sum()
+        .fold(0.0, |total, duration| total + duration)
 }
 
 pub(super) fn compute(
@@ -102,10 +102,21 @@ pub(super) fn compute(
             "owner_user_id":owner_user_id,"start":range.0,"end":range.1,"outcome":outcome,"state":state,"partial":open}));
     }
     partial |= rows.is_empty();
-    let total: f64 = agents.into_values().map(covered).sum();
+    let total = agents
+        .into_values()
+        .map(covered)
+        .fold(0.0, |total, duration| total + duration);
     let people: BTreeMap<_, _> = per_person
         .into_iter()
-        .map(|(id, agents)| (id, agents.into_values().map(covered).sum::<f64>()))
+        .map(|(id, agents)| {
+            (
+                id,
+                agents
+                    .into_values()
+                    .map(covered)
+                    .fold(0.0, |total, duration| total + duration),
+            )
+        })
         .collect();
     let capacity = super::capacity::compute(facts, members, window, person);
     let denominator = capacity["seconds"].as_f64();

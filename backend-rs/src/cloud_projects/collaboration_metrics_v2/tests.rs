@@ -73,6 +73,27 @@ fn unit(id: usize, mode: Classification) -> Evidence {
 }
 
 #[test]
+fn empty_or_fully_waiting_activity_serializes_as_positive_zero() {
+    let mut waiting = activity("waiting-agent", 1, Some(2));
+    if let Fact::Activity { state, .. } = &mut waiting.fact {
+        *state = ActivityState::Queue;
+    }
+    for facts in [vec![], vec![waiting]] {
+        for person in [None, Some(7), Some(8)] {
+            let result = activity::compute(&facts, &BTreeSet::from([7, 8]), window(), person);
+            for key in ["ai_active_seconds", "ai_active_hours"] {
+                let value = result[key].as_f64().unwrap();
+                assert_eq!(value, 0.0);
+                assert!(value.is_sign_positive(), "{key}: {result}");
+            }
+            for value in result["per_person_seconds"].as_object().unwrap().values() {
+                assert!(value.as_f64().unwrap().is_sign_positive());
+            }
+        }
+    }
+}
+
+#[test]
 fn ten_issues_with_three_contributors_give_thirty_participations_and_six_per_member() {
     let issues: Vec<_> = (0..10).map(issue).collect();
     let facts: Vec<_> = (0..10)
