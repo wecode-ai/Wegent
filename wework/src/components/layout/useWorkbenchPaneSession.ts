@@ -30,6 +30,7 @@ import {
 import i18n from '@/i18n'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useScopedComposerAttachments } from '@/features/workbench/useScopedComposerAttachments'
 import {
   compareMessageStyles,
   summarizeRuntimePaneMemory,
@@ -220,11 +221,6 @@ const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 5
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 export { RUNTIME_RETRY_CONTINUATION_PROMPT } from './runtimeRetry'
-const EMPTY_ATTACHMENT_STATE = {
-  attachments: [],
-  uploadingFiles: new Map(),
-  errors: new Map(),
-}
 
 export function useWorkbenchPaneSession({
   currentRuntimeTask,
@@ -301,29 +297,15 @@ export function useWorkbenchPaneSession({
   const inputScopeKey = currentRuntimeTask
     ? getRuntimeTaskChatScopeKey(currentRuntimeTask)
     : projectChat.scopeKey
-  const attachmentState =
-    projectChat.attachmentStateByScope[inputScopeKey] ?? EMPTY_ATTACHMENT_STATE
+  const attachmentState = useScopedComposerAttachments(projectChat, inputScopeKey)
   const addExistingAttachmentForScope = projectChat.addExistingAttachmentForScope
-  const addExistingAttachment = useCallback(
-    (attachment: Attachment) => addExistingAttachmentForScope(inputScopeKey, attachment),
-    [addExistingAttachmentForScope, inputScopeKey]
-  )
-  const handleFileSelect = useCallback(
-    (files: File | File[]) => projectChat.handleFileSelectForScope(inputScopeKey, files),
-    [inputScopeKey, projectChat]
-  )
-  const removeAttachment = useCallback(
-    (attachmentId: number) => projectChat.removeAttachmentForScope(inputScopeKey, attachmentId),
-    [inputScopeKey, projectChat]
-  )
-  const resetAttachments = useCallback(
-    () => projectChat.resetAttachmentsForScope(inputScopeKey),
-    [inputScopeKey, projectChat]
-  )
-  const dismissAttachmentError = useCallback(
-    (filename: string) => projectChat.dismissAttachmentErrorForScope(inputScopeKey, filename),
-    [inputScopeKey, projectChat]
-  )
+  const {
+    addExistingAttachment,
+    handleFileSelect,
+    removeAttachment,
+    resetAttachments,
+    dismissAttachmentError,
+  } = attachmentState
   const input = projectChat.inputByScope[inputScopeKey] ?? ''
   const setInputForScope = projectChat.setInputForScope
   const getInputRevisionForScope = projectChat.getInputRevisionForScope

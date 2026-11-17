@@ -89,6 +89,37 @@ describe('SystemDragBridge', () => {
     )
   })
 
+  test('keeps one pending drop read while the desktop host is slow', async () => {
+    vi.useFakeTimers()
+    let resolve!: (payloads: typeof mocks.pending) => void
+    const pending = new Promise<typeof mocks.pending>(accept => {
+      resolve = accept
+    })
+    mocks.invoke.mockImplementation(command =>
+      command === 'systemDrag.takePending' ? pending : Promise.resolve(undefined)
+    )
+    const { unmount } = render(<SystemDragBridge />)
+    try {
+      await act(async () => vi.advanceTimersByTimeAsync(5_000))
+      expect(
+        mocks.invoke.mock.calls.filter(([command]) => command === 'systemDrag.takePending')
+      ).toHaveLength(1)
+      await act(async () => resolve([]))
+      await act(async () => vi.advanceTimersByTimeAsync(250))
+      expect(
+        mocks.invoke.mock.calls.filter(([command]) => command === 'systemDrag.takePending')
+      ).toHaveLength(2)
+      unmount()
+      await act(async () => vi.advanceTimersByTimeAsync(1_000))
+      expect(
+        mocks.invoke.mock.calls.filter(([command]) => command === 'systemDrag.takePending')
+      ).toHaveLength(2)
+    } finally {
+      unmount()
+      vi.useRealTimers()
+    }
+  })
+
   test('handles rejected panel dismissal after a drag ends', async () => {
     const error = new Error('dismiss failed')
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)

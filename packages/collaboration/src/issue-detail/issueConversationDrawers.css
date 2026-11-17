@@ -30,10 +30,7 @@
 }
 
 .issue-drawer-viewport:has(.task-detail-workspace-panel-shell.is-expanded) {
-  --issue-drawer-width: min(
-    860px,
-    calc((100cqw - var(--issue-drawer-gap) - 24px) / 2)
-  );
+  --issue-drawer-width: min(860px, 100cqw);
 }
 
 .issue-conversation-drawers {
@@ -136,7 +133,7 @@
   }
 
   .issue-drawer-viewport:has(.task-detail-workspace-panel-shell.is-expanded) {
-    --issue-drawer-width: min(640px, calc(100cqw - 24px));
+    --issue-drawer-width: min(640px, 100cqw);
   }
 }
 
@@ -150,5 +147,35 @@
 @media (prefers-reduced-motion: reduce) {
   .issue-conversation-drawers {
     transition: none;
+  }
+}
+
+@container issue-workspace (min-width: 1024px) {
+  .issue-drawer-viewport:has(
+      .task-detail-workspace-panel-shell.is-expanded
+    ):has([data-has-conversation="true"]) {
+    --issue-drawer-width: min(
+      860px,
+      calc((100cqw - var(--issue-drawer-gap)) / 2)
+    );
+  }
+}
+
+@media (max-width: 767px) {
+  .collaboration-platform-app:has(
+    .issue-conversation-drawers-backdrop:not(
+      .issue-conversation-drawers-embedded
+    )
+  ) {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .collaboration-platform-app:has(
+      .issue-conversation-drawers-backdrop:not(
+        .issue-conversation-drawers-embedded
+      )
+    )
+    > .collaboration-platform-sidebar {
+    display: none;
   }
 }

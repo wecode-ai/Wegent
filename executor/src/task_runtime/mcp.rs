@@ -40,6 +40,7 @@ pub(crate) mod git_connections;
 mod human_requests;
 mod parent_issue;
 mod stand_in;
+mod stand_in_questions;
 pub(crate) mod stand_in_tasks;
 #[cfg(test)]
 use context::role_categories;
