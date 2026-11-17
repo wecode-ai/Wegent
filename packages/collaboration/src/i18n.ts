@@ -665,6 +665,7 @@ const sharedMessages: Record<
     "todo.confirm_assignment": "填入转派对象",
     "todo.assign_only": "转派",
     "todo.no_matching_assignee": "没有匹配的负责人",
+    "todo.no_matching_collaborator": "没有匹配的参与者",
     "todo.assignee_add_member": "添加人员",
     "todo.assignee_add_agent": "添加智能体",
     "todo.members": "成员",
@@ -686,7 +687,13 @@ const sharedMessages: Record<
     "todo.collaborators": "参与者",
     "todo.add_collaborator": "添加参与者",
     "todo.none": "暂无",
-    "todo.select_project_member": "选择项目空间成员",
+    "todo.select_project_member": "搜索并选择参与者",
+    "todo.outside_issue_person":
+      "非项目成员：确认后仅可管理该 Issue，不会加入项目。",
+    "todo.confirm_outside_issue_person": "确认邀请非项目成员",
+    "todo.issue_person_access":
+      "仅授予该 Issue 的管理权限，不改变项目成员关系。",
+    "todo.confirm_issue_invitation": "确认 Issue 邀请",
     "todo.collaborators_unavailable": "此项目暂不支持编辑参与者",
     "todo.new_issue": "新建任务",
     "todo.issue_markdown_hint": "支持 Markdown，可拖拽文件到编辑器添加附件",
@@ -1325,6 +1332,7 @@ const sharedMessages: Record<
     "todo.confirm_assignment": "Use as assignment target",
     "todo.assign_only": "Assign",
     "todo.no_matching_assignee": "No matching assignees",
+    "todo.no_matching_collaborator": "No matching participants",
     "todo.assignee_add_member": "Add member",
     "todo.assignee_add_agent": "Add agent",
     "todo.members": "Members",
@@ -1346,7 +1354,14 @@ const sharedMessages: Record<
     "todo.collaborators": "Participants",
     "todo.add_collaborator": "Add participant",
     "todo.none": "None",
-    "todo.select_project_member": "Select a project member",
+    "todo.select_project_member": "Search and select participants",
+    "todo.outside_issue_person":
+      "Outside this project: manage this Issue only; project membership is unchanged.",
+    "todo.confirm_outside_issue_person":
+      "Confirm invitation outside the project",
+    "todo.issue_person_access":
+      "Manage this Issue only; project membership is unchanged.",
+    "todo.confirm_issue_invitation": "Confirm Issue invitation",
     "todo.collaborators_unavailable":
       "Editing participants is not available for this project yet",
     "todo.new_issue": "New issue",

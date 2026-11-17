@@ -29,7 +29,7 @@ export interface CommentIssueActions {
   currentColumns: string[]
   closed: boolean
   canToggle: boolean
-  move(value: string): Promise<void>
+  move(value: string): Promise<void | boolean>
   toggle(closed: boolean): Promise<void>
 }
 
@@ -80,6 +80,7 @@ export function createIssueCommentActions({
   canAssign,
   issues,
   onUpdated,
+  confirmAssignee,
   translate: t,
 }: {
   issue: CollaborationIssue
@@ -89,6 +90,7 @@ export function createIssueCommentActions({
   canAssign: boolean
   issues: SharedIssueDetailPort['issues']
   onUpdated(issue: CollaborationIssue): void
+  confirmAssignee(target: string): Promise<boolean>
   translate: CollaborationTranslate
 }): CommentIssueActions {
   const matches = board.columns.filter(column =>
@@ -174,6 +176,8 @@ export function createIssueCommentActions({
         ...(priority === undefined ? {} : { priority: priority as CollaborationIssue['priority'] }),
       }
       if (mutation.kind === 'assignee' && mutation.assigneeType && mutation.assigneeId) {
+        if (!(await confirmAssignee(`${mutation.assigneeType}:${mutation.assigneeId}`)))
+          return false
         const updated = await issues.assign(issue.cloud_project_id, issue.id, {
           version: latest.version,
           assigneeType: mutation.assigneeType,
