@@ -393,6 +393,9 @@ impl RuntimeWorkRpcHandler {
             self.finish_quota_command(&turn).await;
             return;
         };
+        // Cancellation needs the send gate while the provider request is pending.
+        // The registered execution owns this turn and its cancellation channel.
+        drop(_send);
         let Some(mut wait) = wait(&turn) else {
             self.finish_local_task_execution(&turn.local_task_id, execution);
             self.end_quota_turn(&turn, "Invalid saved quota recovery record")
