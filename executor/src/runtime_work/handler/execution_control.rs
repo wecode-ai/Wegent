@@ -209,6 +209,27 @@ impl RuntimeWorkRpcHandler {
         true
     }
 
+    pub(super) fn settle_cancelled_idle_task(
+        &self,
+        local_task_id: &str,
+        thread_id: Option<String>,
+    ) -> bool {
+        let settled = self
+            .store
+            .update_task_without_snapshot(local_task_id, |link| {
+                settle_local_execution_link(link, thread_id, "cancelled");
+            })
+            .is_some();
+        if settled {
+            self.publish_settled_local_execution(
+                local_task_id,
+                "cancelled",
+                "cancel_before_executor_start",
+            );
+        }
+        settled
+    }
+
     fn publish_settled_local_execution(&self, local_task_id: &str, status: &str, reason: &str) {
         if let Some(link) = self.store.get_task_summary(local_task_id) {
             if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(&link) {

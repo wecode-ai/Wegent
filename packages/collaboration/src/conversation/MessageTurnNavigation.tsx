@@ -80,6 +80,7 @@ export function MessageTurnNavigation({
   const previewNodesRef = useRef<Map<string, HTMLDivElement>>(new Map())
   const timerRef = useRef<number | null>(null)
   const navigationCleanupRef = useRef<(() => void) | null>(null)
+  const openingTargetCleanupRef = useRef<(() => void) | null>(null)
   const messagesRef = useRef(messages)
   const turnNavigationRef = useRef(turnNavigation)
   const measuredScrollGeometryRef = useRef<MeasuredScrollGeometry | null>(null)
@@ -97,6 +98,7 @@ export function MessageTurnNavigation({
   }, [])
 
   const cancelNavigation = useCallback(() => {
+    openingTargetCleanupRef.current?.()
     if (locatingRequest.current) locatedRequest.current = locatingRequest.current
     locatingRequest.current = null
     loadOwnerRef.current = null
@@ -118,7 +120,9 @@ export function MessageTurnNavigation({
   useEffect(() => {
     const cancelForInput = (event: Event) => {
       if (
-        (!loadOwnerRef.current && !navigationCleanupRef.current) ||
+        (!loadOwnerRef.current &&
+          !navigationCleanupRef.current &&
+          !openingTargetCleanupRef.current) ||
         !isConversationScrollInput(event)
       )
         return
@@ -234,10 +238,12 @@ export function MessageTurnNavigation({
     locatingRequest.current = key
     const owner = {}
     loadOwnerRef.current = owner
+    let cancelled = false
     const cleanup = () => observer.disconnect()
     let ownedCleanup: (() => void) | null = cleanup
     const locate = () => {
-      if (loadOwnerRef.current !== owner || !findMessageAnchor(contentRef, targetMessageId)) return
+      if (cancelled || !findMessageAnchor(contentRef, targetMessageId)) return
+      locatingRequest.current = key
       scrollToMessageId(scroller, targetMessageId, 'auto', () => {
         if (locatingRequest.current !== key) return
         locatedRequest.current = key
@@ -247,11 +253,31 @@ export function MessageTurnNavigation({
     }
     const observer = new MutationObserver(locate)
     observer.observe(content, { childList: true, subtree: true })
+    let width = scroller.clientWidth
+    let height = scroller.clientHeight
+    const viewportObserver = new ResizeObserver(() => {
+      const nextWidth = scroller.clientWidth
+      const nextHeight = scroller.clientHeight
+      if (nextWidth === width && nextHeight === height) return
+      width = nextWidth
+      height = nextHeight
+      // Opening a question owns its context until the reader chooses another position.
+      if (!cancelled && locatedRequest.current === key) locate()
+    })
+    viewportObserver.observe(scroller)
+    const cleanupOpeningTarget = () => {
+      cancelled = true
+      observer.disconnect()
+      viewportObserver.disconnect()
+      if (openingTargetCleanupRef.current === cleanupOpeningTarget)
+        openingTargetCleanupRef.current = null
+    }
+    openingTargetCleanupRef.current = cleanupOpeningTarget
     navigationCleanupRef.current = cleanup
     onNavigationScrollTargetChange?.(targetMessageId)
     locate()
     return () => {
-      observer.disconnect()
+      cleanupOpeningTarget()
       if (ownedCleanup && navigationCleanupRef.current === ownedCleanup) {
         loadOwnerRef.current = null
         locatingRequest.current = null

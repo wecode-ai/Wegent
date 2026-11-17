@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    OnceLock,
+};
 
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -40,6 +43,15 @@ impl ActivationCoordinator {
 
 static ACTIVATION: ActivationCoordinator = ActivationCoordinator::new();
 static CHANGED: tokio::sync::Notify = tokio::sync::Notify::const_new();
+fn inventory_changes() -> &'static tokio::sync::watch::Sender<u64> {
+    static CHANGES: OnceLock<tokio::sync::watch::Sender<u64>> = OnceLock::new();
+    CHANGES.get_or_init(|| tokio::sync::watch::channel(0).0)
+}
+
+/// Fanout subscription independent of the application preparation permit.
+pub fn subscribe_changes() -> tokio::sync::watch::Receiver<u64> {
+    inventory_changes().subscribe()
+}
 
 pub async fn begin_execution() -> RwLockReadGuard<'static, ()> {
     ACTIVATION.begin_execution().await
@@ -62,6 +74,7 @@ pub fn mark_changed() {
 /// Signal an inventory change that may require application-owned preparation.
 pub fn notify_changed() {
     CHANGED.notify_one();
+    inventory_changes().send_modify(|value| *value = value.wrapping_add(1));
 }
 
 /// Wait for the next inventory change without holding the activation lease.

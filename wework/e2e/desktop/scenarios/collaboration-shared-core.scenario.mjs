@@ -15,6 +15,12 @@ import { createProjectSpacePickerRegression } from '../modules/project-space-pic
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
+import { verifyCollaborationSettingsUx } from '../modules/collaboration-settings-ux.mjs'
+import {
+  handleProjectCreateGroupModel,
+  verifyPrivateProjectCreation,
+  verifyProjectCreateDialogUi,
+} from '../modules/project-create-dialog-regression.mjs'
 import {
   selectProjectBoardGrouping,
   verifyPersonalBoardGrouping,
@@ -265,6 +271,7 @@ export function createDesktopScenario({
     requiresCloudEnvironment: true,
     async handleHttp(request, response, url) {
       return (
+        (await handleProjectCreateGroupModel(request, response, url)) ||
         (await handlePersonalHomeModel(request, response, url)) ||
         boardReplyModel.handleHttp(request, response, url)
       )
@@ -484,6 +491,7 @@ export function createDesktopScenario({
         await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
           value: projectName,
         })
+        await verifyProjectCreateDialogUi(control, scoped)
         await control.command(
           'click',
           scoped('[data-testid="collaboration-project-create-advanced"]')
@@ -527,7 +535,9 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await capture(control, 'collaboration-shared-core-03-project-created.png')
+        await verifyPrivateProjectCreation({ control, scoped, request, workspace, project })
         await verifyCollaborationMemberSettings(control, { scoped, owner, request, project })
+        await verifyCollaborationSettingsUx(control, { scoped, request, project })
 
         // Creation authorizes the current runner; this recovery case needs an unassigned project.
         const initialEnvironments = await request(

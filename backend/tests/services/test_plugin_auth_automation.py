@@ -13,6 +13,7 @@ from app.schemas.plugin_account_auth import (
 )
 from app.services.plugin_account_connections import PluginAccountAuthError
 from app.services.plugin_auth_automation import PluginAuthAutomationService
+from app.services.plugin_write_errors import PluginWriteError
 from tests.services.test_plugin_account_connections import (
     device,
     enroll,
@@ -133,6 +134,87 @@ def test_revoked_device_and_disconnected_account_stay_disabled(
     )
 
 
+def test_cloud_grant_rejects_a_policy_changed_after_its_decision(
+    automation, service, test_db, test_user, installed, device
+):
+    enroll(service, test_db, test_user, installed)
+    test_db.commit()
+    automation.grant_current_device(
+        test_db, user_id=test_user.id, device_id="logical-device"
+    )
+    assert service.list_connections(test_db, user_id=test_user.id)[0].device_ids
+    policy = (
+        test_db.query(Kind)
+        .filter_by(
+            user_id=test_user.id,
+            kind="ConnectorAuthPolicy",
+            namespace="plugin-auth",
+            name="account",
+        )
+        .one()
+    )
+    policy.json = {
+        "spec": {
+            "enabled": False,
+            "revision": policy.json["spec"].get("revision", 0) + 1,
+        }
+    }
+    test_db.flush()
+
+    with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
+        test_db.commit()
+    test_db.rollback()
+    assert not service.list_connections(test_db, user_id=test_user.id)[0].device_ids
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_cloud_grant_only_locks_plugins_needing_a_grant(
+    automation, service, test_db, test_user, installed, device, monkeypatch, pending
+):
+    from app.services import plugin_auth_automation as module
+
+    enroll(service, test_db, test_user, installed)
+    automation.grant_current_device(
+        test_db, user_id=test_user.id, device_id="logical-device"
+    )
+    test_db.commit()
+    expected = set()
+    if pending:
+        document = deepcopy(installed.json)
+        document["spec"]["source"]["pluginKey"] = "other-mail"
+        other = Kind(
+            user_id=test_user.id,
+            kind="InstalledPlugin",
+            namespace="default",
+            name="other-mail",
+            is_active=True,
+            json=document,
+        )
+        test_db.add(other)
+        test_db.flush()
+        enroll(service, test_db, test_user, other)
+        expected.add(other.id)
+        test_db.commit()
+    acquired = set()
+    original = module.acquire_plugin_write_locks
+
+    def capture(db, targets):
+        targets = list(targets)
+        acquired.update(installed_id for _, installed_id in targets)
+        return original(db, targets)
+
+    monkeypatch.setattr(module, "acquire_plugin_write_locks", capture)
+    automation.grant_current_device(
+        test_db, user_id=test_user.id, device_id="logical-device"
+    )
+    test_db.commit()
+    assert acquired == expected
+    assert all(
+        "logical-device" in connection.device_ids
+        for connection in service.list_connections(test_db, user_id=test_user.id)
+    )
+
+
 def test_disable_fences_already_issued_intents_and_can_resume(
     automation,
     test_db,
@@ -216,11 +298,13 @@ def test_disabled_uninstalled_and_foreign_plugins_never_receive_intents(
     assert automation.reconcile(
         test_db, user_id=test_user.id, device_id="local", installed_ids=[]
     ) == {"migrations": []}
+    test_db.commit()
     installed.json = {"spec": {**installed.json["spec"], "enabled": False}}
-    test_db.flush()
+    test_db.commit()
     assert reconcile(automation, test_db, test_user, installed) == {"migrations": []}
+    test_db.commit()
     installed.user_id = test_admin_user.id
-    test_db.flush()
+    test_db.commit()
     assert reconcile(automation, test_db, test_user, installed) == {"migrations": []}
 
 

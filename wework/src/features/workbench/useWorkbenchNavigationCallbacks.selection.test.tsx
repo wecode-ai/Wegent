@@ -1,0 +1,67 @@
+import { act, cleanup, renderHook } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
+import type { ProjectWithTasks, User } from '@/types/api'
+import type { WorkbenchState } from '@/types/workbench'
+import { navigateTo } from '@/lib/navigation'
+import {
+  useSelectProject,
+  useSelectProjectWorkspace,
+  useSelectStandaloneDevice,
+} from './useWorkbenchNavigationCallbacks'
+
+vi.mock('@/lib/navigation', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/navigation')>()),
+  navigateTo: vi.fn(),
+}))
+
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
+
+const project = { id: 7, name: 'Code', tasks: [] } as unknown as ProjectWithTasks
+const state = {
+  projects: [project],
+  devices: [],
+  runtimeWork: null,
+  standaloneDeviceId: null,
+} as unknown as WorkbenchState
+
+it.each([
+  ['select', 'project_selected'],
+  ['clear', 'project_cleared'],
+  ['workspace', 'project_workspace_selected'],
+  ['device', 'project_cleared'],
+])(
+  'keeps the %s transaction while allowing the caller to retain its route',
+  (operation, action) => {
+    for (const stay of [false, true]) {
+      const dispatch = vi.fn()
+      const projectSelectionStartedRef = { current: false }
+      const props = {
+        state,
+        dispatch,
+        projectSelectionStartedRef,
+        ownershipKey: 'selection-review',
+        user: { id: 7 } as User,
+      }
+      const { result, unmount } = renderHook(() => ({
+        project: useSelectProject(props),
+        workspace: useSelectProjectWorkspace(props),
+        device: useSelectStandaloneDevice(props),
+      }))
+      vi.mocked(navigateTo).mockClear()
+      const options = stay ? { navigate: false } : undefined
+      act(() => {
+        if (operation === 'workspace') result.current.workspace(7, 21, options)
+        else if (operation === 'device') result.current.device(null, options)
+        else result.current.project(operation === 'clear' ? null : 7, options)
+      })
+      expect(projectSelectionStartedRef.current).toBe(true)
+      expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: action }))
+      if (stay) expect(navigateTo).not.toHaveBeenCalled()
+      else expect(navigateTo).toHaveBeenCalledExactlyOnceWith('/')
+      unmount()
+    }
+  }
+)

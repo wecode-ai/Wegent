@@ -1654,6 +1654,114 @@ describe('composer cancellation rollback', () => {
     )
   })
 
+  test('a rejected cancellation does not reopen a turn that completed while stopping', async () => {
+    const { result } = await renderSession()
+    let resolveCancellation!: (accepted: boolean) => void
+    mocks.cancel.mockImplementation(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveCancellation = resolve
+        })
+    )
+    let stopping!: Promise<void>
+    act(() => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        subtaskId: 'completed-during-cancel',
+        clientUserMessageId: 'completed-during-cancel-user',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_chunk',
+        subtaskId: 'completed-during-cancel',
+        itemId: 'completed-answer',
+        content: 'The runtime completed before the acknowledgement.',
+      })
+      stopping = result.current.pauseCurrentResponse()
+    })
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(address)
+
+    await act(async () => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_done',
+        subtaskId: 'completed-during-cancel',
+        itemId: 'completed-answer',
+        content: 'The runtime completed before the acknowledgement.',
+      })
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subtaskId: 'completed-during-cancel',
+          status: 'done',
+          runtimeStatus: 'done',
+          content: 'The runtime completed before the acknowledgement.',
+        }),
+      ])
+    )
+
+    await act(async () => {
+      resolveCancellation(false)
+      await stopping
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subtaskId: 'completed-during-cancel',
+          status: 'done',
+          runtimeStatus: 'done',
+          content: 'The runtime completed before the acknowledgement.',
+        }),
+      ])
+    )
+  })
+
+  test.each([true, false])(
+    'settles an optimistic prompt before a native turn starts (accepted=%s)',
+    async accepted => {
+      const { result } = await renderSession()
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'user_added',
+          message: {
+            id: 'cancelled-before-start',
+            role: 'user',
+            content: 'Old prompt',
+            status: 'done',
+          },
+        })
+      })
+      await waitFor(() =>
+        expect(result.current.messages).toContainEqual(
+          expect.objectContaining({ id: 'cancelled-before-start' })
+        )
+      )
+      mocks.cancel.mockResolvedValue(accepted)
+
+      await act(async () => {
+        await result.current.pauseCurrentResponse()
+      })
+
+      expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(address, {
+        pendingClientUserMessageId: 'cancelled-before-start',
+      })
+      if (accepted) {
+        await waitFor(() =>
+          expect(result.current.messages).not.toContainEqual(
+            expect.objectContaining({ id: 'cancelled-before-start' })
+          )
+        )
+      } else {
+        await waitFor(() =>
+          expect(result.current.messages).toContainEqual(
+            expect.objectContaining({ id: 'cancelled-before-start' })
+          )
+        )
+      }
+    }
+  )
+
   test.each([
     { pendingResume: false, outcome: 'rejected' },
     { pendingResume: true, outcome: 'rejected' },

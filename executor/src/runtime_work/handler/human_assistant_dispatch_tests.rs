@@ -572,10 +572,17 @@ async fn native_turn_rechecks_revoked_local_grants_without_rebinding_another_dev
 
 #[tokio::test]
 async fn versioned_cancellation_signals_only_the_matching_active_frozen_execution() {
+    for requested_id in ["shared-task", "019f4c0d-b036-78f3-b879-7e5ed203ad61"] {
+        assert_versioned_cancellation(requested_id).await;
+    }
+}
+
+async fn assert_versioned_cancellation(requested_id: &str) {
     let fixture = fixture().await;
     let task_id = "shared-task";
     fixture.handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: task_id.into(),
+        thread_id: Some("019f4c0d-b036-78f3-b879-7e5ed203ad61".into()),
         runtime_handle: json!({"origin":{"humanAssistantDispatchId":"old","executionId":"41"}}),
         ..Default::default()
     });
@@ -600,7 +607,7 @@ async fn versioned_cancellation_signals_only_the_matching_active_frozen_executio
         .request = Some(request);
     let old = fixture
         .handler
-        .cancel_task(json!({"taskId":task_id,"executionId":"41"}))
+        .cancel_task(json!({"taskId":requested_id,"executionId":"41"}))
         .await
         .unwrap();
     assert_eq!(old["accepted"], false);
@@ -611,18 +618,19 @@ async fn versioned_cancellation_signals_only_the_matching_active_frozen_executio
     assert!(!fixture.handler.active_local_executions.lock().unwrap()[task_id].stop_requested);
     let current = fixture
         .handler
-        .cancel_task(json!({"taskId":task_id,"executionId":"42"}))
+        .cancel_task(json!({"taskId":requested_id,"executionId":"42"}))
         .await
         .unwrap();
     assert_eq!(current["accepted"], true);
     assert_eq!(current["cleanupPending"], true);
+    assert_eq!(current["taskId"], task_id);
     assert_eq!(cancellation.try_recv(), Ok(()));
     assert!(fixture
         .handler
         .finish_local_task_execution(task_id, local_execution));
     let missing = fixture
         .handler
-        .cancel_task(json!({"taskId":task_id,"executionId":"42"}))
+        .cancel_task(json!({"taskId":requested_id,"executionId":"42"}))
         .await
         .unwrap();
     assert_eq!(missing["accepted"], false);

@@ -12,7 +12,7 @@ import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRe
 import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
 import { ApplicationMenuButton } from './ApplicationMenuButton'
 import { GlobalFeedbackButton } from '@/features/feedback/GlobalFeedbackButton'
-import type { ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { WorkspaceTabStrip } from '@/features/workspace-tabs/WorkspaceTabStrip'
 import type { WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
 
@@ -35,19 +35,31 @@ export function ChromeTitlebar({
   const isDesktop = isDesktopRuntime()
   const platform = getPlatform()
   const feedbackSlotVisible = isDesktop
-  const fixedActionsWidth = showWorkspacePortals
-    ? feedbackSlotVisible
-      ? '9rem'
-      : '7.25rem'
-    : feedbackSlotVisible
-      ? '4rem'
-      : '2.25rem'
+  const titlebarRef = useRef<HTMLDivElement>(null)
+  const actionsRef = useRef<HTMLDivElement>(null)
+  const fixedActionsWidth = 'var(--titlebar-fixed-actions-width, 0px)'
+  useLayoutEffect(() => {
+    const actions = actionsRef.current
+    if (!actions) return
+    const measure = () => {
+      titlebarRef.current?.style.setProperty(
+        '--titlebar-fixed-actions-width',
+        `${actions.getBoundingClientRect().width}px`
+      )
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(actions)
+    return () => observer.disconnect()
+  }, [])
 
   return (
     <div
+      ref={titlebarRef}
       data-testid="chrome-titlebar"
       className={cn(
-        'relative z-titlebar flex h-[38px] shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none',
+        'relative z-titlebar flex h-12 shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none sm:max-md:h-11 md:h-[38px]',
+        isDesktop && platform !== 'mac' && 'max-sm:h-24 max-sm:pb-12',
         className
       )}
     >
@@ -61,6 +73,14 @@ export function ChromeTitlebar({
       {/* Windows/Linux: the frameless window hides the OS menu bar, so the
           application menu is exposed through a native button instead. */}
       {isDesktop && (platform === 'win' || platform === 'linux') && <ApplicationMenuButton />}
+      {isDesktop && platform !== 'mac' && (
+        <div
+          data-testid="compact-titlebar-drag-region"
+          className="min-w-0 flex-1 self-stretch sm:hidden"
+        >
+          <MacOSTitleBarDragRegion />
+        </div>
+      )}
 
       {beforeTabs && (
         <div
@@ -71,7 +91,14 @@ export function ChromeTitlebar({
         </div>
       )}
 
-      <WorkspaceTabStrip availableKinds={availableWorkspaceTabKinds} />
+      <WorkspaceTabStrip
+        availableKinds={availableWorkspaceTabKinds}
+        className={
+          isDesktop && platform !== 'mac'
+            ? 'max-sm:absolute max-sm:inset-x-0 max-sm:bottom-0 max-sm:h-12 max-sm:w-full'
+            : undefined
+        }
+      />
       {afterTabs && (
         <div
           data-testid="chrome-titlebar-after-tabs"
@@ -85,7 +112,7 @@ export function ChromeTitlebar({
       {showWorkspacePortals && (
         <div
           data-testid="titlebar-right-workspace-zone"
-          className="pointer-events-none absolute top-0 z-chrome flex h-full items-center"
+          className="pointer-events-none absolute top-0 z-chrome flex h-12 items-center md:h-full"
           style={{
             right:
               isDesktop && platform === 'win'
@@ -111,20 +138,20 @@ export function ChromeTitlebar({
       )}
       {
         <div
+          ref={actionsRef}
           data-testid="titlebar-fixed-actions"
           className="relative z-chrome flex h-full shrink-0 items-center"
-          style={{ width: fixedActionsWidth }}
         >
           {showWorkspacePortals && (
             <div
               id={TITLEBAR_ACTIONS_PORTAL_ID}
               data-testid="titlebar-actions"
-              className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-[5rem] shrink-0 items-center justify-end gap-1"
+              className="electron-titlebar-interactive-region pointer-events-auto flex h-full shrink-0 items-center justify-end gap-1"
             />
           )}
           <div
             data-testid="titlebar-notifications"
-            className="electron-titlebar-interactive-region flex h-full w-9 shrink-0 items-center justify-center"
+            className="electron-titlebar-interactive-region flex h-full w-11 shrink-0 items-center justify-center md:w-9"
           >
             <NotificationCenter />
           </div>
@@ -132,7 +159,7 @@ export function ChromeTitlebar({
             <div
               id={TITLEBAR_FEEDBACK_PORTAL_ID}
               data-testid="titlebar-feedback"
-              className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-7 shrink-0 items-center justify-center"
+              className="electron-titlebar-interactive-region pointer-events-auto flex h-full w-11 shrink-0 items-center justify-center md:w-7"
             >
               <GlobalFeedbackButton />
             </div>
@@ -140,16 +167,8 @@ export function ChromeTitlebar({
         </div>
       }
 
-      {/* Linux: right spacer for native window controls */}
-      {isDesktop && platform === 'linux' && (
-        <div className="electron-titlebar-drag-region w-[138px] shrink-0 self-stretch">
-          <MacOSTitleBarDragRegion />
-        </div>
-      )}
-
-      {/* Windows: custom window frame controls */}
-      {((isDesktop && platform === 'win') ||
-        (isElectron && (platform === 'win' || platform === 'linux'))) && (
+      {/* Windows and Linux share the Electron window controls. */}
+      {isElectron && (platform === 'win' || platform === 'linux') && (
         <div className="electron-titlebar-interactive-region relative z-chrome w-[138px] shrink-0 self-stretch">
           <WindowFrameControls className="h-full justify-end" />
         </div>

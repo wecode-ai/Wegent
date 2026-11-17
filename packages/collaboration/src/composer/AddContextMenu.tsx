@@ -125,30 +125,32 @@ export function AddContextMenu({
               'fixed z-system-popover w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-border bg-background p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.12)]',
             ].join(' ')}
           >
-            {showAttachmentActions && <>
-            <button
-              type="button"
-              role="menuitem"
-              data-testid="attach-files-button"
-              onClick={() => fileInputRef.current?.click()}
-              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal leading-[18px] text-text-primary hover:bg-muted"
-            >
-              <Paperclip className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
-              <span>{t('workbench.add_photos_files', '添加照片和文件')}</span>
-            </button>
-            </>}
+            {showAttachmentActions && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="attach-files-button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex h-9 max-md:min-h-11 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal leading-[18px] text-text-primary hover:bg-muted"
+                >
+                  <Paperclip className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
+                  <span>{t('workbench.add_photos_files', '添加照片和文件')}</span>
+                </button>
+              </>
+            )}
             {onSetPlanMode && (
               <button
                 type="button"
                 role="menuitem"
                 data-testid="set-plan-mode-button"
                 onClick={handleSetPlanMode}
-                className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal leading-[18px] text-text-primary hover:bg-muted"
+                className="flex min-h-9 max-md:min-h-11 w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left text-base leading-[18px] text-text-primary hover:bg-muted"
               >
-                <ClipboardList className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
-                <span className="min-w-0 truncate">
+                <ClipboardList className="mt-0.5 h-[18px] w-[18px] shrink-0 text-text-secondary" />
+                <span className="flex min-w-0 flex-col gap-0.5">
                   <span>{t('workbench.plan_mode', '计划模式')}</span>
-                  <span className="ml-2 text-text-muted">
+                  <span className="text-sm text-text-secondary break-words">
                     {t('workbench.enable_plan_mode', '开启计划模式')}
                   </span>
                 </span>
@@ -160,12 +162,15 @@ export function AddContextMenu({
                 role="menuitem"
                 data-testid="set-goal-button"
                 onClick={handleSetGoal}
-                className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal leading-[18px] text-text-primary hover:bg-muted"
+                className="flex min-h-9 max-md:min-h-11 w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left text-base leading-[18px] text-text-primary hover:bg-muted"
               >
-                <Target className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
-                <span className="min-w-0 truncate">
+                <Target className="mt-0.5 h-[18px] w-[18px] shrink-0 text-text-secondary" />
+                <span className="flex min-w-0 flex-col gap-0.5">
                   <span>{t('workbench.goal_chip', '目标')}</span>
-                  <span className="ml-2 text-text-muted">
+                  <span
+                    data-testid="goal-mode-description"
+                    className="text-sm text-text-secondary break-words"
+                  >
                     {t('workbench.pursue_goal_description', '设置 WeWork 将持续努力实现的目标')}
                   </span>
                 </span>
@@ -177,12 +182,12 @@ export function AddContextMenu({
                 role="menuitem"
                 data-testid="task-supervisor-toggle-button"
                 onClick={handleConfigureSupervisor}
-                className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal leading-[18px] text-text-primary hover:bg-muted"
+                className="flex min-h-9 max-md:min-h-11 w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left text-base leading-[18px] text-text-primary hover:bg-muted"
               >
-                <Eye className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
-                <span className="min-w-0 truncate">
+                <Eye className="mt-0.5 h-[18px] w-[18px] shrink-0 text-text-secondary" />
+                <span className="flex min-w-0 flex-col gap-0.5">
                   <span>{t('workbench.supervisor_title')}</span>
-                  <span className="ml-2 text-text-muted">
+                  <span className="text-sm text-text-secondary break-words">
                     {supervisorPending
                       ? t('workbench.supervisor_pending_menu')
                       : supervisorEnabled
@@ -201,11 +206,11 @@ export function AddContextMenu({
                   setOpen(false)
                   onDraw()
                 }}
-                className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal text-text-primary hover:bg-muted"
+                className="flex h-9 max-md:min-h-11 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal text-text-primary hover:bg-muted"
               >
                 <PencilLine className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
                 <span>{t('workbench.drawing.title', '绘图')}</span>
-                <span className="text-text-muted">
+                <span className="text-text-secondary">
                   {t('workbench.drawing.description', '绘制草图')}
                 </span>
               </button>

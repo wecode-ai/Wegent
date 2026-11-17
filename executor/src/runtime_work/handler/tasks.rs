@@ -1184,6 +1184,33 @@ impl RuntimeWorkRpcHandler {
                 ],
             );
         }
+        if let Some(client_user_message_id) = string_field(&payload, "clientUserMessageId")
+            .or_else(|| string_field(&payload, "client_user_message_id"))
+        {
+            let cancelled = {
+                let mut pending = self
+                    .cancelled_pending_sends
+                    .lock()
+                    .expect("cancelled pending sends lock should not be poisoned");
+                let cancelled = pending
+                    .get_mut(&local_task_id)
+                    .is_some_and(|message_ids| message_ids.remove(&client_user_message_id));
+                if cancelled && pending.get(&local_task_id).is_some_and(HashSet::is_empty) {
+                    pending.remove(&local_task_id);
+                }
+                cancelled
+            };
+            if cancelled {
+                return Ok(json!({
+                    "success": false,
+                    "accepted": false,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                    "code": "cancelled",
+                    "error": "send was cancelled before executor dispatch",
+                }));
+            }
+        }
         self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
         let existing_link = self.local_task_link(&local_task_id);
@@ -2444,8 +2471,11 @@ impl RuntimeWorkRpcHandler {
         stop_timeout: Duration,
         require_stopped: bool,
     ) -> Result<Value, AppIpcError> {
-        let local_task_id = runtime_task_id(&payload)
+        let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let local_task_id = self.canonical_local_task_id(&requested_task_id);
+        let send_gate = self.task_send_gate(&local_task_id);
+        let _send_guard = send_gate.lock().await;
         if let Some(execution) = payload.get("executionId") {
             let accepted = execution.as_str().is_some_and(|execution| {
                 self.request_human_assistant_execution_stop(&local_task_id, execution)
@@ -2457,6 +2487,8 @@ impl RuntimeWorkRpcHandler {
             }));
         }
         self.invalidate_stand_in_owner_request(&local_task_id);
+        let pending_client_user_message_id = string_field(&payload, "clientUserMessageId")
+            .or_else(|| string_field(&payload, "client_user_message_id"));
         let link = self.local_task_link(&local_task_id);
         let thread_id = link.as_ref().and_then(runtime_session_id_from_link);
         let is_codex = link
@@ -2479,7 +2511,8 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if self.cancel_preparing_turn(&local_task_id) {
+        let cancelled_preparing_turn = self.cancel_preparing_turn(&local_task_id);
+        if cancelled_preparing_turn {
             self.request_active_turn_stop(&local_task_id);
             return Ok(match link {
                 Some(link) => task_action_success(&link),
@@ -2491,9 +2524,23 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
+        let cancels_pending_send = pending_client_user_message_id.is_some()
+            && !had_active_local_execution
+            && !removed_queued
+            && !cancelled_preparing_turn;
+        if let (true, Some(client_user_message_id)) =
+            (cancels_pending_send, pending_client_user_message_id)
+        {
+            self.cancelled_pending_sends
+                .lock()
+                .expect("cancelled pending sends lock should not be poisoned")
+                .entry(local_task_id.clone())
+                .or_default()
+                .insert(client_user_message_id);
+        }
         let had_active_local_execution =
             self.request_active_turn_stop(&local_task_id) || had_active_local_execution;
-        if is_codex && !had_active_local_execution {
+        if is_codex && !had_active_local_execution && !cancels_pending_send {
             if let Some(thread_id) = thread_id.as_deref() {
                 if self
                     .settle_local_execution_from_terminal_codex_turn(
@@ -2518,8 +2565,14 @@ impl RuntimeWorkRpcHandler {
         }
         let local_stop = self.abort_active_turn_with_timeout(&local_task_id, stop_timeout);
         let provider_stop = async {
-            match (is_codex, had_active_local_execution, thread_id.as_deref()) {
-                (true, false, Some(thread_id)) => tokio::time::timeout(
+            match (
+                is_codex,
+                had_active_local_execution,
+                cancels_pending_send,
+                thread_id.as_deref(),
+            ) {
+                (_, _, true, _) => true,
+                (true, false, false, Some(thread_id)) => tokio::time::timeout(
                     stop_timeout,
                     self.interrupt_provider_active_turn(thread_id),
                 )
@@ -2532,12 +2585,16 @@ impl RuntimeWorkRpcHandler {
         if !local_stopped && !require_stopped {
             self.force_settle_local_task_execution(
                 &local_task_id,
-                thread_id,
+                thread_id.clone(),
                 "cancelled",
                 "cancel_timeout",
             );
         }
         let cleanup_pending = !local_stopped || !provider_stopped;
+
+        if cancels_pending_send {
+            self.settle_cancelled_idle_task(&local_task_id, thread_id.clone());
+        }
 
         Ok(match self.local_task_link(&local_task_id).or(link) {
             Some(link) => {

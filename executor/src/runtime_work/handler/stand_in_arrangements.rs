@@ -308,13 +308,10 @@ impl RuntimeWorkRpcHandler {
         settings: &Value,
     ) -> Result<(), AppIpcError> {
         for mut action in store
-            .stand_in_actions(user)
+            .pending_stand_in_actions(user)
             .map_err(settings_error)?
             .into_iter()
-            .filter(|action| {
-                action["kind"] == "run_arrangement"
-                    && matches!(action["status"].as_str(), Some("pending" | "sending"))
-            })
+            .filter(|action| action["kind"] == "run_arrangement")
         {
             let Some(run) = self
                 .automation_store
