@@ -10,8 +10,8 @@ import {
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `分身项目启用-${process.pid}`
-const OTHER_PROJECT = `保留分身项目-${process.pid}`
+const PROJECT = `助理项目启用-${process.pid}`
+const OTHER_PROJECT = `保留助理项目-${process.pid}`
 
 /** A project connection must visibly enable a previously disabled personal stand-in. */
 export function createDesktopScenario({ uiTimeoutMs }) {
@@ -40,7 +40,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       const settings = await rpc('runtime.stand_in.personal.get', { userId: USER_ID })
       const role = {
         id: 'project-enable',
-        name: '项目启用分身',
+        name: '项目启用助理',
         enabled: false,
         prompt: '',
         version: 0,
@@ -127,7 +127,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
       await control.command('waitFor', '[data-testid="stand-in-overview-role-project-enable"]', {
-        text: '项目启用分身',
+        text: '项目启用助理',
       })
       await control.command('waitFor', '[data-testid="stand-in-overview-role-project-enable"]', {
         text: '已开启',

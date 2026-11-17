@@ -31,6 +31,7 @@ import { verifyCloudFileChunkIntegrity } from './workspace-file-chunks-flow.mjs'
 import { verifyCloudGitReview } from './workspace-git-review-flow.mjs'
 import { verifyCloudConversationMenu } from './conversation-menu-flow.mjs'
 import { verifyCloudHtmlFileLinkPreview } from './markdown-file-preview.mjs'
+import { verifyMarkdownRelativeFileLinks } from './markdown-relative-file-links.mjs'
 import {
   createCloudAttachmentVerification,
   verifyCloudWorkspacePathMentions,
@@ -119,6 +120,7 @@ const CLOUD_CHECKPOINTS = [
   'rendering-extensions',
   'browser-multi-tabs',
   'embedded-browser',
+  'connector-oauth',
 ]
 
 async function createCloudProjectFixture(control, workspacePath) {
@@ -1033,12 +1035,16 @@ async function verifyCloudCheckpoint({
         projectRowSelector,
         workspacePath,
       })
+      setPhase('cloud-markdown-relative-file-links')
+      await verifyMarkdownRelativeFileLinks({ control, workspacePath })
       setPhase('cloud-tool-block-order')
       await verifyToolBlockChronologicalOrder({ composerSelector, control })
       setPhase('cloud-view-image')
       await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
       return
     case 'browser-multi-tabs':
+    case 'embedded-browser':
+    case 'connector-oauth':
       assert.ok(desktopScenario, `${checkpoint} requires its desktop scenario module`)
       setPhase(`cloud-${checkpoint}`)
       await desktopScenario.verify(control)

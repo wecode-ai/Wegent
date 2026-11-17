@@ -68,7 +68,7 @@ export function createDesktopScenario({
       const id = `identity-${Date.now()}`
       let events
       if (input.includes(FOLLOWUP))
-        events = [assistantMessage('已记住这次补充，我们继续在同一个分身会话沟通。')]
+        events = [assistantMessage('已记住这次补充，我们继续在同一个助理会话沟通。')]
       else if (requestContainsToolOutput(body, 'identity-proposal'))
         events = [assistantMessage('已拟好评审角色，请查看并确认上方的变更。确认后才会生效。')]
       else {

@@ -36,6 +36,7 @@ import {
 } from './workbenchRuntimeHelpers'
 import {
   normalizeRuntimeTaskSummary,
+  mergeRuntimeTaskSnapshotMetadata,
   shouldReplaceRuntimeTaskProjection,
 } from './runtimeTaskLifecycle/projection'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
@@ -392,7 +393,7 @@ function mergeRuntimeTasks(
       const nextTask = nextById.get(task.taskId)
       if (nextTask) {
         return shouldReplaceRuntimeTaskProjection(task, nextTask)
-          ? nextTask
+          ? mergeRuntimeTaskSnapshotMetadata(nextTask, task)
           : mergeRuntimeTaskListState(task, nextTask)
       }
       if (
@@ -418,7 +419,7 @@ function mergeRuntimeTaskListState(
   next: RuntimeTaskSummary
 ): RuntimeTaskSummary {
   return {
-    ...current,
+    ...mergeRuntimeTaskSnapshotMetadata(current, next),
     ...(next.threadId ? { threadId: next.threadId } : {}),
     ...(next.pinned === undefined ? {} : { pinned: next.pinned }),
     ...(next.pinnedOrder === undefined ? {} : { pinnedOrder: next.pinnedOrder }),

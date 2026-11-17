@@ -40,13 +40,13 @@ describe('MCP tool identity in desktop model fixtures', () => {
     ).toMatchObject({ mode: 'direct', namespace: 'wework_space' })
   })
 
-  test('searches the requested server instead of calling a loaded namesake', () => {
+  test('searches the requested server identity when only another server is loaded', () => {
     expect(
       selectMcpToolRequest(searched('wework_control'), name, {}, `mcp__wework_space__${name}`)
     ).toMatchObject({ mode: 'search', arguments: { query: `wework_space ${name}` } })
   })
 
-  test('uses qualified search before either server is loaded', () => {
+  test('searches the requested server identity before either server is loaded', () => {
     expect(
       selectMcpToolRequest({ tools: [search] }, name, {}, `mcp__wework_space__${name}`)
     ).toMatchObject({ mode: 'search', arguments: { query: `wework_space ${name}` } })

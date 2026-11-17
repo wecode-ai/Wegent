@@ -2,9 +2,9 @@
 sidebar_position: 28
 ---
 
-# Wework 分身遥测
+# Wework 助理遥测
 
-分身复用 Wework 统一遥测客户端、接收地址、字段策略和用户开关，默认不附带用户身份。详见 [遥测配置](wework-telemetry.md)。
+助理复用 Wework 统一遥测客户端、接收地址、字段策略和用户开关，默认不附带用户身份。详见 [遥测配置](wework-telemetry.md)。
 
 ## 事件与统计口径
 
@@ -17,14 +17,14 @@ sidebar_position: 28
 | `stand_in_conversation_succeeded/failed`  | 对话消息被 Runtime 接受或拒绝，包括身份会话中的后续消息                                                         |
 | `stand_in_proposal_succeeded/failed`      | 接受或拒绝配置提案的实际结果；验证草稿时的保存点回滚不会产生配置成功事件                                        |
 | `stand_in_work_action_succeeded/failed`   | 确认、回复、重试、拆分、合并、移动、调整和撤销；整理操作通过受控操作枚举区分用户意图                            |
-| `stand_in_dispatch_succeeded/failed`      | 每个匹配分身实际尝试派发的结果；复用已有任务和重复指派通知不构成新接单                                          |
+| `stand_in_dispatch_succeeded/failed`      | 每个匹配助理实际尝试派发的结果；复用已有任务和重复指派通知不构成新接单                                          |
 | `stand_in_execution_started`              | Executor 观察到实际运行开始，以任务和原生轮次在本地去重                                                         |
 | `stand_in_execution_waiting`              | 进入等待用户回复或确认的状态；重复状态快照不重复计数                                                            |
 | `stand_in_execution_completed`            | 实际执行终态；`result` 为 `success`、`failure` 或 `cancelled`，`duration_ms` 为该轮在 Executor 记录的起止时间差 |
 
 派发成功不代表执行成功。配置一次保存可能产生多个不同动作的事件，例如创建连接并修改处理要求；配置动作次数不能直接解释为保存请求次数。执行完成也不代表业务目标通过人工验收。失败阶段来自明确的错误代码映射，不发送原始错误文本，不分析模型回复判断成功。
 
-公共维度仅包括 `domain`、`identity`、`surface`、`source`、`trigger`、`action`、`failure_stage`、`executor_location`、`result` 和有界非负耗时。`identity` 区分主分身和角色分身，无法确定时为 `unknown`；`executor_location` 复用设备目录中的本机、云端、远端分类；来源区分本地项目、云端项目、钉钉、其他连接及身份对话。不会发送账号、设备、任务或分身 ID、名称、消息、提示词、代码、路径和凭据。传输层使用独立随机事件 UUID，不由业务标识派生。
+公共维度仅包括 `domain`、`identity`、`surface`、`source`、`trigger`、`action`、`failure_stage`、`executor_location`、`result` 和有界非负耗时。`identity` 区分主助理和角色助理，无法确定时为 `unknown`；`executor_location` 复用设备目录中的本机、云端、远端分类；来源区分本地项目、云端项目、钉钉、其他连接及身份对话。不会发送账号、设备、任务或助理 ID、名称、消息、提示词、代码、路径和凭据。传输层使用独立随机事件 UUID，不由业务标识派生。
 
 ## 离线保存与补报
 
@@ -48,4 +48,4 @@ Executor 在本地 SQLite 保存采集策略、待发送事实及轮次去重状
 
 聚焦单测覆盖：同轮去重、等待和完成的先后顺序、重试与取消、无遥测同意、账号隔离、分页和幂等确认、配置差异与草稿回滚、进程内无页面订阅时的真实 Store 状态记录、持久存储失败、丢失 ACK、传输失败和策略隔离。
 
-桌面 `stand-in-telemetry` checkpoint 由现有 CI runner 和 core shard 执行：使用真实 Executor 与本地 PostHog 接收器，验证未被页面订阅的账号实际执行后，其完成事实跨窗口重载保留、重复读取与确认、实际分身对话的开始及完成事件，以及请求体不含合成私密提示词和业务 ID。仅模型响应被模拟。按仓库规则，只有明确要求时才在本地运行 E2E 或 `ai:verify`。
+桌面 `stand-in-telemetry` checkpoint 由现有 CI runner 和 core shard 执行：使用真实 Executor 与本地 PostHog 接收器，验证未被页面订阅的账号实际执行后，其完成事实跨窗口重载保留、重复读取与确认、实际助理对话的开始及完成事件，以及请求体不含合成私密提示词和业务 ID。仅模型响应被模拟。按仓库规则，只有明确要求时才在本地运行 E2E 或 `ai:verify`。

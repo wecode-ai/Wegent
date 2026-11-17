@@ -398,7 +398,7 @@ async def test_dingtalk_runtime_notification_enables_quoted_reply_continuation(
             "任务标题：Native Codex task\n\n"
             "任务状态：有新的 AI 回复\n\n"
             "最新回复：Implemented from native Codex\n\n"
-            "在分身模式下引用本通知回复，可交给当前分身处理。发送 /standin 可进入。"
+            "在助理模式下引用本通知回复，可交给当前助理处理。发送 /standin 可进入。"
         ),
     }
     assert (

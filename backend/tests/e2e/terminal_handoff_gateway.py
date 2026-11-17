@@ -39,6 +39,7 @@ from tests.e2e.terminal_handoff_frames import (
     assert_recovered_terminal_frames,
     publish_callback_probe,
 )
+from tests.e2e.terminal_response_attachments import assert_response_attachments
 
 T = TypeVar("T")
 
@@ -98,6 +99,9 @@ class TerminalHandoffGateway(unittest.TestCase):
             and capture["url"] in {"/v1/chat/completions", "/v1/responses"}
         ]
 
+    def test_response_attachments_reach_the_vision_model(self) -> None:
+        assert_response_attachments(self)
+
     def _create_team(self, *, pipeline: bool, stages: int = 2) -> tuple[int, list[int]]:
         self._json(
             self.api.post(
@@ -106,6 +110,7 @@ class TerminalHandoffGateway(unittest.TestCase):
                     "kind": "Model",
                     "metadata": {"name": self.marker, "namespace": "default"},
                     "spec": {
+                        "modelCapabilities": {"supportsImage": True},
                         "modelConfig": {
                             "env": {
                                 "model": "openai",
@@ -113,7 +118,7 @@ class TerminalHandoffGateway(unittest.TestCase):
                                 "api_key": "mock-api-key",
                                 "base_url": f"{self.model.base_url}v1",
                             }
-                        }
+                        },
                     },
                 },
             ),

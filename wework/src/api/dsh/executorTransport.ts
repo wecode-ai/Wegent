@@ -1,4 +1,5 @@
 import { isRuntimeReadCancellation } from '@/features/workbench/runtimeConversationReadCancellation'
+import type { DeviceInfo } from '@/types/api'
 import { createRequestId } from '@/lib/request-id'
 import { reportE2EDiagnostic, reportE2EError } from '@/e2e/error-capture'
 import { recordExecutorActivity, registerExecutorActivity } from '@/e2e/executor-activity'
@@ -29,6 +30,7 @@ export interface DshExecutorDescription {
   device_route_id?: string
   version?: string
   capabilities: string[]
+  runtime_features?: DeviceInfo['runtime_features']
   renderer_methods: string[]
   transports: string[]
 }

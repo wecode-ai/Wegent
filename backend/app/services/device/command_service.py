@@ -4,6 +4,7 @@
 
 """Backend RPC service for executing commands on local devices."""
 
+import json
 import logging
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Mapping, Optional
@@ -34,6 +35,7 @@ from app.services.device.remote_control_policy import (
     remote_control_is_enabled,
 )
 from app.services.device_service import device_service
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +180,56 @@ class DeviceCommandUnknownKeyError(DeviceCommandError):
 
 class DeviceCommandConfigurationError(DeviceCommandError):
     """Raised when configured command metadata is invalid."""
+
+
+CONNECTION_OBSERVATION_COMMAND_METHODS = {
+    **{
+        f"connection_observer_{operation}": f"runtime.connections.observers.{operation}"
+        for operation in ("start", "renew", "refresh", "stop")
+    },
+    "connection_observation_refresh": "runtime.connections.observations.refresh",
+    "connection_subscription_cancel": "runtime.connections.subscriptions.cancel",
+}
+
+
+@trace_async(
+    span_name="device.connection_observation.command",
+    tracer_name="backend.device",
+)
+async def _execute_connection_observation_command(
+    *, user_id: int, device_id: str, command_key: str, args: list[str], timeout: int
+) -> dict[str, Any]:
+    """Send sealed observation operations through the owned Runtime RPC route."""
+    from app.services.device.runtime_rpc_service import (
+        RuntimeRpcError,
+        runtime_rpc_service,
+    )
+
+    if command_key in {
+        "connection_observation_refresh",
+        "connection_subscription_cancel",
+    }:
+        if len(args) != 2 or any(not value.strip() for value in args):
+            raise DeviceCommandError("A conversation and subscription are required")
+        payload = {"taskId": args[0], "subscriptionKey": args[1]}
+    else:
+        try:
+            payload = json.loads(args[0]) if len(args) == 1 else None
+        except (ValueError, TypeError) as exc:
+            raise DeviceCommandError("One observation request is required") from exc
+        if not isinstance(payload, dict):
+            raise DeviceCommandError("One observation request is required")
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method=CONNECTION_OBSERVATION_COMMAND_METHODS[command_key],
+            payload=payload,
+            timeout_seconds=timeout,
+        )
+    except RuntimeRpcError as exc:
+        raise DeviceCommandError(f"{exc.code}: {exc}") from exc
+    return {"success": True, "exit_code": 0, "stdout": result, "stderr": ""}
 
 
 def _resolve_cloud_runtime_device_id(device_kind: Any) -> str:
@@ -442,6 +494,17 @@ async def execute_configured_device_command(
     if not device_kind:
         raise DeviceCommandNotFoundError("Device not found or access denied")
     device_type = device_kind_type(device_kind)
+
+    if command_key in CONNECTION_OBSERVATION_COMMAND_METHODS:
+        if not remote_control_is_enabled(device_type):
+            raise DeviceCommandError(REMOTE_CONTROL_DISABLED_MESSAGE)
+        return await _execute_connection_observation_command(
+            user_id=user_id,
+            device_id=device_id,
+            command_key=command_key,
+            args=args or [],
+            timeout=timeout_seconds,
+        )
 
     if command_key in INTERNAL_DEVICE_COMMAND_KEYS and not allow_internal:
         raise DeviceCommandUnknownKeyError(

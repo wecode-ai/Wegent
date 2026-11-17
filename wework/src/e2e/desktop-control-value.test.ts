@@ -3,7 +3,7 @@ import type { DesktopControlCommand } from '@/extensions/desktop-control-contrac
 import { runDesktopControlClient } from './automation'
 
 const selector = '[data-testid="cloud-todo-detail-title"]'
-const title = '在通知内继续处理分身任务'
+const title = '在通知内继续处理助理任务'
 type Result = { id: string; ok: boolean; value?: string; error?: string }
 
 afterEach(() => {

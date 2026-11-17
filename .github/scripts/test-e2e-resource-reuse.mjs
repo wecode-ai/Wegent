@@ -20,10 +20,16 @@ function runFixtureShell(script, directory, { env, ...options }) {
   // Shell startup can rebuild PATH; select test commands after startup completes.
   return spawnSync(
     "bash",
-    ["-e", "-c", 'export PATH="$TEST_COMMAND_BIN:$PATH"\n' + script],
+    [
+      "--noprofile",
+      "--norc",
+      "-e",
+      "-c",
+      'export PATH="$TEST_COMMAND_BIN:$PATH"\n' + script,
+    ],
     {
       ...options,
-      env: { ...env, TEST_COMMAND_BIN: directory },
+      env: { ...env, BASH_ENV: "", TEST_COMMAND_BIN: directory },
     },
   );
 }
@@ -542,7 +548,7 @@ test("platform image reuse checks the registry before starting a builder", () =>
       const image = "ghcr.io/example/platform-e2e:content-hash";
       writeFileSync(
         join(root, "docker"),
-        `#!${process.execPath}\nconst assert = require('node:assert/strict')\nassert.deepEqual(process.argv.slice(2), ['manifest', 'inspect', process.env.IMAGE])\nprocess.exit(${exists ? 0 : 1})\n`,
+        `#!/usr/bin/env node\nconst assert = require('node:assert/strict')\nassert.deepEqual(process.argv.slice(2), ['manifest', 'inspect', process.env.IMAGE])\nprocess.exit(${exists ? 0 : 1})\n`,
       );
       chmodSync(join(root, "docker"), 0o755);
       const probe = runFixtureShell(steps[checkIndex].run, root, {
@@ -745,7 +751,7 @@ for (const [mode, expectedStatus, expectedTests] of [
     try {
       const log = join(root, "calls.jsonl");
       const evidence = join(root, "evidence");
-      const stub = `#!${process.execPath}
+      const stub = `#!/usr/bin/env node
 const fs = require('node:fs')
 const path = require('node:path')
 const command = path.basename(process.argv[1])
@@ -949,7 +955,7 @@ for (const [mode, expectedStatus, expectedTests] of [
     const root = mkdtempSync(join(tmpdir(), "e2e-resource-reuse-"));
     try {
       const log = join(root, "calls.jsonl");
-      const stub = `#!${process.execPath}
+      const stub = `#!/usr/bin/env node
 const fs = require('node:fs')
 const path = require('node:path')
 const command = path.basename(process.argv[1])

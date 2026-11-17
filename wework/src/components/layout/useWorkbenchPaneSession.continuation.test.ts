@@ -354,6 +354,67 @@ describe('pane transcript reload ownership', () => {
     return restoredTranscript
   }
 
+  test('recovers an offline same-address read without discarding the draft', async () => {
+    const device = (status: string) => ({
+      device_id: address.deviceId,
+      device_type: 'remote',
+      name: 'Remote workspace',
+      status,
+    })
+    const contextState = () => mocks.context.state as Record<string, unknown>
+    mocks.context.state = { ...contextState(), devices: [device('offline')] }
+    const load = vi
+      .fn<RuntimeTranscriptLoader>()
+      .mockRejectedValue(
+        Object.assign(new Error('Device internal-id is offline'), { code: 'device_offline' })
+      )
+    mocks.context.loadRuntimeTranscriptForPane = load
+    const { result, rerender } = await renderSession()
+    expect(result.current.transcriptError).toContain('Remote workspace')
+    expect(result.current.transcriptError).not.toContain('internal-id')
+    load.mockImplementation(readRestoredTranscript)
+    const previousReads = load.mock.calls.length
+    act(() => {
+      mocks.context.state = { ...contextState(), devices: [device('online')] }
+      rerender({ currentRuntimeTask: { ...address } })
+    })
+    await waitFor(() => expect(load.mock.calls.length).toBeGreaterThan(previousReads))
+    await waitFor(() => expect(result.current.transcriptError).toBeNull())
+    expect(result.current.messages[0]?.content).toBe('Original archived prompt')
+    expectDraftPreserved(result.current)
+  })
+
+  test('a failed pre-reconnect request cannot replace the recovered history', async () => {
+    const offline = { device_id: address.deviceId, device_type: 'remote', status: 'offline' }
+    const contextState = () => mocks.context.state as Record<string, unknown>
+    mocks.context.state = { ...contextState(), devices: [offline] }
+    const load = vi.fn<RuntimeTranscriptLoader>().mockRejectedValue(new Error('device_offline'))
+    mocks.context.loadRuntimeTranscriptForPane = load
+    const { result, rerender } = await renderSession()
+    let rejectOld!: (error: Error) => void
+    load.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectOld = reject
+        })
+    )
+    act(() => result.current.reloadRuntimeTranscript())
+    await waitFor(() => expect(rejectOld).toBeTypeOf('function'))
+    const oldSignal = load.mock.calls.at(-1)?.[1]?.signal
+    load.mockImplementation(readRestoredTranscript)
+    act(() => {
+      mocks.context.state = { ...contextState(), devices: [{ ...offline, status: 'online' }] }
+      rerender({ currentRuntimeTask: { ...address } })
+    })
+    await waitFor(() =>
+      expect(result.current.messages[0]?.content).toBe('Original archived prompt')
+    )
+    expect(oldSignal?.aborted).toBe(true)
+    await act(async () => rejectOld(new Error('late device timeout')))
+    expect(result.current.transcriptError).toBeNull()
+    expectDraftPreserved(result.current)
+  })
+
   test.each(['failed', 'loaded'] as const)(
     'invalidates an archived owner %s read and reads its restored same-address history',
     async previousRead => {
