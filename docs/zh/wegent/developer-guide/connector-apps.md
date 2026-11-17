@@ -83,7 +83,7 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 - App 可声明为 MCP 上游或 HTTP API 上游；主要配置位于 `Kind.json.spec`。
 - 管理员固定请求头加密后存储在 `Kind.json.spec.providerHeadersEncrypted`。
 - Connector App、用户连接和 OAuth 临时会话复用 `kinds` 表，分别使用 `ConnectorApp`、`ConnectorConnection` 和缓存中的短时会话，不引入新的物理表。
-- 动态注册的 OAuth 客户端保存在 `Kind.json.spec.oauthClientEncrypted`。管理员在应用卡片上删除应用是物理删除：`ConnectorApp` 记录、该应用缓存的 OAuth 客户端以及所有用户的 `ConnectorConnection` 会一并移除，因此删除需要两次确认，且不可恢复。内置应用（钉钉文档、钉钉表格、钉钉 AI 表格、钉钉知识库）会在下一次后端启动时由种子逻辑自动补回；管理员手动创建的应用不会被补回。重新添加应用后，下一次授权会重新注册客户端。
+- 动态注册的 OAuth 客户端保存在 `Kind.json.spec.oauthClientEncrypted`。管理员在应用卡片上删除应用是物理删除：`ConnectorApp` 记录、该应用缓存的 OAuth 客户端以及所有用户的 `ConnectorConnection` 会一并移除，因此删除需要两次确认，且不可恢复。内置应用只在首次成功 bootstrap 时补齐；bootstrap 完成后删除内置应用不会在下一次启动时自动补回。重新添加应用后，下一次授权会重新注册客户端。
 - 最近一次成功发现的工具摘要按用户缓存在 `ConnectorConnection` 的 `toolSummaries` 中；多实例部署共享同一数据库，因此不存在实例本地缓存不一致。动态客户端注册使用共享分布式锁，避免多个实例并发重复注册。
 - 完整重新授权清空旧账号工具摘要；普通 token 刷新保留摘要。发现结果和错误按实际请求使用的凭据条件写入，旧账号的延迟响应不能覆盖新账号状态。
 - OAuth 回调只允许处理一次，成功会话的轮询保持幂等。落库前重新确认应用身份、可见权限及资源地址；授权期间删除、同名重建、停用或改址的应用不能接收旧会话的授权。
@@ -118,7 +118,7 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 | `dingtalk_aitable` | 钉钉 AI 表格 | `https://mcp-gw.dingtalk.com/oauth/server/aitable` |
 | `dingtalk_wiki`    | 钉钉知识库   | `https://mcp-gw.dingtalk.com/oauth/server/wiki`    |
 
-`CONNECTOR_BUILTIN_APPS_ENABLED` 默认开启。Rust 和 Python 初始化共用 `shared/data/builtin-connector-apps.json` 清单，不依赖开发环境 YAML 初始化，并由拥有数据库初始化的一方补齐缺失应用。补齐是幂等的：缺失的系统应用会被创建，后续管理员的停用、加载方式和关键词设置会保留；已有相同地址的系统应用不会重复创建。删除内置应用后，下一次启动会重新建出它；如需长期移除，请设置 `CONNECTOR_BUILTIN_APPS_ENABLED=False`。
+`CONNECTOR_BUILTIN_APPS_ENABLED` 默认开启。Rust 和 Python 初始化共用 `shared/data/builtin-connector-apps.json` 清单，不依赖开发环境 YAML 初始化，并由拥有数据库初始化的一方执行首次 bootstrap。首次 bootstrap 会在一个事务内创建缺失的系统应用并写入 `builtin_connector_apps_initialized` 完成标记；成功后初始化不再读取目录，后续管理员的停用、加载方式和关键词设置会保留，已有相同地址的系统应用也不会重复创建。删除内置应用后不会在下一次启动时自动重建；如需恢复，需要管理员显式重建，或删除完成标记后重新执行 bootstrap。`CONNECTOR_BUILTIN_APPS_ENABLED=False` 只用于跳过后续初始化，不会恢复已删除应用。
 
 这四个服务不再使用 provider 配置弹窗，也不再注入"打开配置弹窗"的引导。内置 App 默认使用 `toolLoadingMode: lazy`，并带有钉钉服务关键词；消息命中关键词时提前 preload 对应 `wegent-connector-<slug>` Skill，否则由模型按需 `load_skill`。未授权时仍由对话内的 Connector 授权链接引导。OAuth 授权、工具发现和白名单校验保持原有 Connector 流程不变。Wegent Web 的"设置 → 集成"不再展示钉钉 provider 卡片，改用"应用连接"卡片。
 
