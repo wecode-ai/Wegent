@@ -22,7 +22,9 @@ vi.mock('@/api/cloud/connectorApps', () => ({
     error instanceof Error ? error.message : String(error),
   notifyConnectorAuthorizationChanged: api.changed,
 }))
-vi.mock('@/lib/cloud-authorization-window', () => ({ openCloudAuthorizationWindow: api.open }))
+vi.mock('@/lib/connector-authorization-window', () => ({
+  openConnectorAuthorizationWindow: api.open,
+}))
 
 const connection = (status: WegentConnectorConnection['status']): WegentConnectorConnection => ({
   status,
