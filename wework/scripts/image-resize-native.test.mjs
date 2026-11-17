@@ -79,10 +79,11 @@ window.runImageResizeContract = async () => {
       `const {app,BrowserWindow}=require('electron')
 app.setPath('userData',${JSON.stringify(join(directory, 'profile'))})
 app.whenReady().then(async()=>{
-  const window=new BrowserWindow({show:false,webPreferences:{backgroundThrottling:false}})
+  const window=new BrowserWindow({show:true,focusable:false,webPreferences:{backgroundThrottling:false}})
   window.webContents.on('console-message', event => console.log('[image-resize-contract]', event.message))
   window.webContents.on('render-process-gone', (_event, details) => console.error('[image-resize-contract] renderer exited', JSON.stringify(details)))
   await window.loadURL('data:text/html,<body>')
+  if (!window.isVisible()) throw new Error('Image layout verification requires a visible native window')
   await window.webContents.executeJavaScript(${JSON.stringify(await readFile(bundle, 'utf8'))})
   const result=await window.webContents.executeJavaScript('window.runImageResizeContract()')
   require('fs').writeFileSync(${JSON.stringify(output)},JSON.stringify(result))
