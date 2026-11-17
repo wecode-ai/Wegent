@@ -814,6 +814,35 @@ describe('TodoEditor external item sync', () => {
     expect(onCreateTask).toHaveBeenCalledOnce()
   })
 
+  it.each([true, false])(
+    'shows existing-task linking only for editable Issues (%s)',
+    async canEdit => {
+      const item = {
+        ...baseItem,
+        project_store: 'backend' as const,
+        can_edit: canEdit,
+        can_view_detail: true,
+      }
+      const onLink = vi.fn().mockResolvedValue(undefined)
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation="workspace-panel"
+          item={item}
+          project={project}
+          allItems={[item]}
+          api={api}
+          currentUserId={1}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          existingTaskSource={{ port: { bindTask: onLink, unbindTask: vi.fn() } }}
+        />
+      )
+      if (canEdit) expect(await screen.findByTestId('issue-link-existing-task')).toBeVisible()
+      else expect(screen.queryByTestId('issue-link-existing-task')).not.toBeInTheDocument()
+    }
+  )
+
   it('shows only the linked-task create button until that section scrolls above the viewport', async () => {
     let anchorBottom = 1000
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (

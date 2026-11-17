@@ -181,7 +181,10 @@ function DocumentAttachmentCard({
           type="button"
           data-testid="attachment-document-preview-button"
           aria-label={filename}
-          onClick={onOpen}
+          onClick={(event) => {
+            event.currentTarget.focus({ preventScroll: true });
+            onOpen();
+          }}
           className="absolute inset-0 cursor-pointer rounded-2xl hover:bg-text-primary/5 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-primary"
         />
       )}

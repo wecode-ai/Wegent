@@ -620,6 +620,24 @@ export async function createDesktopScenario({
       })
       await captureScreenshot(control, 'local-agent-dispatch-06-follow-ups-completed.png', CONTENT)
       for (const mode of ['create', 'edit']) {
+        // Retain the native providers, then hide the interactions Activity.
+        // A tab-owned singleton handler would be cleared on that transition.
+        for (const tab of ['task', 'board']) {
+          const selector = `[data-testid="workspace-tab-select-fixed-${tab}"]`
+          await control.command('clickWhenEnabled', selector)
+          await control.command('waitFor', `${selector}[aria-selected="true"]`)
+        }
+        await control.command('clickWhenEnabled', '[data-testid="workspace-tab-add"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="workspace-tab-add-pending-interactions"]'
+        )
+        await control.command('waitFor', scoped('[data-testid="runtime-interactions-page"]'))
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="workspace-tab-select-fixed-board"]'
+        )
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'))
         await verifyLocalIssueAssigneeRecovery(control, {
           contentSelector: CONTENT,
           ...fixture,

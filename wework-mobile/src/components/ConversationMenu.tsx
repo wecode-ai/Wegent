@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import * as Clipboard from 'expo-clipboard'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { BackHandler, Keyboard, View } from 'react-native'
 import { Button, Dialog, Portal, Text, TextInput, useTheme } from 'react-native-paper'
 import type { RuntimeTaskAddress } from '@/types/runtime'
@@ -24,6 +24,14 @@ interface Props extends ConversationMenuActions {
   address: RuntimeTaskAddress | null
   title: string
   compact?: boolean
+  listItem?: boolean
+  testID?: string
+  renderRow?: (input: {
+    disabled: boolean
+    onLongPress?: () => void
+    onArchive: () => void
+  }) => ReactElement
+  onAction?: () => void
 }
 
 export function ConversationMenu(props: Props) {
@@ -33,7 +41,7 @@ export function ConversationMenu(props: Props) {
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(props.title)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   useEffect(() => {
     if (!renaming && !error) return
     const listener = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -55,7 +63,7 @@ export function ConversationMenu(props: Props) {
       await action()
       afterSuccess?.()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(cause)
     } finally {
       pending.current = false
       setBusy(false)
@@ -113,9 +121,13 @@ export function ConversationMenu(props: Props) {
       section: 'settings',
     },
   ]
+  const visibleActions = props.listItem
+    ? actions.filter(action => action.section === 'conversation')
+    : actions
   const select = (id: string) => {
     const action = actions.find(item => item.id === id)
     if (!action || action.disabled || pending.current || renaming || error) return
+    props.onAction?.()
     Keyboard.dismiss()
     // Native menus dismiss themselves when an item is selected. Dialogs and
     // navigation do not depend on an iOS open/close callback or animation timer.
@@ -155,19 +167,27 @@ export function ConversationMenu(props: Props) {
   return (
     <>
       <ConversationMenuNative
-        actions={actions}
+        actions={visibleActions}
         colorScheme={theme.dark ? 'dark' : 'light'}
         disabled={busy || renaming || Boolean(error)}
         onSelect={select}
+        testID={props.testID}
+        triggerTestID={props.testID ? `${props.testID}-trigger` : undefined}
         title={props.title}
-        width={width}
+        trigger={props.renderRow ? 'longPress' : 'press'}
+        width={props.renderRow ? undefined : width}
       >
-        <View
-          accessible={false}
-          style={{ width, height: 44, alignItems: 'center', justifyContent: 'center' }}
-        >
-          <Ionicons color={theme.colors.onSurface} name="ellipsis-horizontal" size={25} />
-        </View>
+        {props.renderRow ? (
+          trigger =>
+            props.renderRow!({ ...trigger, onArchive: () => select('conversation-archive') })
+        ) : (
+          <View
+            accessible={false}
+            style={{ width, height: 44, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Ionicons color={theme.colors.onSurface} name="ellipsis-horizontal" size={25} />
+          </View>
+        )}
       </ConversationMenuNative>
       <Portal>
         {renaming ? (

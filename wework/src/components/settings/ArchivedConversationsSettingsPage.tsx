@@ -179,7 +179,7 @@ function matchesSearch(item: ArchivedConversationItem, query: string) {
     .includes(normalizedQuery)
 }
 
-function archivedTimestamp(value?: string | null) {
+function archivedTimestamp(value?: string | number | null) {
   if (!value) return 0
   const timestamp = new Date(value).getTime()
   return Number.isNaN(timestamp) ? 0 : timestamp

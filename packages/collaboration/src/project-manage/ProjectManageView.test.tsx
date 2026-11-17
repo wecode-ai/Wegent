@@ -860,3 +860,40 @@ it('isolates a member load failure and retries only the member list', async () =
   expect(api.listMembers).toHaveBeenCalledTimes(2)
   expect(api.listItems).not.toHaveBeenCalled()
 })
+
+it('keeps tag creation and renaming local until IME composition finishes', () => {
+  const createTag = vi.fn()
+  const renameTag = vi.fn()
+  const tree = ProjectTagsSection({
+    host: createHost(),
+    className: '',
+    allTags: ['old'],
+    renamingTag: 'old',
+    renameValue: '新名称',
+    tagComposerOpen: true,
+    newTag: '新标签',
+    tagBusy: false,
+    setTagComposerOpen: vi.fn(),
+    setNewTag: vi.fn(),
+    setRenamingTag: vi.fn(),
+    setRenameValue: vi.fn(),
+    createTag,
+    renameTag,
+    deleteTag: vi.fn(),
+  })
+  const create = findByTestId(tree, 'cloud-project-tag-create-input').props.onKeyDown
+  const rename = findByTestId(tree, 'cloud-project-tag-rename-input-old').props.onKeyDown
+  for (const event of [
+    { key: 'Enter', nativeEvent: { isComposing: true } },
+    { key: 'Enter', nativeEvent: { keyCode: 229 } },
+  ]) {
+    create(event)
+    rename(event)
+  }
+  expect(createTag).not.toHaveBeenCalled()
+  expect(renameTag).not.toHaveBeenCalled()
+  create({ key: 'Enter' })
+  rename({ key: 'Enter' })
+  expect(createTag).toHaveBeenCalledOnce()
+  expect(renameTag).toHaveBeenCalledExactlyOnceWith('old')
+})

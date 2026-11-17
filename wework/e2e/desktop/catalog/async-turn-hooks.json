@@ -1,0 +1,14 @@
+{
+  "order": 157100,
+  "scenario": "./scenarios/async-turn-hooks.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "executor/crates/hooks/**",
+    "executor/examples/hooks/turn-diff-logger/**",
+    "executor/src/runtime_work/handler/hooks.rs",
+    "executor/src/runtime_work/handler/turns.rs",
+    "executor/src/runtime_work/handler/claude_turns.rs",
+    "wework/src/features/hooks/**"
+  ],
+  "ci": { "core": { "order": 103100, "shard": 7, "position": 8100 } }
+}

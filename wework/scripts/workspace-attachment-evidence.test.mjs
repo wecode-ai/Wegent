@@ -382,6 +382,7 @@ describe('cloud attachment task ownership', () => {
       },
       control: {
         command: async command => {
+          if (command === 'snapshot') return JSON.stringify({ testIds: [] })
           if (command === 'getWorkbenchDebugSnapshot')
             return JSON.stringify({ workbench: selection })
           if (command === 'getText') return DEFAULT_MODEL_LABEL

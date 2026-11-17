@@ -14,6 +14,26 @@ use super::{
     local_datetime, local_isoformat, render_task_crd, subtask_column, task_column,
 };
 use crate::internal_callback::py_json::python_dumps;
+use wegent_task_store::task_store_subscription_reads::{
+    assistant_membership_statement, latest_assistant_statement,
+};
+
+pub(super) async fn read_assistants<T: MysqlTransaction>(
+    mysql: &mut T,
+    subtask_table: &str,
+    task_id: i64,
+    is_subscription: bool,
+) -> MysqlResult<Vec<MysqlRow>> {
+    let statement = if is_subscription {
+        latest_assistant_statement(subtask_table)
+    } else {
+        sql::assistant_subtasks(subtask_table)
+    };
+    mysql
+        .fetch_all(statement, (task_id,))
+        .await
+        .and_then(crate::task_store_listing::order_assistant_subtasks)
+}
 
 pub(crate) async fn update_task_status_on<T: MysqlTransaction>(
     tables: sql::Tables,
@@ -67,6 +87,7 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
 ) -> MysqlResult<Option<CollaborationStatus>> {
     let owner_user_id = task_column::<i64>(&task, "user_id").ok_or(MysqlError::RowNotFound)?;
     let task_json: Option<Value> = task_column::<Json<Value>>(&task, "json").map(|json| json.0);
+    let is_subscription = task_column::<i64>(&task, "is_active") == Some(2);
 
     let _owner: Vec<MysqlRow> = mysql
         .fetch_all(
@@ -75,15 +96,22 @@ pub(super) async fn update_locked_task_status<T: MysqlTransaction>(
         )
         .await?;
     let subtasks = crate::task_store_listing::order_assistant_subtasks(
-        mysql
-            .fetch_all(sql::assistant_subtasks(subtask_table), (task_id,))
-            .await?,
+        read_assistants(mysql, subtask_table, task_id, is_subscription).await?,
     )?;
     let Some(last) = subtasks.last() else {
         return Ok(None);
     };
     let last_status = subtask_column::<String>(last, "status").unwrap_or_default();
-    let is_latest = subtask_column::<i64>(last, "id") == Some(changed_subtask_id);
+    let mut is_latest = subtask_column::<i64>(last, "id") == Some(changed_subtask_id);
+    if is_subscription && !is_latest {
+        is_latest = mysql
+            .fetch_optional::<_, _, (i64,)>(
+                assistant_membership_statement(subtask_table),
+                (changed_subtask_id, task_id),
+            )
+            .await?
+            .is_some();
+    }
     if !is_latest && !terminal {
         return Ok(None);
     }

@@ -344,6 +344,7 @@ fn socket_resolution_rejects_offline_missing_and_stale_routes() {
     let identity = crate::device_identity::RuntimeRouteIdentity {
         logical_device_id: "logical".into(),
         runtime_device_id: "transport".into(),
+        app_device_id: None,
         runtime_instance_id: Some("current".into()),
         device_type: crate::device_identity::DeviceType::Cloud,
     };

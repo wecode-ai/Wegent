@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeStream } from '@/services/runtimeStream'
 import type { RuntimeTaskAddress, RuntimeTranscriptResponse } from '@/types/runtime'
 import { useMobileTranscript } from './useMobileTranscript'
+import { setDiagnosticRecording } from '@/services/mobileDiagnostics'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const first = { deviceId: 'device-1', taskId: 'task-1' }
@@ -50,6 +51,7 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
   })
   afterEach(async () => {
     await act(() => renderer.unmount())
+    setDiagnosticRecording(false)
     vi.restoreAllMocks()
   })
 
@@ -65,6 +67,51 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
       await state.reloadTranscript(next)
     })
   }
+
+  it('retries the failed older page by its own address without replacing the latest history', async () => {
+    await load(first)
+    getTranscript.mockRejectedValueOnce(new Error('older page failed'))
+    await act(() => state.loadMoreMessagesBefore())
+    expect(onError).toHaveBeenCalledWith('older page failed', first, 'older', expect.any(Function))
+    const retry = onError.mock.lastCall![3] as () => Promise<void>
+    await open(second)
+    getTranscript.mockResolvedValueOnce(page('older first page'))
+    await act(() => retry())
+    expect(getTranscript).toHaveBeenLastCalledWith(first, { beforeCursor: 'older' })
+    expect(state.messages).toEqual([])
+    await open(first)
+    expect(state.messages.map(message => message.content)).toEqual(['older first page', 'history'])
+  })
+
+  it('diagnoses history boundaries only when enabled, without bodies or addresses', async () => {
+    const output = vi.spyOn(console, 'info').mockImplementation(() => {})
+    await load()
+    expect(output).not.toHaveBeenCalled()
+    setDiagnosticRecording(true)
+    getTranscript.mockResolvedValueOnce(page('private-message-body'))
+    await load()
+    expect(output).toHaveBeenCalledWith(
+      '[MobileTranscript] Read received',
+      expect.objectContaining({
+        receivedMessages: 1,
+        active: true,
+        retained: true,
+      })
+    )
+    expect(output).toHaveBeenCalledWith(
+      '[MobileTranscript] Hydrated',
+      expect.objectContaining({ messages: 1 })
+    )
+    getTranscript.mockRejectedValueOnce(new Error('private-failure-token'))
+    await act(async () => {
+      await expect(state.reloadTranscript(first)).rejects.toThrow('private-failure-token')
+    })
+    expect(output).toHaveBeenCalledWith(
+      '[MobileTranscript] Read failed',
+      expect.objectContaining({ errorType: 'Error' })
+    )
+    expect(JSON.stringify(output.mock.calls)).not.toMatch(/private-|device-1|task-1|\/work/)
+  })
 
   it('binds a new draft before a terminal event starts transcript hydration', async () => {
     await act(() =>
@@ -320,6 +367,59 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
     ])
   })
 
+  it('keeps a user before its streamed reply when a history read resolves during sending', async () => {
+    await open()
+    const pending = deferred<RuntimeTranscriptResponse>()
+    getTranscript.mockReturnValueOnce(pending.promise)
+    let read!: Promise<unknown>
+    await act(() => {
+      read = state.reloadTranscript(first)
+      state.dispatchMessages({
+        type: 'optimistic-user',
+        id: 'client-user',
+        content: 'Question',
+        createdAt: 1,
+      })
+      state.dispatchMessages({
+        type: 'stream',
+        event: {
+          name: 'response.output_text.delta',
+          payload: {
+            subtaskId: 'turn',
+            clientUserMessageId: 'client-user',
+            data: { itemId: 'text', delta: 'Reply', offset: 0 },
+          },
+        },
+      })
+    })
+    await act(async () => {
+      pending.resolve({
+        ...page(''),
+        messages: [
+          {
+            id: 'runtime-view:turn:assistant',
+            role: 'assistant',
+            subtaskId: 'turn',
+            content: 'Reply',
+            status: 'streaming',
+            runtimeItems: [{ id: 'text', type: 'assistant_text', content: 'Reply' }],
+          },
+        ],
+      })
+      await read
+    })
+    expect(state.messages.map(message => [message.role, message.content])).toEqual([
+      ['user', 'Question'],
+      ['assistant', 'Reply'],
+    ])
+    await act(() => state.dispatchMessages({ type: 'user-delivered', id: 'client-user' }))
+    expect(state.messages[0]).toMatchObject({
+      id: 'client-user',
+      subtaskId: 'turn',
+      pendingDelivery: false,
+    })
+  })
+
   it('loads older pages only on demand, coalesces scrolling, and retains the cursor on reopen', async () => {
     await load()
     expect(getTranscript).toHaveBeenCalledOnce()
@@ -358,10 +458,47 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
     })
     expect(state.messages[0]?.content).toBe('history')
     expect(state.loading).toBe(false)
+    expect(state.historyLoaded).toBe(true)
     await act(async () => {
       await state.reloadTranscript(first)
     })
     expect(getTranscript).toHaveBeenCalledTimes(3)
+  })
+
+  it('distinguishes an initial failed read from successful empty history and retries the same task', async () => {
+    await open()
+    expect(state.loading).toBe(true)
+    expect(state.historyLoaded).toBe(false)
+    getTranscript.mockRejectedValueOnce(new Error('timeout'))
+    await act(async () => {
+      await state.reloadTranscript(first).catch(error => state.fail(first, error.message))
+    })
+    expect(state.loading).toBe(false)
+    expect(state.historyLoaded).toBe(false)
+    expect(onError).toHaveBeenCalledWith(
+      'timeout',
+      expect.objectContaining({ taskId: expect.any(String) })
+    )
+    const pending = deferred<RuntimeTranscriptResponse>()
+    getTranscript.mockReturnValueOnce(pending.promise)
+    let read!: Promise<unknown>
+    await act(() => {
+      read = state.reloadTranscript(first)
+    })
+    expect(state.loading).toBe(true)
+    await act(async () => {
+      pending.resolve({ ...page(''), messages: [] })
+      await read
+    })
+    expect(state.historyLoaded).toBe(true)
+    expect(state.messages).toEqual([])
+    expect(state.loading).toBe(false)
+    await open(second)
+    expect(state.historyLoaded).toBe(false)
+    await open(first)
+    expect(state.historyLoaded).toBe(true)
+    await act(() => state.reset())
+    expect(state.historyLoaded).toBe(false)
   })
 
   it('adopts a disjoint latest page and its cursor so cached history cannot hide a gap', async () => {

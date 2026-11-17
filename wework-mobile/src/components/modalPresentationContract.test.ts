@@ -9,15 +9,18 @@ declare global {
   }
 }
 
-const sourceModules = import.meta.glob(['./ConversationScreen.tsx', '../../App.tsx'], {
-  eager: true,
-  import: 'default',
-  query: '?raw',
-}) as Record<string, string>
+const sourceModules = import.meta.glob(
+  ['./ConversationScreen.tsx', './ChoiceSheet.tsx', '../../App.tsx'],
+  {
+    eager: true,
+    import: 'default',
+    query: '?raw',
+  }
+) as Record<string, string>
 
 describe('modal presentation contract', () => {
   it('does not move a transparent modal backdrop with the native slide animation', () => {
-    const conversationSource = sourceModules['./ConversationScreen.tsx']
+    const conversationSource = sourceModules['./ChoiceSheet.tsx']
 
     expect(conversationSource).not.toContain('<Modal animationType="slide"')
     expect(conversationSource).toContain('animationType="none"')

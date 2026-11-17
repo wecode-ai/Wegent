@@ -126,7 +126,7 @@ export function StandInConversation({
   if (error && address === undefined) return failureNotice
   if (address === undefined)
     return (
-      <p role="status" className="p-5 text-sm text-text-muted">
+      <p role="status" className="p-5 text-sm text-text-secondary">
         {t('standIn.loading')}
       </p>
     )
