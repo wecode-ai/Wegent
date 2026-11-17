@@ -12,11 +12,7 @@ import {
 import { flushSync } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
-import {
-  resolveMarkdownFilePath,
-  resolveWorkspaceFilePath,
-  workspaceParentPath,
-} from './workspaceFilePaths'
+import { resolveWorkspaceFilePath, workspaceParentPath } from './workspaceFilePaths'
 import {
   createFilePreviewTraceId,
   filePreviewElapsedMs,
@@ -40,7 +36,12 @@ import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { WorkspaceFileToolbar, WorkspaceFileRootSelector } from './WorkspaceFileToolbar'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 import { useWorkspaceFileReveal } from './useWorkspaceFileReveal'
-import { useWorkspaceFileNavigation } from './useWorkspaceFileNavigation'
+import {
+  createPreviewLineTarget,
+  type PreviewLineTarget,
+  useWorkspaceFileNavigation,
+  useWorkspaceMarkdownFileNavigation,
+} from './useWorkspaceFileNavigation'
 import { useWorkspaceTextDocument } from './useWorkspaceTextDocument'
 import {
   isHtmlFile,
@@ -82,12 +83,6 @@ export interface FileWorkspacePanelHandle {
   navigate: (action: () => void) => void
 }
 
-interface PreviewLineTarget {
-  filePath: string
-  lineStart: number
-  lineEnd?: number
-}
-
 interface WorkspaceBinaryPreview {
   path: string
   name: string
@@ -105,18 +100,6 @@ interface FilePreviewLoadingProgress {
 function decodeBase64(value: string): Uint8Array {
   const decoded = atob(value)
   return Uint8Array.from(decoded, character => character.charCodeAt(0))
-}
-
-function createPreviewLineTarget(
-  filePath: string,
-  options?: WorkspaceFileOpenOptions
-): PreviewLineTarget | null {
-  if (typeof options?.lineStart !== 'number') return null
-  return {
-    filePath,
-    lineStart: options.lineStart,
-    lineEnd: options.lineEnd,
-  }
 }
 
 export function FileWorkspacePanel({
@@ -588,6 +571,13 @@ export function FileWorkspacePanel({
     ]
   )
 
+  const openMarkdownFile = useWorkspaceMarkdownFileNavigation({
+    documentPath: preview?.path,
+    onOpenFile: openFilePath,
+    navigateWithDirtyGuard,
+    onError: () => setPreviewError(t('workbench.workspace_file_preview_failed', '读取文件失败')),
+  })
+
   useEffect(() => {
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
@@ -909,18 +899,7 @@ export function FileWorkspacePanel({
       </WorkspaceFileToolbar>
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <WorkspaceFilePreview
-          onOpenFile={(path, options) => {
-            if (!displayedPreview) return
-            try {
-              const resolvedPath = resolveMarkdownFilePath(displayedPreview.path, path)
-              const open = () => openFilePath(resolvedPath, options)
-              if (options?.lineStart !== undefined || options?.isDirectory)
-                navigateWithDirtyGuard(open)
-              else open()
-            } catch {
-              setPreviewError(t('workbench.workspace_file_preview_failed', '读取文件失败'))
-            }
-          }}
+          onOpenFile={openMarkdownFile}
           file={displayedPreview}
           binaryFile={binaryPreview}
           loading={previewLoading}

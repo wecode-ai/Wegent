@@ -1,3 +1,6 @@
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import type { MarkdownFileOpenOptions } from '@wegent/collaboration/markdown'
+import { resolveMarkdownFilePath } from './workspaceFilePaths'
 import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react'
 
 export function useWorkspaceFileNavigation({
@@ -28,4 +31,49 @@ export function useWorkspaceFileNavigation({
     },
     [pendingNavigationRef, saveFileRef, savingRef]
   )
+}
+
+export function useWorkspaceMarkdownFileNavigation({
+  documentPath,
+  onOpenFile,
+  navigateWithDirtyGuard,
+  onError,
+}: {
+  documentPath?: string
+  onOpenFile: (path: string, options?: MarkdownFileOpenOptions) => void
+  navigateWithDirtyGuard: (action: () => void) => void
+  onError: () => void
+}) {
+  return useCallback(
+    (path: string, options?: MarkdownFileOpenOptions) => {
+      if (!documentPath) return
+      try {
+        const resolvedPath = resolveMarkdownFilePath(documentPath, path)
+        const open = () => onOpenFile(resolvedPath, options)
+        if (options?.lineStart !== undefined || options?.isDirectory) navigateWithDirtyGuard(open)
+        else open()
+      } catch {
+        onError()
+      }
+    },
+    [documentPath, onOpenFile, navigateWithDirtyGuard, onError]
+  )
+}
+
+export interface PreviewLineTarget {
+  filePath: string
+  lineStart: number
+  lineEnd?: number
+}
+
+export function createPreviewLineTarget(
+  filePath: string,
+  options?: WorkspaceFileOpenOptions
+): PreviewLineTarget | null {
+  if (typeof options?.lineStart !== 'number') return null
+  return {
+    filePath,
+    lineStart: options.lineStart,
+    lineEnd: options.lineEnd,
+  }
 }
