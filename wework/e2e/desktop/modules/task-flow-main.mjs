@@ -3981,9 +3981,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await captureVerificationScreenshot(control, 'file-panel-anchor-01-before-open.png')
 
       await control.command('click', filePanelLinkSelector)
-      await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
+      const activeLinkedFileTabSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid^="right-workspace-file-tab-"][role="tab"][aria-selected="true"]`
+      await control.command('waitFor', activeLinkedFileTabSelector, {
+        text: FILE_PANEL_LINK_NAME,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      const linkedFileTabId = await control.command('getAttribute', activeLinkedFileTabSelector, {
+        value: 'data-testid',
+      })
+      assert.ok(linkedFileTabId, 'The linked file did not activate its workspace tab')
+      const linkedFileTabSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid=${JSON.stringify(linkedFileTabId)}]`
+      const linkedFileTabCloseSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid=${JSON.stringify(`${linkedFileTabId}-close-button`)}]`
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
         join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
@@ -4043,10 +4051,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           }
         )}`
       )
-      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+      await control.command('click', linkedFileTabCloseSelector)
       await waitForSnapshot(
         control,
-        snapshot => !snapshot.testIds.includes('right-workspace-file-tab'),
+        snapshot => !snapshot.testIds.includes(linkedFileTabId),
         'The file panel remained open after the anchor regression check',
         DEFAULT_STEP_TIMEOUT_MS,
         ACTIVE_WORKBENCH_SELECTOR
@@ -4075,7 +4083,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         `Closing the file panel moved the linked paragraph from ${filePanelAnchorBeforeOpen.top}px to ${filePanelAnchorAfterClose.top}px`
       )
       await control.command('click', filePanelLinkSelector)
-      await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
+      await control.command('waitFor', linkedFileTabSelector, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('finishAnimations', 'body')
@@ -4120,7 +4128,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await waitForSnapshot(
         control,
         snapshot =>
-          snapshot.testIds.includes('right-workspace-file-tab') &&
+          snapshot.testIds.includes(linkedFileTabId) &&
           !snapshot.testIds.includes('assistant-markdown-link-tooltip'),
         'The assistant file-link tooltip did not dismiss above the open file panel',
         DEFAULT_STEP_TIMEOUT_MS
@@ -4334,7 +4342,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'true',
         'The review tab was not active after switching back to the first task'
       )
-      await control.command('click', '[data-testid="right-workspace-file-tab"]')
+      await control.command('click', linkedFileTabSelector)
       await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
         target: activeTaskWorkbenchSelector,
         text: FILE_PREVIEW_RESTORE_MARKER,
@@ -4363,7 +4371,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The browser tab was not restored after switching conversations'
       )
       assert.ok(
-        restoredWorkspaceSnapshot.testIds.includes('right-workspace-file-tab'),
+        restoredWorkspaceSnapshot.testIds.includes(linkedFileTabId),
         'The file tab was not restored after switching conversations'
       )
       assert.ok(
@@ -4478,7 +4486,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await control.command('click', bottomWorkspaceTabCloseSelector)
       await control.command('hover', rightBrowserTabSelector)
       await control.command('click', rightBrowserTabCloseSelector)
-      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+      await control.command('click', linkedFileTabCloseSelector)
       await control.command('click', '[data-testid="right-workspace-review-tab-close-button"]')
 
       await control.command('fill', composerSelector, { value: '' })
