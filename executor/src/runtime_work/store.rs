@@ -695,7 +695,7 @@ impl RuntimeWorkStore {
         if should_persist {
             self.persist_current_index();
         }
-        self.observe_stand_in(observation);
+        self.flush_stand_in();
         Some(updated)
     }
 

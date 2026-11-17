@@ -503,9 +503,12 @@ impl LocalTaskStore {
 
     /// Normalize settings for this Executor without making a read acquire a write lock.
     pub fn personal_stand_in(&self, user: i64, device: &str) -> Result<Value, TaskRuntimeError> {
-        let connection = self.connection()?;
-        let mut personal = read_personal(&connection, user, device)?;
+        let mut connection = self.connection()?;
+        // Legacy and current rows must be read from one WAL snapshot without reserving a writer.
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let mut personal = read_personal(&transaction, user, device)?;
         bind_personal_device(&mut personal, device);
+        transaction.commit()?;
         Ok(personal)
     }
 

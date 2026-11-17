@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { requestExecutor } from './executor-rpc.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 
 /** Reload the real workbench while SQLite's writer slot is held by another connection. */
 export async function verifyStartupDatabaseLock({ control, executorHome, timeoutMs }) {
@@ -31,8 +32,12 @@ export async function verifyStartupDatabaseLock({ control, executorHome, timeout
     assert.equal(tasks.success, true)
     await control.command('waitFor', '[data-testid="model-selector-button"]', { timeoutMs })
     await control.command('waitFor', 'body', { text: project.name, timeoutMs })
-    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    assert.ok(snapshot, 'The workbench must remain inspectable while a writer is active')
+    await waitForValue(
+      async () => JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')),
+      snapshot => snapshot.workbench?.isBootstrapping === false,
+      'Startup data did not finish loading while the SQLite writer remained active',
+      timeoutMs
+    )
     // None of the startup reads may end the other connection's transaction.
     assert.equal(database.isTransaction, true)
   } finally {
