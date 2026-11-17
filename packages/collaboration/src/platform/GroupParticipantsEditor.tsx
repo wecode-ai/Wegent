@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from "react";
+import { isImeComposingEvent } from "@wegent/chat-core/ime";
 import * as Popover from "@radix-ui/react-popover";
 import { Bot, UserRound, Plus, Check, Copy, X } from "lucide-react";
 import type { CollaborationGroup } from "../types";
@@ -101,14 +102,12 @@ function ParticipantPicker({
       .toLocaleLowerCase()
       .includes(query.trim().toLocaleLowerCase()),
   );
+  const changeOpen = (next: boolean) => {
+    setOpen(next);
+    setQuery("");
+  };
   return (
-    <Popover.Root
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        setQuery("");
-      }}
-    >
+    <Popover.Root open={open} onOpenChange={changeOpen}>
       <Popover.Trigger asChild>
         <button
           type="button"
@@ -127,6 +126,11 @@ function ParticipantPicker({
         avoidCollisions={false}
         collisionPadding={12}
         aria-label={messages.add}
+        onEscapeKeyDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!isImeComposingEvent(event)) changeOpen(false);
+        }}
         onKeyDown={(event) => {
           if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
           const items = Array.from(

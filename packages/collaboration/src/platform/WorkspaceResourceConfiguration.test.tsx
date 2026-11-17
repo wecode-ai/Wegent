@@ -500,6 +500,19 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     );
     await act(async () => {
       document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          isComposing: true,
+          keyCode: 229,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(byTestId("collaboration-group-members-search")).not.toBeNull();
+    expect(byTestId("collaboration-group-form")).not.toBeNull();
+    await act(async () => {
+      document.activeElement!.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
       );
     });
