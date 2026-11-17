@@ -667,6 +667,12 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
         timeoutMs: uiTimeoutMs,
       })
+      await until(
+        () => modelRequests.some(body => JSON.stringify(body).includes(LAZY_PROMPT)),
+        Boolean,
+        'The lazy connector turn never reached the model after execution preparation',
+        workbenchReadyTimeoutMs
+      )
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: LAZY_COMPLETION,
         timeoutMs: uiTimeoutMs,
