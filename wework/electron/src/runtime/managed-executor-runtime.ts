@@ -1,3 +1,4 @@
+import { recordE2ERuntimeEvent } from '../host/e2e-runtime-events.js'
 import { randomBytes, randomUUID } from 'node:crypto'
 import {
   copyFileSync,
@@ -442,6 +443,7 @@ function connectExecutorSocket(
             !Array.isArray(message.payload)
               ? (message.payload as Record<string, unknown>)
               : {}
+          recordE2ERuntimeEvent(message.event, payload)
           onEvent(message.event, payload)
         } catch (error) {
           socket.destroy(error instanceof Error ? error : new Error(String(error)))

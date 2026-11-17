@@ -172,7 +172,8 @@ try {
       await delay(50)
     }
   }
-  await handleEvent(event, config)
+  const result = await handleEvent(event, config)
+  process.stdout.write(JSON.stringify(result) + '\\n')
   if (event.hook_event_name === 'TurnStarted') await mark('baseline')
   if (event.hook_event_name === 'ExecutionCompleted') await mark('execution-ended')
 } finally { await mark('finished') }
