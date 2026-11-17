@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createStoppedGoal } from './goal-stopped-state.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { ensureTaskRowVisible } from '../modules/memory-tool-flows.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -24,7 +25,7 @@ const MARKER = 'WEWORK_GOAL_RESUME_ROUTE'
 const RECOVERED = `${MARKER}_RECOVERED`
 
 export function createDesktopScenario(options) {
-  const existing = createStoppedGoal(options)
+  const existing = options.checkpoint === 'goal-resume-route' ? null : createStoppedGoal(options)
   let active = false
   let requests = 0
   let restartDesktopApp
@@ -32,10 +33,10 @@ export function createDesktopScenario(options) {
     ...existing,
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
-      existing.setRestartDesktopApp?.(restart)
+      existing?.setRestartDesktopApp?.(restart)
     },
     async handleHttp(request, response, url) {
-      if (!active) return existing.handleHttp(request, response, url)
+      if (!active) return existing?.handleHttp(request, response, url) ?? false
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
@@ -69,12 +70,12 @@ export function createDesktopScenario(options) {
       return true
     },
     async verify(control) {
-      await existing.verify(control)
+      await existing?.verify(control)
       active = true
       let address
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
       try {
-        await control.command('click', '[data-testid="new-chat-button"]')
+        await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]')
         const workspace = join(options.workspacePath, 'goal-resume-route')
         await mkdir(workspace, { recursive: true })
         await createSingleRootLocalProject(control, workspace, 'goal-resume-route')
@@ -102,12 +103,16 @@ export function createDesktopScenario(options) {
         // available while its in-memory model route no longer exists.
         assert.ok(restartDesktopApp, 'The fixture requires the shared desktop restart')
         await restartDesktopApp()
-        await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)
+        await ensureTaskRowVisible(control, `runtime-local-task-row-${address.taskId}`)
+        await control.command(
+          'clickWhenEnabled',
+          `[data-testid="runtime-local-task-row-${address.taskId}"]`
+        )
         const transcript = await rpc('runtime.tasks.transcript', { address, refresh: true })
         assert.ok(transcript.messages.length, 'Reopening must restore the original conversation')
         assert.equal(requests, 1, 'Loading blocked history must not invoke the model')
         await control.command(
-          'click',
+          'clickWhenEnabled',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="resume-goal-button"]`
         )
         await control.command(
@@ -118,11 +123,13 @@ export function createDesktopScenario(options) {
         const settled = await waitForWorkbenchDebugState(
           control,
           snapshot =>
-            snapshot.pane?.goal?.status === 'complete' && snapshot.pane?.status?.isBusy === false,
+            snapshot.workbench?.activeLifecycle?.goalStatus === 'complete' &&
+            snapshot.pane?.status?.isBusy === false,
           'Resuming the stopped Goal did not complete'
         )
         assert.equal(settled.workbench.currentRuntimeTask.taskId, address.taskId)
         const after = (await rpc('runtime.tasks.goal.get', { address })).goal
+        assert.equal(after.status, 'complete')
         for (const key of ['threadId', 'objective', 'createdAt', 'tokenBudget'])
           assert.equal(after[key], before[key], `Resume replaced Goal ${key}`)
         assert.ok(after.tokensUsed >= before.tokensUsed)
@@ -134,7 +141,7 @@ export function createDesktopScenario(options) {
     },
     diagnostics() {
       return {
-        ...existing.diagnostics?.(),
+        ...existing?.diagnostics?.(),
         resumeRouteRequests: requests,
         resumeRouteActive: active,
       }

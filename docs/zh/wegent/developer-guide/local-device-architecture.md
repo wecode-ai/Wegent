@@ -232,6 +232,8 @@ Wework 发起压缩前先解析目标会话保存的模型选择，并用当前�
 
 恢复已停止的 Goal 属于会消耗模型的操作：executor 必须在 `thread/goal/set` 激活目标前，使用任务当前模型配置注册并绑定线程路由。历史刷新只恢复原生线程，不能代替模型路由准备；executor 重启或空闲路由回收后尤其如此。路由引用由现有线程事件路由持有，持续到 Goal 暂停、阻塞、完成或清除，不能在激活 RPC 返回时释放；已有运行中的对话继续使用其当前路由和模型选择。桌面 `goal-state-sync` 检查点覆盖失败目标在隔离应用重启、历史刷新后的 UI 恢复，核对真实模型调用、`update_goal` 工具完成、会话身份与目标计数保留。
 
+可用 `pnpm --filter wework e2e:desktop -- --parallel-segments goal-resume-route` 单独运行此回归，复用 CI 的共享 runtime 准备流程；CI 仍在既有 `goal-state-sync` 检查点内执行它，不增加应用启动或 job。
+
 压缩事件路由保留 `${taskId}-context-compact` 这一合成 subtask 身份，避免真实 Codex turn ID 把前端乐观处理块拆成另一条消息。executor 同时兼容 `item/completed` 和 `context/compaction` 两种通知形式：相同压缩项按 item ID 去重，不同压缩项必须分别发出。Wework 会按 subtask 对账乐观块和运行时块，避免同一次压缩显示两条指示器。桌面 E2E 通过受控的 mock 模型端点接收并阻塞 Wework 发出的压缩请求，验证确认、运行中、完成和后续消息四个阶段，并确认后续模型请求实际包含 mock 返回的压缩摘要，而不是只验证界面标记；同一 checkpoint 还会让 mock 端点拒绝一次压缩请求，断言失败在 App-IPC 截止之前自行暴露且不是超时文案。Codex transcript 持久化完成边界由 executor 回归测试覆盖，空闲线程的模型路由绑定由 executor 单测覆盖。
 
 Codex 同一回合可以交错产生推理、助手文本和工具调用。executor 必须按 provider item ID 跟踪每一段助手文本的流式偏移和完成快照：同一 item 的 `delta` 与 `completed` 是同一内容的增量和快照，应去重；不同 item 的完成文本即使位于同一回合，也必须作为后续文本继续发送，不能因为前一个 item 已产生 delta 而丢弃。Wework 在把当前助手文本移动到工具或处理块之前会清空该文本流的偏移状态，使工具后的下一段助手文本从 offset 0 开始，并保持 transcript 的事件顺序。
