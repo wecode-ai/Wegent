@@ -3,7 +3,7 @@ import { until } from './plugin-regression-fixture.mjs'
 import { verifyComposerLayout } from './issue-comment-workflow.mjs'
 import { setGoalDraftForTabTransfer } from './goal-draft-flows.mjs'
 import { waitForElementInsideScroller } from './conversation-layout.mjs'
-import { confirmProjectDraftDiscard } from './project-create-dialog-regression.mjs'
+import { confirmProjectDraftDiscard } from './project-create-dialog-navigation.mjs'
 
 async function resizeHome(control, home, width, height, timeoutMs) {
   await control.command('setMainWindowSize', 'body', {

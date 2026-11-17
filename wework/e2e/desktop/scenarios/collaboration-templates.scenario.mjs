@@ -3,6 +3,10 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  confirmProjectDraftDiscard,
+  waitForProjectCreateClosed,
+} from '../modules/project-create-dialog-navigation.mjs'
+import {
   expandCollaborationSpaces,
   reloadMainWindow,
   selectCollaborationProjectView,
@@ -339,6 +343,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           '[data-testid="collaboration-project-create-dialog"] .collaboration-project-create-footer button[type="button"]'
         )
       )
+      await confirmProjectDraftDiscard(control)
+      await waitForProjectCreateClosed(control, CONTENT, uiTimeoutMs)
       await wait(
         control,
         `template-card-${accountTemplate.document.metadata.name}`,
@@ -389,10 +395,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         timeoutMs: uiTimeoutMs,
       })
       // Creation configures template resources before onCreated closes the form.
-      await control.command('waitFor', testId('collaboration-project-create-confirm'), {
-        visible: false,
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
+      await waitForProjectCreateClosed(control, CONTENT, workbenchReadyTimeoutMs)
       await wait(control, 'cloud-project-header-title', projectName)
       await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
       await click(control, 'collaboration-project-settings-sharing')
