@@ -6,6 +6,11 @@ import { inspectBeforeStart } from './inspect-before-start.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 import { captureStartupNativeStack } from './startup-native-stack.mjs'
 import { spawnStartupGdbProbe, verifyStartupGdbContract } from './startup-gdb-probe.mjs'
+import {
+  assertStartupGpuEvidence,
+  createStartupGpuLaunch,
+  waitForStartupGpuExit,
+} from './startup-gpu-evidence.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 
 export async function seedInstalledRelease({ data, appBinary, version, id = 'installed-fixture' }) {
@@ -78,13 +83,15 @@ async function verifyStartupFault({
   const original = fault === 'invalid-release' ? '{broken-release' : validDescriptor
   await writeFile(descriptorPath, original)
   const evidencePath = join(resultDir, `startup-fault-${name}.json`)
+  const gpuLaunch = createStartupGpuLaunch(join(root, 'gpu-process.jsonl'))
   const startedAt = Date.now()
   const launchArguments = resolveElectronLaunchArguments({
-    extraArguments: ['--inspect-brk=127.0.0.1:0'],
+    extraArguments: ['--inspect-brk=127.0.0.1:0', ...(gpuLaunch ? [gpuLaunch.argument] : [])],
   })
   const launchOptions = {
     env: {
       ...environment,
+      ...gpuLaunch?.env,
       WEWORK_USER_DATA_DIR: data,
       WEWORK_RELEASE_ROOT: releases,
       WEWORK_RELEASE_SUPERVISED: descriptor.id,
@@ -128,7 +135,8 @@ async function verifyStartupFault({
   let primaryError
   try {
     console.info('[recovery-probe] case-start', JSON.stringify(identity))
-    await inspectBeforeStart(child, recoveryWindowAssertion(evidencePath))
+    await inspectBeforeStart(child, recoveryWindowAssertion(evidencePath, Boolean(gpuLaunch)))
+    const exitDeadline = Date.now() + 15_000
     const exit = await Promise.race([
       ended,
       new Promise((_, reject) => {
@@ -145,6 +153,7 @@ async function verifyStartupFault({
       }),
     ])
     assert.deepEqual(exit, { code: 0, signal: null }, output)
+    const gpuProof = gpuLaunch ? await waitForStartupGpuExit(gpuLaunch, exitDeadline) : null
     if (debuggerProbe) await debuggerProbe.assertNormalExit(exit)
     const result = JSON.parse(await readFile(evidencePath, 'utf8'))
     console.info(
@@ -157,6 +166,13 @@ async function verifyStartupFault({
     assert.equal(result.reopened, true)
     assert.equal(result.state.ready, false, 'Recovery must not certify a healthy release')
     assert.ok(result.state.error)
+    if (gpuLaunch) {
+      assertStartupGpuEvidence(result, gpuProof, output)
+      console.info(
+        '[recovery-probe] gpu-exit',
+        JSON.stringify({ fault, iteration, ...gpuProof, metrics: result.gpu })
+      )
+    }
     assert.equal(await readFile(credentials, 'utf8'), saved)
     assert.equal(await readFile(descriptorPath, 'utf8'), original)
     console.info(
@@ -182,7 +198,7 @@ async function verifyStartupFault({
   }
 }
 
-function recoveryWindowAssertion(evidencePath) {
+function recoveryWindowAssertion(evidencePath, requireGpuEvidence) {
   return `(() => {
     const require = process.getBuiltinModule('module').createRequire(process.execPath)
     const { app, BrowserWindow } = require('electron')
@@ -194,8 +210,18 @@ function recoveryWindowAssertion(evidencePath) {
       console.info('[startup-gdb-inferior]', JSON.stringify({pid:process.pid,ppid:process.ppid,pgid}))
     }
     const record = (event, details = {}) => console.info('[recovery-probe]', JSON.stringify({event,...details,at:Date.now()}))
+    const gpu = ${JSON.stringify(requireGpuEvidence)} ? {
+      required:true,nativeHostPid:process.pid,initial:null,reopened:null,childProcessGone:[],quitObserved:false
+    } : null
+    let result = null
+    const persistResult = () => {
+      if (result) fs.writeFileSync(output, JSON.stringify({...result,...(gpu ? {gpu} : {})}))
+    }
     for (const event of ['before-quit','will-quit','quit','window-all-closed']) {
-      app.on(event, () => record(event, {windows:BrowserWindow.getAllWindows().length}))
+      app.on(event, () => {
+        record(event, {windows:BrowserWindow.getAllWindows().length})
+        if (event === 'quit' && gpu) { gpu.quitObserved = true; persistResult() }
+      })
     }
     app.on('browser-window-created', (_event, window) => {
       const id = window.id
@@ -203,7 +229,13 @@ function recoveryWindowAssertion(evidencePath) {
       window.once('closed', () => record('window-closed', {id}))
       window.webContents.on('render-process-gone', (_event, details) => record('render-process-gone', details))
     })
-    app.on('child-process-gone', (_event, details) => record('child-process-gone', details))
+    app.on('child-process-gone', (_event, details) => {
+      record('child-process-gone', details)
+      if (gpu && details.type === 'GPU') {
+        gpu.childProcessGone.push({...details,at:Date.now()})
+        persistResult()
+      }
+    })
     const deadline = Date.now() + 10_000
     let pathsRecorded = false
     let profilePaths
@@ -214,6 +246,9 @@ function recoveryWindowAssertion(evidencePath) {
       if (checking) return
       checking = true
       try {
+        if (gpu && gpu.childProcessGone.some(event => event.reason !== 'clean-exit' || event.exitCode !== 0)) {
+          throw new Error('A GPU child exited abnormally during recovery')
+        }
         const window = BrowserWindow.getAllWindows().find(window =>
           window.webContents.getURL().includes('recovery=1'))
         if (!window || window.webContents.isLoading()) {
@@ -242,6 +277,25 @@ function recoveryWindowAssertion(evidencePath) {
           if (Date.now() > deadline) throw new Error('Recovery was not operable')
           return
         }
+        if (gpu) {
+          const metrics = app.getAppMetrics().filter(metric => metric.type === 'GPU')
+          if (!metrics.length) {
+            if (Date.now() > deadline) throw new Error('No external GPU process became available')
+            return
+          }
+          if (metrics.length !== 1) throw new Error('Expected exactly one external GPU process')
+          const {pid,type,creationTime} = metrics[0]
+          if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid || !Number.isFinite(creationTime) || creationTime <= 0) {
+            throw new Error('The external GPU process has no usable identity')
+          }
+          const metric = {pid,type,creationTime}
+          if (!reopenRequested) gpu.initial = metric
+          else {
+            gpu.reopened = metric
+            if (pid !== gpu.initial.pid || creationTime !== gpu.initial.creationTime) throw new Error('The GPU process restarted while recovery reopened')
+          }
+          record('gpu-process', {stage:reopenRequested ? 'reopened' : 'initial',...metric})
+        }
         if (!reopenRequested) {
           const { join } = require('node:path')
           const recovery = require(join(app.getAppPath(), 'dist', 'host', 'startup-recovery-window.js'))
@@ -253,12 +307,14 @@ function recoveryWindowAssertion(evidencePath) {
           return
         }
         clearInterval(timer)
-        fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,reopened:true,state,profilePaths}))
+        result = {visible:window.isVisible(),retryEnabled,reopened:true,state,profilePaths}
+        persistResult()
         record('quit-requested', {windows:BrowserWindow.getAllWindows().length})
         app.quit()
       } catch (error) {
         clearInterval(timer)
-        fs.writeFileSync(output, JSON.stringify({error:error.stack}))
+        result = {error:error.stack,profilePaths}
+        persistResult()
         app.exit(1)
       } finally { checking = false }
     }, 50)
