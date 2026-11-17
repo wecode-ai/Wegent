@@ -379,15 +379,20 @@ function assertDefaultIssueContextAbsent(request) {
   )
 }
 
-function assertDefaultIssueContextInjected(request) {
+function assertDefaultIssueReferenceIncluded(request) {
   const serializedRequest = JSON.stringify(request.body)
   assert.ok(
-    serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
-    'The follow-up request did not include the enriched default Issue title'
+    !serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
+    'The follow-up request eagerly included the default Issue title'
   )
   assert.match(
     serializedRequest,
-    /cloud:\/\/projects\/default-work-items\/todos\/WORK-\d+/,
+    /space_id\\?":\\?"default-work-items\\?"/,
+    'The follow-up request did not identify the default Issue project'
+  )
+  assert.match(
+    serializedRequest,
+    /item_id\\?":\\?"WORK-\d+\\?"/,
     'The follow-up request did not include the bound default Issue reference'
   )
 }
@@ -3083,7 +3088,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
         control.setScenario('checkpoint_task')
         const enrichedIssueRequest = await sendProjectAiCheckpointPrompt(control, composerSelector)
-        assertDefaultIssueContextInjected(enrichedIssueRequest)
+        assertDefaultIssueReferenceIncluded(enrichedIssueRequest)
         phase = 'cloud-issue-task-sidebar-restored'
         await reloadMainWindow(
           control,

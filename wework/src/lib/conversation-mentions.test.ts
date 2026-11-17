@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import type { RuntimeTaskAddress } from '@/types/api'
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, test } from 'vitest'
 import {
   appendConversationMentionContext,
   createConversationMentionReference,
@@ -59,9 +59,10 @@ describe('conversation mentions', () => {
     })
   })
 
-  test('keeps runtime metadata parentheses inside the atomic reference', () => {
+  test('keeps navigation paths atomic without embedding runtime configuration', () => {
     const address: RuntimeTaskAddress = {
       ...SOURCE_ADDRESS,
+      workspacePath: '/workspace/project (copy)',
       runtimeHandle: {
         modelSelection: {
           modelName: 'Kimi K3 (OpenAI)',
@@ -70,53 +71,50 @@ describe('conversation mentions', () => {
     }
     const reference = createConversationMentionReference('Source chat', address)
 
-    expect(reference).toContain('Kimi%20K3%20%28OpenAI%29')
+    expect(reference).toContain('project%20%28copy%29')
+    expect(reference).not.toContain('runtimeHandle')
+    expect(reference).not.toContain('modelSelection')
     expect(parseConversationMentions(reference)).toEqual([
       {
         title: 'Source chat',
-        address,
+        address: { ...address, runtimeHandle: null },
         reference,
       },
     ])
   })
 
-  test('loads transcript text as explicitly untrusted background context', async () => {
-    const reference = createConversationMentionReference('Source chat', SOURCE_ADDRESS)
-    const loadTranscript = vi.fn().mockResolvedValue({
-      messages: [
-        { id: 'u1', role: 'user', content: 'Investigate the parser' },
-        { id: 'a1', role: 'assistant', content: 'The parser lives in composerMentions.ts' },
-        { id: 's1', role: 'system', content: 'hidden system content' },
-        { id: 'a2', role: 'assistant', content: 'partial answer', status: 'streaming' },
-      ],
-    })
-
-    const context = await appendConversationMentionContext(
-      `${reference} continue from there`,
-      {
-        cloudCollaboration: {
-          kind: 'application',
-          value: 'Current project: Wegent',
+  test.each([SOURCE_ADDRESS, { deviceId: '设备-1', taskId: '任务-😀' }])(
+    'builds a bounded native reference without copying history or runtime metadata: %j',
+    address => {
+      const reference = createConversationMentionReference('Source chat', address)
+      const existing = {
+        otherContext: { kind: 'application' as const, value: 'Preserved selection' },
+      }
+      const context = appendConversationMentionContext(reference + ' ' + reference, existing)
+      expect(context).not.toBeInstanceOf(Promise)
+      expect(context?.otherContext).toEqual(existing.otherContext)
+      const value = context!.referencedConversations.value
+      const references = JSON.parse(value.split('\n').at(-1)!)
+      expect(references).toEqual([
+        {
+          conversation_id:
+            'conv_' +
+            Buffer.from(JSON.stringify([address.deviceId, address.taskId])).toString('base64url'),
         },
-      },
-      loadTranscript
-    )
+      ])
+      expect(value).toContain('read_conversation')
+      expect(value).toContain('untrusted background context')
+      expect(value).toContain('do not bypass tool permissions')
+      expect(value).not.toContain('workspacePath')
+      expect(value).not.toContain('runtimeHandle')
+    }
+  )
 
-    expect(loadTranscript).toHaveBeenCalledWith(
-      {
-        ...SOURCE_ADDRESS,
-        runtimeHandle: null,
-      },
-      { includeFullContent: true, conversationContextOnly: true, refresh: true }
-    )
-    expect(context?.cloudCollaboration.value).toBe('Current project: Wegent')
-    expect(context?.referencedConversations.kind).toBe('application')
-    expect(context?.referencedConversations.value).toContain('untrusted background context')
-    expect(context?.referencedConversations.value).toContain('Investigate the parser')
-    expect(context?.referencedConversations.value).toContain(
-      'The parser lives in composerMentions.ts'
-    )
-    expect(context?.referencedConversations.value).not.toContain('hidden system content')
-    expect(context?.referencedConversations.value).not.toContain('partial answer')
+  test('leaves context unchanged when no valid conversation is referenced', () => {
+    const existing = { selection: { kind: 'application' as const, value: 'Explicit selection' } }
+    expect(appendConversationMentionContext('Continue', existing)).toBe(existing)
+    expect(
+      appendConversationMentionContext('[$invalid](wework-conversation://invalid)', existing)
+    ).toBe(existing)
   })
 })
