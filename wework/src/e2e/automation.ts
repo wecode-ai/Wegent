@@ -12,7 +12,7 @@ import { createDesktopControlFile } from './file-fixture'
 import { selectDesktopControlFile } from './select-file'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
-import { readElementVisibility } from './element-visibility'
+import { readElementVisibility, readSelectionVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
@@ -835,7 +835,8 @@ function desktopControlElementText(selector: string, visible = false): string {
 function desktopControlElementMetrics(
   selector: string,
   includeText = false,
-  attributeNames: readonly string[] = []
+  attributeNames: readonly string[] = [],
+  includeSelection = false
 ): string {
   const elements = findDesktopControlElements(selector)
   return JSON.stringify(
@@ -871,6 +872,7 @@ function desktopControlElementMetrics(
         viewportWidth: window.innerWidth,
         width: rect.width,
         ...readElementVisibility(element),
+        ...(includeSelection ? { selection: readSelectionVisibility(element) } : {}),
       }
     })
   )
@@ -3050,6 +3052,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         includeText?: boolean
         attributeNames?: string[]
         waitForMatch?: boolean
+        includeSelection?: boolean
       }
       if (
         options.attributeNames !== undefined &&
@@ -3061,7 +3064,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         desktopControlElementMetrics(
           command.selector,
           options.includeText === true,
-          options.attributeNames ?? []
+          options.attributeNames ?? [],
+          options.includeSelection === true
         )
       return options.waitForMatch === true
         ? waitForDesktopControlElement(command, snapshot)

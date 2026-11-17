@@ -171,6 +171,7 @@ import {
   BlockingNetworkProxy,
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
+  CANCELLATION_RUNNING_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
   CHECKPOINT_TASK_PROMPT,
   CLOUD_FEATURES_ONLY,
@@ -360,6 +361,17 @@ const PROJECT_QUICK_PHRASE_TITLE = 'Project constraint review'
 const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before implementation.'
 const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
   'WEWORK_DESKTOP_E2E_DEFAULT_ISSUE_CONTEXT: preserve this acceptance criterion.'
+
+async function waitForLocalExecutorRequestCompletion(control, completedCount, message) {
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let last
+  while (Date.now() < deadline) {
+    last = JSON.parse(await control.command('getLocalExecutorRequestHoldSnapshot', 'body'))
+    if ((last?.completedCount ?? 0) >= completedCount) return last
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  assert.fail(`${message}: ${JSON.stringify(last)}`)
+}
 
 function assertDefaultIssueContextAbsent(request) {
   const serializedRequest = JSON.stringify(request.body)
@@ -3789,39 +3801,91 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'queue-management'
       await verifyPausedQueueLifecycle({ composerSelector, control })
 
-      phase = 'cancellation'
+      phase = 'early-cancellation'
       control.setScenario('cancellation')
-      await sendPrompt(control, composerSelector, CANCELLATION_PROMPT)
-      await withTimeout(
-        control.awaitScenarioRequest('cancellation'),
-        DEFAULT_STEP_TIMEOUT_MS,
-        'The model service did not receive the cancellation request'
-      )
-      await control.command('waitFor', '[data-testid="pause-response-button"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({ method: 'runtime.tasks.send', phase: 'before-dispatch' }),
       })
-      const cancellationTaskSnapshot = JSON.parse(
-        await control.command('getWorkbenchDebugSnapshot', 'body')
-      )
-      const cancelledTaskId = cancellationTaskSnapshot.workbench?.currentRuntimeTask?.taskId
-      assert.ok(cancelledTaskId, 'The running cancellation task did not expose its runtime task ID')
-      const cancellationExecutorLogOffset = (
-        await readFile(executorLogPath, 'utf8').catch(() => '')
-      ).length
-      await control.command('click', '[data-testid="pause-response-button"]')
-      await waitForLogPattern(
-        executorLogPath,
-        /app IPC request finished .* method=runtime\.tasks\.cancel .* ok=true/,
-        { fromOffset: cancellationExecutorLogOffset }
-      )
-      await waitForWorkbenchDebugState(
-        control,
-        snapshot =>
-          snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
-          snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
-          snapshot.pane?.status?.taskExecution?.status === 'cancelled',
-        'The current cancellation did not settle before releasing the upstream response'
-      )
+      let cancelledTaskId
+      let cancellationRequestCountBeforeStop
+      let earlyPromptVisibleBeforeCancel = false
+      let unboundCancellationTurn
+      try {
+        await sendPrompt(control, composerSelector, CANCELLATION_PROMPT)
+        const heldSend = JSON.parse(
+          await withTimeout(
+            control.command('awaitLocalExecutorRequestHold', 'body'),
+            DEFAULT_STEP_TIMEOUT_MS,
+            'The cancellation fixture did not reach the pre-dispatch send gate'
+          )
+        )
+        assert.equal(
+          heldSend?.method,
+          'runtime.tasks.send',
+          'The cancellation fixture held an unexpected local executor request'
+        )
+        await control.command('waitFor', '[data-testid="pause-response-button"]', {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        const cancellationTaskSnapshot = await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            Boolean(snapshot.workbench?.currentRuntimeTask?.taskId) &&
+            snapshot.workbench?.activeLifecycle?.turn?.active === true &&
+            snapshot.workbench.activeLifecycle.turn.id === null,
+          'The early cancellation did not run against an unbound turn'
+        )
+        cancelledTaskId = cancellationTaskSnapshot.workbench.currentRuntimeTask.taskId
+        unboundCancellationTurn = cancellationTaskSnapshot.workbench.activeLifecycle.turn
+        assert.equal(
+          cancellationTaskSnapshot.pane?.messageSummary?.activeAssistantMessage,
+          null,
+          'Cancellation was delayed until an assistant turn was already streaming'
+        )
+        cancellationRequestCountBeforeStop =
+          control.scenarioRequests.get('cancellation')?.length ?? 0
+        assert.equal(
+          cancellationRequestCountBeforeStop,
+          0,
+          'The pre-bind cancellation fixture reached the model before stopping'
+        )
+        const cancellationTextBeforeStop = await control.command('getText', 'body')
+        earlyPromptVisibleBeforeCancel = cancellationTextBeforeStop.includes(CANCELLATION_PROMPT)
+        assert.equal(
+          earlyPromptVisibleBeforeCancel,
+          true,
+          'The unbound cancellation fixture did not render its optimistic prompt'
+        )
+        const cancellationExecutorLogOffset = (
+          await readFile(executorLogPath, 'utf8').catch(() => '')
+        ).length
+        await control.command('click', '[data-testid="pause-response-button"]')
+        await waitForLogPattern(
+          executorLogPath,
+          /app IPC request finished .* method=runtime\.tasks\.cancel .* ok=true/,
+          { fromOffset: cancellationExecutorLogOffset }
+        )
+        assert.equal(
+          await control.command('releaseLocalExecutorRequestHold', 'body'),
+          'true',
+          'The held send was not released after the cancellation acknowledgement'
+        )
+        await waitForLocalExecutorRequestCompletion(
+          control,
+          1,
+          'The cancelled pre-dispatch send did not settle'
+        )
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
+            snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+            snapshot.pane?.status?.taskExecution?.status === 'cancelled',
+          'The current cancellation did not settle after releasing the held send'
+        )
+      } finally {
+        await control.command('releaseLocalExecutorRequestHold', 'body').catch(() => undefined)
+      }
       const cancelledTaskUnreadTestId = `runtime-local-task-unread-dot-${cancelledTaskId}`
       await waitForSnapshot(
         control,
@@ -3834,8 +3898,77 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         false,
         'The cancelled task unexpectedly rendered a completion response'
       )
+      assert.equal(
+        cancellationText.includes(CANCELLATION_PROMPT),
+        false,
+        'The unbound cancelled prompt remained visible after cancellation'
+      )
+
+      phase = 'running-cancellation'
+      control.setScenario('cancellation')
+      await sendPrompt(control, composerSelector, CANCELLATION_RUNNING_PROMPT)
+      await withTimeout(
+        control.awaitNextScenarioRequest('cancellation_running'),
+        DEFAULT_STEP_TIMEOUT_MS,
+        'The model service did not receive the running cancellation request'
+      )
+      await control.command('waitFor', '[data-testid="pause-response-button"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      const runningCancellationSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      assert.equal(
+        runningCancellationSnapshot.workbench?.currentRuntimeTask?.taskId,
+        cancelledTaskId,
+        'The running cancellation unexpectedly switched runtime tasks'
+      )
+      const runningCancellationLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => ''))
+        .length
+      await control.command('click', '[data-testid="pause-response-button"]')
+      await waitForLogPattern(
+        executorLogPath,
+        /app IPC request finished .* method=runtime\.tasks\.cancel .* ok=true/,
+        { fromOffset: runningCancellationLogOffset }
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
+          snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+          snapshot.pane?.status?.taskExecution?.status === 'cancelled',
+        'The running cancellation did not settle before releasing the stale response'
+      )
+      const runningCancellationText = await control.command('getText', 'body')
+      assert.equal(
+        runningCancellationText.includes(CANCELLATION_COMPLETION_TEXT),
+        false,
+        'The running task rendered its completion after cancellation'
+      )
+
+      phase = 'cancellation-replacement'
+      const replacementRequestCountBefore =
+        control.scenarioRequests.get('cancellation_replacement')?.length ?? 0
+      await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
+      await control.awaitScenarioRequestCount(
+        'cancellation_replacement',
+        replacementRequestCountBefore + 1
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: CHECKPOINT_TASK_COMPLETION_TEXT,
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+
+      phase = 'cancellation-late-old-response'
+      const cancellationRequestCountBeforeRelease =
+        control.scenarioRequests.get('cancellation')?.length ?? 0
       control.releaseCancellationResponse()
+      // Keep a bounded negative observation window after releasing the stale stream;
+      // a passing absence check must span the event-delivery turn.
       await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+      const cancellationRequestCountAfterRelease =
+        control.scenarioRequests.get('cancellation')?.length ?? 0
       const cancellationTextAfterUpstreamCompletion = await control.command('getText', 'body')
       assert.equal(
         cancellationTextAfterUpstreamCompletion.includes(CANCELLATION_COMPLETION_TEXT),
@@ -3855,6 +3988,16 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         false,
         'The cancelled task made the composer busy after the upstream completion response'
       )
+      assert.equal(
+        cancellationTextAfterUpstreamCompletion.includes(CHECKPOINT_TASK_COMPLETION_TEXT),
+        true,
+        'The replacement response disappeared after releasing the cancelled stream'
+      )
+      assert.equal(
+        cancellationTextAfterUpstreamCompletion.includes(CANCELLATION_PROMPT),
+        false,
+        'The unbound cancelled prompt reappeared after the replacement response'
+      )
       const cancellationUiAfterUpstreamCompletion = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
@@ -3862,6 +4005,69 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         cancellationUiAfterUpstreamCompletion.testIds.includes('pause-response-button'),
         false,
         'The cancelled task restored the stop control after the upstream completion response'
+      )
+
+      phase = 'cancellation-reopen'
+      await reloadMainWindow(
+        control,
+        'The cancelled conversation did not reconnect for stale-response verification'
+      )
+      const cancelledTaskRowTestId = `runtime-local-task-row-${cancelledTaskId}`
+      await ensureTaskRowVisible(control, cancelledTaskRowTestId)
+      const cancelledTaskRowSelector = `[data-testid="${cancelledTaskRowTestId}"]`
+      await control.command('clickWhenEnabled', cancelledTaskRowSelector, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await waitForWorkbenchTask(
+        control,
+        cancelledTaskId,
+        'The cancelled conversation did not reopen after the stale response was released'
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: CHECKPOINT_TASK_COMPLETION_TEXT,
+        visible: true,
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      const reopenedCancellationText = await control.command('getText', 'body')
+      assert.equal(
+        reopenedCancellationText.includes(CANCELLATION_COMPLETION_TEXT),
+        false,
+        'Reopening the conversation restored the cancelled completion at the end'
+      )
+      assert.equal(
+        reopenedCancellationText.includes(CANCELLATION_PROMPT),
+        false,
+        'Reopening the conversation restored the unbound cancelled prompt'
+      )
+      await writeFile(
+        join(resultDir, 'cancellation-race-evidence.json'),
+        JSON.stringify(
+          {
+            cancellationRequestCountAfterRelease,
+            cancellationRequestCountBeforeRelease,
+            cancellationRequestCountBeforeStop,
+            cancelledTaskId,
+            earlyPromptVisibleBeforeCancel,
+            earlyPromptVisibleAfterCancel: cancellationText.includes(CANCELLATION_PROMPT),
+            earlyPromptVisibleAfterReopen: reopenedCancellationText.includes(CANCELLATION_PROMPT),
+            earlyPromptVisibleAfterReplacement:
+              cancellationTextAfterUpstreamCompletion.includes(CANCELLATION_PROMPT),
+            runningCancellationRequestObserved: true,
+            unboundTurnAtStop: unboundCancellationTurn,
+            replacementVisibleAfterRelease: cancellationTextAfterUpstreamCompletion.includes(
+              CHECKPOINT_TASK_COMPLETION_TEXT
+            ),
+            staleCompletionVisibleAfterRelease: cancellationTextAfterUpstreamCompletion.includes(
+              CANCELLATION_COMPLETION_TEXT
+            ),
+            staleCompletionVisibleAfterReopen: reopenedCancellationText.includes(
+              CANCELLATION_COMPLETION_TEXT
+            ),
+          },
+          null,
+          2
+        ) + '\n',
+        'utf8'
       )
 
       phase = 'retry'

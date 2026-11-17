@@ -205,3 +205,12 @@
     transition: none;
   }
 }
+
+@media (max-width: 767px) {
+  .defaultItem,
+  .modelItem,
+  .fastModeToggle {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

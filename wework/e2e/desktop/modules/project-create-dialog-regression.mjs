@@ -25,6 +25,7 @@ export {
   assertProjectCreateActionHit,
 } from './project-create-test-utils.mjs'
 export { handleProjectCreateGroupModel } from './project-create-group-model.mjs'
+export { confirmDiscard as confirmProjectDraftDiscard }
 
 const testId = value => `[data-testid="${value}"]`
 const DIALOG = testId('collaboration-project-create-dialog')

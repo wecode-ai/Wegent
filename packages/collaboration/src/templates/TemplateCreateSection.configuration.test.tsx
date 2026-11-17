@@ -139,6 +139,12 @@ it('shows template details inline and returns to the catalog without another dia
 it('keeps an incomplete configuration editable after returning to the project', async () => {
   await act(async () => root.render(<Harness initial />))
   await click('project-create-configure-template')
+  const disclosure = target.querySelector<HTMLDetailsElement>('details')!
+  expect(disclosure.open).toBe(false)
+  await act(async () => {
+    disclosure.open = true
+    disclosure.dispatchEvent(new Event('toggle'))
+  })
   const select = target.querySelector<HTMLSelectElement>(
     '[data-testid="template-role-main-role-0"]'
   )!

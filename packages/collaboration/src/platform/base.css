@@ -95,7 +95,7 @@
 
 .collaboration-project-summary-description {
   overflow: hidden;
-  color: rgb(var(--color-text-muted)) !important;
+  color: rgb(var(--color-text-secondary)) !important;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -117,7 +117,7 @@
 .collaboration-settings-section p,
 .collaboration-settings label small {
   margin: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .collaboration-status-editor {
@@ -1678,7 +1678,7 @@
 .collaboration-current-assignment > p,
 .collaboration-current-assignment-main small,
 .collaboration-current-assignment-source {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 
 .collaboration-current-assignment > p {
@@ -1789,6 +1789,14 @@
 }
 
 @media (max-width: 767px) {
+  .collaboration-project-create-dialog button,
+  .collaboration-project-create-dialog summary,
+  .collaboration-project-create-dialog input:not([type='checkbox']):not([type='radio']),
+  .collaboration-project-create-dialog select {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   .collaboration-project-create-field input:not([type='checkbox']):not([type='radio']),
   .collaboration-project-create-field select,
   .collaboration-project-create-field textarea {

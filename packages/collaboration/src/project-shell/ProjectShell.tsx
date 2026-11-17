@@ -46,6 +46,7 @@ export interface ProjectShellProps {
   hasCreateAction: boolean
   sidebarCollapsed: boolean
   title: ReactNode
+  compactTitle?: ReactNode
   titleIcon: ReactNode
   renderRightActions(context: ProjectShellRenderContext): ReactNode
   renderViewSwitcher(context: ProjectShellViewSwitcherContext): ReactNode
@@ -123,6 +124,7 @@ export function ProjectShell({
   searchPanel,
   sidebarCollapsed,
   title,
+  compactTitle,
   titleIcon,
   viewSwitcherPlacement = 'header',
 }: ProjectShellProps) {
@@ -247,7 +249,7 @@ export function ProjectShell({
       <header
         ref={headerRef}
         data-testid="cloud-project-header"
-        className={`relative z-10 flex h-[52px] shrink-0 items-center border-b border-border bg-background pr-6 ${
+        className={`relative z-10 flex shrink-0 items-center border-b border-border bg-background pr-6 ${level >= 2 && compactTitle ? 'min-h-[52px] flex-wrap gap-y-2 py-2' : 'h-[52px]'} ${
           !embedded && sidebarCollapsed ? 'pl-[240px]' : 'pl-6'
         }`}
       >
@@ -256,11 +258,17 @@ export function ProjectShell({
         <div
           ref={titleRef}
           data-testid="cloud-project-header-title"
-          className={`relative z-10 min-w-0 items-center ${level < 2 ? 'flex' : 'hidden'}`}
+          className={`relative z-10 min-w-0 items-center ${level < 2 ? 'flex' : compactTitle ? 'order-last flex w-full basis-full' : 'hidden'}`}
         >
-          {titleIcon}
-          <span className="ml-2 min-w-0 truncate text-base font-semibold">
-            {title}
+          {level < 2 || !compactTitle ? titleIcon : null}
+          <span
+            className={
+              level >= 2 && compactTitle
+                ? 'min-w-0 break-words text-sm font-medium'
+                : 'ml-2 min-w-0 truncate text-base font-semibold'
+            }
+          >
+            {level >= 2 && compactTitle ? compactTitle : title}
           </span>
         </div>
         {viewSwitcherPlacement === 'header' &&

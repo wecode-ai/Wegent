@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CollaborationTranslate } from '../i18n'
+import { requestFailureMessage } from '../controls/requestFailure'
 
 // These messages are the existing workspace/project authorization API contract.
 const authorizationErrors: Record<string, string> = {
@@ -26,5 +27,10 @@ export function environmentAuthorizationError(
 ): string {
   const message = error instanceof Error ? error.message : String(error)
   const key = authorizationErrors[message]
-  return key ? translate(key) : message
+  return key
+    ? translate(key)
+    : requestFailureMessage(
+        error,
+        translate('todo.settings_connection_failed', '无法连接服务，请检查连接后重试。')
+      )
 }

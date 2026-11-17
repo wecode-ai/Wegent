@@ -9,7 +9,7 @@ import {
   isAsyncRequestUserInputPayload,
 } from '@wegent/chat-core/runtime-user-input'
 import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import type { Dispatch } from 'react'
 import { ApiError } from '@/api/http'
 import type { ExecutorClient } from '@/api/executorAccess'
@@ -359,6 +359,7 @@ export function useWorkbenchRuntimeMessaging({
   skillSelection,
   refreshWorkLists,
 }: UseWorkbenchRuntimeMessagingOptions) {
+  const sendAttemptsRef = useRef(new Map<string, number>())
   const appPreferences = useAppPreferencesState()
   const preferences = appPreferences?.preferences
   const reportError = useCallback(
@@ -530,7 +531,30 @@ export function useWorkbenchRuntimeMessaging({
           lifecycleStore.sendRequested(outboundRequest.address)
           sendRequested = true
         }
+        const sendAttempt = advanceRuntimeSendAttempt(
+          sendAttemptsRef.current,
+          outboundRequest.address
+        )
         const response = await executorClient.runtime.sendRuntimeMessage(outboundRequest)
+        if (!response.accepted && response.code === 'cancelled') {
+          if (optimisticUserMessage) {
+            removeRuntimeConversationTurn(outboundRequest.address, {
+              clientUserMessageId: optimisticUserMessage.id,
+            })
+          }
+          if (isLatestRuntimeSendAttempt(sendAttemptsRef.current, sendAttempt)) {
+            lifecycleStore.stopRequested(outboundRequest.address)
+            lifecycleStore.turnSettled(outboundRequest.address, undefined, 'cancelled')
+            lifecycleStore.executorSettled(outboundRequest.address)
+          }
+          await refreshWorkLists().catch(error => {
+            console.warn('[Wework] Cancelled stale send but work list refresh failed', {
+              taskId: outboundRequest.address.taskId,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          })
+          return isCurrent()
+        }
         if (!isCurrent()) return false
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
@@ -817,7 +841,11 @@ export function useWorkbenchRuntimeMessaging({
   const cancelRuntimePaneTask = useCallback(
     async (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): Promise<boolean> => {
       try {
-        const ack = await executorClient.runtime.cancelRuntimeTask(address)
+        const ack = await executorClient.runtime.cancelRuntimeTask(
+          options?.pendingClientUserMessageId
+            ? { ...address, clientUserMessageId: options.pendingClientUserMessageId }
+            : address
+        )
         if (!ack.accepted) {
           reportError(normalizeGuidanceError(ack.error ?? '取消当前回复失败'), options)
           return false
@@ -2182,6 +2210,28 @@ export function applyExecutionModelOverride(
     next.modelOptions = executionModel.modelOptions
   }
   return next
+}
+
+interface RuntimeSendAttempt {
+  key: string
+  version: number
+}
+
+function advanceRuntimeSendAttempt(
+  attempts: Map<string, number>,
+  address: RuntimeTaskAddress
+): RuntimeSendAttempt {
+  const key = `${address.deviceId}\u0000${address.taskId}`
+  const version = (attempts.get(key) ?? 0) + 1
+  attempts.set(key, version)
+  return { key, version }
+}
+
+function isLatestRuntimeSendAttempt(
+  attempts: Map<string, number>,
+  attempt: RuntimeSendAttempt
+): boolean {
+  return attempts.get(attempt.key) === attempt.version
 }
 
 function runtimeAddressLog(address: RuntimeTaskAddress): Record<string, unknown> {

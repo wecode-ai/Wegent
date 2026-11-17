@@ -4,6 +4,7 @@ import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
+import { createPersonalHomeTaskDraftStore } from '../todo/personalHomeTaskDrafts'
 import {
   bindComposerAppsSource,
   notifyComposerAppsListeners,
@@ -445,6 +446,7 @@ function OwnedWorkbenchProvider({
     goalDraftActiveByScope,
     setGoalDraftActiveForScope,
   } = useWorkspaceTabDraftInput(workspaceTabId)
+  const [personalHomeTaskDraftStore] = useState(createPersonalHomeTaskDraftStore)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
     Record<string, PluginPathComponent[]>
@@ -1699,6 +1701,7 @@ function OwnedWorkbenchProvider({
       scopeKey: projectChatScopeKey,
       inputByScope: draftInputByScope,
       goalDraftActiveByScope,
+      personalHomeTaskDraftStore,
       setGoalDraftActiveForScope,
       getInputRevisionForScope,
       models: conversationModels,
@@ -1781,6 +1784,7 @@ function OwnedWorkbenchProvider({
       draftInput,
       draftInputByScope,
       goalDraftActiveByScope,
+      personalHomeTaskDraftStore,
       setGoalDraftActiveForScope,
       getInputRevisionForScope,
       composerError,

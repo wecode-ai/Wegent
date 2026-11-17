@@ -70,22 +70,49 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await openCollaborationIssueCreation(control, scoped)
       await control.command(
         'waitFor',
-        scoped('[data-testid="collaboration-first-project-starter"]'),
+        scoped('[data-testid="collaboration-first-issue-starter"]'),
         {
-          text: '开始第一个协作项目',
+          text: '从第一件事开始',
           timeoutMs: uiTimeoutMs,
         }
       )
       await capture(control, 'collaboration-first-use-01-welcome.png')
 
+      await control.command('waitFor', scoped('[data-testid="collaboration-first-issue-create"]'))
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            scoped('[data-testid="collaboration-first-project-create"]')
+          )
+        ),
+        0,
+        'The first-use home must start with an Issue rather than require project creation'
+      )
+      await control.command('click', scoped('[data-testid="collaboration-first-issue-create"]'))
+      await control.command('waitFor', '[data-testid="independent-issue-dialog"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        await control.command('getValue', '[data-testid="independent-issue-project"]'),
+        '',
+        'The first Issue must not require a project selection'
+      )
+      await control.command('click', '[data-testid="independent-issue-close"]')
+      await control.command('waitFor', scoped('[data-testid="collaboration-first-issue-create"]'))
+      await control.command(
+        'click',
+        sidebarScoped('[data-testid="collaboration-workspace-home-wework-local-workspace"]')
+      )
+
       const projectMenuTrigger = scoped(
-        '[data-testid="collaboration-first-project-create"][aria-haspopup="menu"]'
+        '[data-testid="collaboration-workspace-project-create"][aria-haspopup="menu"]'
       )
       await control.command('waitFor', projectMenuTrigger, { timeoutMs: uiTimeoutMs })
       await control.command('click', projectMenuTrigger)
       await control.command(
         'clickWhenEnabled',
-        '[data-testid="collaboration-first-project-create-folder"]',
+        '[data-testid="collaboration-workspace-project-import-folder"]',
         {
           timeoutMs: uiTimeoutMs,
         }

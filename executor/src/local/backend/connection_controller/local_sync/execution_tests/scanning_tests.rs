@@ -32,7 +32,7 @@ async fn held_scan_for(
         async move { fixture.sync(json!({"full":true})).await }
     });
     tokio::time::timeout(
-        Duration::from_secs(3),
+        EVENT_WAIT_TIMEOUT,
         fixture.installer.digest_gate.entered.notified(),
     )
     .await
@@ -41,7 +41,7 @@ async fn held_scan_for(
 }
 
 pub(super) async fn settle_recovery(fixture: &Fixture, unconfirmed: bool) {
-    tokio::time::timeout(Duration::from_secs(3), fixture.recovery_entered.notified())
+    tokio::time::timeout(EVENT_WAIT_TIMEOUT, fixture.recovery_entered.notified())
         .await
         .expect("Pending submission waited for the content scan");
     fixture.recovery_release.notify_one();
@@ -67,19 +67,16 @@ async fn concurrent_full_reconciliations_wait_for_a_fresh_scan() {
         let independent = Fixture::new(Plan::Valid, false).await;
         persist(&independent.path, &json!({"version":1,"pending":[]})).unwrap();
         assert_eq!(
-            tokio::time::timeout(
-                Duration::from_secs(3),
-                independent.sync(json!({"full":true}))
-            )
-            .await
-            .expect("An independent journal waited for another account's scan")
-            .unwrap()["localCompleted"],
+            tokio::time::timeout(EVENT_WAIT_TIMEOUT, independent.sync(json!({"full":true})))
+                .await
+                .expect("An independent journal waited for another account's scan")
+                .unwrap()["localCompleted"],
             true
         );
         drop(held);
         assert_eq!(first.await.unwrap().unwrap()["localCompleted"], true);
         assert_eq!(
-            tokio::time::timeout(Duration::from_secs(3), second)
+            tokio::time::timeout(EVENT_WAIT_TIMEOUT, second)
                 .await
                 .expect("Queued full check did not resume")
                 .unwrap()
@@ -113,7 +110,7 @@ async fn a_queued_full_check_revalidates_foreground_admission_before_scanning() 
     drop(held);
     assert_eq!(first.await.unwrap().unwrap()["localCompleted"], true);
     assert_eq!(
-        tokio::time::timeout(Duration::from_secs(3), queued)
+        tokio::time::timeout(EVENT_WAIT_TIMEOUT, queued)
             .await
             .unwrap()
             .unwrap()
@@ -134,7 +131,7 @@ async fn slow_scans_allow_pending_submission_and_foreground_completion() {
         let (fixture, held, full) = held_scan(phase, true).await;
         settle_recovery(&fixture, true).await;
         let foreground = tokio::time::timeout(
-            Duration::from_secs(3),
+            EVENT_WAIT_TIMEOUT,
             fixture.sync(json!({"action":"update","targetId":8,"payload":{"releaseId":3}})),
         )
         .await
@@ -270,11 +267,11 @@ async fn terminal_recovery_during_either_scan_completes_without_rescanning() {
             let fixture = Arc::new(Fixture::with_recovery(Plan::Valid, reply).await);
             let original = load_journal(&fixture.path).unwrap()["pending"][0].clone();
             let (fixture, held, full) = held_scan_for(fixture, phase).await;
-            tokio::time::timeout(Duration::from_secs(3), fixture.recovery_entered.notified())
+            tokio::time::timeout(EVENT_WAIT_TIMEOUT, fixture.recovery_entered.notified())
                 .await
                 .unwrap();
             fixture.recovery_release.notify_one();
-            tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::time::timeout(EVENT_WAIT_TIMEOUT, async {
                 loop {
                     if load_journal(&fixture.path).unwrap()[archive]
                         .as_array()
@@ -355,14 +352,13 @@ async fn cancellation_keeps_the_scan_slot_until_its_worker_exits() {
     settle_recovery(&fixture, true).await;
     full.abort();
     assert!(full.await.unwrap_err().is_cancelled());
-    let duplicate =
-        tokio::time::timeout(Duration::from_secs(3), fixture.sync(json!({"full":true})))
-            .await
-            .expect("The duplicate scan waited instead of yielding its slot");
+    let duplicate = tokio::time::timeout(EVENT_WAIT_TIMEOUT, fixture.sync(json!({"full":true})))
+        .await
+        .expect("The duplicate scan waited instead of yielding its slot");
     assert_eq!(duplicate.unwrap_err().code, "plugin_local_sync_busy");
     assert_eq!(fixture.installer.digest_calls.load(Ordering::SeqCst), 1);
     let foreground = tokio::time::timeout(
-        Duration::from_secs(3),
+        EVENT_WAIT_TIMEOUT,
         fixture.sync(json!({"installedPluginId":8})),
     )
     .await
@@ -370,7 +366,7 @@ async fn cancellation_keeps_the_scan_slot_until_its_worker_exits() {
     .unwrap();
     assert_eq!(foreground["localCompleted"], true);
     drop(held);
-    tokio::time::timeout(Duration::from_secs(3), async {
+    tokio::time::timeout(EVENT_WAIT_TIMEOUT, async {
         loop {
             if recovery::lock_file(&fixture.path.with_extension("scan.lock")).is_ok() {
                 break;

@@ -15,6 +15,7 @@ it.each(['local', 'cloud'] as const)(
   'retains local projects and defaults creation to %s',
   location => {
     const createProject = vi.fn()
+    const setMobileNavigationOpen = vi.fn()
     const host = {
       location: {},
       capabilities: {
@@ -27,6 +28,8 @@ it.each(['local', 'cloud'] as const)(
     render(
       <CollaborationPlatformNavigation
         domain={location}
+        mobileNavigationOpen={false}
+        onMobileNavigationOpenChange={setMobileNavigationOpen}
         host={host}
         messages={platformMessages['zh-CN']}
         workspaces={
@@ -77,6 +80,7 @@ it.each(['local', 'cloud'] as const)(
     expect(screen.queryByText('本地项目')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('collaboration-workspace-nav-create-project'))
     expect(createProject).toHaveBeenCalledExactlyOnceWith(location)
+    expect(setMobileNavigationOpen).toHaveBeenLastCalledWith(false)
     fireEvent.click(screen.getByTestId(`collaboration-workspace-actions-${spaceId}`))
     fireEvent.click(screen.getByTestId('collaboration-workspace-nav-settings'))
     expect(host.navigate).toHaveBeenLastCalledWith(

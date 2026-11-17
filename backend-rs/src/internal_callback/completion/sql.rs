@@ -162,14 +162,13 @@ pub(crate) fn kind_refresh_by_id() -> &'static str {
      FROM kinds WHERE kinds.id = ?"
 }
 
-/// `subtask_store.list_not_executor_deleted_by_task`: the full subtask
-/// projection of one task whose executor runtime is still recorded as alive.
+/// Cleanup needs only executor references, read in bounded keyset pages.
 pub(crate) fn subtasks_not_executor_deleted_by_task(tables: Tables) -> String {
     let table = tables.subtasks;
     format!(
-        "SELECT {} \nFROM {table} \n\
-         WHERE {table}.task_id = ? AND {table}.executor_deleted_at = false",
-        crate::task_store_statements::subtask_projection(table)
+        "SELECT id, executor_name, executor_namespace FROM {table} \
+         WHERE {table}.task_id = ? AND {table}.executor_deleted_at = false \
+         AND id > ? ORDER BY id LIMIT 100"
     )
 }
 

@@ -6004,3 +6004,40 @@ def test_message_with_cloud_reference_activates_project_space_capability() -> No
     assert "Use wework_space as the only interface" in message
     assert "Do not use git commands" in message
     assert "read_item_attachment" in message
+
+
+@pytest.mark.asyncio
+async def test_task_archive_forwards_cleanup_and_preserves_accepted_cleanup_error(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskArchiveRequest
+    from app.services import runtime_work_service as work
+
+    monkeypatch.setattr(
+        work.device_service, "get_device_by_device_id", lambda *args: object()
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "taskId": "task-1",
+            "cleanupError": "Snapshot unavailable",
+        }
+    )
+    monkeypatch.setattr(work.runtime_rpc_service, "call", rpc)
+    response = await work.archive_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        address=RuntimeTaskArchiveRequest(
+            deviceId="device-1", taskId="task-1", cleanupWorktree=True
+        ),
+    )
+    assert rpc.await_args.kwargs["payload"] == {
+        "deviceId": "device-1",
+        "taskId": "task-1",
+        "cleanupWorktree": True,
+    }
+    assert response.accepted is True
+    assert response.cleanup_error == "Snapshot unavailable"

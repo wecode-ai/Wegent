@@ -138,6 +138,7 @@ import {
   replaceRuntimeConversationFromUserMessage,
   runtimeConversationSnapshotSettlesLatestTurn,
   runtimeConversationKey,
+  settleOptimisticallyInterruptedRuntimeConversation,
   subscribeRuntimeConversation,
   restoreOptimisticallyInterruptedRuntimeConversation,
   takeInterruptedRuntimeConversationGuidance,
@@ -1258,6 +1259,9 @@ export function useWorkbenchPaneSession({
           })
         }
         return false
+      }
+      if (interruptedTurn) {
+        settleOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
       }
 
       if (deferLocalMessage && !queued) {
@@ -2786,6 +2790,7 @@ export function useWorkbenchPaneSession({
     let accepted: boolean | null = null
     let queuePauseRequested = false
     let restoreQueue: (() => void) | undefined
+    let interruptedTurn: ReturnType<typeof optimisticallyInterruptRuntimeConversation> = null
     let abortReason: 'goal-pause-rejected' | null = null
     try {
       if (goalPauseRequired) {
@@ -2800,11 +2805,24 @@ export function useWorkbenchPaneSession({
       queuePauseRequested = getRuntimeConversationQueuePausedByKey(
         runtimeConversationKey(currentRuntimeTask)
       )
-      const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
+      interruptedTurn = optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
+      const cancelled =
+        interruptedTurn?.turnId === null && interruptedTurn.clientUserMessageId
+          ? await cancelRuntimePaneTask(currentRuntimeTask, {
+              pendingClientUserMessageId: interruptedTurn.clientUserMessageId,
+            })
+          : await cancelRuntimePaneTask(currentRuntimeTask)
       accepted = cancelled
       if (!cancelled) return
     } finally {
-      if (accepted !== true) restoreQueue?.()
+      if (accepted !== true) {
+        restoreQueue?.()
+        if (interruptedTurn) {
+          restoreOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
+        }
+      } else if (interruptedTurn) {
+        settleOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
+      }
       logRuntimeQueueStage(currentRuntimeTask, 'queue-stop-result', {
         source: 'composer',
         accepted,

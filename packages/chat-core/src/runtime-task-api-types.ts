@@ -209,6 +209,12 @@ export interface RuntimeSendResponse {
   compactionItemId?: string
   compaction_item_id?: string
   error?: string | null
+  code?: string | null
+}
+
+export interface RuntimeTaskCancelRequest extends RuntimeTaskAddress {
+  /** Cancels a send that was submitted optimistically but has not reached the executor yet. */
+  clientUserMessageId?: string
 }
 
 export interface RuntimeGuidanceRequest {

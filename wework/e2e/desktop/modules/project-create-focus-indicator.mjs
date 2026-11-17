@@ -4,9 +4,15 @@ import { withProjectRenderer } from './project-create-test-utils.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 
 function rgb(color) {
-  assert.match(color, /^rgba?\(/, `Expected a computed RGB color, received ${color}`)
-  const values = color.match(/[\d.]+/g).map(Number)
-  return [...values.slice(0, 3), values[3] ?? 1]
+  assert.match(
+    color,
+    /^(?:rgba?\(|color\(srgb\s)/,
+    `Expected a computed sRGB color, received ${color}`
+  )
+  const values = color.match(/[-+]?(?:\d*\.)?\d+(?:e[-+]?\d+)?/gi)?.map(Number) ?? []
+  assert.ok(values.length === 3 || values.length === 4, `Invalid computed color: ${color}`)
+  const scale = color.startsWith('color(') ? 255 : 1
+  return [...values.slice(0, 3).map(channel => channel * scale), values[3] ?? 1]
 }
 
 function composite(foreground, background) {

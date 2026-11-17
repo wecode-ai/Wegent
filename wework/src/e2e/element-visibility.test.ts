@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readElementVisibility } from './element-visibility'
+import { readElementVisibility, readSelectionVisibility } from './element-visibility'
 
 function bounds(element: HTMLElement, left: number, top: number, width: number, height: number) {
   vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
@@ -25,6 +25,33 @@ afterEach(() => {
 })
 
 describe('desktop control element visibility', () => {
+  it('measures only the requested editor caret and preserves its selection', () => {
+    const viewport = document.createElement('div')
+    const editor = document.createElement('div')
+    editor.textContent = 'draft'
+    viewport.style.overflow = 'auto'
+    viewport.append(editor)
+    document.body.append(viewport)
+    bounds(viewport, 0, 20, 300, 100)
+    const selection = document.getSelection()!
+    selection.setPosition(editor.firstChild, 5)
+    let top = 80
+    const createRange = document.createRange.bind(document)
+    vi.spyOn(document, 'createRange').mockImplementation(() => {
+      const range = createRange()
+      Object.defineProperty(range, 'getBoundingClientRect', {
+        value: () => ({ left: 20, top, width: 0, height: 20, bottom: top + 20 }),
+      })
+      return range
+    })
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => editor })
+    expect(readSelectionVisibility(editor)?.hitTestVisible).toBe(true)
+    top = 200
+    expect(readSelectionVisibility(editor)?.visibleIntersection).toBeNull()
+    expect(readSelectionVisibility(document.createElement('div'))).toBeNull()
+    expect(selection.focusNode).toBe(editor.firstChild)
+    expect(selection.focusOffset).toBe(5)
+  })
   it('rejects viewport-visible geometry clipped by an ancestor scrollport', () => {
     const parent = document.createElement('div')
     const target = document.createElement('span')

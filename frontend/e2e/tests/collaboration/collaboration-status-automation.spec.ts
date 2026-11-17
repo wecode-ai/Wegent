@@ -50,15 +50,17 @@ projectTest(
     await page.goto(`${path}?view=manage`)
     await page.getByTestId('collaboration-project-settings-automatic-processing').click()
     await page.getByTestId('automatic-processing-create').click()
+    await page.getByTestId('automatic-processing-trigger-schedule').locator('..').click()
+    await page.getByTestId('automatic-processing-prompt').fill(prompt)
     await page.getByTestId('automatic-processing-trigger-status_changed').locator('..').click()
     await expect(page.getByTestId('automatic-processing-trigger-status_changed')).toBeChecked()
     await page.getByTestId('automatic-processing-status').selectOption('in_review')
-    await page.getByTestId('automatic-processing-prompt').fill(prompt)
     await page.getByTestId('automatic-processing-target-kind-human').click()
     await expect(page.getByTestId('automatic-processing-target-kind-human')).toHaveAttribute(
       'aria-pressed',
       'true'
     )
+    await expect(page.getByTestId('automatic-processing-prompt')).toHaveCount(0)
     const created = page.waitForResponse(
       response =>
         response.request().method() === 'POST' && new URL(response.url()).pathname === rulesPath
@@ -87,9 +89,14 @@ projectTest(
     await page.getByTestId('collaboration-project-settings-automatic-processing').click()
     await page.getByTestId(`automatic-processing-edit-${rule.id}`).click()
     await expect(page.getByTestId('automatic-processing-status')).toHaveValue('in_review')
+    await expect(page.getByTestId('automatic-processing-prompt')).toHaveCount(0)
+    await page.getByTestId('automatic-processing-trigger-schedule').locator('..').click()
     await expect(page.getByTestId('automatic-processing-prompt')).toHaveValue(prompt)
-    await page.getByTestId('automatic-processing-status').selectOption('completed')
     await page.getByTestId('automatic-processing-prompt').fill(updatedPrompt)
+    await page.getByTestId('automatic-processing-trigger-status_changed').locator('..').click()
+    await expect(page.getByTestId('automatic-processing-status')).toHaveValue('in_review')
+    await page.getByTestId('automatic-processing-status').selectOption('completed')
+    await expect(page.getByTestId('automatic-processing-prompt')).toHaveCount(0)
     const updated = page.waitForResponse(
       response =>
         response.request().method() === 'PATCH' &&
@@ -105,7 +112,11 @@ projectTest(
     await page.getByTestId('collaboration-project-settings-automatic-processing').click()
     await page.getByTestId(`automatic-processing-edit-${rule.id}`).click()
     await expect(page.getByTestId('automatic-processing-status')).toHaveValue('completed')
+    await expect(page.getByTestId('automatic-processing-prompt')).toHaveCount(0)
+    await page.getByTestId('automatic-processing-trigger-schedule').locator('..').click()
     await expect(page.getByTestId('automatic-processing-prompt')).toHaveValue(updatedPrompt)
+    await page.getByTestId('automatic-processing-trigger-status_changed').locator('..').click()
+    await expect(page.getByTestId('automatic-processing-status')).toHaveValue('completed')
     await page.getByTestId('automatic-processing-cancel').click()
 
     const runsPath = `${rulesPath}/${rule.id}/runs`
