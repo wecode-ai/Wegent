@@ -2,8 +2,15 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { createAccountAuthFixture } from '../e2e/desktop/modules/plugin-account-auth-fixture.mjs'
+
+// Manifest coverage does not execute the Python SDK vendoring command. The
+// real desktop checkpoint still vendors and runs the SDK in its E2E image.
+vi.mock('node:child_process', async importOriginal => ({
+  ...(await importOriginal()),
+  execFile: (_file, _args, _options, callback) => callback(null, '', ''),
+}))
 
 test.each([
   { accountConnectorSlugs: undefined, expected: ['mail', 'oauth', 'transfer'] },
