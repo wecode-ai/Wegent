@@ -87,8 +87,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       project = (await rpc('projects.list', {})).find(row => row.name === PROJECT)
       assert.ok(project)
-      const { deviceId } = await rpc('runtime.stand_in.device_identity', {})
-      assert.ok(deviceId)
+      // Local space references use the IPC identity without requiring cloud registration.
+      const { deviceId } = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+      assert.ok(deviceId, 'The local Executor must expose its IPC identity')
       const space = { project_store: 'local', space_id: project.id, device_id: deviceId }
       issue = await rpc('todos.create', {
         project_id: project.id,
