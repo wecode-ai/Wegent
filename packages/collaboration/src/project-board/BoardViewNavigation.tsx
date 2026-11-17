@@ -15,6 +15,7 @@ import type { useSavedBoardViews } from './useSavedBoardViews'
 export function BoardViewNavigation({
   controller,
   canManage,
+  canWrite = true,
   statuses,
   tags,
   settings,
@@ -22,6 +23,7 @@ export function BoardViewNavigation({
 }: {
   controller: ReturnType<typeof useSavedBoardViews>
   canManage: boolean
+  canWrite?: boolean
   statuses: readonly CollaborationStatus[]
   tags: readonly string[]
   settings?: Omit<BoardViewEditorSettings, 'defaultViewId'>
@@ -32,7 +34,11 @@ export function BoardViewNavigation({
   const theme = useCollaborationPortalTheme()
   const editing = controller.editing
   const view = controller.view
-  const builtIn = { id: 'default', name: t('todo.board_view_builtin'), columns: [] }
+  const builtIn = {
+    id: 'default',
+    name: t('todo.board_view_builtin'),
+    columns: [],
+  }
   const itemStyle =
     'flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary outline-none hover:bg-muted focus:bg-muted disabled:opacity-50 md:min-h-8'
   return (
@@ -112,7 +118,7 @@ export function BoardViewNavigation({
                     type="button"
                     role="menuitem"
                     data-testid="board-view-new"
-                    disabled={controller.views.length >= 30}
+                    disabled={!canWrite || controller.views.length >= 30}
                     className={itemStyle}
                     onClick={() => {
                       setOpen(false)
@@ -126,6 +132,7 @@ export function BoardViewNavigation({
                     type="button"
                     role="menuitem"
                     data-testid="board-view-edit"
+                    disabled={!canWrite}
                     className={itemStyle}
                     onClick={() => {
                       setOpen(false)
@@ -145,6 +152,7 @@ export function BoardViewNavigation({
         <BoardViewEditor
           key={editing.view.id}
           initial={editing.view}
+          canWrite={canWrite}
           statuses={statuses}
           tags={tags}
           translate={t}

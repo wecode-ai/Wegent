@@ -198,8 +198,8 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         `${lane('design')} [data-testid="cloud-todo-card-${issue.id}"]`
       )
       await control.command('click', scoped('[data-testid="board-view-picker"]'))
-      await control.command('waitFor', '[data-testid="board-view-new"]', { visible: false })
-      await control.command('waitFor', '[data-testid="board-view-edit"]', { visible: false })
+      await control.command('waitFor', '[data-testid="board-view-new"]:disabled')
+      await control.command('waitFor', '[data-testid="board-view-edit"]:disabled')
       await control.command('press', scoped('[data-testid="board-view-picker"]'), { key: 'Escape' })
       await control.command(
         'waitFor',

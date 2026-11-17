@@ -249,7 +249,6 @@ export function ProjectBoardAdapter({
     project.task_provider,
   );
   const canManageViews =
-    structuralWritesEnabled &&
     Boolean(onSaveViews) &&
     (project.project_store === "local" ||
       project.access_role === "Owner" ||
@@ -482,6 +481,7 @@ export function ProjectBoardAdapter({
             statuses={statuses}
             tags={availableTags}
             canManage={canManageViews}
+            canWrite={structuralWritesEnabled}
             settings={{
               cardDisplay: project.card_display,
               boardConfig: project.board_config,

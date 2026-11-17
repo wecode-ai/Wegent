@@ -149,6 +149,93 @@ describe('saved project board views', () => {
     expect(screen.getByTestId('board-view-picker')).toHaveFocus()
   })
 
+  it('retains a draft during a sync write lock and only submits it after syncing recovers', async () => {
+    const user = userEvent.setup()
+    const save = vi.fn().mockResolvedValue(undefined)
+    function Harness({ canWrite }: { canWrite: boolean }) {
+      const controller = useSavedBoardViews({
+        projectKey: 'one',
+        config,
+        revision: 1,
+        translate,
+        save,
+      })
+      return (
+        <BoardViewNavigation
+          controller={controller}
+          canManage
+          canWrite={canWrite}
+          statuses={statuses}
+          tags={['a']}
+          translate={translate}
+        />
+      )
+    }
+    const view = render(<Harness canWrite />)
+    await user.click(screen.getByTestId('board-view-picker'))
+    await user.click(screen.getByTestId('board-view-mixed'))
+    await user.click(screen.getByTestId('board-view-picker'))
+    await user.click(screen.getByTestId('board-view-edit'))
+    const dialog = screen.getByTestId('board-view-editor')
+    fireEvent.change(screen.getByTestId('board-view-name'), { target: { value: 'Kept draft' } })
+    await user.click(screen.getByTestId('board-view-delete'))
+
+    view.rerender(<Harness canWrite={false} />)
+    expect(screen.getByTestId('board-view-editor')).toBe(dialog)
+    expect(screen.getByTestId('board-view-name')).toHaveValue('Kept draft')
+    expect(screen.getByTestId('board-view-save')).toBeDisabled()
+    expect(screen.getByTestId('board-view-delete')).toBeDisabled()
+    fireEvent.submit(dialog.querySelector('form')!)
+    await user.click(screen.getByTestId('board-view-delete'))
+    expect(save).not.toHaveBeenCalled()
+
+    view.rerender(<Harness canWrite />)
+    expect(screen.getByTestId('board-view-editor')).toBe(dialog)
+    expect(screen.getByTestId('board-view-name')).toHaveValue('Kept draft')
+    expect(screen.getByTestId('board-view-delete')).toBeEnabled()
+    await user.click(screen.getByTestId('board-view-save'))
+    await waitFor(() => expect(save).toHaveBeenCalledOnce())
+    expect(save).toHaveBeenCalledWith({
+      ...config,
+      views: [{ ...config.views[0], name: 'Kept draft' }],
+    })
+  })
+
+  it('removes editor access when management permission is revoked even while writes are fresh', async () => {
+    const user = userEvent.setup()
+    const save = vi.fn().mockResolvedValue(undefined)
+    function Harness({ canManage }: { canManage: boolean }) {
+      const controller = useSavedBoardViews({
+        projectKey: 'one',
+        config,
+        revision: 1,
+        translate,
+        save,
+      })
+      return (
+        <BoardViewNavigation
+          controller={controller}
+          canManage={canManage}
+          canWrite
+          statuses={statuses}
+          tags={['a']}
+          translate={translate}
+        />
+      )
+    }
+    const view = render(<Harness canManage />)
+    await user.click(screen.getByTestId('board-view-picker'))
+    await user.click(screen.getByTestId('board-view-edit'))
+    expect(screen.getByTestId('board-view-editor')).toBeVisible()
+
+    view.rerender(<Harness canManage={false} />)
+    expect(screen.queryByTestId('board-view-editor')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('board-view-picker'))
+    expect(screen.queryByTestId('board-view-edit')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('board-view-new')).not.toBeInTheDocument()
+    expect(save).not.toHaveBeenCalled()
+  })
+
   it('keeps status menus inside the unified dialog and stages workflow edits until save', async () => {
     const user = userEvent.setup()
     const save = vi.fn().mockResolvedValue(undefined)

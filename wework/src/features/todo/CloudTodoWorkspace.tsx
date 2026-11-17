@@ -4912,7 +4912,8 @@ export function CloudTodoWorkspace({
                             controller={savedViews}
                             statuses={nativeStatuses}
                             tags={availableTags}
-                            canManage={canManageViews && projectSnapshot.canWrite}
+                            canManage={canManageViews}
+                            canWrite={projectSnapshot.canWrite}
                             settings={{
                               cardDisplay: selectedProject?.card_display,
                               boardConfig: selectedProject?.board_config,
