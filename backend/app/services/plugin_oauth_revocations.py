@@ -71,7 +71,7 @@ class PluginOAuthRevocations:
     def _coordinated_connection(
         self, db: Session, user_id: int, connection_id: str
     ) -> Kind:
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(db, user_id, connection_id=connection_id)
         row = self.connections._get(db, user_id, connection_id)
         if row.json["spec"]["status"] != "disconnected":
             raise PluginAccountAuthError("plugin_auth_operation_mismatch", 409)

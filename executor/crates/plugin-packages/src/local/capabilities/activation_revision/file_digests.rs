@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use sha2::{Digest, Sha256};
+use crate::services::workbench::PackageDigest;
 
 #[cfg(windows)]
 #[path = "file_digests/windows.rs"]
@@ -36,7 +36,7 @@ impl FileDigests {
                 }
             }
         }
-        let mut digest = Sha256::new();
+        let mut digest = PackageDigest::new();
         let mut buffer = [0; 8192];
         self.hashed_files += 1;
         loop {
@@ -50,7 +50,7 @@ impl FileDigests {
         if before != FileStamp::read(&file)? {
             return Err(io::Error::other("File changed during capability detection"));
         }
-        let digest = format!("sha256:{:x}", digest.finalize());
+        let digest = digest.finish();
         if let Some(stamp) = before.filter(|stamp| stamp.cacheable_at(observed_at)) {
             self.entries
                 .insert(path.to_owned(), (stamp, digest.clone()));
