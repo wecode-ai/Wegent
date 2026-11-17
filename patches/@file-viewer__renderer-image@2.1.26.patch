@@ -1,0 +1,29 @@
+diff --git a/dist/image.js b/dist/image.js
+index 37fb49f33b14a14b255955c2cb45cb541bc79138..60fff5972a1f368af9d9c126dd250b4c1e0b91f0 100644
+--- a/dist/image.js
++++ b/dist/image.js
+@@ -163,7 +163,15 @@ export default async function renderImage(buffer, target, type, context) {
+         applyImageZoom();
+         zoomEmitter.emit();
+     };
+-    const resizeObserver = new ResizeObserver(updateViewportSize);
++    const windowRef = documentRef.defaultView;
++    let resizeFrame = null;
++    const resizeObserver = new ResizeObserver(() => {
++        if (resizeFrame !== null) return;
++        resizeFrame = windowRef.requestAnimationFrame(() => {
++            resizeFrame = null;
++            updateViewportSize();
++        });
++    });
+     resizeObserver.observe(root);
+     image.addEventListener('load', updateViewportSize);
+     const getZoomState = () => ({
+@@ -249,6 +257,7 @@ export default async function renderImage(buffer, target, type, context) {
+         unmount() {
+             unregisterFileViewerZoomProvider(root);
+             resizeObserver.disconnect();
++            if (resizeFrame !== null) windowRef.cancelAnimationFrame(resizeFrame);
+             image.removeEventListener('load', updateViewportSize);
+             image.removeEventListener('click', openLightbox);
+             lightbox.destroy();
