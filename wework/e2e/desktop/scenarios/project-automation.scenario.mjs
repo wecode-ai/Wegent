@@ -411,10 +411,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           await control.command('snapshot', '[data-testid="wework-agent-resource-creator"]')
         )
         assert.ok(
-          agentDialogSnapshot.testIds.includes('wework-agent-resource-creator-tab-basic'),
-          'Agent creation must open the basic information tab'
+          agentDialogSnapshot.testIds.includes('wework-agent-resource-creator-panel-basic') &&
+            agentDialogSnapshot.testIds.includes('wework-agent-resource-creator-advanced-toggle') &&
+            agentDialogSnapshot.testIds.includes('wework-agent-resource-creator-runtime-summary'),
+          'Agent creation must show responsibilities, tools and the labeled runtime summary'
         )
-        await capture(control, 'project-automation-02-agent-create-basic-tab.png')
+        await capture(control, 'project-automation-02-agent-create-configuration.png')
         await control.command('fill', '[data-testid="wework-agent-display-name"]', {
           value: PROJECT_AGENT_NAME,
         })

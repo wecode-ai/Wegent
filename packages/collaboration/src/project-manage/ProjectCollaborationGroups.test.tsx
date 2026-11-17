@@ -172,6 +172,26 @@ describe('project collaboration-group loading', () => {
     expect(view.props!.members[0].user_name).toBe('Bob')
   })
 
+  it('distinguishes a failed collection from an empty result and recovers with a read-only retry', async () => {
+    const api = apiFor()
+    vi.mocked(api.projects.listCollaborationGroups!)
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue([group])
+    await render(api)
+    expect(view.props!.collectionState).toBe('error')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('connection')
+    expect(container.textContent).not.toContain('Failed to fetch')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="project-groups-load-retry"]')!
+        .click()
+    )
+    expect(view.props!.collectionState).toBe('ready')
+    expect(view.props!.groups).toEqual([group])
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(api.projects.updateCollaborationGroup).not.toHaveBeenCalled()
+  })
+
   it('reports initial group reload failures without discarding successfully loaded members', async () => {
     const api = apiFor()
     vi.mocked(api.projects.listCollaborationGroups!).mockRejectedValue(

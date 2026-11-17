@@ -349,7 +349,9 @@ export function CollaborationApp({
         translate(
           "todo.archive_issue_failed_count",
           "{{count}} 个任务归档失败，请重试。",
-          { count: failed.length },
+          {
+            count: failed.length,
+          },
         ),
       );
     }
@@ -738,7 +740,10 @@ export function CollaborationApp({
                             linkedIssues,
                             "milestones",
                             linkedAssignments,
-                            { emptyLabel, milestoneId },
+                            {
+                              emptyLabel,
+                              milestoneId,
+                            },
                           )
                         }
                       />
@@ -845,6 +850,7 @@ export function CollaborationApp({
               embedded
               hasCreateAction={hasHeaderCreateAction}
               sidebarCollapsed={false}
+              compactTitle={project.name}
               title={
                 <span className="collaboration-project-heading">
                   <strong>{project.name}</strong>
@@ -1047,7 +1053,10 @@ export function CollaborationApp({
                             refreshOrder: async (target) => {
                               await commands.loadProjectSnapshot(
                                 target.cloud_project_id,
-                                { invalidate: true, throwOnError: true },
+                                {
+                                  invalidate: true,
+                                  throwOnError: true,
+                                },
                               );
                             },
                           },

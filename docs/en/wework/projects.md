@@ -262,7 +262,7 @@ Local spaces save the agent configuration in the project, preserving its resourc
 
 Open **Project settings → AI configuration → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. Project Maintainers can edit project-owned definitions, including entries created by other members; explicitly private definitions remain creator-only. Shared and personal Agent source definitions still require their original editing permission. Unchanged hidden MCP configuration is preserved; editing a project definition does not grant access to another person's private credentials. Click **Save** to apply changes and refresh the project list. A failed write keeps the form open with its values and an error. If the write succeeds but refreshing the list fails, the editor closes and the list offers a retry that only reloads data. Saving other fields preserves untouched routing; older Agents do not need a model-policy upgrade first.
 
-Assignment errors identify the Agent, the Issue's bound environment, the policy environment and the denial reason. For a policy conflict, open **Runtime settings** in the editor above and configure the Agent to use the Issue's bound device. For missing workspace or project authorization, restore the grant on the indicated **Execution environments** page, then assign again. When group members have no common runner, the error lists each member and its eligible devices. Rejected assignments preserve the saved assignee and do not automatically move historical sessions to another device.
+Assignment errors identify the Agent, the Issue's bound environment, the policy environment and the denial reason. For a policy conflict, open **How it runs** in the editor above and configure the Agent to use the Issue's bound device. For missing workspace or project authorization, restore the grant on the indicated **Execution environments** page, then assign again. When group members have no common runner, the error lists each member and its eligible devices. Rejected assignments preserve the saved assignee and do not automatically move historical sessions to another device.
 
 In a global, space or project agent create/settings form, check resource ownership and choose the capability source:
 
@@ -270,7 +270,7 @@ In a global, space or project agent create/settings form, check resource ownersh
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Follow runtime device (recommended) | Uses that running device's current user's plugins, Skills, MCP and local capabilities; today's device preview is not a guarantee for a different device               |
 | Fix capabilities to Agent           | Search/add/remove plugins and Skills to store them with the agent; plugin capability selection is Codex-only and configured capabilities synchronize before execution |
-| Advanced MCP                        | In fixed mode, edit MCP JSON in advanced settings and check format/source trust; do not put credentials in prose or chat                                              |
+| Advanced MCP                        | In fixed mode, edit MCP JSON in Tools and skills and check format/source trust; do not put credentials in prose or chat                                              |
 | Prompt references                   | Plugin/Skill references require fixed capabilities and lock required selections; review/remove the reference before changing its required item                        |
 | Save                                | Explicitly save after reviewing capabilities, execution environment and model; choosing an option alone does not save                                                 |
 | Disable                             | Disabling in project agent configuration submits immediately, without another confirmation dialog; not deletion of the source agent or termination of an existing run |
@@ -281,10 +281,12 @@ In a global, space or project agent create/settings form, check resource ownersh
 
 When adding an Agent, search existing Agents by name or owning space, or open
 the creation form. New Agents default to **Automatic selection** for execution
-and the first available cloud model. The basic tab shows the current environment
-and model in its footer, so you can create the Agent without opening runtime settings.
+and the first available cloud model. Enter the name and responsibilities first,
+then independently expand **Tools and skills** and **How it runs** as needed.
+Both sections preserve your draft. The collapsed runtime section labels the
+environment and model separately; the footer contains only Cancel and Save.
 
-Open **Runtime settings** to change these defaults. The environment menu lists
+Open **How it runs** to change these defaults. The environment menu lists
 automatic selection, selection at run time, and specific devices, with project
 shared devices before personal devices. Search by name or device ID. Only online
 devices appear initially; use **Show offline devices** in the bottom-right corner
@@ -449,7 +451,7 @@ Each setup step has **Setup command** and **Working directory (optional)** field
 
 After saving a collaboration group or automatic rule, you can return directly to Basic information without reloading. If **Configuration saved, but project details could not be refreshed. Retry the refresh.** appears, **Retry** only reads project details again; it never repeats the configuration write.
 
-An Agent's **Runtime settings → Automatic allocation** uses cloud models. When no models are available for this mode, choose **Specify device** to open the same execution-environment picker and select a device for its native models. No device is bound automatically.
+An Agent's **How it runs → Automatic allocation** uses cloud models. When no models are available for this mode, choose **Specify device** to open the same execution-environment picker and select a device for its native models. No device is bound automatically.
 
 Opening a template under **Configuration sharing → Choose template** shows its details within the same dialog. Choose **Back to templates** to continue browsing. **Confirm collaboration configuration → Customize members** switches between the role summary and editing form. Use **Save to My templates** to retain the current configuration or **Export configuration (YAML)** to download it.
 

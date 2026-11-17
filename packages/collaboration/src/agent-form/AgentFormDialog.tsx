@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
-//
 // SPDX-License-Identifier: Apache-2.0
 
-import { ChevronRight, LoaderCircle, SlidersHorizontal, X } from 'lucide-react'
-import { useRef, useState, type ReactNode } from 'react'
-
+import { ChevronRight, LoaderCircle, X } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { DialogForm } from '../controls/DialogForm'
 import { useDialogKeyboard } from '../controls/useDialogKeyboard'
 
@@ -16,7 +14,6 @@ export interface AgentFormSelectOption {
   label: string
   value: string
 }
-
 export interface AgentFormField {
   disabled?: boolean
   label: string
@@ -25,11 +22,9 @@ export interface AgentFormField {
   testId: string
   value: string
 }
-
 export interface AgentFormSelectField extends AgentFormField {
   options: AgentFormSelectOption[]
 }
-
 export interface AgentFormLabels {
   advanced: string
   advancedDescription: string
@@ -37,20 +32,21 @@ export interface AgentFormLabels {
   close: string
   owner: string
 }
-
 export interface AgentFormAdvancedSummary {
   description: string
   title: string
 }
-
-interface AgentFormRuntimeTab {
-  onOpen?(): void
-  basicLabel: string
+interface ConfigurationValue {
   label: string
-  summary: string
+  value: string
+}
+export interface AgentFormRuntimeSettings {
+  onOpen?(): void
+  label: string
+  environment?: ConfigurationValue
+  model: ConfigurationValue
   error?: string | null
 }
-
 export interface AgentFormTestIds {
   backdrop: string
   close: string
@@ -88,7 +84,7 @@ export function AgentFormDialog({
   promptEditor,
   capabilityMode,
   runtime,
-  runtimeTab,
+  runtimeSettings,
   saveDisabled,
   saveLabel,
   savingLabel,
@@ -121,7 +117,7 @@ export function AgentFormDialog({
   promptEditor?: ReactNode
   capabilityMode?: ReactNode
   runtime?: AgentFormSelectField
-  runtimeTab?: AgentFormRuntimeTab
+  runtimeSettings?: AgentFormRuntimeSettings
   saveDisabled: boolean
   saveLabel: string
   savingLabel: string
@@ -131,12 +127,19 @@ export function AgentFormDialog({
   const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
     if (!busy) onClose()
   })
-  const titleId = `${testIds.dialog}-title`
   const [advancedOpen, setAdvancedOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<'basic' | 'runtime'>('basic')
+  const [runtimeOpen, setRuntimeOpen] = useState(false)
+  const titleId = `${testIds.dialog}-title`
   const identityField = displayName ?? name
-  const hasAdvancedSettings = Boolean(capabilityMode || capabilities || mcp)
+  const hasCapabilities = Boolean(capabilityMode || capabilities || mcp)
   const modelField = modelControl ?? (model ? <SelectInput busy={busy} field={model} /> : null)
+  const runtimeControls = (
+    <>
+      {executionControl}
+      {runtime ? <SelectInput busy={busy} field={runtime} /> : null}
+      {modelField}
+    </>
+  )
 
   return (
     <div
@@ -154,22 +157,22 @@ export function AgentFormDialog({
         className="flex max-h-[90dvh] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-border bg-popover text-text-primary shadow-xl"
         data-agent-form="shared"
         data-testid={testIds.dialog}
+        role="dialog"
         onSubmit={event => {
           event.preventDefault()
           if (!busy && !saveDisabled) onSave()
         }}
-        role="dialog"
       >
-        <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-5">
-          <div className="min-w-0 space-y-0.5">
+        <header className="flex items-start justify-between gap-4 px-6 pb-4 pt-5">
+          <div className="min-w-0 space-y-1">
             <h2 className="text-heading-sm font-medium text-text-primary" id={titleId}>
               {title}
             </h2>
-            <p className="max-w-xl text-sm leading-5 text-text-muted">{description}</p>
+            <p className="max-w-prose text-sm leading-5 text-text-secondary">{description}</p>
           </div>
           <button
             aria-label={labels.close}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary disabled:pointer-events-none disabled:opacity-40 md:h-8 md:w-8"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-40 md:h-8 md:w-8"
             data-testid={testIds.close}
             disabled={busy}
             onClick={onClose}
@@ -178,128 +181,112 @@ export function AgentFormDialog({
             <X aria-hidden="true" className="h-4 w-4" />
           </button>
         </header>
-
-        {runtimeTab ? (
-          <AgentFormTabs
-            activeTab={activeTab}
-            busy={busy}
-            labels={runtimeTab}
-            onChange={tab => {
-              setActiveTab(tab)
-              if (tab === 'runtime') runtimeTab.onOpen?.()
-            }}
-            prefix={testIds.dialog}
-          />
-        ) : null}
-
         {loading ? (
-          <p className="flex items-center gap-2 px-6 pb-5 pt-2 text-sm text-text-muted">
+          <p
+            className="flex items-center gap-2 px-6 pb-5 text-sm text-text-secondary"
+            role="status"
+          >
             <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
             {loadingLabel}
           </p>
         ) : null}
-        <div className="min-h-0 space-y-4 overflow-y-auto px-6 pb-5 pt-2" hidden={loading}>
-          <section
-            aria-labelledby={runtimeTab ? `${testIds.dialog}-tab-basic` : undefined}
-            className="min-w-0 space-y-4"
-            hidden={Boolean(runtimeTab && activeTab !== 'basic')}
-            id={`${testIds.dialog}-panel-basic`}
-            role={runtimeTab ? 'tabpanel' : undefined}
-          >
-            <section className="min-w-0 space-y-2">
-              {identityField ? <TextInput busy={busy} field={identityField} /> : null}
-              {owner ? (
-                <SelectInput busy={busy} field={owner} />
-              ) : (
-                <div className="flex min-h-5 items-center gap-2 text-xs text-text-muted">
-                  <span>{labels.owner}</span>
-                  <span aria-hidden="true">·</span>
-                  <span className="truncate text-text-secondary">{ownerLabel}</span>
-                </div>
-              )}
-            </section>
-
-            <section className="space-y-4">
-              {!runtimeTab ? executionControl : null}
-              {!runtimeTab && runtime ? (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <SelectInput busy={busy} field={runtime} />
-                  {modelField}
-                </div>
-              ) : !runtimeTab ? (
-                modelField
-              ) : null}
-              {promptEditor ?? <TextareaInput busy={busy} field={prompt} />}
-            </section>
-
-            {advanced}
-
-            {hasAdvancedSettings ? (
-              <section className="border-t border-border pt-2">
-                <button
-                  aria-expanded={advancedOpen}
-                  className="flex min-h-11 w-full items-center gap-2 rounded-md py-1 text-left hover:bg-muted/60 disabled:pointer-events-none disabled:opacity-50 md:min-h-9"
-                  data-testid={`${testIds.dialog}-advanced-toggle`}
-                  disabled={busy}
-                  onClick={() => {
-                    if (!advancedOpen) onAdvancedOpen?.()
-                    setAdvancedOpen(open => !open)
-                  }}
-                  type="button"
-                >
-                  <ChevronRight
-                    aria-hidden="true"
-                    className={classes(
-                      'h-4 w-4 shrink-0 text-text-muted transition-transform',
-                      advancedOpen ? 'rotate-90' : undefined
-                    )}
-                  />
-                  <span className="flex-1 text-sm text-text-secondary">{labels.advanced}</span>
-                  {advancedSummary ? (
-                    <span className="truncate text-xs text-text-muted">
-                      {advancedSummary.title}
-                    </span>
-                  ) : null}
-                </button>
-                {advancedOpen ? (
-                  <div className="space-y-4 border-t border-border px-4 py-4">
-                    {!capabilityMode ? (
-                      <p className="text-xs text-text-muted">
-                        {advancedSummary?.description ?? labels.advancedDescription}
-                      </p>
-                    ) : null}
-                    {capabilityMode}
-                    {capabilities}
-                    {mcp ? <TextareaInput busy={busy} code field={mcp} /> : null}
-                  </div>
-                ) : null}
-              </section>
-            ) : null}
+        <div className="min-h-0 space-y-5 overflow-y-auto px-6 pb-5" hidden={loading}>
+          <section className="min-w-0 space-y-2" data-testid={`${testIds.dialog}-panel-basic`}>
+            {identityField ? <TextInput busy={busy} field={identityField} /> : null}
+            {owner ? (
+              <SelectInput busy={busy} field={owner} />
+            ) : (
+              <dl className="flex min-w-0 flex-wrap gap-x-2 text-xs text-text-secondary">
+                <dt>{labels.owner}</dt>
+                <dd className="min-w-0 break-words">{ownerLabel}</dd>
+              </dl>
+            )}
           </section>
 
-          {runtimeTab ? (
-            <section
-              aria-labelledby={`${testIds.dialog}-tab-runtime`}
-              className="space-y-4"
-              hidden={activeTab !== 'runtime'}
-              id={`${testIds.dialog}-panel-runtime`}
-              role="tabpanel"
+          <section className="min-w-0">
+            {promptEditor ?? <TextareaInput busy={busy} field={prompt} />}
+          </section>
+          {advanced}
+
+          {hasCapabilities ? (
+            <ConfigurationDisclosure
+              title={labels.advanced}
+              open={advancedOpen}
+              busy={busy}
+              testId={`${testIds.dialog}-advanced-toggle`}
+              panelId={`${testIds.dialog}-panel-capabilities`}
+              summary={
+                advancedSummary ? (
+                  <>
+                    <span className="block text-sm text-text-primary">{advancedSummary.title}</span>
+                    <span className="mt-1 block text-xs leading-5 text-text-secondary">
+                      {advancedSummary.description}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-xs text-text-secondary">{labels.advancedDescription}</span>
+                )
+              }
+              onToggle={() => {
+                if (!advancedOpen) onAdvancedOpen?.()
+                setAdvancedOpen(value => !value)
+              }}
             >
-              {executionControl}
-              {runtime ? <SelectInput busy={busy} field={runtime} /> : null}
-              {modelField}
-            </section>
+              {capabilityMode}
+              {capabilities}
+              {mcp ? <TextareaInput busy={busy} code field={mcp} /> : null}
+            </ConfigurationDisclosure>
           ) : null}
 
-          {runtimeTab?.error && activeTab === 'basic' ? (
-            <p className="text-sm text-destructive" role="alert">
-              {runtimeTab.error}
-            </p>
-          ) : null}
+          {runtimeSettings ? (
+            <section>
+              <ConfigurationDisclosure
+                title={runtimeSettings.label}
+                open={runtimeOpen}
+                busy={busy}
+                keepMounted
+                testId={`${testIds.dialog}-tab-runtime`}
+                panelId={`${testIds.dialog}-panel-runtime`}
+                summary={
+                  <span
+                    className="block space-y-1"
+                    data-testid={`${testIds.dialog}-runtime-summary`}
+                  >
+                    {[runtimeSettings.environment, runtimeSettings.model]
+                      .filter(Boolean)
+                      .map((field, index) => (
+                        <span
+                          className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 text-sm"
+                          key={index}
+                        >
+                          <span className="text-text-secondary">{field!.label}</span>
+                          <span className="min-w-0 break-words text-text-primary">
+                            {field!.value}
+                          </span>
+                        </span>
+                      ))}
+                  </span>
+                }
+                onToggle={() => {
+                  if (!runtimeOpen) runtimeSettings.onOpen?.()
+                  setRuntimeOpen(value => !value)
+                }}
+              >
+                {runtimeControls}
+              </ConfigurationDisclosure>
+              {runtimeSettings.error ? (
+                <p className="mt-2 text-sm text-destructive" role="alert">
+                  {runtimeSettings.error}
+                </p>
+              ) : null}
+            </section>
+          ) : (
+            runtimeControls
+          )}
 
           {error ? (
             <p
-              className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500"
+              className="rounded-md border border-destructive/30 p-3 text-sm text-destructive"
               data-testid={testIds.error}
               role="alert"
             >
@@ -307,36 +294,15 @@ export function AgentFormDialog({
             </p>
           ) : null}
         </div>
-
-        <footer
-          className={classes(
-            'flex flex-wrap items-center gap-3 border-t border-border bg-popover px-6 py-3',
-            footerHint || runtimeTab ? 'justify-between' : 'justify-end'
-          )}
-        >
-          {runtimeTab ? (
-            <button
-              aria-controls={`${testIds.dialog}-panel-runtime`}
-              aria-label={`${runtimeTab.label}: ${runtimeTab.summary}`}
-              className="flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-lg text-left text-xs text-text-muted hover:text-text-primary disabled:opacity-40 md:min-h-9"
-              data-testid={`${testIds.dialog}-runtime-summary`}
-              disabled={busy}
-              onClick={() => {
-                setActiveTab('runtime')
-                runtimeTab.onOpen?.()
-                document.getElementById(`${testIds.dialog}-tab-runtime`)?.focus()
-              }}
-              type="button"
-            >
-              <span className="min-w-0 break-words">{runtimeTab.summary}</span>
-              <SlidersHorizontal aria-hidden="true" className="h-4 w-4 shrink-0" />
-            </button>
-          ) : footerHint ? (
-            <p className="max-w-sm text-xs leading-4 text-text-muted">{footerHint}</p>
+        <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-border bg-popover px-6 py-3">
+          {footerHint ? (
+            <p className="mr-auto max-w-prose text-xs leading-5 text-text-secondary">
+              {footerHint}
+            </p>
           ) : null}
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <button
-              className="h-11 rounded-lg px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-40 md:h-9"
+              className="h-11 rounded-md px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-40 md:h-9"
               data-testid={`${testIds.dialog}-cancel`}
               disabled={busy}
               onClick={onClose}
@@ -345,7 +311,7 @@ export function AgentFormDialog({
               {labels.cancel}
             </button>
             <button
-              className="inline-flex h-11 items-center gap-2 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:opacity-80 disabled:opacity-40 md:h-9"
+              className="inline-flex h-11 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-80 disabled:opacity-40 md:h-9"
               data-testid={testIds.save}
               disabled={busy || saveDisabled}
               type="submit"
@@ -360,67 +326,57 @@ export function AgentFormDialog({
   )
 }
 
-function AgentFormTabs({
-  activeTab,
+function ConfigurationDisclosure({
+  title,
+  open,
   busy,
-  labels,
-  onChange,
-  prefix,
+  summary,
+  onToggle,
+  testId,
+  panelId,
+  children,
+  keepMounted = false,
 }: {
-  activeTab: 'basic' | 'runtime'
+  title: string
+  open: boolean
   busy: boolean
-  labels: AgentFormRuntimeTab
-  onChange(tab: 'basic' | 'runtime'): void
-  prefix: string
+  summary: ReactNode
+  onToggle(): void
+  testId: string
+  panelId: string
+  children: ReactNode
+  keepMounted?: boolean
 }) {
-  const buttons = useRef<Array<HTMLButtonElement | null>>([])
-  const tabs = ['basic', 'runtime'] as const
   return (
-    <div
-      aria-label={`${labels.basicLabel} / ${labels.label}`}
-      className="mx-6 flex gap-5 border-b border-border"
-      role="tablist"
-    >
-      {tabs.map((tab, index) => (
-        <button
-          aria-controls={`${prefix}-panel-${tab}`}
-          aria-selected={activeTab === tab}
+    <section className="border-t border-border">
+      <button
+        aria-expanded={open}
+        aria-controls={panelId}
+        aria-labelledby={`${panelId}-heading`}
+        className="flex min-h-11 w-full items-start gap-3 rounded-md py-4 text-left hover:bg-muted/40 disabled:opacity-50"
+        data-testid={testId}
+        disabled={busy}
+        onClick={onToggle}
+        type="button"
+      >
+        <ChevronRight
+          aria-hidden="true"
           className={classes(
-            'min-h-11 border-b-2 px-1 text-sm disabled:opacity-40 md:min-h-9',
-            activeTab === tab
-              ? 'border-text-primary text-text-primary'
-              : 'border-transparent text-text-muted hover:text-text-primary'
+            'mt-0.5 h-4 w-4 shrink-0 text-text-secondary',
+            open ? 'rotate-90' : undefined
           )}
-          data-testid={`${prefix}-tab-${tab}`}
-          disabled={busy}
-          id={`${prefix}-tab-${tab}`}
-          key={tab}
-          onClick={() => onChange(tab)}
-          onKeyDown={event => {
-            const target =
-              event.key === 'Home'
-                ? 0
-                : event.key === 'End'
-                  ? 1
-                  : event.key === 'ArrowLeft' || event.key === 'ArrowRight'
-                    ? 1 - index
-                    : null
-            if (target == null) return
-            event.preventDefault()
-            onChange(tabs[target]!)
-            buttons.current[target]?.focus()
-          }}
-          ref={element => {
-            buttons.current[index] = element
-          }}
-          role="tab"
-          tabIndex={activeTab === tab ? 0 : -1}
-          type="button"
-        >
-          {tab === 'basic' ? labels.basicLabel : labels.label}
-        </button>
-      ))}
-    </div>
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-text-primary" id={`${panelId}-heading`}>
+            {title}
+          </span>
+          {!open ? <span className="mt-2 block">{summary}</span> : null}
+        </span>
+      </button>
+      <div className="space-y-4 pb-4" id={panelId} hidden={!open}>
+        {open || keepMounted ? children : null}
+      </div>
+    </section>
   )
 }
 

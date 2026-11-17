@@ -238,6 +238,7 @@ import { GroupConfigurationView } from "./GroupConfigurationView";
 export function useGroupConfiguration({
   workspace,
   groups,
+  collectionState = "ready",
   availableGroups = [],
   members: suppliedMembers,
   agents: suppliedAgents,
@@ -258,6 +259,7 @@ export function useGroupConfiguration({
 }: {
   workspace?: CollaborationWorkspace;
   groups: CollaborationGroup[];
+  collectionState?: "loading" | "ready" | "error";
   availableGroups?: CollaborationGroup[];
   members: Array<Pick<CollaborationMember, "user_id" | "user_name">>;
   agents: CollaborationAgent[];
@@ -730,6 +732,7 @@ export function useGroupConfiguration({
     formOpen,
     groupAgentActions,
     groups,
+    collectionState,
     insertRuleMention,
     leader,
     loadParticipants,

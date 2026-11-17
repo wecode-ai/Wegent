@@ -45,6 +45,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
     formOpen,
     groupAgentActions,
     groups,
+    collectionState,
     loadParticipants,
     locale,
     messages,
@@ -553,11 +554,15 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                       </article>
                     ))}
                   </div>
-                ) : (
+                ) : collectionState === 'ready' ? (
                   <div className="collaboration-resource-empty">
                     {workspace ? messages.noGroups : messages.noProjectGroups}
                   </div>
-                )}
+                ) : collectionState === 'loading' ? (
+                  <p className="py-5 text-sm text-text-secondary" role="status">
+                    {locale === 'zh-CN' ? '正在加载协作小组…' : 'Loading collaboration groups…'}
+                  </p>
+                ) : null}
               </div>
               {availableGroups.length > 0 && commands.addCollaborationGroup ? (
                 <div className="collaboration-resource-section">

@@ -201,7 +201,9 @@ describe('ProjectAutomaticProcessing loading', () => {
     expect(screen.getByTestId('automatic-processing-hook')).toBeDisabled()
     expect(screen.getByTestId('automatic-processing-save')).toBeDisabled()
     await act(async () => hooks.reject(new Error('接入服务不可用')))
-    expect(screen.getAllByRole('alert')[0]).toHaveTextContent('接入服务不可用')
+    expect(screen.getAllByRole('alert')[0]).toHaveTextContent('读取事件来源失败，请重试。')
+    expect(screen.getAllByRole('alert')[0]).toHaveAttribute('title', '接入服务不可用')
+    expect(screen.getByTestId('automatic-processing-hooks-retry')).toBeEnabled()
     expect(screen.getByText('自动分配')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-created'))
     api.incomingHooks.list.mockResolvedValue([
@@ -213,6 +215,31 @@ describe('ProjectAutomaticProcessing loading', () => {
     )
     expect(screen.getByTestId('automatic-processing-save')).toBeEnabled()
     expect(api.incomingHooks.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('explains empty event sources and refreshes them without submitting a rule', async () => {
+    const { api, view } = fixture()
+    render(view())
+    await screen.findByText('自动分配')
+    fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('automatic-processing-trigger-external'))
+    expect(await screen.findByTestId('automatic-processing-hooks-empty')).toHaveTextContent(
+      '管理员'
+    )
+    expect(screen.getByTestId('automatic-processing-hooks-help')).toHaveAttribute(
+      'href',
+      expect.stringContaining('docs/zh/wework/workbench.md')
+    )
+    expect(screen.getByTestId('automatic-processing-save')).toBeDisabled()
+    api.incomingHooks.list.mockResolvedValue([
+      { id: 'hook-1', name: 'GitHub', sourceType: 'github' },
+    ])
+    fireEvent.click(screen.getByTestId('automatic-processing-hooks-refresh'))
+    await waitFor(() =>
+      expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('hook-1')
+    )
+    expect(screen.queryByTestId('automatic-processing-hooks-empty')).not.toBeInTheDocument()
+    expect(api.automations.create).not.toHaveBeenCalled()
   })
 
   it('refreshes after deletion without hiding the list and caches the updated result', async () => {
@@ -590,7 +617,11 @@ describe('ProjectAutomaticProcessing prompts', () => {
       target: { value: prompt },
     })
     fireEvent.click(screen.getByTestId('automatic-processing-target-kind-human'))
+    expect(screen.queryByTestId('automatic-processing-prompt')).not.toBeInTheDocument()
+    expect(screen.getByTestId('automatic-processing-routing-hint')).toHaveTextContent('不会启动 AI')
+    fireEvent.click(screen.getByTestId('automatic-processing-target-kind-agent'))
     expect(screen.getByTestId('automatic-processing-prompt')).toHaveValue(prompt)
+    fireEvent.click(screen.getByTestId('automatic-processing-target-kind-human'))
     fireEvent.click(screen.getByTestId('automatic-processing-save'))
     await waitFor(() =>
       expect(api.automations.create).toHaveBeenCalledWith(

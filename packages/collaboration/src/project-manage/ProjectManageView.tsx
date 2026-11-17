@@ -14,6 +14,7 @@ import {
 import { BoardLayoutEditor } from './BoardLayoutEditor'
 import { ProjectProviderSection, ProjectTagsSection } from './ProjectManageSections'
 import { ProjectMembersSection } from './ProjectMembersSection'
+import { requestFailureMessage } from '../controls/requestFailure'
 import {
   projectSettingsContentClassName,
   projectSettingsPageClassName,
@@ -285,7 +286,7 @@ export function ProjectManageView<
         setTagLoadState({
           projectId: project.id,
           loading: false,
-          error: cause instanceof Error ? cause.message : tagLoadFailed,
+          error: requestFailureMessage(cause, tagLoadFailed),
         })
       }
     )

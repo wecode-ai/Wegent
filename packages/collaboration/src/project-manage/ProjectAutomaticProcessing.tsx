@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { collaborationMessages, type CollaborationTranslate } from '../i18n'
 import { projectStatuses } from '../board'
 import { Textarea } from '../controls/Textarea'
+import { requestFailureMessage } from '../controls/requestFailure'
 import { useDialogKeyboard } from '../controls/useDialogKeyboard'
 import { DialogForm } from '../controls/DialogForm'
 import { ConfirmationDialog } from '../controls/ConfirmationDialog'
@@ -120,6 +121,7 @@ export function ProjectAutomaticProcessing({
   const [cronError, setCronError] = useState('')
   const [optionsError, setOptionsError] = useState('')
   const [hooksError, setHooksError] = useState('')
+  const [hooksRevision, setHooksRevision] = useState(0)
   const translateRef = useRef(translate)
   translateRef.current = translate
   const saveScope = useMemo(() => ({ api, projectId: project.id }), [api, project.id])
@@ -129,7 +131,6 @@ export function ProjectAutomaticProcessing({
   const error =
     actionError ||
     optionsError ||
-    (needsHooks && hooksError) ||
     (rulesError
       ? rulesError instanceof Error
         ? rulesError.message
@@ -233,7 +234,7 @@ export function ProjectAutomaticProcessing({
     return () => {
       active = false
     }
-  }, [api.incomingHooks, project.id, needsHooks])
+  }, [api.incomingHooks, project.id, needsHooks, hooksRevision])
 
   useEffect(() => {
     setAvailableAgents(agents)
@@ -562,7 +563,10 @@ export function ProjectAutomaticProcessing({
           <>
             {error ? (
               <div className="collaboration-alert" role="alert">
-                {error}
+                {requestFailureMessage(
+                  error,
+                  translate('todo.settings_connection_failed', '无法连接服务，请检查连接后重试。')
+                )}
               </div>
             ) : null}
 
@@ -600,7 +604,7 @@ export function ProjectAutomaticProcessing({
                           {rule.name}
                         </strong>
                         <span className="mt-0.5 block truncate text-xs text-text-secondary">
-                          {triggerLabel} → {targetName}
+                          {triggerLabel} · {targetKindLabel[rule.targetKind]} · {targetName}
                         </span>
                       </button>
                       {canManage ? (
@@ -720,10 +724,12 @@ export function ProjectAutomaticProcessing({
                   draft={draft}
                   updateDraft={updateDraft}
                   selectTrigger={selectTrigger}
+                  refreshHooks={() => setHooksRevision(value => value + 1)}
                   locale={locale}
                   translate={translate}
                   hooks={hooks}
                   hooksLoading={hooksLoading}
+                  hooksError={hooksError}
                   hasIncomingHooks={Boolean(api.incomingHooks)}
                   statuses={statuses}
                 />
@@ -733,7 +739,7 @@ export function ProjectAutomaticProcessing({
                     {translate('todo.assign_to', '交给')}
                   </h3>
                   <div
-                    className="grid grid-cols-3 gap-2"
+                    className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-2"
                     data-testid="automatic-processing-target-kinds"
                   >
                     {targetKinds.map(targetKind => {
@@ -772,7 +778,7 @@ export function ProjectAutomaticProcessing({
                           />
                           <span className="min-w-0">
                             <strong
-                              className={`block truncate text-sm font-medium ${
+                              className={`block break-words text-sm font-medium ${
                                 available ? 'text-text-primary' : 'text-text-muted'
                               }`}
                             >
@@ -806,44 +812,81 @@ export function ProjectAutomaticProcessing({
                   />
                 </section>
 
-                <div className="space-y-2">
-                  <label
-                    className="block text-sm font-medium text-text-primary"
-                    htmlFor="automatic-processing-prompt"
-                  >
-                    {translate('todo.automatic_processing_prompt', '提示词（可选）')}
-                  </label>
-                  <Textarea
-                    aria-describedby="automatic-processing-prompt-hint"
-                    data-testid="automatic-processing-prompt"
-                    disabled={saving}
-                    id="automatic-processing-prompt"
-                    maxLength={100000}
-                    onChange={event => updateDraft({ prompt: event.target.value })}
-                    rows={4}
-                    value={draft.prompt}
-                  />
-                  <p
-                    className="text-xs leading-5 text-text-secondary"
-                    id="automatic-processing-prompt-hint"
-                  >
-                    {translate(
-                      'todo.automatic_processing_prompt_hint',
-                      '触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。'
-                    )}
-                  </p>
-                </div>
-
-                <p className="text-xs leading-5 text-text-secondary">
-                  {translate(
-                    'todo.automatic_processing_runner_hint',
-                    '执行时从项目的可用设备池中自动选择设备；同一 Issue 后续执行会优先继续使用原设备。'
-                  )}
+                {draft.targetKind !== 'human' ||
+                draft.trigger === 'schedule' ||
+                draft.trigger === 'external' ? (
+                  <div className="space-y-2">
+                    <label
+                      className="block text-sm font-medium text-text-primary"
+                      htmlFor="automatic-processing-prompt"
+                    >
+                      {translate(
+                        draft.targetKind === 'human'
+                          ? 'todo.automatic_processing_issue_description'
+                          : 'todo.automatic_processing_prompt',
+                        draft.targetKind === 'human' ? '新 Issue 说明（可选）' : '提示词（可选）'
+                      )}
+                    </label>
+                    <Textarea
+                      aria-describedby="automatic-processing-prompt-hint"
+                      data-testid="automatic-processing-prompt"
+                      disabled={saving}
+                      id="automatic-processing-prompt"
+                      maxLength={100000}
+                      onChange={event => updateDraft({ prompt: event.target.value })}
+                      rows={4}
+                      value={draft.prompt}
+                    />
+                    <p
+                      className="text-xs leading-5 text-text-secondary"
+                      id="automatic-processing-prompt-hint"
+                    >
+                      {draft.targetKind === 'human'
+                        ? translate(
+                            'todo.automatic_processing_human_description_hint',
+                            '触发后创建新 Issue，并将此内容写入事项说明，再指派给所选成员。'
+                          )
+                        : draft.targetKind === 'collaboration_group'
+                          ? translate(
+                              'todo.automatic_processing_group_prompt_hint',
+                              '新建 Issue 时写入事项说明。已有 Issue 的处理要求请写在 Issue 内容或小组协作规则中。'
+                            )
+                          : translate(
+                              'todo.automatic_processing_prompt_hint',
+                              '触发时发送给 AI，用于处理当前 Issue；留空按目标职责处理。'
+                            )}
+                    </p>
+                  </div>
+                ) : null}
+                <p
+                  className="text-xs leading-5 text-text-secondary"
+                  data-testid="automatic-processing-routing-hint"
+                >
+                  {draft.targetKind === 'human'
+                    ? translate(
+                        'todo.automatic_processing_human_hint',
+                        '触发后将 Issue 指派给所选成员。成员按 Issue 内容处理，此规则不会启动 AI 执行。'
+                      )
+                    : draft.targetKind === 'collaboration_group'
+                      ? translate(
+                          'todo.automatic_processing_group_runner_hint',
+                          '由小组负责人协调处理；AI 执行时使用小组与成员已配置的运行方式。'
+                        )
+                      : translate(
+                          'todo.automatic_processing_agent_runner_hint',
+                          'AI 按智能体已保存的执行环境与模型策略运行，同一 Issue 的后续执行会沿用其绑定关系。'
+                        )}
                 </p>
 
                 {error ? (
                   <div className="collaboration-alert" role="alert">
-                    {error}
+                    {requestFailureMessage(
+                      error,
+                      translate(
+                        'todo.settings_connection_failed',
+                        '无法连接服务，请检查连接后重试。'
+                      )
+                    )}
                   </div>
                 ) : null}
               </fieldset>

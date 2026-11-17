@@ -39,6 +39,7 @@ import { useExecutionEnvironmentList } from '../execution-environment/useExecuti
 import { compareExecutionEnvironments } from '../execution-environment/compareExecutionEnvironments'
 import { ensureWorkspaceEnvironmentSharing } from '../execution-environment/ensureWorkspaceEnvironmentSharing'
 import { GitAccountConfigurationButton } from '../controls/GitAccountConfiguration'
+import { requestFailureMessage } from '../controls/requestFailure'
 
 type RepositoryDraft = CollaborationExecutionEnvironmentRepository & {
   id: string
@@ -554,7 +555,14 @@ export function ProjectExecutionEnvironments({
       const message = saveError instanceof Error ? saveError.message : String(saveError)
       const conflict = /^(Cloud project|Workspace) changed$/.test(message)
       setConfigurationConflict(conflict)
-      setConfigurationError(conflict ? environmentConfigurationConflictMessage(translate) : message)
+      setConfigurationError(
+        conflict
+          ? environmentConfigurationConflictMessage(translate)
+          : requestFailureMessage(
+              saveError,
+              translate('todo.settings_connection_failed', '无法连接服务，请检查连接后重试。')
+            )
+      )
     } finally {
       configurationSaveInFlight.current = false
       setSaving(false)
@@ -685,11 +693,7 @@ export function ProjectExecutionEnvironments({
       assigned.update(current => current.filter(item => item.id !== environment.id))
       onEnvironmentsChange?.()
     } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : translate('todo.execution_environment_remove_failed', '移除执行环境失败')
-      )
+      setError(environmentAuthorizationError(saveError, translate))
     } finally {
       setSaving(false)
     }

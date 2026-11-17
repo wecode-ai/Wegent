@@ -1,0 +1,24 @@
+.collaboration-project-members-table {
+  container-type: inline-size;
+}
+
+.collaboration-project-member-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.collaboration-project-member-heading {
+  display: none;
+}
+
+@container (min-width: 40rem) {
+  .collaboration-project-member-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(9rem, 0.9fr) 2.25rem;
+    gap: 16px;
+  }
+
+  .collaboration-project-member-heading {
+    display: grid;
+  }
+}

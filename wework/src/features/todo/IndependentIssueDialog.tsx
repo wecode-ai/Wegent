@@ -89,7 +89,7 @@ export function IndependentIssueDialog({
   }
   const ref = useDialogKeyboard<HTMLDivElement>(
     requestClose,
-    presentation === 'dialog' && !deleting && !discarding,
+    presentation === 'dialog',
     '[data-testid="independent-issue-title"]'
   )
   useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)

@@ -85,28 +85,25 @@ Wework 桌面版使用顶部标签页承载任务、项目空间、智能体和�
 
 ## 从外部系统创建 Issue
 
-云端工作空间的维护者可以在自动化规则配置中，为来源（GitHub、GitLab）直接创建事件订阅。将生成的 Webhook 地址配置到 GitHub、GitLab、Sentry、Grafana、告警平台或其他支持 HTTP 回调的系统后，外部事件会确定性地转换为当前工作空间收集箱中的未指派 Issue。创建成功后，现有的 `task.created` 自动化规则仍会继续执行。
+云端项目的 **自动化规则 → 外部事件** 可以选择项目中已接入的事件来源。当前设置界面不提供接入、轮换地址或凭据管理表单；来源为空时，先由项目管理员通过现有管理 API 接入，再返回此处点击 **刷新来源**，选择来源及其支持的事件并保存规则。
 
-> 提示：事件订阅与使用它的自动化规则一起创建和管理。选择来源（GitHub、GitLab）后补充资源地址，创建的订阅 Webhook 地址会在同一页面展示，可直接复制到外部系统。
+管理员可先读取 `GET /api/v1/cloud-projects/event-sources/catalog`，确认来源类型、采集方式与支持的事件。使用已认证且有项目管理权限的 API 会话，向 `POST /api/v1/cloud-projects/{project_id}/incoming-hooks` 提交配置。例如，通用 Webhook 来源使用稳定的外部资源标识：
 
-Hook 地址本身包含访问凭据，应按密钥管理，不要写入公开仓库或日志。地址泄露时选择 **轮换地址**，旧地址会立即失效；暂时停止接收时可以禁用 Hook。当前仅 Wework 托管任务的云端工作空间支持该能力。
-
-内置适配器直接识别 GitHub Issue 的 `opened`、`reopened` 事件，GitLab Issue 的 `open`、`reopen` 事件，以及 Sentry 和 Grafana 的未解决告警。关闭、解决或无法确定标题的事件不会创建 Issue，但会记录接收结果。相同的外部事件 ID、投递 ID 或请求正文只会处理一次。
-
-其他系统不需要实现 Wework 专用协议，可以直接发送 JSON、表单或纯文本。通用 JSON 至少提供 `title`、`subject`、`summary`、`name` 或 `message` 之一：
-
-```bash
-curl -X POST '<Hook 地址>' \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: incident-2026-08-16-001' \
-  -d '{
-    "title": "生产环境支付失败",
-    "description": "错误率超过阈值，请排查并恢复服务",
-    "url": "https://monitor.example.com/incidents/001"
-  }'
+```json
+{
+  "name": "Release events",
+  "source_type": "generic",
+  "collection_mode": "webhook",
+  "resource": {
+    "external_id": "release-events",
+    "display_name": "Release events"
+  }
+}
 ```
 
-纯文本请求会使用第一行作为标题、完整正文作为描述。单次请求正文不得超过 1 MiB。服务返回 HTTP `202`，响应中的 `status` 为 `created`、`duplicate`、`ignored` 或 `failed`；`created` 响应还会包含新建 Issue 的 `loop_item_id`。
+将响应中的 `webhook_url` 配置到对应的外部系统，按来源目录的协议投递事件。轮询或混合采集还需要有效的 `credential_ref`；不要把凭据内容写入规则说明。连接配置与接收事件不等于已验证任何外部服务的真实兼容性。
+
+Webhook 地址包含访问凭据，应按密钥管理，不要写入公开仓库或日志。读取、禁用、删除及地址轮换使用项目事件来源管理 API；当前自动化规则页面只选择已有来源。来源接入完成后，刷新列表并显式保存规则。
 
 ## 在 Issue 和运行任务之间往返
 

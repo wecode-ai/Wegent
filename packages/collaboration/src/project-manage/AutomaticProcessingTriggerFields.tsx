@@ -34,7 +34,9 @@ interface AutomaticProcessingTriggerFieldsProps {
   translate: CollaborationTranslate
   hooks: WorkspaceIncomingHook[]
   hooksLoading: boolean
+  hooksError: string
   hasIncomingHooks: boolean
+  refreshHooks(): void
   statuses: CollaborationStatus[]
 }
 
@@ -47,7 +49,9 @@ export function AutomaticProcessingTriggerFields({
   translate,
   hooks,
   hooksLoading,
+  hooksError,
   hasIncomingHooks,
+  refreshHooks,
   statuses,
 }: AutomaticProcessingTriggerFieldsProps) {
   const cronInput = useRef<HTMLInputElement>(null)
@@ -351,6 +355,55 @@ export function AutomaticProcessingTriggerFields({
 
           {draft.trigger === 'external' ? (
             <>
+              {hooksError ? (
+                <div
+                  className="space-y-2 rounded-md border border-destructive/30 p-3 text-sm text-destructive"
+                  role="alert"
+                  title={hooksError}
+                >
+                  <p>{translate('todo.event_sources_load_failed', '读取事件来源失败，请重试。')}</p>
+                  <button
+                    type="button"
+                    className="collaboration-link-button"
+                    data-testid="automatic-processing-hooks-retry"
+                    onClick={refreshHooks}
+                  >
+                    {translate('todo.event_sources_refresh', '刷新来源')}
+                  </button>
+                </div>
+              ) : !hooksLoading && hooks.length === 0 ? (
+                <div
+                  className="space-y-2 rounded-md border border-border p-3 text-sm text-text-secondary"
+                  role="status"
+                  data-testid="automatic-processing-hooks-empty"
+                >
+                  <p>
+                    {translate(
+                      'todo.event_sources_empty',
+                      '当前项目尚未接入事件来源。请由项目管理员完成来源接入，再刷新列表。'
+                    )}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <a
+                      className="collaboration-link-button"
+                      data-testid="automatic-processing-hooks-help"
+                      href={`https://github.com/wecode-ai/Wegent/blob/main/docs/${locale === 'zh-CN' ? 'zh' : 'en'}/wework/workbench.md#${locale === 'zh-CN' ? '从外部系统创建-issue' : 'create-issues-from-external-systems'}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {translate('todo.event_sources_setup_help', '查看接入说明')}
+                    </a>
+                    <button
+                      type="button"
+                      className="collaboration-link-button"
+                      data-testid="automatic-processing-hooks-refresh"
+                      onClick={refreshHooks}
+                    >
+                      {translate('todo.event_sources_refresh', '刷新来源')}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="flex min-h-12 items-center gap-4 py-2 text-sm">
                 <label
                   className="w-14 shrink-0 font-medium text-text-primary"
@@ -362,7 +415,7 @@ export function AutomaticProcessingTriggerFields({
                   className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
                   data-testid="automatic-processing-hook"
                   id="automatic-processing-hook"
-                  disabled={hooksLoading}
+                  disabled={hooksLoading || hooks.length === 0}
                   value={draft.hookId}
                   onChange={event => {
                     const hook = hooks.find(candidate => candidate.id === event.target.value)
@@ -395,7 +448,7 @@ export function AutomaticProcessingTriggerFields({
                   className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-3"
                   data-testid="automatic-processing-event"
                   id="automatic-processing-event"
-                  disabled={hooksLoading}
+                  disabled={hooksLoading || !draft.hookId}
                   value={draft.eventType}
                   onChange={event =>
                     updateDraft({

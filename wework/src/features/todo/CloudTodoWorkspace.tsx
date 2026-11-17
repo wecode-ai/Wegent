@@ -4449,6 +4449,7 @@ export function CloudTodoWorkspace({
                   ) : null
                 }
                 sidebarCollapsed={sidebarCollapsed}
+                compactTitle={selectedProject.name}
                 title={
                   embedded && embeddedTitle === 'workspace'
                     ? t('workbench.workspace_tab_board', '协作')

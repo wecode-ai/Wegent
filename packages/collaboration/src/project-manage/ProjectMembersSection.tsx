@@ -12,8 +12,7 @@ import type { useProjectMembers } from './useProjectMembers'
 import { MemberSearchPicker } from '../controls/MemberSearchPicker'
 import { projectSettingsContentClassName } from './ProjectSettingsPage'
 
-const grid =
-  'grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.8fr)_2.25rem] md:gap-4'
+const grid = 'collaboration-project-member-grid'
 const focus =
   'focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 keyboard:focus-visible:ring-offset-2'
 const roles = ['Maintainer', 'Developer', 'Viewer'] as const
@@ -218,14 +217,14 @@ export function ProjectMembersSection<
         )}
 
         <div
-          className="mt-6"
+          className="collaboration-project-members-table mt-6"
           role="table"
           aria-label={host.translate('todo.project_members', '项目成员')}
           data-testid="cloud-project-members-table"
         >
           <div
             role="row"
-            className={`${grid} hidden border-b border-border px-2 pb-2 text-xs text-text-muted md:grid`}
+            className={`${grid} collaboration-project-member-heading border-b border-border px-2 pb-2 text-xs text-text-muted`}
           >
             <span role="columnheader">{host.translate('todo.project_member', '成员')}</span>
             <span role="columnheader" data-testid="cloud-project-member-capability-heading">
@@ -314,7 +313,7 @@ export function ProjectMembersSection<
                     ) : null}
                     {member.inherited_role && (
                       <p
-                        className="truncate text-xs text-text-muted"
+                        className="break-words text-xs text-text-muted"
                         data-testid={`cloud-project-member-source-${member.user_id}`}
                         title={inheritedSource(member, project, host)}
                       >
@@ -324,7 +323,7 @@ export function ProjectMembersSection<
                       </p>
                     )}
                     {!roleReadOnly && (
-                      <label className="flex items-center gap-2">
+                      <label className="flex flex-col items-start gap-1">
                         {member.inherited_role && (
                           <span className="shrink-0 text-xs text-text-muted">
                             {host.translate('todo.project_member_project_role', '项目角色')}
@@ -340,7 +339,7 @@ export function ProjectMembersSection<
                               event.target.value as Exclude<ProjectManageRole, 'Owner'>
                             )
                           }
-                          className={`min-h-11 min-w-0 rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:opacity-40 md:min-h-8 ${focus}`}
+                          className={`min-h-11 w-full min-w-0 rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:opacity-40 md:min-h-8 ${focus}`}
                           aria-label={host.translate(
                             'todo.project_member_role_label',
                             '{{name}} 的项目角色',

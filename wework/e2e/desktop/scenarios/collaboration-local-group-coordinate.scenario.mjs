@@ -160,7 +160,11 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
     'scrollIntoView',
     `[data-testid="cloud-project-chat-agent-model-${ALTERNATE_MODEL}"]`
   )
-  await control.command('click', '[data-testid="cloud-project-chat-agent-editor-tab-basic"]')
+  await control.command('click', '[data-testid="cloud-project-chat-agent-editor-tab-runtime"]')
+  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
+    visible: true,
+    timeoutMs,
+  })
   await control.command('fill', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
     value: `${REVIEWER_ROLE_MARKER}。你是当前设备上的执行成员，只完成负责人分配的复核任务并返回证据。`,
   })
