@@ -742,7 +742,8 @@ function reduceWorkspaceState(
 
 interface CommandEnvironment {
   api: SharedWorkspaceApi;
-  messages: CollaborationWorkspaceControllerMessages;
+  /** Resolve translated failures without changing the active data request. */
+  getMessages(): CollaborationWorkspaceControllerMessages;
   myWorkEnabled: boolean;
   preloadHomeSnapshots: boolean;
   dispatch(action: CollaborationWorkspaceControllerAction): void;
@@ -877,7 +878,7 @@ async function loadExternalGitBoardSnapshot(
 
 export function createCollaborationWorkspaceControllerCommands({
   api,
-  messages,
+  getMessages,
   myWorkEnabled,
   preloadHomeSnapshots = true,
   dispatch,
@@ -970,9 +971,9 @@ export function createCollaborationWorkspaceControllerCommands({
     try {
       const latest = await api.issues.get(issueId);
       await loadProject(latest.cloud_project_id, false);
-      reportError(messages.conflict, "conflict");
+      reportError(getMessages().conflict, "conflict");
     } catch {
-      reportError(messages.loadFailed, "load");
+      reportError(getMessages().loadFailed, "load");
     }
     return true;
   };
@@ -1008,7 +1009,7 @@ export function createCollaborationWorkspaceControllerCommands({
       .markRead(issue.id, undefined, issue.content_revision)
       .then(confirmIssueRead)
       .catch(() => {
-        reportError(messages.saveFailed);
+        reportError(getMessages().saveFailed);
         return null;
       })
       .finally(() => {
@@ -1115,7 +1116,7 @@ export function createCollaborationWorkspaceControllerCommands({
           value: { request: settingsRead, status: "error" },
         });
       }
-      reportError(messages.loadFailed, "load");
+      reportError(getMessages().loadFailed, "load");
     } finally {
       if (showLoading && !cachedSettings && isCurrent()) {
         dispatch({ type: "loading", value: false });
@@ -1145,7 +1146,7 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({ type: "project-catalog-loaded", projects: catalogProjects });
       } catch {
         if (!isCurrent()) return;
-        reportError(messages.loadFailed, "load");
+        reportError(getMessages().loadFailed, "load");
       } finally {
         if (isCurrent()) dispatch({ type: "loading", value: false });
       }
@@ -1227,7 +1228,7 @@ export function createCollaborationWorkspaceControllerCommands({
           myWork,
         });
       } catch {
-        reportError(messages.loadFailed, "load");
+        reportError(getMessages().loadFailed, "load");
       } finally {
         dispatch({ type: "loading", value: false });
       }
@@ -1248,7 +1249,7 @@ export function createCollaborationWorkspaceControllerCommands({
           items: await (pending ?? api.myWork.list()),
         });
       } catch {
-        reportError(messages.loadFailed, "load");
+        reportError(getMessages().loadFailed, "load");
       } finally {
         dispatch({ type: "loading", value: false });
       }
@@ -1283,8 +1284,8 @@ export function createCollaborationWorkspaceControllerCommands({
       } catch {
         if (mutationGeneration !== projectMutationGeneration(projectId))
           return null;
-        reportError(messages.loadFailed, "load");
-        if (options?.throwOnError) throw new Error(messages.loadFailed);
+        reportError(getMessages().loadFailed, "load");
+        if (options?.throwOnError) throw new Error(getMessages().loadFailed);
         return null;
       }
     },
@@ -1329,7 +1330,7 @@ export function createCollaborationWorkspaceControllerCommands({
           nextCursor: page.nextCursor,
         });
       } catch {
-        reportError(messages.loadFailed, "load");
+        reportError(getMessages().loadFailed, "load");
       } finally {
         externalColumnLoads.delete(requestKey);
         dispatch({ type: "external-column-loading", status, value: false });
@@ -1341,7 +1342,7 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({ type: "replace-issue", issue });
         return issue;
       } catch {
-        reportError(messages.loadFailed, "load");
+        reportError(getMessages().loadFailed, "load");
         return null;
       }
     },
@@ -1417,7 +1418,7 @@ export function createCollaborationWorkspaceControllerCommands({
         return resolvedIssue;
       } catch {
         if (revision !== selectedIssueLoadRevision) return null;
-        reportError(messages.loadFailed, "load");
+        reportError(getMessages().loadFailed, "load");
         return null;
       }
     },
@@ -1437,7 +1438,7 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({ type: "replace-project", project });
         return project;
       } catch {
-        reportError(messages.saveFailed);
+        reportError(getMessages().saveFailed);
         return null;
       }
     },
@@ -1451,7 +1452,7 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({ type: "replace-project", project });
         return project;
       } catch {
-        reportError(messages.saveFailed);
+        reportError(getMessages().saveFailed);
         return null;
       }
     },
@@ -1465,7 +1466,7 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({ type: "remove-project", projectId });
         return true;
       } catch {
-        reportError(messages.saveFailed);
+        reportError(getMessages().saveFailed);
         return false;
       }
     },
@@ -1476,7 +1477,7 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({ type: "append-issue", issue });
         return issue;
       } catch (error) {
-        reportError(messages.saveFailed);
+        reportError(getMessages().saveFailed);
         if (options?.throwOnError) throw error;
         return null;
       }
@@ -1495,7 +1496,7 @@ export function createCollaborationWorkspaceControllerCommands({
         const conflictReported =
           input.position && (await reportPositionConflict(issueId, error));
         if (!conflictReported && !options?.throwOnError)
-          reportError(messages.saveFailed);
+          reportError(getMessages().saveFailed);
         if (options?.throwOnError) throw error;
         return null;
       }
@@ -1512,7 +1513,7 @@ export function createCollaborationWorkspaceControllerCommands({
         return issue;
       } catch (error) {
         if (!input.position || !(await reportPositionConflict(issueId, error)))
-          reportError(messages.saveFailed);
+          reportError(getMessages().saveFailed);
         return null;
       }
     },
@@ -1526,7 +1527,7 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({ type: "remove-issue", issueId });
         return true;
       } catch (error) {
-        reportError(messages.saveFailed);
+        reportError(getMessages().saveFailed);
         if (options?.throwOnError) throw error;
         return false;
       }
@@ -1539,9 +1540,9 @@ export function createCollaborationWorkspaceControllerCommands({
           type: "replace-issue",
           issue: await api.issues.get(issue.id),
         });
-        reportError(messages.conflict, "conflict");
+        reportError(getMessages().conflict, "conflict");
       } catch {
-        reportError(messages.loadFailed, "load");
+        reportError(getMessages().loadFailed, "load");
       }
     },
     async refreshProjectAgents(projectId) {
@@ -1566,7 +1567,7 @@ export function createCollaborationWorkspaceControllerCommands({
         });
       } catch {
         if (mutationGeneration !== projectMutationGeneration(projectId)) return;
-        reportError(messages.loadFailed, "load");
+        reportError(getMessages().loadFailed, "load");
       }
     },
     replaceProject: (project) => {
@@ -1708,6 +1709,7 @@ export function useCollaborationWorkspaceController({
   const projectTaskBindingsRef = useRef(state.projectTaskBindings);
   const stateRef = useRef(state);
   const externalBoardRef = useRef(externalBoard);
+  const messagesRef = useRef(messages);
   const notifyRef = useRef(notify);
   const locationLoadRevisionRef = useRef(0);
   selectedIssueRef.current = state.selectedIssue;
@@ -1718,12 +1720,13 @@ export function useCollaborationWorkspaceController({
   projectTaskBindingsRef.current = state.projectTaskBindings;
   stateRef.current = state;
   externalBoardRef.current = externalBoard;
+  messagesRef.current = messages;
   notifyRef.current = notify;
   const commands = useMemo(() => {
     if (!api) return null;
     return createCollaborationWorkspaceControllerCommands({
       api,
-      messages,
+      getMessages: () => messagesRef.current,
       myWorkEnabled,
       preloadHomeSnapshots,
       dispatch,
@@ -1741,7 +1744,7 @@ export function useCollaborationWorkspaceController({
       getExternalBoardOptions: () => externalBoardRef.current,
       notify: (message, kind) => notifyRef.current?.(message, kind),
     });
-  }, [api, dispatch, messages, myWorkEnabled, preloadHomeSnapshots]);
+  }, [api, dispatch, myWorkEnabled, preloadHomeSnapshots]);
 
   const loadBoardOnLocation = location.view !== "manage";
   const loadProjectSnapshotOnLocation =

@@ -174,11 +174,11 @@ describe("collaboration workspace controller", () => {
       commands: createCollaborationWorkspaceControllerCommands({
         api,
         myWorkEnabled,
-        messages: {
+        getMessages: () => ({
           loadFailed: "load failed",
           saveFailed: "save failed",
           conflict: "conflict",
-        },
+        }),
         dispatch,
         getProjects: () => state.projects,
         getProjectSnapshot: (projectId) => {

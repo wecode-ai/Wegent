@@ -125,7 +125,11 @@ function createController(...responses: ReturnType<typeof deferredResponse>[]) {
   const notify = vi.fn()
   const commands = createCollaborationWorkspaceControllerCommands({
     api,
-    messages: { loadFailed: 'Load failed', saveFailed: 'Save failed', conflict: 'Conflict' },
+    getMessages: () => ({
+      loadFailed: 'Load failed',
+      saveFailed: 'Save failed',
+      conflict: 'Conflict',
+    }),
     myWorkEnabled: false,
     preloadHomeSnapshots: false,
     notify,

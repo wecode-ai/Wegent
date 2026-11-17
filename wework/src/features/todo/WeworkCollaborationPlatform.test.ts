@@ -14,7 +14,7 @@ import type {
 } from '@/features/workbench/workbenchServices'
 import i18n from '@/i18n'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type {
   CollaborationApp,
   CollaborationPlatformLocation,
@@ -39,6 +39,7 @@ import {
   WeworkSharedProject,
 } from './WeworkCollaborationPlatform'
 import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
+import type { LocalWorkspacePresentation } from './localWorkspaceApi'
 import {
   projectSpaceForRuntimeTask,
   publishProjectSpaceTaskBindingChanged,
@@ -51,6 +52,7 @@ type BoardIssueCardRenderer = NonNullable<
 >
 
 const renderedProjectApis = vi.hoisted(() => new Map<string, SharedWorkspaceApi>())
+const actualProjectSettings = vi.hoisted(() => ({ enabled: false }))
 const renderedProjectControls = vi.hoisted(
   () =>
     new Map<
@@ -66,161 +68,173 @@ const renderedProjectControls = vi.hoisted(
 
 vi.mock('@wegent/collaboration', async importOriginal => {
   const actual = await importOriginal<typeof import('@wegent/collaboration')>()
+  const CollaborationAppProbe = ({
+    api,
+    host,
+    initialProject,
+    onCreateTask,
+    onProjectChange,
+    refreshProjectRequestKey = 0,
+    renderIssueDetail,
+    renderBoardIssueCard,
+  }: {
+    api: SharedWorkspaceApi
+    host: {
+      location: { projectId: string | null }
+      manageResource?(kind: 'agents' | 'environments', resourceId?: string): void
+    }
+    initialProject?: { id: string }
+    onCreateTask?: (project: unknown, issue: unknown) => Promise<void> | void
+    onProjectChange?: (project: unknown) => void
+    refreshProjectRequestKey?: number
+    renderIssueDetail?: (context: unknown) => unknown
+    renderBoardIssueCard?: BoardIssueCardRenderer
+  }) => {
+    if (host.location.projectId) renderedProjectApis.set(host.location.projectId, api)
+    if (initialProject) {
+      renderedProjectControls.set(String(initialProject.id), {
+        onCreateTask,
+        onProjectChange,
+        renderIssueDetail,
+        renderBoardIssueCard,
+      })
+    }
+    const renderCount = useRef(0)
+    const [projectIds, setProjectIds] = useState('')
+    const [resourceNames, setResourceNames] = useState('')
+    const [automationNames, setAutomationNames] = useState('')
+    const [snapshotStatuses, setSnapshotStatuses] = useState('')
+    renderCount.current += 1
+    const loadSnapshot = useCallback(() => {
+      const projectId = host.location.projectId
+      if (!projectId || !api.issues.getBoardSnapshot) return
+      void api.issues
+        .getBoardSnapshot(projectId)
+        .then(snapshot => setSnapshotStatuses(snapshot.items.map(item => item.status).join(',')))
+        .catch(() => undefined)
+    }, [api.issues, host.location.projectId])
+    useEffect(() => {
+      loadSnapshot()
+    }, [loadSnapshot, refreshProjectRequestKey])
+    useEffect(() => {
+      if (typeof api.projects.list !== 'function') return
+      void api.projects
+        .list()
+        .then(projects => setProjectIds(projects.map(project => String(project.id)).join(',')))
+        .catch(() => setProjectIds('error'))
+    }, [api])
+    const createAgent = () => {
+      const projectId = host.location.projectId
+      if (!projectId) return
+      void api.agents
+        .create(projectId, {
+          name: 'Review Agent',
+          runtime: 'codex',
+          model: 'gpt-5.6-sol',
+          systemPrompt: 'Review carefully.',
+        })
+        .catch(() => undefined)
+    }
+    const loadResources = () => {
+      void api.resources
+        ?.list()
+        .then(resources => setResourceNames(resources.agents.map(agent => agent.name).join(',')))
+        .catch(() => setResourceNames('error'))
+    }
+    const loadAutomations = () => {
+      const projectId = host.location.projectId
+      if (!projectId || !api.automations) {
+        setAutomationNames('unavailable')
+        return
+      }
+      void api.automations
+        .list(projectId)
+        .then(automations => setAutomationNames(automations.map(rule => rule.name).join(',')))
+        .catch(() => setAutomationNames('error'))
+    }
+    return createElement(
+      'div',
+      {
+        'data-testid': `collaboration-app-refresh-probe-${host.location.projectId}`,
+        'data-refresh-key': refreshProjectRequestKey,
+        'data-render-count': renderCount.current,
+        'data-project-ids': projectIds,
+        'data-snapshot-statuses': snapshotStatuses,
+      },
+      createElement(
+        'button',
+        {
+          'data-testid': `collaboration-app-snapshot-reload-${host.location.projectId}`,
+          onClick: loadSnapshot,
+          type: 'button',
+        },
+        'Reload snapshot'
+      ),
+      createElement(
+        'button',
+        {
+          'data-testid': `collaboration-app-create-agent-${host.location.projectId}`,
+          onClick: createAgent,
+          type: 'button',
+        },
+        'Create Agent'
+      ),
+      createElement(
+        'button',
+        {
+          'data-testid': `collaboration-app-load-resources-${host.location.projectId}`,
+          onClick: loadResources,
+          type: 'button',
+        },
+        'Load resources'
+      ),
+      createElement(
+        'span',
+        {
+          'data-testid': `collaboration-app-resource-names-${host.location.projectId}`,
+        },
+        resourceNames
+      ),
+      createElement(
+        'button',
+        {
+          'data-testid': `collaboration-app-load-automations-${host.location.projectId}`,
+          onClick: loadAutomations,
+          type: 'button',
+        },
+        'Load automations'
+      ),
+      createElement(
+        'span',
+        {
+          'data-testid': `collaboration-app-automation-names-${host.location.projectId}`,
+        },
+        automationNames
+      ),
+      createElement(
+        'button',
+        {
+          'data-testid': `collaboration-app-manage-environments-${host.location.projectId}`,
+          onClick: () => host.manageResource?.('environments'),
+          type: 'button',
+        },
+        'Manage environments'
+      )
+    )
+  }
+
   return {
     ...actual,
-    CollaborationApp: ({
-      api,
-      host,
-      initialProject,
-      onCreateTask,
-      onProjectChange,
-      refreshProjectRequestKey = 0,
-      renderIssueDetail,
-      renderBoardIssueCard,
-    }: {
-      api: SharedWorkspaceApi
-      host: {
-        location: { projectId: string | null }
-        manageResource?(kind: 'agents' | 'environments', resourceId?: string): void
+    CollaborationApp: (props: ComponentProps<typeof actual.CollaborationApp>) => {
+      if (props.host.location.projectId) {
+        renderedProjectApis.set(props.host.location.projectId, props.api)
       }
-      initialProject?: { id: string }
-      onCreateTask?: (project: unknown, issue: unknown) => Promise<void> | void
-      onProjectChange?: (project: unknown) => void
-      refreshProjectRequestKey?: number
-      renderIssueDetail?: (context: unknown) => unknown
-      renderBoardIssueCard?: BoardIssueCardRenderer
-    }) => {
-      if (host.location.projectId) renderedProjectApis.set(host.location.projectId, api)
-      if (initialProject) {
-        renderedProjectControls.set(String(initialProject.id), {
-          onCreateTask,
-          onProjectChange,
-          renderIssueDetail,
-          renderBoardIssueCard,
-        })
-      }
-      const renderCount = useRef(0)
-      const [projectIds, setProjectIds] = useState('')
-      const [resourceNames, setResourceNames] = useState('')
-      const [automationNames, setAutomationNames] = useState('')
-      const [snapshotStatuses, setSnapshotStatuses] = useState('')
-      renderCount.current += 1
-      const loadSnapshot = useCallback(() => {
-        const projectId = host.location.projectId
-        if (!projectId || !api.issues.getBoardSnapshot) return
-        void api.issues
-          .getBoardSnapshot(projectId)
-          .then(snapshot => setSnapshotStatuses(snapshot.items.map(item => item.status).join(',')))
-          .catch(() => undefined)
-      }, [api.issues, host.location.projectId])
-      useEffect(() => {
-        loadSnapshot()
-      }, [loadSnapshot, refreshProjectRequestKey])
-      useEffect(() => {
-        if (typeof api.projects.list !== 'function') return
-        void api.projects
-          .list()
-          .then(projects => setProjectIds(projects.map(project => String(project.id)).join(',')))
-          .catch(() => setProjectIds('error'))
-      }, [api])
-      const createAgent = () => {
-        const projectId = host.location.projectId
-        if (!projectId) return
-        void api.agents
-          .create(projectId, {
-            name: 'Review Agent',
-            runtime: 'codex',
-            model: 'gpt-5.6-sol',
-            systemPrompt: 'Review carefully.',
-          })
-          .catch(() => undefined)
-      }
-      const loadResources = () => {
-        void api.resources
-          ?.list()
-          .then(resources => setResourceNames(resources.agents.map(agent => agent.name).join(',')))
-          .catch(() => setResourceNames('error'))
-      }
-      const loadAutomations = () => {
-        const projectId = host.location.projectId
-        if (!projectId || !api.automations) {
-          setAutomationNames('unavailable')
-          return
-        }
-        void api.automations
-          .list(projectId)
-          .then(automations => setAutomationNames(automations.map(rule => rule.name).join(',')))
-          .catch(() => setAutomationNames('error'))
-      }
-      return createElement(
-        'div',
-        {
-          'data-testid': `collaboration-app-refresh-probe-${host.location.projectId}`,
-          'data-refresh-key': refreshProjectRequestKey,
-          'data-render-count': renderCount.current,
-          'data-project-ids': projectIds,
-          'data-snapshot-statuses': snapshotStatuses,
-        },
-        createElement(
-          'button',
-          {
-            'data-testid': `collaboration-app-snapshot-reload-${host.location.projectId}`,
-            onClick: loadSnapshot,
-            type: 'button',
-          },
-          'Reload snapshot'
-        ),
-        createElement(
-          'button',
-          {
-            'data-testid': `collaboration-app-create-agent-${host.location.projectId}`,
-            onClick: createAgent,
-            type: 'button',
-          },
-          'Create Agent'
-        ),
-        createElement(
-          'button',
-          {
-            'data-testid': `collaboration-app-load-resources-${host.location.projectId}`,
-            onClick: loadResources,
-            type: 'button',
-          },
-          'Load resources'
-        ),
-        createElement(
-          'span',
-          {
-            'data-testid': `collaboration-app-resource-names-${host.location.projectId}`,
-          },
-          resourceNames
-        ),
-        createElement(
-          'button',
-          {
-            'data-testid': `collaboration-app-load-automations-${host.location.projectId}`,
-            onClick: loadAutomations,
-            type: 'button',
-          },
-          'Load automations'
-        ),
-        createElement(
-          'span',
-          {
-            'data-testid': `collaboration-app-automation-names-${host.location.projectId}`,
-          },
-          automationNames
-        ),
-        createElement(
-          'button',
-          {
-            'data-testid': `collaboration-app-manage-environments-${host.location.projectId}`,
-            onClick: () => host.manageResource?.('environments'),
-            type: 'button',
-          },
-          'Manage environments'
-        )
-      )
+      return actualProjectSettings.enabled
+        ? createElement(actual.CollaborationApp, props)
+        : createElement(
+            CollaborationAppProbe,
+            props as unknown as ComponentProps<typeof CollaborationAppProbe>
+          )
     },
     CollaborationPlatformApp: ({
       host,
@@ -376,6 +390,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
               project: {
                 id: 'local-project',
                 name: 'Local project',
+                project_key: 'LOCAL',
                 project_store: 'local',
                 workspace_id: 'wework-local-workspace',
               },
@@ -423,6 +438,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
 })
 
 afterEach(() => {
+  actualProjectSettings.enabled = false
   vi.useRealTimers()
   clearRuntimeConversationCacheForTests()
   renderedProjectControls.clear()
@@ -995,6 +1011,134 @@ describe('Wework collaboration workspace API', () => {
       })
     }
   })
+
+  it('preserves a local preparation draft when the host language changes', async () => {
+    actualProjectSettings.enabled = true
+    const previousLanguage = i18n.language
+    const localDeliveryApi = createLocalDeliveryApi()
+    const getProject = vi.mocked(localDeliveryApi.getCloudProject)
+    const project = {
+      id: 'local-project',
+      name: 'Local project',
+      project_key: 'LOCAL',
+      project_store: 'local' as const,
+      access_role: 'Owner' as const,
+      version: 3,
+      metadata: { code_project_key: 'runtime-project' },
+      execution_environment: {
+        workspace_policy: 'git_worktree' as const,
+        repositories: [],
+        setup_steps: [],
+      },
+    }
+    const originalGetProject = getProject.getMockImplementation()!
+    getProject.mockImplementation(projectId =>
+      String(projectId) === project.id
+        ? Promise.resolve(project as never)
+        : originalGetProject(projectId)
+    )
+    const view = render(
+      createElement(WeworkCollaborationPlatform, {
+        user: { id: 1, user_name: 'local', email: '' } as never,
+        localProjects: [],
+        services: {
+          projectSpaceApis: { local: localDeliveryApi },
+          projectSpaceDetailServices: { local: createLocalDetailServices() },
+        } as never,
+        activeProjectRef: { projectStore: 'local', projectId: project.id },
+      })
+    )
+    try {
+      await screen.findByText('local-project')
+      await act(async () =>
+        screen.getByTestId('collaboration-platform-render-local-project').click()
+      )
+      await act(async () => screen.getByTestId('collaboration-platform-manage-project').click())
+      const policy = await screen.findByTestId(
+        'collaboration-project-execution-environment-workspace-policy'
+      )
+      expect(policy).not.toBeDisabled()
+      fireEvent.change(policy, { target: { value: 'project' } })
+      expect(policy).toHaveValue('project')
+      const initialSectionLabel = screen.getByTestId(
+        'collaboration-project-settings-environments'
+      ).textContent
+      const initialApi = renderedProjectApis.get(project.id)
+      const initialReads = getProject.mock.calls.length
+      const refreshed = deferred<typeof project>()
+      getProject.mockImplementation(projectId =>
+        String(projectId) === project.id
+          ? (refreshed.promise as never)
+          : originalGetProject(projectId)
+      )
+
+      await act(async () => {
+        await i18n.changeLanguage(previousLanguage.startsWith('zh') ? 'en' : 'zh-CN')
+      })
+      await act(async () => refreshed.resolve(project))
+
+      expect(renderedProjectApis.get(project.id)).toBe(initialApi)
+      expect(getProject).toHaveBeenCalledTimes(initialReads)
+      expect(
+        screen.getByTestId('collaboration-project-execution-environment-workspace-policy')
+      ).toHaveValue('project')
+      expect(
+        screen.getByTestId('collaboration-project-settings-environments').textContent
+      ).not.toBe(initialSectionLabel)
+    } finally {
+      view.unmount()
+      await act(async () => {
+        await i18n.changeLanguage(previousLanguage)
+      })
+    }
+  })
+
+  it.each(['user', 'source'] as const)(
+    'replaces the local project data scope when its %s changes',
+    async changed => {
+      const firstDelivery = createLocalDeliveryApi()
+      const secondDelivery = createLocalDeliveryApi()
+      const details = createLocalDetailServices()
+      const props = {
+        user: { id: 1, user_name: 'admin', email: '' } as never,
+        localProjects: [],
+        services: {
+          projectSpaceApis: { local: firstDelivery },
+          projectSpaceDetailServices: { local: details },
+        } as never,
+      }
+      const view = render(createElement(WeworkCollaborationPlatform, props))
+      await act(async () =>
+        screen.getByTestId('collaboration-platform-render-local-project').click()
+      )
+      const initialApi = renderedProjectApis.get('local-project')!
+
+      view.rerender(
+        createElement(WeworkCollaborationPlatform, {
+          ...props,
+          ...(changed === 'user'
+            ? { user: { id: 2, user_name: 'admin', email: '' } as never }
+            : {
+                services: {
+                  projectSpaceApis: { local: secondDelivery },
+                  projectSpaceDetailServices: { local: details },
+                } as never,
+              }),
+        })
+      )
+      await act(async () =>
+        screen.getByTestId('collaboration-platform-render-local-project').click()
+      )
+      const currentApi = renderedProjectApis.get('local-project')!
+      expect(currentApi).not.toBe(initialApi)
+      expect(await currentApi.projects.get('local-project')).toMatchObject({
+        current_user_id: changed === 'user' ? 2 : 1,
+      })
+      if (changed === 'source') {
+        expect(secondDelivery.getCloudProject).toHaveBeenCalledWith('local-project')
+      }
+    }
+  )
 
   it.each([
     { destination: 'an Issue in the same project', projectId: 'project-a' },
@@ -1846,6 +1990,35 @@ describe('Wework collaboration workspace API', () => {
     expect(await api.projects.update('new-local', { name: 'Renamed', version: 1 })).toMatchObject({
       workspace_id: 'wework-local-workspace',
     })
+  })
+
+  it('updates local labels and operation errors without replacing the data adapter', async () => {
+    let presentation: LocalWorkspacePresentation = { locale: 'zh-CN', userName: '我' }
+    const api = createLocalWorkspaceApi(createLocalDeliveryApi(), 1, () => presentation, null)!
+    const getProject = api.projects.get
+    await expect(
+      api.projects.importMessages!('local-project', { content: '' } as never)
+    ).rejects.toThrow('当前分组不支持此操作')
+
+    presentation = { locale: 'en', userName: 'Me' }
+
+    expect(api.projects.get).toBe(getProject)
+    expect(await api.projects.get('local-project')).toMatchObject({
+      current_user_id: 1,
+      current_user_name: 'Me',
+    })
+    expect(await api.workspaces!.listMembers('wework-local-workspace')).toEqual([
+      expect.objectContaining({ user_id: 1, user_name: 'Me' }),
+    ])
+    expect(await api.workspaces!.get('wework-local-workspace')).toMatchObject({
+      name: 'Personal group',
+    })
+    await expect(
+      api.projects.importMessages!('local-project', { content: '' } as never)
+    ).rejects.toThrow('This operation is not available in this group')
+    await expect(
+      api.projects.initializeExecutionEnvironment!('local-project', { deviceId: 7, version: 1 })
+    ).rejects.toThrow('The current device executor is unavailable')
   })
 
   it('does not add the default local Agent when creating a project without a selection', async () => {

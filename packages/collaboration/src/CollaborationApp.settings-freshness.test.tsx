@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CollaborationApp } from "./CollaborationApp";
+import { collaborationMessages } from "./i18n";
 import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
 import type { CollaborationLocation, CollaborationProject } from "./types";
 
@@ -24,10 +25,12 @@ const project = {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((yes) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((yes, no) => {
     resolve = yes;
+    reject = no;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function createApi() {
@@ -106,6 +109,99 @@ const environment = (suffix: string) =>
   query(`collaboration-project-execution-environment${suffix}`);
 
 describe("project settings metadata freshness", () => {
+  it("keeps the same-project provider draft mounted when the application language changes", async () => {
+    const api = createApi();
+    const providerProject: CollaborationProject = {
+      ...project,
+      project_store: "backend",
+      task_provider: "github",
+      provider_config: { repository: "original/repo" },
+    };
+    vi.mocked(api.projects.get).mockResolvedValue(providerProject);
+    const host = {
+      location: {
+        projectId: project.id,
+        issueId: null,
+        view: "manage" as const,
+        projectSettingsSection: "project" as const,
+      },
+      navigate: vi.fn(),
+      capabilities: {},
+    };
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const page = (locale: "zh-CN" | "en") => (
+      <CollaborationApp
+        api={api}
+        initialProject={providerProject}
+        host={host}
+        locale={locale}
+        pollIntervalMs={0}
+      />
+    );
+    await act(async () => root!.render(page("zh-CN")));
+    const input = query(
+      "cloud-project-provider-manage-repository",
+    ) as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )!.set!.call(input, "https://github.com/unsaved/draft");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(input.value).toBe("https://github.com/unsaved/draft");
+    const unexpectedRead = deferred<CollaborationProject>();
+    vi.mocked(api.projects.get).mockReturnValueOnce(unexpectedRead.promise);
+
+    await act(async () => root!.render(page("en")));
+    await act(async () => unexpectedRead.resolve(providerProject));
+
+    expect(query("cloud-project-provider-manage-repository")).toBe(input);
+    expect(input.value).toBe("https://github.com/unsaved/draft");
+    expect(api.projects.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a pending project read failure in the latest application language without restarting it", async () => {
+    const api = createApi();
+    const current = deferred<CollaborationProject>();
+    vi.mocked(api.projects.get).mockReturnValueOnce(current.promise);
+    const host = {
+      location: {
+        projectId: project.id,
+        issueId: null,
+        view: "manage" as const,
+        projectSettingsSection: "environments" as const,
+      },
+      navigate: vi.fn(),
+      capabilities: {},
+    };
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const page = (locale: "zh-CN" | "en") => (
+      <CollaborationApp
+        api={api}
+        initialProject={project}
+        host={host}
+        locale={locale}
+        pollIntervalMs={0}
+      />
+    );
+    await act(async () => root!.render(page("zh-CN")));
+    await act(async () => root!.render(page("en")));
+    await act(async () => current.reject(new Error("Read failed")));
+
+    expect(api.projects.get).toHaveBeenCalledTimes(1);
+    expect(query("collaboration-error")?.textContent).toBe(
+      collaborationMessages.en.loadFailed,
+    );
+    expect(environment("-configuration-read")?.getAttribute("role")).toBe(
+      "alert",
+    );
+  });
+
   it("keeps navigation and cached runners available during a current project read", async () => {
     const api = createApi();
     await render(api);
