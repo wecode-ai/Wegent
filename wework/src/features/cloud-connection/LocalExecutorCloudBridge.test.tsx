@@ -136,11 +136,49 @@ describe('LocalExecutorCloudBridge', () => {
   function ConnectionStatusProbe() {
     const status = useLocalExecutorCloudConnectionStatus()
     return (
-      <span data-testid="local-executor-cloud-connection-status">
+      <span
+        data-testid="local-executor-cloud-connection-status"
+        data-configured={status.configured}
+      >
         {status.connected ? `connected:${status.apiBaseUrl}` : 'disconnected'}
       </span>
     )
   }
+
+  test('publishes readiness only after configuration acknowledgement without requiring a Device status read', async () => {
+    const pending = deferred<{ running: boolean; ready: boolean }>()
+    mocks.connect.mockReturnValue(pending.promise)
+    mocks.request.mockImplementation(async (method: string) => {
+      if (method === 'executor.backend.status') throw new Error('Status temporarily unavailable')
+      return { changed: true }
+    })
+    const view = render(
+      <>
+        {connectedCloudBridge()}
+        <ConnectionStatusProbe />
+      </>
+    )
+    try {
+      await waitFor(() => expect(mocks.connect).toHaveBeenCalledOnce())
+      expect(screen.getByTestId('local-executor-cloud-connection-status')).toHaveAttribute(
+        'data-configured',
+        'false'
+      )
+      pending.resolve({ running: true, ready: true })
+      await waitFor(() =>
+        expect(screen.getByTestId('local-executor-cloud-connection-status')).toHaveAttribute(
+          'data-configured',
+          'true'
+        )
+      )
+      expect(screen.getByTestId('local-executor-cloud-connection-status')).toHaveTextContent(
+        'disconnected'
+      )
+    } finally {
+      pending.resolve({ running: true, ready: true })
+      view.unmount()
+    }
+  })
 
   test('a pending plugin session does not delay unrelated cloud initialization', async () => {
     const pending = deferred<{ ready: boolean; expiresIn: number | null }>()

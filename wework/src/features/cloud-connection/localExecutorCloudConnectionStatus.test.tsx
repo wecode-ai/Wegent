@@ -66,7 +66,11 @@ test('does not publish a query that finishes after connection state was reset an
   )
   const pending = refreshLocalExecutorCloudConnectionStatus('/old-api')
   resetLocalExecutorCloudConnectionStatus()
-  setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/current-api', connected: true })
+  setLocalExecutorCloudConnectionStatus({
+    apiBaseUrl: '/current-api',
+    connected: true,
+    configured: true,
+  })
   const hook = renderHook(useLocalExecutorCloudConnectionStatus)
 
   await act(async () => {
@@ -127,7 +131,7 @@ test('checks health on every poll without rendering unchanged connection state',
 })
 
 test('an unchanged explicit state still invalidates older pending health reads', async () => {
-  setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true })
+  setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true, configured: true })
   let finish!: (value: { configured: boolean; connected: boolean }) => void
   request.mockReturnValue(new Promise(resolve => (finish = resolve)))
   const pending = refreshLocalExecutorCloudConnectionStatus('/api')
@@ -135,10 +139,32 @@ test('an unchanged explicit state still invalidates older pending health reads',
   const current = hook.result.current
 
   await act(async () => {
-    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true })
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true, configured: true })
     finish({ configured: true, connected: false })
     expect(await pending).toBeNull()
   })
 
   expect(hook.result.current).toBe(current)
+})
+
+test('publishes configuration readiness independently of Device connectivity', async () => {
+  const hook = renderHook(useLocalExecutorCloudConnectionStatus)
+  const before = hook.result.current
+  request.mockResolvedValue({ configured: true, connected: false })
+  await act(async () => {
+    await refreshLocalExecutorCloudConnectionStatus('/api')
+  })
+  expect(hook.result.current).toMatchObject({ configured: true, connected: false })
+  expect(hook.result.current).not.toBe(before)
+  const configured = hook.result.current
+  request.mockRejectedValueOnce(new Error('Status read failed'))
+  await act(async () => {
+    await refreshLocalExecutorCloudConnectionStatus('/api')
+  })
+  expect(hook.result.current).toBe(configured)
+  request.mockResolvedValueOnce({ configured: false, connected: false })
+  await act(async () => {
+    await refreshLocalExecutorCloudConnectionStatus('/api')
+  })
+  expect(hook.result.current).toMatchObject({ configured: false, connected: false })
 })

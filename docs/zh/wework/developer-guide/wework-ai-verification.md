@@ -151,6 +151,8 @@ pnpm --filter wework e2e:desktop --segment idle-executor-requests
 
 ## 插件周期恢复 E2E
 
+插件自动同步探测等待当前 Backend 配置提交确认，而不等待 Device／Socket 在线。共享连接状态分别记录配置就绪和连接状态；配置确认后，临时状态查询失败不抹去该确认。账号或 Backend 切换先清除就绪状态。`plugin-auto-update` 在业务流程前通过已确认的错误采集检查点断言启动期插件同步没有失败，避免把提前探测导致的错误当作正常启动。
+
 `plugin-periodic-reconcile` checkpoint 使用真实 Electron、Executor、Socket.IO、数据库和插件包存储，丢弃一次真实插件变更通知后，验证定时对账恢复状态、持久化 ACK、设备身份以及未受影响插件的内容。测试实例设置 `LOCAL_PLUGIN_RECONCILE_INTERVAL=90`、`LOCAL_PLUGIN_RECONCILE_JITTER=18`（单位为秒），并用已有的 `LOCAL_HEARTBEAT_INTERVAL=1` 保留至少 10 次心跳的活性断言。检查点根据真实对账 tick 对齐故障注入；准备流程跨过某个 tick 时等待当前定时器窗口，而不是因负载延长周期。
 
 未设置配置时，生产对账周期仍为 600 秒加 0～119 秒的稳定 Runtime 偏移，心跳仍为 30 秒。无效或非正整数配置使用默认值；测试没有手动触发对账或替换真实计时器。

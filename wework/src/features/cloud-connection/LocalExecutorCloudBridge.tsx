@@ -10,6 +10,7 @@ import { isCloudConnectionUiAvailable } from './cloudConnectionAvailability'
 import { nextConnectorSyncRevision } from './connectorSyncRevision'
 import { ConnectorSyncAbortedError, synchronizeConnectorApps } from './connectorAppSync'
 import {
+  getLocalExecutorCloudConnectionStatus,
   refreshLocalExecutorCloudConnectionStatus,
   setLocalExecutorCloudConnectionStatus,
 } from './localExecutorCloudConnectionStatus'
@@ -51,7 +52,11 @@ export function LocalExecutorCloudBridge({
     const generation = connectionGenerationRef.current + 1
     connectionGenerationRef.current = generation
     if (!preferencesLoaded) {
-      setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })
+      setLocalExecutorCloudConnectionStatus({
+        apiBaseUrl: apiBaseUrl || '',
+        connected: false,
+        configured: false,
+      })
       return
     }
     const backendUrl = isConnected ? configuredBackendUrl : null
@@ -152,13 +157,25 @@ export function LocalExecutorCloudBridge({
         ) {
           scheduleRefresh(result.runtimeAuthTokenExpiresIn)
         }
+        if (result.connected) {
+          const current = getLocalExecutorCloudConnectionStatus()
+          setLocalExecutorCloudConnectionStatus({
+            apiBaseUrl: apiBaseUrl || '',
+            configured: true,
+            connected: current.apiBaseUrl === apiBaseUrl && current.connected,
+          })
+        }
         // Provision in parallel: a slow plugin endpoint cannot delay unrelated
         // cloud setup. Its lifetime is checked by the existing health tick.
         if (result.connected && result.pluginAuthorization) {
           void result.pluginAuthorization.then(schedulePluginAuthorization)
         }
         if (!result.connected) {
-          setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })
+          setLocalExecutorCloudConnectionStatus({
+            apiBaseUrl: apiBaseUrl || '',
+            connected: false,
+            configured: false,
+          })
         } else if (needsConnectorResync) {
           needsConnectorResync = false
           setConnectorRefreshRevision(revision => revision + 1)
@@ -168,6 +185,7 @@ export function LocalExecutorCloudBridge({
         setLocalExecutorCloudConnectionStatus({
           apiBaseUrl: apiBaseUrl || '',
           connected: false,
+          configured: false,
         })
         if (connected) {
           console.error('[CloudConnection] Failed to connect runtime task service to cloud', error)
@@ -186,6 +204,7 @@ export function LocalExecutorCloudBridge({
     setLocalExecutorCloudConnectionStatus({
       apiBaseUrl: apiBaseUrl || '',
       connected: false,
+      configured: false,
     })
     void applyConnection().then(() => refreshConnectionStatus())
     return () => {
@@ -193,7 +212,11 @@ export function LocalExecutorCloudBridge({
       connectionGenerationRef.current += 1
       if (refreshTimer) clearTimeout(refreshTimer)
       if (statusTimer) clearTimeout(statusTimer)
-      setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })
+      setLocalExecutorCloudConnectionStatus({
+        apiBaseUrl: apiBaseUrl || '',
+        connected: false,
+        configured: false,
+      })
     }
   }, [apiBaseUrl, configuredBackendUrl, isConnected, preferencesLoaded, socketBaseUrl, token])
 

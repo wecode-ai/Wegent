@@ -1913,7 +1913,7 @@ describe('PluginsWorkspace', () => {
     clearLocalConnectorAuthHealthCache()
     resetLocalExecutorStateForTests()
     resetLocalExecutorCloudConnectionStatus()
-    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true })
+    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true, configured: true })
     window.history.replaceState({}, '', '/')
     mockSystemSkillsFetch()
   })
@@ -2447,7 +2447,11 @@ describe('PluginsWorkspace', () => {
 
   test('HTTP installation works without a device id or cloud registration', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    setLocalExecutorCloudConnectionStatus({
+      apiBaseUrl: '/api',
+      connected: false,
+      configured: false,
+    })
     const fixture = mockSystemSkillsFetch()
     mockCodexAppServerInvoke({ deviceId: '', backendConnected: false })
     const original = vi.mocked(requestLocalExecutor).getMockImplementation()!
@@ -2527,7 +2531,11 @@ describe('PluginsWorkspace', () => {
 
   test('keeps the user on the plugin page when the current device is disconnected', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    setLocalExecutorCloudConnectionStatus({
+      apiBaseUrl: '/api',
+      connected: false,
+      configured: false,
+    })
     mockCodexAppServerInvoke({ backendConnected: false })
 
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
@@ -2560,7 +2568,11 @@ describe('PluginsWorkspace', () => {
 
   test('clears a stale disconnected notice when the device reconnects', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    setLocalExecutorCloudConnectionStatus({
+      apiBaseUrl: '/api',
+      connected: false,
+      configured: false,
+    })
     mockCodexAppServerInvoke({ backendConnected: false })
 
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
@@ -2571,7 +2583,11 @@ describe('PluginsWorkspace', () => {
     )
 
     act(() => {
-      setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: true })
+      setLocalExecutorCloudConnectionStatus({
+        apiBaseUrl: '/api',
+        connected: true,
+        configured: true,
+      })
     })
 
     await waitFor(() =>
@@ -6570,7 +6586,11 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('同步中')
 
     act(() => {
-      setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+      setLocalExecutorCloudConnectionStatus({
+        apiBaseUrl: '/api',
+        connected: false,
+        configured: false,
+      })
     })
 
     await waitFor(() =>
@@ -6883,7 +6903,11 @@ describe('PluginsWorkspace', () => {
 
   test('reports local packages even when the executor socket is disconnected', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
-    setLocalExecutorCloudConnectionStatus({ apiBaseUrl: '/api', connected: false })
+    setLocalExecutorCloudConnectionStatus({
+      apiBaseUrl: '/api',
+      connected: false,
+      configured: false,
+    })
     const marketplaceMock = mockSystemSkillsFetch({
       marketplaceInstalled: true,
       marketplaceDeviceState: 'pending',

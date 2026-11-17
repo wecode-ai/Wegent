@@ -46,7 +46,12 @@ export function PluginAutoUpdateCoordinator() {
     let disposed = false
     let probing = false
     let refresh: (() => void) | undefined
-    if (cloud.apiBaseUrl && cloud.token) {
+    if (
+      cloud.apiBaseUrl &&
+      cloud.token &&
+      localExecutorCloudConnection.apiBaseUrl === cloud.apiBaseUrl &&
+      localExecutorCloudConnection.configured
+    ) {
       const profile = { apiBaseUrl: cloud.apiBaseUrl, token: cloud.token }
       const probe = createLocalDevicePluginApi(
         createPluginApi(
@@ -96,7 +101,13 @@ export function PluginAutoUpdateCoordinator() {
       window.removeEventListener('online', resume)
       document.removeEventListener('visibilitychange', resume)
     }
-  }, [cloud.apiBaseUrl, cloud.token, localExecutorCloudConnection.connected])
+  }, [
+    cloud.apiBaseUrl,
+    cloud.token,
+    localExecutorCloudConnection.apiBaseUrl,
+    localExecutorCloudConnection.configured,
+    localExecutorCloudConnection.connected,
+  ])
 
   // An accepted sync must survive an Executor disconnect until its HTTP request settles.
   useEffect(() => {

@@ -753,6 +753,11 @@ async function verifyCloudCheckpoint({
   }
 
   if (checkpoint === 'plugin-auto-update') {
+    await control.errors.assertCollectedErrors(control, [], {
+      source: 'renderer',
+      type: 'executor:executor.plugins.local_sync',
+      sources: ['main', 'runtime'],
+    })
     await verifyPluginUpgrade({ cloudEnvironment, control, codexHome, setPhase })
     setPhase('cloud-plugin-auto-update-disable-codex-rpc')
     await cloudEnvironment.restartCloudExecutorWithoutCodexPluginRpc()

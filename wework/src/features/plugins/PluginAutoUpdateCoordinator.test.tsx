@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => {
     notifyLocalPluginSkillsChanged: vi.fn(),
     track: vi.fn(),
     runtimeConnected: true,
+    runtimeConfigured: true,
     routeId: 'device-1',
     requestLocalExecutor: vi.fn(),
     token: 'cloud-token',
@@ -69,6 +70,7 @@ vi.mock('@/features/cloud-connection/localExecutorCloudConnectionStatus', () => 
   useLocalExecutorCloudConnectionStatus: () => ({
     apiBaseUrl: 'https://cloud.example.com/api',
     connected: mocks.runtimeConnected,
+    configured: mocks.runtimeConfigured,
   }),
 }))
 
@@ -118,6 +120,7 @@ describe('PluginAutoUpdateCoordinator', () => {
     vi.clearAllMocks()
     mocks.handlers.clear()
     mocks.runtimeConnected = true
+    mocks.runtimeConfigured = true
     mocks.socketBaseUrl = 'https://cloud.example.com'
     mocks.socketPath = '/socket.io'
     mocks.routeId = 'device-1'
@@ -178,6 +181,30 @@ describe('PluginAutoUpdateCoordinator', () => {
         results: [],
       },
     })
+  })
+
+  test('waits for Backend configuration before probing while allowing HTTP sync without a Device', async () => {
+    mocks.runtimeConfigured = false
+    mocks.runtimeConnected = false
+    mocks.socketBaseUrl = ''
+    mocks.socketPath = ''
+    mocks.requestLocalExecutor.mockImplementation(async (_method, params) =>
+      params.probeOnly
+        ? { enabled: true, protocolVersion: 1 }
+        : { enabled: true, protocolVersion: 1, localCompleted: true, result: { plugins: [] } }
+    )
+    const view = render(<PluginAutoUpdateCoordinator />)
+    expect(mocks.requestLocalExecutor).not.toHaveBeenCalled()
+    expect(mocks.autoUpdateInstalledPlugins).not.toHaveBeenCalled()
+    mocks.runtimeConfigured = true
+    view.rerender(<PluginAutoUpdateCoordinator />)
+    await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalled())
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'executor.plugins.local_sync',
+      expect.objectContaining({ probeOnly: true })
+    )
+    expect(mocks.ensureConnected).not.toHaveBeenCalled()
+    expect(mocks.listLocalInstalledPlugins).not.toHaveBeenCalled()
   })
 
   test('uses the registered route for background release sync and discovery', async () => {
