@@ -399,9 +399,11 @@ Each completed step is marked automatically, and the guide hides after all three
 
 Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
 
+<a id="board-views"></a>
+
 ## Save and switch board views
 
-The native task board's view dropdown on the right provides switching, creation, and board settings on the same toolbar as **Focus view** and **Archived**. The base board groups Issues by the five default statuses: Inbox, Pending, In progress, In review, and Completed. Status and custom tags remain separate Issue properties.
+The native task board's view dropdown on the right provides switching, creation, and board settings on the same toolbar as **Focus view** and **Archived**. Choosing **Base board** always displays lanes in the project's configured status order, normally Inbox, Pending, In progress, In review, and Completed. Personal grouping preferences and workflow tags cannot override this order. Status and custom tags remain separate Issue properties.
 
 Project administrators can save multiple views, bind each lane to a status or tag, reorder lanes, configure tag filters, and choose the project default view. Entering a project opens its default; subsequent switches apply to the current visit. Views and their default are shared with project members. Deleting the default view restores the base board. Lane settings and card fields are edited in one dialog and saved together; card fields apply to every view in the project.
 
@@ -422,7 +424,7 @@ Renaming or deleting a tag in a native project saves the catalog, tags on undele
 
 An Issue can appear in both its matching status and tag lanes. After a cross-type drag, the destination card is highlighted and feedback describes the actual change. Dragging into a tag lane never reopens a completed Issue. Custom views with In progress or In review lanes also support Focus view to expand execution progress.
 
-Existing projects keep the base board without converting historical Issue statuses or tags. Concurrent configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
+When an administrator opens a project with historical tag grouping, Wework saves the corrected base grouping while preserving the status order, Issues, tags, and default custom view. If saving fails, the status board remains usable; choose **Retry saving** in the message to try again. Switching views changes the current display without saving the project grouping. Concurrent view configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
 
 ## Quick tag filters
 

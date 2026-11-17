@@ -12,6 +12,9 @@ import {
   createCollaborationTranslator,
   boardDropHint,
   saveProjectBoardViews,
+  isBaseBoardStatusGroupingEnabled,
+  useBaseBoardStatusMigration,
+  BaseBoardStatusMigrationNotice,
 } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
@@ -2006,12 +2009,41 @@ export function CloudTodoWorkspace({
   const canManageViews =
     selectedProject?.location === 'local' ||
     ['Owner', 'Maintainer'].includes(selectedProject?.access_role ?? '')
+  const baseBoardStatusGrouping =
+    !isMyTasksBoard &&
+    !isAITableProject &&
+    !isExternalGitBoard &&
+    isBaseBoardStatusGroupingEnabled()
+  const baseBoardMigrationReady =
+    selectedProject?.location !== 'cloud' ||
+    (cloudWorkspace.state.project?.project_store === 'backend' &&
+      cloudWorkspace.state.project.id === String(selectedProject.id) &&
+      !cloudWorkspace.state.loading)
+  const baseBoardMigration = useBaseBoardStatusMigration({
+    api:
+      selectedProject?.location === 'cloud'
+        ? (cloudWorkspaceApi?.projects ?? null)
+        : (localProjectManageApi?.projects ?? null),
+    project: selectedProject
+      ? {
+          id: String(selectedProject.id),
+          project_store: selectedProject.project_store ?? 'backend',
+          board_config: selectedProject.board_config,
+        }
+      : null,
+    enabled: baseBoardStatusGrouping && baseBoardMigrationReady && projectView === 'board',
+    canManage: canManageViews,
+    onMigrated: project => {
+      if (selectedProject) replaceProject(selectedProject, toWeworkCloudProject(project))
+    },
+  })
   const tagFilter = useBoardTagFilter({
     scope: `${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
     tags: availableTags,
     translate: boardTranslate,
   })
   const standardBoardController = useStandardCloudBoardController({
+    baseBoardStatusGrouping,
     currentUserId: taskOwnerUserId,
     tagFilter: tagFilter.tags,
     tagLimitError: boardTranslate('todo.tag_limit_exceeded', '最多添加 20 个不同标签'),
@@ -3506,6 +3538,7 @@ export function CloudTodoWorkspace({
   }
 
   async function saveGlobalGroupBy() {
+    if (baseBoardStatusGrouping) return
     if (!selectedProject || groupScopeBusy) return
     const projectApi = projectSpaceApis[selectedProject.location]
     if (selectedProject.location === 'cloud' ? !cloudWorkspaceApi : !projectApi) return
@@ -5102,15 +5135,17 @@ export function CloudTodoWorkspace({
                           }}
                         />
                       )}
-                      renderGroupPicker={(value, onChange) => (
-                        <AITableGroupFieldPicker
-                          fields={nativeBoardGroupFields}
-                          value={value}
-                          testIdPrefix="cloud-board-group"
-                          searchPlaceholder="搜索分组字段"
-                          onChange={id => onChange(id as NativeBoardGroupBy)}
-                        />
-                      )}
+                      renderGroupPicker={(value, onChange) =>
+                        baseBoardStatusGrouping ? null : (
+                          <AITableGroupFieldPicker
+                            fields={nativeBoardGroupFields}
+                            value={value}
+                            testIdPrefix="cloud-board-group"
+                            searchPlaceholder="搜索分组字段"
+                            onChange={id => onChange(id as NativeBoardGroupBy)}
+                          />
+                        )
+                      }
                       renderBoardSettingsAction={
                         !isMyTasksBoard && (isAITableProject || isExternalGitBoard)
                           ? () => (
@@ -5248,6 +5283,12 @@ export function CloudTodoWorkspace({
                                 : t('todo.dingtalk_board_connect')}
                             </button>
                           </div>
+                        ) : baseBoardMigration.error ? (
+                          <BaseBoardStatusMigrationNotice
+                            error={baseBoardMigration.error}
+                            retry={baseBoardMigration.retry}
+                            translate={boardTranslate}
+                          />
                         ) : boardError ? (
                           <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
                             {boardError}
@@ -5278,7 +5319,9 @@ export function CloudTodoWorkspace({
                         !nativeBoardQuery.trim()
                       )}
                       showSaveGlobal={Boolean(
-                        personalGroupKey && localStorage.getItem(personalGroupKey)
+                        !baseBoardStatusGrouping &&
+                        personalGroupKey &&
+                        localStorage.getItem(personalGroupKey)
                       )}
                     />
                   ),

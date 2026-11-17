@@ -15,7 +15,10 @@ import {
 } from "../project-board/IssueChildrenProgress";
 import { BrowserIssueBoardCard } from "../issue-card/BrowserIssueBoardCard";
 import { useBrowserBoardRuntimeWork } from "./useBrowserBoardRuntimeWork";
-import type { SharedWorkspaceRuntimeApi } from "../ports/SharedWorkspaceApi";
+import type {
+  SharedWorkspaceRuntimeApi,
+  SharedWorkspaceProjectsApi,
+} from "../ports/SharedWorkspaceApi";
 import type { CollaborationTranslate } from "../i18n";
 import { runnerEnvironmentError } from "../execution-environment/runnerEnvironmentError";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
@@ -46,6 +49,9 @@ import {
   BoardViewNotice,
   collectProjectTags,
   boardDropHint,
+  isBaseBoardStatusGroupingEnabled,
+  useBaseBoardStatusMigration,
+  BaseBoardStatusMigrationNotice,
   type ProjectBoardViews,
   type ProjectBoardColumn,
   type ProjectBoardGroupBy,
@@ -109,6 +115,8 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
+  projectApi?: Pick<SharedWorkspaceProjectsApi, "get" | "update">;
+  onProjectMigrated?(project: CollaborationProject): void;
   participationUserId?: import("../issueParticipation").IssueParticipationViewer;
   parentGroupingEnabled?: boolean;
   emptyState?: ReactNode;
@@ -175,6 +183,8 @@ function issueSearchText(
 }
 
 export function ProjectBoardAdapter({
+  projectApi,
+  onProjectMigrated,
   participationUserId,
   parentGroupingEnabled = false,
   emptyState,
@@ -251,6 +261,15 @@ export function ProjectBoardAdapter({
     (project.project_store === "local" ||
       project.access_role === "Owner" ||
       project.access_role === "Maintainer");
+  const baseBoardStatusGrouping =
+    supportsOrder && isBaseBoardStatusGroupingEnabled();
+  const baseBoardMigration = useBaseBoardStatusMigration({
+    api: projectApi ?? null,
+    project,
+    enabled: baseBoardStatusGrouping && Boolean(onProjectMigrated),
+    canManage: canManageViews,
+    onMigrated: (updated) => onProjectMigrated?.(updated),
+  });
   const runtimeWork = useBrowserBoardRuntimeWork(
     isIssueRunning && renderIssueCard ? undefined : runtime,
     taskBindings,
@@ -361,6 +380,7 @@ export function ProjectBoardAdapter({
     translate,
   });
   const controller = useStandardCloudBoardController({
+    baseBoardStatusGrouping,
     currentUserId: handlingUserId,
     tagFilter: tagFilter.tags,
     tagLimitError: translate(
@@ -656,26 +676,38 @@ export function ProjectBoardAdapter({
           ) : null
         }
         renderExternalGroupPicker={() => null}
-        renderGroupPicker={(value, onChange) => (
-          <ProjectBoardGroupPicker
-            fields={[
-              { id: "status", name: labels.groupStatus, type: "status" },
-              {
-                id: "priority",
-                name: labels.groupPriority,
-                type: "singleSelect",
-              },
-              { id: "assignee", name: labels.groupAssignee, type: "user" },
-              { id: "tag", name: labels.groupTag, type: "tag" },
-            ]}
-            value={value}
-            onChange={(id) => onChange(id as ProjectBoardGroupBy)}
-            testIdPrefix="cloud-board-group"
-            searchPlaceholder={translate("board.group.search", "搜索分组字段")}
-            chooseLabel={translate("board.group.choose", "选择分组字段")}
-            emptyLabel={translate("board.group.empty", "没有匹配字段")}
+        renderStatus={() => (
+          <BaseBoardStatusMigrationNotice
+            error={baseBoardMigration.error}
+            retry={baseBoardMigration.retry}
+            translate={translate}
           />
         )}
+        renderGroupPicker={(value, onChange) =>
+          baseBoardStatusGrouping ? null : (
+            <ProjectBoardGroupPicker
+              fields={[
+                { id: "status", name: labels.groupStatus, type: "status" },
+                {
+                  id: "priority",
+                  name: labels.groupPriority,
+                  type: "singleSelect",
+                },
+                { id: "assignee", name: labels.groupAssignee, type: "user" },
+                { id: "tag", name: labels.groupTag, type: "tag" },
+              ]}
+              value={value}
+              onChange={(id) => onChange(id as ProjectBoardGroupBy)}
+              testIdPrefix="cloud-board-group"
+              searchPlaceholder={translate(
+                "board.group.search",
+                "搜索分组字段",
+              )}
+              chooseLabel={translate("board.group.choose", "选择分组字段")}
+              emptyLabel={translate("board.group.empty", "没有匹配字段")}
+            />
+          )
+        }
         renderBoardSettingsAction={
           onOpenArchive
             ? () => (
