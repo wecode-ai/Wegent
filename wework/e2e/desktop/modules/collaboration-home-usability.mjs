@@ -252,6 +252,23 @@ async function verifyTaskLabels(control, home) {
   )
 }
 
+async function verifyOwnerKeyboardFocus(control, home) {
+  await control.command('click', `${home} [data-testid="collaboration-issue-owner"]`)
+  const menu = '[data-testid="collaboration-issue-owner-menu"]'
+  const search = '[data-testid="collaboration-issue-owner-search"]'
+  await control.command('waitFor', search, { visible: true })
+  await control.command('nativePress', search, { key: 'Tab' })
+  const unassigned = '[data-testid="collaboration-issue-owner-none"]'
+  await control.command('waitFor', `${unassigned}:focus`, { visible: true })
+  assert.notEqual(
+    await control.command('getComputedStyleValue', unassigned, { value: 'box-shadow' }),
+    'none',
+    'Keyboard focus needs a visible indicator beyond the selected or hovered background'
+  )
+  await control.command('nativePress', unassigned, { key: 'Escape' })
+  await control.command('waitFor', menu, { visible: false })
+}
+
 async function verifyAssistantSetupTouchTarget(control, home) {
   await control.command('click', `${home} [data-testid="personal-home-tab-stand-in"]`)
   const toggle = `${home} [data-testid="personal-home-assistant-view-toggle"]`
@@ -546,6 +563,7 @@ export async function verifyCollaborationHomeUsability(
       'Sidebar restoration must retain the draft'
     )
     await verifyRecordDraftNavigation(control, home)
+    await verifyOwnerKeyboardFocus(control, home)
     await verifyTaskLabels(control, home)
     await verifyProjectDialogKeyboard(control, home, timeoutMs)
     await resizeHome(control, home, 1100, 800, timeoutMs)
