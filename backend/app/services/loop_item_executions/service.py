@@ -1983,6 +1983,9 @@ class LoopItemExecutionService:
         """Commit Runtime acceptance and its activity projection together."""
 
         try:
+            from app.services.loop_items.locking import lock_execution_issue
+
+            lock_execution_issue(db, execution_id)
             row = self.confirm_runtime_accepted(
                 db,
                 execution_id=execution_id,
@@ -2155,6 +2158,9 @@ class LoopItemExecutionService:
         key is (project, task, agent, runtime ids), making this idempotent.
         """
 
+        from app.services.loop_items.locking import lock_existing_issue
+
+        lock_existing_issue(db, execution.loop_item_id)
         current = db.get(
             LoopItemExecution,
             execution.id,
@@ -2896,8 +2902,10 @@ class LoopItemExecutionService:
         """Apply the elected execution outcome without committing or pushing."""
 
         from app.models.delivery import ProjectAutomationRun
+        from app.services.loop_items.locking import lock_existing_issue
         from app.services.project_chat.service import project_chat_service
 
+        lock_existing_issue(db, execution.loop_item_id)
         activity = self._linked_activity(db, execution)
         if activity is not None:
             project_chat_service._record_runtime_sequence(
@@ -4534,6 +4542,9 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Apply a trusted snapshot and restore its missing activity projection."""
 
+        from app.services.loop_items.locking import lock_execution_issue
+
+        lock_execution_issue(db, execution_id)
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status not in CAPACITY_STATUSES:
             return row

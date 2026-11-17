@@ -13,15 +13,16 @@ from app.db.base import Base
 from app.models.delivery import CloudProject, LoopItem
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
+from app.services.loop_item_executions.runtime_identity import execution_runtime_task_id
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.service import project_chat_service
 
 
 def verify_reply_runtime_lock_order(
-    engine: Engine, with_execution: bool, terminal: bool = False
+    engine: Engine, with_execution: bool, transition: str = "runtime"
 ) -> None:
     """A reply holding Issue must not deadlock with an incoming runtime event."""
-    task_id = f"lock-order-{with_execution}-{terminal}"
+    task_id = f"lock-order-{with_execution}-{transition}"
     with Session(engine, expire_on_commit=False) as setup:
         if setup.get(CloudProject, "project-1") is None:
             setup.add(CloudProject(id="project-1", name="Lock order project"))
@@ -42,7 +43,12 @@ def verify_reply_runtime_lock_order(
         )
         run = (
             LoopItemExecution(
-                loop_item_id=task_id, cloud_project_id="project-1", status="running"
+                loop_item_id=task_id,
+                cloud_project_id="project-1",
+                status={"accept": "claimed", "reject": "pending_approval"}.get(
+                    transition, "running"
+                ),
+                executor_owner_user_id=1,
             )
             if with_execution
             else None
@@ -82,7 +88,7 @@ def verify_reply_runtime_lock_order(
         runtime_thread.append(get_ident())
         assert held.wait(10)
         with Session(engine) as db:
-            if terminal:
+            if transition == "terminal":
                 assert loop_item_execution_service._transition_terminal(
                     db,
                     execution_id=execution_id,
@@ -90,6 +96,19 @@ def verify_reply_runtime_lock_order(
                     note=None,
                     content=None,
                     commit=False,
+                )
+            elif transition == "accept":
+                run = db.get(LoopItemExecution, execution_id)
+                assert loop_item_execution_service.accept_runtime_and_open_activity(
+                    db,
+                    execution_id=execution_id,
+                    runtime_device_id="runtime-device",
+                    runtime_task_id=execution_runtime_task_id(run),
+                    prompt=None,
+                )
+            elif transition == "reject":
+                assert loop_item_execution_service.reject(
+                    db, execution_id=execution_id, user_id=1
                 )
             elif execution_id:
                 assert loop_item_execution_service._lock_runtime_event_execution(
@@ -115,11 +134,11 @@ def verify_reply_runtime_lock_order(
             db.query(ProjectChatMessage).filter_by(message_id=task_id).one().content
             == "replyruntime"
         )
-        if terminal:
+        if transition in {"terminal", "reject"}:
             assert db.get(LoopItemExecution, execution_id).status == "cancelled"
     print(
         "MySQL: reply/runtime lock order is serialized "
-        f"with_execution={with_execution} terminal={terminal}"
+        f"with_execution={with_execution} transition={transition}"
     )
 
 
@@ -301,7 +320,10 @@ def main() -> None:
         verify_existing_activity_serialization(engine)
         for with_execution in (False, True):
             verify_reply_runtime_lock_order(engine, with_execution)
-        verify_reply_runtime_lock_order(engine, with_execution=True, terminal=True)
+        for transition in ("terminal", "accept", "reject"):
+            verify_reply_runtime_lock_order(
+                engine, with_execution=True, transition=transition
+            )
         for identity in ("bound", "client", "wrong_turn", "old_sequence"):
             verify_final_content_after_concurrent_history(engine, identity)
     finally:
