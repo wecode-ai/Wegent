@@ -16,7 +16,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { handleEvent } from './logger.mjs'
@@ -96,6 +96,36 @@ async function records(logs) {
 
 const patchPath = (f, record) =>
   join(f.logs, 'records', digest(record.event.event_id), 'diff.patch')
+
+test('event pins stay within the reported Windows ref path and survive archive cleanup', async t => {
+  const f = await fixture(t)
+  const start = await f.invoke(f.event(0, 'TurnStarted'))
+  const jobs = []
+  for (const sequence of [1, 2]) {
+    await writeFile(join(f.workspace, 'source.txt'), 'revision ' + sequence + '\n')
+    const event = f.event(sequence)
+    await f.invoke(event)
+    jobs.push(await readJson(join(start.queue_path, 'pending', digest(event.event_id) + '.json')))
+  }
+  await f.invoke(f.event(3, 'ExecutionCompleted'))
+  const reportedGitRoot =
+    'C:/Users/wework-e2e-9756/AppData/Local/Temp/wework-async-hooks-IGsJvw/repository/.git'
+  const refs = jobs.flatMap(job => job.references)
+  assert.equal(new Set(refs).size, 4, 'Each queued snapshot must retain its own pins')
+  for (const job of jobs) {
+    for (const [index, ref] of job.references.entries()) {
+      const lockPath = win32.join(reportedGitRoot, ref + '.lock')
+      assert.ok(lockPath.length < 260,
+        'Reported Windows ref lock path is too long: ' + lockPath.length)
+      assert.equal(git(f.workspace, 'rev-parse', ref), index ? job.after : job.before)
+    }
+  }
+  git(f.workspace, 'gc', '--prune=now')
+  await processQueue(start.queue_path)
+  assert.equal((await records(f.logs)).length, 2)
+  assert.deepEqual(await readdir(join(start.queue_path, 'pending')), [])
+  assert.equal(git(f.workspace, 'for-each-ref', '--format=%(refname)', 'refs/wegent/turn-diff'), '')
+})
 
 test('verbose Git warnings are drained while metadata stdout remains bounded', async t => {
   const f = await fixture(t)
@@ -177,7 +207,7 @@ test('failed queue publication releases refs only before the job becomes visible
       assert.equal(refs(), baseline.reference)
     } else {
       assert.equal(pending.length, 1)
-      assert.match(refs(), /-event-/)
+      assert.match(refs(), /\/event-/)
       git(f.workspace, 'gc', '--prune=now')
       await processQueue(start.queue_path)
       const [record] = await records(f.logs)

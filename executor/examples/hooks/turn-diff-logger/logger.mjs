@@ -75,7 +75,9 @@ async function enqueue(root, directory, state, input) {
   const hooks = join(root, 'empty-hooks')
   const after = await snapshot(state.workspace, directory, hooks)
   const git_url = await remoteUrl(state.workspace, hooks)
-  const prefix = state.reference + '-event-' + digest(input.event_id)
+  // Hash the event identity once to keep Windows ref lock paths short.
+  const prefix =
+    'refs/wegent/turn-diff/event-' + digest(JSON.stringify([state.reference, input.event_id]))
   // Refs outside heads protect immutable trees without changing the user's index.
   const references = [prefix + '-before', prefix + '-after']
   const job = {
