@@ -1,6 +1,7 @@
 import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { Button } from '@/components/ui/button'
 import { projectKey, type ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -199,15 +200,16 @@ function WorkItemComposerGuideContent({
             ) : null}
           </button>
           {ownedBindings?.failed ? (
-            <button
+            <Button
+              variant="ghost"
               type="button"
               data-testid="work-item-guide-retry-task-count"
               disabled={bindingsPending}
               onClick={() => setBindingRetry(current => current + 1)}
-              className="shrink-0 rounded px-1 text-xs text-text-muted hover:bg-background/70 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30 disabled:cursor-wait"
+              className="h-6 shrink-0 px-1 py-0 text-xs text-text-muted"
             >
               {t('workbench.task_count_load_failed_retry', '任务数加载失败，重试')}
-            </button>
+            </Button>
           ) : null}
           {onOpen ? (
             <button
