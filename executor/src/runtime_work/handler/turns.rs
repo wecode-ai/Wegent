@@ -410,6 +410,8 @@ impl RuntimeWorkRpcHandler {
         // retain their own context without changing the active native turn.
         for turn in starting {
             self.store.update_task(&turn.local_task_id, |link| {
+                // Admission owns capacity before preparation or the native RPC starts.
+                crate::runtime_work::lifecycle::begin_native_request(link);
                 store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
             });
         }
@@ -1133,6 +1135,7 @@ impl RuntimeWorkRpcHandler {
 
     fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
         self.store.update_task(local_task_id, |link| {
+            settle_pending_native_admission(link, "cancelled");
             link.running = false;
             link.status = "cancelled".to_owned();
             link.thread_status = "cancelled".to_owned();
@@ -3030,3 +3033,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "preparation_terminal_tests.rs"]
+mod preparation_terminal_tests;

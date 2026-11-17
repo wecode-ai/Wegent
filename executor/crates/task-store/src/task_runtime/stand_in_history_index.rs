@@ -1,6 +1,20 @@
 //! Indexed retention facts are recorded with new writes; legacy payloads are not backfilled.
 use super::*;
 
+pub(super) fn schema_is_current(connection: &Connection) -> Result<bool, rusqlite::Error> {
+    connection.query_row(
+        "SELECT count(*) = 11 FROM sqlite_master WHERE
+         (type='table' AND name IN ('stand_in_history','stand_in_history_refs','stand_in_retention_cursor'))
+         OR (type='index' AND name IN (
+           'ix_stand_in_history_status','ix_stand_in_history_batch',
+           'ix_stand_in_history_router_batch','ix_stand_in_history_error',
+           'ix_stand_in_history_event_ref','ix_stand_in_history_retention',
+           'ix_loop_items_loop_item_id','ix_loop_items_delivery_id'))",
+        [],
+        |row| row.get(0),
+    )
+}
+
 pub(super) fn ensure_schema(connection: &Connection) -> Result<(), rusqlite::Error> {
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS stand_in_history (
