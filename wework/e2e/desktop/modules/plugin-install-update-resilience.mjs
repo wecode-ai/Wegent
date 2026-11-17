@@ -15,11 +15,18 @@ const skillName = 'resilience-check'
 const prefix = 'install-update-resilience-'
 const packageFailureCode = 'PLUGIN_PACKAGE_INTEGRITY_FAILED'
 
-export async function settlePluginPolicyWrite(cloud, installedId, operate, timeoutMs) {
+export async function settlePluginPolicyWrite(
+  cloud,
+  installedId,
+  originDeviceId,
+  operate,
+  timeoutMs
+) {
+  assert.match(originDeviceId, /^app-record-\d+$/, 'Policy setup needs the exact App record route')
   const read = () =>
     cloud.queryDatabase(
-      'SELECT device_id, state, CAST(last_sync_at AS CHAR) AS last_sync_at FROM plugin_device_installations WHERE user_id=%s AND installed_kind_id=%s',
-      [1, installedId]
+      'SELECT device_id, state, CAST(last_sync_at AS CHAR) AS last_sync_at FROM plugin_device_installations WHERE user_id=%s AND installed_kind_id=%s AND device_id<>%s',
+      [1, installedId, originDeviceId]
     )
   const before = await read()
   assert.ok(before.length > 0, 'Policy setup needs existing real device installations')
@@ -36,7 +43,7 @@ export async function settlePluginPolicyWrite(cloud, installedId, operate, timeo
             row.last_sync_at !== previous.last_sync_at
         )
       ),
-    'Plugin policy sync did not persist on every existing Runtime',
+    'Plugin policy sync did not persist on every background recipient',
     timeoutMs
   )
   // Persistence happens inside the write lease. Acquire and release that exact
@@ -103,6 +110,7 @@ export async function verifyPluginInstallUpdateResilience({
   control,
   apiProxy,
   deviceId,
+  localRuntimeRouteId,
   executorHome,
   resultDir,
   captureScreenshot,
@@ -678,6 +686,7 @@ export async function verifyPluginInstallUpdateResilience({
             await settlePluginPolicyWrite(
               cloud,
               item.before.account.id,
+              localRuntimeRouteId,
               () => setPolicy(item.old, 'auto'),
               timeoutMs
             )

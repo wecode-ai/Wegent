@@ -23,7 +23,7 @@ test('waits for every Runtime policy ACK and the scoped writer before continuing
   const queries = [before, before, [row('app', 'new'), row('cloud', 'old')], complete]
   const cloud = {
     queryDatabase: vi.fn(async (_sql, params) => {
-      expect(params).toEqual([1, 95])
+      expect(params).toEqual([1, 95, 'app-record-76'])
       expect(holdPluginWriteLease).not.toHaveBeenCalled()
       return queries.shift()
     }),
@@ -38,10 +38,12 @@ test('waits for every Runtime policy ACK and the scoped writer before continuing
     expect(cloud.queryDatabase).toHaveBeenCalledTimes(1)
   })
   let finished = false
-  const pending = settlePluginPolicyWrite(cloud, 95, operate, 1000).then(result => {
-    finished = true
-    return result
-  })
+  const pending = settlePluginPolicyWrite(cloud, 95, 'app-record-76', operate, 1000).then(
+    result => {
+      finished = true
+      return result
+    }
+  )
   await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
   expect(finished).toBe(false)
   releaseWriter()
@@ -57,8 +59,8 @@ test('does not admit auto-update after a fresh but failed policy sync', async ()
       .mockResolvedValueOnce([row('app', 'old')])
       .mockResolvedValue([row('app', 'new', 'failed')]),
   }
-  await expect(settlePluginPolicyWrite(cloud, 95, vi.fn(), 1)).rejects.toThrow(
-    'Plugin policy sync did not persist on every existing Runtime'
+  await expect(settlePluginPolicyWrite(cloud, 95, 'app-record-76', vi.fn(), 1)).rejects.toThrow(
+    'Plugin policy sync did not persist on every background recipient'
   )
   expect(holdPluginWriteLease).not.toHaveBeenCalled()
 })
@@ -66,9 +68,29 @@ test('does not admit auto-update after a fresh but failed policy sync', async ()
 test('rejects missing device setup before changing the policy', async () => {
   const cloud = { queryDatabase: vi.fn().mockResolvedValue([]) }
   const operate = vi.fn()
-  await expect(settlePluginPolicyWrite(cloud, 95, operate, 1000)).rejects.toThrow(
+  await expect(settlePluginPolicyWrite(cloud, 95, 'app-record-76', operate, 1000)).rejects.toThrow(
     'Policy setup needs existing real device installations'
   )
   expect(operate).not.toHaveBeenCalled()
   expect(holdPluginWriteLease).not.toHaveBeenCalled()
+})
+
+test('does not wait for an ACK from the API caller receiving its snapshot in the response', async () => {
+  let changed = false
+  const origin = row('app-record-76', 'old')
+  const cloud = {
+    queryDatabase: vi.fn(async (sql, params) => {
+      expect(sql).toContain('device_id<>%s')
+      return [origin, row('remote', changed ? 'new' : 'old')].filter(
+        value => value.device_id !== params[2]
+      )
+    }),
+  }
+  const release = vi.fn()
+  holdPluginWriteLease.mockResolvedValue({ release })
+  await expect(
+    settlePluginPolicyWrite(cloud, 95, 'app-record-76', () => (changed = true), 1000)
+  ).resolves.toEqual([row('remote', 'new')])
+  expect(origin.last_sync_at).toBe('old')
+  expect(release).toHaveBeenCalledOnce()
 })
