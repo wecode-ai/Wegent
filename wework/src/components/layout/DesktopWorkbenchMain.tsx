@@ -1,7 +1,10 @@
+import { supportsConnectionEvents } from '@/lib/device-capabilities'
+import { cancelConnectionEventSubscription } from '@/api/connectionEventSubscriptions'
 import {
   isQuestionDiscussionTab,
   useQuestionDiscussionWorkspacePanel,
 } from '@/features/notifications/questionDiscussion'
+import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import {
   getMcpAppPanel,
@@ -4836,6 +4839,29 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [compactContextAction]
   )
   const setCurrentGoal = useCallback(() => void setCurrentGoalAction(), [setCurrentGoalAction])
+  const eventCancellationUnsupported =
+    !activeDeviceUnavailable && !supportsConnectionEvents(activeDevice)
+  const cancelCurrentEventSubscription = async (key: string) => {
+    if (!deviceApi || !currentRuntimeTask || activeDeviceUnavailable) {
+      throw new Error(t('workbench.connection_event_cancel_unavailable', '设备离线，恢复后可取消'))
+    }
+    if (eventCancellationUnsupported) {
+      throw new Error(
+        t('workbench.connection_event_upgrade_required', '此设备需升级执行器以使用事件监听')
+      )
+    }
+    await cancelConnectionEventSubscription(deviceApi, currentRuntimeTask, key, activeDevice)
+  }
+  const eventSubscriptionScope = currentRuntimeTask
+    ? JSON.stringify([
+        currentRuntimeTask.deviceId,
+        currentRuntimeTask.taskId,
+        currentRuntimeTask.workspacePath,
+        activeDevice?.runtime_instance_id,
+        activeDevice?.executor_version,
+        eventCancellationUnsupported,
+      ])
+    : ''
   const pauseCurrentGoal = useCallback(
     () => void pauseCurrentGoalAction(),
     [pauseCurrentGoalAction]
@@ -5535,6 +5561,30 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   <RequestUserInputComposer
                                     payload={pendingRequestUserInput}
                                     source={currentRuntimeTask}
+                                    questionContext={
+                                      <ConversationEventContext
+                                        integrated
+                                        goal={paneSession.goal}
+                                        goalDraftActive={paneSession.goalDraftActive}
+                                        continuing={paneSession.goalContinuing}
+                                        executionStatus={paneSession.goalExecutionStatus}
+                                        eventSubscriptionScope={eventSubscriptionScope}
+                                        onCancelEventSubscription={cancelCurrentEventSubscription}
+                                        eventCancellationUnsupported={eventCancellationUnsupported}
+                                        eventCancellationUnavailable={
+                                          activeDeviceUnavailable || !deviceApi
+                                        }
+                                        subscriptions={
+                                          currentRuntimeConversationSource?.runtimeHandle
+                                            ?.connectionEventSubscriptions
+                                        }
+                                        interactionStatus={runtimeTaskSummary?.interactionStatus}
+                                        onEditGoal={paneSession.editCurrentGoal}
+                                        onPauseGoal={pauseCurrentGoal}
+                                        onResumeGoal={resumeCurrentGoal}
+                                        onClearGoal={clearCurrentGoal}
+                                      />
+                                    }
                                     renderQuestion={onCollapse =>
                                       pendingRequestUserInput ? (
                                         <RequestUserInputCard
@@ -5638,6 +5688,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         goal={paneSession.goal}
                                         goalContinuing={paneSession.goalContinuing}
                                         goalExecutionStatus={paneSession.goalExecutionStatus}
+                                        eventSubscriptionScope={eventSubscriptionScope}
+                                        onCancelEventSubscription={cancelCurrentEventSubscription}
+                                        eventCancellationUnsupported={eventCancellationUnsupported}
+                                        eventCancellationUnavailable={
+                                          activeDeviceUnavailable || !deviceApi
+                                        }
+                                        eventSubscriptions={
+                                          currentRuntimeConversationSource?.runtimeHandle
+                                            ?.connectionEventSubscriptions
+                                        }
+                                        interactionStatus={runtimeTaskSummary?.interactionStatus}
                                         taskPlan={paneSession.taskPlan}
                                         goalDraftActive={paneSession.goalDraftActive}
                                         onSetGoal={
@@ -5940,6 +6001,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           goal={paneSession.goal}
                           goalContinuing={paneSession.goalContinuing}
                           goalExecutionStatus={paneSession.goalExecutionStatus}
+                          eventSubscriptionScope={eventSubscriptionScope}
+                          onCancelEventSubscription={cancelCurrentEventSubscription}
+                          eventCancellationUnsupported={eventCancellationUnsupported}
+                          eventCancellationUnavailable={activeDeviceUnavailable || !deviceApi}
+                          eventSubscriptions={
+                            currentRuntimeConversationSource?.runtimeHandle
+                              ?.connectionEventSubscriptions
+                          }
+                          interactionStatus={runtimeTaskSummary?.interactionStatus}
                           taskPlan={paneSession.taskPlan}
                           goalDraftActive={paneSession.goalDraftActive}
                           onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}

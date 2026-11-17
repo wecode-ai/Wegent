@@ -1,3 +1,4 @@
+import type { DeviceInfo } from '@/types/api'
 import type { RuntimeEvent as LocalExecutorEvent } from '@wegent/chat-core'
 import { readRuntimeTranscript } from '@wegent/chat-core'
 import {
@@ -35,6 +36,7 @@ export interface LocalExecutorStatus {
   runtimeInstanceId?: string
   codexInitializeElapsedMs?: number
   version?: string
+  runtimeFeatures?: DeviceInfo['runtime_features']
   error?: string
 }
 
@@ -513,6 +515,7 @@ export function ensureLocalExecutorAvailable(
           deviceRouteId: description.device_route_id?.trim() || undefined,
           runtimeInstanceId: description.runtime_instance_id,
           version: description.version,
+          runtimeFeatures: description.runtime_features,
         }
         availableLocalExecutorStatus = status
         return status

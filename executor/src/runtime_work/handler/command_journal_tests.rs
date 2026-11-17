@@ -84,6 +84,47 @@ fn replay_keeps_identity_across_goal_recovery_and_credential_rotation() {
 }
 
 #[test]
+fn goal_continuation_retains_the_event_receipt_without_a_new_source_trigger() {
+    let mut original = turn("task", json!("event-command"), "Source facts");
+    let events = json!(["a".repeat(64)]);
+    original
+        .request
+        .extra
+        .insert("resource_event_keys".into(), events.clone());
+    original
+        .request
+        .extra
+        .get_mut("runtime_command_input")
+        .unwrap()["resourceEventKeys"] = events;
+    let command = RuntimeCommand::from_turn(&original, CommandState::Started)
+        .unwrap()
+        .unwrap();
+    let mut journal = super::command_journal::CommandJournal::from([(command.key(), command)]);
+    let mut resumed = original.clone();
+    resumed.request.prompt = json!("");
+    resumed.request.extra.remove("resource_event_keys");
+    resumed
+        .request
+        .extra
+        .insert(RESUME_GOAL_ONLY_MARKER.into(), json!(true));
+    super::command_journal::project_queue(&mut journal, &VecDeque::new(), &[resumed]).unwrap();
+    let receipt = journal.values().next().unwrap();
+    assert_eq!(receipt.resource_event_keys, vec!["a".repeat(64)]);
+    assert!(!receipt
+        .turn
+        .request
+        .extra
+        .contains_key("resource_event_keys"));
+    assert_eq!(
+        receipt.fingerprint,
+        RuntimeCommand::from_turn(&original, CommandState::Started)
+            .unwrap()
+            .unwrap()
+            .fingerprint
+    );
+}
+
+#[test]
 fn same_id_cannot_change_input_or_account() {
     let original = turn("task", json!("command"), "original");
     let first = RuntimeCommand::from_turn(&original, CommandState::Queued)

@@ -1,7 +1,95 @@
 //! Automatic input stays in the native durable queue until human participation ends.
 use super::*;
 
+pub(super) fn is_automatic_input(request: &ExecutionRequest) -> bool {
+    request.extra.get("standInAutomatic") == Some(&Value::Bool(true))
+        || request
+            .extra
+            .get("resource_event_keys")
+            .and_then(Value::as_array)
+            .is_some_and(|keys| !keys.is_empty())
+}
+
 impl RuntimeWorkRpcHandler {
+    pub(super) fn automatic_input_admission(
+        &self,
+        task: &str,
+        request: &ExecutionRequest,
+    ) -> Option<crate::agents::CodexInputAdmission> {
+        if !is_automatic_input(request) {
+            return None;
+        }
+        let handler = self.clone();
+        let task = task.to_owned();
+        let source_input = request
+            .extra
+            .get("resource_event_keys")
+            .and_then(Value::as_array)
+            .is_some_and(|keys| !keys.is_empty());
+        let operation = request
+            .extra
+            .get("client_user_message_id")
+            .or_else(|| request.extra.get("clientUserMessageId"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        Some(Box::new(move || {
+            let _guard = handler
+                .stand_in_lifecycle_gate
+                .lock()
+                .expect("turn lifecycle gate poisoned");
+            let link = handler
+                .store
+                .get_task_summary(&task)
+                .ok_or("Automatic input conversation is unavailable")?;
+            if source_input {
+                handler
+                    .validate_event_input_session(&task, operation.as_deref(), &link)
+                    .map_err(|error| error.message)?;
+            }
+            if link
+                .interaction_status
+                .as_deref()
+                .is_some_and(|status| !status.is_empty())
+            {
+                return Err(crate::agents::AUTOMATIC_INPUT_WAITING_FOR_HUMAN.into());
+            }
+            Ok(())
+        }))
+    }
+
+    pub(super) async fn defer_automatic_input(
+        &self,
+        task: &str,
+        request: &ExecutionRequest,
+        execution: u64,
+    ) -> Result<bool, AppIpcError> {
+        let id = request
+            .extra
+            .get("runtime_command_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                AppIpcError::new("command_missing", "Automatic input has no durable command")
+            })?;
+        let turn = {
+            let commands = self
+                .command_journal
+                .lock()
+                .expect("command journal poisoned");
+            let command = commands
+                .get(&super::command_journal::key(task, id))
+                .ok_or_else(|| {
+                    AppIpcError::new("command_missing", "Automatic input command is unavailable")
+                })?;
+            if command.native.is_some()
+                || command.state != super::command_journal::CommandState::Dispatching
+            {
+                return Ok(false);
+            }
+            command.turn.clone()
+        };
+        self.park_automatic_turn(turn, Some(execution)).await
+    }
+
     pub(super) async fn start_automatic_turn(
         &self,
         mut turn: SpawnTurnRequest,
@@ -105,8 +193,8 @@ impl RuntimeWorkRpcHandler {
         self.validate_primary_task_followup(user, &link).await
     }
 
-    pub(super) fn automatic_stand_in_waits(&self, turn: &SpawnTurnRequest) -> bool {
-        turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true))
+    pub(super) fn automatic_input_waits(&self, turn: &SpawnTurnRequest) -> bool {
+        turn.is_automatic_input()
             && self
                 .store
                 .get_task_summary(&turn.local_task_id)
@@ -118,7 +206,26 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn park_waiting_automatic_turn(&self, turn: SpawnTurnRequest) {
+        let task = turn.local_task_id.clone();
+        if let Err(error) = self.park_automatic_turn(turn, None).await {
+            log_executor_event(
+                "Automatic input queue persistence failed",
+                &[("task_id", task), ("code", error.code)],
+            );
+        }
+    }
+
+    async fn park_automatic_turn(
+        &self,
+        turn: SpawnTurnRequest,
+        execution: Option<u64>,
+    ) -> Result<bool, AppIpcError> {
         let operation = self.turn_queue_operation.lock().await;
+        if execution.is_some_and(|id| {
+            !self.is_local_task_execution_accepting_notifications(&turn.local_task_id, id)
+        }) {
+            return Ok(false);
+        }
         let (previous, ready, queued) = {
             let mut scheduler = self.turn_scheduler.lock().expect("turn scheduler poisoned");
             let previous = scheduler.clone();
@@ -133,11 +240,23 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             *self.turn_scheduler.lock().expect("turn scheduler poisoned") = previous;
-            log_executor_event(
-                "Automatic input queue persistence failed",
-                &[("task_id", turn.local_task_id), ("code", error.code)],
-            );
-            return;
+            return Err(error);
+        }
+        if let Some(execution) = execution {
+            // Retire the old publication before any immediately ready command
+            // can acquire this task's new execution and publication route.
+            self.clear_active_codex_turn(&turn.local_task_id, execution);
+            self.clear_active_request_user_input(&turn.local_task_id, execution);
+            self.mark_thread_event_routes_idle_for_local_task(&turn.local_task_id);
+            self.finish_local_task_execution(&turn.local_task_id, execution);
+            let position = self
+                .queued_local_task_position(&turn.local_task_id)
+                .unwrap_or(0);
+            self.store.update_task(&turn.local_task_id, |link| {
+                crate::runtime_work::lifecycle::settle_native_execution(link, "cancelled");
+                apply_local_execution_state(link, false, Some(position));
+            });
+            emit_runtime_work_changed(&self.event_tx, &self.device_id, &turn.local_task_id);
         }
         self.preparing_turns
             .lock()
@@ -150,6 +269,7 @@ impl RuntimeWorkRpcHandler {
         for next in ready {
             self.start_queued_turn(next);
         }
+        Ok(true)
     }
 }
 
@@ -179,6 +299,269 @@ mod tests {
             resume_thread_id: None,
             initial_thread_goal: None,
         }
+    }
+
+    #[tokio::test]
+    async fn immediate_redispatch_retires_old_routes_before_transferring_the_reservation() {
+        let (mut handler, root) = isolated_runtime_work_handler("automatic-immediate-redispatch");
+        handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
+        handler.restore_startup_semaphore = Arc::new(Semaphore::new(0));
+        handler.command_journal.lock().unwrap().clear();
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: "waiting-work".into(),
+            status: "active".into(),
+            thread_id: Some("original-thread".into()),
+            ..Default::default()
+        });
+        let mut input = automatic_turn();
+        // The existing restoration permit keeps the next worker before launch,
+        // while the scheduler exercises an immediate same-command handoff.
+        input
+            .request
+            .extra
+            .insert(RESTORED_TURN_MARKER.into(), json!(true));
+        handler.queue_turn(input).await.unwrap();
+        let (previous, turn) = {
+            let mut scheduler = handler.turn_scheduler.lock().unwrap();
+            let previous = scheduler.clone();
+            (previous, scheduler.force_start("waiting-work").unwrap())
+        };
+        handler
+            .persist_turn_queue(
+                VecDeque::new(),
+                Some(&previous),
+                std::slice::from_ref(&turn),
+            )
+            .await
+            .unwrap();
+        let (cancel, _cancelled) = oneshot::channel();
+        let (_stopped, stopped) = oneshot::channel();
+        let execution = handler.start_local_task_execution("waiting-work".into(), cancel, stopped);
+        let mut completion = ScheduledTurnGuard::new(
+            handler.clone(),
+            "waiting-work".into(),
+            execution,
+            Some("automatic-followup".into()),
+        );
+        handler.register_thread_event_route(
+            "original-thread",
+            "waiting-work".into(),
+            turn.request.clone(),
+            true,
+        );
+        handler.set_interaction_status("waiting-work", Some("awaitingUserReply"));
+        assert_eq!(
+            handler
+                .automatic_input_admission("waiting-work", &turn.request)
+                .unwrap()()
+            .unwrap_err(),
+            crate::agents::AUTOMATIC_INPUT_WAITING_FOR_HUMAN
+        );
+        handler.set_interaction_status("waiting-work", None);
+        assert!(handler
+            .defer_automatic_input("waiting-work", &turn.request, execution)
+            .await
+            .unwrap());
+        assert!(!handler.thread_event_routing.lock().unwrap().routes["original-thread"].active,"old publication must retire before redispatch, rather than after the new worker can publish");
+        let mut next_request = turn.request.clone();
+        next_request.subtask_id = "next-native-turn".into();
+        handler.register_thread_event_route(
+            "original-thread",
+            "waiting-work".into(),
+            next_request,
+            true,
+        );
+        completion.transferred = true;
+        drop(completion);
+        tokio::task::yield_now().await;
+        {
+            let routes = handler.thread_event_routing.lock().unwrap();
+            assert!(routes.routes["original-thread"].active);
+            assert_eq!(
+                routes.routes["original-thread"].request.subtask_id,
+                "next-native-turn"
+            );
+        }
+        assert!(
+            handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .active_task_ids
+                .contains_key("waiting-work"),
+            "the old completion cannot release the new reservation"
+        );
+        assert!(handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .queued_turns
+            .is_empty());
+        handler.restore_startup_semaphore.close();
+        tokio::task::yield_now().await;
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn source_input_after_runtime_preparation_requeues_the_same_durable_command() {
+        let (mut handler, root) = isolated_runtime_work_handler("source-input-late-question");
+        handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
+        handler.command_journal.lock().unwrap().clear();
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: "waiting-work".into(),
+            status: "active".into(),
+            thread_id: Some("original-thread".into()),
+            ..Default::default()
+        });
+        let event_key = "a".repeat(64);
+        let path = handler
+            .store
+            .index_path()
+            .with_file_name("conversation-event-subscriptions.json");
+        crate::workbench_control::journal::transact(&path,|state| {
+            state["operations"]["source"]=json!({"task_id":"waiting-work","operation_id":"automatic-followup","session":{"engine":"Codex","id":"original-thread"},"resource_event_keys":[event_key],"events":[{"id":"original-event"}],"source":{"name":"Review"},"native_event_phase":"injected"});
+            Ok(())
+        }).unwrap();
+        let mut input = automatic_turn();
+        input
+            .request
+            .extra
+            .insert("client_user_message_id".into(), json!("automatic-followup"));
+        input.send_payload.as_mut().unwrap()["automaticStandIn"] = json!(false);
+        input.send_payload.as_mut().unwrap()["resourceEventKeys"] = json!([event_key]);
+        apply_runtime_payload_metadata(&mut input.request, input.send_payload.as_ref().unwrap());
+        handler.queue_turn(input).await.unwrap();
+        let (previous, turn) = {
+            let mut scheduler = handler.turn_scheduler.lock().unwrap();
+            let previous = scheduler.clone();
+            (previous, scheduler.force_start("waiting-work").unwrap())
+        };
+        handler
+            .persist_turn_queue(
+                VecDeque::new(),
+                Some(&previous),
+                std::slice::from_ref(&turn),
+            )
+            .await
+            .unwrap();
+        let (cancel, _cancelled) = oneshot::channel();
+        let (_stopped, stopped) = oneshot::channel();
+        let execution = handler.start_local_task_execution("waiting-work".into(), cancel, stopped);
+        let mut completion = ScheduledTurnGuard::new(
+            handler.clone(),
+            "waiting-work".into(),
+            execution,
+            Some("automatic-followup".into()),
+        );
+        handler.set_interaction_status("waiting-work", Some("awaitingUserReply"));
+        let admit = handler
+            .automatic_input_admission("waiting-work", &turn.request)
+            .unwrap();
+        assert_eq!(
+            admit().unwrap_err(),
+            crate::agents::AUTOMATIC_INPUT_WAITING_FOR_HUMAN
+        );
+        assert!(handler
+            .defer_automatic_input("waiting-work", &turn.request, execution)
+            .await
+            .unwrap());
+        completion.transferred = true;
+        drop(completion);
+        tokio::task::yield_now().await;
+        let receipt = handler
+            .command_receipt(
+                json!({"taskId":"waiting-work","commandId":"automatic-followup","userId":7}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(receipt["state"], "queued");
+        assert!(receipt["native"].is_null());
+        let persisted =
+            super::super::turns::read_runtime_turn_state(handler.turn_queue_path.as_ref()).unwrap();
+        assert_eq!(persisted.queued_turns.len(), 1);
+        assert_eq!(
+            persisted.queued_turns[0].request.prompt,
+            "Original source input"
+        );
+        assert_eq!(
+            persisted.queued_turns[0].request.extra["resource_event_keys"],
+            json!([event_key])
+        );
+        assert!(!handler.is_current_local_task_execution("waiting-work", execution));
+        assert_eq!(
+            handler
+                .store
+                .get_task_summary("waiting-work")
+                .unwrap()
+                .interaction_status
+                .as_deref(),
+            Some("awaitingUserReply")
+        );
+        let phase = crate::workbench_control::journal::transact(&path, |state| {
+            Ok(state["operations"]["source"]["native_event_phase"].clone())
+        })
+        .unwrap();
+        assert_eq!(
+            phase, "injected",
+            "parking must preserve the native receipt for a later activation"
+        );
+        handler.set_interaction_status("waiting-work", None);
+        let ready = {
+            let mut scheduler = handler.turn_scheduler.lock().unwrap();
+            scheduler.refresh_automatic_waits(&handler.store, None);
+            scheduler.take_available()
+        };
+        assert_eq!(ready.len(), 1);
+        assert_eq!(
+            ready[0].request.extra["runtime_command_id"],
+            "automatic-followup"
+        );
+        assert!(handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .take_available()
+            .is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn resource_event_input_uses_the_existing_human_participation_queue() {
+        let (handler, root) = isolated_runtime_work_handler("resource-event-question");
+        handler.upsert_local_task(RuntimeTaskLink {
+            local_task_id: "waiting-work".into(),
+            status: "active".into(),
+            interaction_status: Some("waitingForApproval".into()),
+            ..Default::default()
+        });
+        let mut event = automatic_turn();
+        event.request.extra.remove("standInAutomatic");
+        event
+            .request
+            .extra
+            .insert("resource_event_keys".into(), json!(["a".repeat(64)]));
+        assert!(handler.automatic_input_waits(&event));
+        {
+            let mut scheduler = handler.turn_scheduler.lock().unwrap();
+            scheduler.enqueue_queued(event);
+            scheduler.refresh_automatic_waits(&handler.store, None);
+            assert!(scheduler.force_start("waiting-work").is_none());
+            assert!(scheduler.take_available().is_empty());
+        }
+        handler.set_interaction_status("waiting-work", None);
+        {
+            let mut scheduler = handler.turn_scheduler.lock().unwrap();
+            scheduler.refresh_automatic_waits(&handler.store, None);
+            let ready = scheduler.take_available();
+            assert_eq!(ready.len(), 1);
+            assert_eq!(ready[0].request.prompt, "Original source input");
+            assert_eq!(
+                ready[0].request.extra["resource_event_keys"],
+                json!(["a".repeat(64)])
+            );
+            assert!(scheduler.queued_turns.is_empty());
+        }
+        let _ = fs::remove_dir_all(root);
     }
 
     #[tokio::test]
