@@ -369,6 +369,7 @@ pub(crate) async fn overwrite_attachment_internal(
     };
     let reset_type_data = attributes.current.type_data.clone().unwrap_or_default();
     let stored_type_data = with_encryption(reset_type_data.clone(), encrypt);
+    let parsed = document::parse_async(binary_data, &extension).await;
     let mut parse_failure: Option<Value> = None;
     let mut truncation_info: Option<Value> = None;
 
@@ -425,7 +426,7 @@ pub(crate) async fn overwrite_attachment_internal(
             attributes.flush(transaction, context_id).await?;
 
             // `_parse_and_update_context` + the `READY` flush.
-            match document::parse_async(binary_data, &extension).await {
+            match parsed {
                 Ok(parsed) => {
                     let mut type_data = attributes.current.type_data.clone().unwrap_or_default();
                     type_data.insert(
