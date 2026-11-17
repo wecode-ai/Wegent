@@ -30,6 +30,7 @@ test('restores the configured native model when its source arrives after cloud d
     name: 'native-codex',
     type: 'runtime',
     runtime: { family: 'codex', provider: 'native-provider' },
+    config: { ui: { reasoningEfforts: ['low', 'high'] } },
   }
   let models = [cloud]
   let notify: (() => void) | undefined
