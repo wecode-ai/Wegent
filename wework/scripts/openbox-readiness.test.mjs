@@ -15,10 +15,11 @@ const processTestTimeoutMs = fixtureTimeoutMs + 5_000
 const runningOpenbox = `#!/usr/bin/env node
 const fs = require('node:fs')
 const directory = process.env.OPENBOX_TEST_DIR
-// Native Node cleanup requires process.pid, not an MSYS shell's unrelated $$.
-fs.writeFileSync(directory + '/pid', String(process.pid))
 fs.writeFileSync(directory + '/openbox-started', '')
-setInterval(() => {}, 1000)
+// A failed launcher may leave this fixture alive after its directory is removed.
+setInterval(() => {
+  if (!fs.existsSync(directory)) process.exit(0)
+}, 50)
 `
 
 const windowManagerProperties = `#!/bin/sh
@@ -101,11 +102,6 @@ shift
       displayQueries: existsSync(displayQueries) ? Number(readFileSync(displayQueries, 'utf8')) : 0,
     }
   } finally {
-    try {
-      process.kill(Number(readFileSync(join(directory, 'pid'), 'utf8')))
-    } catch (error) {
-      if (error.code !== 'ENOENT' && error.code !== 'ESRCH') throw error
-    }
     rmSync(directory, { recursive: true, force: true })
   }
 }

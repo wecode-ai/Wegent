@@ -10,29 +10,32 @@ export function watchDevelopmentDirectory(
   notify,
   createWatcher = chokidar.watch
 ) {
-  // Native realpath also expands Windows short names emitted by fs.watch.
-  const roots = [directory, realpathSync.native(directory)]
-  const watcher = createWatcher(directory, {
+  // Subscribe with the expanded Windows path so native events use the same prefix.
+  const canonicalDirectory = realpathSync.native(directory)
+  const roots = [directory, canonicalDirectory]
+  const watcher = createWatcher(canonicalDirectory, {
     ignoreInitial: true,
     depth: recursive ? undefined : 0,
-    ignored,
+    ignored:
+      ignored &&
+      ((filename, ...args) =>
+        ignored(path.resolve(directory, path.relative(canonicalDirectory, filename)), ...args)),
     // macOS directory events can stop arriving after atomic editor saves.
     // Set both options: Chokidar 3 selects FSEvents before reading its polling env override.
     ...(process.platform === 'darwin'
       ? { useFsEvents: false, usePolling: true, interval: 1000, binaryInterval: 1000 }
       : {}),
   })
-  watcher.on('all', (event, filename) => notify(event, path.relative(directory, filename)))
+  watcher.on('all', (event, filename) => {
+    const relative = relativeNotificationPath(roots, filename)
+    if (relative !== undefined) notify(event, relative)
+  })
   // Node-backed normalized change events are throttled for 50 ms. Preserve
   // raw edits as well; the input snapshot deduplicates repeated notifications.
   watcher.on('raw', (event, filename, details) => {
     const changed = rawNotificationPath(filename, details?.watchedPath)
     if (!changed) return
-    const relative = roots
-      .map(root => path.relative(root, changed))
-      .find(
-        value => value !== '..' && !value.startsWith(`..${path.sep}`) && !path.isAbsolute(value)
-      )
+    const relative = relativeNotificationPath(roots, changed)
     if (relative !== undefined)
       notify(event, filename ? relative || path.basename(directory) : undefined)
   })
@@ -41,6 +44,12 @@ export function watchDevelopmentDirectory(
     on: (...args) => watcher.on(...args),
     close: () => watcher.close(),
   }
+}
+
+function relativeNotificationPath(roots, filename) {
+  return roots
+    .map(root => path.relative(root, filename))
+    .find(value => value !== '..' && !value.startsWith(`..${path.sep}`) && !path.isAbsolute(value))
 }
 
 function rawNotificationPath(filename, watched) {
