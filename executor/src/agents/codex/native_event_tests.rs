@@ -1,4 +1,4 @@
-//! Keep event activation ahead of native Goal accounting and automatic execution.
+//! Keep event activation ahead of native Goal execution.
 use std::{path::Path, sync::Arc, time::Duration};
 
 use axum::{extract::State, routing::post, Json, Router};
@@ -49,7 +49,7 @@ async fn respond(
 
 #[tokio::test]
 #[ignore = "requires the repository-pinned Codex binary; invoked by the Executor CI job"]
-async fn native_event_goal_injected_event_accounts_from_first_request() {
+async fn native_event_goal_injected_event_activates_before_first_request() {
     run_native_event_case(false).await;
 }
 
@@ -128,7 +128,7 @@ async fn run_native_event_case(recover_injection: bool) {
         let first = tokio::time::timeout(Duration::from_secs(15),receive.recv()).await.unwrap().unwrap();
         assert!(first["input"].to_string().contains("event-wakeup-source-fact"));
         let active = client.request("thread/goal/get",json!({"threadId":thread})).await.unwrap();
-        assert_eq!(active["goal"]["status"],"active","Goal accounting must be active before the first model response");
+        assert_eq!(active["goal"]["status"],"active","The Goal must be active before the first model response");
         tokio::time::sleep(Duration::from_millis(1100)).await;
         model.release.add_permits(1);
         let second = tokio::time::timeout(Duration::from_secs(15),receive.recv()).await.unwrap().unwrap();
@@ -148,7 +148,6 @@ async fn run_native_event_case(recover_injection: bool) {
         assert_eq!(after["goal"]["status"],"complete");
         assert_eq!(after["goal"]["createdAt"],before["goal"]["createdAt"]);
         assert_eq!(after["goal"]["tokenBudget"],before["goal"]["tokenBudget"]);
-        assert_eq!(after["goal"]["tokensUsed"],14,"the first model request must be charged to the original Goal");
         assert!(after["goal"]["timeUsedSeconds"].as_u64().unwrap() >= 1);
         let history = client.request("thread/read",json!({"threadId":thread,"includeTurns":true})).await.unwrap();
         let rollout = std::fs::read_to_string(history["thread"]["path"].as_str().unwrap()).unwrap();

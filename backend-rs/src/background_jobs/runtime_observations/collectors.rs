@@ -80,7 +80,9 @@ async fn collect_source(state: &AppState, owner: i64, claim: &Value) -> Result<V
         .map_err(|_| anyhow::anyhow!("Observation lease credential unavailable"))?;
     match collector {
         crate::runtime_observations::collector::Collector::Device { device_id: device } => {
-            runtime_rpc::call(
+            let started = std::time::Instant::now();
+            tracing::info!("Runtime observation collector RPC started");
+            let result = runtime_rpc::call(
                 state,
                 owner,
                 &device,
@@ -88,7 +90,21 @@ async fn collect_source(state: &AppState, owner: i64, claim: &Value) -> Result<V
                 json!({"collectorToken":token,"expectedOwnerId":owner}),
                 Duration::from_secs(420),
             )
-            .await
+            .await;
+            let outcome = match &result {
+                Ok(_) => "acknowledged",
+                Err(error) => match error.downcast_ref::<crate::socketio_rpc::RpcError>() {
+                    Some(crate::socketio_rpc::RpcError::Closed) => "closed",
+                    Some(crate::socketio_rpc::RpcError::Timeout) => "timeout",
+                    _ => "unavailable",
+                },
+            };
+            tracing::info!(
+                outcome,
+                elapsed_ms = started.elapsed().as_millis(),
+                "Runtime observation collector RPC finished"
+            );
+            result
         }
     }
 }

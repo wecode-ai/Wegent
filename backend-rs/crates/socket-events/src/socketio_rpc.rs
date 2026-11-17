@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use brz_redis::resp::encoder::encode_command_slices;
 use brz_redis::resp::{ParseResult, parse_reply};
@@ -31,7 +31,7 @@ use bytes::{Bytes, BytesMut};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{broadcast, oneshot, watch};
 use tokio::time::timeout;
 
 use wegent_backend_config::RedisConfig;
@@ -51,6 +51,42 @@ const MAX_RECONNECT_ATTEMPTS: u32 = 5;
 const RECONNECT_BASE_DELAY: Duration = Duration::from_secs(1);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
 
+type Peer = (String, String);
+
+#[derive(Default)]
+struct ClosedRoutes {
+    peers: HashMap<Peer, Instant>,
+    reject_until: Option<Instant>,
+}
+
+impl ClosedRoutes {
+    fn prune(&mut self, now: Instant) {
+        self.peers.retain(|_, expires| *expires > now);
+        if self.reject_until.is_some_and(|expires| expires <= now) {
+            self.reject_until = None;
+        }
+    }
+
+    fn remember(&mut self, peer: Peer, retention: Duration, now: Instant) {
+        self.prune(now);
+        let expires = now + retention;
+        if self.peers.len() >= MAX_SID_COUNTERS && !self.peers.contains_key(&peer) {
+            // Do not evict an unexpired fence and accidentally admit its stale route.
+            self.reject_until = Some(self.reject_until.map_or(expires, |old| old.max(expires)));
+        } else {
+            self.peers.entry(peer).and_modify(|old| *old = (*old).max(expires)).or_insert(expires);
+        }
+    }
+
+    fn rejects(&mut self, sid: &str, namespace: &str, now: Instant) -> bool {
+        self.prune(now);
+        self.reject_until.is_some() || self.peers.contains_key(&(sid.to_owned(), namespace.to_owned()))
+    }
+}
+
+/// Watches transport changes while an asynchronous route lookup is in progress.
+pub struct RouteGuard(broadcast::Receiver<Peer>);
+
 type CallbackKey = (String, String, u64);
 type Waiters = Mutex<HashMap<CallbackKey, oneshot::Sender<Value>>>;
 /// Receives adapter `emit` messages so the local Socket.IO sessions can deliver
@@ -64,7 +100,7 @@ pub enum RpcError {
     Unavailable(String),
     /// The peer did not answer within the source timeout.
     Timeout,
-    /// The subscription closed while the call was pending.
+    /// The subscription or target transport closed while the call was pending.
     Closed,
 }
 
@@ -83,6 +119,8 @@ impl std::error::Error for RpcError {}
 /// The process-lifetime Socket.IO subscription and its callback waiters.
 pub struct SocketIoRpc {
     waiters: Arc<Waiters>,
+    closed: broadcast::Sender<Peer>,
+    closed_routes: Arc<Mutex<ClosedRoutes>>,
     emit_sink: Arc<Mutex<Option<EmitSink>>>,
     /// `base_manager._generate_ack_id`: one `itertools.count(1)` per socket
     /// id, dropped when the socket goes away.
@@ -111,11 +149,17 @@ impl SocketIoRpc {
             db: config.db,
             password: config.password.clone(),
         };
+        let (closed, _) = broadcast::channel(MAX_WAITERS);
+        let worker_closed = closed.clone();
+        let closed_routes = Arc::new(Mutex::new(ClosedRoutes::default()));
+        let worker_routes = closed_routes.clone();
         let worker_waiters = Arc::clone(&waiters);
         let worker_sink = Arc::clone(&emit_sink);
-        tokio::spawn(run(worker_waiters, worker_sink, endpoint, receiver));
+        tokio::spawn(run(worker_waiters, worker_closed, worker_routes, worker_sink, endpoint, receiver));
         Arc::new(Self {
             waiters,
+            closed,
+            closed_routes,
             emit_sink,
             next_ids: Mutex::new(HashMap::new()),
             in_flight: crate::callback_sequencer::InFlightRegistry::shared(),
@@ -138,6 +182,20 @@ impl SocketIoRpc {
 
     /// Register one callback waiter before its `emit` is published.
     pub fn begin(&self, sid: &str, namespace: &str) -> Result<SocketIoCall, RpcError> {
+        self.begin_inner(sid, namespace, None)
+    }
+
+    /// Start before reading online state, so disconnect cannot race registration.
+    pub fn route_guard(&self) -> RouteGuard {
+        RouteGuard(self.closed.subscribe())
+    }
+
+    /// Register only while the observed route still belongs to a live transport.
+    pub fn begin_for_route(&self, sid: &str, namespace: &str, guard: &mut RouteGuard) -> Result<SocketIoCall, RpcError> {
+        self.begin_inner(sid, namespace, Some(guard))
+    }
+
+    fn begin_inner(&self, sid: &str, namespace: &str, guard: Option<&mut RouteGuard>) -> Result<SocketIoCall, RpcError> {
         let id = self.next_callback_id(sid)?;
         let key = (sid.to_string(), namespace.to_string(), id);
         let (sender, receiver) = oneshot::channel();
@@ -146,6 +204,19 @@ impl SocketIoRpc {
                 .waiters
                 .lock()
                 .map_err(|_| RpcError::Unavailable("callback waiter table is poisoned".into()))?;
+            if self.closed_routes.lock().map_err(|_| RpcError::Unavailable("route fence registry is poisoned".into()))?.rejects(sid, namespace, Instant::now()) {
+                return Err(RpcError::Closed);
+            }
+            if let Some(guard) = guard {
+                loop {
+                    match guard.0.try_recv() {
+                        Ok((peer, scope)) if peer == sid && scope == namespace => return Err(RpcError::Closed),
+                        Ok(_) => continue,
+                        Err(broadcast::error::TryRecvError::Empty) => break,
+                        Err(_) => return Err(RpcError::Closed),
+                    }
+                }
+            }
             if waiters.len() >= MAX_WAITERS {
                 return Err(RpcError::Unavailable(
                     "too many pending Socket.IO callbacks".into(),
@@ -180,6 +251,11 @@ impl SocketIoRpc {
         // still ours, so the frame must not be published for someone else.
         let _ = sender.send(args.clone());
         true
+    }
+
+    /// End calls for a disconnected transport without touching a replacement SID.
+    pub fn disconnect(&self, sid: &str, namespace: &str, retention: Duration) {
+        close_peer(&self.waiters, &self.closed, &self.closed_routes, sid, namespace, retention);
     }
 
     /// `_generate_ack_id`: the next ack id of one socket, counting from 1.
@@ -256,8 +332,20 @@ struct Endpoint {
     password: Option<String>,
 }
 
+fn close_peer(waiters: &Waiters, closed: &broadcast::Sender<Peer>, closed_routes: &Mutex<ClosedRoutes>, sid: &str, namespace: &str, retention: Duration) {
+    if let Ok(mut waiters) = waiters.lock() {
+        waiters.retain(|(peer, scope, _), _| peer != sid || scope != namespace);
+        if let Ok(mut routes) = closed_routes.lock() {
+            routes.remember((sid.to_owned(), namespace.to_owned()), retention, Instant::now());
+        }
+        let _ = closed.send((sid.to_owned(), namespace.to_owned()));
+    }
+}
+
 async fn run(
     waiters: Arc<Waiters>,
+    closed: broadcast::Sender<Peer>,
+    closed_routes: Arc<Mutex<ClosedRoutes>>,
     emit_sink: Arc<Mutex<Option<EmitSink>>>,
     endpoint: Endpoint,
     mut shutdown: watch::Receiver<bool>,
@@ -271,7 +359,7 @@ async fn run(
                 }
                 continue;
             }
-            outcome = subscribe_and_read(&endpoint, &waiters, &emit_sink) => outcome,
+            outcome = subscribe_and_read(&endpoint, &waiters, &closed, &closed_routes, &emit_sink) => outcome,
         };
         match outcome {
             Ok(()) => attempts = 0,
@@ -315,6 +403,8 @@ fn fail_waiters(waiters: &Waiters) {
 async fn subscribe_and_read(
     endpoint: &Endpoint,
     waiters: &Waiters,
+    closed: &broadcast::Sender<Peer>,
+    closed_routes: &Mutex<ClosedRoutes>,
     emit_sink: &Mutex<Option<EmitSink>>,
 ) -> anyhow::Result<()> {
     let mut stream = timeout(
@@ -349,7 +439,7 @@ async fn subscribe_and_read(
             match parse_reply(&pending) {
                 Ok(ParseResult::Complete { value, consumed }) => {
                     let _ = buffer.split_to(consumed);
-                    dispatch(value, waiters, emit_sink);
+                    dispatch(value, waiters, closed, closed_routes, emit_sink);
                 }
                 Ok(ParseResult::Incomplete) => break,
                 Err(error) => return Err(anyhow::Error::from(error)),
@@ -397,6 +487,8 @@ async fn expect_ok(stream: &mut TcpStream) -> anyhow::Result<()> {
 fn dispatch(
     value: brz_redis::types::Value,
     waiters: &Waiters,
+    closed: &broadcast::Sender<Peer>,
+    closed_routes: &Mutex<ClosedRoutes>,
     emit_sink: &Mutex<Option<EmitSink>>,
 ) {
     let brz_redis::types::Value::Array(items) = value else {
@@ -418,6 +510,14 @@ fn dispatch(
         return;
     };
     match message.get("method").and_then(Value::as_str) {
+        Some("runtime_peer_closed") => {
+            if let (Some(sid), Some(namespace)) = (message["sid"].as_str(), message["namespace"].as_str()) {
+                if let Some(retain_ms) = message["retain_ms"].as_u64().filter(|value| *value > 0 && *value <= 600_000) {
+                    close_peer(waiters, closed, closed_routes, sid, namespace, Duration::from_millis(retain_ms));
+                }
+            }
+            return;
+        }
         Some("callback") => {}
         Some("emit") => {
             if let Ok(sink) = emit_sink.lock()
@@ -457,6 +557,18 @@ mod tests {
     use super::*;
     use brz_redis::types::Value;
 
+    fn registry() -> SocketIoRpc {
+        SocketIoRpc {
+            waiters: Arc::new(Mutex::new(HashMap::new())),
+            closed: broadcast::channel(MAX_WAITERS).0,
+            closed_routes: Arc::new(Mutex::new(ClosedRoutes::default())),
+            emit_sink: Arc::new(Mutex::new(None)),
+            next_ids: Mutex::new(HashMap::new()),
+            in_flight: crate::callback_sequencer::InFlightRegistry::shared(),
+            _shutdown: watch::channel(false).0,
+        }
+    }
+
     fn push(json: &str) -> Value {
         Value::Array(vec![
             Value::BulkString(Bytes::from_static(b"message")),
@@ -482,6 +594,8 @@ mod tests {
                 r#"{"method":"emit","event":"device:online","data":[{"device_id":"d"}],"namespace":"/chat","room":"user:1"}"#,
             ),
             &waiters,
+            &broadcast::channel(MAX_WAITERS).0,
+            &Mutex::new(ClosedRoutes::default()),
             &sink,
         );
         assert_eq!(seen.lock().unwrap().len(), 1);
@@ -502,6 +616,8 @@ mod tests {
                 crate::socketio_emit::host_id()
             )),
             &waiters,
+            &broadcast::channel(MAX_WAITERS).0,
+            &Mutex::new(ClosedRoutes::default()),
             &no_sink(),
         );
         assert_eq!(
@@ -524,6 +640,8 @@ mod tests {
                 r#"{"method":"callback","host_id":"00000000000000000000000000000000","sid":"sid","namespace":"/local-executor","id":1,"args":[]}"#,
             ),
             &waiters,
+            &broadcast::channel(MAX_WAITERS).0,
+            &Mutex::new(ClosedRoutes::default()),
             &no_sink(),
         );
         assert!(receiver.try_recv().is_err());
@@ -535,6 +653,8 @@ mod tests {
                 Value::BulkString(Bytes::from_static(b"{}")),
             ]),
             &waiters,
+            &broadcast::channel(MAX_WAITERS).0,
+            &Mutex::new(ClosedRoutes::default()),
             &no_sink(),
         );
         assert_eq!(waiters.lock().unwrap().len(), 1);
@@ -542,13 +662,7 @@ mod tests {
 
     #[test]
     fn dropping_a_call_removes_its_waiter() {
-        let rpc = SocketIoRpc {
-            waiters: Arc::new(Mutex::new(HashMap::new())),
-            emit_sink: Arc::new(Mutex::new(None)),
-            next_ids: Mutex::new(HashMap::new()),
-            in_flight: crate::callback_sequencer::InFlightRegistry::shared(),
-            _shutdown: watch::channel(false).0,
-        };
+        let rpc = registry();
         let call = rpc.begin("sid", "/local-executor").unwrap();
         assert_eq!(call.id(), 1);
         assert_eq!(rpc.waiters.lock().unwrap().len(), 1);
@@ -558,13 +672,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_local_ack_resolves_the_waiter() {
-        let rpc = SocketIoRpc {
-            waiters: Arc::new(Mutex::new(HashMap::new())),
-            emit_sink: Arc::new(Mutex::new(None)),
-            next_ids: Mutex::new(HashMap::new()),
-            in_flight: crate::callback_sequencer::InFlightRegistry::shared(),
-            _shutdown: watch::channel(false).0,
-        };
+        let rpc = registry();
         let call = rpc.begin("sid-1", "/local-executor").unwrap();
         let id = call.id();
         assert!(rpc.deliver_local("sid-1", "/local-executor", id, &serde_json::json!(["ok"])));
@@ -576,25 +684,91 @@ mod tests {
 
     #[tokio::test]
     async fn an_unknown_callback_is_not_delivered_locally() {
-        let rpc = SocketIoRpc {
-            waiters: Arc::new(Mutex::new(HashMap::new())),
-            emit_sink: Arc::new(Mutex::new(None)),
-            next_ids: Mutex::new(HashMap::new()),
-            in_flight: crate::callback_sequencer::InFlightRegistry::shared(),
-            _shutdown: watch::channel(false).0,
-        };
+        let rpc = registry();
         assert!(!rpc.deliver_local("sid-1", "/local-executor", 1, &serde_json::json!([])));
+    }
+
+    #[tokio::test]
+    async fn disconnect_closes_only_old_session_calls_and_rejects_late_ack() {
+        let rpc = registry();
+        let old = rpc.begin("old", "/local-executor").unwrap();
+        let old_id = old.id();
+        let replacement = rpc.begin("new", "/local-executor").unwrap();
+        let other_namespace = rpc.begin("old", "/chat").unwrap();
+        rpc.disconnect("old", "/local-executor", Duration::from_secs(90));
+        assert_eq!(rpc.waiters.lock().unwrap().len(), 2);
+        assert!(matches!(old.wait(Duration::from_secs(1)).await, Err(RpcError::Closed)));
+        assert!(!rpc.deliver_local("old", "/local-executor", old_id, &serde_json::json!(["late"])));
+        for (sid, namespace, call) in [("new", "/local-executor", replacement), ("old", "/chat", other_namespace)] {
+            assert!(rpc.deliver_local(sid, namespace, call.id(), &serde_json::json!(["ok"])));
+            assert_eq!(call.wait(Duration::from_secs(1)).await.unwrap(), serde_json::json!(["ok"]));
+        }
+    }
+
+    #[test]
+    fn disconnected_route_cannot_register_a_late_waiter() {
+        let rpc = registry();
+        let mut route = rpc.route_guard();
+        let old = rpc.begin("old", "/local-executor").unwrap();
+        rpc.disconnect("old", "/local-executor", Duration::from_secs(90));
+        drop(old);
+        assert!(matches!(rpc.begin_for_route("old", "/local-executor", &mut route), Err(RpcError::Closed)));
+        assert!(rpc.begin("replacement", "/local-executor").is_ok());
+    }
+
+    #[tokio::test]
+    async fn adapter_disconnect_reaches_a_different_process_registry() {
+        let caller = registry();
+        let socket_host = registry();
+        let old = caller.begin("old", "/local-executor").unwrap();
+        let old_id = old.id();
+        let replacement = caller.begin("new", "/local-executor").unwrap();
+        socket_host.disconnect("old", "/local-executor", Duration::from_secs(90));
+        assert_eq!(caller.waiters.lock().unwrap().len(), 2);
+        dispatch(
+            push(r#"{"method":"runtime_peer_closed","sid":"old","namespace":"/local-executor","host_id":"another-process","retain_ms":90000}"#),
+            &caller.waiters, &caller.closed, &caller.closed_routes, &no_sink(),
+        );
+        assert!(matches!(old.wait(Duration::from_secs(1)).await, Err(RpcError::Closed)));
+        assert!(!caller.deliver_local("old", "/local-executor", old_id, &serde_json::json!(["late"])));
+        assert!(caller.deliver_local("new", "/local-executor", replacement.id(), &serde_json::json!(["ok"])));
+        assert!(replacement.wait(Duration::from_secs(1)).await.is_ok());
+    }
+
+    #[test]
+    fn closed_peer_rejects_a_lookup_started_after_the_notification() {
+        let rpc = registry();
+        rpc.disconnect("old", "/local-executor", Duration::from_secs(90));
+        let mut late_route = rpc.route_guard();
+        assert!(matches!(rpc.begin_for_route("old", "/local-executor", &mut late_route), Err(RpcError::Closed)));
+        assert!(rpc.begin_for_route("new", "/local-executor", &mut late_route).is_ok());
+    }
+
+    #[test]
+    fn a_route_read_spanning_fence_expiry_keeps_its_disconnect_event() {
+        let rpc = registry();
+        let mut route = rpc.route_guard();
+        rpc.disconnect("old", "/local-executor", Duration::from_secs(90));
+        rpc.closed_routes.lock().unwrap().prune(Instant::now() + Duration::from_secs(91));
+        assert!(matches!(rpc.begin_for_route("old", "/local-executor", &mut route), Err(RpcError::Closed)));
+    }
+
+    #[test]
+    fn route_fences_are_bounded_without_evicting_live_fences() {
+        let now = Instant::now();
+        let mut routes = ClosedRoutes::default();
+        for index in 0..=MAX_SID_COUNTERS {
+            routes.remember((index.to_string(), "/local-executor".into()), Duration::from_secs(90), now);
+        }
+        assert_eq!(routes.peers.len(), MAX_SID_COUNTERS);
+        assert!(routes.rejects("0", "/local-executor", now));
+        assert!(routes.rejects("overflow", "/local-executor", now));
+        assert!(!routes.rejects("new", "/local-executor", now + Duration::from_secs(91)));
     }
 
     #[test]
     fn callback_ids_are_allocated_per_socket() {
-        let rpc = SocketIoRpc {
-            waiters: Arc::new(Mutex::new(HashMap::new())),
-            emit_sink: Arc::new(Mutex::new(None)),
-            next_ids: Mutex::new(HashMap::new()),
-            in_flight: crate::callback_sequencer::InFlightRegistry::shared(),
-            _shutdown: watch::channel(false).0,
-        };
+        let rpc = registry();
         // Every fresh socket starts at 1, independent of the calls other
         // sockets already made in this process.
         assert_eq!(rpc.begin("a", "/n").unwrap().id(), 1);

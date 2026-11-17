@@ -305,13 +305,24 @@ impl RuntimeWorkRpcHandler {
         &self,
         signal: Value,
     ) -> Result<Value, AppIpcError> {
+        let rejected = |stage: &str, error: AppIpcError| {
+            log_executor_event(
+                "Cloud event subscription sync rejected",
+                &[("stage", stage.to_owned()), ("code", error.code.clone())],
+            );
+            error
+        };
         let cloud_id = signal["subscriptionId"]
             .as_str()
             .filter(|id| id.len() == 64)
             .ok_or_else(delivery_error)?;
         let initial = self.cloud_subscription_record(cloud_id)?;
         let prefetched = if initial.is_none() {
-            Some(self.cloud_subscription_snapshot(cloud_id).await?)
+            Some(
+                self.cloud_subscription_snapshot(cloud_id)
+                    .await
+                    .map_err(|error| rejected("snapshot", error))?,
+            )
         } else {
             None
         };
@@ -341,23 +352,31 @@ impl RuntimeWorkRpcHandler {
         }
         let snapshot = match prefetched {
             Some(snapshot) => snapshot,
-            None => self.cloud_subscription_snapshot(cloud_id).await?,
+            None => self
+                .cloud_subscription_snapshot(cloud_id)
+                .await
+                .map_err(|error| rejected("snapshot", error))?,
         };
         if snapshot["subscription"]["intent"]["target"]["taskId"] != task {
-            return Err(delivery_error());
+            return Err(rejected("identity", delivery_error()));
         }
         let (id, record) = match found {
             Some(found) => found,
-            None => self.recover_cloud_subscription(&snapshot, &signal).await?,
+            None => self
+                .recover_cloud_subscription(&snapshot, &signal)
+                .await
+                .map_err(|error| rejected("recover", error))?,
         };
         if record["device_id"] != self.device_id
             || record["cloud_subscription"]["intent"]["target"]["deviceId"]
                 != self.cloud_device_id()?
         {
-            return Err(delivery_error());
+            return Err(rejected("identity", delivery_error()));
         }
-        let mut record = merge_snapshot(&record, &snapshot, &signal, now_ms())?;
-        self.guard_cloud_admission(&id, &mut record, &snapshot)?;
+        let mut record = merge_snapshot(&record, &snapshot, &signal, now_ms())
+            .map_err(|error| rejected("merge", error))?;
+        self.guard_cloud_admission(&id, &mut record, &snapshot)
+            .map_err(|error| rejected("admission", error))?;
         self.save_event_subscription(&id, &record)?;
         if record["status"] == "cancelled" && snapshot["subscription"]["status"] != "cancelled" {
             self.finish_cloud_connection_cancellation(&id, &mut record)
@@ -391,6 +410,20 @@ impl RuntimeWorkRpcHandler {
                 Some("delivered" | "resuming_goal")
             )
             && record["operation_id"].is_string();
+        log_executor_event(
+            "Cloud event subscription sync finished",
+            &[
+                (
+                    "status",
+                    record["status"].as_str().unwrap_or("unknown").to_owned(),
+                ),
+                (
+                    "delivery_present",
+                    signal["deliveryId"].is_string().to_string(),
+                ),
+                ("accepted", accepted.to_string()),
+            ],
+        );
         Ok(
             json!({"accepted":accepted,"operationId":record["operation_id"],"status":record["status"]}),
         )

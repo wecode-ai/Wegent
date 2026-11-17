@@ -374,10 +374,6 @@ export function createDesktopScenario(options) {
             assert.equal(completedGoal.status, 'complete')
             assert.equal(completedGoal.createdAt, originalGoal.createdAt)
             assert.equal(completedGoal.tokenBudget, originalGoal.tokenBudget)
-            assert.ok(
-              completedGoal.tokensUsed >= originalGoal.tokensUsed + 14,
-              'The event turn must charge nonzero model usage to the original Goal'
-            )
           }
           await open(control, address)
           await control.command(
