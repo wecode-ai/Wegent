@@ -86,7 +86,7 @@ export function TemporaryConversationLayout({
           'shrink-0',
           expanded
             ? cn(
-                'relative z-critical mx-auto max-w-[calc(100%_-_2rem)] bg-transparent pb-2 pt-6',
+                'relative z-popover mx-auto max-w-[calc(100%_-_2rem)] bg-transparent pb-2 pt-6',
                 wideComposer
                   ? 'w-[min(68rem,calc(100%_-_2rem))]'
                   : 'w-[min(46rem,calc(100%_-_2rem))]'

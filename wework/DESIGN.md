@@ -310,7 +310,9 @@ change, a hairline, then elevation. Do not jump directly to a bordered card.
 
 Codex's interactive accent is blue:
 
-- focus/link blue: `#339CFF`;
+- focus/link blue: `#2563EB` on light surfaces and `#339CFF` on dark surfaces;
+- default focus indicators meet at least `3:1` against their adjacent surfaces;
+  default text links meet `4.5:1`;
 - light accent surface: `#E5F3FF`;
 - dark accent surface: `#00284D`.
 
@@ -1006,6 +1008,10 @@ component-level validation outlines to override the native-outline reset.
 - Use optimistic updates only when failure is clearly reversible.
 - Put status next to the affected object whenever possible; use a toast for a
   completed non-blocking result and a dialog only for a blocking decision.
+- Background runtime notices use the popover layer below modal dialogs. Their
+  progress, failure and recovery controls remain available after the dialog
+  closes; unrelated preparation failures must not cover the active dialog's
+  fields, keyboard focus or primary action.
 - Secondary controls may reveal progressively, but current status, errors, and
   required decisions remain visible.
 
