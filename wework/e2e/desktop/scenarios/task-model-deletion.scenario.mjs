@@ -34,6 +34,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
   let replyCount = 0
   const modelName = `task-model-deletion-${process.pid}`
   const localModelName = `local-deletion-${process.pid}`
+  const unsentModelName = `local-unsent-deletion-${process.pid}`
   const offlineModelName = `task-model-offline-${process.pid}`
   const request = (path, options = {}) =>
     fetchJson(`${cloud.backendUrl}${path}`, {
@@ -53,13 +54,16 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
     assert.equal(response.status, 204, 'Offline fixture cleanup must return 204')
   }
 
-  async function createLocalModel(control) {
+  async function createLocalModel(
+    control,
+    { providerName = modelName, modelId = localModelName } = {}
+  ) {
     await control.command('navigate', 'body', { value: '/settings/personal/models' })
     await control.command('waitFor', '[data-testid="provider-add"]')
     await control.command('click', '[data-testid="provider-add"]')
     await control.command('waitFor', '[data-testid="provider-editor"]')
     await control.command('select', '[data-testid="provider-preset"]', { value: 'custom' })
-    await control.command('fill', '[data-testid="provider-name"]', { value: modelName })
+    await control.command('fill', '[data-testid="provider-name"]', { value: providerName })
     await control.command('fill', '[data-testid="provider-base-url"]', {
       value: cloud.modelServerUrl,
     })
@@ -69,7 +73,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
     const input = editor.testIds.find(id => id.startsWith('provider-model-id-'))
     assert.ok(input, 'The local deletion fixture editor is unavailable')
     const id = input.slice('provider-model-id-'.length)
-    await control.command('fill', `[data-testid="${input}"]`, { value: localModelName })
+    await control.command('fill', `[data-testid="${input}"]`, { value: modelId })
     await control.command('click', '[data-testid="provider-editor-save"]')
     await control.command('waitFor', '[data-testid="provider-editor"]', { visible: false })
     await control.command(
@@ -82,6 +86,20 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
       'The local deletion fixture was not persisted'
     )
     return id
+  }
+
+  async function deleteLocalModel(control, localModelId) {
+    await control.command('navigate', 'body', { value: '/settings/personal/models' })
+    const model = `[data-testid="provider-model-${localModelId}"]`
+    const provider = `[data-testid^="provider-row-"]:has(${model})`
+    await control.command('waitFor', provider)
+    await control.command('click', `${provider} > summary`)
+    await control.command('click', `[data-testid="provider-model-edit-${localModelId}"]`)
+    await control.command('waitFor', '[data-testid="provider-editor"]')
+    await control.command('click', `[data-testid="provider-model-remove-${localModelId}"]`)
+    await control.command('click', '[data-testid="provider-editor-save"]')
+    await control.command('waitFor', '[data-testid="provider-editor"]', { visible: false })
+    assert.equal(Number(await control.command('getElementCount', model)), 0)
   }
 
   async function send(control, suffix) {
@@ -282,17 +300,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
         await assertTaskReadModelDiagnostics(control, identity, `local-model:${localModelId}`)
 
         // Delete the local configuration through the actual settings UI and reopen the task.
-        await control.command('navigate', 'body', { value: '/settings/personal/models' })
-        const model = `[data-testid="provider-model-${localModelId}"]`
-        const provider = `[data-testid^="provider-row-"]:has(${model})`
-        await control.command('waitFor', provider)
-        await control.command('click', `${provider} > summary`)
-        await control.command('click', `[data-testid="provider-model-edit-${localModelId}"]`)
-        await control.command('waitFor', '[data-testid="provider-editor"]')
-        await control.command('click', `[data-testid="provider-model-remove-${localModelId}"]`)
-        await control.command('click', '[data-testid="provider-editor-save"]')
-        await control.command('waitFor', '[data-testid="provider-editor"]', { visible: false })
-        assert.equal(Number(await control.command('getElementCount', model)), 0)
+        await deleteLocalModel(control, localModelId)
         await control.command('navigate', 'body', { value: '/' })
         await control.command('waitFor', taskSelector)
         await control.command('click', taskSelector)
@@ -380,6 +388,39 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
           5,
           'Continuing a task after its model went offline did not reach the model'
         )
+        await assertOriginalConversation(control, identity, row)
+
+        // A confirmed but unsent replacement must not fall back to the last sent model.
+        await request(`/api/admin/public-models/${offlineModelId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ is_visible: true }),
+        })
+        const unsentModelId = await createLocalModel(control, {
+          providerName: unsentModelName,
+          modelId: unsentModelName,
+        })
+        await control.command('navigate', 'body', { value: '/' })
+        await control.command('waitFor', taskSelector)
+        await control.command('click', taskSelector)
+        await selectE2EModel(control, `local-model:${unsentModelId}`, unsentModelName)
+        await assertTaskReadModelDiagnostics(control, identity, offlineModelName)
+        assert.equal(replyCount, 5, 'Selecting a replacement unexpectedly sent a turn')
+        await deleteLocalModel(control, unsentModelId)
+        await control.command('navigate', 'body', { value: '/' })
+        await control.command('waitFor', taskSelector)
+        await control.command('click', taskSelector)
+        await control.command('ensureLocalModelCatalogReady', 'body')
+        await assertRecoveryEntry(control)
+        await control.command('waitFor', `${SEND}:disabled`, { visible: true, stableMs: 1000 })
+        assert.equal(
+          (await control.command('getText', SELECTOR)).includes(offlineModelName),
+          false,
+          'Deleting the unsent replacement silently restored the previous model'
+        )
+        assert.equal(replyCount, 5, 'Deleting the unsent replacement unexpectedly sent a turn')
+        await selectE2EModel(control, offlineModelName, offlineModelName)
+        await send(control, 'explicit recovery after unsent model deletion')
+        assert.equal(replyCount, 6, 'Explicit recovery did not continue the existing task')
         await assertOriginalConversation(control, identity, row)
       } finally {
         if (deletedModelId) await request(`/api/models/${deletedModelId}`, { method: 'DELETE' })

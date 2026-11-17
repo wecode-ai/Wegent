@@ -17,6 +17,7 @@ interface RuntimeTaskModelStore {
   models: UnifiedModel[]
   hasSelectionForScope: (scopeKey: string) => boolean
   getSelectedModelForScope: (scopeKey: string) => UnifiedModel | null
+  getSelectedModelAvailabilityForScope: (scopeKey: string) => boolean | null
   getSelectedModelOptionsForScope: (scopeKey: string) => ModelOptions
   setSelectionForScope: (
     scopeKey: string,
@@ -58,6 +59,7 @@ export function useRuntimeTaskModelSelection({
 }: UseRuntimeTaskModelSelectionOptions) {
   const {
     getSelectedModelForScope,
+    getSelectedModelAvailabilityForScope,
     getSelectedModelOptionsForScope,
     hasSelectionForScope,
     models,
@@ -85,10 +87,9 @@ export function useRuntimeTaskModelSelection({
       const catalogTaskModel = findModelForSelection(models, taskSelection)
       const taskModel = catalogTaskModel ?? modelFromTaskSnapshot(taskSelection)
       const scopeKey = runtimeTaskModelScopeKey(userId, address)
-      // Read the ref-backed value, not the last rendered state: a retry sent
-      // immediately after picking a model must use that model. An entry with no
-      // model (for example a restored placeholder) is not authoritative and
-      // must not hide the conversation's saved model.
+      // Read ref-backed identity and availability together: a retry must see an
+      // immediate pick, and a deleted pick must keep its identity while blocked.
+      // A placeholder without a model still defers to the saved task selection.
       const scopedModel = getSelectedModelForScope(scopeKey)
       const hasScopedModel = Boolean(scopedModel)
       const hasScopedOptions = hasSelectionForScope(scopeKey)
@@ -112,6 +113,7 @@ export function useRuntimeTaskModelSelection({
       const selectedModelAvailable = hasScopedModel
         ? Boolean(
             scopedModel &&
+            getSelectedModelAvailabilityForScope(scopeKey) !== false &&
             !(scopedCatalogModel?.compatibilityDisabled ?? scopedModel.compatibilityDisabled)
           )
         : catalogTaskModel
@@ -129,7 +131,9 @@ export function useRuntimeTaskModelSelection({
         // A resolved conversation whose saved model was deleted is not ready
         // to send, but it must stay recoverable: the selector remains usable
         // so the user can choose a replacement.
-        selectionReady: activeTaskSelectionReady || (hasUsableSelection && selectedModelAvailable),
+        selectionReady: hasScopedModel
+          ? selectedModelAvailable
+          : activeTaskSelectionReady || (hasUsableSelection && selectedModelAvailable),
         taskSelection,
         activeModel: taskModel,
         ...((resolveTask(address)?.runtimeHandle ?? address.runtimeHandle)?.modelProviderRouting ===
@@ -148,6 +152,7 @@ export function useRuntimeTaskModelSelection({
     },
     [
       getSelectedModelForScope,
+      getSelectedModelAvailabilityForScope,
       getSelectedModelOptionsForScope,
       hasSelectionForScope,
       models,
