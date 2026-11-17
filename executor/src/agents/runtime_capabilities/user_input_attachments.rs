@@ -2,12 +2,17 @@ use super::{attachment_records, prepare_runtime_attachments, AttachmentPromptPro
 use crate::protocol::ExecutionRequest;
 use serde_json::{json, Value};
 
+pub(crate) struct PreparedUserInputResponse {
+    pub request: ExecutionRequest,
+    pub response: Value,
+}
+
 /// Materialize files through the ordinary runtime attachment pipeline before
 /// returning text-only answers to the native question protocol.
 pub(crate) async fn prepare_user_input_response(
     request: ExecutionRequest,
     mut response: Value,
-) -> Result<Value, String> {
+) -> Result<PreparedUserInputResponse, String> {
     let request = prepare_runtime_attachments(request).await;
     let records = attachment_records(&request);
     let Some(answers) = response.get_mut("answers").and_then(Value::as_object_mut) else {
@@ -45,7 +50,7 @@ pub(crate) async fn prepare_user_input_response(
                 .push(json!(context));
         }
     }
-    Ok(response)
+    Ok(PreparedUserInputResponse { request, response })
 }
 
 #[cfg(test)]
@@ -76,7 +81,8 @@ mod tests {
             }),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .response;
         assert_eq!(response["requestId"], 7);
         assert_eq!(response["interactionScope"], "turn-1");
         assert_eq!(response["answers"]["audience"]["answers"][0], "Staff");
@@ -103,7 +109,8 @@ mod tests {
         assert_eq!(
             prepare_user_input_response(request(json!([])), skipped.clone())
                 .await
-                .unwrap(),
+                .unwrap()
+                .response,
             skipped
         );
     }

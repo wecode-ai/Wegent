@@ -1,4 +1,4 @@
-/** Exercise DOM composition against a real input and record application value writes.
+/** Exercise DOM composition against a real editor and record application value writes.
  * This verifies renderer behavior; it does not automate the OS candidate window.
  */
 export async function composeDesktopInput(
@@ -6,14 +6,21 @@ export async function composeDesktopInput(
   values: string[],
   settle: () => Promise<void>
 ) {
-  if (!(element instanceof HTMLInputElement) || !values.length) {
-    throw new Error('composeInput requires an input and at least one composition value')
+  if (
+    (!(element instanceof HTMLInputElement) && !element.matches('.ProseMirror[contenteditable]')) ||
+    !values.length
+  ) {
+    throw new Error('composeInput requires an editor and at least one composition value')
   }
-  const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!
   const ownValue = Object.getOwnPropertyDescriptor(element, 'value')
   if (!ownValue?.get || !ownValue.set) {
-    throw new Error('composeInput requires a React-controlled input')
+    throw new Error('composeInput requires a controlled editor')
   }
+  const nativeValue =
+    element instanceof HTMLInputElement
+      ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!
+      : ownValue
+  const editor = element as HTMLElement & { value: string }
   const writes: string[] = []
   const steps: { value: string; actual: string; focused: boolean; connected: boolean }[] = []
   Object.defineProperty(element, 'value', {
@@ -46,7 +53,7 @@ export async function composeDesktopInput(
       await settle()
       steps.push({
         value,
-        actual: element.value,
+        actual: editor.value,
         focused: document.activeElement === element,
         connected: element.isConnected,
       })
@@ -55,7 +62,7 @@ export async function composeDesktopInput(
       new CompositionEvent('compositionend', { bubbles: true, data: values.at(-1) })
     )
     await settle()
-    return { writes, steps, value: element.value }
+    return { writes, steps, value: editor.value }
   } finally {
     Object.defineProperty(element, 'value', ownValue)
   }

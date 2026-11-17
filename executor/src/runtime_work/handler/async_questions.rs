@@ -29,11 +29,42 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| link.runtime_handle.get("execution_request"))
             .filter(|request| request.is_object())
             .ok_or_else(|| AppIpcError::new("bad_request", "Task execution request is missing"))?;
-        // Answering continues the native task's model, tools and identity snapshot.
-        payload["executionRequest"] = saved.clone();
-        payload["executionRequest"]["prompt"] = payload["message"].clone();
-        payload["executionRequest"]["history"] = json!([]);
-        payload["executionRequest"]["message_id"] = Value::Null;
+        let request = async_reply_execution_request(saved, payload)?;
+        let prepared = crate::agents::runtime_capabilities::prepare_user_input_response(
+            request,
+            response.clone(),
+        )
+        .await
+        .map_err(|error| AppIpcError::new("attachment_preparation_failed", error))?;
+        if response["answers"].as_object().is_some_and(|answers| {
+            answers.values().any(|answer| {
+                answer["attachments"]
+                    .as_array()
+                    .is_some_and(|files| !files.is_empty())
+            })
+        }) {
+            let transcript = self
+                .transcript(json!({"taskId":task_id,"limit":1,"includeFullContent":true}))
+                .await?;
+            if !pending_async_question(&transcript, response) {
+                return Err(AppIpcError::new(
+                    "stale_request_user_input",
+                    "The question changed while preparing attachments",
+                ));
+            }
+            // Active turns use guidance; idle turns use the ordinary attachment prompt.
+            payload["message"] = json!(prepared.response["answers"]
+                .as_object()
+                .into_iter()
+                .flat_map(|answers| answers.values())
+                .flat_map(|answer| answer["answers"].as_array().into_iter().flatten())
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
+        payload["attachments"] = prepared.request.extra["attachments"].clone();
+        payload["executionRequest"] = serde_json::to_value(prepared.request)
+            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
         if let Some(selection) = link
             .runtime_handle
             .get("modelSelection")
@@ -189,6 +220,26 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
+fn async_reply_execution_request(
+    saved: &Value,
+    payload: &Value,
+) -> Result<ExecutionRequest, AppIpcError> {
+    // Preserve the task's model, tools and identity, but replace per-message data.
+    let mut request: ExecutionRequest = serde_json::from_value(saved.clone())
+        .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+    request.prompt = payload["message"].clone();
+    request.history.clear();
+    request.message_id = None;
+    request.extra.insert(
+        "attachments".into(),
+        payload
+            .get("attachments")
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+    );
+    Ok(request)
+}
+
 fn pending_async_question(transcript: &Value, response: &Value) -> bool {
     let mut pending = false;
     for (turn, item) in transcript["turns"]
@@ -277,6 +328,43 @@ mod reply_tests {
         json!({"turns":[{"items":[{"type":"block","block":{"render_payload":{
             "delivery":"async","itemId":"question","interactionScope":"turn"
         }}}]}]})
+    }
+
+    #[tokio::test]
+    async fn async_reply_replaces_message_files_without_replacing_the_task_identity() {
+        let saved = json!({
+            "task_id":"task", "subtask_id":"turn", "model_config":{"model_id":"original"},
+            "system_prompt":"Keep the task permissions", "history":[{"role":"user","content":"old"}],
+            "message_id":42, "attachments":[{"id":1,"original_filename":"old.txt"}]
+        });
+        let files = json!([
+            {"id":-1,"original_filename":"brief.txt","local_path":"/tmp/brief.txt","status":"ready"}
+        ]);
+        let payload = json!({
+            "message":"First line\nSecond line", "attachments":files,
+            "executionRequest":{"model_config":{"model_id":"foreign"},"system_prompt":"foreign"}
+        });
+        let request = async_reply_execution_request(&saved, &payload).unwrap();
+        assert_eq!(request.task_id, "task");
+        assert_eq!(request.model_config["model_id"], "original");
+        assert_eq!(request.system_prompt, "Keep the task permissions");
+        assert_eq!(request.prompt, payload["message"]);
+        assert!(request.history.is_empty());
+        assert!(request.message_id.is_none());
+        assert_eq!(request.extra["attachments"], files);
+        let prepared = crate::agents::runtime_capabilities::prepare_user_input_response(
+            request,
+            json!({"answers":{"q":{"answers":["First line\nSecond line"],"attachments":[{"id":-1}]}}}),
+        ).await.unwrap();
+        assert_eq!(prepared.request.extra["attachments"], files);
+        assert_eq!(prepared.request.prompt, payload["message"]);
+        assert!(prepared.response["answers"]["q"]["answers"][1]
+            .as_str()
+            .unwrap()
+            .contains("/tmp/brief.txt"));
+        let without_files =
+            async_reply_execution_request(&saved, &json!({"message":"Text only"})).unwrap();
+        assert_eq!(without_files.extra["attachments"], json!([]));
     }
 
     #[test]

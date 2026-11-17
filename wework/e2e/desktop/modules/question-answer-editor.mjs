@@ -83,7 +83,7 @@ export function createQuestionAnswerEditorRegression({ workspacePath }) {
         )
       if (!text.includes(ANSWER)) return [assistantMessage('Waiting for the answer and file.')]
       if (!requestContainsToolOutput(body, 'answer-editor-read')) {
-        const path = text.match(/- question-editor-brief\.txt \([^\n]*\): ([^\n]+)/)?.[1]
+        const path = text.match(/## question-editor-brief\.txt\nLocal File Path: ([^\n]+)/)?.[1]
         assert.ok(path, 'The real question reply must materialize an attachment path')
         const quoted =
           process.platform === 'win32'
@@ -129,6 +129,11 @@ export function createQuestionAnswerEditorRegression({ workspacePath }) {
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
       )
       await control.command('waitFor', CARD, { text: 'Provide a multiline answer', visible: true })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+        { text: 'Waiting for the answer and file.' }
+      )
       const lineHeight = await verifySingleLineAnswerLayout(control, true)
       await control.command('fill', INPUT, { value: 'First line' })
       await verifySingleLineAnswerLayout(control, false)

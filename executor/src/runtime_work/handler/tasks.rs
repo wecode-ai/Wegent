@@ -2428,7 +2428,7 @@ impl RuntimeWorkRpcHandler {
                     json!({"success": false, "code": "stale_request_user_input", "error": "The question execution changed while preparing attachments"}),
                 );
             }
-            prepared
+            prepared.response
         } else {
             response.clone()
         };

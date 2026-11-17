@@ -5,6 +5,7 @@ import { setComposerValue } from '@/test/composer'
 import { RequestUserInputCard, RequestUserInputSummary } from './RequestUserInputCard'
 import type { Attachment, RequestUserInputPayload } from '@/types/api'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { composeDesktopInput } from '@/e2e/input-composition'
 
 const payload: RequestUserInputPayload = {
   requestId: 12,
@@ -25,6 +26,24 @@ const submitButton = () => screen.getByTestId('request-user-input-submit-button'
 const clipboard = (files: File[]) => ({ files, types: ['Files'], getData: () => '' })
 
 describe('question answer editor', () => {
+  test('preserves IME text through the shared desktop composition control', async () => {
+    render(<RequestUserInputCard payload={payload} onSubmit={vi.fn()} />)
+    const result = await composeDesktopInput(input(), ['bao', 'baoliu', '保留回答'], async () => {
+      await act(async () => {})
+    })
+    expect(result.writes).toEqual([])
+    expect(result.steps).toEqual(
+      ['bao', 'baoliu', '保留回答'].map(value => ({
+        value,
+        actual: value,
+        focused: true,
+        connected: true,
+      }))
+    )
+    expect(result.value).toBe('保留回答')
+    expect(input()).toHaveValue('保留回答')
+  })
+
   test('skips an async question without submitting or losing its draft', async () => {
     const submit = vi.fn()
     const skip = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
