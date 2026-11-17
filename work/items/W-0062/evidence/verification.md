@@ -138,6 +138,10 @@ Rust 验证通过：`runtime_work::handler::turns::tests` 17 项、`runtime_work
 
 本轮随后自动整合主线 `ea5eca2558`，无内容冲突。main 的 Issue 邀请权限、项目 Viewer 与执行限制断言，以及中英导航和 locale 更新均保留；本项的 API、成员提示和实际任务入口也完整保留。整合后共享创建、模板及完整 Platform/App 共 33 文件、445 项通过（43.79 秒），后端同一 API/CP/guard 命令 95 项通过（56.92 秒）；文档 8 项、导航与成员 helper 协议 10 项通过。真实任务页宿主的两种宽度、英文入口、等待名单确认及同项目重试共 5 项再次通过（16.46 秒）。共享构建、Wework typecheck 和完整 lint 通过，lint 为 0 错误、5 项既有警告；Black、isort 与相对主线的差异检查通过。
 
+推送后主线推进到 `2a7319fef7`，GitHub 与 `git merge-tree` 均确认 `executor/src/runtime_work/handler/turns.rs` 有新冲突。第二次整合保留 main 的 `result_received`、observer 成功/失败和 `local_result_settled` 清理日志，把原耗时诊断包在同一次 observer await 及结果处理外；原生生命周期、事件 Goal、自动输入和异步问题顺序保持 main。Rust 聚焦回归共 28 项通过：turns 17、主线新增异步问题投递 8、handler hooks 1、hooks lifecycle 2；复用既有 target，Rustfmt 与差异检查通过。
+
+模型自动合并同时保留 main 的默认选择与本地目录失效刷新，以及 MAN-08 的显式选择身份和可用性。三个 hook 与 modelCatalog 全套共 4 文件、53 项通过，hybrid 三项来源快照案例通过，目标五文件 ESLint 和 Wework typecheck 通过；双语文档 8 项与导航/helper 10 项通过。独立 Electron 包在本地未安装完整测试依赖，宿主 model-runtime-request 套件未成功收集，未计为通过；该路径的真实桌面结果和既有单元 CI 结果仍须核对新 head。本地未运行 E2E 或 ai:verify。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
