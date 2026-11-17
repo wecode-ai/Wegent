@@ -304,7 +304,7 @@ export function cacheRuntimeConversationTurns(key: string, turns: RuntimeConvers
     const previous = retryState(turnsByConversation.get(key) ?? [])
     const next = retryState(turns)
     if ((previous.length || next.length) && JSON.stringify(previous) !== JSON.stringify(next))
-      console.info('[Wework] Runtime retry conversation state', { key, previous, next })
+      console.debug('[Wework] Runtime retry conversation state', { key, previous, next })
   }
   projectedMessagesByConversation.delete(key)
   cacheBoundedEntry(turnsByConversation, key, turns, evictedKey => {

@@ -71,21 +71,21 @@ function WorkItemComposerGuideContent({
   const menuOpen = open && canChangeProject
   const closeMenu = useCallback(() => {
     if (import.meta.env.VITE_WEWORK_E2E === 'true')
-      console.info('[Wework] Project picker lifecycle', { event: 'close-requested', traceId })
+      console.debug('[Wework] Project picker lifecycle', { event: 'close-requested', traceId })
     setOpen(false)
   }, [traceId])
 
   useEffect(() => {
     if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
-    console.info('[Wework] Project picker lifecycle', { event: 'mounted', traceId })
+    console.debug('[Wework] Project picker lifecycle', { event: 'mounted', traceId })
     return () => {
-      console.info('[Wework] Project picker lifecycle', { event: 'unmounted', traceId })
+      console.debug('[Wework] Project picker lifecycle', { event: 'unmounted', traceId })
     }
   }, [traceId])
 
   useEffect(() => {
     if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
-    console.info('[Wework] Project picker lifecycle', {
+    console.debug('[Wework] Project picker lifecycle', {
       event: 'state',
       traceId,
       open,

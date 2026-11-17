@@ -90,6 +90,13 @@ while ([DateTime]::UtcNow -lt $deadline) {
   foreach ($window in $windows) {
     [Console]::Error.WriteLine('Native decision stage: window-name-start')
     [Console]::Error.WriteLine('Native decision window: ' + $window.Current.Name)
+    if ($iteration -eq 1) {
+      [Console]::Error.WriteLine('Native decision stage: window-children-start')
+      $children = @($window.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object {
+        @{ name = $_.Current.Name; className = $_.Current.ClassName; controlType = $_.Current.ControlType.ProgrammaticName; processId = $_.Current.ProcessId }
+      })
+      [Console]::Error.WriteLine('Native decision window children: ' + (ConvertTo-Json -InputObject $children -Compress))
+    }
     if ($window.Current.Name -notin @(${TITLES.map(title => `'${title}'`).join(', ')})) { continue }
     [Console]::Error.WriteLine('Native decision stage: button-lookup-start')
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
