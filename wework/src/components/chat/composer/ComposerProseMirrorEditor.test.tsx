@@ -77,6 +77,14 @@ function renderEditor(
 }
 
 describe('ComposerProseMirrorEditor', () => {
+  test('exposes the localized input prompt as its accessible name', () => {
+    renderEditor('')
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAttribute(
+      'aria-placeholder',
+      'Message'
+    )
+  })
+
   test('preserves user line breaks in an edited Markdown tail', () => {
     const { onChange } = renderEditor('')
     const editor = screen.getByTestId('composer-editor')

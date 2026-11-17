@@ -100,6 +100,22 @@ it('supports keyboard expansion and changing the session switch', async () => {
   })
 })
 
+it.each([
+  [{ automatic: false, askBeforeAct: true }, '未开启自动处理'],
+  [{ automatic: true, askBeforeAct: true }, '收到即处理'],
+  [{ automatic: true, askBeforeAct: true, immediate: false }, '先汇总新事项'],
+] as const)('shows the current policy before configuration: %j', async (policy, mode) => {
+  const { user, onChange } = fixture(policy)
+  const toggle = screen.getByRole('button', { name: new RegExp(`处理方式.*${mode}.*配置`) })
+  expect(document.getElementById(toggle.getAttribute('aria-controls')!)).not.toBeVisible()
+  await user.tab()
+  await user.keyboard('{Enter}')
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  expect(document.getElementById(toggle.getAttribute('aria-controls')!)).toBeVisible()
+  expect(within(toggle).getByText('收起')).toBeVisible()
+  expect(onChange).not.toHaveBeenCalled()
+})
+
 it.each(['independent', 'reuse'] as const)(
   'changes timing without changing conversation strategy: %s',
   async sessionStrategy => {

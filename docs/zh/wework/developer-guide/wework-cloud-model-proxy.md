@@ -56,6 +56,8 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 透传模式保留思考、历史、原始调用 ID、加密内容、`previous_response_id`、`include`、`store` 和扩展字段。它也跳过图片预算裁剪、视觉副模型替换、历史增强、fork/模型切换清理及输出上限注入；配置的 `max_output_tokens` 不会由代理添加到请求中。上游需要直接支持这些 Codex 请求内容。
 
+官方 ChatGPT 的内部路由是一条独立的透传路径。它保留相同的原生字段和响应流行为，但兼容层仍会规范化不可移植的推理历史，并在模型切换后的首个请求执行清理。这样普通对话和分身共用一条路由，同时不会把第三方 `reasoning_text` 或过期密封状态发送给官方 endpoint。
+
 例如，Kimi Responses 可配置为：
 
 ```json
@@ -137,7 +139,7 @@ WebSocket 重试，暂时无法由界面识别。
 
 ### Codex 直连模型过载恢复
 
-使用原生 Codex provider 直连模型时，请求不经过 compat proxy。Codex
+用户配置的原生 Codex provider 在未选择 Wework 兼容路由时仍可直连模型，请求不经过 compat proxy。Codex
 app-server 报告结构化 `serverOverloaded` 错误后，executor 会等待该轮
 `turn/completed` 确认失败轮次已经结束，再在同一 thread、同一模型下恢复。
 最多恢复 5 次，等待时间依次为 5、10、20、40 和 60 秒。

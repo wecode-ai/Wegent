@@ -99,10 +99,13 @@ export const templateMessages = {
     resourceUnavailable: '项目或绑定资源已不可用，请刷新项目并检查访问权限。',
     groupsNotStarted: '模板尚未开始创建，当前配置已保留。',
     groupsUnchanged: '已刷新协作小组列表，未发现本次新增的小组，当前配置已保留。',
+    groupsRejected: '创建请求已被拒绝，当前配置已保留，可调整后重试。',
     groupsCreated: '已创建小组：{names}。请在项目设置中检查未完成的配置，避免重复导入。',
     groupsUnknown:
-      '无法刷新协作小组列表，尚不能确认完整状态。请检查项目设置后再导入，避免重复创建。',
-    agentsUnknown: '尚不能确认是否已创建智能体。请刷新状态或检查项目设置，避免重复创建。',
+      '尚不能确认创建请求是否已完成；请求可能仍在处理。请刷新状态或检查项目设置，避免重复导入。',
+    groupsRefreshFailed:
+      '无法刷新协作小组列表，尚不能确认完整状态。请在项目设置中核对配置，避免重复导入。',
+    agentsUnknown: '尚不能确认智能体创建请求是否已完成。请刷新状态或检查项目设置，避免重复创建。',
     syncConflict: '模板尚未同步。请检查冲突，或另存为副本。',
     bindingsTitle: '确认协作配置',
     bindingsHint:
@@ -247,12 +250,15 @@ export const templateMessages = {
     groupsNotStarted: 'Template creation has not started. Your configuration is preserved.',
     groupsUnchanged:
       'Collaboration groups refreshed; no new groups were found. Your configuration is preserved.',
+    groupsRejected: 'Creation was rejected. Your configuration is preserved; adjust it and retry.',
     groupsCreated:
       'Groups were created: {names}. Check unfinished configuration in project settings before importing again.',
     groupsUnknown:
-      'Could not refresh collaboration groups, so the full current state could not be confirmed. Check project settings before importing again to avoid duplicates.',
+      'Creation has not been confirmed and the request may still be processing. Refresh status or check project settings before importing again to avoid duplicates.',
+    groupsRefreshFailed:
+      'Could not refresh collaboration groups, so their full current state is unavailable. Check project settings before importing again to avoid duplicates.',
     agentsUnknown:
-      'Agent creation could not be confirmed. Refresh status or check project settings before importing again.',
+      'The Agent creation request may still be processing. Refresh status or check project settings before importing again to avoid duplicates.',
     syncConflict: 'Template not synced. Resolve the conflict or save a copy.',
     embeddedAgents:
       'Template Agents are created and bound automatically. Models and tools follow the execution environment.',
@@ -260,8 +266,7 @@ export const templateMessages = {
     environmentHint: 'Models and tools follow the execution environment.',
     agentModel: 'Model for Agents',
     chooseModel: 'Choose a model',
-    selectedModelHint:
-      'Execution environments and models can be configured later.',
+    selectedModelHint: 'Execution environments and models can be configured later.',
     modelUnavailable:
       'The selected model is no longer available. Refresh the model list and choose again.',
     noModels: 'No models available. Add a model in Settings, then refresh this list.',

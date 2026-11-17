@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Download, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import {
   IssueActivityMarkdown,
   createCollaborationTranslator,
@@ -37,13 +38,11 @@ export function CloudFilePreviewDialog({
   const kind = preview?.kind
   const text = preview?.text ?? ''
   const objectUrl = preview?.url
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
+  const dialogRef = useDialogKeyboard<HTMLElement>(
+    onClose,
+    true,
+    '[data-testid="cloud-file-preview-close"]'
+  )
 
   async function download() {
     const source = loadFile
@@ -66,7 +65,10 @@ export function CloudFilePreviewDialog({
       onMouseDown={event => event.currentTarget === event.target && onClose()}
     >
       <section
+        ref={dialogRef}
         role="dialog"
+        aria-modal="true"
+        tabIndex={-1}
         aria-label={filename}
         data-testid="cloud-file-preview-dialog"
         className="flex h-[calc(100vh-72px)] w-[min(960px,calc(100vw-48px))] flex-col overflow-hidden rounded-2xl bg-background shadow-2xl"
@@ -75,7 +77,7 @@ export function CloudFilePreviewDialog({
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-medium text-text-primary">{filename}</h2>
             {sizeLabel ? (
-              <span data-testid="cloud-file-preview-size" className="text-xs text-text-muted">
+              <span data-testid="cloud-file-preview-size" className="text-xs text-text-secondary">
                 {sizeLabel}
               </span>
             ) : null}
@@ -85,7 +87,7 @@ export function CloudFilePreviewDialog({
             data-testid="cloud-file-preview-download"
             disabled={downloading}
             onClick={() => void download()}
-            className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
+            className="flex h-11 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-50 md:h-8"
           >
             <Download className="h-3.5 w-3.5" />
             {downloading ? t('todo.file_downloading', '下载中…') : t('todo.download_file', '下载')}
@@ -94,7 +96,7 @@ export function CloudFilePreviewDialog({
             type="button"
             data-testid="cloud-file-preview-close"
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-muted"
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-muted md:h-8 md:w-8"
             aria-label={t('common.close', '关闭')}
           >
             <X className="h-4 w-4" />
@@ -111,7 +113,7 @@ export function CloudFilePreviewDialog({
         ) : null}
         <div className="min-h-0 flex-1 overflow-auto bg-muted/20">
           {loading && !preview && !failed ? (
-            <div className="flex h-full items-center justify-center text-sm text-text-muted">
+            <div className="flex h-full items-center justify-center text-sm text-text-secondary">
               {t('todo.file_preview_loading', '正在加载预览…')}
             </div>
           ) : failed ? (
@@ -158,14 +160,15 @@ export function CloudFilePreviewDialog({
           ) : (
             <div
               data-testid="cloud-file-preview-unsupported"
-              className="flex h-full flex-col items-center justify-center gap-3 px-6 text-sm text-text-muted"
+              className="flex h-full flex-col items-center justify-center gap-3 px-6 text-sm text-text-secondary"
             >
               <span>{t('todo.file_preview_unsupported', '此文件格式暂不支持预览')}</span>
               <button
                 type="button"
+                data-testid="cloud-file-preview-unsupported-download"
                 disabled={downloading}
                 onClick={() => void download()}
-                className="h-8 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50"
+                className="h-11 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50 md:h-8"
               >
                 {t('todo.download_file', '下载')}
               </button>

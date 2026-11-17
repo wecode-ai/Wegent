@@ -85,17 +85,22 @@ function fixture(host?: ProjectAgentConfigurationHost) {
     automations: { list: vi.fn(async () => []), create: vi.fn() },
   }
   const applied = vi.fn()
-  const render = async (agentConfiguration = host, configure = true) => {
+  const onClose = vi.fn()
+  const render = async (
+    agentConfiguration = host,
+    configure = true,
+    scope: { api?: SharedWorkspaceApi; projectId?: string } = {}
+  ) => {
     await act(async () =>
       root.render(
         <ProjectTemplateApplyDialog
-          api={api as unknown as SharedWorkspaceApi}
-          projectId="project"
+          api={scope.api ?? (api as unknown as SharedWorkspaceApi)}
+          projectId={scope.projectId ?? 'project'}
           document={document}
           locale="zh-CN"
           currentUserId={7}
           agentConfiguration={agentConfiguration}
-          onClose={() => {}}
+          onClose={onClose}
           onApplied={applied}
         />
       )
@@ -109,7 +114,17 @@ function fixture(host?: ProjectAgentConfigurationHost) {
         runtime.dispatchEvent(new Event('toggle', { bubbles: true }))
       })
   }
-  return { api, render, applied, project }
+  return { api, render, applied, project, onClose }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes
+    reject = no
+  })
+  return { promise, resolve, reject }
 }
 
 it('imports without loading runtime catalogs and leaves automatic execution disabled', async () => {
@@ -421,11 +436,97 @@ async function renameDraft(name: string) {
   })
 }
 
+it.each(['project', 'api'] as const)(
+  'preserves the current names and candidates when old recovery completes after a %s change',
+  async change => {
+    const { api, render, project } = fixture()
+    const nextApi = change === 'api' ? fixture().api : api
+    const projectId = change === 'project' ? 'project-b' : 'project'
+    const creation = deferred<Awaited<ReturnType<typeof api.projects.createCollaborationGroup>>>()
+    const currentGroup = { id: 'b-group', name: 'B existing' } as CollaborationGroup
+    const oldGroup = { id: 'a-group', name: 'A existing' } as CollaborationGroup
+    api.projects.createCollaborationGroup.mockReturnValueOnce(creation.promise)
+    api.projects.listCollaborationGroups.mockResolvedValueOnce([]).mockResolvedValueOnce([])
+    api.members.list.mockResolvedValueOnce([{ user_id: 7, user_name: 'A owner' }])
+    await render()
+    await act(async () => applyButton().click())
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    nextApi.projects.get.mockResolvedValue({ ...project, id: projectId })
+    nextApi.projects.listCollaborationGroups.mockResolvedValueOnce([currentGroup])
+    nextApi.members.list.mockResolvedValue([{ user_id: 7, user_name: 'B owner' }])
+    api.projects.listCollaborationGroups.mockResolvedValue([oldGroup])
+    await render(undefined, false, {
+      api: nextApi as unknown as SharedWorkspaceApi,
+      projectId,
+    })
+    await renameDraft('B existing')
+    await act(async () => creation.reject(new TypeError('Failed to fetch')))
+    const choices = container.querySelector('select')!.textContent!
+    expect(choices).toContain('B owner')
+    expect(choices).not.toContain('A owner')
+    const calls = nextApi.projects.createCollaborationGroup.mock.calls.length
+    await act(async () => applyButton().click())
+    expect(nextApi.projects.createCollaborationGroup).toHaveBeenCalledTimes(calls)
+    expect(container.querySelector('[role="alert"]')!.textContent).toContain('已有这个小组名称')
+    expect(
+      container.querySelector<HTMLInputElement>('[data-testid="template-group-name-main"]')!.value
+    ).toBe('B existing')
+  }
+)
+
+it.each(['project', 'api', 'unmount'] as const)(
+  'ignores an old successful final refresh after a %s change',
+  async change => {
+    const { api, render, project, applied, onClose } = fixture()
+    const finalRefresh = deferred<typeof project>()
+    api.projects.get
+      .mockResolvedValueOnce(project)
+      .mockResolvedValueOnce(project)
+      .mockReturnValueOnce(finalRefresh.promise)
+    await render()
+    await act(async () => applyButton().click())
+    expect(api.projects.update).toHaveBeenCalledOnce()
+    expect(api.projects.get).toHaveBeenCalledTimes(3)
+    if (change === 'unmount') {
+      await act(async () => root.render(null))
+    } else {
+      const nextApi = change === 'api' ? fixture().api : api
+      const projectId = change === 'project' ? 'project-b' : 'project'
+      nextApi.projects.get.mockResolvedValue({ ...project, id: projectId })
+      nextApi.members.list.mockResolvedValue([{ user_id: 7, user_name: 'B owner' }])
+      await render(undefined, false, {
+        api: nextApi as unknown as SharedWorkspaceApi,
+        projectId,
+      })
+      expect(container.querySelector('select')!.textContent).toContain('B owner')
+    }
+    await act(async () => finalRefresh.resolve(project))
+    expect(applied).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  }
+)
+
+it('does not publish a pending initial load after the dialog is closed', async () => {
+  const { api, render, project, onClose } = fixture()
+  const load = deferred<typeof project>()
+  api.projects.get.mockReturnValueOnce(load.promise)
+  await render()
+  await click('collaboration-template-close')
+  expect(onClose).toHaveBeenCalledOnce()
+  await act(async () => load.resolve(project))
+  expect(api.members.list).not.toHaveBeenCalled()
+  expect(container.querySelector('[data-testid="template-bindings-apply"]')).toBeNull()
+})
+
 it('preserves the draft and member binding after a rejected member configuration', async () => {
   const { api, render, applied } = fixture()
   api.projects.createCollaborationGroup.mockRejectedValue(
     Object.assign(new Error('rejected'), { status: 422, detail: 'member must be a Developer' })
   )
+  api.projects.listCollaborationGroups
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([{ id: 'existing', name: 'Discovered group' } as CollaborationGroup])
   await render()
   await renameDraft('Current draft')
   const before = container.querySelector<HTMLSelectElement>('select')!.value
@@ -438,9 +539,13 @@ it('preserves the draft and member binding after a rejected member configuration
   expect(applyButton().disabled).toBe(false)
   expect(api.projects.listCollaborationGroups).toHaveBeenCalledTimes(3)
   expect(applied).not.toHaveBeenCalled()
+  await renameDraft('Discovered group')
+  await act(async () => applyButton().click())
+  expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  expect(container.querySelector('[role="alert"]')!.textContent).toContain('已有这个小组名称')
 })
 
-it('blocks an unknown creation outcome until a read-only recheck confirms no new group', async () => {
+it('keeps unknown writes blocked across empty rechecks and reports a later saved group', async () => {
   const { api, render } = fixture()
   api.projects.createCollaborationGroup.mockRejectedValue(new TypeError('Failed to fetch'))
   api.projects.listCollaborationGroups
@@ -448,6 +553,7 @@ it('blocks an unknown creation outcome until a read-only recheck confirms no new
     .mockResolvedValueOnce([])
     .mockRejectedValueOnce(new TypeError('Failed to fetch'))
     .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([{ id: 'persisted', name: 'Retained draft' } as CollaborationGroup])
   await render()
   await renameDraft('Retained draft')
   await act(async () => applyButton().click())
@@ -457,11 +563,20 @@ it('blocks an unknown creation outcome until a read-only recheck confirms no new
     container.querySelector<HTMLButtonElement>('[data-testid="template-bindings-recheck"]')!.click()
   )
   expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
-  expect(applyButton().disabled).toBe(false)
+  expect(applyButton().disabled).toBe(true)
   expect(
     container.querySelector<HTMLInputElement>('[data-testid="template-group-name-main"]')!.value
   ).toBe('Retained draft')
-  expect(container.querySelector('[role="alert"]')!.textContent).toContain('未发现本次新增')
+  expect(container.querySelector('[role="alert"]')!.textContent).toContain('尚不能确认')
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[data-testid="template-bindings-recheck"]')!.click()
+  )
+  expect(container.querySelector('[role="alert"]')!.textContent).toContain(
+    '已创建小组：Retained draft'
+  )
+  expect(applyButton().disabled).toBe(true)
+  expect(container.querySelector('[data-testid="template-bindings-recheck"]')).toBeNull()
+  expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
 })
 
 it('identifies persisted groups after a lost response and prevents another import', async () => {

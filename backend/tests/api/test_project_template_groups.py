@@ -7,16 +7,40 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.endpoints import project_automations
 from app.models.user import User
+from app.schemas.workspace import CollaborationGroupResponse
+from shared.telemetry import decorators
 
 TemplateProject = tuple[str, dict[str, str], dict[str, Any]]
+PRIVATE_RESPONSE_VALUE = "private-template-response-value"
+
+
+@pytest.fixture
+def template_spans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[InMemorySpanExporter]:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer(__name__)
+    monkeypatch.setattr(decorators, "_is_telemetry_enabled", lambda: True)
+    monkeypatch.setattr(decorators, "_get_tracer", lambda _: tracer)
+    try:
+        yield exporter
+    finally:
+        provider.shutdown()
 
 
 def _human_template_payload(humans: list[User]) -> dict[str, Any]:
@@ -153,11 +177,24 @@ def test_human_with_revoked_developer_access_returns_configuration_error(
     assert "stage=create status=422 error_type=HTTPException" in caplog.text
 
 
+def test_response_validation_hides_input_values() -> None:
+    with pytest.raises(ValidationError) as captured:
+        CollaborationGroupResponse.model_validate(
+            {"coordination_mode": PRIVATE_RESPONSE_VALUE}
+        )
+
+    for message in (str(captured.value), repr(captured.value)):
+        assert "coordination_mode" in message
+        assert "literal_error" in message
+        assert PRIVATE_RESPONSE_VALUE not in message
+
+
 def test_response_failure_reports_created_group_without_logging_payload(
     test_client: TestClient,
     human_template_project: TemplateProject,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    template_spans: InMemorySpanExporter,
 ) -> None:
     project_url, headers, payload = human_template_project
     create = project_automations.workspace_service.create_project_collaboration_group
@@ -165,7 +202,7 @@ def test_response_failure_reports_created_group_without_logging_payload(
     def create_with_invalid_response(*args: Any, **kwargs: Any) -> dict[str, object]:
         result = create(*args, **kwargs)
         # Inject failure after the real transaction commits.
-        return {**result, "coordination_mode": "invalid"}
+        return {**result, "coordination_mode": PRIVATE_RESPONSE_VALUE}
 
     monkeypatch.setattr(
         project_automations.workspace_service,
@@ -197,3 +234,25 @@ def test_response_failure_reports_created_group_without_logging_payload(
     )
     assert all(payload["name"] not in message for message in records)
     assert all(payload["instructions"] not in message for message in records)
+    span = next(
+        span
+        for span in template_spans.get_finished_spans()
+        if span.name == "project.collaboration_group.create"
+    )
+    assert span.status.status_code == StatusCode.ERROR
+    assert "coordination_mode" in span.status.description
+    exceptions = [event for event in span.events if event.name == "exception"]
+    assert exceptions
+    assert all(
+        "ValidationError" in event.attributes["exception.type"] for event in exceptions
+    )
+    trace_text = str(span.status.description) + str(
+        [dict(event.attributes) for event in exceptions]
+    )
+    for private_value in (
+        PRIVATE_RESPONSE_VALUE,
+        payload["name"],
+        payload["instructions"],
+    ):
+        assert private_value not in trace_text
+        assert private_value not in caplog.text

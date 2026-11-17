@@ -320,6 +320,8 @@ class CollaborationGroupUpdate(BaseModel):
 
 
 class CollaborationGroupResponse(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     id: SnowflakeId
     workspace_id: SnowflakeId
     owner_type: Literal["workspace", "project"]

@@ -1,22 +1,41 @@
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import '@/i18n'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { TodoEditor } from './TodoEditor'
+import { useAttachmentPreview } from '@/components/chat/useAttachmentPreview'
+import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
+import type { Attachment } from '@/types/api'
 
 const renderActivity = vi.hoisted(() => vi.fn())
+afterEach(() => vi.unstubAllGlobals())
 
 vi.mock('./TaskActivityView', () => ({
   TaskActivityView: (props: unknown) => {
     renderActivity(props)
     const [draft, setDraft] = useState('')
+    const preview = useAttachmentPreview()
     return (
-      <textarea
-        data-testid="activity-draft"
-        value={draft}
-        onChange={event => setDraft(event.target.value)}
-      />
+      <>
+        <button
+          data-testid="preview-staged-file"
+          onClick={() =>
+            preview?.({
+              id: 42,
+              filename: 'staged-reply.txt',
+              mime_type: 'text/plain',
+            } as Attachment)
+          }
+        >
+          Preview attachment
+        </button>
+        <textarea
+          data-testid="activity-draft"
+          value={draft}
+          onChange={event => setDraft(event.target.value)}
+        />
+      </>
     )
   },
 }))
@@ -45,6 +64,41 @@ const api = {
   listCloudProjectMembers: vi.fn(async () => []),
 } as never
 const client = {} as never
+
+it('previews staged reply attachments through the Issue-owned preview surface', async () => {
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:staged-reply')
+      static revokeObjectURL = vi.fn()
+    }
+  )
+  const readFile = vi.fn(async () =>
+    Object.assign(new Blob(['staged reply content'], { type: 'text/plain' }), {
+      text: async () => 'staged reply content',
+    })
+  )
+  render(
+    <AttachmentDownloadProvider fetchAttachmentBlob={readFile}>
+      {editor(item)}
+    </AttachmentDownloadProvider>
+  )
+  const trigger = screen.getByTestId('preview-staged-file')
+  trigger.focus()
+  fireEvent.click(trigger)
+  expect(await screen.findByTestId('cloud-file-preview-dialog')).toHaveTextContent(
+    'staged-reply.txt'
+  )
+  expect(await screen.findByTestId('cloud-file-preview-text')).toHaveTextContent(
+    'staged reply content'
+  )
+  await waitFor(() => expect(readFile).toHaveBeenCalledExactlyOnceWith(42))
+  expect(screen.getByTestId('cloud-file-preview-close')).toHaveFocus()
+  fireEvent.keyDown(screen.getByTestId('cloud-file-preview-close'), { key: 'Escape' })
+  expect(screen.queryByTestId('cloud-file-preview-dialog')).not.toBeInTheDocument()
+  expect(screen.getByTestId('activity-draft')).toBeInTheDocument()
+  expect(trigger).toHaveFocus()
+})
 
 function editor(issue: CloudLoopItem) {
   return (

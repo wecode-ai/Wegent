@@ -68,12 +68,24 @@ function originalFailure(cause: unknown): unknown {
   return cause
 }
 
+function mutationWasRejected(cause: unknown): boolean {
+  return (
+    !!cause &&
+    typeof cause === 'object' &&
+    'status' in cause &&
+    typeof cause.status === 'number' &&
+    [400, 401, 403, 404, 409, 422].includes(cause.status)
+  )
+}
+
 /** Reconcile writes using persisted identities, including a lost POST response. */
 export async function reconcileProjectTemplateFailure(
   cause: unknown,
   recovery: ProjectApplyRecovery
 ): Promise<TemplateApplyRecoveryError> {
   const m = templateMessages[recovery.locale]
+  const failure = originalFailure(cause)
+  const rejected = mutationWasRejected(failure)
   let refreshed: CollaborationGroup[] | undefined
   try {
     refreshed = await recovery.api.projects.listCollaborationGroups?.(recovery.projectId)
@@ -81,8 +93,7 @@ export async function reconcileProjectTemplateFailure(
   } catch {
     // The original mutation error remains the cause when reconciliation also fails.
   }
-  let agentsConfirmed = !recovery.unconfirmedAgentCreation
-  if (!agentsConfirmed && recovery.baselineAgentIds) {
+  if (recovery.unconfirmedAgentCreation && !rejected && recovery.baselineAgentIds) {
     try {
       const agents = await recovery.api.agents.list(recovery.projectId, { forceRefresh: true })
       recovery.createdAgents ||= agents.some(
@@ -90,7 +101,6 @@ export async function reconcileProjectTemplateFailure(
           !recovery.baselineAgentIds!.has(String(agent.team_id ?? agent.id)) &&
           recovery.agentNames.includes(agent.name)
       )
-      agentsConfirmed = true
     } catch {
       // Group reads cannot establish the outcome of a lost Agent creation response.
     }
@@ -105,27 +115,31 @@ export async function reconcileProjectTemplateFailure(
   const created = [
     ...new Map([...recovery.createdGroups, ...observed].map(group => [group.id, group])).values(),
   ]
+  recovery.createdGroups = created
   const hasPartialWork =
     created.length > 0 || recovery.createdAgents || cause instanceof PartialTemplateApplyError
+  // Empty reads cannot prove that a failed request has stopped processing on the server.
   const outcome: TemplateApplyOutcome = hasPartialWork
     ? 'partial'
-    : !recovery.mutationStarted || (refreshed && recovery.baselineGroups && agentsConfirmed)
+    : !recovery.mutationStarted || rejected
       ? 'unchanged'
       : 'unknown'
-  const reason = templateFailureMessage(originalFailure(cause), recovery.locale)
+  const reason = templateFailureMessage(failure, recovery.locale)
   const stateMessage = created.length
     ? m.groupsCreated.replace('{names}', created.map(group => group.name).join('、'))
     : hasPartialWork
       ? m.partial
-      : !agentsConfirmed
-        ? m.agentsUnknown
-        : refreshed && recovery.baselineGroups
-          ? m.groupsUnchanged
-          : recovery.mutationStarted
-            ? m.groupsUnknown
-            : m.groupsNotStarted
+      : !recovery.mutationStarted
+        ? m.groupsNotStarted
+        : outcome === 'unknown'
+          ? recovery.unconfirmedAgentCreation
+            ? m.agentsUnknown
+            : m.groupsUnknown
+          : refreshed && recovery.baselineGroups
+            ? m.groupsUnchanged
+            : m.groupsRejected
   const refreshMessage =
-    !refreshed && recovery.mutationStarted && hasPartialWork ? ` ${m.groupsUnknown}` : ''
+    !refreshed && recovery.mutationStarted && hasPartialWork ? ` ${m.groupsRefreshFailed}` : ''
   return new TemplateApplyRecoveryError(
     `${reason} ${stateMessage}${refreshMessage}`,
     outcome,

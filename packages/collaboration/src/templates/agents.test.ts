@@ -19,6 +19,16 @@ import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { TemplateRoutingResolver } from './types'
 import type { CollaborationGroup } from '../types'
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 const routing: TemplateRoutingResolver = async runtime => ({
   executionPolicy: { mode: 'fixed', environment_id: 'destination-device' },
   modelPolicy: {
@@ -166,6 +176,76 @@ describe('self-contained template Agents', () => {
     expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
     expect(api.agents.list).toHaveBeenLastCalledWith('project', { forceRefresh: true })
   })
+
+  it.each([
+    new TypeError('Failed to fetch'),
+    Object.assign(new Error('Internal server error'), { status: 500 }),
+  ])('blocks empty Agent reads until a late commit is detected: %s', async cause => {
+    const { document, drafts, api, create } = fixture()
+    delete document.spec.resources.collaboration.project.taskAssignment
+    delete document.spec.resources.collaboration.project.board
+    api.projects = {
+      listCollaborationGroups: vi.fn(async () => []),
+      createCollaborationGroup: vi.fn(),
+    } as unknown as SharedWorkspaceApi['projects']
+    const request = deferred<Awaited<ReturnType<typeof create>>>()
+    const started = deferred<void>()
+    const persisted = deferred<void>()
+    const created = {
+      id: 'late-agent',
+      name: document.spec.resources.collaboration.agents![0].name,
+    }
+    let agents: (typeof created)[] = []
+    const commit = persisted.promise.then(() => {
+      agents = [created]
+    })
+    create.mockImplementationOnce(() => {
+      started.resolve()
+      return request.promise
+    })
+    vi.mocked(api.agents.list).mockImplementation(async () => agents)
+    const application = applyProjectTemplate(
+      api,
+      'project',
+      document,
+      drafts,
+      'zh-CN',
+      'partial',
+      routing
+    ).catch(error => error)
+    await started.promise
+    request.reject(cause)
+    const failure = await application
+    expect(failure).toMatchObject({ cause, outcome: 'unknown', retryBlocked: true })
+    expect(await failure.recheck()).toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    expect(await failure.recheck()).toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    persisted.resolve()
+    await commit
+    expect(await failure.recheck()).toMatchObject({ cause, outcome: 'partial', retryBlocked: true })
+    expect(create).toHaveBeenCalledOnce()
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(api.agents.list).toHaveBeenLastCalledWith('project', { forceRefresh: true })
+  })
+
+  it.each([400, 401, 403, 409, 422])(
+    'allows retry after an Agent creation request is rejected with HTTP %i',
+    async status => {
+      const { document, drafts, api, create } = fixture()
+      delete document.spec.resources.collaboration.project.taskAssignment
+      delete document.spec.resources.collaboration.project.board
+      api.projects = {
+        listCollaborationGroups: vi.fn(async () => []),
+        createCollaborationGroup: vi.fn(),
+      } as unknown as SharedWorkspaceApi['projects']
+      const cause = Object.assign(new Error('Request rejected'), { status })
+      create.mockRejectedValueOnce(cause)
+      await expect(
+        applyProjectTemplate(api, 'project', document, drafts, 'zh-CN', 'partial', routing)
+      ).rejects.toMatchObject({ cause, outcome: 'unchanged', retryBlocked: false })
+      expect(create).toHaveBeenCalledOnce()
+      expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    }
+  )
 
   it('exports original prompts with portable references and recreates them in another account', async () => {
     const { document, drafts, api } = fixture()

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { issueCommentFormSelector } from './issue-comment-selectors.mjs'
 
 /** Verify the comment picker uses the same persisted targets as Issue properties. */
 export async function verifyCommentAssignmentTargets(
@@ -20,9 +21,7 @@ export async function verifyCommentAssignmentTargets(
   await control.command('openWeworkScheme', 'body', {
     value: `wework://boards/${project.id}/issues/${issue.id}`,
   })
-  const form = scoped(
-    `[data-testid="cloud-task-activity-${issue.id}"] [data-testid="task-comment-form"]`
-  )
+  const form = scoped(issueCommentFormSelector(issue.id))
   const picker = `${form} [data-testid="task-comment-form-assignee"]`
   const send = `${form} [data-testid="send-message-button"]`
   await control.command('waitFor', picker)
