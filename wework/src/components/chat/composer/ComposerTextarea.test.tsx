@@ -607,15 +607,32 @@ describe('ComposerTextarea', () => {
 
     render(<Harness />)
     const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
-    act(() => {
+    await act(async () => {
       editor.value = '@auth'
       editor.focus()
     })
 
-    await screen.findByTestId('workspace-mention-option-0')
-    fireEvent.keyDown(editor, { key: 'Tab', code: 'Tab', keyCode: 9, charCode: 9 })
     await waitFor(() => {
-      expect(editor.value).toContain('[$auth.ts](file://')
+      expect(screen.getByTestId('workspace-mention-option-0')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(editor).toHaveFocus()
+    })
+    let tabPropagated = true
+    await act(async () => {
+      tabPropagated = fireEvent.keyDown(editor, {
+        key: 'Tab',
+        code: 'Tab',
+        keyCode: 9,
+        charCode: 9,
+      })
+    })
+    expect(tabPropagated, JSON.stringify(getComposerDiagnosticsSnapshot())).toBe(false)
+    await waitFor(() => {
+      expect(editor.value, JSON.stringify(getComposerDiagnosticsSnapshot())).toContain(
+        '[$auth.ts](file://'
+      )
       expect(screen.getByTestId('composer-path-chip-auth-ts')).toHaveAttribute(
         'data-composer-path',
         '/workspace/project/src/auth.ts'
