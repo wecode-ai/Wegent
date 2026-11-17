@@ -7,7 +7,7 @@ import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import type { StandInExecutorApi } from '@/api/standIn'
-import '@/i18n'
+import i18n from '@/i18n'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 
 vi.mock('@/components/layout/useProjectWorktreeAvailabilityProbe', () => ({
@@ -416,6 +416,22 @@ it('persists real project and model selections and protects unsaved changes when
       }),
     })
   )
+})
+
+it.each([
+  ['zh-CN', '搜索项目'],
+  ['en', 'Search projects'],
+])('names the project search in %s', async (language, name) => {
+  const previous = i18n.language
+  await i18n.changeLanguage(language)
+  const view = render(<StandInPrimaryProfile {...fixture()} />)
+  try {
+    await userEvent.setup().click(screen.getByTestId('project-work-button'))
+    expect(await screen.findByRole('searchbox', { name })).toHaveFocus()
+  } finally {
+    view.unmount()
+    await i18n.changeLanguage(previous)
+  }
 })
 
 it('dismisses the project menu before asking to discard an unsaved workspace', async () => {

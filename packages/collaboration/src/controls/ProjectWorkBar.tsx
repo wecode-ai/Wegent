@@ -562,7 +562,8 @@ export function ProjectWorkBar({
                       isMobile && 'h-11 rounded-2xl text-base'
                     )}
                   >
-                    <Search className="h-4 w-4 shrink-0" />
+                    <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span className="sr-only">{t('workbench.search_projects', '搜索项目')}</span>
                     <input
                       ref={searchInputRef}
                       data-testid="project-search-input"

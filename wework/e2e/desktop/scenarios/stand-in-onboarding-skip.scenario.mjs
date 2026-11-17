@@ -10,6 +10,7 @@ async function verifyProjectMenuDismissal(control, retainedView) {
   await control.command('scrollIntoView', trigger)
   await control.command('clickWhenEnabled', trigger)
   await control.command('waitFor', `${menu} ${selector('project-search-input')}`, { visible: true })
+  assert.equal(await control.command('getText', `${menu} label`), '搜索项目')
   await control.command('press', `${menu} ${selector('project-search-input')}`, { key: 'Escape' })
   await control.command('waitFor', menu, { visible: false })
   await control.command('waitFor', selector(retainedView), { visible: true })
