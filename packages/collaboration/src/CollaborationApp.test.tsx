@@ -456,9 +456,12 @@ describe("CollaborationApp API boundary", () => {
       firstShell?.props.slots.manage,
       ProjectSettingsShell,
     );
-    const firstSettings = firstSettingsShell?.props.sections.find(
-      (section: { id: string }) => section.id === "project",
-    )?.content;
+    const firstSettings = findByType(
+      firstSettingsShell?.props.sections.find(
+        (section: { id: string }) => section.id === "project",
+      )?.content,
+      CollaborationSettings,
+    );
 
     collaborationAppMocks.useController.mockReturnValue(
       controllerWithProject(createProject(2)),
@@ -471,9 +474,12 @@ describe("CollaborationApp API boundary", () => {
       refreshedShell?.props.slots.manage,
       ProjectSettingsShell,
     );
-    const refreshedSettings = refreshedSettingsShell?.props.sections.find(
-      (section: { id: string }) => section.id === "project",
-    )?.content;
+    const refreshedSettings = findByType(
+      refreshedSettingsShell?.props.sections.find(
+        (section: { id: string }) => section.id === "project",
+      )?.content,
+      CollaborationSettings,
+    );
 
     expect(firstSettings?.type).toBe(CollaborationSettings);
     expect(firstSettings?.key).toContain("project-1");

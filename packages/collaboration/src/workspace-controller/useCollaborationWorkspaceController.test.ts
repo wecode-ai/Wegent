@@ -283,7 +283,10 @@ describe("collaboration workspace controller", () => {
     const latest = { ...project, version: 3 };
     vi.mocked(api.projects.get).mockResolvedValue(latest);
 
-    await commands.loadProject(project.id, true, { loadSnapshot: false });
+    await commands.loadProject(project.id, true, {
+      loadSnapshot: false,
+      refreshProject: true,
+    });
 
     expect(api.projects.get).toHaveBeenCalledExactlyOnceWith(project.id);
     expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();

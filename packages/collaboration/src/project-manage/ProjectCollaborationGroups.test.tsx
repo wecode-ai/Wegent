@@ -315,22 +315,29 @@ it('keeps groups scoped when the real metadata-only controller switches cached p
   function Harness({ projectId }: { projectId: string | null }) {
     const { state } = useCollaborationWorkspaceController({
       api,
-      location: { projectId, issueId: null, view: 'manage' },
+      location: {
+        projectId,
+        issueId: null,
+        view: 'manage',
+        projectSettingsSection: 'groups',
+      },
       messages,
       preloadHomeSnapshots: false,
       myWorkEnabled: false,
       pollIntervalMs: 0,
     })
     return state.loading || !state.project ? null : (
-      <ProjectCollaborationGroups
-        api={api}
-        projectId={state.project.id}
-        workspaceId={state.project.workspace_id}
-        members={state.members}
-        agents={state.agents}
-        locale="en"
-        canManage
-      />
+      <div data-testid="settings-panel">
+        <ProjectCollaborationGroups
+          api={api}
+          projectId={state.project.id}
+          workspaceId={state.project.workspace_id}
+          members={state.members}
+          agents={state.agents}
+          locale="en"
+          canManage
+        />
+      </div>
     )
   }
   container = document.createElement('div')
@@ -338,10 +345,12 @@ it('keeps groups scoped when the real metadata-only controller switches cached p
   root = createRoot(container)
   await act(async () => root!.render(<Harness projectId={null} />))
   await act(async () => root!.render(<Harness projectId="a" />))
-  expect(api.projects.get).toHaveBeenNthCalledWith(1, 'a')
+  const panel = container.querySelector('[data-testid="settings-panel"]')
+  expect(panel).not.toBeNull()
   expect(api.projects.listCollaborationGroups).toHaveBeenNthCalledWith(1, 'a')
   await act(async () => root!.render(<Harness projectId="b" />))
-  expect(api.projects.get).toHaveBeenNthCalledWith(2, 'b')
+  expect(container.querySelector('[data-testid="settings-panel"]')).toBe(panel)
+  expect(api.projects.get).not.toHaveBeenCalled()
   expect(api.projects.listCollaborationGroups).toHaveBeenNthCalledWith(2, 'b')
   await act(async () => a.resolve([group]))
   expect(view.props!.groups.map(value => value.id)).toEqual(['b-group'])

@@ -69,6 +69,7 @@ import type {
 } from "./ports/SharedWorkspaceApi";
 import { executeStandardCloudBoardMutation } from "./project-board/useStandardCloudBoardController";
 import { useCollaborationWorkspaceController } from "./workspace-controller";
+import { ProjectSettingsReadBoundary } from "./project-manage/ProjectSettingsReadBoundary";
 import { canEditCollaborationIssue } from "./permissions";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
 import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
@@ -193,15 +194,16 @@ export function CollaborationApp({
   );
   const archiveLoadGeneration = useRef(0);
   const [restoringIssueId, setRestoringIssueId] = useState<string | null>(null);
-  const { state, commands } = useCollaborationWorkspaceController({
-    api,
-    location: host.location,
-    initialProject,
-    messages,
-    myWorkEnabled: host.capabilities.myWork === true,
-    pollIntervalMs,
-    notify: (message, kind) => host.notify?.(message, kind),
-  });
+  const { state, commands, projectSettings } =
+    useCollaborationWorkspaceController({
+      api,
+      location: host.location,
+      initialProject,
+      messages,
+      myWorkEnabled: host.capabilities.myWork === true,
+      pollIntervalMs,
+      notify: (message, kind) => host.notify?.(message, kind),
+    });
   const {
     projects,
     myWork,
@@ -1132,17 +1134,22 @@ export function CollaborationApp({
                         label: messages.projectConfiguration,
                         testId: "collaboration-project-settings-project",
                         content: (
-                          <CollaborationSettings
-                            api={api}
-                            key={project.id}
-                            project={project}
-                            onChange={commands.replaceProject}
-                            onError={() =>
-                              commands.reportError(messages.saveFailed)
-                            }
+                          <ProjectSettingsReadBoundary
+                            read={projectSettings}
                             translate={translate}
-                            section="overview"
-                          />
+                          >
+                            <CollaborationSettings
+                              api={api}
+                              key={project.id}
+                              project={project}
+                              onChange={commands.replaceProject}
+                              onError={() =>
+                                commands.reportError(messages.saveFailed)
+                              }
+                              translate={translate}
+                              section="overview"
+                            />
+                          </ProjectSettingsReadBoundary>
                         ),
                       },
                       ...(templateStore
@@ -1174,17 +1181,22 @@ export function CollaborationApp({
                       ...createProjectAiTeamSections({
                         translate: translate,
                         membersContent: (
-                          <CollaborationSettings
-                            api={api}
-                            embedded
-                            project={project}
-                            onChange={commands.replaceProject}
-                            onError={() =>
-                              commands.reportError(messages.saveFailed)
-                            }
+                          <ProjectSettingsReadBoundary
+                            read={projectSettings}
                             translate={translate}
-                            section="members"
-                          />
+                          >
+                            <CollaborationSettings
+                              api={api}
+                              embedded
+                              project={project}
+                              onChange={commands.replaceProject}
+                              onError={() =>
+                                commands.reportError(messages.saveFailed)
+                              }
+                              translate={translate}
+                              section="members"
+                            />
+                          </ProjectSettingsReadBoundary>
                         ),
                         agentsContent: (
                           <CollaborationSettings
@@ -1252,6 +1264,7 @@ export function CollaborationApp({
                         content: (
                           <ProjectExecutionEnvironments
                             api={api}
+                            configurationRead={projectSettings}
                             onManageDevices={
                               host.manageResource
                                 ? () => host.manageResource?.("environments")

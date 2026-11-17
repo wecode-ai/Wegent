@@ -1217,6 +1217,11 @@ describe('ProjectExecutionEnvironments', () => {
     await change('-workspace-policy', 'git_worktree')
     await rerender(api, { executionEnvironment: configuration, version: 3 })
     expect(element<HTMLSelectElement>('-workspace-policy').value).toBe('git_worktree')
+    await act(async () => element<HTMLButtonElement>('-save-configuration').click())
+    expect(api.projects.update).toHaveBeenCalledWith(
+      project.id,
+      expect.objectContaining({ version: 2 })
+    )
   })
 
   it('does not clobber in-progress form edits when the project prop refreshes', async () => {
