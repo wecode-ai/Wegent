@@ -210,6 +210,7 @@ def test_private_agent_runtime_address_follows_the_agent_owner(test_db, test_use
         message_id="agent-result",
         agent_id=agent.id,
         trigger_message_id=trigger.message_id,
+        metadata_json={"execution_id": 42, "workflow_task_title": "Private task"},
         runtime_device_id="owner-device",
         runtime_task_id="owner-task",
         status="completed",
@@ -222,6 +223,8 @@ def test_private_agent_runtime_address_follows_the_agent_owner(test_db, test_use
     )
     assert trigger_view.runtime_address is None
     assert trigger_view.trace_state == "restricted"
+    assert "execution_id" not in trigger_view.metadata
+    assert "workflow_task_title" not in trigger_view.metadata
 
     owner_view = project_chat_service.to_shared_view(
         row, db=test_db, viewer_user_id=agent.created_by_user_id
@@ -248,6 +251,8 @@ def test_shared_agent_runtime_is_available_without_private_metadata(test_db, tes
         metadata_json={
             "private_prompt": "not shared",
             "summary": "Public result",
+            "execution_id": 42,
+            "workflow_task_title": "Assigned task",
         },
         runtime_device_id="owner-device",
         runtime_task_id="owner-task",
@@ -266,6 +271,8 @@ def test_shared_agent_runtime_is_available_without_private_metadata(test_db, tes
     assert member_view.trace_state == "available"
     assert "private_prompt" not in member_view.metadata
     assert member_view.metadata["summary"] == "Public result"
+    assert member_view.metadata["execution_id"] == 42
+    assert member_view.metadata["workflow_task_title"] == "Assigned task"
 
 
 def test_shared_room_payload_never_contains_a_runtime_address_or_process_body():
@@ -275,11 +282,17 @@ def test_shared_room_payload_never_contains_a_runtime_address_or_process_body():
             "content": "private tool output",
             "runtimeAddress": {"deviceId": "device", "taskId": "task"},
             "traceRef": "trace",
-            "metadata": {"private_prompt": "not shared", "run_status": "running"},
+            "metadata": {
+                "private_prompt": "not shared",
+                "run_status": "running",
+                "execution_id": 42,
+                "contentMode": "delta",
+                "dispatch_assignments": [],
+            },
         }
     )
 
     assert payload["runtimeAddress"] is None
     assert payload["traceState"] == "restricted"
     assert payload["content"] == ""
-    assert payload["metadata"] == {"run_status": "running"}
+    assert payload["metadata"] == {"run_status": "running", "dispatch_assignments": []}

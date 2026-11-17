@@ -12,11 +12,18 @@ SHARED_METADATA_KEYS = frozenset(
     {
         "mentions",
         "stand_in_reply_to",
+        "stand_in",
         "execution_dispatch",
         "activity_type",
         "dispatch_role",
         "manager_display_name",
         "run_status",
+        "activity_at",
+        "conversation_only",
+        "kind",
+        "dispatch_id",
+        "coordination_round_id",
+        "dispatch_assignments",
         "summary",
         "evidence_refs",
         "next_action",
@@ -27,11 +34,33 @@ SHARED_METADATA_KEYS = frozenset(
     }
 )
 
+SHARED_RUNTIME_METADATA_KEYS = frozenset(
+    {
+        "run_id",
+        "execution_id",
+        "executor_type",
+        "backend_task_id",
+        "execution_url",
+        "model",
+        "runtime_event_sequence",
+        "contentMode",
+        "runtime_turn_id",
+        "workflow_task_title",
+    }
+)
 
-def shared_message_metadata(metadata: object) -> dict[str, object]:
+
+def shared_message_metadata(
+    metadata: object, *, include_runtime: bool = False
+) -> dict[str, object]:
     if not isinstance(metadata, dict):
         return {}
-    return {key: metadata[key] for key in SHARED_METADATA_KEYS if key in metadata}
+    keys = (
+        SHARED_METADATA_KEYS | SHARED_RUNTIME_METADATA_KEYS
+        if include_runtime
+        else SHARED_METADATA_KEYS
+    )
+    return {key: metadata[key] for key in keys if key in metadata}
 
 
 def shared_message_payload(message: dict[str, Any]) -> dict[str, Any]:

@@ -272,6 +272,134 @@ test.describe('Collaboration group Executor coordination', () => {
     }
   })
 
+  test('registers an assistant and creates an idempotent risk-scoped dispatch', async ({
+    page,
+    request,
+  }) => {
+    test.setTimeout(180_000)
+    if (!model) throw new Error('Issue Dispatch mock model was not provisioned')
+
+    const suffix = `${Date.now()}`
+    const fixture = await createProjectFixture(
+      page,
+      `assistant-${suffix}`,
+      `Assistant dispatch fixture ${suffix}`
+    )
+    try {
+      const me = await apiRequest<{ id: number }>(request, model.token, '/api/users/me')
+      const roster = await apiJson<{ id: string; endpointRef: string }>(
+        request,
+        model.token,
+        'POST',
+        `/api/v1/cloud-projects/${fixture.projectId}/assistant-roster`,
+        {
+          userId: me.id,
+          roleId: 'review',
+          endpointRef: `local_wework:${me.id}:review`,
+          displayName: `Dispatch reviewer ${suffix}`,
+          enabled: true,
+          capabilityTags: ['review'],
+          autonomyPolicy: {
+            automatic: true,
+            askBeforeAct: false,
+            riskCeiling: 'low',
+          },
+          availability: 'online',
+          version: 0,
+        }
+      )
+      const input = {
+        intentId: `assistant-intent-${suffix}`,
+        goal: `Assistant dispatch ${suffix}`,
+        riskLevel: 'high' as const,
+        description: 'Review the high-risk request before execution.',
+        managerUserId: me.id,
+        confirmationState: 'confirmed' as const,
+        assignments: [
+          {
+            rosterEntryId: roster.id,
+            userId: me.id,
+            brief: 'Review the high-risk request before execution.',
+          },
+        ],
+      }
+      const dispatched = await apiJson<{
+        dispatchId: string
+        rootIssueId: string
+        children: Array<{ issueId: string; status: string; rosterEntryId: string }>
+        replayed: boolean
+      }>(
+        request,
+        model.token,
+        'POST',
+        `/api/v1/cloud-projects/${fixture.projectId}/assistant-dispatches`,
+        input
+      )
+      expect(dispatched.replayed).toBe(false)
+      expect(dispatched.children).toHaveLength(1)
+      expect(dispatched.children[0]).toMatchObject({
+        rosterEntryId: roster.id,
+        status: 'waiting_confirmation',
+      })
+
+      const replayed = await apiJson<typeof dispatched>(
+        request,
+        model.token,
+        'POST',
+        `/api/v1/cloud-projects/${fixture.projectId}/assistant-dispatches`,
+        input
+      )
+      expect(replayed).toMatchObject({
+        dispatchId: dispatched.dispatchId,
+        rootIssueId: dispatched.rootIssueId,
+        replayed: true,
+      })
+
+      const automatic = await apiJson<typeof dispatched>(
+        request,
+        model.token,
+        'POST',
+        `/api/v1/cloud-projects/${fixture.projectId}/assistant-dispatches`,
+        {
+          ...input,
+          intentId: `assistant-low-risk-${suffix}`,
+          goal: `Automatic assistant dispatch ${suffix}`,
+          riskLevel: 'low',
+          description: 'Use the explicitly authorized low-risk assistant policy.',
+        }
+      )
+      expect(automatic.children[0].status).toBe('queued')
+
+      const root = await apiRequest<{
+        id: string
+        status: string
+        automation: { assistant_dispatch?: boolean }
+      }>(request, model.token, `/api/v1/loop-items/${dispatched.rootIssueId}`)
+      const child = await apiRequest<{
+        id: string
+        parent_id: string | null
+        automation: { risk_level?: string }
+      }>(request, model.token, `/api/v1/loop-items/${dispatched.children[0].issueId}`)
+      expect(root.automation.assistant_dispatch).toBe(true)
+      expect(child).toMatchObject({
+        parent_id: root.id,
+        automation: { risk_level: 'high' },
+      })
+    } finally {
+      for (const path of [
+        `/api/v1/cloud-projects/${fixture.projectId}`,
+        `/api/v1/workspaces/${fixture.workspaceId}`,
+      ]) {
+        const current = await apiRequest<{ version: number }>(request, model.token, path)
+        const removed = await request.delete(
+          `${PROVIDER_NATIVE_API_URL}${path}?version=${current.version}`,
+          { headers: authHeaders(model.token) }
+        )
+        expect(removed.status(), await removed.text()).toBe(204)
+      }
+    }
+  })
+
   test('runs two collaboration rounds with parallel members and fresh manager tasks', async ({
     page,
     request,
@@ -655,6 +783,22 @@ async function apiRequest<T>(
 ): Promise<T> {
   const response = await request.get(`${PROVIDER_NATIVE_API_URL}${pathname}`, {
     headers: authHeaders(token),
+  })
+  expect(response.status(), await response.text()).toBe(200)
+  return (await response.json()) as T
+}
+
+async function apiJson<T>(
+  request: APIRequestContext,
+  token: string,
+  method: 'POST',
+  pathname: string,
+  data: unknown
+): Promise<T> {
+  const response = await request.fetch(`${PROVIDER_NATIVE_API_URL}${pathname}`, {
+    method,
+    headers: authHeaders(token),
+    data,
   })
   expect(response.status(), await response.text()).toBe(200)
   return (await response.json()) as T

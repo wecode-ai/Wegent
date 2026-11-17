@@ -664,3 +664,21 @@ it("routes assistant roster and risk-scoped dispatch through the project API", a
     expect.objectContaining({ riskLevel: "low", intentId: "intent-1" }),
   );
 });
+
+it("rejects assistant publication without an exact project scope", () => {
+  const transport = {
+    get: vi.fn(),
+    post: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+  };
+  const api = createSharedWorkspaceHttpApi(transport);
+
+  expect(() =>
+    api.comments.create("issue/1", "Published conclusion", {
+      clientMessageId: "publication-1",
+      assistantSource: { deviceId: "device", taskId: "task" },
+    }),
+  ).toThrow("Assistant publication requires an exact project scope");
+  expect(transport.post).not.toHaveBeenCalled();
+});

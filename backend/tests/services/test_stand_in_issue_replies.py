@@ -16,7 +16,11 @@ from app.models.wework_notification import WeworkNotification
 from app.schemas.delivery import LoopItemTaskBind, LoopItemUpdate
 from app.schemas.issue_activity_comment import StandInPublicReply
 from app.schemas.project_chat import LoopItemAssign, ProjectChatMention, ProjectChatSend
-from app.services.collaboration_human_assignments import human_task_bindings
+from app.services.collaboration_human_assignments import (
+    direct_human_assignment_id,
+    human_task_bindings,
+)
+from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_unread import (
     content_revision,
     initialize_content_revision,
@@ -100,6 +104,30 @@ def publish(db, user, scope, identity=None, text="Received"):
     )
 
 
+def record_dispatch_assignment(db, user, scope):
+    project, issue, _, _, identity = scope
+    assignment, _ = issue_assignment_service.record(
+        db,
+        project_id=project.id,
+        issue_id=issue.id,
+        member_type="human",
+        member_id=str(user.id),
+        assigned_by_user_id=user.id,
+        workflow_step=None,
+        notify=False,
+        trigger="assistant_dispatch",
+        replace_root_assignments=True,
+    )
+    db.commit()
+    return assignment, identity.model_copy(
+        update={
+            "human_assignment_id": direct_human_assignment_id(
+                issue_id=issue.id, assignment_id=assignment.id
+            )
+        }
+    )
+
+
 def test_public_messages_are_separate_and_redelivery_is_idempotent(
     test_db, test_user, scope
 ):
@@ -154,6 +182,11 @@ def test_dispatched_reply_follows_the_member_autonomy_policy(
     test_db, test_user, scope, automatic, risk_level, expected_status, published
 ):
     issue = scope[1]
+    assignment, identity = record_dispatch_assignment(test_db, test_user, scope)
+    assert (
+        direct_human_assignment_id(issue_id=issue.id, assignment_id=assignment.id)
+        == identity.human_assignment_id
+    )
     issue.assignee_user_id = test_user.id
     issue.metadata_json = {
         "assistant_dispatch_role": "member",
@@ -173,7 +206,7 @@ def test_dispatched_reply_follows_the_member_autonomy_policy(
         test_db,
         test_user,
         scope,
-        scope[-1].model_copy(update={"message_id": f"result-{automatic}-{risk_level}"}),
+        identity.model_copy(update={"message_id": f"result-{automatic}-{risk_level}"}),
         "Verified summary",
     )
     test_db.refresh(issue)
@@ -198,6 +231,7 @@ def test_dispatch_publication_requires_the_authorized_owner_and_role():
 def test_late_dispatch_result_does_not_reopen_a_completed_issue(
     test_db, test_user, scope
 ):
+    _, identity = record_dispatch_assignment(test_db, test_user, scope)
     issue = scope[1]
     issue.assignee_user_id = test_user.id
     issue.metadata_json = {
@@ -218,14 +252,14 @@ def test_late_dispatch_result_does_not_reopen_a_completed_issue(
         test_db,
         test_user,
         scope,
-        scope[-1].model_copy(update={"message_id": "auto-result"}),
+        identity.model_copy(update={"message_id": "auto-result"}),
         "Automatic summary",
     )
     publish(
         test_db,
         test_user,
         scope,
-        scope[-1].model_copy(update={"message_id": "late-result"}),
+        identity.model_copy(update={"message_id": "late-result"}),
         "Late summary",
     )
     test_db.refresh(issue)
@@ -235,6 +269,7 @@ def test_late_dispatch_result_does_not_reopen_a_completed_issue(
 def test_reassigned_dispatch_result_cannot_complete_the_issue(
     test_db, test_user, test_admin_user, scope
 ):
+    _, identity = record_dispatch_assignment(test_db, test_user, scope)
     issue = scope[1]
     issue.assignee_user_id = test_admin_user.id
     issue.metadata_json = {
@@ -256,7 +291,7 @@ def test_reassigned_dispatch_result_cannot_complete_the_issue(
         test_db,
         test_user,
         scope,
-        scope[-1].model_copy(update={"message_id": "reassigned-result"}),
+        identity.model_copy(update={"message_id": "reassigned-result"}),
         "Late summary",
     )
     test_db.refresh(issue)
@@ -266,9 +301,56 @@ def test_reassigned_dispatch_result_cannot_complete_the_issue(
     assert issue.metadata_json["awaiting_public_summary"] is True
 
 
+def test_superseded_dispatch_result_cannot_transition_the_issue(
+    test_db, test_user, scope
+):
+    first, first_identity = record_dispatch_assignment(test_db, test_user, scope)
+    issue = scope[1]
+    issue.assignee_user_id = test_user.id
+    issue.metadata_json = {
+        "assistant_dispatch_role": "member",
+        "assistant_owner_user_id": test_user.id,
+        "assistant_endpoint_ref": f"local_wework:{test_user.id}:review",
+        "risk_level": "low",
+        "awaiting_public_summary": True,
+        "publish_policy": "summary_only",
+        "assistant_autonomy_policy": {
+            "automatic": True,
+            "ask_before_act": False,
+            "risk_ceiling": "low",
+        },
+    }
+    test_db.commit()
+    second, second_identity = record_dispatch_assignment(test_db, test_user, scope)
+    assert first.id != second.id
+
+    publish(
+        test_db,
+        test_user,
+        scope,
+        first_identity.model_copy(update={"message_id": "superseded-result"}),
+        "Superseded summary",
+    )
+    test_db.refresh(issue)
+    assert issue.status == "pending"
+    assert issue.metadata_json["awaiting_public_summary"] is True
+
+    publish(
+        test_db,
+        test_user,
+        scope,
+        second_identity.model_copy(update={"message_id": "current-result"}),
+        "Current summary",
+    )
+    test_db.refresh(issue)
+    assert issue.status == "completed"
+    assert issue.metadata_json["awaiting_public_summary"] is False
+
+
 def test_dispatch_result_does_not_override_a_user_review_state(
     test_db, test_user, scope
 ):
+    _, identity = record_dispatch_assignment(test_db, test_user, scope)
     issue = scope[1]
     issue.status = "in_review"
     issue.assignee_user_id = test_user.id
@@ -289,7 +371,7 @@ def test_dispatch_result_does_not_override_a_user_review_state(
         test_db,
         test_user,
         scope,
-        scope[-1].model_copy(update={"message_id": "review-state-result"}),
+        identity.model_copy(update={"message_id": "review-state-result"}),
         "Result while reviewing",
     )
     test_db.refresh(issue)

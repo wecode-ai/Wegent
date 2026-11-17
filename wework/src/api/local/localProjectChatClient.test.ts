@@ -203,6 +203,8 @@ describe('createLocalProjectChatClient', () => {
         metadata: {
           private_prompt: 'not shared',
           run_status: 'running',
+          execution_id: 42,
+          workflow_task_title: 'Assigned task',
           runtime_address: { deviceId: 'shared-device', taskId: 'shared-task' },
         },
       }),
@@ -216,7 +218,11 @@ describe('createLocalProjectChatClient', () => {
       content: '',
       runtimeAddress: { deviceId: 'shared-device', taskId: 'shared-task' },
       traceState: 'available',
-      metadata: { run_status: 'running' },
+      metadata: {
+        run_status: 'running',
+        execution_id: 42,
+        workflow_task_title: 'Assigned task',
+      },
     })
     subscription.unsubscribe()
   })
@@ -232,6 +238,8 @@ describe('createLocalProjectChatClient', () => {
         trace_ref: 'trace',
         metadata: {
           private_prompt: 'not shared',
+          execution_id: 99,
+          workflow_task_title: 'Private task',
           runtime_address: { deviceId: 'private-device', taskId: 'private-task' },
         },
       }),

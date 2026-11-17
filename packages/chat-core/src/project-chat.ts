@@ -270,7 +270,11 @@ export function createProjectChatClient(
         throw error
       }
     },
-    send(input) {
+    async send(input) {
+      if (input.assistantSource)
+        throw new Error(
+          'Assistant publication provenance requires the activity transport',
+        )
       return emitWithAck<ProjectChatMessage>(client, SEND_EVENT, {
         projectId: input.projectId,
         taskId: input.taskId,

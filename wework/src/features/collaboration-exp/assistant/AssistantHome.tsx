@@ -171,6 +171,10 @@ export function AssistantHome({
         capabilities: { attachments: true, cancel: true, trace: true },
       }
     )
+    if (!endpoint) {
+      setError(t('assistant.deviceUnavailable'))
+      return false
+    }
     try {
       const current = shared.projects.listAssistantRoster
         ? await shared.projects.listAssistantRoster(project.id)

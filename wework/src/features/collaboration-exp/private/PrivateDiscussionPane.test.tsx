@@ -22,7 +22,20 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
-    state: { user: { id: mocks.userId } },
+    state: {
+      user: { id: mocks.userId },
+      devices: [
+        {
+          id: 1,
+          device_id: 'device-1',
+          name: 'Local device',
+          status: 'online',
+          is_default: true,
+          device_type: 'local',
+          bind_shell: 'claudecode',
+        },
+      ],
+    },
     services: {
       runtimeWorkApi: {
         sendRuntimeMessage: mocks.runtimeApiSend,
@@ -172,6 +185,24 @@ describe('private discussion pane', () => {
       expect.objectContaining({ message: 'Replace the current direction' })
     )
     expect(mocks.runtimeApiSend).not.toHaveBeenCalled()
+  })
+
+  it('reports queued acceptance to the native composer', async () => {
+    mocks.runtimeApiSend.mockResolvedValue({
+      accepted: true,
+      taskId: 'task-1',
+      status: 'queued',
+    })
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+
+    await expect(
+      panelProps.assistantSend({
+        message: 'Queue this follow-up',
+        clientUserMessageId: 'queued-request',
+      })
+    ).resolves.toEqual({ sent: true, queued: true })
   })
 
   it('uses task context and the original source history without a second embedded pane heading', () => {

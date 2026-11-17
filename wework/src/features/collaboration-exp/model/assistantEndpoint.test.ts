@@ -29,4 +29,14 @@ describe('experienceAssistantEndpoint', () => {
       })
     ).toMatchObject({ id: `${kind}:7:review`, kind, availability: 'online' })
   })
+
+  it('does not guess a provider when the configured device is unavailable', () => {
+    expect(
+      experienceAssistantEndpoint([], 'missing-device', {
+        ownerUserId: 7,
+        roleId: 'review',
+        displayName: 'Reviewer',
+      })
+    ).toBeNull()
+  })
 })

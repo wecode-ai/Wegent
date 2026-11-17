@@ -64,7 +64,12 @@ def test_project_chat_push_never_broadcasts_private_source_fields(monkeypatch) -
             "content": "private tool output",
             "runtimeAddress": {"deviceId": "device", "taskId": "task"},
             "traceRef": "trace",
-            "metadata": {"private_prompt": "not shared", "run_status": "running"},
+            "metadata": {
+                "private_prompt": "not shared",
+                "run_status": "running",
+                "execution_id": 42,
+                "contentMode": "delta",
+            },
         }
     )
 

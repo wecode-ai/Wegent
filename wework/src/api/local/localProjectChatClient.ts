@@ -41,11 +41,18 @@ const LOCAL_COMMENT_POLL_INTERVAL_MS = 3000
 const SHARED_METADATA_KEYS = new Set([
   'mentions',
   'stand_in_reply_to',
+  'stand_in',
   'execution_dispatch',
   'activity_type',
   'dispatch_role',
   'manager_display_name',
   'run_status',
+  'activity_at',
+  'conversation_only',
+  'kind',
+  'dispatch_id',
+  'coordination_round_id',
+  'dispatch_assignments',
   'summary',
   'evidence_refs',
   'next_action',
@@ -53,6 +60,18 @@ const SHARED_METADATA_KEYS = new Set([
   'imported_from',
   'history_import',
   'member_assistant_result',
+])
+const SHARED_RUNTIME_METADATA_KEYS = new Set([
+  'run_id',
+  'execution_id',
+  'executor_type',
+  'backend_task_id',
+  'execution_url',
+  'model',
+  'runtime_event_sequence',
+  'contentMode',
+  'runtime_turn_id',
+  'workflow_task_title',
 ])
 
 function commentToMessage(
@@ -75,7 +94,11 @@ function commentToMessage(
   const metadata = owner
     ? (record.metadata ?? {})
     : Object.fromEntries(
-        Object.entries(record.metadata ?? {}).filter(([key]) => SHARED_METADATA_KEYS.has(key))
+        Object.entries(record.metadata ?? {}).filter(
+          ([key]) =>
+            SHARED_METADATA_KEYS.has(key) ||
+            (runtimeVisible && SHARED_RUNTIME_METADATA_KEYS.has(key))
+        )
       )
   const runtimeAddressRecord = runtimeVisible ? (record.metadata ?? {}).runtime_address : undefined
   const runtimeAddress =

@@ -15,15 +15,12 @@ export function experienceAssistantEndpoint(
   }
 ) {
   const device = findWorkbenchDevice((devices ?? []) as DeviceInfo[], deviceId)
+  if (!device) return null
   const availability =
     input.availability ??
-    (device?.status === 'online' || device?.status === 'busy'
-      ? 'online'
-      : device
-        ? 'offline'
-        : 'unknown')
+    (device.status === 'online' || device.status === 'busy' ? 'online' : 'offline')
   const scoped = { ...input, availability }
-  return device?.device_type === 'cloud' || device?.device_type === 'remote'
+  return device.device_type === 'cloud' || device.device_type === 'remote'
     ? cloudDeviceEndpoint(scoped)
     : localWeworkEndpoint(scoped)
 }

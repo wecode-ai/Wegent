@@ -109,7 +109,7 @@ fn apply_private_source_access(
 ) {
     let owner = runtime_owner_user_id == Some(viewer);
     if !owner {
-        view["metadata"] = json!(shared_metadata(&row.metadata()));
+        view["metadata"] = json!(shared_metadata(&row.metadata(), runtime_shared));
         if matches!(row.message_type.as_str(), "agent_status" | "agent_chunk") {
             view["content"] = json!("");
         }
@@ -139,7 +139,7 @@ fn apply_private_source_access(
 pub(crate) fn shared_message_payload(view: &Value) -> Value {
     let mut shared = view.clone();
     if let Some(metadata) = view.get("metadata") {
-        shared["metadata"] = json!(shared_metadata(metadata));
+        shared["metadata"] = json!(shared_metadata(metadata, false));
     }
     if matches!(
         view.get("type").and_then(Value::as_str),
@@ -158,15 +158,22 @@ pub(crate) fn shared_message_payload(view: &Value) -> Value {
     shared
 }
 
-fn shared_metadata(metadata: &Value) -> serde_json::Map<String, Value> {
+fn shared_metadata(metadata: &Value, include_runtime: bool) -> serde_json::Map<String, Value> {
     const SHARED_KEYS: &[&str] = &[
         "mentions",
         "stand_in_reply_to",
+        "stand_in",
         "execution_dispatch",
         "activity_type",
         "dispatch_role",
         "manager_display_name",
         "run_status",
+        "activity_at",
+        "conversation_only",
+        "kind",
+        "dispatch_id",
+        "coordination_round_id",
+        "dispatch_assignments",
         "summary",
         "evidence_refs",
         "next_action",
@@ -175,8 +182,26 @@ fn shared_metadata(metadata: &Value) -> serde_json::Map<String, Value> {
         "history_import",
         "member_assistant_result",
     ];
+    const SHARED_RUNTIME_KEYS: &[&str] = &[
+        "run_id",
+        "execution_id",
+        "executor_type",
+        "backend_task_id",
+        "execution_url",
+        "model",
+        "runtime_event_sequence",
+        "contentMode",
+        "runtime_turn_id",
+        "workflow_task_title",
+    ];
     SHARED_KEYS
         .iter()
+        .chain(
+            include_runtime
+                .then_some(SHARED_RUNTIME_KEYS)
+                .into_iter()
+                .flatten(),
+        )
         .filter_map(|key| {
             metadata
                 .get(*key)
@@ -205,7 +230,9 @@ mod tests {
             metadata: Some(brz_mysql::Json(json!({
                 "private_prompt":"secret",
                 "summary":"Public summary",
-                "mentions":[]
+                "mentions":[],
+                "execution_id":42,
+                "contentMode":"delta"
             }))),
             trigger_message_id: String::new(),
             reply_to_message_id: String::new(),
@@ -274,7 +301,9 @@ mod tests {
         let mut shared = row();
         shared.metadata = Some(brz_mysql::Json(json!({
             "private_prompt":"not shared",
-            "summary":"Public result"
+            "summary":"Public result",
+            "execution_id":42,
+            "runtime_event_sequence":"7"
         })));
         let mut view = message_view(&shared);
         apply_private_source_access(&mut view, &shared, 8, Some(7), true);
@@ -283,6 +312,8 @@ mod tests {
         assert_eq!(view["traceState"], "available");
         assert!(view["metadata"].get("private_prompt").is_none());
         assert_eq!(view["metadata"]["summary"], "Public result");
+        assert_eq!(view["metadata"]["execution_id"], 42);
+        assert_eq!(view["metadata"]["runtime_event_sequence"], "7");
     }
 
     #[test]
@@ -296,6 +327,8 @@ mod tests {
         assert_eq!(shared["runtimeAddress"], Value::Null);
         assert_eq!(shared["traceState"], "restricted");
         assert!(shared["metadata"].get("private_prompt").is_none());
+        assert!(shared["metadata"].get("execution_id").is_none());
+        assert!(shared["metadata"].get("contentMode").is_none());
     }
 
     #[test]

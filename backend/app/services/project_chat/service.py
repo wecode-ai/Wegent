@@ -2905,7 +2905,9 @@ class ProjectChatService:
                     if row.message_type in {"agent_status", "agent_chunk"}
                     else view.content
                 ),
-                "metadata": shared_message_metadata(row.metadata_json),
+                "metadata": shared_message_metadata(
+                    row.metadata_json, include_runtime=runtime_shared
+                ),
                 "runtime_address": view.runtime_address if runtime_shared else None,
                 "trace_state": trace_state,
             }

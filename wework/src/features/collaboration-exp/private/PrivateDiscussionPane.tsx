@@ -149,6 +149,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
       displayName: conversation.title ?? 'Assistant',
       capabilities: { attachments: true, cancel: true, trace: true },
     })
+    if (!endpoint) return null
     const scopedConversation = createAssistantConversation(endpoint, {
       id: conversation.address.taskId,
       projectId: project.id,
@@ -307,7 +308,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                 assistantInteraction && actorId !== undefined
                   ? async input => {
                       try {
-                        await assistantInteraction.send({
+                        const result = await assistantInteraction.send({
                           requestId: input.clientUserMessageId,
                           idempotencyKey: input.clientUserMessageId,
                           projectId: project.id,
@@ -319,7 +320,10 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                           interruptWhenBusy: input.interruptWhenBusy,
                           runtimeOptions: input.runtimeOptions,
                         })
-                        return { sent: true }
+                        return {
+                          sent: true,
+                          ...(result.queued === true ? { queued: true } : {}),
+                        }
                       } catch (cause) {
                         return {
                           sent: false,

@@ -112,6 +112,17 @@ function setupWorkbench() {
   }
   const state = {
     user: { id: 7 },
+    devices: [
+      {
+        id: 1,
+        device_id: 'device-1',
+        name: 'Local device',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+        bind_shell: 'claudecode',
+      },
+    ],
     runtimeWork: { projects: [], chats: [], totalTasks: 0 } as RuntimeWorkListResponse | null,
     runtimeWorkLoad: { phase: 'ready', error: null } as RuntimeWorkLoadState,
   }
@@ -1136,6 +1147,52 @@ describe('AssistantHome', () => {
       endpointRef: 'cloud_device:7:reviewer',
       availability: 'online',
     })
+  })
+
+  it('does not guess a project endpoint when the assistant device is unavailable', async () => {
+    setupWorkbench()
+    ;(mocks.workbench.state as Record<string, unknown>).devices = []
+    const role = {
+      ...newStandInRole('missing-device', 'reviewer'),
+      name: 'Reviewer',
+      collaboration: {
+        enabled: true,
+        allProjects: false,
+        projects: [{ id: 'first-shared-project', store: 'cloud' as const }],
+        excludedProjects: [],
+        tags: ['review'],
+      },
+    }
+    mocks.source.settings = { ...settings, roles: [role] }
+    const rosterSave = vi.fn().mockResolvedValue({})
+    ;(
+      mocks.workbench.services as {
+        sharedWorkspaceApi: { projects: Record<string, unknown> }
+      }
+    ).sharedWorkspaceApi.projects = {
+      listAssistantRoster: vi.fn().mockResolvedValue([]),
+      saveAssistantRosterEntry: rosterSave,
+    }
+    render(
+      <AssistantHome
+        active
+        projects={[
+          {
+            project: experienceProjectFixture({
+              id: 'first-shared-project',
+              project_store: 'backend',
+            }),
+            issues: [],
+          },
+        ]}
+      />
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-team-toggle'))
+    fireEvent.click(
+      screen.getByTestId('collaboration-exp-assistant-register-reviewer-first-shared-project')
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('assistant.deviceUnavailable')
+    expect(rosterSave).not.toHaveBeenCalled()
   })
 
   it('restores the ordinary-question draft after remounting without creating a conversation', () => {

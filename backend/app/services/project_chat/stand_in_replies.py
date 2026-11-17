@@ -12,7 +12,9 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
 from app.schemas.issue_activity_comment import StandInPublicReply
 from app.schemas.project_chat import ProjectChatMessageView
+from app.services.collaboration_human_assignments import direct_human_assignment_id
 from app.services.device.identity import resolve_owned_device_alias
+from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_chat.service import project_chat_service
@@ -52,6 +54,24 @@ def _dispatch_endpoint_belongs_to(
     except ValueError:
         return False
     return endpoint_owner == user_id
+
+
+def _dispatch_assignment_is_current(
+    db: Session,
+    item: LoopItem,
+    *,
+    user_id: int,
+    human_assignment_id: str | None,
+) -> bool:
+    if human_assignment_id is None:
+        return False
+    return any(
+        direct_human_assignment_id(issue_id=item.id, assignment_id=assignment.id)
+        == human_assignment_id
+        and assignment.member_type == "human"
+        and assignment.member_id == str(user_id)
+        for assignment in issue_assignment_service.active_for_issue(db, item.id)
+    )
 
 
 @trace_sync("stand_in.public_issue_reply", tracer_name="backend.project_chat")
@@ -122,10 +142,16 @@ def publish_stand_in_reply(
     owner_matches = _dispatch_endpoint_belongs_to(
         metadata, user_id=user_id, role_id=identity.role_id
     )
+    dispatch_current = owner_matches and _dispatch_assignment_is_current(
+        db,
+        item,
+        user_id=user_id,
+        human_assignment_id=identity.human_assignment_id,
+    )
     can_transition = item.status not in {"completed", "in_review"}
     auto_publish = (
         metadata.get("assistant_dispatch_role") == "member"
-        and owner_matches
+        and dispatch_current
         and metadata.get("assistant_owner_user_id") == user_id
         and item.assignee_user_id == user_id
         and metadata.get("awaiting_public_summary") is True
@@ -141,7 +167,7 @@ def publish_stand_in_reply(
     )
     dispatch_review = (
         metadata.get("assistant_dispatch_role") == "member"
-        and owner_matches
+        and dispatch_current
         and metadata.get("assistant_owner_user_id") == user_id
         and item.assignee_user_id == user_id
         and metadata.get("awaiting_public_summary") is True

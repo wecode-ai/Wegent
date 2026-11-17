@@ -18,7 +18,14 @@ export interface AssistantInteractionTransport {
     runtimeOptions?: AssistantInteractionRequest["runtimeOptions"];
     conversationContext: "private_discussion";
     queueIfBusy: boolean;
-  }): Promise<{ accepted: boolean; taskId: string; error?: string | null }>;
+  }): Promise<{
+    accepted: boolean;
+    taskId: string;
+    status?: "queued" | "running";
+    queuePosition?: number | null;
+    turnId?: string;
+    error?: string | null;
+  }>;
   cancelRuntimeTask(
     address: RuntimeTaskAddress,
   ): Promise<{ accepted: boolean; error?: string | null }>;
@@ -109,6 +116,7 @@ export function createAssistantInteraction(
       conversationId: conversation.id,
       requestId: request.requestId,
       state: "accepted" as const,
+      ...(result.status === "queued" ? { queued: true } : {}),
     };
   }
 

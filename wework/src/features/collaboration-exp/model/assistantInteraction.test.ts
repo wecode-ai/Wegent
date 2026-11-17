@@ -96,6 +96,21 @@ describe.each(['local_wework', 'cloud_device', 'wegent_agent'] as const)(
       })
     })
 
+    it('reports queued acceptance without claiming the turn has started', async () => {
+      const f = fixture(kind)
+      f.sendRuntimeMessage.mockResolvedValueOnce({
+        accepted: true,
+        taskId: 'original-task',
+        status: 'queued',
+      })
+      const interaction = createAssistantInteraction(f.endpoint, f.conversation, f.transport)
+
+      await expect(interaction.send(f.request)).resolves.toMatchObject({
+        state: 'accepted',
+        queued: true,
+      })
+    })
+
     it('retains identity after routing to another device', async () => {
       const f = fixture(kind)
       const moved = {
@@ -227,6 +242,23 @@ describe('assistant endpoint adapters', () => {
     expect(send).toHaveBeenCalledOnce()
     expect(cancel).toHaveBeenCalledOnce()
     expect(transcript).toHaveBeenCalledWith(address)
+  })
+
+  it('rejects an incomplete Runtime address before creating a conversation', () => {
+    const endpoint = localWeworkEndpoint({
+      ownerUserId: 7,
+      roleId: 'review',
+      displayName: 'Review assistant',
+    })
+    expect(() =>
+      createAssistantConversation(endpoint, {
+        id: 'conversation',
+        projectId: 'project',
+        issueId: 'ISSUE-1',
+        deviceId: 'device',
+        taskId: '',
+      })
+    ).toThrow('Assistant conversation scope is required')
   })
 
   it('projects a roster record into the shared endpoint capability contract', () => {
