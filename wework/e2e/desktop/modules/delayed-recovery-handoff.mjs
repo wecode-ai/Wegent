@@ -6,10 +6,15 @@ import { appendProcessOutput } from '../process-output.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { quitInstalledHost } from './installed-startup-history.mjs'
 import { routeUpgradeRequests } from './upgrade-request-route.mjs'
+import { inspectRunningApp, readConnectedApplicationPid } from './inspect-before-start.mjs'
 
 /** A queued native recovery must not revive B after another process restored A. */
 export async function assertDelayedRecoveryHandoffs(options) {
   const { root, targetId, control, installedVersion, expectedVersion } = options
+  assert.ok(
+    Array.isArray(options.inspectorPorts),
+    'Recovery handoffs require the package inspector registry'
+  )
   const target = JSON.parse(await readFile(join(root, 'slots', targetId, 'release.json'), 'utf8'))
   const payload = target.macosInstallation.payloadExecutable
   const token = (await readFile(join(root, 'healthy'), 'utf8')).trim()
@@ -33,7 +38,8 @@ export async function assertDelayedRecoveryHandoffs(options) {
     appendProcessOutput(child.stderr, log)
     let handedOff = false
     try {
-      await routeUpgradeRequests(child, options.origin, log)
+      const port = await routeUpgradeRequests(child, options.origin, log, { followHandoffs: true })
+      options.inspectorPorts.push(port)
       await control.awaitReadyAfter(readyCount, options.timeoutMs)
       assert.equal(
         await installedVersion(),
@@ -44,6 +50,8 @@ export async function assertDelayedRecoveryHandoffs(options) {
         timeoutMs: options.timeoutMs,
       })
       assert.equal(child.exitCode, 0, 'The recovery bootstrap did not exit after its handoff')
+      const pid = await readConnectedApplicationPid(control)
+      assert.equal(await inspectRunningApp(options.inspectorPorts, pid, 'process.pid'), pid)
       handedOff = true
     } finally {
       if (!handedOff) await stopProcessGroup(child)

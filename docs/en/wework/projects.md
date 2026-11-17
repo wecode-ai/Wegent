@@ -161,6 +161,11 @@ Open **Milestones** in the project. The Issue-detail selector only associates ex
 
 ## Members, discussion assignment and archival
 
+In a native cloud project Issue, open **Participants → +**, search by name or email, select multiple people across searches, then click **Add**. Results outside the project explain that access is limited to this Issue and require confirmation. Canceling creates no invitations. The assignee picker uses the same search and confirmation flow and saves after confirmation. GitHub/GitLab and other external Issues retain their source provider membership and access policies.
+
+An outside participant manages only the invited Issue: reading, commenting, editing, inviting people and assigning to people. This grants no project membership, access to the project or other Issues, project administration, or project execution resources. The Issue link opens its details directly. Removing a participant revokes access unless they remain the current assignee; past assignments grant no continuing access. Multi-selection adds participants individually; errors remain visible and successful additions are retained.
+
+
 | Feature                            | Steps                                                                                                                       | Conditions and result                                                                                              |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Add project member                 | Project settings → Project members → Add member → search username/email → choose role → click result                      | Clicking adds immediately; no extra Save button; requires management permission                                    |
@@ -309,6 +314,7 @@ Open **Project settings → AI configuration → Agents → Edit** on the releva
 Assignment errors identify the Agent, the Issue's bound environment, the policy environment and the denial reason. For a policy conflict, open **How it runs** in the editor above and configure the Agent to use the Issue's bound device. For missing workspace or project authorization, restore the grant on the indicated **Execution environments** page, then assign again. When group members have no common runner, the error lists each member and its eligible devices. Rejected assignments preserve the saved assignee and do not automatically move historical sessions to another device.
 
 In a global, space or project agent create/settings form, check resource ownership and choose the capability source:
+
 
 | Option/action                       | Steps and limits                                                                                                                                                      |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
