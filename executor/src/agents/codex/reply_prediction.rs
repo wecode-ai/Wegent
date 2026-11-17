@@ -98,11 +98,17 @@ impl CodexAppServerClient {
         };
         self.mark_thread_active(&thread_id).await;
         let result = async {
-            if let Some(registration) =
-                launch_config.and_then(|config| config.local_proxy_registration.as_deref())
-            {
-                local_model_proxy::bind_fork_thread(&registration.0, &thread_id)?;
-            }
+            let _prediction_route = launch_config
+                .and_then(|config| config.local_proxy_registration.as_deref())
+                .map(|registration| {
+                    local_model_proxy::bind_prediction_thread(
+                        &registration.0,
+                        source_thread_id,
+                        &thread_id,
+                    )
+                    .map(LocalProxyRegistration)
+                })
+                .transpose()?;
             self.run_prediction_turn(
                 &thread_id,
                 source_thread_id,

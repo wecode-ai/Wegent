@@ -135,6 +135,8 @@ The test does not simulate Wework, Executor, or Codex. To keep regression result
 
 Reply predictions and their image-description requests are dispatched independently of the foreground scenario. A previous conversation's background image request can arrive after the protocol matrix starts. The model fixture identifies it first, retains the image-description protocol checks and response, and leaves matrix state unchanged. `desktop-reply-prediction-fixture.test.mjs` covers this cross-scenario path; foreground endpoint and model ID assertions remain intact.
 
+`reply-prediction-official` exercises reply suggestions through the local model proxy with an official CodeX subscription. Only the subscription model service is simulated; Electron, Codex, Executor, and task storage remain real. It verifies suggestions across consecutive turns, preservation of the parent conversation identity, prediction after a native app-server restart, and subsequent conversation turns. A prediction fork inherits its parent's provider URL, so it must reuse the parent thread's bound route and retain a reference while generating. The independent route rule for ordinary forks does not apply to predictions. If the parent route has not been restored, the existing stale-route recovery mechanism applies. The checkpoint runs in an existing core CI shard.
+
 The model protocol matrix defines 18 combinations across execution location, model source, and protocol:
 
 - Local execution covers local custom models, built-in Codex models, and cloud Model CRDs across all three protocols, for 9 complete text and tool lifecycles.
