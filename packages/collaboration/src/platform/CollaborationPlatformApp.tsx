@@ -3062,20 +3062,27 @@ function CollaborationPlatformAppContent({
               }
             },
             configure: async (project, selection) => {
-              await configureProjectMembers({
-                api,
-                projectId: project.id,
-                currentUserId:
-                  host.currentUser?.id ??
-                  projectWorkspace?.created_by_user_id ??
-                  0,
-                memberUserIds: selection.memberUserIds,
-                members: projectWorkspaceMembers,
-                verificationFailureMessage:
-                  locale === "zh-CN"
-                    ? "未能确认该成员拥有项目 Developer 权限，请重试"
-                    : "Project Developer access has not been confirmed for this member. Please retry.",
-              });
+              const currentUserId =
+                host.currentUser?.id ??
+                projectWorkspace?.created_by_user_id ??
+                0;
+              if (
+                selection.memberUserIds.some(
+                  (userId) => userId !== currentUserId,
+                )
+              ) {
+                await configureProjectMembers({
+                  api,
+                  projectId: project.id,
+                  currentUserId,
+                  memberUserIds: selection.memberUserIds,
+                  members: projectWorkspaceMembers,
+                  verificationFailureMessage:
+                    locale === "zh-CN"
+                      ? "未能确认该成员拥有项目 Developer 权限，请重试"
+                      : "Project Developer access has not been confirmed for this member. Please retry.",
+                });
+              }
               if (selection.template) {
                 await prepareTemplateProject(
                   api,

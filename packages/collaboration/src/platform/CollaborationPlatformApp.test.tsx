@@ -5240,6 +5240,9 @@ describe("CollaborationPlatformApp real component flow", () => {
 
   it("creates a template project without runtime setup and keeps authorization optional", async () => {
     const { api } = createApi({ initialProjects: [] });
+    api.members.list = vi.fn(async () => {
+      throw new Error("Unrelated project member roster unavailable");
+    });
     api.agents.create = vi.fn(async (_projectId, input) => ({
       ...agent,
       id: `template-${input.name}`,
@@ -5268,6 +5271,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.projects.create).toHaveBeenCalledOnce();
     expect(api.projects.addExecutionEnvironment).not.toHaveBeenCalled();
     expect(api.agents.create).toHaveBeenCalledTimes(6);
+    expect(api.members.list).not.toHaveBeenCalled();
     for (const [, input] of vi.mocked(api.agents.create).mock.calls) {
       expect(input.executionPolicy).toEqual({ mode: "user_select" });
       expect(input.modelPolicy).toEqual({ mode: "user_select" });
@@ -7324,6 +7328,57 @@ describe("CollaborationPlatformApp real component flow", () => {
     ).toBeLessThan(
       api.projects.addExecutionEnvironment.mock.invocationCallOrder[0],
     );
+  });
+
+  it("configures selected agents and environments without an unrelated project member roster", async () => {
+    const currentEnvironment = { ...environment, is_current_device: true };
+    const { api } = createApi({
+      initialProjects: [],
+      initialResources: {
+        agents: [agent],
+        execution_environments: [currentEnvironment],
+      },
+    });
+    api.members.list = vi.fn(async () => {
+      throw new Error("Project member roster unavailable");
+    });
+    api.agents.create = vi.fn(async () => agent);
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+    await chooseBlankProjectCreation("collaboration-workspace-project-create");
+    await change(
+      byTestId("collaboration-project-name-input") as HTMLInputElement,
+      "Only agents and a device",
+    );
+    await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(
+      portalByTestId("collaboration-project-create-collaborator-tab-agents"),
+    );
+    await click(
+      portalByTestId(`collaboration-project-create-agent-${agent.id}`),
+    );
+    await click(byTestId("collaboration-project-create-confirm"));
+
+    expect(api.projects.create).toHaveBeenCalledOnce();
+    expect(api.agents.create).toHaveBeenCalledWith(
+      project.id,
+      createSharedAgentBindingInput(agent),
+    );
+    expect(api.projects.addExecutionEnvironment).toHaveBeenCalledWith(
+      project.id,
+      currentEnvironment.device_id,
+    );
+    expect(api.members.list).not.toHaveBeenCalled();
+    expect(api.members.add).not.toHaveBeenCalled();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-project-name-input"]',
+      ),
+    ).toBeNull();
   });
 
   it("does not authorize an environment or create agents when workspace sharing fails", async () => {

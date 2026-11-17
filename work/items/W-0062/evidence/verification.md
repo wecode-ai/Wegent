@@ -90,6 +90,8 @@ pnpm --filter wework test src/features/todo/CloudTodoWorkspace.test.tsx src/feat
 
 新测试同时确认：成员已经以 Developer 保存后，看板读取失败仍曾阻止成功回调。现在项目快照读取使用原有页面错误报告路径，不再把看板错误包装为成员配置失败；保留名单回读及成功成员提示。无成员和有成员两条看板失败路径均覆盖。此轮完整 Platform 与 Dialog 共 193 项、普通入口与工厂共 73 项测试通过；共享构建、Wework typecheck、格式检查及针对性 lint 通过，未新增 lint 问题。新增目录 mock 补齐了 `defaultSelection: null`。最新提交仍须取得其自身的 CI 结果。
 
+对 `25250db76` 的补充评审获得另一条稳定复现：协作平台入口未选额外成员，只选智能体与当前设备时，项目成员名单接口失败仍阻断资源配置，项目创建一次但智能体未绑定。平台现在与普通入口一致，仅在选择了当前用户之外的成员时调用成员配置器；保留配置器完整名单回读及错误契约。新用例验证智能体与设备均正常配置、成员 API 不被调用且创建弹窗关闭；原模板用例补强为成员 API 不可用仍可完成无成员模板创建。相关平台 7 项与原成员配置器 11 项测试全部通过，真实所选成员的失败、持久化校验与同项目重试断言保持。最终 CI 仍以包含此修复的新 head 为准。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
