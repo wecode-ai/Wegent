@@ -19,6 +19,7 @@ function windowFixture(maximized = false) {
     maximize: vi.fn(),
     setContentSize: vi.fn(),
     unmaximize: vi.fn(),
+    webContents: { capturePage: vi.fn().mockResolvedValue(undefined) },
   })
 }
 
@@ -27,6 +28,32 @@ function expectClean(target: ReturnType<typeof windowFixture>) {
     expect(target.listenerCount(event)).toBe(0)
   }
 }
+
+test('acknowledges a native resize only after its compositor frame completes', async () => {
+  const target = windowFixture()
+  target.setContentSize.mockImplementation((width: number, height: number) => {
+    target.getContentSize.mockReturnValue([width, height])
+    target.emit('resize')
+  })
+  let rendered!: () => void
+  target.webContents.capturePage.mockReturnValueOnce(
+    new Promise<void>(resolve => {
+      rendered = resolve
+    })
+  )
+  const finished = vi.fn()
+  const resizing = setWindowSize(target, 1024, 768).then(finished)
+  try {
+    await vi.waitFor(() => expect(target.webContents.capturePage).toHaveBeenCalledOnce())
+    expect(target.getContentSize()).toEqual([1024, 768])
+    expect(finished).not.toHaveBeenCalled()
+  } finally {
+    rendered()
+    await resizing
+  }
+  expect(finished).toHaveBeenCalledOnce()
+  expectClean(target)
+})
 
 test('waits for native unmaximize before requesting a size and preserves the original size', async () => {
   const target = windowFixture(true)
