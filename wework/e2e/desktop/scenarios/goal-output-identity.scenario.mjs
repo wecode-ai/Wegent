@@ -18,6 +18,7 @@ import {
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import {
   activeTranscriptSelector,
+  sendPrompt,
   assertConversationTextOccurrences,
   assertConversationTextOrder,
 } from '../modules/conversation-navigation.mjs'
@@ -220,10 +221,6 @@ export function createDesktopScenario(options) {
         return payload.result
       }
       const waitText = text => control.command('waitFor', activeTranscriptSelector(), { text })
-      const send = async text => {
-        await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: text })
-        await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-      }
       const transcript = () => rpc('runtime.tasks.transcript', { address, refresh: true })
       const lifecycle = async () =>
         JSON.parse(
@@ -237,7 +234,7 @@ export function createDesktopScenario(options) {
       try {
         await control.command('click', '[data-testid="new-chat-button"]')
         await createSingleRootLocalProject(control, options.workspacePath, 'output-identity')
-        await send(BASE)
+        await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, BASE)
         await waitText(HISTORY)
         await control.command(
           'waitFor',
@@ -248,7 +245,7 @@ export function createDesktopScenario(options) {
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="add-context-button"]`
         )
         await control.command('click', '[data-testid="set-goal-button"]')
-        await send(GOAL)
+        await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, GOAL)
         await waitText(INITIAL)
         const before = await waitForWorkbenchDebugState(
           control,
@@ -342,7 +339,7 @@ export function createDesktopScenario(options) {
         await rpc('runtime.tasks.goal.clear', { address })
         await control.command('waitFor', '[data-testid="goal-status-bar"]', { visible: false })
         phase = 'send-follow-up'
-        await send(FOLLOW_UP)
+        await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, FOLLOW_UP)
         phase = 'wait-for-follow-up'
         await waitText(FINAL)
         await control.command('click', '[data-testid="new-chat-button"]')
@@ -408,7 +405,7 @@ export function createDesktopScenario(options) {
           'A cold executor must recover history without restoring the previous native owner'
         )
         phase = 'send-after-completed-restart'
-        await send(AFTER_RESTART)
+        await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, AFTER_RESTART)
         await waitText(RESTARTED_FINAL)
         await control.command(
           'waitFor',
@@ -506,7 +503,7 @@ export function createDesktopScenario(options) {
         assertRestoredRecovery(recoveryEvidence.afterRestoredRestart, interruptedTurn.id)
         assert.equal(recoveryEvidence.afterRestoredRestart.lifecycle.task.executionState, null)
         phase = 'send-after-restored-restart'
-        await send(AFTER_RESTORE)
+        await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, AFTER_RESTORE)
         await waitText(RESTORED_FINAL)
         await control.command(
           'waitFor',
