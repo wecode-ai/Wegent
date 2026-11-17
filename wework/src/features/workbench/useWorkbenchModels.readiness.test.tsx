@@ -19,9 +19,83 @@ test('refreshes the owning catalog after committed local model settings change',
   act(() => window.dispatchEvent(new Event(LOCAL_MODEL_SETTINGS_CHANGED_EVENT)))
   await waitFor(() => expect(hook.result.current.models).toEqual([after]))
   expect(api.refresh).toHaveBeenCalledOnce()
+  expect(api.refresh).toHaveBeenCalledWith({ invalidateLocal: true })
   hook.unmount()
   window.dispatchEvent(new Event(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
   expect(api.refresh).toHaveBeenCalledOnce()
+})
+
+test('keeps an initialized draft model when another source changes the default', async () => {
+  const cloud: UnifiedModel = {
+    name: 'cloud-model',
+    type: 'public',
+    config: { ui: { reasoningEfforts: ['low', 'high'] } },
+  }
+  const local: UnifiedModel = { name: 'native-model', type: 'runtime' }
+  let models = [cloud]
+  let notify: (() => void) | undefined
+  const onSelectionChange = vi.fn()
+  const api = {
+    listModels: vi.fn(async () => ({ data: models })),
+    subscribe: (listener: () => void) => {
+      notify = listener
+      return () => {
+        notify = undefined
+      }
+    },
+  }
+  const hook = renderHook(
+    ({ scopeKey, selectionConfig }) =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        scopeKey,
+        selectionConfig,
+        persistSelection: false,
+        defaultSelectionConfig: catalog => {
+          const model = catalog[0]
+          return model ? { modelName: model.name, modelType: model.type } : null
+        },
+        onSelectionChange,
+      }),
+    {
+      initialProps: {
+        scopeKey: 'draft-one',
+        selectionConfig: null as ModelSelectionConfig | null,
+      },
+    }
+  )
+  await waitFor(() => expect(hook.result.current.selectedModel).toEqual(cloud))
+  act(() => hook.result.current.setSelectedModelOption('reasoning', 'high'))
+
+  act(() => {
+    models = [local, cloud]
+    notify?.()
+  })
+  await waitFor(() => expect(hook.result.current.models).toEqual([local, cloud]))
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+  expect(hook.result.current.selectedModel).toEqual(cloud)
+  expect(hook.result.current.selectedModelOptions.reasoning).toBe('high')
+  expect(hook.result.current.isSelectionReady).toBe(true)
+
+  hook.rerender({ scopeKey: 'draft-two', selectionConfig: null })
+  await waitFor(() => expect(hook.result.current.selectedModel).toEqual(local))
+  hook.rerender({ scopeKey: 'draft-one', selectionConfig: null })
+  await waitFor(() => expect(hook.result.current.selectedModel).toEqual(cloud))
+  expect(hook.result.current.selectedModelOptions.reasoning).toBe('high')
+
+  hook.rerender({
+    scopeKey: 'draft-one',
+    selectionConfig: { modelName: local.name, modelType: local.type },
+  })
+  await waitFor(() => expect(hook.result.current.selectedModel).toEqual(local))
+  act(() => {
+    models = [cloud]
+    notify?.()
+  })
+  await waitFor(() => expect(hook.result.current.selectedModel).toEqual(cloud))
+  expect(onSelectionChange).not.toHaveBeenCalled()
+  hook.unmount()
 })
 
 test('restores the configured native model when its source arrives after cloud discovery', async () => {

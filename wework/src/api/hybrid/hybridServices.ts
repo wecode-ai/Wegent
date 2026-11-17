@@ -1851,8 +1851,8 @@ export function createHybridWorkbenchServices(
           unsubscribeCloud()
         }
       },
-      refresh() {
-        localModels.refresh()
+      refresh(options) {
+        localModels.refresh({ invalidate: options?.invalidateLocal })
         cloudModels.refresh()
       },
       getModel: cloudServices.modelApi.getModel,

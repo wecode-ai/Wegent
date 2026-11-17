@@ -18,7 +18,10 @@ export function createModelCatalog(
     const controller = new AbortController()
     request = controller
     requestPromise = Promise.resolve()
-      .then(() => load(controller.signal, forceRefresh))
+      .then(() => {
+        controller.signal.throwIfAborted()
+        return load(controller.signal, forceRefresh)
+      })
       .then(nextModels => {
         if (controller.signal.aborted || request !== controller) return
         models = nextModels
@@ -39,7 +42,14 @@ export function createModelCatalog(
   }
 
   return {
-    refresh: () => loadCatalog(true),
+    refresh(options?: { invalidate?: boolean }) {
+      if (options?.invalidate) {
+        const previous = request
+        request = null
+        previous?.abort()
+      }
+      return loadCatalog(true)
+    },
     loadIfNeeded() {
       if (!loadStarted) loadCatalog(false)
       return loadCompleted ? Promise.resolve() : (requestPromise ?? Promise.resolve())

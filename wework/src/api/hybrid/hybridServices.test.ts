@@ -2042,6 +2042,46 @@ describe('createHybridWorkbenchServices', () => {
     }
   })
 
+  it('invalidates pre-edit local discovery without cancelling the independent cloud read', async () => {
+    const oldLocal = deferred<{ data: [] }>()
+    const cloud = deferred<{ data: (typeof responsesModel)[] }>()
+    mocks.localListModels
+      .mockReturnValueOnce(oldLocal.promise)
+      .mockResolvedValue({ data: [chatCompletionsModel] })
+    mocks.cloudListModels.mockReturnValue(cloud.promise)
+    const services = createServices()
+    const changed = vi.fn()
+    const unsubscribe = services.modelApi.subscribe?.(changed)
+    const initialRead = services.modelApi.listModels()
+    try {
+      await vi.waitFor(() => expect(mocks.localListModels).toHaveBeenCalledOnce())
+      const oldLocalSignal = mocks.localListModels.mock.calls[0][0].signal
+      const cloudSignal = mocks.cloudListModels.mock.calls[0][0].signal
+      services.modelApi.refresh?.({ invalidateLocal: true })
+      services.modelApi.refresh?.({ invalidateLocal: true })
+      await vi.waitFor(() => expect(mocks.localListModels).toHaveBeenCalledTimes(2))
+      expect(oldLocalSignal.aborted).toBe(true)
+      expect(cloudSignal.aborted).toBe(false)
+      expect(mocks.cloudListModels).toHaveBeenCalledOnce()
+      await vi.waitFor(async () =>
+        expect((await services.modelApi.listModels()).data).toEqual([chatCompletionsModel])
+      )
+      oldLocal.resolve({ data: [] })
+      await initialRead
+      expect((await services.modelApi.listModels()).data).toEqual([chatCompletionsModel])
+      cloud.resolve({ data: [responsesModel] })
+      await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2))
+      expect((await services.modelApi.listModels()).data.map(model => model.name)).toEqual([
+        'chat-completions-model',
+        'responses-model',
+      ])
+    } finally {
+      oldLocal.resolve({ data: [] })
+      cloud.resolve({ data: [] })
+      unsubscribe?.()
+    }
+  })
+
   it('waits for an explicit refresh after a cloud model request fails', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     let rejectInitial!: (error: Error) => void

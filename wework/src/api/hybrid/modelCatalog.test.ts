@@ -160,6 +160,42 @@ describe.each(['local', 'cloud'] as const)('%s on-demand model catalog', source 
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('invalidates a pre-mutation read and shares one new read across mutation consumers', async () => {
+    let finishOld!: (models: UnifiedModel[]) => void
+    const replacement: UnifiedModel = { name: 'after-edit', type: 'public' }
+    const load = vi
+      .fn<(signal: AbortSignal) => Promise<UnifiedModel[]>>()
+      .mockResolvedValueOnce([cloudModel])
+      .mockImplementationOnce(() => new Promise(resolve => (finishOld = resolve)))
+      .mockRejectedValueOnce(new Error('intentional post-mutation failure'))
+      .mockResolvedValue([replacement])
+    const catalog = createModelCatalog(source, load)
+    const changed = vi.fn()
+    disposers.push(catalog.subscribe(changed))
+    await catalog.loadIfNeeded()
+    catalog.refresh()
+    await vi.advanceTimersByTimeAsync(0)
+    const previousSignal = load.mock.calls[1][0]
+
+    const firstConsumer = catalog.refresh({ invalidate: true })
+    const secondConsumer = catalog.refresh({ invalidate: true })
+    await Promise.all([firstConsumer, secondConsumer])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(previousSignal.aborted).toBe(true)
+    expect(load).toHaveBeenCalledTimes(3)
+    expect(catalog.getModels()).toEqual([cloudModel])
+    expect(changed).toHaveBeenCalledOnce()
+
+    finishOld([{ name: 'stale-model', type: 'public' }])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(catalog.getModels()).toEqual([cloudModel])
+    expect(changed).toHaveBeenCalledOnce()
+    await catalog.refresh({ invalidate: true })
+    expect(load).toHaveBeenCalledTimes(4)
+    expect(catalog.getModels()).toEqual([replacement])
+    expect(changed).toHaveBeenCalledTimes(2)
+  })
+
   it('ignores late results from cancelled subscriptions', async () => {
     let resolveOld!: (models: UnifiedModel[]) => void
     const load = vi
