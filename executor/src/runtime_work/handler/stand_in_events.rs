@@ -55,6 +55,13 @@ impl RuntimeWorkRpcHandler {
             .cloned()
             .collect();
         if configs.is_empty() {
+            self.record_assignment_policy_block(
+                &context,
+                issue_id,
+                assignment,
+                "no_authorized_assistant",
+            )
+            .await?;
             self.log_stand_in_decision(
                 &context,
                 &event_issue,
@@ -81,6 +88,8 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         if super::personal_stand_in::automatic_assignment_roles(&configs, &issue).is_empty() {
+            self.record_assignment_policy_block(&context, issue_id, assignment, "tag_mismatch")
+                .await?;
             self.log_stand_in_decision(&context, &issue, "no_matching_role_tags", json!({}));
             return Ok(());
         }

@@ -48,6 +48,7 @@ export interface SharedWorkspaceHttpTransport {
 }
 
 export interface SharedWorkspaceHttpApi {
+  metrics: import("../metrics/types").CollaborationMetricsApi;
   workspaces: SharedCollaborationWorkspacesApi;
   resources: SharedCollaborationResourcesApi;
   gitRepositories: SharedWorkspaceGitRepositoriesApi;
@@ -264,6 +265,13 @@ export function createSharedWorkspaceHttpApi(
     cache.invalidate("/v1/resources");
   };
   return {
+    metrics: {
+      project: (projectId) =>
+        transport.get(
+          `/v1/cloud-projects/${encoded(projectId)}/collaboration-metrics`,
+        ),
+      personal: () => transport.get("/v1/collaboration-metrics/me"),
+    },
     workspaces: {
       async transferOwnership(workspaceId, input) {
         return mapCollaborationWorkspaceDto(

@@ -9,7 +9,8 @@ impl LocalTaskStore {
             receipt["userId"],
             receipt["issueId"],
             receipt["assignmentId"],
-            receipt["taskId"]
+            receipt["taskId"],
+            receipt["dispatch"]
         ]);
         let id = format!(
             "assignment-receipt:{:x}",

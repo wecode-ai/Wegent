@@ -194,7 +194,29 @@ export interface CollaborationIssue {
 
 export type CollaborationAssignmentTargetType = "human" | "agent";
 
+export interface DirectHumanAssignmentReceipt {
+  projectId: string;
+  issueId: string;
+  humanAssignmentId: string;
+  ownerUserId: number;
+  state:
+    | "queued"
+    | "waiting_device"
+    | "blocked_policy"
+    | "running"
+    | "waiting_user"
+    | "completed"
+    | "failed"
+    | "cancelled";
+  reasonCode: string | null;
+  runtimeTaskId: string | null;
+  deliveryId: string | null;
+  publicMessageId?: string | null;
+  updatedAt: string;
+}
+
 export interface CollaborationAssignmentReceipt {
+  dispatch_receipt?: DirectHumanAssignmentReceipt | null;
   id: string;
   target_type: string;
   target_id: string;
@@ -205,6 +227,7 @@ export interface CollaborationAssignmentReceipt {
 }
 
 export interface CollaborationAssignment {
+  dispatch_receipt?: DirectHumanAssignmentReceipt | null;
   automation?: IssueHistoryAutomation | null;
   receipt_tracking?: boolean;
   human_read_at?: string | null;

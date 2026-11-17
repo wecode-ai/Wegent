@@ -1019,6 +1019,14 @@ path = "/api/v1/me/project-coordinator-bindings"
 [[routes]]
 methods = ["GET", "POST"]
 path = "/api/v1/cloud-projects/:project_id/assistant-roster"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id/collaboration-metrics"
+
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/collaboration-metrics/me"
 [[routes]]
 methods = ["POST"]
 path = "/api/v1/cloud-projects/:project_id/assistant-dispatches"

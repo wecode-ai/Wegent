@@ -56,6 +56,30 @@ export async function verifyLocalCloudStandInReceipt(
     )
     assert.equal(String(assignment.target_id), String(userId))
     assert.equal(assignment.human_read_at, null, 'Background execution is not a human detail read')
+    const completed = await until(
+      () => request(`/v1/loop-items/${issue.id}/assignments`),
+      result => result.items.find(row => row.dispatch_receipt?.state === 'completed'),
+      uiTimeoutMs,
+      'Published work must persist its assignment completion receipt'
+    )
+    const receipt = completed.dispatch_receipt
+    assert.equal(receipt.issueId, issue.id)
+    assert.equal(String(receipt.ownerUserId), String(userId))
+    assert.equal(receipt.runtimeTaskId, binding.task_id)
+    assert.ok(receipt.humanAssignmentId)
+    const comments = await request(
+      `/v1/cloud-projects/${settingsParams().projectId}/loop-items/${issue.id}/activity-comments`
+    )
+    assert.ok(
+      comments.some(comment => comment.id === receipt.publicMessageId && comment.body.trim()),
+      'Completion must reference an actual public result from the owning execution'
+    )
+    const refreshed = await request(`/v1/loop-items/${issue.id}/assignments`)
+    assert.deepEqual(
+      refreshed.items.find(row => row.id === completed.id).dispatch_receipt,
+      receipt,
+      'Refreshing must preserve the completed receipt without restarting execution'
+    )
   } finally {
     const latest = await rpc('runtime.stand_in.get', settingsParams())
     await rpc('runtime.stand_in.save', {

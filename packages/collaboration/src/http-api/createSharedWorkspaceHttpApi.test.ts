@@ -31,6 +31,19 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
+  it("keeps project and personal metrics fresh and scoped to their endpoints", async () => {
+    const { transport, get } = createTransport();
+    const api = createSharedWorkspaceHttpApi(transport);
+    get.mockResolvedValue({ definition_version: 1 });
+    await api.metrics.project("project/one");
+    await api.metrics.project("project/one");
+    await api.metrics.personal();
+    expect(get.mock.calls.map((call) => call[0])).toEqual([
+      "/v1/cloud-projects/project%2Fone/collaboration-metrics",
+      "/v1/cloud-projects/project%2Fone/collaboration-metrics",
+      "/v1/collaboration-metrics/me",
+    ]);
+  });
   it("round-trips opaque MCP server names and options through project Agent editing", async () => {
     const { transport, get, patch } = createTransport();
     const mcpServers = {

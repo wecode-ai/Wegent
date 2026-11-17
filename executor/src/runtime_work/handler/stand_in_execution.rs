@@ -257,7 +257,13 @@ impl RuntimeWorkRpcHandler {
         issue: &Value,
         binding: &Value,
     ) -> Value {
-        json!({"type":"issue_dispatch","initiatedBy":"stand_in","publicConversation":true,"runtimeTaskId":self.stand_in_task_id(config, issue),"trigger":if config["triggerCommentId"].is_string() { "mention" } else if config["manual"] == true { "manual" } else { "assignment" },"triggerCommentId":config["triggerCommentId"],"standInId":config["id"],"roleName":config["name"],"userId":config["userId"],"deviceId":self.device_id,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"] == true,"projectStore":config["projectStore"],"cloudProjectId":config["projectId"],"loopItemId":issue["id"],"humanAssignmentId":binding["humanAssignmentId"].as_str().unwrap_or_default(),"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]})
+        let mut origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","publicConversation":true,"runtimeTaskId":self.stand_in_task_id(config, issue),"trigger":if config["triggerCommentId"].is_string() { "mention" } else if config["manual"] == true { "manual" } else { "assignment" },"triggerCommentId":config["triggerCommentId"],"standInId":config["id"],"roleName":config["name"],"userId":config["userId"],"deviceId":self.device_id,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"] == true,"projectStore":config["projectStore"],"cloudProjectId":config["projectId"],"loopItemId":issue["id"],"humanAssignmentId":binding["humanAssignmentId"].as_str().unwrap_or_default(),"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]});
+        if config["projectStore"] == "cloud" {
+            if let Ok(Some(connection)) = self.backend_connection_snapshot() {
+                origin["backendUrl"] = json!(connection.backend_url);
+            }
+        }
+        origin
     }
 
     pub(super) async fn dispatch_stand_in_task(
@@ -351,6 +357,14 @@ impl RuntimeWorkRpcHandler {
                 .await
         }
         .await;
+        if result.is_err() {
+            if let Err(error) = self.record_assignment_start_failure(config, issue, binding) {
+                log_executor_event(
+                    "Assignment failure receipt persistence failed",
+                    &[("code", error.code)],
+                );
+            }
+        }
         let reason = if result.is_ok() {
             "dispatch_completed"
         } else {

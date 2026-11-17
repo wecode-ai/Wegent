@@ -11,11 +11,33 @@ use super::auth::FlexibleUser;
 use super::loop_repository::{AssignmentMetadata, BindingMetadata, LoopItemRepository};
 use crate::{http_compat::FastApiError, state::AppState};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ReceiptKind {
     HumanRead,
     StandInReceived,
+    StandInState,
+}
+
+#[derive(Clone, Deserialize, serde::Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum DispatchState {
+    Queued,
+    Running,
+    WaitingUser,
+    Completed,
+    Failed,
+    Cancelled,
+    BlockedPolicy,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DispatchUpdate {
+    state: DispatchState,
+    reason_code: Option<String>,
+    observed_at: chrono::DateTime<chrono::Utc>,
+    public_message_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -23,6 +45,7 @@ struct ReceiptInput {
     kind: ReceiptKind,
     device_id: Option<String>,
     task_id: Option<String>,
+    dispatch: Option<DispatchUpdate>,
 }
 
 // Only the current assignment IDs are indexed. Historical events remain audit data.
@@ -79,10 +102,54 @@ async fn acknowledge_assignment(
         .await
         .map_err(internal)?;
     require_active_recipient(assignment.as_ref(), user.id)?;
+    if payload.dispatch.is_some() && payload.kind != ReceiptKind::StandInState {
+        return Err(FastApiError::detail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Dispatch updates require a stand-in receipt",
+        ));
+    }
+    let mut public_result = None;
     let field = match payload.kind {
         ReceiptKind::HumanRead => "human_read_at",
         ReceiptKind::StandInReceived => {
             require_personal_binding(state, item_id, assignment_id, &user, &payload).await?;
+            "stand_in_received_at"
+        }
+        ReceiptKind::StandInState => {
+            let update = payload.dispatch.as_ref().ok_or_else(|| {
+                FastApiError::detail(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Dispatch state is required",
+                )
+            })?;
+            if update.observed_at > chrono::Utc::now() + chrono::Duration::minutes(5) {
+                return Err(FastApiError::detail(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Invalid observation time",
+                ));
+            }
+            if update.state == DispatchState::BlockedPolicy || unbound_failure(&payload) {
+                if update.state == DispatchState::BlockedPolicy
+                    && (payload.task_id.is_some()
+                        || !matches!(
+                            update.reason_code.as_deref(),
+                            Some("no_authorized_assistant" | "tag_mismatch")
+                        ))
+                {
+                    return Err(FastApiError::detail(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "Invalid policy reason",
+                    ));
+                }
+                require_owned_device(state, &user, &payload).await?;
+            } else {
+                require_personal_binding(state, item_id, assignment_id, &user, &payload).await?;
+            }
+            if update.state == DispatchState::Completed {
+                public_result = Some(
+                    require_public_result(state, item_id, assignment_id, &user, &payload).await?,
+                );
+            }
             "stand_in_received_at"
         }
     };
@@ -92,6 +159,7 @@ async fn acknowledge_assignment(
     #[derive(FromMysqlRow)]
     struct LockedRow {
         id: String,
+        cloud_project_id: String,
     }
     let written = state
         .mysql
@@ -99,7 +167,7 @@ async fn acknowledge_assignment(
             // Assignment changes take the same Issue lock; no activity range is read or locked.
             let locked: Vec<LockedRow> = tx
                 .fetch_all(
-                    "SELECT id FROM loop_items WHERE id = ? AND resource_type = 'task' FOR UPDATE",
+                    "SELECT id,cloud_project_id FROM loop_items WHERE id = ? AND resource_type = 'task' FOR UPDATE",
                     (item_id,),
                 )
                 .await?;
@@ -119,6 +187,22 @@ async fn acknowledge_assignment(
             if require_active_recipient(assignment.as_ref(), user.id).is_err() {
                 return Ok(false);
             }
+            if let Some(update) = payload.dispatch.as_ref() {
+                let previous = assignment.as_ref().and_then(ReceiptRow::metadata).and_then(|row| row.dispatch_receipt.as_ref());
+                if !accept_update(previous, &payload) { return Ok(false); }
+                let receipt = json!({
+                    "projectId":locked[0].cloud_project_id,"issueId":item_id,
+                    "humanAssignmentId":super::human_task_binding::direct_human_assignment_id(item_id,assignment_id),
+                    "ownerUserId":user.id,"state":update.state,"reasonCode":update.reason_code,
+                    "runtimeTaskId":payload.task_id.as_ref().map(|task|json!(task)).unwrap_or_else(||previous.map(|row|row["runtimeTaskId"].clone()).unwrap_or(Value::Null)),
+                    "deviceId":payload.device_id,"deliveryId":null,"publicMessageId":public_result,
+                    "observedAt":update.observed_at,"updatedAt":timestamp,
+                });
+                tx.execute("UPDATE loop_items SET metadata=JSON_SET(COALESCE(metadata,JSON_OBJECT()),'$.dispatch_receipt',?) WHERE id=? AND loop_item_id=? AND resource_type='comment'",(Json(receipt),assignment_id,item_id)).await?;
+            }
+            if payload.dispatch.as_ref().is_some_and(|update| update.state == DispatchState::BlockedPolicy) || unbound_failure(&payload) {
+                return Ok(true);
+            }
             tx.execute(
             "UPDATE loop_items SET metadata = JSON_INSERT(COALESCE(metadata, JSON_OBJECT()), ?, ?) \
              WHERE id = ? AND loop_item_id = ? AND resource_type = 'comment'",
@@ -135,6 +219,127 @@ async fn acknowledge_assignment(
         ));
     }
     Ok(json!({"acknowledged": true}))
+}
+
+fn accept_update(previous: Option<&Value>, payload: &ReceiptInput) -> bool {
+    let Some(update) = &payload.dispatch else {
+        return true;
+    };
+    let Some(previous) = previous else {
+        return true;
+    };
+    if previous["runtimeTaskId"].is_string()
+        && previous["deviceId"]
+            .as_str()
+            .is_some_and(|device| Some(device) != payload.device_id.as_deref())
+    {
+        return false;
+    }
+    if !unbound_failure(payload)
+        && previous["runtimeTaskId"]
+            .as_str()
+            .is_some_and(|task| Some(task) != payload.task_id.as_deref())
+    {
+        return false;
+    }
+    // A verified binding supersedes observations from devices that did not
+    // accept the assignment. Their clocks cannot veto the executing device.
+    if previous["runtimeTaskId"].is_null() && payload.task_id.is_some() {
+        return true;
+    }
+    previous["observedAt"]
+        .as_str()
+        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        .is_none_or(|at| update.observed_at >= at)
+}
+
+fn unbound_failure(payload: &ReceiptInput) -> bool {
+    payload.task_id.is_none()
+        && payload.dispatch.as_ref().is_some_and(|update| {
+            update.state == DispatchState::Failed
+                && update.reason_code.as_deref() == Some("execution_rejected")
+        })
+}
+
+async fn require_owned_device(
+    state: &AppState,
+    user: &FlexibleUser,
+    payload: &ReceiptInput,
+) -> Result<(), FastApiError> {
+    if crate::device_identity::resolve_owned_device_alias(
+        &state.mysql,
+        i64::from(user.id),
+        payload.device_id.as_deref().unwrap_or_default(),
+    )
+    .await
+    .map_err(internal)?
+    .is_some()
+    {
+        return Ok(());
+    }
+    Err(FastApiError::forbidden(
+        "A recipient-owned device is required",
+    ))
+}
+
+async fn require_public_result(
+    state: &AppState,
+    item_id: &str,
+    assignment_id: &str,
+    user: &FlexibleUser,
+    payload: &ReceiptInput,
+) -> Result<String, FastApiError> {
+    let id = payload
+        .dispatch
+        .as_ref()
+        .and_then(|update| update.public_message_id.as_deref())
+        .unwrap_or_default();
+    #[derive(FromMysqlRow)]
+    struct ResultRow {
+        id: String,
+    }
+    let row:Option<ResultRow> = state.mysql.fetch_optional(
+        // Public stand-in replies intentionally have no runtime address. Their
+        // server-generated idempotency key binds the validated device and task.
+        "SELECT message_id AS id FROM project_chat_messages WHERE task_id=? AND client_message_id=SHA2(CONCAT(project_id,CHAR(0),task_id,CHAR(0),?,CHAR(0),?,CHAR(0),?),256) AND JSON_EXTRACT(metadata,'$.stand_in.user_id')=? AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in.human_assignment_id'))=? AND status='completed'",
+        (item_id,payload.device_id.as_deref().unwrap_or_default(),payload.task_id.as_deref().unwrap_or_default(),id,user.id,super::human_task_binding::direct_human_assignment_id(item_id,assignment_id)),
+    ).await.map_err(internal)?;
+    if let Some(row) = row {
+        return Ok(row.id);
+    }
+    Err(FastApiError::detail(
+        StatusCode::CONFLICT,
+        "A published assignment result is required",
+    ))
+}
+
+pub(super) async fn project_device_wait(state: &AppState, receipt: &mut Value) {
+    if receipt["state"] != "queued" || !receipt["runtimeTaskId"].is_null() {
+        return;
+    }
+    let Some(owner) = receipt["ownerUserId"].as_i64() else {
+        return;
+    };
+    let devices:Result<Vec<crate::device_identity::DeviceKindRow>,_> = state.mysql.fetch_all(
+        "SELECT id AS kinds_id,name AS kinds_name,json AS kinds_json FROM kinds WHERE kind='Device' AND namespace='default' AND user_id=? AND is_active=1",(owner,),
+    ).await;
+    let Ok(devices) = devices else {
+        receipt["reasonCode"] = json!("presence_unavailable");
+        return;
+    };
+    for device in devices {
+        let route = crate::device_identity::device_connection_route_id(&device);
+        match crate::device_online_state::read_online_state::<Value>(state, owner, &route).await {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(_) => {
+                receipt["reasonCode"] = json!("presence_unavailable");
+                return;
+            }
+        }
+    }
+    receipt["state"] = json!("waiting_device");
+    receipt["reasonCode"] = json!("device_offline");
 }
 
 async fn require_personal_binding(
@@ -270,5 +475,33 @@ mod tests {
             .is_ok()
         );
         assert!(serde_json::from_value::<ReceiptInput>(json!({"kind":"completed"})).is_err());
+    }
+
+    #[test]
+    fn updates_cannot_replace_another_task_or_a_newer_observation() {
+        let payload: ReceiptInput = serde_json::from_value(json!({
+            "kind":"stand_in_state","task_id":"task", "device_id":"mac",
+            "dispatch":{"state":"running","observedAt":"2026-11-17T02:00:00Z"}
+        }))
+        .unwrap();
+        assert!(accept_update(None, &payload));
+        assert!(!accept_update(
+            Some(&json!({"runtimeTaskId":"other"})),
+            &payload
+        ));
+        assert!(!accept_update(
+            Some(&json!({"runtimeTaskId":"task","observedAt":"2026-11-17T03:00:00Z"})),
+            &payload
+        ));
+        assert!(accept_update(
+            Some(&json!({"runtimeTaskId":"task","observedAt":"2026-11-17T01:00:00Z"})),
+            &payload
+        ));
+        assert!(accept_update(
+            Some(
+                &json!({"runtimeTaskId":null,"deviceId":"other-device","state":"blocked_policy","observedAt":"2026-11-17T02:04:00Z"})
+            ),
+            &payload
+        ));
     }
 }

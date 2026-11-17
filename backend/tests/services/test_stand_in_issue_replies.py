@@ -179,6 +179,12 @@ def test_dispatched_reply_follows_the_member_autonomy_policy(
     assert result.generation_source == "ai"
     assert result.publication_source == "ai"
     assert result.confirmation_state == ("not_required" if published else "pending")
+    if published:
+        assert issue.metadata_json["completion_owner_user_id"] == test_user.id
+        assert (
+            issue.metadata_json["status_history"][-1]["completion_owner_user_id"]
+            == test_user.id
+        )
 
 
 def test_dispatch_publication_requires_the_authorized_owner_and_role():

@@ -42,6 +42,7 @@ mod collaboration_groups;
 
 /// Project assistant roster and one-transaction Issue fan-out.
 mod assistant_roster;
+mod collaboration_metrics;
 
 mod access;
 mod collaboration_access;

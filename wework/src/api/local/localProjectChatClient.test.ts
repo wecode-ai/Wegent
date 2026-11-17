@@ -29,6 +29,41 @@ function commentRecord(overrides: Partial<LocalCommentRecord> = {}): LocalCommen
 }
 
 describe('createLocalProjectChatClient', () => {
+  it('preserves native-owner sources across cloud identity without exposing another participant', async () => {
+    request.mockResolvedValue([
+      commentRecord({
+        actor_user_id: '0',
+        metadata: {
+          runtime_address: { deviceId: 'mac', taskId: 'private' },
+          runtime_turn_id: 'turn',
+        },
+      }),
+      commentRecord({
+        message_id: 'foreign',
+        sender_id: '42',
+        actor_user_id: '42',
+        metadata: { runtime_address: { deviceId: 'mac', taskId: 'foreign' } },
+      }),
+      commentRecord({
+        message_id: 'reply',
+        sender_type: 'agent',
+        actor_user_id: '0',
+        trigger_message_id: 'm-1',
+      }),
+    ])
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 86, user_name: 'cloud' },
+      viewerUserIds: [0, 86],
+    })
+    const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+    const [own, foreign, reply] = subscription.snapshot.messages
+    expect(own.runtimeAddress).toEqual({ deviceId: 'mac', taskId: 'private' })
+    expect(own.metadata.runtime_turn_id).toBe('turn')
+    expect(foreign.runtimeAddress).toBeUndefined()
+    expect(foreign.metadata.runtime_address).toBeUndefined()
+    expect(reply.triggerMessageId).toBe('m-1')
+    subscription.unsubscribe()
+  })
   beforeEach(() => {
     request.mockReset()
   })

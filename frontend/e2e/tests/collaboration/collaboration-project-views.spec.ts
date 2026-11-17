@@ -17,6 +17,65 @@ async function dragIssueToLane(page: Page, issueId: string, source: string, targ
 }
 
 projectTest(
+  'counts authoritative root completions and exposes the personal project breakdown',
+  async ({ page, scheduledProject: { path, issueId } }) => {
+    const projectId = path.split('/').at(-1)!
+    await webApi(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Excluded child', parent_id: issueId, status: 'completed' },
+    })
+    const removed = await webApi<Resource>(page, `/api/v1/cloud-projects/${projectId}/loop-items`, {
+      method: 'POST',
+      body: { title: 'Deleted root', status: 'completed' },
+    })
+    await webApi(page, `/api/v1/loop-items/${removed.id}`, { method: 'DELETE' })
+    const issue = await webApi<Resource>(page, `/api/v1/loop-items/${issueId}`)
+    await webApi(page, `/api/v1/loop-items/${issueId}`, {
+      method: 'PATCH',
+      body: { version: issue.version, status: 'completed' },
+    })
+    type Metrics = {
+      definition_version: number
+      as_of: string
+      window: { start: string; end: string }
+      completion: { completed: number; denominator: number; unknown: number; per_member: number }
+      timing: { ai_active_seconds: number; agent_run_seconds: number }
+    }
+    const metrics = await webApi<Metrics>(
+      page,
+      `/api/v1/cloud-projects/${projectId}/collaboration-metrics`
+    )
+    expect(metrics.definition_version).toBe(1)
+    expect(metrics.completion).toMatchObject({
+      completed: 1,
+      denominator: 2,
+      unknown: 0,
+      per_member: 0.5,
+    })
+    expect(Date.parse(metrics.window.end) - Date.parse(metrics.window.start)).toBe(
+      7 * 24 * 3600 * 1000
+    )
+    expect(metrics.window.end).toBe(metrics.as_of)
+    expect(metrics.timing.ai_active_seconds).toBe(0)
+    expect(metrics.timing.agent_run_seconds).toBe(0)
+    const personal = await webApi<{ projects: Array<{ project_id: string; completed: number }> }>(
+      page,
+      '/api/v1/collaboration-metrics/me'
+    )
+    expect(personal.projects.find(project => project.project_id === projectId)?.completed).toBe(1)
+    const completed = await webApi<Resource>(page, `/api/v1/loop-items/${issueId}`)
+    await webApi(page, `/api/v1/loop-items/${issueId}`, {
+      method: 'PATCH',
+      body: { version: completed.version, status: 'pending' },
+    })
+    expect(
+      (await webApi<Metrics>(page, `/api/v1/cloud-projects/${projectId}/collaboration-metrics`))
+        .completion.completed
+    ).toBe(0)
+  }
+)
+
+projectTest(
   'rejects subtree archiving through an editable parent with a private descendant',
   async ({ page, request, scheduledProject: { path, issueId } }) => {
     const projectId = path.split('/').at(-1)!

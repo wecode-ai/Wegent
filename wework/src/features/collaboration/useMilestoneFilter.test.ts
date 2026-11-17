@@ -21,6 +21,27 @@ function setup(data = issues) {
 }
 
 describe('milestone filter drilldown', () => {
+  it('reads controlled values directly and emits one callback per action', () => {
+    const onFilterChange = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ milestoneId }: { milestoneId: string | null }) =>
+        useMilestoneFilter('p', 'table', issues, {
+          filter: { milestoneId },
+          onFilterChange,
+        }),
+      { initialProps: { milestoneId: 'm' as string | null } }
+    )
+    expect(result.current.filteredIssues.map(item => item.id)).toEqual(['parent', 'same'])
+    act(() => result.current.select('other'))
+    expect(onFilterChange).toHaveBeenCalledExactlyOnceWith('other')
+    expect(result.current.value).toBe('m')
+    onFilterChange.mockClear()
+    rerender({ milestoneId: null })
+    expect(result.current.value).toBe('all')
+    expect(onFilterChange).not.toHaveBeenCalled()
+    act(() => result.current.clear())
+    expect(onFilterChange).toHaveBeenCalledExactlyOnceWith(null)
+  })
   it('temporarily includes counted children and restores selection at the root in the same event', () => {
     const { result } = setup()
     act(() => result.current.select('m'))

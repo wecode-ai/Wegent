@@ -255,6 +255,31 @@ async function verifyReceiptPermissions(
     { kind: 'stand_in_received', device_id: 'unowned', task_id: 'unbound' },
     403
   )
+  await http(
+    authToken,
+    ack,
+    'POST',
+    {
+      kind: 'human_read',
+      dispatch: { state: 'running', observedAt: new Date().toISOString() },
+    },
+    422
+  )
+  await http(
+    authToken,
+    ack,
+    'POST',
+    {
+      kind: 'stand_in_state',
+      device_id: 'unowned',
+      dispatch: {
+        state: 'blocked_policy',
+        reasonCode: 'no_authorized_assistant',
+        observedAt: new Date().toISOString(),
+      },
+    },
+    403
+  )
   const device = `receipt-device-${process.pid}`
   const bindingId = `receipt-binding-${process.pid}`
   const [issue] = await database.queryDatabase(
@@ -281,6 +306,21 @@ async function verifyReceiptPermissions(
     )
     const payload = { kind: 'stand_in_received', device_id: device, task_id: bindingId }
     await http(authToken, ack, 'POST', payload)
+    await http(
+      authToken,
+      ack,
+      'POST',
+      {
+        ...payload,
+        kind: 'stand_in_state',
+        dispatch: {
+          state: 'completed',
+          observedAt: new Date().toISOString(),
+          publicMessageId: 'unpublished-result',
+        },
+      },
+      409
+    )
     await database.executeDatabase(
       "UPDATE kinds SET is_active=0 WHERE user_id=%s AND kind='Device' AND namespace='default' AND name=%s",
       [Number(assignment.target_id), device]

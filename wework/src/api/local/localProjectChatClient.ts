@@ -52,7 +52,10 @@ const SHARED_METADATA_KEYS = new Set([
   'history_import',
 ])
 
-function commentToMessage(record: LocalCommentRecord, currentUserId: string): ProjectChatMessage {
+function commentToMessage(
+  record: LocalCommentRecord,
+  viewerUserIds: ReadonlySet<string>
+): ProjectChatMessage {
   const senderType: ProjectChatMessage['sender']['type'] =
     record.sender_type === 'user' || record.sender_type === 'agent' ? record.sender_type : 'system'
   const status: ProjectChatMessage['status'] =
@@ -65,9 +68,9 @@ function commentToMessage(record: LocalCommentRecord, currentUserId: string): Pr
       : 'completed'
   const owner =
     record.actor_user_id != null
-      ? record.actor_user_id === currentUserId
+      ? viewerUserIds.has(record.actor_user_id)
       : record.sender_type === 'user'
-        ? record.sender_id === currentUserId
+        ? viewerUserIds.has(record.sender_id)
         : false
   const metadata = owner
     ? (record.metadata ?? {})
@@ -106,6 +109,7 @@ function commentToMessage(record: LocalCommentRecord, currentUserId: string): Pr
     metadata,
     replyToMessageId: record.reply_to_message_id ?? null,
     rootMessageId: record.thread_root_message_id ?? null,
+    triggerMessageId: record.trigger_message_id ?? null,
     runtimeAddress,
     status,
     traceState:
@@ -119,6 +123,7 @@ export function createLocalProjectChatClient(
   request: LocalChatRequest,
   options: {
     currentUser: Pick<User, 'id' | 'user_name'>
+    viewerUserIds?: readonly (string | number)[]
     prepareExecution?: (input: {
       projectId: string
       taskId: string
@@ -129,6 +134,7 @@ export function createLocalProjectChatClient(
   }
 ): ProjectChatClient {
   const currentUserId = String(options.currentUser.id)
+  const viewerUserIds = new Set([currentUserId, ...(options.viewerUserIds ?? []).map(String)])
   const currentUserName = options.currentUser.user_name
   const activeUnsubscribers = new Set<() => void>()
 
@@ -153,7 +159,7 @@ export function createLocalProjectChatClient(
           after_sequence: 0,
         })
         for (const record of records) {
-          const message = commentToMessage(record, currentUserId)
+          const message = commentToMessage(record, viewerUserIds)
           latestSequence = Math.max(latestSequence, message.sequenceNumber)
           const previous = knownMessages.get(message.messageId)
           knownMessages.set(message.messageId, message)
@@ -218,7 +224,7 @@ export function createLocalProjectChatClient(
         reply_to_message_id: input.replyToMessageId ?? null,
       },
     })
-    return commentToMessage(created, currentUserId)
+    return commentToMessage(created, viewerUserIds)
   }
 
   const executeTaskComment: ProjectChatClient['executeTaskComment'] = async input => {
@@ -271,7 +277,7 @@ export function createLocalProjectChatClient(
       task_id: input.taskId,
       after_sequence: trigger.sequence_number,
     })
-    return updated.map(record => commentToMessage(record, currentUserId))
+    return updated.map(record => commentToMessage(record, viewerUserIds))
   }
 
   const startAgentResponse: ProjectChatClient['startAgentResponse'] = async input => {
@@ -285,7 +291,7 @@ export function createLocalProjectChatClient(
       prompt: input.prompt ?? null,
       model: input.model ?? null,
     })
-    return commentToMessage(created, currentUserId)
+    return commentToMessage(created, viewerUserIds)
   }
 
   const failAgentResponse: ProjectChatClient['failAgentResponse'] = async input => {
@@ -295,7 +301,7 @@ export function createLocalProjectChatClient(
       message_id: input.messageId,
       error: input.error ?? '执行失败',
     })
-    return commentToMessage(failed, currentUserId)
+    return commentToMessage(failed, viewerUserIds)
   }
 
   return {

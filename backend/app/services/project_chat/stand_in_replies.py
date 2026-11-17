@@ -13,6 +13,7 @@ from app.schemas.base_role import BaseRole
 from app.schemas.issue_activity_comment import StandInPublicReply
 from app.schemas.project_chat import ProjectChatMessageView
 from app.services.device.identity import resolve_owned_device_alias
+from app.services.loop_item_status_history import write_status_change
 from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_chat.service import project_chat_service
@@ -64,7 +65,7 @@ def publish_stand_in_reply(
     body: str,
     identity: StandInPublicReply,
 ) -> ProjectChatMessageView:
-    project_chat_service._require_scope(
+    project = project_chat_service._require_scope(
         db,
         user_id=user_id,
         project_id=project_id,
@@ -159,6 +160,7 @@ def publish_stand_in_reply(
             "user_id": user_id,
             "role_id": identity.role_id,
             "message_id": identity.message_id,
+            "human_assignment_id": identity.human_assignment_id,
         },
     }
     if auto_publish:
@@ -171,11 +173,28 @@ def publish_stand_in_reply(
         metadata["assistant_publication_message_id"] = message_id
         metadata["assistant_result_message_id"] = message_id
         if can_transition:
+            write_status_change(
+                metadata,
+                project=project,
+                from_status=item.status,
+                to_status="completed",
+                trigger="assistant_publication",
+                by_user_id=user_id,
+                completion_owner_user_id=user_id,
+            )
             item.status = "completed"
             item.completed_at = datetime.now(UTC).replace(tzinfo=None)
     elif dispatch_review:
         metadata["awaiting_public_summary"] = False
         metadata["assistant_result_message_id"] = message_id
+        write_status_change(
+            metadata,
+            project=project,
+            from_status=item.status,
+            to_status="in_review",
+            trigger="assistant_result",
+            by_user_id=user_id,
+        )
         item.status = "in_review"
     row = ProjectChatMessage(
         message_id=message_id,

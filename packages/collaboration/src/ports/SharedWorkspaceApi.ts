@@ -1149,6 +1149,7 @@ export interface WorkspaceStandInSettings {
 }
 
 export interface SharedWorkspaceApi {
+  metrics?: import("../metrics/types").CollaborationMetricsApi;
   milestones?: import("../milestones/types").MilestonesApi;
   standIn?: {
     run?(

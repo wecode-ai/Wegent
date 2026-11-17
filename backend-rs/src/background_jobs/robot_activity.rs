@@ -68,6 +68,18 @@ pub(crate) async fn finish(
         let (next_status, reset_sort) = transition
             .map(|status| (status, true))
             .unwrap_or((task.status.as_str(), false));
+        if transition == Some("completed") {
+            metadata["completion_owner_user_id"] = metadata["assistant_owner_user_id"].clone();
+            let mut history = metadata["status_history"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            history.push(json!({
+                "from_status":task.status,"to_status":"completed","trigger":"assistant_publication",
+                "completion_owner_user_id":metadata["assistant_owner_user_id"],"at":now.and_utc(),
+            }));
+            metadata["status_history"] = json!(history);
+        }
         tx.execute(
             "UPDATE loop_items SET metadata=?,status=?,completed_at=CASE WHEN ? THEN '1970-01-01 00:00:01' WHEN ? THEN UTC_TIMESTAMP(6) ELSE completed_at END,sort_order=CASE WHEN ? THEN 0 ELSE sort_order END,version=version+?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND resource_type='task'",
             (
