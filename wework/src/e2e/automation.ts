@@ -50,6 +50,7 @@ import {
   recordNativeTerminalKey,
 } from './native-terminal-diagnostics'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
+import { reportE2EDiagnostic } from './error-capture'
 import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import {
@@ -2943,7 +2944,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         height: Number(nextSize.height),
         maximized: nextSize.maximized ?? false,
       })
-      console.info('[desktop-e2e-renderer-window-size]', {
+      reportE2EDiagnostic('renderer-window-size', {
         windowLabel: getDesktopWindowLabel(),
         topFrame: window === window.top,
         requested: nextSize,

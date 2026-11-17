@@ -3,6 +3,7 @@ import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-t
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import * as desktopHost from '@/api/dsh/desktopHost'
 import * as nativeKey from './native-key-acknowledgement'
+import * as errorCapture from './error-capture'
 import { getDesktopControlDiagnostics } from './desktop-control-diagnostics'
 import {
   fillDesktopControlElement,
@@ -104,6 +105,7 @@ describe('Electron desktop E2E automation', () => {
   test.each([undefined, false, true])(
     'preserves window maximization through the host command (%s)',
     async maximized => {
+      const diagnostic = vi.spyOn(errorCapture, 'reportE2EDiagnostic')
       const previous = { width: 1272, height: 716, maximized: true }
       const native = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(previous as never)
       const results: Array<{ ok: boolean; value: string }> = []
@@ -132,6 +134,14 @@ describe('Electron desktop E2E automation', () => {
       expect(results).toContainEqual(
         expect.objectContaining({ ok: true, value: JSON.stringify(previous) })
       )
+      expect(diagnostic).toHaveBeenCalledWith('renderer-window-size', {
+        windowLabel: 'main',
+        topFrame: true,
+        requested: { width: 1040, height: 760, ...(maximized === undefined ? {} : { maximized }) },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        screen: { width: window.screen.width, height: window.screen.height },
+        devicePixelRatio: window.devicePixelRatio,
+      })
     }
   )
 
