@@ -71,6 +71,7 @@ import {
   LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
   MACOS_LAUNCH_SERVICES_REGISTER,
   MEMORY_ONLY,
+  MODEL_API_KEY,
   MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
   MODEL_PROTOCOL_MATRIX_TOTAL,
   MODEL_PROVIDER_ID,
@@ -818,6 +819,9 @@ export async function verifyRemoteDockerCommandFlow(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
+    await control.command('waitFor', '[data-testid="remote-docker-command"]', {
+      text: remoteDeviceE2EExtension.commandMarker,
+    })
     runnableCommandSnapshot = await waitForSnapshot(
       control,
       snapshot =>
@@ -844,7 +848,13 @@ export async function verifyRemoteDockerCommandFlow(
   const generatedAuthToken = runnableCommandSnapshot.text.match(/WEGENT_AUTH_TOKEN=([^\s\\]+)/)?.[1]
   assert.ok(generatedDeviceId, 'The generated command did not include a device ID')
   assert.ok(generatedDeviceName, 'The generated command did not include a device name')
-  assert.ok(generatedAuthToken, 'The generated command did not include an auth token')
+  assert.ok(
+    generatedAuthToken?.startsWith('wg-'),
+    'The generated device must use a personal API key'
+  )
+  if (projectEntry) {
+    await verifyRemoteDeviceOwnerIdentity(cloudEnvironment, generatedAuthToken)
+  }
   const generatedDevice = await cloudEnvironment.startGeneratedRemoteDevice({
     deviceId: generatedDeviceId,
     deviceName: generatedDeviceName,
@@ -965,12 +975,63 @@ export async function verifyRemoteDockerCommandFlow(
   return { deviceId: generatedDeviceId, ...generatedDevice }
 }
 
+async function verifyRemoteDeviceOwnerIdentity(cloudEnvironment, deviceKey) {
+  const { backendUrl, authToken } = cloudEnvironment
+  const request = (path, token) =>
+    fetch(`${backendUrl}/api${path}`, { headers: { Authorization: `Bearer ${token}` } })
+  const [session, owner, invalidKey, profile] = await Promise.all([
+    request('/users/me', authToken),
+    request('/devices/runtime-owner', deviceKey),
+    request('/devices/runtime-owner', 'wg-invalid-e2e-device-key'),
+    request('/users/me', deviceKey),
+  ])
+  assert.equal(session.status, 200)
+  assert.equal(owner.status, 200)
+  assert.deepEqual(await owner.json(), { id: (await session.json()).id })
+  assert.equal(invalidKey.status, 401)
+  assert.equal(profile.status, 401)
+}
+
 async function assertDisabledControl(control, selector, message) {
   await control.command('waitFor', selector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   assert.notEqual(
     await control.command('getAttribute', selector, { value: 'disabled' }),
     null,
     message
+  )
+}
+
+const REMOTE_DEVICE_MODEL = 'remote-device-e2e-model'
+
+export async function prepareRemoteDeviceConversationModel(userDataDir, modelServerUrl) {
+  const directory = join(userDataDir, 'model-connections')
+  await mkdir(directory, { recursive: true })
+  await writeFile(
+    join(directory, 'model.yml'),
+    JSON.stringify({
+      version: 1,
+      providers: [
+        {
+          id: REMOTE_DEVICE_MODEL,
+          name: REMOTE_DEVICE_MODEL,
+          base_url: modelServerUrl,
+          request_path: '/v1/responses',
+          api_format: 'openai-responses',
+          api_key: MODEL_API_KEY,
+          models: [
+            {
+              id: REMOTE_DEVICE_MODEL,
+              model_id: DEFAULT_MODEL_ID,
+              display_name: REMOTE_DEVICE_MODEL,
+              codex_catalog_model_id: 'wework-gpt-6.1-sol',
+              tool_profile: 'function',
+              codex_tool_compatibility: 'standard',
+            },
+          ],
+        },
+      ],
+    }),
+    { mode: 0o600 }
   )
 }
 
@@ -1102,6 +1163,35 @@ export async function verifyDisabledRemoteSessionCapabilities(
     WORKBENCH_READY_TIMEOUT_MS
   )
   await captureVerificationScreenshot(control, 'cloud-00-generated-remote-task-completed.png')
+
+  await selectE2EModel(control, `local-model:${REMOTE_DEVICE_MODEL}`, REMOTE_DEVICE_MODEL)
+  const apiLogPath = join(resultDir, 'backend-rs-logs', 'api.log')
+  const apiLogOffset = (await readFile(apiLogPath, 'utf8')).length
+  control.setScenario('cloud_follow_up')
+  await sendPromptWithButton(
+    control,
+    ACTIVE_COMPOSER_SELECTOR,
+    CLOUD_FOLLOW_UP_PROMPT,
+    WORKBENCH_READY_TIMEOUT_MS,
+    { confirmCloudModelCatalogSync: true }
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  control.releaseCloudFollowUpResponse()
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(runningTaskTestId),
+    'The generated remote Executor follow-up did not settle after completion',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.match(
+    (await readFile(apiLogPath, 'utf8')).slice(apiLogOffset),
+    /\[API\] GET \/api\/devices\/runtime-owner 200 /,
+    'The remote conversation did not verify its owner with the device key'
+  )
+  await captureVerificationScreenshot(control, 'cloud-00-generated-remote-owner-verified.png')
 }
 
 export async function verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment) {
