@@ -10,9 +10,15 @@ export const projectAssistantStatusEnglish: ProjectAssistantStatusCopy = {
   revoked: 'Authorization revoked',
   loading: 'Syncing hosting status',
   loadingDetail: 'Reading the server projection. Please wait.',
+  refreshing: 'Refreshing hosting status',
+  refreshingDetail:
+    'Showing the last confirmed snapshot while reading the server projection.',
   error: 'Hosting status sync failed',
   errorDetail:
     'Dispatch availability cannot be verified. Refresh the project to sync again.',
+  staleDetail:
+    'Refresh failed. The details shown are the last confirmed snapshot and may be outdated.',
+  retryAction: 'Retry sync',
   unknown: 'Hosting status awaiting sync',
   unknownDetail:
     'Waiting for the server projection before confirming availability.',
@@ -97,8 +103,12 @@ export const projectAssistantStatusChinese: ProjectAssistantStatusCopy = {
   revoked: '授权已撤销',
   loading: '正在同步托管状态',
   loadingDetail: '正在读取服务端状态，请稍候。',
+  refreshing: '正在刷新托管状态',
+  refreshingDetail: '正在读取服务端状态，当前展示上次已确认的数据。',
   error: '托管状态同步失败',
   errorDetail: '暂时无法核验是否可接单，请重新同步项目。',
+  staleDetail: '刷新失败。当前展示上次已确认的旧数据，可能已过期。',
+  retryAction: '重新同步',
   unknown: '托管状态待同步',
   unknownDetail: '等待服务端托管状态，当前不能确认是否可接单。',
   dispatchable: '可派发',

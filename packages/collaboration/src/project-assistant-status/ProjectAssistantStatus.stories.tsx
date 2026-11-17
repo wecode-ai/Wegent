@@ -15,7 +15,13 @@ export type HostingPreviewScenario =
   | keyof typeof scenarios
   | 'loading'
   | 'error'
+  | 'refreshing'
+  | 'refreshError'
   | 'manager'
+  | 'managerLoading'
+  | 'managerError'
+  | 'managerRefreshing'
+  | 'managerRefreshError'
   | 'featureOff'
 interface PreviewArgs {
   scenario: HostingPreviewScenario
@@ -46,6 +52,7 @@ const previewMessages = {
     settings: 'Assistant settings preview',
     rules: 'Project rules preview',
     receipt: 'Acceptance receipt preview',
+    retried: 'Synthetic sync completed. No execution was started.',
   },
   'zh-CN': {
     scenario: '评审场景',
@@ -65,6 +72,7 @@ const previewMessages = {
     settings: '助理设置预览',
     rules: '项目规则预览',
     receipt: '接单回执预览',
+    retried: '合成同步已完成，未启动任何执行。',
   },
 }
 
@@ -73,6 +81,9 @@ function Preview(args: PreviewArgs) {
   const [theme, setTheme] = useState(args.theme ?? 'light')
   const [width, setWidth] = useState<number>(args.width ?? 900)
   const [surface, setSurface] = useState(args.surface ?? 'project')
+  const [retryState, setRetryState] = useState<
+    'idle' | 'loading' | 'succeeded'
+  >('idle')
   const [destination, setDestination] = useState<
     'settings' | 'rules' | 'receipt' | null
   >(null)
@@ -86,10 +97,40 @@ function Preview(args: PreviewArgs) {
   const messages = previewMessages[locale]
   const snapshot =
     scenarios[scenario as keyof typeof scenarios] ?? scenarios.hosting
+  const manager = scenario.startsWith('manager')
+  const initial = [
+    'loading',
+    'error',
+    'managerLoading',
+    'managerError',
+  ].includes(scenario)
+  const readSucceeded = retryState === 'succeeded'
+  const projectScope = {
+    projectStore: snapshot.projectStore,
+    projectId: snapshot.projectId,
+  }
   const panelStatus =
-    scenario === 'manager'
-      ? { dispatchable: true, availability: 'online' }
-      : snapshot
+    initial && !readSucceeded
+      ? null
+      : manager
+        ? { dispatchable: true, availability: 'online' }
+        : snapshot
+  const loading =
+    retryState === 'loading' ||
+    (!readSucceeded &&
+      ['loading', 'refreshing', 'managerLoading', 'managerRefreshing'].includes(
+        scenario,
+      ))
+  const error =
+    !readSucceeded &&
+    ['error', 'refreshError', 'managerError', 'managerRefreshError'].includes(
+      scenario,
+    )
+  const retry = () => {
+    // A synthetic read refresh only; no heartbeat, assignment or execution is changed.
+    setRetryState('loading')
+    void Promise.resolve().then(() => setRetryState('succeeded'))
+  }
   const open = (
     target: 'settings' | 'rules' | 'receipt',
     value: ProjectAssistantStatus,
@@ -116,13 +157,20 @@ function Preview(args: PreviewArgs) {
               onChange={(event) => {
                 setScenario(event.target.value as HostingPreviewScenario)
                 setDestination(null)
+                setRetryState('idle')
               }}
             >
               {[
                 ...Object.keys(scenarios),
                 'loading',
                 'error',
+                'refreshing',
+                'refreshError',
                 'manager',
+                'managerLoading',
+                'managerError',
+                'managerRefreshing',
+                'managerRefreshError',
                 'featureOff',
               ].map((value) => (
                 <option key={value} value={value}>
@@ -183,14 +231,17 @@ function Preview(args: PreviewArgs) {
           >
             <h1>{messages[entry]}</h1>
             <ProjectAssistantStatusPanel
+              projectScope={projectScope}
+              statusScope={projectScope}
               status={panelStatus}
               projectName={messages.projectName}
               copy={copy}
               locale={locale}
-              loading={scenario === 'loading'}
-              error={scenario === 'error'}
+              loading={loading}
+              error={error}
               featureEnabled={scenario !== 'featureOff'}
-              audience={scenario === 'manager' ? 'manager' : 'self'}
+              audience={manager ? 'manager' : 'self'}
+              onRetry={retry}
               onOpenSettings={(value) => open('settings', value)}
               onOpenRules={(value) => open('rules', value)}
               onOpenReceipt={(value) => open('receipt', value)}
@@ -202,7 +253,9 @@ function Preview(args: PreviewArgs) {
             ? messages.hidden
             : destination
               ? messages[destination]
-              : messages.feedback}
+              : readSucceeded
+                ? messages.retried
+                : messages.feedback}
         </p>
         {destination && openedSnapshot && (
           <aside
@@ -292,7 +345,13 @@ export const NoReceipt = { args: { scenario: 'noReceipt' } }
 export const Unknown = { args: { scenario: 'unknown' } }
 export const Loading = { args: { scenario: 'loading' } }
 export const Error = { args: { scenario: 'error' } }
+export const Refreshing = { args: { scenario: 'refreshing' } }
+export const RefreshError = { args: { scenario: 'refreshError' } }
 export const Manager = { args: { scenario: 'manager' } }
+export const ManagerLoading = { args: { scenario: 'managerLoading' } }
+export const ManagerError = { args: { scenario: 'managerError' } }
+export const ManagerRefreshing = { args: { scenario: 'managerRefreshing' } }
+export const ManagerRefreshError = { args: { scenario: 'managerRefreshError' } }
 export const FeatureOff = { args: { scenario: 'featureOff' } }
 export const Mobile = { args: { scenario: 'waitingDevice', width: 390 } }
 export const Dark = { args: { scenario: 'waitingDevice', theme: 'dark' } }

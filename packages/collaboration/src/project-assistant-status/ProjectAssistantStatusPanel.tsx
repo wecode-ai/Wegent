@@ -7,14 +7,20 @@ import {
   projectAssistantStatus,
 } from './projection'
 import type {
+  ProjectAssistantManagerSummary,
+  ProjectAssistantScope,
   ProjectAssistantStatus,
   ProjectAssistantStatusCopy,
 } from './types'
 import './project-assistant-status.css'
 
 export interface ProjectAssistantStatusPanelProps {
+  /** Current request context. A snapshot from another project/store is hidden. */
+  projectScope: ProjectAssistantScope
   /** Self receives the proposed full DTO; manager receives only its minimal DTO. */
   status?: unknown
+  /** Response envelope identity for the minimal manager DTO, never private data. */
+  statusScope?: ProjectAssistantScope
   audience?: 'self' | 'manager'
   projectName?: string
   copy?: ProjectAssistantStatusCopy
@@ -23,6 +29,8 @@ export interface ProjectAssistantStatusPanelProps {
   loading?: boolean
   error?: boolean
   featureEnabled?: boolean
+  /** Requests a read refresh only; the host owns fetching and response ordering. */
+  onRetry?(): void
   onOpenSettings?(snapshot: ProjectAssistantStatus): void
   onOpenRules?(snapshot: ProjectAssistantStatus): void
   onOpenReceipt?(snapshot: ProjectAssistantStatus): void
@@ -50,8 +58,97 @@ function hostingLabel(
     : copy.enabled
 }
 
+type SyncState =
+  | 'ready'
+  | 'loading'
+  | 'refreshing'
+  | 'error'
+  | 'stale'
+  | 'unknown'
+
+function matchesScope(
+  current: ProjectAssistantScope,
+  snapshot?: ProjectAssistantScope | null,
+) {
+  return (
+    (current?.projectStore === 'local' || current?.projectStore === 'cloud') &&
+    !!current.projectId?.trim() &&
+    current.projectStore === snapshot?.projectStore &&
+    current.projectId === snapshot.projectId
+  )
+}
+
+function managerSnapshot(
+  value: unknown,
+): ProjectAssistantManagerSummary | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return projectAssistantManagerSummary(value)
+}
+
+function syncState(
+  hasSnapshot: boolean,
+  loading: boolean,
+  error: boolean,
+): SyncState {
+  if (loading) return hasSnapshot ? 'refreshing' : 'loading'
+  if (error) return hasSnapshot ? 'stale' : 'error'
+  return hasSnapshot ? 'ready' : 'unknown'
+}
+
+function SyncNotice({
+  state,
+  copy,
+}: {
+  state: SyncState
+  copy: ProjectAssistantStatusCopy
+}) {
+  if (state === 'ready') return null
+  const failed = state === 'error' || state === 'stale'
+  const [label, detail] = {
+    loading: [copy.loading, copy.loadingDetail],
+    refreshing: [copy.refreshing, copy.refreshingDetail],
+    error: [copy.error, copy.errorDetail],
+    stale: [copy.error, copy.staleDetail],
+    unknown: [copy.unknown, copy.unknownDetail],
+  }[state]
+  return (
+    <p
+      className="project-assistant-status__notice"
+      data-testid="project-assistant-sync-state"
+      data-state={state}
+      role={failed ? 'alert' : 'status'}
+    >
+      <strong>{label}</strong>
+      <span>{detail}</span>
+    </p>
+  )
+}
+
+function RetryAction({
+  state,
+  copy,
+  onRetry,
+}: {
+  state: SyncState
+  copy: ProjectAssistantStatusCopy
+  onRetry?: () => void
+}) {
+  if (!onRetry || (state !== 'error' && state !== 'stale')) return null
+  return (
+    <button
+      type="button"
+      data-testid="project-assistant-retry"
+      onClick={onRetry}
+    >
+      {copy.retryAction}
+    </button>
+  )
+}
+
 export function ProjectAssistantStatusPanel({
+  projectScope,
   status,
+  statusScope,
   projectName,
   audience = 'self',
   copy = projectAssistantStatusEnglish,
@@ -60,6 +157,7 @@ export function ProjectAssistantStatusPanel({
   loading = false,
   error = false,
   featureEnabled = true,
+  onRetry,
   onOpenSettings,
   onOpenRules,
   onOpenReceipt,
@@ -67,47 +165,53 @@ export function ProjectAssistantStatusPanel({
   const headingId = useId()
   if (!featureEnabled) return null
   if (audience === 'manager') {
-    const summary = projectAssistantManagerSummary(status)
+    const summary = matchesScope(projectScope, statusScope)
+      ? managerSnapshot(status)
+      : null
+    const state = syncState(!!summary, loading, error)
     return (
       <section
         className="project-assistant-status"
         data-testid="project-assistant-status-manager"
+        data-state={state}
         aria-labelledby={headingId}
       >
         <header className="project-assistant-status__header">
           <h2 id={headingId}>{copy.managerHeading}</h2>
         </header>
+        <SyncNotice state={state} copy={copy} />
         <dl className="project-assistant-status__facts">
           <Fact label={copy.dispatchable}>
-            {loading || error || summary.dispatchable === null
+            {summary?.dispatchable == null
               ? copy.pending
               : summary.dispatchable
                 ? copy.yes
                 : copy.no}
           </Fact>
           <Fact label={copy.availability}>
-            {loading || error
+            {!summary
               ? copy.pending
               : copy.availabilityValues[summary.availability]}
           </Fact>
         </dl>
+        <footer className="project-assistant-status__footer">
+          <RetryAction state={state} copy={copy} onRetry={onRetry} />
+        </footer>
       </section>
     )
   }
-  const snapshot = projectAssistantStatus(status)
-  const unavailable = loading || error || !snapshot
-  const stateLabel = loading
-    ? copy.loading
-    : error
-      ? copy.error
-      : snapshot
-        ? hostingLabel(snapshot, copy)
+  const candidate = projectAssistantStatus(status)
+  const snapshot = matchesScope(projectScope, candidate) ? candidate : null
+  const state = syncState(!!snapshot, loading, error)
+  const stateLabel = snapshot
+    ? hostingLabel(snapshot, copy)
+    : loading
+      ? copy.loading
+      : error
+        ? copy.error
         : copy.unknown
-  const panelState = loading
-    ? 'loading'
-    : error
-      ? 'error'
-      : (snapshot?.reasonCode ?? (snapshot ? 'hosting' : 'unknown'))
+  const panelState =
+    state === 'ready' ? (snapshot?.reasonCode ?? 'hosting') : state
   return (
     <section
       className="project-assistant-status"
@@ -130,15 +234,8 @@ export function ProjectAssistantStatusPanel({
           {stateLabel}
         </strong>
       </header>
-      {unavailable ? (
-        <p className="project-assistant-status__notice">
-          {loading
-            ? copy.loadingDetail
-            : error
-              ? copy.errorDetail
-              : copy.unknownDetail}
-        </p>
-      ) : (
+      <SyncNotice state={state} copy={copy} />
+      {snapshot && (
         <>
           <HostingFacts
             snapshot={snapshot}
@@ -166,7 +263,8 @@ export function ProjectAssistantStatusPanel({
         <span>
           {snapshot?.synthetic ? copy.fixtureNote : copy.projectionNote}
         </span>
-        {!unavailable && (
+        <RetryAction state={state} copy={copy} onRetry={onRetry} />
+        {snapshot && (
           <HostingActions
             snapshot={snapshot}
             copy={copy}

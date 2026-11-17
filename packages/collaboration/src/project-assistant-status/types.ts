@@ -71,8 +71,12 @@ export interface ProjectAssistantStatusCopy {
   revoked: string
   loading: string
   loadingDetail: string
+  refreshing: string
+  refreshingDetail: string
   error: string
   errorDetail: string
+  staleDetail: string
+  retryAction: string
   unknown: string
   unknownDetail: string
   dispatchable: string

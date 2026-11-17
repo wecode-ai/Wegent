@@ -14,6 +14,22 @@ Current hosting settings and historical execution remain separate. Pausing hosti
 
 Recovery actions lead to assistant settings, project rules, or the assignment receipt. The shared component invokes supplied handlers; design stories provide explicitly labeled demonstration feedback. Production callers must bind real destinations and explain permission failures.
 
+## Loading, refresh, and failure
+
+The self card and manager summary follow the same request lifecycle:
+
+| Request state                                                 | Display and actions                                                                                                                     |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Initial load without a valid snapshot for the current context | Show synchronization in progress; do not display facts, receipts, or actions from another context                                       |
+| Refresh with a valid snapshot for the same context            | Retain the last confirmed facts and historical receipt, with a refresh notice; a refresh is not a new heartbeat or acceptance receipt   |
+| Refresh fails with a valid snapshot                           | Retain the last confirmed facts, explicitly identify them as a previous snapshot, and show the failure and a host-provided retry action |
+| Initial request fails without a valid snapshot                | Show an explicit failure and retry; the manager view must also distinguish this from pending synchronization                            |
+| Project or storage type changes                               | Immediately remove the old context's facts, receipt, and actions while awaiting the new data                                            |
+
+Retry only invokes `onRetry`; it does not mutate hosting, endpoint, or execution state. Without a handler there is no inert button, and a pending request does not offer duplicate retries. Hosts must also isolate requests and caches by user, project, and data source, discarding late responses for a context that has been left. These display constraints do not replace server authorization.
+
+Hosts must supply the current `projectScope: { projectStore, projectId }`. Self snapshots match it using their own project fields. Manager summaries retain the two-field DTO and associate the response with a project through a separate `statusScope`. Missing or mismatched identity hides response data and previous-snapshot actions. The component does not cache snapshots; hosts retain and pass the last same-context snapshot during refresh.
+
 ## Proposed contract and data boundaries
 
 This is a proposed projection contract, not an existing published API. New Backend APIs must follow the repository’s Rust route ownership rules.
@@ -51,7 +67,7 @@ Source lives in `packages/collaboration/src/project-assistant-status/`; the regi
 
 Roster CRUD, assistant capability matching, and device migration are outside this scope. The design does not automatically join projects or enable hosting for all projects.
 
-Local CSF stories provide 24 states covering both entry points, five unavailability reasons, six assignment states, paused hosting with historical running work, missing delivery evidence, no receipt, unknown, loading, error, manager summary, feature off, compact layout, and theme review. All data is synthetic. Every state uses the same shared component and theme structure, with caller-supplied copy.
+Local CSF stories provide 30 states covering both entry points, five unavailability reasons, six assignment states, paused hosting with historical running work, missing delivery evidence, no receipt, unknown, initial loading, refresh, failure and retry for self and manager views, manager summary, feature off, compact layout, and theme review. All data is synthetic. Every state uses the same shared component and theme structure, with caller-supplied copy.
 
 The full Storybook build environment remains in the design reference repository. This repository provides importable CSF stories and renders them in existing collaboration tests. Component and contract tests do not replace visual approval or production acceptance.
 
@@ -64,13 +80,14 @@ pnpm --filter @wegent/collaboration test src/project-assistant-status
 
 ## Subsequent acceptance
 
-| Scenario                         | Expected result and evidence                                                                                                                      |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Hosting enabled for this project | Both entry points use the same snapshot and display scope, Tag match, availability, and canonical receipt time                                    |
-| Assigned but not started         | A specific reason and real recovery action appear; matching rules still create a visible assignment when the assistant is unavailable             |
-| Offline endpoint recovers        | Server projects waiting_device, then starts one execution and binds its receipt to the original human assignment and runtime task                 |
-| New assignment after pausing     | The project overview immediately shows paused; no new default-assistant execution; historical records and running work follow the existing policy |
-| Manager reads member summary     | Server returns only dispatchability and availability, without private configuration or transcripts                                                |
+| Scenario                         | Expected result and evidence                                                                                                                                                                             |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hosting enabled for this project | Both entry points use the same snapshot and display scope, Tag match, availability, and canonical receipt time                                                                                           |
+| Assigned but not started         | A specific reason and real recovery action appear; matching rules still create a visible assignment when the assistant is unavailable                                                                    |
+| Offline endpoint recovers        | Server projects waiting_device, then starts one execution and binds its receipt to the original human assignment and runtime task                                                                        |
+| New assignment after pausing     | The project overview immediately shows paused; no new default-assistant execution; historical records and running work follow the existing policy                                                        |
+| Manager reads member summary     | Server returns only dispatchability and availability, without private configuration or transcripts                                                                                                       |
+| Requests and retry               | Self and manager views distinguish initial load, refresh, and failure; same-context refresh retains facts, failures offer retry, and project or local/cloud switches never display previous-context data |
 
 Production verification must cover idempotency, revoked access, Tag and project isolation, stale snapshots and recovery, plus 1440 / 900 / 390 viewports, keyboard navigation, and screen readers. This design PR does not complete real heartbeat, dispatch, server ACL, or full viewport visual acceptance.
 
