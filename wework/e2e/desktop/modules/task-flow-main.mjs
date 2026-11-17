@@ -4,6 +4,7 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { startAsyncResourceDiagnostics } from '../../../../.github/scripts/node-async-resource-diagnostics.mjs'
 import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
@@ -1261,6 +1262,9 @@ async function main() {
   let phase = 'startup'
   let desktopScenarioVerified = false
   let testFailed = false
+  const stopAsyncDiagnostics = startAsyncResourceDiagnostics(
+    join(resultDir, 'node-async-resource-diagnostics.jsonl')
+  )
   try {
     await control.start()
     // Publish bound ports for scenarios without releasing the listening sockets.
@@ -5091,6 +5095,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
     throw error
   } finally {
+    stopAsyncDiagnostics()
     const teardownFailures = []
     const runTeardownStep = async (label, action) => {
       try {
