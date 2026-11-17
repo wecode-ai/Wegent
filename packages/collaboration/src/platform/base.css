@@ -825,11 +825,14 @@
 
 .collaboration-project-create-group-members {
   display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 
 .collaboration-project-create-group-members > span {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   border-radius: 8px;
@@ -854,6 +857,7 @@
 }
 
 .collaboration-project-create-group-members strong {
+  overflow-wrap: anywhere;
   font-size: 13px;
   font-weight: 500;
 }
@@ -862,6 +866,7 @@
   color: rgb(var(--color-text-secondary));
   font-size: 12px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .collaboration-project-create-group-remove {
