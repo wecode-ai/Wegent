@@ -63,7 +63,9 @@ def verify_query_plans(engine: Engine) -> None:
                 .with_for_update()
                 .statement
             )
-            compiled = statement.compile(dialect=engine.dialect)
+            compiled = statement.compile(
+                dialect=engine.dialect, compile_kwargs={"render_postcompile": True}
+            )
             rows = db.connection().exec_driver_sql(
                 "EXPLAIN " + str(compiled), compiled.params
             )
