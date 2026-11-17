@@ -201,4 +201,6 @@ Images, Markdown and file links in Issue activity open attachment previews with 
 
 Default execution devices and device grants from new Issues are described in [Collaboration device settings](./devices.md#collaboration-device-defaults): **Collaboration → Collaboration management → Execution devices → Personal default environment**. **Collaboration → New Issue → Runtime (optional) → Personal default environment → Save personal default device** explicitly saves personal preferences. For a selected project, **Project device access (applies immediately) → Choose or add a device** manages project grants. See [Independent Issues](./projects.md#independent-issues) for participant selection, the persistent action bar and unsaved-change protection.
 
+Issue **Participants → +** supports search and multiple selections. The assignee picker also searches outside the project; confirmation grants management of that Issue only. See [Issue collaboration](./projects.md#project-controls).
+
 Link an existing task: **Collaboration → Issue details → Linked tasks → Link existing task**. See [Projects and Issues](./projects.md).
