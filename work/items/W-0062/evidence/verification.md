@@ -136,6 +136,8 @@ Rust 验证通过：`runtime_work::handler::turns::tests` 17 项、`runtime_work
 
 创建成员的延迟请求曾在读取 Viewer 后覆盖并发提升的 Maintainer，helper 回归已稳定失败。真实 API 交错用例进一步确认：先通过 PATCH 晋升为 Maintainer，再提交延迟的 Developer POST；旧写入在 inherited/direct Viewer 两种前提均返回 201 却降为 Developer。创建链现显式请求至少 Developer，普通管理请求保留精确角色及降权语义；同一参数通过共享 API、Web 与 Wework 适配器传递。服务端仍使用现有 Python-owned 成员写入 API，不迁移路由，不修改 CP 权限不变量。修复后角色覆盖、CP 契约及 guard 共 95 项通过（38.54 秒）；helper 12 项、Wework 传输与适配器 36 项、Web 适配器 14 项通过。MySQL RR 陈旧快照回归加入既有 CI 套件，本地未设置专用 URL，未计为本地通过。后续交接须采用包含本轮修复的新 head CI，不能沿用 `0a691d1f0c` 的绿色结论。
 
+本轮随后自动整合主线 `ea5eca2558`，无内容冲突。main 的 Issue 邀请权限、项目 Viewer 与执行限制断言，以及中英导航和 locale 更新均保留；本项的 API、成员提示和实际任务入口也完整保留。整合后共享创建、模板及完整 Platform/App 共 33 文件、445 项通过（43.79 秒），后端同一 API/CP/guard 命令 95 项通过（56.92 秒）；文档 8 项、导航与成员 helper 协议 10 项通过。真实任务页宿主的两种宽度、英文入口、等待名单确认及同项目重试共 5 项再次通过（16.46 秒）。共享构建、Wework typecheck 和完整 lint 通过，lint 为 0 错误、5 项既有警告；Black、isort 与相对主线的差异检查通过。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
