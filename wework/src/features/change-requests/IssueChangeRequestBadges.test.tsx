@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { IssueChangeRequestBadges } from './IssueChangeRequestBadges'
 import { createConnectionObserverFixture } from '@/test/connection-observer'
 import { outputAsRecord } from '@/api/environment'
-import type { DeviceCommandRequest, DeviceCommandResponse } from '@/types/api'
+import type { DeviceCommandRequest, DeviceCommandResponse, DeviceInfo } from '@/types/api'
 
 const url = 'https://github.com/org/app/pull/42'
 const badges = [Object.freeze({ id: 'pr-42', label: '#42', url, icon: 'git-pull-request' })]
@@ -61,6 +61,12 @@ describe('client PR badge adapter', () => {
     const reply = protocolReplies()
     const executeCommand = vi.fn().mockImplementation(async (_device, request) => reply(request))
     const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(null, [
+      {
+        device_id: 'local-device',
+        runtime_features: { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } },
+      },
+    ] as DeviceInfo[])
     const view = render(<IssueChangeRequestBadges badges={badges} monitor={monitor} compact />)
     expect(executeCommand).not.toHaveBeenCalled()
     await setVisible(true)
@@ -90,6 +96,12 @@ describe('client PR badge adapter', () => {
       .fn()
       .mockImplementation(async (_device, request) => reply(request, 'MERGED'))
     const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(null, [
+      {
+        device_id: 'local-device',
+        runtime_features: { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } },
+      },
+    ] as DeviceInfo[])
     render(
       <>
         <IssueChangeRequestBadges badges={badges} monitor={monitor} compact />
@@ -115,6 +127,12 @@ describe('client PR badge adapter', () => {
     })
     const executeCommand = vi.fn().mockReturnValue(pending)
     const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(null, [
+      {
+        device_id: 'local-device',
+        runtime_features: { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } },
+      },
+    ] as DeviceInfo[])
     const view = render(<IssueChangeRequestBadges badges={badges} monitor={monitor} compact />)
     try {
       await setVisible(true)
