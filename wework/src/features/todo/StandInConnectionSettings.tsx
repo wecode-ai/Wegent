@@ -8,7 +8,7 @@ import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/sta
 import { useTranslation } from '@/hooks/useTranslation'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
-import { StandInConnections } from './StandInConnections'
+import { StandInConnections, type StandInProjectNavigationHandle } from './StandInConnections'
 import { StandInSourceConnections } from './StandInSourceConnections'
 import { StandInGitConnections, GIT_CONNECTION_PREFIX } from './StandInGitConnections'
 import { StandInEmailConnections, EMAIL_PROVIDER } from './StandInEmailConnections'
@@ -20,6 +20,8 @@ import { Clock } from 'lucide-react'
 import { StandInConnectionCatalog } from './StandInConnectionCatalog'
 
 export interface StandInConnectionNavigationHandle extends AutomationNavigationHandle {
+  /** True means the source editor already confirmed discarding unsaved changes. */
+  requestLeave(action: (discarded?: boolean) => void): void
   back(): void
 }
 
@@ -34,12 +36,14 @@ export function StandInConnectionSettings({
   focusedProjectId,
   scheduling,
   onScheduleDirtyChange,
+  onDraftDirtyChange,
   initialCalendar = false,
   onCalendarViewChange,
   onDetailViewChange,
   onDetailTitleChange,
   hideHeading = false,
   savedConfiguration,
+  projectScopeConfigured,
   ref,
   onNavigate,
 }: {
@@ -53,12 +57,14 @@ export function StandInConnectionSettings({
   focusedProjectId?: string
   scheduling?: { userId: number; roleId: string }
   onScheduleDirtyChange?(dirty: boolean): void
+  onDraftDirtyChange?(dirty: boolean): void
   initialCalendar?: boolean
   onCalendarViewChange?(open: boolean): void
   onDetailViewChange?(open: boolean): void
   onDetailTitleChange?(title: string | null): void
   hideHeading?: boolean
   savedConfiguration?: Pick<StandInRole, 'connections' | 'collaboration' | 'calendar'>
+  projectScopeConfigured?: boolean
   ref?: Ref<StandInConnectionNavigationHandle>
   onNavigate?(action: () => void): void
 }) {
@@ -74,17 +80,20 @@ export function StandInConnectionSettings({
   const [view, setView] = useState<string | null>(initialCalendar ? 'time' : null)
   const calendarRef = useRef<AutomationNavigationHandle>(null)
   const emailRef = useRef<AutomationNavigationHandle>(null)
+  const projectRef = useRef<StandInProjectNavigationHandle>(null)
+  const requestLeave = (action: (discarded?: boolean) => void) => {
+    const editor = calendarRef.current ?? emailRef.current
+    if (projectRef.current) projectRef.current.requestLeave(action)
+    else if (editor) editor.requestLeave(() => action(false))
+    else action(false)
+  }
   useImperativeHandle(ref, () => ({
     back() {
       const back = () => setView(null)
-      if (calendarRef.current) calendarRef.current.requestLeave(back)
-      else if (emailRef.current) emailRef.current.requestLeave(back)
-      else back()
+      requestLeave(back)
     },
     requestLeave(action) {
-      if (calendarRef.current) calendarRef.current.requestLeave(action)
-      else if (emailRef.current) emailRef.current.requestLeave(action)
-      else action()
+      requestLeave(action)
     },
   }))
   useEffect(() => {
@@ -230,6 +239,8 @@ export function StandInConnectionSettings({
             </div>
           ) : view === 'projects' ? (
             <StandInConnections
+              ref={projectRef}
+              onDraftDirtyChange={onDraftDirtyChange}
               role={role}
               projects={projects}
               allowLocalProjects={deviceId === localDeviceId}
@@ -311,6 +322,7 @@ export function StandInConnectionSettings({
           {!hideHeading && <h3 className="font-medium">{t('standIn.workspace.connections')}</h3>}
           <StandInConnectionCatalog
             role={role}
+            projectScopeConfigured={projectScopeConfigured}
             projects={projects}
             providers={providers}
             loading={loading}
@@ -326,7 +338,7 @@ export function StandInConnectionSettings({
         <button
           type="button"
           data-testid="stand-in-provider-retry"
-          className="min-h-9 text-sm underline"
+          className="min-h-11 min-w-11 text-sm underline md:min-h-9"
           onClick={() => setRefresh(value => value + 1)}
         >
           {t('standIn.workspace.connection_retry')}
@@ -343,7 +355,7 @@ export function StandInConnectionSettings({
               setError(null)
               setRefresh(value => value + 1)
             }}
-            className="min-h-9 text-sm underline"
+            className="min-h-11 min-w-11 text-sm underline md:min-h-9"
           >
             {t('standIn.workspace.connection_retry')}
           </button>
@@ -366,7 +378,7 @@ function ConnectionProviderStatus({
   return (
     <>
       {!['ready', 'auth_required'].includes(provider.availability.status) && (
-        <p className="px-2 text-xs text-text-muted">
+        <p className="px-2 text-xs text-text-secondary">
           {provider.availability.code
             ? getStandInErrorMessage({ code: provider.availability.code })
             : t('standIn.workspace.connection_status_' + provider.availability.status, {
@@ -380,7 +392,7 @@ function ConnectionProviderStatus({
           data-testid={`stand-in-install-dependencies-${provider.id}`}
           disabled={disabled}
           onClick={onInstall}
-          className="min-h-9 px-2 text-sm underline"
+          className="min-h-11 min-w-11 px-2 text-sm underline md:min-h-9"
         >
           {t('standIn.workspace.install_dependencies')}
         </button>

@@ -998,6 +998,19 @@ describe('ProjectExecutionEnvironments', () => {
     ).toEqual(['All', 'Online', 'Offline', 'Preparing', 'Error'])
   })
 
+  it('keeps the English device menu and project authorization instructions in English', async () => {
+    await render({
+      locale: 'en',
+      assigned: [environment(22, 'Assigned device', 'online')],
+    })
+    expect(element('-actions-toggle-22').textContent).toBe('More')
+    await openPicker()
+    expect(element('-picker').textContent).toContain(
+      'Choose a device to authorize for this project.'
+    )
+    expect(element('-picker').textContent).not.toMatch(/\p{Script=Han}/u)
+  })
+
   it('derives name and directory from the selected repository and submits the chosen branch', async () => {
     const listBranches = vi.fn(async () => [
       { name: 'develop', default: false },

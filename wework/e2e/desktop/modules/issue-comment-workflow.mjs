@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { issueCommentFormSelector } from './issue-comment-selectors.mjs'
 import { waitForBoardValue } from './collaboration-board-flows.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 
@@ -78,7 +79,7 @@ export async function verifyIssueCommentWorkflow(
     }),
   })
   const content = '[data-workspace-tab-content][aria-hidden="false"]'
-  const form = `${content} [data-testid="cloud-task-activity-${issue.id}"] [data-testid="task-comment-form"]`
+  const form = `${content} ${issueCommentFormSelector(issue.id)}`
   const send = `${form} [data-testid="send-message-button"]`
   const sendMenu = `${form} [data-testid="task-comment-form-send-actions"]`
   const close = '[data-testid="task-comment-form-close"]'

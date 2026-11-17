@@ -163,7 +163,12 @@ async def _dispatch(
     from app.services.runtime_work_service import _runtime_attachment_payloads
 
     attachment_ids = _persist_attachments(db, user.id, context, port)
+    from app.services.im.question_context import pending_question_context
+
     additional_context = await _quoted_task_context(session, context)
+    additional_context.update(
+        await pending_question_context(db, session, context, target)
+    )
     result = await runtime_rpc_service.call(
         user_id=user.id,
         device_id=target["deviceId"],

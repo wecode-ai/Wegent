@@ -40,7 +40,7 @@ export const ModelSelectorMenuRow = forwardRef<
       )}
     >
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="max-w-24 truncate text-text-muted">{value}</span>
+      <span className="max-w-24 truncate text-text-secondary">{value}</span>
       <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
     </button>
   );
