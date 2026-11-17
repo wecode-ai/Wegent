@@ -6,20 +6,22 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use super::model::{
-    CommandHookConfig, HookHealth, HookPluginManifest, HookPolicy, HookRunSummary, HookSource,
-    HooksConfig, ResolvedHookHandlerView, ResolvedHookPluginView, MAX_TIMEOUT_SECONDS,
+    CommandHookConfig, HookEventName, HookHealth, HookPluginManifest, HookPolicy, HookRunSummary,
+    HookSource, HooksConfig, ResolvedHookHandlerView, ResolvedHookPluginView, MAX_TIMEOUT_SECONDS,
 };
 
 const MAX_JSON_BYTES: u64 = 1024 * 1024;
 
 pub struct ResolvedCommandHook {
     pub handler_id: String,
+    pub event_name: HookEventName,
     pub matcher_source: String,
     pub matcher: Regex,
     pub config: CommandHookConfig,
@@ -49,6 +51,7 @@ impl ResolvedHookPlugin {
                 .iter()
                 .map(|hook| ResolvedHookHandlerView {
                     id: hook.handler_id.clone(),
+                    event_name: hook.event_name,
                     matcher: hook.matcher_source.clone(),
                     config: hook.config.clone(),
                 })
@@ -95,18 +98,23 @@ struct RuntimeStateFile {
 #[derive(Debug, Clone)]
 pub struct HookRegistryStore {
     executor_home: PathBuf,
+    changed: Arc<tokio::sync::Notify>,
 }
 
 impl HookRegistryStore {
     pub fn from_env() -> Self {
+        Self::new(crate::config::paths::executor_home())
+    }
+
+    pub fn new(executor_home: PathBuf) -> Self {
         Self {
-            executor_home: crate::config::paths::executor_home(),
+            executor_home,
+            changed: Arc::default(),
         }
     }
 
-    #[cfg(test)]
-    pub fn new(executor_home: PathBuf) -> Self {
-        Self { executor_home }
+    pub(super) fn change_signal(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.changed)
     }
 
     pub fn plugins_dir(&self) -> PathBuf {
@@ -213,6 +221,7 @@ impl HookRegistryStore {
             .ok_or("hook registry entry not found")?;
         entry.enabled = enabled;
         self.write_registry(&registry)?;
+        self.changed.notify_one();
         self.list()
             .into_iter()
             .find(|plugin| plugin.manifest.id == id)
@@ -234,6 +243,7 @@ impl HookRegistryStore {
             let _ = fs::remove_dir_all(&directory);
             return Err(error);
         }
+        self.changed.notify_one();
         self.list()
             .into_iter()
             .find(|plugin| plugin.manifest.id == manifest.id)
@@ -258,6 +268,7 @@ impl HookRegistryStore {
             return Err("hook plugin id cannot be changed".to_owned());
         }
         write_plugin_files(&plugin.directory, &manifest, &config)?;
+        self.changed.notify_one();
         self.list()
             .into_iter()
             .find(|plugin| plugin.manifest.id == id)
@@ -287,7 +298,9 @@ impl HookRegistryStore {
         fs::remove_dir_all(path).map_err(|error| error.to_string())?;
         let mut registry = self.read_registry();
         registry.plugins.remove(id);
-        self.write_registry(&registry)
+        self.write_registry(&registry)?;
+        self.changed.notify_one();
+        Ok(())
     }
 
     pub fn install(&self, source: &Path) -> Result<ResolvedHookPluginView, String> {
@@ -299,6 +312,7 @@ impl HookRegistryStore {
             return Err("hook plugin already exists".to_owned());
         }
         copy_directory(&source, &destination, &source)?;
+        self.changed.notify_one();
         self.list()
             .into_iter()
             .find(|plugin| plugin.manifest.id == manifest.id)
@@ -400,39 +414,53 @@ fn load_plugin(
         }
     };
     let mut hooks = Vec::new();
-    for (group_index, group) in config.post_tool_use.into_iter().enumerate() {
-        let matcher = match Regex::new(&group.matcher) {
-            Ok(value) => value,
-            Err(error) => {
-                return Some(ResolvedHookPlugin {
-                    manifest,
-                    enabled,
-                    source,
-                    directory,
-                    policy,
-                    health: HookHealth::InvalidConfig(error.to_string()),
-                    hooks: Vec::new(),
-                })
-            }
-        };
-        for (hook_index, config) in group.hooks.into_iter().enumerate() {
-            if let Err(error) = validate_hook(&config) {
-                return Some(ResolvedHookPlugin {
-                    manifest,
-                    enabled,
-                    source,
-                    directory,
-                    policy,
-                    health: HookHealth::Unsupported(error),
-                    hooks: Vec::new(),
+    for (event_name, prefix, groups) in [
+        (
+            HookEventName::PostToolUse,
+            "post-tool-use",
+            config.post_tool_use,
+        ),
+        (
+            HookEventName::TurnCompleted,
+            "turn-completed",
+            config.turn_completed,
+        ),
+    ] {
+        for (group_index, group) in groups.into_iter().enumerate() {
+            let matcher = match Regex::new(&group.matcher) {
+                Ok(value) => value,
+                Err(error) => {
+                    return Some(ResolvedHookPlugin {
+                        manifest,
+                        enabled,
+                        source,
+                        directory,
+                        policy,
+                        health: HookHealth::InvalidConfig(error.to_string()),
+                        hooks: Vec::new(),
+                    })
+                }
+            };
+            for (hook_index, config) in group.hooks.into_iter().enumerate() {
+                if let Err(error) = validate_hook(&config) {
+                    return Some(ResolvedHookPlugin {
+                        manifest,
+                        enabled,
+                        source,
+                        directory,
+                        policy,
+                        health: HookHealth::Unsupported(error),
+                        hooks: Vec::new(),
+                    });
+                }
+                hooks.push(ResolvedCommandHook {
+                    handler_id: format!("{prefix}-{group_index}-{hook_index}"),
+                    event_name,
+                    matcher_source: group.matcher.clone(),
+                    matcher: matcher.clone(),
+                    config,
                 });
             }
-            hooks.push(ResolvedCommandHook {
-                handler_id: format!("post-tool-use-{group_index}-{hook_index}"),
-                matcher_source: group.matcher.clone(),
-                matcher: matcher.clone(),
-                config,
-            });
         }
     }
     let command_health = hooks
@@ -504,7 +532,7 @@ fn write_plugin_files(
     config: &HooksConfig,
 ) -> Result<(), String> {
     validate_plugin_id(&manifest.id)?;
-    for group in &config.post_tool_use {
+    for group in config.post_tool_use.iter().chain(&config.turn_completed) {
         Regex::new(&group.matcher).map_err(|error| error.to_string())?;
         for hook in &group.hooks {
             validate_hook(hook)?;
@@ -633,6 +661,57 @@ mod tests {
         )
         .unwrap();
         fs::write(directory.join("hooks.json"), r#"{"PostToolUse":[]}"#).unwrap();
+    }
+
+    #[test]
+    fn resolves_both_event_types_and_exposes_event_names() {
+        let home = tempdir().unwrap();
+        let directory = home.path().join("hooks/plugins/reporter");
+        write_plugin(&directory);
+        fs::write(directory.join("hooks.json"), r#"{
+            "PostToolUse": [{"matcher":"^Edit$", "hooks":[{"type":"command","command":"reporter"}]}],
+            "TurnCompleted": [{"hooks":[{"type":"command","command":"reporter"}]}]
+        }"#).unwrap();
+        let store = HookRegistryStore::new(home.path().to_path_buf());
+
+        let plugins = store.discover_with_roots(None, None);
+
+        let handlers = plugins[0].view(Vec::new()).handlers;
+        assert_eq!(handlers.len(), 2);
+        assert_eq!(handlers[0].id, "post-tool-use-0-0");
+        assert_eq!(handlers[0].event_name, HookEventName::PostToolUse);
+        assert_eq!(handlers[1].id, "turn-completed-0-0");
+        assert_eq!(handlers[1].event_name, HookEventName::TurnCompleted);
+        assert!(plugins[0].hooks[1].matcher.is_match("cancelled"));
+        let view = serde_json::to_value(&handlers[1]).unwrap();
+        assert_eq!(view["eventName"], "TurnCompleted");
+    }
+
+    #[test]
+    fn existing_post_tool_configs_deserialize_without_completion_handlers() {
+        let config: HooksConfig = serde_json::from_str(r#"{"PostToolUse":[]}"#).unwrap();
+
+        assert!(config.turn_completed.is_empty());
+    }
+
+    #[test]
+    fn rejects_invalid_completion_matchers_and_commands_before_writing() {
+        let home = tempdir().unwrap();
+        let store = HookRegistryStore::new(home.path().to_path_buf());
+        let manifest: HookPluginManifest = serde_json::from_str(
+            r#"{"schemaVersion":1,"id":"reporter","name":"Reporter","version":"1"}"#,
+        )
+        .unwrap();
+        for group in [
+            serde_json::json!({"matcher": "[", "hooks": [{"type": "command", "command": "echo ok"}]}),
+            serde_json::json!({"hooks": [{"type": "unsupported", "command": "echo ok"}]}),
+            serde_json::json!({"hooks": [{"type": "command", "command": ""}]}),
+        ] {
+            let config =
+                serde_json::from_value(serde_json::json!({"TurnCompleted": [group]})).unwrap();
+            assert!(store.create(manifest.clone(), config).is_err());
+            assert!(!store.plugins_dir().join("reporter").exists());
+        }
     }
 
     #[test]

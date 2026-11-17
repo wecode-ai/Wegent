@@ -17,9 +17,13 @@ use flate2::{write::GzEncoder, Compression};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+mod git_artifacts;
 mod git_capture;
+mod git_stream;
+mod git_turn_snapshot;
 mod task_baseline;
 use git_capture::git_output_vec;
+pub use git_turn_snapshot::{GitTurnRange, GitTurnSnapshot};
 
 const ARTIFACT_VERSION: u64 = 1;
 const MAX_INLINE_DIFF_BYTES: usize = 512 * 1024;

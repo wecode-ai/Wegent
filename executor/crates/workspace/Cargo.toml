@@ -16,11 +16,12 @@ wegent-filesystem = { path = "../../../shared/rust/filesystem" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 flate2 = "1.0"
 serde_json = { version = "1", features = ["preserve_order"] }
+serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 tempfile = "3.23"
 tokio = { version = "1.48", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 url = "2"
+libc = "0.2"
 
 [dev-dependencies]
-libc = "0.2"
 tokio = { version = "1.48", features = ["test-util"] }

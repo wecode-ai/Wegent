@@ -362,6 +362,7 @@ pub(super) fn shared_options(
         request_user_input_answers: None,
         active_turn_started: None,
         active_turn_finished: None,
+        turn_diff_hook: None,
         wait_for_goal_continuation: false,
         auto_approve_mcp_tool_calls: false,
         stand_in_single_approval: false,
@@ -485,6 +486,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,
                 wait_for_goal_continuation: false,
+                turn_diff_hook: None,
                 active_turn_started: Some(Box::new(move |thread_id, turn_id| {
                     active_tx.send((thread_id, turn_id)).unwrap();
                 })),
@@ -598,6 +600,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,
                 wait_for_goal_continuation: false,
+                turn_diff_hook: None,
                 active_turn_started: None,
                 overload_turn_recovering: None,
                 overload_continuation_params: json!({"threadId": "root-thread", "input": []}),
@@ -676,6 +679,7 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,
                 wait_for_goal_continuation: false,
+                turn_diff_hook: None,
                 active_turn_started: None,
                 overload_turn_recovering: None,
                 overload_continuation_params: json!({"threadId": "root-thread", "input": []}),

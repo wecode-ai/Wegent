@@ -184,6 +184,66 @@ fn write_plugin(directory: &Path, subscriptions: &[&str], enabled: bool) {
 }
 
 #[test]
+fn completion_only_plugins_do_not_activate_the_rollout_feed() {
+    let home = tempfile::tempdir().unwrap();
+    let directory = home.path().join("hooks/plugins/reporter");
+    write_plugin(&directory, &[super::CODEX_ROLLOUT_SUBSCRIPTION], true);
+    fs::write(
+        directory.join("hooks.json"),
+        json!({
+            "TurnCompleted": [{"hooks": [{"type": "command", "command": "echo ok"}]}],
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let subscribers = subscribed_plugins(&super::HookRegistryStore::new(home.path().into()));
+
+    assert!(!subscribers.installed);
+    assert!(!subscribers.enabled);
+    assert!(subscribers.delivering.is_empty());
+}
+
+#[tokio::test]
+async fn rollout_delivery_never_invokes_completion_handlers() {
+    let home = tempfile::tempdir().unwrap();
+    let directory = home.path().join("hooks/plugins/reporter");
+    write_plugin(&directory, &[super::CODEX_ROLLOUT_SUBSCRIPTION], true);
+    let handler = json!({"hooks": [{"type": "command", "command": "echo ok"}]});
+    fs::write(
+        directory.join("hooks.json"),
+        json!({
+            "PostToolUse": [handler.clone()], "TurnCompleted": [handler],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    fs::create_dir(home.path().join("sessions")).unwrap();
+    append(
+        &home.path().join("sessions/rollout-root.jsonl"),
+        &[metadata("root"), file_change("call-1", &["a.rs"])],
+    );
+    let database = home.path().join("reports.db");
+    let mut store = Store::open(&database).unwrap();
+    store.register_root("root", &session(home.path())).unwrap();
+    assert_eq!(scan_home(&mut store, home.path()).reports, 1);
+    let observer = CodexRolloutObserver::new(database, home.path().into());
+    let registry = super::HookRegistryStore::new(home.path().into());
+    let (sender, mut receiver) = tokio::sync::broadcast::channel(8);
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Some(sender)));
+
+    super::deliver(&observer.inner, &registry, &events)
+        .await
+        .unwrap();
+
+    let event = receiver.try_recv().unwrap();
+    assert_eq!(event["payload"]["run"]["handlerId"], "post-tool-use-0-0");
+    assert_eq!(event["payload"]["run"]["status"], "succeeded");
+    assert!(receiver.try_recv().is_err());
+    assert!(store.next(i64::MAX).unwrap().is_none());
+}
+
+#[test]
 fn reports_every_written_file_once_and_keeps_offsets_across_restarts() {
     let temp = tempfile::tempdir().unwrap();
     fs::create_dir(temp.path().join("sessions")).unwrap();

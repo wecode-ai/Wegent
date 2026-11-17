@@ -17,10 +17,11 @@ pub const OUTPUT_PREVIEW_BYTES: usize = 16 * 1024;
 /// delivered too.
 pub const CODEX_ROLLOUT_SUBSCRIPTION: &str = "codex_rollout";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum HookEventName {
     PostToolUse,
+    TurnCompleted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +48,28 @@ pub struct PostToolUseInput {
     pub tool_response: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TurnCompletedInput {
+    pub event_id: String,
+    pub sequence: u64,
+    pub user: HookUser,
+    pub session_id: String,
+    pub turn_id: String,
+    pub cwd: PathBuf,
+    pub hook_event_name: HookEventName,
+    pub model: Option<String>,
+    pub permission_mode: String,
+    pub status: String,
+    pub file_changes: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnHookReceipt {
+    pub event_id: String,
+    pub sequence: u64,
+    pub queued_handlers: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HookPluginManifest {
@@ -70,10 +93,13 @@ impl HookPluginManifest {
 pub struct HooksConfig {
     #[serde(rename = "PostToolUse", default)]
     pub post_tool_use: Vec<HookMatcherGroup>,
+    #[serde(rename = "TurnCompleted", default)]
+    pub turn_completed: Vec<HookMatcherGroup>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct HookMatcherGroup {
+    #[serde(default)]
     pub matcher: String,
     pub hooks: Vec<CommandHookConfig>,
 }
@@ -194,6 +220,7 @@ pub struct HookRunSummary {
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedHookHandlerView {
     pub id: String,
+    pub event_name: HookEventName,
     pub matcher: String,
     pub config: CommandHookConfig,
 }

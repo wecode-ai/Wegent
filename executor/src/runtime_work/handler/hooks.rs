@@ -14,6 +14,22 @@ use crate::{
 use super::{hook_payload, hook_rpc_error, string_field, RuntimeWorkRpcHandler};
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn turn_diff_hook(
+        &self,
+        request: &crate::protocol::ExecutionRequest,
+    ) -> Option<crate::agents::TurnDiffHook> {
+        if !self.hook_service.has_turn_completed_hooks() {
+            return None;
+        }
+        Some(crate::agents::TurnDiffHook::new(
+            self.hook_service.clone(),
+            super::turns::hook_user(request),
+            PathBuf::from(request.cwd()?),
+            super::string_field(&request.model_config, "model_id"),
+            "workspace-write".to_owned(),
+        ))
+    }
+
     pub(super) async fn create_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
         let manifest = hook_payload::<HookPluginManifest>(&payload, "manifest")?;
         let config = hook_payload::<HooksConfig>(&payload, "hooks")?;

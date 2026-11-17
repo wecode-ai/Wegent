@@ -290,7 +290,7 @@ fn write_private_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
     })
 }
 
-fn hook_user(request: &ExecutionRequest) -> HookUser {
+pub(super) fn hook_user(request: &ExecutionRequest) -> HookUser {
     let nested_user = request.extra.get("user").and_then(Value::as_object);
     let id = request
         .extra
@@ -1712,6 +1712,7 @@ impl RuntimeWorkRpcHandler {
                             thread_started: Some(thread_started),
                             active_turn_started: Some(active_turn_started),
                             active_turn_finished: Some(active_turn_finished),
+                            turn_diff_hook: handler.turn_diff_hook(&request),
                             overload_turn_recovering: Some(overload_turn_recovering),
                         },
                     )
