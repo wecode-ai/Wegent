@@ -6,6 +6,31 @@ import { createDingTalkReplyStory } from '../modules/stand-in-dingtalk-reply-sto
 import { createDirectRecoveryVerification } from '../modules/stand-in-direct-recovery.mjs'
 import { createSourceOwnerTaskStory } from '../modules/stand-in-source-owner-task.mjs'
 
+async function authorizeDingTalk(control, authTarget, timeoutMs) {
+  let status = await requestExecutor(
+    control,
+    'runtime.local_connector_auth.start',
+    { pluginKey: authTarget.pluginKey, connectorSlug: authTarget.connectorSlug },
+    timeoutMs
+  )
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (status.status === 'ok') return status
+    assert.notEqual(status.status, 'error', status.hint ?? 'DingTalk authorization failed')
+    await new Promise(resolve => setTimeout(resolve, 50))
+    status = await requestExecutor(
+      control,
+      'runtime.local_connector_auth.poll',
+      {
+        pluginKey: authTarget.pluginKey,
+        connectorSlug: authTarget.connectorSlug,
+        sessionId: status.sessionId,
+      },
+      timeoutMs
+    )
+  }
+  assert.fail('DingTalk authorization did not complete')
+}
+
 export function createDesktopScenario(options) {
   const { uiTimeoutMs, workbenchReadyTimeoutMs } = options
   const dingtalk = createStandInDingTalkFixture(options)
@@ -66,6 +91,64 @@ export function createDesktopScenario(options) {
         })
         return response.json()
       }
+      const providerId = provider.id
+      const authTarget = provider.authTarget
+      // Exercise the real CLI, provider and catalog boundaries with the profile
+      // still present while its token is no longer refreshable.
+      await dingtalk.setAuthState('expired')
+      const expiredProfile = await invoke('runtime.connections.cli', {
+        providerId,
+        dependencyAlias: dependency.alias,
+        source: dependency.source,
+        expectedVersion: dependency.resolved.version,
+        operation: 'callTool',
+        tool: 'listProfiles',
+        arguments: {},
+      })
+      assert.equal(expiredProfile.ok, true)
+      assert.equal(expiredProfile.result.currentProfile, 'connection-test-account')
+      const expiredCatalog = await invoke('runtime.connections.catalog', {})
+      assert.equal(expiredCatalog.ok, true)
+      assert.equal(
+        expiredCatalog.result.items.find(item => item.id === providerId).availability.status,
+        'auth_required'
+      )
+      const expiredSearch = await invoke('runtime.connections.resources', {
+        providerId,
+        kind: 'direct',
+        query: 'qindi',
+      })
+      assert.equal(expiredSearch.ok, false)
+      assert.equal(expiredSearch.error.code, 'connector_auth_required')
+
+      // The preflight passes, then the search expires the token before its result.
+      await dingtalk.setAuthState('expire-on-search')
+      const expiredDuringSearch = await invoke('runtime.connections.resources', {
+        providerId,
+        kind: 'direct',
+        query: 'qindi',
+      })
+      assert.equal(expiredDuringSearch.ok, false)
+      assert.equal(expiredDuringSearch.error.code, 'connector_auth_required')
+      assert.equal(await dingtalk.authState(), 'expired')
+
+      await authorizeDingTalk(control, authTarget, uiTimeoutMs)
+      assert.equal(await dingtalk.authState(), 'ready')
+      const recoveredCatalogAfterAuth = await invoke('runtime.connections.catalog', {})
+      assert.equal(recoveredCatalogAfterAuth.ok, true)
+      assert.equal(
+        recoveredCatalogAfterAuth.result.items.find(item => item.id === providerId).availability
+          .status,
+        'ready'
+      )
+      const recoveredSearch = await invoke('runtime.connections.resources', {
+        providerId,
+        kind: 'direct',
+        query: 'qindi',
+      })
+      assert.equal(recoveredSearch.ok, true)
+      assert.ok(recoveredSearch.result.items.some(item => item.id === 'fixture-user'))
+
       for (const input of [
         { tool: 'reply', arguments: {} },
         { tool: 'searchGroups', arguments: { output: '/tmp/forbidden' } },
