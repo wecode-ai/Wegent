@@ -481,7 +481,7 @@ jobs:
         env:
           WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         run: |
-          pnpm --dir wework prepare:electron
+          node wework/scripts/prepare-electron.mjs
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Set up real object storage for collaboration E2E
@@ -799,7 +799,7 @@ jobs:
       - name: Install Electron for native startup and schema verification
         if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')
         run: |
-          pnpm --dir wework prepare:electron
+          node wework/scripts/prepare-electron.mjs
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
       - name: Prepare DingTalk protocol fixture for the standard account
