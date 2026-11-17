@@ -98,7 +98,7 @@ def main() -> None:
                             with observer.cursor() as cursor:
                                 while not released.is_set():
                                     cursor.execute(
-                                        "SELECT waits.REQUESTING_ENGINE_LOCK_ID, waits.BLOCKING_ENGINE_LOCK_ID "
+                                        "SELECT waits.REQUESTING_ENGINE_TRANSACTION_ID, waits.BLOCKING_ENGINE_TRANSACTION_ID "
                                         "FROM performance_schema.data_lock_waits AS waits "
                                         "JOIN performance_schema.threads AS threads "
                                         "ON waits.BLOCKING_THREAD_ID=threads.THREAD_ID "
@@ -109,8 +109,8 @@ def main() -> None:
                                     if wait:
                                         emit(
                                             "blocked",
-                                            requestingLockId=wait[0],
-                                            blockingLockId=wait[1],
+                                            requestingTransactionId=str(wait[0]),
+                                            blockingTransactionId=str(wait[1]),
                                         )
                                         return
                                     released.wait(0.01)

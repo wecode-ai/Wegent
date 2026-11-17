@@ -128,6 +128,15 @@ async function readFailureSummary(result) {
   )
 }
 
+function annotateCheckpointFailure(checkpoint, failure) {
+  if (process.env.GITHUB_ACTIONS !== 'true') return
+  const message = `[${checkpoint}] ${failure}`
+    .replaceAll('%', '%25')
+    .replaceAll('\r', '%0D')
+    .replaceAll('\n', '%0A')
+  console.error(`::error title=Desktop checkpoint failed::${message}`)
+}
+
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
   if (checkpoint === 'workspace-attachments') {
@@ -366,6 +375,7 @@ async function runRequestedArgs() {
     return
   }
   const failure = await readFailureSummary(result)
+  annotateCheckpointFailure(label, failure)
   console.error(
     `[desktop-e2e] FAIL ${label}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
   )
@@ -440,6 +450,7 @@ async function runParallelCheckpoints(checkpoints) {
           return
         }
         const failure = await readFailureSummary(result)
+        annotateCheckpointFailure(checkpoint, failure)
         failures.push({ checkpoint, failure, ...result })
         console.error(
           `[desktop-e2e] FAIL ${checkpoint}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
@@ -483,6 +494,7 @@ async function runCheckpoints(checkpoints) {
     }
 
     const failure = await readFailureSummary(result)
+    annotateCheckpointFailure(checkpoint, failure)
     failures.push({ checkpoint, failure, ...result })
     console.error(
       `[desktop-e2e] FAIL ${checkpoint}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`

@@ -494,6 +494,7 @@ export async function createDesktopScenario({
       deviceProxy,
       packageProxy,
       localDeviceId: local.device_id,
+      localRuntimeRouteId: local.socket_device_id || local.execution_target_id,
       evidence,
       timeoutMs: workbenchReadyTimeoutMs,
       deviceId: rendererDevice.deviceId,

@@ -131,6 +131,10 @@ export async function createDesktopScenario({
       oauthSecret,
       transferSecret,
       recordPythonRuntime: checkpoint === 'plugin-account-auth-password',
+      // The row-lock probe observes an installation, not a connector. Keep its
+      // sole account adapter identical to the mail recovery assertion.
+      accountConnectorSlugs:
+        checkpoint === 'plugin-account-auth-coordination' ? ['mail'] : undefined,
     })
 
   async function api(path, method = 'GET', body) {
