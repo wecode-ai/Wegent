@@ -165,8 +165,12 @@ impl RuntimeWorkRpcHandler {
                     .ok_or_else(|| app_error("Invalid MCP App session identity"))
             })
             .transpose()?;
+        let client = self
+            .codex_app_server
+            .for_request(&runtime_event_request_from_link(&link))
+            .map_err(|_| app_error("Cannot resolve the source runtime Home"))?;
         if payload["method"] == "release" {
-            self.codex_app_server
+            client
                 .set_mcp_app_session(
                     &thread_id,
                     &call_id,
@@ -178,7 +182,7 @@ impl RuntimeWorkRpcHandler {
         }
         let started = std::time::Instant::now();
         let (read, source) = self
-            .mcp_app_source(&thread_id, &call_id, payload["turnId"].as_str())
+            .mcp_app_source(&client, &thread_id, &call_id, payload["turnId"].as_str())
             .await
             .map_err(|_| app_error("Cannot read source invocation"))?;
         if started.elapsed().as_millis() >= 250 {
@@ -212,7 +216,7 @@ impl RuntimeWorkRpcHandler {
             .as_str()
             .ok_or_else(|| app_error("Source server is unavailable"))?;
         let catalog_started = std::time::Instant::now();
-        let server_catalog = self.mcp_app_catalog(&thread_id, server).await;
+        let server_catalog = self.mcp_app_catalog(&client, &thread_id, server).await;
         if catalog_started.elapsed().as_millis() >= 250 {
             crate::logging::log_executor_event(
                 "MCP App catalog lookup slow",
@@ -263,7 +267,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(descriptor());
         }
         if payload["method"] == "retain" {
-            self.codex_app_server
+            client
                 .set_mcp_app_session(
                     &thread_id,
                     &call_id,
@@ -311,8 +315,8 @@ impl RuntimeWorkRpcHandler {
                 Ok(json!({}))
             }
             "initialize" => {
-                let resource = self
-                    .call_codex_thread_method(
+                let resource = client
+                    .request(
                         "mcpServer/resource/read",
                         json!({
                             "threadId":thread_id,"server":server,"uri":uri,"originCallId":call_id
@@ -338,7 +342,7 @@ impl RuntimeWorkRpcHandler {
                     .iter()
                     .find(|tool| tool["name"] == params["name"] && source_visible(source, tool))
                     .ok_or_else(|| app_error("Tool is not available to this app"))?;
-                let result = self.codex_app_server.call_mcp_app_tool(json!({
+                let result = client.call_mcp_app_tool(json!({
                     "threadId":thread_id,"server":server,"tool":tool["name"],"arguments":params["arguments"]
                 })).await.or_else(app_tool_failure)?;
                 crate::logging::log_executor_event(
@@ -358,7 +362,7 @@ impl RuntimeWorkRpcHandler {
                 let requested = params["uri"]
                     .as_str()
                     .ok_or_else(|| app_error("Missing resource URI"))?;
-                self.call_codex_thread_method(
+                client.request(
                     "mcpServer/resource/read",
                     json!({
                         "threadId":thread_id,"server":server,"uri":requested,"originCallId":call_id
@@ -373,14 +377,15 @@ impl RuntimeWorkRpcHandler {
 
     async fn mcp_app_catalog(
         &self,
+        client: &CodexAppServerClient,
         thread_id: &str,
         server: &str,
     ) -> Result<Option<Value>, AppIpcError> {
         let mut cursor = Value::Null;
         let mut cursors = HashSet::new();
         loop {
-            let page = self
-                .call_codex_thread_method(
+            let page = client
+                .request(
                     "mcpServerStatus/list",
                     json!({
                         "threadId":thread_id,"serverName":server,"limit":100,"cursor":cursor

@@ -16,11 +16,12 @@ use futures_util::future::BoxFuture;
 use serde_json::Map;
 use serde_json::{json, Value};
 use tokio::{
-    io::AsyncWriteExt,
     process::{ChildStdin, Command},
     sync::{broadcast, mpsc, oneshot, Mutex},
     time::{timeout, timeout_at, Instant},
 };
+
+use wegent_subprocess::frame_writer::FrameWriter;
 
 use crate::{
     agents::{
@@ -194,6 +195,7 @@ mod event_goal;
 pub(crate) mod event_receipt;
 pub use event_goal::EventGoalAdmission;
 mod local_notifications;
+mod isolated_rpc;
 mod native_activity;
 mod native_turn;
 use native_activity::{CodexNativeActivity, CodexNativeRequest};
@@ -435,6 +437,13 @@ impl CodexAppServerClient {
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        if isolated_rpc::is_source_read(method) {
+            if let Some(result) = self.request_isolated(method, params.clone()).await {
+                return result.map_err(|error| match error {
+                    CodexAppToolError::NotDispatched(message) | CodexAppToolError::OutcomeUnknown(message) => message,
+                });
+            }
+        }
         let result = self.request_once(method, params.clone()).await;
         if let Err(error) = &result {
             if is_codex_cloud_config_error(error)
@@ -1542,6 +1551,7 @@ fn is_codex_cloud_config_error(error: &str) -> bool {
 
 struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
+    isolated_rpc: isolated_rpc::IsolatedRpcRegistry,
     runtime_notifications: RuntimeNotificationSubscribers,
     executor_shutdown_requested: bool,
     next_id: u64,
@@ -1604,6 +1614,7 @@ impl Default for CodexAppServerSharedState {
     fn default() -> Self {
         Self {
             process: None,
+            isolated_rpc: Default::default(),
             runtime_notifications: Arc::new(StdMutex::new(Vec::new())),
             executor_shutdown_requested: false,
             next_id: 1,
@@ -1780,7 +1791,7 @@ impl CodexNotificationHub {
 
 struct CodexAppServerProcess {
     child: CodexAppServerChild,
-    stdin: Arc<Mutex<ChildStdin>>,
+    stdin: Arc<Mutex<FrameWriter<ChildStdin>>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
     notifications: CodexNotificationHub,
     reader_task: tokio::task::JoinHandle<()>,
@@ -1808,7 +1819,7 @@ impl Drop for CodexAppServerProcess {
 
 #[derive(Clone)]
 struct CodexAppServerHandle {
-    stdin: Arc<Mutex<ChildStdin>>,
+    stdin: Arc<Mutex<FrameWriter<ChildStdin>>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
     notifications: CodexNotificationHub,
 }
@@ -1820,13 +1831,9 @@ impl CodexAppServerHandle {
         line.push(b'\n');
         let mut stdin = self.stdin.lock().await;
         stdin
-            .write_all(&line)
+            .write_frame(line)
             .await
-            .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))?;
-        stdin
-            .flush()
-            .await
-            .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"))
+            .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))
     }
 
     async fn remove_pending(&self, request_id: u64) {
@@ -1904,7 +1911,7 @@ async fn start_persistent_codex_app_server(
             Ok((
                 CodexAppServerProcess {
                     child,
-                    stdin: Arc::new(Mutex::new(stdin)),
+                    stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
                     pending,
                     notifications,
                     reader_task,
@@ -2321,11 +2328,14 @@ async fn run_codex_app_server_turn_on_shared_client(
             Arc::clone(&state.thread_activity_changed),
         );
         drop(state);
+        let owner_client = client.for_request(&request)?;
+        let owner_registry = owner_client.state.lock().await.isolated_rpc.clone();
         return run_codex_app_server_turn_with_runtime(
             &client.binary,
             request,
             options,
             Some(runtime_notifications),
+            Some(owner_registry),
         )
         .await;
     }
@@ -2790,7 +2800,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    run_codex_app_server_turn_with_runtime(binary, request, options, None).await
+    run_codex_app_server_turn_with_runtime(binary, request, options, None, None).await
 }
 
 async fn run_codex_app_server_turn_with_runtime(
@@ -2798,6 +2808,7 @@ async fn run_codex_app_server_turn_with_runtime(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
     runtime_notifications: Option<CodexNotificationHub>,
+    owner_registry: Option<isolated_rpc::IsolatedRpcRegistry>,
 ) -> Result<CodexAppServerTurn, String> {
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
@@ -2847,6 +2858,11 @@ async fn run_codex_app_server_turn_with_runtime(
         }
     };
 
+    let mut owner_endpoint = owner_registry.map(|registry| {
+        let (owner, requests) = registry.owner();
+        process.child.hold_rpc_owner(owner.clone());
+        (owner, requests)
+    });
     let result: Result<CodexAppServerTurn, String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let stdin = process
@@ -2865,6 +2881,9 @@ async fn run_codex_app_server_turn_with_runtime(
         );
         let mut rpc = JsonRpcConnection::new(stdin, stdout, 1)
             .with_runtime_notifications(runtime_notifications.clone());
+        if let Some((owner, requests)) = owner_endpoint.take() {
+            rpc = rpc.with_isolated_owner(owner, requests);
+        }
         let mut state = CodexRunState::default();
 
         with_rpc_timeout(
@@ -2897,6 +2916,7 @@ async fn run_codex_app_server_turn_with_runtime(
             &launch_config,
         );
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
+            rpc.bind_isolated_thread(thread_id)?;
             bind_local_proxy_thread(&launch_config, thread_id)?;
             state.set_root_thread_id(thread_id.to_owned());
         }
@@ -2928,6 +2948,7 @@ async fn run_codex_app_server_turn_with_runtime(
                 thread_id
             }
         };
+        rpc.activate_isolated_thread(&thread_id)?;
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
         let local_notifications = local_notifications::LocalNotificationSource::new(

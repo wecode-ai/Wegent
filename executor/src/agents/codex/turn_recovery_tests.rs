@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::runner::ExecutionOutcome;
+use wegent_subprocess::frame_writer::FrameWriter;
 
 pub(super) fn overload_error() -> Value {
     json!({
@@ -750,7 +751,7 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
                 client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
             shared.process = Some(CodexAppServerProcess {
                 child: child.into(),
-                stdin: Arc::new(Mutex::new(stdin)),
+                stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
                 pending: Arc::clone(&pending),
                 notifications: CodexNotificationHub::new(),
                 reader_task: tokio::spawn(async {}),
@@ -877,7 +878,7 @@ async fn overload_recovery_drains_user_resumed_turns_before_settling_changed_goa
                 client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
             shared.process = Some(CodexAppServerProcess {
                 child: child.into(),
-                stdin: Arc::new(Mutex::new(stdin)),
+                stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
                 pending: Arc::clone(&pending),
                 notifications: CodexNotificationHub::new(),
                 reader_task: tokio::spawn(async {}),

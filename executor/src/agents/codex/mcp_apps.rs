@@ -13,6 +13,9 @@ impl CodexAppServerClient {
         params: Value,
     ) -> Result<Value, CodexAppToolError> {
         let method = "mcpServer/tool/call";
+        if let Some(result) = self.request_isolated(method, params.clone()).await {
+            return result;
+        }
         let (request_id, handle, response_rx) = self
             .prepare_request_with_process(true, None, method, &params)
             .await

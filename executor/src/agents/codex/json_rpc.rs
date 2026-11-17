@@ -2,14 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::Duration;
+use std::{
+    collections::{HashMap, VecDeque},
+    time::Duration,
+};
 
 use serde_json::{json, Value};
 use tokio::{
-    io::AsyncWriteExt,
     process::ChildStdin,
+    sync::{mpsc, oneshot},
     time::{timeout_at, Instant},
 };
+use wegent_subprocess::frame_writer::FrameWriter;
 
 use crate::runner::ExecutionOutcome;
 
@@ -23,10 +27,19 @@ use super::{
 };
 
 pub(super) struct JsonRpcConnection {
-    stdin: ChildStdin,
+    stdin: FrameWriter<ChildStdin>,
     stdout: CodexStdout,
     next_id: u64,
+    deferred_messages: VecDeque<Value>,
     runtime_notifications: Option<super::CodexNotificationHub>,
+    isolated: Option<IsolatedInput>,
+}
+
+struct IsolatedInput {
+    ready: bool,
+    owner: super::isolated_rpc::IsolatedRpcOwner,
+    requests: mpsc::Receiver<super::isolated_rpc::IsolatedRequest>,
+    pending: HashMap<u64, (String, oneshot::Sender<Result<Value, String>>)>,
 }
 
 pub(super) struct TurnReadOptions {
@@ -60,11 +73,42 @@ fn notify_active_turn(
 impl JsonRpcConnection {
     pub(super) fn new(stdin: ChildStdin, stdout: CodexStdout, next_id: u64) -> Self {
         Self {
-            stdin,
+            stdin: FrameWriter::new(stdin),
             stdout,
             next_id,
+            deferred_messages: VecDeque::new(),
             runtime_notifications: None,
+            isolated: None,
         }
+    }
+
+    pub(super) fn with_isolated_owner(
+        mut self,
+        owner: super::isolated_rpc::IsolatedRpcOwner,
+        requests: mpsc::Receiver<super::isolated_rpc::IsolatedRequest>,
+    ) -> Self {
+        self.isolated = Some(IsolatedInput {
+            ready: false,
+            owner,
+            requests,
+            pending: HashMap::new(),
+        });
+        self
+    }
+
+    pub(super) fn bind_isolated_thread(&self, thread_id: &str) -> Result<(), String> {
+        if let Some(input) = &self.isolated {
+            input.owner.bind(thread_id)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn activate_isolated_thread(&mut self, thread_id: &str) -> Result<(), String> {
+        self.bind_isolated_thread(thread_id)?;
+        if let Some(input) = self.isolated.as_mut() {
+            input.ready = true;
+        }
+        Ok(())
     }
 
     pub(super) fn with_runtime_notifications(
@@ -82,7 +126,7 @@ impl JsonRpcConnection {
     }
 
     pub(super) fn into_parts(self) -> (ChildStdin, CodexStdout, u64) {
-        (self.stdin, self.stdout, self.next_id)
+        (self.stdin.into_inner(), self.stdout, self.next_id)
     }
 
     pub(super) async fn request(
@@ -440,9 +484,9 @@ impl JsonRpcConnection {
         let Some(receiver) = request_user_input_answers else {
             return Err("request_user_input requires a runtime response channel".to_owned());
         };
-        let response = receiver
-            .recv()
-            .await
+        let response = self
+            .while_waiting_for_input(receiver.recv())
+            .await?
             .ok_or_else(|| "request_user_input response channel closed".to_owned())?;
         self.write_message(json!({
             "id": request_id,
@@ -461,8 +505,12 @@ impl JsonRpcConnection {
             json_rpc_request_id(message).ok_or("approval request is missing JSON-RPC id")?;
         let (response, status) = match answers {
             Some(receiver) => {
-                match tokio::time::timeout(super::elicitation::remaining(message), receiver.recv())
-                    .await
+                match self
+                    .while_waiting_for_input(tokio::time::timeout(
+                        super::elicitation::remaining(message),
+                        receiver.recv(),
+                    ))
+                    .await?
                 {
                     Ok(response) => (
                         response.ok_or("approval response channel closed")?,
@@ -497,12 +545,13 @@ impl JsonRpcConnection {
         // Auto-approved requests were not forwarded to the UI and must not create
         // a settled interaction or clear another request's waiting state.
         let visible = !(auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(message));
-        let result = receive_mcp_server_elicitation_response(
-            message,
-            request_user_input_answers.as_mut(),
-            auto_approve_mcp_tool_calls,
-        )
-        .await?;
+        let result = self
+            .while_waiting_for_input(receive_mcp_server_elicitation_response(
+                message,
+                request_user_input_answers.as_mut(),
+                auto_approve_mcp_tool_calls,
+            ))
+            .await??;
         if visible {
             let settled =
                 super::elicitation::settled(message, result.status, result.response.as_ref());
@@ -523,32 +572,129 @@ impl JsonRpcConnection {
             .map_err(|error| format!("failed to encode codex JSON-RPC message: {error}"))?;
         line.push(b'\n');
         self.stdin
-            .write_all(&line)
+            .write_frame(line)
             .await
-            .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))?;
-        self.stdin
-            .flush()
-            .await
-            .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"))
+            .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))
     }
 
     pub(super) async fn read_message(&mut self) -> Result<Value, String> {
-        let mut line = String::new();
-        let bytes_read = self
-            .stdout
-            .read_line(&mut line)
-            .await
-            .map_err(|error| format!("failed to read codex JSON-RPC message: {error}"))?;
-        if bytes_read == 0 {
-            return Err("codex app-server exited before completing the turn".to_owned());
+        loop {
+            let message = match self.deferred_messages.pop_front() {
+                Some(message) => message,
+                None => self.read_next_message().await?,
+            };
+            let Some(mut message) = self.forward_isolated_response(message) else {
+                continue;
+            };
+            if message["method"] == "thread/started" {
+                if let Some(thread) = message["params"]["thread"]["id"].as_str() {
+                    self.bind_isolated_thread(thread)?;
+                }
+            }
+            if message.get("method").is_some() {
+                message = super::external_work::project_review_notification(message);
+                super::elicitation::prepare(&mut message);
+                self.publish_runtime_notification(message.clone()).await;
+            }
+            return Ok(message);
         }
-        let mut message: Value = serde_json::from_str(&line)
-            .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))?;
-        if message.get("method").is_some() {
-            message = super::external_work::project_review_notification(message);
-            super::elicitation::prepare(&mut message);
-            self.publish_runtime_notification(message.clone()).await;
-        }
-        Ok(message)
     }
+
+    fn forward_isolated_response(&mut self, message: Value) -> Option<Value> {
+        if !super::is_json_rpc_response(&message) {
+            return Some(message);
+        }
+        if let Some(id) = response_id(&message) {
+            if let Some((method, reply)) = self
+                .isolated
+                .as_mut()
+                .and_then(|input| input.pending.remove(&id))
+            {
+                let _ = reply.send(response_result(message, &method));
+                return None;
+            }
+        }
+        Some(message)
+    }
+
+    pub(super) async fn while_waiting_for_input<T>(
+        &mut self,
+        response: impl std::future::Future<Output = T>,
+    ) -> Result<T, String> {
+        tokio::pin!(response);
+        loop {
+            tokio::select! {
+                result = &mut response => return Ok(result),
+                message = self.read_next_message(), if self.isolated.is_some() => {
+                    let message = message?;
+                    if let Some(message) = self.forward_isolated_response(message) {
+                        self.deferred_messages.push_back(message);
+                    }
+                }
+            }
+        }
+    }
+
+    async fn read_next_message(&mut self) -> Result<Value, String> {
+        loop {
+            self.stdin
+                .flush()
+                .await
+                .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"))?;
+            let Some(input) = self.isolated.as_mut() else {
+                return read_native_message(&mut self.stdout).await;
+            };
+            if !input.ready {
+                return read_native_message(&mut self.stdout).await;
+            }
+            let request = tokio::select! {
+                message = read_native_message(&mut self.stdout) => return message,
+                request = input.requests.recv() => request,
+            }
+            .ok_or_else(|| "The isolated request channel closed".to_owned())?;
+            if request.reply.is_closed() {
+                continue;
+            }
+            self.send_isolated_request(request).await?;
+        }
+    }
+
+    async fn send_isolated_request(
+        &mut self,
+        request: super::isolated_rpc::IsolatedRequest,
+    ) -> Result<(), String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.isolated
+            .as_mut()
+            .expect("request has an owning input")
+            .pending
+            .insert(id, (request.method.clone(), request.reply));
+        let result = self
+            .write_message(json!({"id":id,"method":request.method,"params":request.params}))
+            .await;
+        if let Err(error) = &result {
+            if let Some((_, reply)) = self
+                .isolated
+                .as_mut()
+                .and_then(|input| input.pending.remove(&id))
+            {
+                let _ = reply.send(Err(error.clone()));
+            }
+        }
+        result
+    }
+}
+
+async fn read_native_message(stdout: &mut CodexStdout) -> Result<Value, String> {
+    let mut line = String::new();
+    let bytes = stdout
+        .read_line(&mut line)
+        .await
+        .map_err(|error| format!("failed to read codex JSON-RPC message: {error}"))?;
+    if bytes == 0 {
+        return Err("codex app-server exited before completing the turn".to_owned());
+    }
+    serde_json::from_str(&line)
+        .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))
 }

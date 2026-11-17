@@ -19,6 +19,7 @@ pub(super) struct CodexAppServerChild {
     child: Option<Child>,
     auth_lease: Option<FileLease>,
     catalog: Option<ProcessCatalog>,
+    rpc_owner: Option<super::isolated_rpc::IsolatedRpcOwner>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     exit: super::process_exit::ExitProgress,
 }
@@ -29,6 +30,7 @@ impl CodexAppServerChild {
             child: Some(child),
             auth_lease,
             catalog: None,
+            rpc_owner: None,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             exit: Default::default(),
         }
@@ -36,6 +38,10 @@ impl CodexAppServerChild {
 
     pub(super) fn hold_catalog(&mut self, catalog: Option<ProcessCatalog>) {
         self.catalog = catalog;
+    }
+
+    pub(super) fn hold_rpc_owner(&mut self, owner: super::isolated_rpc::IsolatedRpcOwner) {
+        self.rpc_owner = Some(owner);
     }
 
     pub(super) async fn kill(&mut self) -> std::io::Result<()> {
@@ -96,6 +102,7 @@ impl Drop for CodexAppServerChild {
         };
         let lease = self.auth_lease.take();
         let catalog = self.catalog.take();
+        let rpc_owner = self.rpc_owner.take();
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if self.exit.try_reap(&mut child) {
             return;
@@ -104,13 +111,14 @@ impl Drop for CodexAppServerChild {
         if matches!(child.try_wait(), Ok(Some(_))) {
             return;
         }
-        if lease.is_none() && catalog.is_none() {
+        if lease.is_none() && catalog.is_none() && rpc_owner.is_none() {
             return;
         }
         let cleanup = Arc::new(Mutex::new(Some(ReapResources {
             child,
             _auth_lease: lease,
             _catalog: catalog,
+            _rpc_owner: rpc_owner,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             exit: std::mem::take(&mut self.exit),
         })));
@@ -131,6 +139,7 @@ struct ReapResources {
     child: Child,
     _auth_lease: Option<FileLease>,
     _catalog: Option<ProcessCatalog>,
+    _rpc_owner: Option<super::isolated_rpc::IsolatedRpcOwner>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     exit: super::process_exit::ExitProgress,
 }

@@ -118,7 +118,7 @@ mod tests {
         let stdin = child.stdin.take().unwrap();
         client.state.lock().await.process = Some(CodexAppServerProcess {
             child,
-            stdin: Arc::new(Mutex::new(stdin)),
+            stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
             pending: Arc::new(Mutex::new(HashMap::new())),
             notifications: first.clone(),
             reader_task: tokio::spawn(std::future::pending()),

@@ -183,6 +183,8 @@ Windows CI runs desktop tests under a standard account. Compile the DingTalk pro
 
 ## Shared Codex startup protection
 
+MCP App source reads, catalogs, resources, tool calls, and retained sessions use the owning task's Agent Home. When an isolated app-server owns a thread, requests use that process's existing JSON-RPC stream. Requests queue until thread restoration completes; source reads continue while waiting for user input, preserving native responses and notification order. A stopping owner remains authoritative until its child is reaped: failures must not restore the thread in a shared process or automatically replay tool calls. Tool isolation, source-invocation checks, and plugin/connector authorization remain enforced. These child-process protocol tests use a synthetic service and do not certify an official runtime fix; real E2E failures continue to block merging.
+
 The shared app-server startup watchdog must account for active turns and turns still preparing native threads. A peer waiting for `thread/start` does not yet have a thread ID, but must still be protected from restart. A client-scoped preparation lifetime is released on initialization, failure, or cancellation; active-thread records continue protection during model execution. This does not increase startup timeouts or resubmit existing turns.
 
 The process-level protocol regression in `executor/tests/codex_app_server_contract/startup.rs` holds the second thread response behind observable file gates, crosses the real watchdog deadline, then releases it and verifies both turns complete. Executor and child-process IPC remain real while the Codex protocol service is synthetic; real Codex compatibility with the same fault injection remains unverified.

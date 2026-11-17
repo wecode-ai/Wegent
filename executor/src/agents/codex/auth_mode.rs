@@ -175,7 +175,7 @@ mod tests {
         );
         state.process = Some(CodexAppServerProcess {
             child,
-            stdin: Arc::new(Mutex::new(stdin)),
+            stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
             pending: Arc::clone(&pending),
             notifications: notifications.clone(),
             reader_task: tokio::spawn(read_persistent_codex_app_server_stdout(
