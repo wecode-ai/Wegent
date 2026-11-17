@@ -273,6 +273,37 @@ describe("useCollaborationWorkspaceController location effects", () => {
     );
   });
 
+  it("refreshes the configuration version when switching project settings sections", async () => {
+    const api = createApi();
+    const location = {
+      projectId: projectA.id,
+      issueId: null,
+      view: "manage" as const,
+      projectSettingsSection: "automatic-processing" as const,
+    };
+    renderController(api, location, false, projectA);
+    await vi.waitFor(() =>
+      expect(
+        renderController(api, location, false, projectA).state.loading,
+      ).toBe(false),
+    );
+    const latest = { ...projectA, version: 3 };
+    vi.mocked(api.projects.get).mockResolvedValue(latest);
+    const environments = {
+      ...location,
+      projectSettingsSection: "environments" as const,
+    };
+
+    renderController(api, environments, false, projectA);
+
+    await vi.waitFor(() =>
+      expect(
+        renderController(api, environments, false, projectA).state.project,
+      ).toEqual(latest),
+    );
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
+  });
+
   it("defaults My Work closed and falls an old root location back to home", async () => {
     const api = createApi();
 

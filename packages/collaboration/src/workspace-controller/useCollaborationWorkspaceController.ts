@@ -1007,17 +1007,21 @@ export function createCollaborationWorkspaceControllerCommands({
     const mutationGeneration = projectMutationGeneration(projectId);
     if (showLoading) dispatch({ type: "loading", value: true });
     try {
-      const project =
-        catalogProjects.find((item) => item.id === projectId) ??
-        (await api.projects.get(projectId));
+      const cachedProject =
+        options?.loadSnapshot === false
+          ? undefined
+          : catalogProjects.find((item) => item.id === projectId);
+      const project = cachedProject ?? (await api.projects.get(projectId));
       if (
         !isCurrent() ||
         mutationGeneration !== projectMutationGeneration(projectId)
       )
         return;
-      if (!catalogProjects.some((item) => item.id === project.id)) {
-        catalogProjects = [...catalogProjects, project];
-      }
+      catalogProjects = catalogProjects.some((item) => item.id === project.id)
+        ? catalogProjects.map((item) =>
+            item.id === project.id ? project : item,
+          )
+        : [...catalogProjects, project];
       if (options?.loadSnapshot === false) {
         dispatch({ type: "project-metadata-loaded", project });
         return;
@@ -1694,6 +1698,9 @@ export function useCollaborationWorkspaceController({
   const loadBoardOnLocation = location.view !== "manage";
   const loadProjectSnapshotOnLocation =
     loadProjectOnLocation && loadBoardOnLocation;
+  const activeSettingsSection = loadBoardOnLocation
+    ? undefined
+    : location.projectSettingsSection;
   useEffect(() => {
     if (!commands) return;
     const revision = ++locationLoadRevisionRef.current;
@@ -1725,6 +1732,7 @@ export function useCollaborationWorkspaceController({
     loadProjectOnLocation,
     loadProjectSnapshotOnLocation,
     location.projectId,
+    activeSettingsSection,
     location.rootView,
     myWorkEnabled,
   ]);

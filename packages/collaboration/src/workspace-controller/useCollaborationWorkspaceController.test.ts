@@ -277,6 +277,24 @@ describe("collaboration workspace controller", () => {
     ).toBe(false);
   });
 
+  it("loads the current configuration version before opening project settings", async () => {
+    state = { ...state, projects: [project], project };
+    const { api, commands } = createController();
+    const latest = { ...project, version: 3 };
+    vi.mocked(api.projects.get).mockResolvedValue(latest);
+
+    await commands.loadProject(project.id, true, { loadSnapshot: false });
+
+    expect(api.projects.get).toHaveBeenCalledExactlyOnceWith(project.id);
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
+    expect(state.project).toEqual(latest);
+    expect(state.loading).toBe(false);
+
+    await commands.loadProject(project.id);
+    expect(state.project).toEqual(latest);
+    expect(api.projects.get).toHaveBeenCalledOnce();
+  });
+
   it.each(["reassignment", "restore"])(
     "invalidates an in-flight board read after %s",
     async (change) => {
