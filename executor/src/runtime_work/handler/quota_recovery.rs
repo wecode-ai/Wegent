@@ -399,6 +399,8 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return;
         };
+        // Cancellation needs the send gate while the provider query is pending.
+        drop(_send);
         let checked = tokio::select! {
             biased;
             _ = cancelled => {
@@ -409,6 +411,7 @@ impl RuntimeWorkRpcHandler {
             }
             checked = self.check_quota_turn(&turn, &wait) => checked,
         };
+        let _send = gate.lock().await;
         if !self.is_local_task_execution_accepting_notifications(&turn.local_task_id, execution) {
             self.finish_local_task_execution(&turn.local_task_id, execution);
             self.finish_quota_command(&turn).await;
