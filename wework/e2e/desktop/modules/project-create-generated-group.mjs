@@ -19,6 +19,11 @@ import {
   assertRenderedGroupPrinciples,
   assertReopenedGroupPrinciples,
 } from './project-create-principles.mjs'
+import {
+  LONG_RESPONSIBILITY_URL,
+  assertSavedGroupResponsibility,
+  assertReopenedGroupResponsibility,
+} from './project-create-responsibilities.mjs'
 
 const testId = value => `[data-testid="${value}"]`
 const MENU = testId('collaboration-project-create-collaborator-menu')
@@ -274,7 +279,8 @@ export async function verifyGeneratedGroupDraft(
     const responsibilityInput = `${responsibility} textarea`
     await control.command('fill', responsibilityInput, { value: '短职责' })
     await assertMobileInlineTarget(control, responsibilityInput)
-    await control.command('fill', responsibilityInput, { value: originalResponsibility })
+    const editedResponsibility = `${originalResponsibility}\n${LONG_RESPONSIBILITY_URL}`
+    await control.command('fill', responsibilityInput, { value: editedResponsibility })
     await control.command('nativePress', responsibilityInput, { key: 'Escape' })
     await control.command('waitFor', responsibilityInput, { visible: false })
     const name = `${editor} ${testId('collaboration-project-create-group-name')}`
@@ -316,6 +322,16 @@ export async function verifyGeneratedGroupDraft(
     const summary = scoped(testId('collaboration-project-create-group-summary'))
     await control.command('waitFor', summary, { text: editedName })
     await assertRenderedGroupPrinciples(control, summary, principles)
+    await assertSavedGroupResponsibility(control, summary, editedResponsibility)
+    const inspectResponsibility = () =>
+      assertReopenedGroupResponsibility(control, configuration, editedResponsibility)
+    await assertReopenedGroupPrinciples(
+      control,
+      summary,
+      configuration,
+      principles,
+      inspectResponsibility
+    )
     await keepDraft(control, summary, 'back')
     await control.command('waitFor', summary, { text: editedName })
     assert.equal(
@@ -328,13 +344,20 @@ export async function verifyGeneratedGroupDraft(
         'getText',
         `${summary} .collaboration-project-create-group-members > span:nth-child(2) small`
       ),
-      originalResponsibility,
+      editedResponsibility,
       'Saving responsibilities must preserve every entry and its line boundary'
     )
     await resizeWindow(control, 375, 812)
     await waitForProjectCreateViewport(control, 375, 812)
     await assertRenderedGroupPrinciples(control, summary, principles)
-    await assertReopenedGroupPrinciples(control, summary, configuration, principles)
+    await assertSavedGroupResponsibility(control, summary, editedResponsibility)
+    await assertReopenedGroupPrinciples(
+      control,
+      summary,
+      configuration,
+      principles,
+      inspectResponsibility
+    )
     const discover = scoped(testId('project-create-choose-template'))
     await control.command('scrollIntoView', discover)
     const discoverSize = await readMetrics(control, discover)

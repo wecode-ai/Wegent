@@ -81,13 +81,20 @@ export async function assertRenderedGroupPrinciples(control, summary, expected) 
   )
 }
 
-export async function assertReopenedGroupPrinciples(control, summary, configuration, expected) {
+export async function assertReopenedGroupPrinciples(
+  control,
+  summary,
+  configuration,
+  expected,
+  inspectConfiguration
+) {
   await control.command(
     'nativePress',
     `${summary} [data-testid="collaboration-project-create-edit-group"]`,
     { key: 'Enter' }
   )
   await control.command('waitFor', configuration, { visible: true })
+  if (inspectConfiguration) await inspectConfiguration()
   await control.command('nativePress', `${configuration} ${EDIT}`, { key: 'Enter' })
   const input = `${configuration} ${SECTION} textarea`
   await control.command('waitFor', input, { visible: true })
