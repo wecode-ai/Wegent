@@ -40,6 +40,7 @@ import type {
 import {
   createCloudProjectTaskRuntimeApi,
   projectTaskRuntimeApiForProject,
+  requiresProjectTaskBinding,
   type ProjectTaskRuntimeApi,
 } from '@/features/workbench/projectTaskTracking'
 import { useProjectSpaceProjects } from './useProjectSpaceProjects'
@@ -184,11 +185,13 @@ async function waitForPendingProjectSpaceContext(
       return await lookup()
     } catch (error) {
       lastError = error
+      const binding = pendingTodoBindingsByTask.get(runtimeTaskKey(task))
       if (
         attempt === PENDING_BINDING_CONTEXT_RETRY_LIMIT ||
         error instanceof ProjectSpaceTaskContextUnavailableError ||
         !shouldContinue() ||
-        !pendingBindingTargetsTask(task)
+        !binding ||
+        !requiresProjectTaskBinding(binding.project, binding.item)
       ) {
         throw error
       }
@@ -712,7 +715,7 @@ export function useWorkbenchCloudProjectContext({
     }
     const api = projectTaskRuntimeApiForProject(services, projectToBind)
     if (!api) return
-    if (isDefaultWorkItemProject(projectToBind) && !itemToBind) {
+    if (!requiresProjectTaskBinding(projectToBind, itemToBind)) {
       return
     }
     const bindingTaskTitle =

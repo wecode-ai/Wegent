@@ -1,8 +1,15 @@
 import type { WeworkWorkspaceRuntimePort, WorkspaceRuntimeTaskAddress } from '@wegent/collaboration'
 import { modelSelectionFromRuntimeHandle } from '@wegent/chat-core/runtime-model-selection'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import { isDefaultWorkItemProject, type CloudLoopItem, type CloudProject } from '@/api/deliveries'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchServices } from './workbenchServices'
+
+export function requiresProjectTaskBinding(
+  project: CloudProject,
+  item: CloudLoopItem | null
+): boolean {
+  return !isDefaultWorkItemProject(project) || item !== null
+}
 
 const cloudRuntimeApis = new WeakMap<WeworkWorkspaceRuntimePort, ProjectTaskRuntimeApi>()
 
