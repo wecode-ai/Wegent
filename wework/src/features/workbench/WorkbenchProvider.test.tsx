@@ -18679,6 +18679,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(cancelRuntimeTask).toHaveBeenCalledTimes(1))
     expect(cancelRuntimeTask).toHaveBeenCalledWith({
+      clientUserMessageId: 'runtime-a:user:1',
       deviceId: 'device-1',
       workspacePath: '/workspace/project-alpha',
       taskId: 'runtime-a',
