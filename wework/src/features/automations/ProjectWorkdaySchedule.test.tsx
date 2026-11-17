@@ -35,6 +35,47 @@ function workdayRule(timezone: string): WorkspaceAutomationRule {
   }
 }
 
+it('refreshes the owning Project after a rule write and retries only the failed read', async () => {
+  const user = userEvent.setup()
+  let rule = workdayRule('Asia/Shanghai')
+  const update = vi.fn(async () => {
+    rule = { ...rule, enabled: false, version: 2 }
+    return rule
+  })
+  const latest = {
+    id: 'project',
+    name: 'Project',
+    access_role: 'Owner',
+    version: 5,
+  } as CollaborationProject
+  const get = vi.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue(latest)
+  const onProjectChange = vi.fn()
+  const api = {
+    automations: { list: vi.fn(async () => [rule]), update },
+    projects: { get, listCollaborationGroups: vi.fn(async () => []) },
+    agents: { list: vi.fn(async () => [{ id: 'agent', name: 'Agent' }]) },
+    members: { list: vi.fn(async () => []) },
+  } as unknown as SharedWorkspaceApi
+  render(
+    <ProjectAutomaticProcessing
+      api={api}
+      project={{ ...latest, version: 1 }}
+      members={[]}
+      agents={[]}
+      locale="en"
+      translate={createCollaborationTranslator('en')}
+      onProjectChange={onProjectChange}
+    />
+  )
+  await user.click(await screen.findByTestId('automatic-processing-enabled-workday'))
+  expect(await screen.findByTestId('automatic-processing-project-refresh-error')).toBeVisible()
+  expect(update).toHaveBeenCalledOnce()
+  await user.click(screen.getByTestId('automatic-processing-project-refresh-retry'))
+  await waitFor(() => expect(onProjectChange).toHaveBeenCalledExactlyOnceWith(latest))
+  expect(update).toHaveBeenCalledOnce()
+  expect(screen.queryByTestId('automatic-processing-project-refresh-error')).not.toBeInTheDocument()
+})
+
 it.each(['Asia/Shanghai', 'America/New_York'])(
   'preserves %s and Cron when editing or toggling the statutory workday rule',
   async timezone => {

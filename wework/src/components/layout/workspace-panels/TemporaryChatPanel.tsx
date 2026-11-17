@@ -1395,9 +1395,9 @@ export function TemporaryChatPanel({
     [address, active, readOnly, cancelRuntimePaneTask]
   )
 
-  const sourceMessageId = presentation.messages.find(message =>
-    sourceMessageIds?.includes(message.id)
-  )?.id
+  const sourceMessageId = sourceMessageIds?.find(id =>
+    presentation.messages.some(message => message.id === id)
+  )
   const messageTarget = useMemo(
     () =>
       sourceMessageId && focusRequestKey

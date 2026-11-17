@@ -30,6 +30,37 @@ struct User {
     preferences: String,
 }
 
+impl ContextData {
+    pub(super) fn history_limit(&self) -> i64 {
+        history_limit(self.preserve_history, &self.spec)
+    }
+}
+
+fn history_limit(preserve_history: bool, spec: &Value) -> i64 {
+    if preserve_history {
+        spec["historyMessageCount"]
+            .as_i64()
+            .unwrap_or(10)
+            .clamp(0, 50)
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod history_window_tests {
+    use super::*;
+
+    #[test]
+    fn subscription_history_limits_match_the_validated_schema_bounds() {
+        assert_eq!(history_limit(true, &json!({})), 10);
+        for (configured, expected) in [(0, 0), (20, 20), (50, 50), (10000, 50), (-1, 0)] {
+            let spec = json!({"historyMessageCount": configured});
+            assert_eq!(history_limit(true, &spec), expected);
+            assert_eq!(history_limit(false, &spec), 0);
+        }
+    }
+}
 /// `db.query(User).filter(User.id == user_id).first()` in
 /// `_load_subscription_execution_objects`; the row carries both the display
 /// name and the preferences document the request builder reads.
@@ -232,6 +263,7 @@ pub(super) async fn create(
         user_id: data.subscription.user_id,
         owner_user_id: data.subscription.user_id.try_into()?,
         continuation,
+        history_window: Some(data.history_limit()),
         team_id: data.team.id,
         bot_ids: bots,
         create_assistant: true,

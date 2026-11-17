@@ -12,7 +12,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { resolveProjectRuntimeWorkspaceTarget } from '@/lib/workspace-target'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
-import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
 import { issueRuntimePort } from './issueRuntimePort'
 import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
 import { LOCAL_USER } from '@/api/local/localSession'
@@ -219,6 +218,15 @@ function ProjectTaskComposer({
     cacheDraft(input.current?.getValue() ?? source.restored)
   })
   const projectWork: ProjectWorkControls = {
+    projectSelectorLabel: t('personalHome.codeWorkspace'),
+    projectMenuLabels: {
+      search: t('personalHome.codeWorkspaceSearch'),
+      empty: t('personalHome.codeWorkspaceEmpty'),
+      emptyHint: t('personalHome.codeWorkspaceHint'),
+      noResults: t('personalHome.codeWorkspaceNoResults'),
+      clear: t('personalHome.codeWorkspaceNone'),
+      addLocal: t('personalHome.codeWorkspaceAdd'),
+    },
     projects: state.projects,
     devices: state.devices,
     runtimeWork: state.runtimeWork,
@@ -230,10 +238,11 @@ function ProjectTaskComposer({
     executionMode: workbench.projectExecutionMode,
     executionModeLocked: false,
     worktreeBranch: workbench.projectWorktreeBranch,
-    onSelectProject: workbench.selectProject,
-    onSelectStandaloneDevice: workbench.selectStandaloneDevice,
-    onSelectProjectWorkspace: workbench.selectProjectWorkspace,
-    onBindProjectWorkspace: workbench.selectProject,
+    onSelectProject: id => workbench.selectProject(id, { navigate: false }),
+    onSelectStandaloneDevice: id => workbench.selectStandaloneDevice(id, { navigate: false }),
+    onSelectProjectWorkspace: (id, workspaceId) =>
+      workbench.selectProjectWorkspace(id, workspaceId, { navigate: false }),
+    onBindProjectWorkspace: id => workbench.selectProject(id, { navigate: false }),
     onExecutionModeChange: workbench.setProjectExecutionMode,
     onWorktreeBranchChange: workbench.setProjectWorktreeBranch,
   }
@@ -344,14 +353,12 @@ function ProjectTaskComposer({
             address,
             issueId: issue.id,
             title: issue.title,
+            dispatchRoundId: issue.human_task_binding?.dispatchRoundId,
+            issues: api.issues,
+            onStatusError: error => setError(error || t('task_board_status_update_failed')),
           }),
       })
       if (!address) return false
-      const statusError = await updateIssueWhenPersonalTaskStarts(api.issues, issue.id, {
-        projectStore: project.project_store,
-        dispatchRoundId: issue.human_task_binding?.dispatchRoundId,
-      })
-      if (statusError !== null) setError(statusError || t('task_board_status_update_failed'))
       draft.onTaskCreated?.(issue, toWorkspaceRuntimeTaskAddress(address))
       completed.current = value
       draft.onChange('')
@@ -384,7 +391,7 @@ function ProjectTaskComposer({
             type="button"
             disabled={submitting}
             data-testid="personal-home-new-task-draft"
-            className="min-h-11 shrink-0 rounded-md px-2 hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-8"
+            className="min-h-11 shrink-0 rounded-md px-2 hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:min-h-8"
             onClick={() => {
               if (projectKey) drafts.delete(projectKey)
               refreshDraft(value => value + 1)

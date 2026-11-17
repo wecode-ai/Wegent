@@ -100,6 +100,7 @@
 
 .agent {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   min-height: 72px;
@@ -127,7 +128,7 @@
 
 .agentIdentity {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 180px;
 }
 
 .agentName {
@@ -142,6 +143,7 @@
 
 .agentDetails {
   display: flex;
+  flex-wrap: wrap;
   min-width: 0;
   align-items: center;
   gap: 8px;
@@ -183,7 +185,6 @@
   gap: 4px;
 }
 
-.archiveButton,
 .archiveButton {
   padding: 7px 10px;
   background: transparent;
@@ -320,8 +321,5 @@
   .addButton,
   .retryButton {
     min-height: 44px;
-  }
-  .agentDetails {
-    flex-wrap: wrap;
   }
 }
