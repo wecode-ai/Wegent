@@ -21,7 +21,14 @@ import { BrowserTaskDrafts } from "./issue-detail/BrowserTaskDrafts";
 import { saveProjectBoardViews } from "./project-board/saveProjectBoardViews";
 import type { BoardIssueCreateDefaults } from "./project-board/projectBoardViews";
 import { RuntimeConfigurationProvider } from "./runtime-profile/RuntimeConfigurationProvider";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import {
   collaborationMessages,
@@ -68,7 +75,10 @@ import type {
   WorkspaceTaskBinding,
 } from "./ports/SharedWorkspaceApi";
 import { executeStandardCloudBoardMutation } from "./project-board/useStandardCloudBoardController";
-import { useCollaborationWorkspaceController } from "./workspace-controller";
+import {
+  useCollaborationWorkspaceController,
+  type CollaborationWorkspaceController,
+} from "./workspace-controller";
 import { canEditCollaborationIssue } from "./permissions";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
 import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
@@ -101,6 +111,11 @@ export interface CollaborationIssueDetailRenderContext {
 }
 
 interface CollaborationAppProps {
+  projectSnapshotLifecycle?: {
+    canWrite: boolean;
+    notice: ReactNode;
+    onControllerChange(controller: CollaborationWorkspaceController): void;
+  };
   /** Handling identity is independent of the project's permission identity. */
   participationUserId?: import("./issueParticipation").IssueParticipationViewer;
   parentGroupingEnabled?: boolean;
@@ -136,6 +151,7 @@ interface CollaborationAppProps {
 }
 
 export function CollaborationApp({
+  projectSnapshotLifecycle,
   participationUserId,
   parentGroupingEnabled = false,
   api,
@@ -203,6 +219,12 @@ export function CollaborationApp({
     pollIntervalMs,
     notify: (message, kind) => host.notify?.(message, kind),
   });
+  const onSnapshotControllerChange =
+    projectSnapshotLifecycle?.onControllerChange;
+  useLayoutEffect(() => {
+    onSnapshotControllerChange?.({ state, commands });
+  }, [commands, onSnapshotControllerChange, state]);
+  const snapshotCanWrite = projectSnapshotLifecycle?.canWrite ?? true;
   const {
     projects,
     myWork,
@@ -259,7 +281,7 @@ export function CollaborationApp({
     }
   };
   const requestIssueCreate = () => {
-    if (!project) return;
+    if (!project || !snapshotCanWrite) return;
     setCreateIssueDefaults(undefined);
     setCreateIssueOpen(true);
   };
@@ -661,6 +683,7 @@ export function CollaborationApp({
           className={`collaboration-app${project ? " collaboration-app-project issue-drawer-workspace" : ""}`}
           data-testid={collaborationTestIds.root}
         >
+          {projectSnapshotLifecycle?.notice}
           {error && (
             <div
               className="collaboration-alert"
@@ -907,6 +930,7 @@ export function CollaborationApp({
                       type="button"
                       className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background"
                       data-testid={collaborationTestIds.createIssue}
+                      disabled={!snapshotCanWrite}
                       aria-label={messages.createIssue}
                       title={messages.createIssue}
                       onClick={requestIssueCreate}
@@ -935,6 +959,7 @@ export function CollaborationApp({
                 board: (
                   <div className="relative flex min-h-0 min-w-0 flex-1">
                     <ProjectBoardAdapter
+                      structuralWritesEnabled={snapshotCanWrite}
                       participationUserId={participationUserId}
                       isIssueRunning={isIssueRunning}
                       parentGroupingEnabled={parentGroupingEnabled}
@@ -956,6 +981,7 @@ export function CollaborationApp({
                               type="button"
                               className="collaboration-primary-button"
                               data-testid="collaboration-empty-project-create"
+                              disabled={!snapshotCanWrite}
                               onClick={requestIssueCreate}
                             >
                               {messages.createIssue}

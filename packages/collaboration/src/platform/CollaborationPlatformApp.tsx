@@ -123,6 +123,7 @@ export type CollaborationProjectRendererWorkspaceContext =
 export interface CollaborationProjectRendererContext {
   project: CollaborationProject;
   workspace: CollaborationProjectRendererWorkspaceContext | null;
+  onProjectUpdated(project: CollaborationProject): void;
 }
 
 function navigateWithin(
@@ -2161,7 +2162,11 @@ function CollaborationPlatformAppContent({
           />
         )
       ) : selectedProject && renderProject && !invitedRouteMatches ? (
-        renderProject({ project: selectedProject, workspace: workspaceContext })
+        renderProject({
+          project: selectedProject,
+          workspace: workspaceContext,
+          onProjectUpdated: commands.registerProject,
+        })
       ) : (
         <CollaborationApp
           parentGroupingEnabled

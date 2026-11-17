@@ -52,7 +52,7 @@ async function registeredNavigation() {
 }
 
 function validateIndex(document, entries, translations, language) {
-  const rows = document.split('\n').filter(line => /^\|.*`\/[^`]*`\s*\|$/.test(line))
+  const rows = document.split(/\r?\n/).filter(line => /^\|.*`\/[^`]*`\s*\|$/.test(line))
   const routeOf = row => row.match(/`(\/[^`]*)`\s*\|$/)[1]
   assert.deepEqual(
     rows.map(routeOf).sort(),

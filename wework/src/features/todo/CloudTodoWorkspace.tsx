@@ -17,6 +17,15 @@ import { useAssignmentNotificationChoice } from '@/features/notifications/useAss
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import {
+  projectSnapshotRevalidateEnabled,
+  useProjectSnapshotRefresh,
+} from '@/features/collaboration/projectSnapshotRefresh'
+import { ProjectSnapshotSyncNotice } from '@/features/collaboration/ProjectSnapshotSyncNotice'
+import {
+  guardProjectSnapshotWrites,
+  type ProjectSnapshotWriteGuard,
+} from '@/features/collaboration/projectSnapshotWriteGuard'
+import {
   useCallback,
   useContext,
   useEffect,
@@ -663,7 +672,22 @@ export function CloudTodoWorkspace({
       ? getChangeRequestMonitor(services.deviceApi)
       : null
   const changeRequestMonitor = changeRequestStatusEnabled ? issueChangeRequestMonitor : null
-  const cloudWorkspaceApi = services.sharedWorkspaceApi
+  const snapshotWriteGuardRef = useRef<ProjectSnapshotWriteGuard>({
+    projectId: null,
+    issueIds: new Set(),
+    canWrite: true,
+    message: t('todo.project_snapshot_write_blocked'),
+  })
+  const cloudWorkspaceApi = useMemo(
+    () =>
+      services.sharedWorkspaceApi
+        ? guardProjectSnapshotWrites(
+            services.sharedWorkspaceApi,
+            () => snapshotWriteGuardRef.current
+          )
+        : undefined,
+    [services.sharedWorkspaceApi]
+  )
   const deviceNamesById = useMemo(() => getRuntimeWorkDeviceNamesById(runtimeWork), [runtimeWork])
   const runtimeTaskExecutionStatusByAddress = useMemo(
     () => runtimeTaskConversationStatusesByAddress(runtimeWork, runtimeTaskLifecycle),
@@ -725,6 +749,7 @@ export function CloudTodoWorkspace({
     },
     messages: cloudWorkspaceMessages,
     loadProjectOnLocation: false,
+    pollIntervalMs: workspaceActive ? 15_000 : 0,
     externalBoard: {
       parentId: boardParentId,
       pageSize: externalBoardColumnPageSize,
@@ -831,7 +856,14 @@ export function CloudTodoWorkspace({
         current.map(project =>
           projectSpaceKey(projectSpaceRef(project)) ===
           projectSpaceKey(projectSpaceRef(currentProject))
-            ? { ...updated, location: currentProject.location }
+            ? project.version > updated.version
+              ? project
+              : {
+                  ...updated,
+                  id: currentProject.id,
+                  project_store: currentProject.project_store,
+                  location: currentProject.location,
+                }
             : project
         )
       )
@@ -1499,6 +1531,72 @@ export function CloudTodoWorkspace({
   const isExternalGitBoard =
     selectedProject?.task_provider === 'github' || selectedProject?.task_provider === 'gitlab'
   const usesSharedCloudBoard = selectedProject?.location === 'cloud'
+  const snapshotScope = useMemo(
+    () =>
+      selectedProjectKey
+        ? { projectKey: selectedProjectKey, api: cloudWorkspaceApi, userId: user.id }
+        : null,
+    [cloudWorkspaceApi, selectedProjectKey, user.id]
+  )
+  const projectSnapshot = useProjectSnapshotRefresh({
+    scope: snapshotScope,
+    active: workspaceActive,
+    refreshKey: `${boardRefreshNonce}:${boardParentId ?? ''}:${projectView}`,
+    refresh: async isCurrent => {
+      const project = selectedProjectForBoardLoadRef.current
+      if (!project) return
+      if (project.location === 'cloud') {
+        if (isAITableProject && services.dwsApi) {
+          const status = await services.dwsApi.authStatus()
+          if (!isCurrent()) return
+          if (!status.authenticated || status.token_valid === false) setDingtalkAuthPrompt(true)
+        }
+        if (isAITableProject && services.aitableApi) {
+          await services.aitableApi.configureProject(project)
+        }
+        if (!isCurrent()) return
+        await cloudWorkspace.commands.loadProject(String(project.id), false, {
+          revalidate: true,
+          throwOnError: true,
+          loadSnapshot: projectView !== 'manage' && projectView !== 'files',
+          isCurrent,
+        })
+      } else {
+        if (!localProjectManageApi) throw new Error(cloudWorkspaceMessages.loadFailed)
+        const updated = await localProjectManageApi.projects.get(String(project.id))
+        if (isCurrent()) replaceProject(project, toWeworkCloudProject(updated))
+      }
+    },
+  })
+  useLayoutEffect(() => {
+    snapshotWriteGuardRef.current = {
+      projectId: selectedProject?.location === 'cloud' ? String(selectedProject.id) : null,
+      issueIds: new Set([
+        ...cloudWorkspace.state.issues
+          .filter(
+            issue =>
+              selectedProject?.location === 'cloud' &&
+              String(issue.cloud_project_id) === String(selectedProject.id)
+          )
+          .map(issue => issue.id),
+        ...(selectedProject?.location === 'cloud' &&
+        selectedItem?.project_store === 'backend' &&
+        String(selectedItem.cloud_project_id) === String(selectedProject.id)
+          ? [selectedItem.id]
+          : []),
+      ]),
+      canWrite: projectSnapshot.canWrite,
+      message: t('todo.project_snapshot_write_blocked'),
+      acceptProject: project => cloudWorkspace.commands.replaceProject(project),
+    }
+  }, [
+    cloudWorkspace.commands,
+    cloudWorkspace.state.issues,
+    projectSnapshot.canWrite,
+    selectedItem,
+    selectedProject,
+    t,
+  ])
   const selectedCloudProjectItems = useMemo(() => {
     if (
       !usesSharedCloudBoard ||
@@ -1562,7 +1660,12 @@ export function CloudTodoWorkspace({
     showDate: selectedProject?.card_display?.show_date ?? true,
   }
   useEffect(() => {
-    if (!usesSharedCloudBoard || boardRefreshNonce === 0 || !selectedProjectId) {
+    if (
+      projectSnapshotRevalidateEnabled ||
+      !usesSharedCloudBoard ||
+      boardRefreshNonce === 0 ||
+      !selectedProjectId
+    ) {
       return
     }
     void cloudWorkspace.commands.loadProject(String(selectedProjectId), false, {
@@ -1829,7 +1932,8 @@ export function CloudTodoWorkspace({
     selectedProject !== null &&
     (selectedProject.location === 'cloud'
       ? cloudWorkspace.state.project?.id !== String(selectedProject.id) ||
-        cloudWorkspace.state.loading
+        cloudWorkspace.state.loading ||
+        cloudWorkspace.state.projectItems[String(selectedProject.id)] === undefined
       : itemsProjectKey !== selectedProjectKey)
   const startupProjectsLoading =
     (Boolean(projectSpaceApis.local) && localProjectsLoading) ||
@@ -1987,6 +2091,7 @@ export function CloudTodoWorkspace({
     revision: selectedProject?.version ?? 0,
     translate: boardTranslate,
     save: async (boardViews, settings) => {
+      if (!projectSnapshot.canWrite) throw new Error(t('todo.project_snapshot_write_blocked'))
       if (!selectedProject) throw new Error(cloudWorkspaceMessages.saveFailed)
       const api = selectedProject.location === 'cloud' ? cloudWorkspaceApi : localProjectManageApi
       if (!api) throw new Error(cloudWorkspaceMessages.saveFailed)
@@ -2128,7 +2233,7 @@ export function CloudTodoWorkspace({
     completed: t('todo.issue_column_empty_completed', '验收通过的 Issue 会显示在这里。'),
   }
   useEffect(() => {
-    if (!usesSharedCloudBoard || !selectedProjectId) return
+    if (projectSnapshotRevalidateEnabled || !usesSharedCloudBoard || !selectedProjectId) return
     let active = true
     const load = async () => {
       try {
@@ -2437,6 +2542,7 @@ export function CloudTodoWorkspace({
     initialTitle?: string,
     options?: { startRuntime?: boolean }
   ) {
+    if (!projectSnapshot.canWrite) return
     setQuickCreateStatus(null)
     setCreateTodoParent(parent)
     setCreateTodoStatus(status)
@@ -2702,8 +2808,12 @@ export function CloudTodoWorkspace({
     selectedProjectKey,
     usesSharedCloudBoard,
   ])
+  const completedCloudBoardRevisionRef = useRef(cloudWorkspace.state.boardLoadRevision)
   useEffect(() => {
+    const previousRevision = completedCloudBoardRevisionRef.current
+    completedCloudBoardRevisionRef.current = cloudWorkspace.state.boardLoadRevision
     if (
+      previousRevision === cloudWorkspace.state.boardLoadRevision ||
       !usesSharedCloudBoard ||
       !selectedProject ||
       cloudWorkspace.state.project?.id !== String(selectedProject.id)
@@ -3193,7 +3303,8 @@ export function CloudTodoWorkspace({
     mutation: StandardCloudBoardMutation<LocatedLoopItem>,
     automationRuleId?: string
   ): Promise<boolean> {
-    if (!canEditProjectSpaceIssue(item) || isAITableProject) return false
+    if (!projectSnapshot.canWrite || !canEditProjectSpaceIssue(item) || isAITableProject)
+      return false
     const enteringExecution = mutation.kind === 'status' && isProcessingStatus(mutation.status)
     const forceStart =
       mutation.kind === 'status' && item.status === 'pending' && isProcessingStatus(mutation.status)
@@ -3502,11 +3613,12 @@ export function CloudTodoWorkspace({
 
   function finishBoardDrop(event: DragEndEvent) {
     setActiveDragItemId(null)
+    if (!projectSnapshot.canWrite) return
     standardBoardController.moveDroppedItem(projectBoardDrop(event))
   }
 
   async function saveGlobalGroupBy() {
-    if (!selectedProject || groupScopeBusy) return
+    if (!projectSnapshot.canWrite || !selectedProject || groupScopeBusy) return
     const projectApi = projectSpaceApis[selectedProject.location]
     if (selectedProject.location === 'cloud' ? !cloudWorkspaceApi : !projectApi) return
     setGroupScopeBusy(true)
@@ -3572,6 +3684,7 @@ export function CloudTodoWorkspace({
     initialContent = '',
     presentation: 'page' | 'popup' = 'page'
   ) {
+    if (!projectSnapshot.canWrite) return
     const targetProject = selectedProject ?? projects[0]
     if (!targetProject) {
       setCreateProjectOpen(true)
@@ -4217,6 +4330,12 @@ export function CloudTodoWorkspace({
                 />
               </div>
             )}
+            {selectedProject && projectSnapshotRevalidateEnabled ? (
+              <ProjectSnapshotSyncNotice
+                state={projectSnapshot.state}
+                retry={projectSnapshot.retry}
+              />
+            ) : null}
             {!selectedProject && projects.length > 0 && localProjectsError ? (
               <div
                 data-testid="local-project-spaces-error"
@@ -4793,7 +4912,7 @@ export function CloudTodoWorkspace({
                             controller={savedViews}
                             statuses={nativeStatuses}
                             tags={availableTags}
-                            canManage={canManageViews}
+                            canManage={canManageViews && projectSnapshot.canWrite}
                             settings={{
                               cardDisplay: selectedProject?.card_display,
                               boardConfig: selectedProject?.board_config,
@@ -4825,6 +4944,7 @@ export function CloudTodoWorkspace({
                         sensors: boardSensors,
                         collisionDetection: projectBoardCollisionDetection,
                         onDragStart: (event: DragStartEvent) => {
+                          if (!projectSnapshot.canWrite) return
                           standardBoardController.setActiveSourceColumnKey(
                             event.active.data.current?.columnKey ?? null
                           )
@@ -5060,6 +5180,7 @@ export function CloudTodoWorkspace({
                                 <button
                                   type="button"
                                   data-testid={`cloud-todo-column-add-${column.key}`}
+                                  disabled={!projectSnapshot.canWrite}
                                   onClick={open}
                                   className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover:opacity-100"
                                   aria-label={t(
@@ -5118,7 +5239,11 @@ export function CloudTodoWorkspace({
                                 type="button"
                                 className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
                                 data-testid="cloud-board-settings"
-                                disabled={!canManageViews || !savedViews.supported}
+                                disabled={
+                                  !projectSnapshot.canWrite ||
+                                  !canManageViews ||
+                                  !savedViews.supported
+                                }
                                 onClick={() => setBoardSettingsOpen(true)}
                               >
                                 {t('todo.board_settings', '看板设置')}

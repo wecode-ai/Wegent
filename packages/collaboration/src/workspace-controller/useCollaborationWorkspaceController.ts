@@ -100,6 +100,8 @@ export interface CollaborationWorkspaceControllerCommands {
       isCurrent?(): boolean;
       invalidate?: boolean;
       loadSnapshot?: boolean;
+      revalidate?: boolean;
+      throwOnError?: boolean;
     },
   ): Promise<void>;
   loadProjectSnapshot(
@@ -327,13 +329,64 @@ export function collaborationWorkspaceControllerReducer(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
 ): CollaborationWorkspaceControllerState {
+  const projectAction = preserveProjectVersions(state, action);
+  if (!projectAction) return state;
   const next = mergeIssueReadState(
     state,
-    reduceWorkspaceState(state, action),
+    reduceWorkspaceState(state, projectAction),
     action.type === "issue-read" ? action.issue : undefined,
   );
   traceIssueStateChange(action.type, state.selectedIssue, next.selectedIssue);
   return next;
+}
+
+function newestProject(
+  current: CollaborationProject | null | undefined,
+  incoming: CollaborationProject,
+): CollaborationProject {
+  return current?.id === incoming.id && current.version > incoming.version
+    ? current
+    : incoming;
+}
+
+function preserveProjectVersions(
+  state: CollaborationWorkspaceControllerState,
+  action: CollaborationWorkspaceControllerAction,
+): CollaborationWorkspaceControllerAction | null {
+  const current = new Map(
+    state.projects.map((project) => [project.id, project]),
+  );
+  if (state.project) {
+    current.set(
+      state.project.id,
+      newestProject(current.get(state.project.id), state.project),
+    );
+  }
+  if (
+    action.type === "project-catalog-loaded" ||
+    action.type === "home-loaded"
+  ) {
+    return {
+      ...action,
+      projects: action.projects.map((project) =>
+        newestProject(current.get(project.id), project),
+      ),
+    };
+  }
+  if (
+    action.type === "project-loaded" ||
+    action.type === "project-metadata-loaded" ||
+    action.type === "replace-project"
+  ) {
+    const project = newestProject(
+      current.get(action.project.id),
+      action.project,
+    );
+    if (project !== action.project && action.type === "project-loaded")
+      return null;
+    return { ...action, project };
+  }
+  return action;
 }
 
 function resolveLoadedIssue(
@@ -884,6 +937,7 @@ export function createCollaborationWorkspaceControllerCommands({
   const selectedIssueCommentsRevisions = new Map<string, number>();
   const selectedIssueAssignmentsRevisions = new Map<string, number>();
   const projectMutationGenerations = new Map<string, number>();
+  const revalidatingProjects = new Map<string, Promise<void>>();
   const externalColumnLoads = new Set<string>();
   const standardSnapshotLoads = new Map<
     string,
@@ -954,6 +1008,37 @@ export function createCollaborationWorkspaceControllerCommands({
     homeSnapshotLoads.delete(projectId);
     homeSnapshotResults.delete(projectId);
   };
+  const acceptProject = (incoming: CollaborationProject) => {
+    const known = catalogProjects.find(
+      (candidate) => candidate.id === incoming.id,
+    );
+    const current = getProjects().find(
+      (candidate) => candidate.id === incoming.id,
+    );
+    const project = newestProject(current, newestProject(known, incoming));
+    const previous = known ?? current;
+    if (previous && project.version > previous.version) {
+      markProjectMutated(project.id);
+    }
+    catalogProjects = catalogProjects.some(
+      (candidate) => candidate.id === project.id,
+    )
+      ? catalogProjects.map((candidate) =>
+          candidate.id === project.id ? project : candidate,
+        )
+      : [...catalogProjects, project];
+    return project;
+  };
+  const acceptCatalog = (incoming: CollaborationProject[]) => {
+    const projects = incoming.map(acceptProject);
+    catalogProjects = projects;
+    return projects;
+  };
+  const projectVersion = (projectId: string) =>
+    Math.max(
+      catalogProjects.find((project) => project.id === projectId)?.version ?? 0,
+      getProjects().find((project) => project.id === projectId)?.version ?? 0,
+    );
   const reportPositionConflict = async (issueId: string, error: unknown) => {
     if (!isIssueVersionConflict(error)) return false;
     try {
@@ -1006,32 +1091,41 @@ export function createCollaborationWorkspaceControllerCommands({
     pendingReadRequests.set(issue.id, request);
     return request;
   };
-  const loadProject = async (
+  const performProjectLoad = async (
     projectId: string,
     showLoading = true,
     options?: {
       isCurrent?(): boolean;
       invalidate?: boolean;
       loadSnapshot?: boolean;
+      revalidate?: boolean;
+      throwOnError?: boolean;
     },
   ) => {
     if (options?.invalidate) markProjectMutated(projectId);
     const revision = ++projectLoadRevision;
     const isCurrent = () =>
       revision === projectLoadRevision && (options?.isCurrent?.() ?? true);
-    const mutationGeneration = projectMutationGeneration(projectId);
+    let mutationGeneration = projectMutationGeneration(projectId);
+    let metadataVersion = projectVersion(projectId);
     if (showLoading) dispatch({ type: "loading", value: true });
     try {
-      const project =
-        catalogProjects.find((item) => item.id === projectId) ??
-        (await api.projects.get(projectId));
+      const incoming = options?.revalidate
+        ? await api.projects.get(projectId)
+        : (catalogProjects.find((item) => item.id === projectId) ??
+          (await api.projects.get(projectId)));
       if (
         !isCurrent() ||
-        mutationGeneration !== projectMutationGeneration(projectId)
+        (!options?.revalidate &&
+          mutationGeneration !== projectMutationGeneration(projectId))
       )
         return;
-      if (!catalogProjects.some((item) => item.id === project.id)) {
-        catalogProjects = [...catalogProjects, project];
+      const project = acceptProject(incoming);
+      if (options?.revalidate && project !== incoming) return;
+      mutationGeneration = projectMutationGeneration(projectId);
+      metadataVersion = project.version;
+      if (options?.revalidate && options.loadSnapshot !== false) {
+        dispatch({ type: "project-metadata-loaded", project });
       }
       if (options?.loadSnapshot === false) {
         dispatch({ type: "project-metadata-loaded", project });
@@ -1102,27 +1196,52 @@ export function createCollaborationWorkspaceControllerCommands({
             }
           : undefined,
       });
-    } catch {
+    } catch (cause) {
       if (
         !isCurrent() ||
-        mutationGeneration !== projectMutationGeneration(projectId)
+        (mutationGeneration !== projectMutationGeneration(projectId) &&
+          (!options?.revalidate || projectVersion(projectId) > metadataVersion))
       )
         return;
       reportError(messages.loadFailed, "load");
+      if (options?.throwOnError) throw cause;
     } finally {
-      if (showLoading && isCurrent()) {
+      if ((showLoading || options?.revalidate) && isCurrent()) {
         dispatch({ type: "loading", value: false });
       }
     }
+  };
+  const loadProject: CollaborationWorkspaceControllerCommands["loadProject"] = (
+    projectId,
+    showLoading = true,
+    options,
+  ) => {
+    const active = revalidatingProjects.get(projectId);
+    if (active && !options?.revalidate) {
+      if (!options?.invalidate) {
+        return options?.throwOnError ? active : active.catch(() => undefined);
+      }
+      markProjectMutated(projectId);
+      const refresh = () => loadProject(projectId, showLoading, options);
+      return active.then(refresh, refresh);
+    }
+    const pending = performProjectLoad(projectId, showLoading, options).finally(
+      () => {
+        if (revalidatingProjects.get(projectId) === pending)
+          revalidatingProjects.delete(projectId);
+      },
+    );
+    if (options?.revalidate) revalidatingProjects.set(projectId, pending);
+    return pending;
   };
   return {
     async loadProjectCatalog(options) {
       const isCurrent = options?.isCurrent ?? (() => true);
       dispatch({ type: "loading", value: true });
       try {
-        const projects = await api.projects.list();
+        const incoming = await api.projects.list();
         if (!isCurrent()) return;
-        catalogProjects = projects;
+        acceptCatalog(incoming);
         dispatch({ type: "project-catalog-loaded", projects: catalogProjects });
       } catch {
         if (!isCurrent()) return;
@@ -1141,8 +1260,7 @@ export function createCollaborationWorkspaceControllerCommands({
           (items) => ({ status: "fulfilled" as const, items }),
           (error: unknown) => ({ status: "rejected" as const, error }),
         );
-        const projects = await api.projects.list();
-        catalogProjects = projects;
+        const projects = acceptCatalog(await api.projects.list());
         dispatch({ type: "project-catalog-loaded", projects });
         const myWorkOutcome = await myWorkResult;
         if (myWorkOutcome.status === "rejected") throw myWorkOutcome.error;
@@ -1424,11 +1542,9 @@ export function createCollaborationWorkspaceControllerCommands({
     },
     async updateProject(projectId, input) {
       try {
-        const project = await api.projects.update(projectId, input);
-        markProjectMutated(projectId);
-        catalogProjects = catalogProjects.map((item) =>
-          item.id === project.id ? project : item,
-        );
+        const incoming = await api.projects.update(projectId, input);
+        const project = acceptProject(incoming);
+        if (project === incoming) markProjectMutated(projectId);
         dispatch({ type: "replace-project", project });
         return project;
       } catch {
@@ -1537,17 +1653,9 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     replaceProject: (project) => {
-      if (
-        catalogProjects.some(
-          (current) =>
-            current.id === project.id && current.version > project.version,
-        )
-      )
-        return;
+      const accepted = acceptProject(project);
+      if (accepted !== project) return;
       markProjectMutated(project.id);
-      catalogProjects = catalogProjects.map((item) =>
-        item.id === project.id ? project : item,
-      );
       dispatch({ type: "replace-project", project });
     },
     appendIssue: (issue) => {

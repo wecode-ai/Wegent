@@ -6983,9 +6983,12 @@ describe("CollaborationPlatformApp real component flow", () => {
       throw new Error("Workspace not found");
     });
     const renderProject = vi.fn(
-      ({ project: renderedProject, workspace: workspaceContext }) => (
+      ({
+        project: renderedProject,
+        workspace: workspaceContext,
+      }: CollaborationProjectRendererContext) => (
         <div data-testid="restricted-custom-project">
-          {renderedProject.name}:{workspaceContext.name}
+          {renderedProject.name}:{workspaceContext?.name}
         </div>
       ),
     );
@@ -7010,6 +7013,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(renderProject).toHaveBeenCalledOnce();
     expect(renderProject).toHaveBeenCalledWith({
       project: restrictedProject,
+      onProjectUpdated: expect.any(Function),
       workspace: {
         id: workspace.id,
         public_id: "workspace-public",
@@ -7041,6 +7045,79 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(byTestId("test-location").textContent).toBe(locationBeforeClick);
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(api.workspaces!.listMembers).not.toHaveBeenCalled();
+
+    const updatedProject = {
+      ...restrictedProject,
+      name: "Updated project configuration",
+      version: restrictedProject.version + 1,
+    };
+    await act(async () => {
+      renderProject.mock.calls.at(-1)![0].onProjectUpdated(updatedProject);
+    });
+    expect(byTestId("restricted-custom-project").textContent).toBe(
+      `${updatedProject.name}:${workspace.name}`,
+    );
+    expect(
+      byTestId(`collaboration-workspace-project-${project.id}`).textContent,
+    ).toContain(updatedProject.name);
+    await act(async () => {
+      renderProject.mock.calls.at(-1)![0].onProjectUpdated(restrictedProject);
+    });
+    expect(byTestId("restricted-custom-project").textContent).toBe(
+      `${updatedProject.name}:${workspace.name}`,
+    );
+  });
+
+  it("keeps a custom renderer project update when pending navigation returns an older version", async () => {
+    const { api } = createApi();
+    const renderProject = vi.fn(
+      ({ project: renderedProject }: CollaborationProjectRendererContext) => (
+        <div data-testid="snapshot-custom-project">{renderedProject.name}</div>
+      ),
+    );
+    const page = (refreshKey: string) => (
+      <PlatformHarness
+        api={api}
+        renderProject={renderProject}
+        refreshKey={refreshKey}
+        start={{
+          ...initialLocation,
+          workspaceId: workspace.id,
+          workspaceView: "projects",
+          projectId: project.id,
+          projectView: "board",
+        }}
+      />
+    );
+    await render(page("initial"));
+    const pendingProjects = deferred<CollaborationProject[]>();
+    vi.mocked(api.projects.list).mockReturnValue(pendingProjects.promise);
+    await render(page("refresh"));
+    const updatedProject = {
+      ...project,
+      name: "Latest saved project",
+      version: project.version + 1,
+    };
+    await act(async () => {
+      renderProject.mock.calls.at(-1)![0].onProjectUpdated(updatedProject);
+    });
+    expect(byTestId("snapshot-custom-project").textContent).toBe(
+      updatedProject.name,
+    );
+    await act(async () => {
+      pendingProjects.resolve([project]);
+      await pendingProjects.promise;
+    });
+    await flush();
+    expect(byTestId("snapshot-custom-project").textContent).toBe(
+      updatedProject.name,
+    );
+    expect(
+      byTestId(`collaboration-workspace-project-${project.id}`).textContent,
+    ).toContain(updatedProject.name);
+    expect(renderProject.mock.calls.at(-1)![0].project.version).toBe(
+      updatedProject.version,
+    );
   });
 
   it("keeps the default restricted project renderer and management tabs hidden", async () => {

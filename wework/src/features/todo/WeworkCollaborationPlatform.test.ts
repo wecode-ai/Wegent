@@ -25,6 +25,7 @@ import {
   createElement,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentProps,
@@ -78,6 +79,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
       refreshProjectRequestKey = 0,
       renderIssueDetail,
       renderBoardIssueCard,
+      projectSnapshotLifecycle,
     }: {
       api: SharedWorkspaceApi
       host: {
@@ -90,7 +92,18 @@ vi.mock('@wegent/collaboration', async importOriginal => {
       refreshProjectRequestKey?: number
       renderIssueDetail?: (context: unknown) => unknown
       renderBoardIssueCard?: BoardIssueCardRenderer
+      projectSnapshotLifecycle?: ComponentProps<typeof CollaborationApp>['projectSnapshotLifecycle']
     }) => {
+      const onControllerChange = projectSnapshotLifecycle?.onControllerChange
+      useLayoutEffect(() => {
+        onControllerChange?.({
+          state: actual.initialCollaborationWorkspaceControllerState,
+          commands: {
+            loadProject: async () => undefined,
+            replaceProject: () => undefined,
+          },
+        } as Parameters<NonNullable<typeof onControllerChange>>[0])
+      }, [onControllerChange])
       if (host.location.projectId) renderedProjectApis.set(host.location.projectId, api)
       if (initialProject) {
         renderedProjectControls.set(String(initialProject.id), {
@@ -294,7 +307,17 @@ vi.mock('@wegent/collaboration', async importOriginal => {
           'button',
           {
             'data-testid': 'collaboration-platform-render-local-project',
-            onClick: () => setShowLocalProject(true),
+            onClick: () => {
+              host.navigate({
+                platformView: 'project',
+                workspaceId: 'wework-local-workspace',
+                workspaceView: 'projects',
+                projectId: 'local-project',
+                projectView: 'board',
+                issueId: null,
+              })
+              setShowLocalProject(true)
+            },
             type: 'button',
           },
           'Render local project'

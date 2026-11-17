@@ -27,6 +27,13 @@ import { navigateTo } from '@/lib/navigation'
 import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
 import { createWeworkPlatformApi, withoutDefaultWorkItemProject } from './weworkPlatformApi'
 import {
+  projectSnapshotRevalidateEnabled,
+  useProjectSnapshotRefresh,
+} from '@/features/collaboration/projectSnapshotRefresh'
+import { ProjectSnapshotSyncNotice } from '@/features/collaboration/ProjectSnapshotSyncNotice'
+import type { ProjectSnapshotWriteGuard } from '@/features/collaboration/projectSnapshotWriteGuard'
+import { useProjectSnapshotWriteGuardApi } from '@/features/collaboration/useProjectSnapshotWriteGuardApi'
+import {
   CollaborationTemplateStore,
   browserTemplatePersistence,
   createCollaborationTemplateRemote,
@@ -59,6 +66,7 @@ import {
   type CollaborationPlatformLocation,
   type CollaborationProjectRendererWorkspaceContext,
   type CollaborationProject,
+  type CollaborationWorkspaceController,
   type SharedIssueDetailTaskExecutionState,
   type SharedWorkspaceApi,
   type WeworkWorkspaceRuntimePort,
@@ -393,9 +401,10 @@ export function WeworkSharedProject({
   standInDeviceId,
   onOpenRuntimeTask,
   onCancelRuntimeTask,
-  project,
+  project: projectProp,
   conversationRequestKey,
   onOpenProjectConversation,
+  onProjectUpdated,
   runtimeTaskLifecycle,
   runtimeWork,
   runtimePort,
@@ -404,6 +413,7 @@ export function WeworkSharedProject({
   userId,
   workspace,
   personalIssue,
+  workspaceActive = true,
 }: {
   personalIssue?: PersonalHomeIssueDetailContext
   api: SharedWorkspaceApi
@@ -426,6 +436,7 @@ export function WeworkSharedProject({
   project: CollaborationProject
   conversationRequestKey?: string
   onOpenProjectConversation?(): void
+  onProjectUpdated?(project: CollaborationProject): void
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   runtimeWork?: RuntimeWorkListResponse | null
   runtimePort?: IssueRuntimeBindingPort
@@ -433,8 +444,101 @@ export function WeworkSharedProject({
   setLocation: Dispatch<SetStateAction<CollaborationPlatformLocation>>
   userId: string | number
   workspace: CollaborationProjectRendererWorkspaceContext | null
+  workspaceActive?: boolean
 }) {
   const { t } = useTranslation('common')
+  const [loadedSnapshot, setLoadedSnapshot] = useState({ api, project: projectProp })
+  const loadedProject = loadedSnapshot.project
+  const project =
+    loadedSnapshot.api === api &&
+    loadedProject.id === projectProp.id &&
+    loadedProject.project_store === projectProp.project_store &&
+    loadedProject.version >= projectProp.version
+      ? loadedProject
+      : projectProp
+  const latestProjectRef = useRef(project)
+  const snapshotControllerRef = useRef<CollaborationWorkspaceController | null>(null)
+  const snapshotScope = useMemo(
+    () => ({
+      api,
+      projectId: String(project.id),
+      projectStore: project.project_store,
+      key: crypto.randomUUID(),
+    }),
+    [api, project.id, project.project_store]
+  )
+  const snapshotSync = useProjectSnapshotRefresh({
+    scope: personalIssue ? null : snapshotScope,
+    active: workspaceActive && location.projectId === String(project.id),
+    refreshKey: `${location.projectView}:${location.projectSettingsSection ?? ''}`,
+    refresh: async isCurrent => {
+      const controller = snapshotControllerRef.current
+      if (!controller) throw new Error(t('todo.project_snapshot_write_blocked'))
+      await controller.commands.loadProject(String(project.id), false, {
+        revalidate: true,
+        invalidate: Object.hasOwn(controller.state.projectItems, String(project.id)),
+        throwOnError: true,
+        loadSnapshot: ['board', 'table', 'calendar', 'gantt'].includes(location.projectView),
+        isCurrent,
+      })
+    },
+  })
+  const snapshotWriteGuardRef = useRef<ProjectSnapshotWriteGuard>({
+    projectId: String(project.id),
+    issueIds: new Set(),
+    canWrite: false,
+    message: t('todo.project_snapshot_write_blocked'),
+  })
+  const publishedProjectRef = useRef<{
+    api: SharedWorkspaceApi
+    project: CollaborationProject
+  } | null>(null)
+  const onSnapshotControllerChange = useCallback(
+    (controller: CollaborationWorkspaceController) => {
+      snapshotControllerRef.current = controller
+      snapshotWriteGuardRef.current = {
+        ...snapshotWriteGuardRef.current,
+        issueIds: new Set(
+          [
+            ...controller.state.issues,
+            ...(controller.state.selectedIssue ? [controller.state.selectedIssue] : []),
+          ]
+            .filter(issue => String(issue.cloud_project_id) === String(projectProp.id))
+            .map(issue => issue.id)
+        ),
+      }
+      const incoming = controller.state.project
+      if (incoming?.id !== projectProp.id || incoming.project_store !== projectProp.project_store)
+        return
+      latestProjectRef.current = incoming
+      setLoadedSnapshot(current =>
+        current.api === api && current.project === incoming
+          ? current
+          : current.api === api &&
+              current.project.id === incoming.id &&
+              current.project.version > incoming.version
+            ? current
+            : { api, project: incoming }
+      )
+      if (
+        publishedProjectRef.current?.api !== api ||
+        publishedProjectRef.current.project !== incoming
+      ) {
+        publishedProjectRef.current = { api, project: incoming }
+        onProjectUpdated?.(incoming)
+      }
+    },
+    [api, onProjectUpdated, projectProp.id, projectProp.project_store]
+  )
+  useLayoutEffect(() => {
+    snapshotWriteGuardRef.current = {
+      ...snapshotWriteGuardRef.current,
+      projectId: String(project.id),
+      canWrite: snapshotSync.canWrite,
+      message: t('todo.project_snapshot_write_blocked'),
+      acceptProject: incoming => snapshotControllerRef.current?.commands.replaceProject(incoming),
+    }
+  }, [project.id, snapshotSync.canWrite, t])
   const preferences = useAppPreferencesState()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const [closedConversationRequestKey, setClosedConversationRequestKey] = useState<string>()
@@ -466,8 +570,9 @@ export function WeworkSharedProject({
     reportExpanded(hasTaskConversation || detailExpanded)
     return () => reportExpanded(false)
   }, [hasTaskConversation, detailExpanded, reportExpanded])
-  const latestProjectRef = useRef(project)
-  const previousProjectPropRef = useRef(project)
+  useLayoutEffect(() => {
+    latestProjectRef.current = project
+  }, [api, project])
   const taskComposerSequenceRef = useRef(0)
   const issueLookupSequenceRef = useRef(0)
   const closeTaskConversation = useCallback(() => {
@@ -499,26 +604,13 @@ export function WeworkSharedProject({
   useEffect(() => {
     runtimeTaskLifecycleRef.current = runtimeTaskLifecycle
   }, [runtimeTaskLifecycle])
-  useEffect(() => {
-    const previousProject = previousProjectPropRef.current
-    previousProjectPropRef.current = project
-    // Navigation can recreate an older host snapshot after settings are saved.
-    if (
-      String(project.id) !== String(previousProject.id) ||
-      project.project_store !== previousProject.project_store ||
-      JSON.stringify(project.execution_environment) !==
-        JSON.stringify(previousProject.execution_environment)
-    ) {
-      latestProjectRef.current = project
-    }
-  }, [project])
   const workspaceId = workspace?.id ?? null
   const hasFullWorkspaceAccess = workspace !== null && 'access_role' in workspace
   const workspaceAccessRef = useRef(hasFullWorkspaceAccess)
   useLayoutEffect(() => {
     workspaceAccessRef.current = hasFullWorkspaceAccess
   }, [hasFullWorkspaceAccess])
-  const scopedApi = useMemo<SharedWorkspaceApi>(
+  const projectApi = useMemo<SharedWorkspaceApi>(
     () => ({
       ...api,
       projects: {
@@ -556,6 +648,7 @@ export function WeworkSharedProject({
     }),
     [api, project.id, project.project_store, workspaceId]
   )
+  const scopedApi = useProjectSnapshotWriteGuardApi(projectApi, () => snapshotWriteGuardRef.current)
   const standInWorkspaceApi = useMemo(
     () => ({
       ...scopedApi,
@@ -1420,6 +1513,18 @@ export function WeworkSharedProject({
         ) : (
           <>
             <CollaborationApp
+              key={snapshotScope.key}
+              pollIntervalMs={workspaceActive ? 15_000 : 0}
+              projectSnapshotLifecycle={{
+                canWrite: snapshotSync.canWrite,
+                onControllerChange: onSnapshotControllerChange,
+                notice: projectSnapshotRevalidateEnabled ? (
+                  <ProjectSnapshotSyncNotice
+                    state={snapshotSync.state}
+                    retry={snapshotSync.retry}
+                  />
+                ) : null,
+              }}
               participationUserId={
                 project.project_store === 'local'
                   ? (services.localParticipationIdentity?.viewerUserIds ?? taskOwnerUserId)
@@ -2432,7 +2537,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               />
             ) : null
           }
-          renderProject={({ project, workspace }) => {
+          renderProject={({ project, workspace, onProjectUpdated }) => {
             const projectApi = project.project_store === 'local' ? localProjectApi : api
             if (!projectApi) return null
             const runtimePort = issueRuntimePort(project.project_store, props.services)
@@ -2465,6 +2570,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                 onOpenRuntimeTask={props.onOpenRuntimeTask}
                 sendRuntimePaneMessage={props.sendRuntimePaneMessage}
                 project={project}
+                onProjectUpdated={onProjectUpdated}
                 onOpenProjectConversation={() => openProjectConversation(project)}
                 conversationRequestKey={
                   conversationRequest?.projectId === project.id &&
@@ -2480,6 +2586,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                 setLocation={setLocation}
                 userId={props.user.id}
                 workspace={workspace}
+                workspaceActive={props.workspaceActive ?? true}
               />
             )
           }}

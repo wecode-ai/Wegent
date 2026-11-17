@@ -206,6 +206,83 @@ describe('saved project board views', () => {
     expect(result.current.view).toBeNull()
   })
 
+  it('uses refreshed columns and drops a removed selection without restoring it later', () => {
+    const save = vi.fn()
+    const { result, rerender } = renderHook(
+      ({ document, revision }) =>
+        useSavedBoardViews({
+          projectKey: 'backend:one',
+          config: document,
+          revision,
+          translate,
+          save,
+        }),
+      { initialProps: { document: config, revision: 1 } }
+    )
+    act(() => result.current.select('mixed'))
+    const updated = { ...config.views[0], columns: [config.views[0].columns[1]] }
+    rerender({ document: { ...config, views: [updated] }, revision: 2 })
+    expect(result.current.view?.columns).toEqual([config.views[0].columns[1]])
+
+    rerender({ document: { ...config, views: [] }, revision: 3 })
+    expect(result.current.selectedId).toBe('default')
+    expect(result.current.view).toBeNull()
+    rerender({ document: config, revision: 4 })
+    expect(result.current.selectedId).toBe('default')
+    expect(result.current.view).toBeNull()
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it.each(['save', 'delete'] as const)(
+    'keeps a later selection and editor when an earlier %s finishes',
+    async operation => {
+      let finish!: () => void
+      const save = vi.fn(() => new Promise<void>(resolve => (finish = resolve)))
+      const { result, rerender } = renderHook(
+        ({ projectKey }) =>
+          useSavedBoardViews({ projectKey, config, revision: 1, translate, save }),
+        { initialProps: { projectKey: 'backend:one' } }
+      )
+      act(() => result.current.select('mixed'))
+      act(() => result.current.edit())
+      let pending!: Promise<void>
+      act(() => {
+        pending =
+          operation === 'save'
+            ? result.current.saveView({ ...config.views[0], name: 'Saved' })
+            : result.current.deleteView('mixed')
+      })
+
+      act(() => result.current.select('default'))
+      act(() => result.current.edit({ id: 'default', name: 'Status board', columns: [] }))
+      const laterEditor = result.current.editing
+      await act(async () => {
+        finish()
+        await pending
+      })
+      expect(result.current.selectedId).toBe('default')
+      expect(result.current.editing).toBe(laterEditor)
+
+      act(() => {
+        pending =
+          operation === 'save'
+            ? result.current.saveView(config.views[0])
+            : result.current.deleteView('mixed')
+      })
+      rerender({ projectKey: 'backend:two' })
+      act(() => result.current.select('mixed'))
+      act(() => result.current.edit())
+      const otherProjectEditor = result.current.editing
+      await act(async () => {
+        finish()
+        await pending
+      })
+      expect(result.current.selectedId).toBe('mixed')
+      expect(result.current.editing).toBe(otherProjectEditor)
+      expect(save).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it('does not expose editing or erase a future document', async () => {
     const save = vi.fn()
     const { result } = renderHook(() =>

@@ -927,9 +927,6 @@ export function createWeworkSharedWorkspaceApi<
           )
         )
       },
-      get(projectId) {
-        return client.get<CloudProject>(`/v1/cloud-projects/${encodeURIComponent(projectId)}`)
-      },
       async initializeExecutionEnvironment(projectId, input) {
         return toProject(
           await client.post<CloudProject>(

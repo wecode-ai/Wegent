@@ -599,7 +599,7 @@ export function useCollaborationPlatformController({
               ],
               (project) => project.id,
             ),
-            cachedNavigation.projects,
+            navigationCacheRef.current.projects,
           );
         const publishNavigationTarget = (
           collections: NavigationCollections,
@@ -887,6 +887,7 @@ export function useCollaborationPlatformController({
     const cachedProject = navigationCacheRef.current.projects.find(
       (candidate) => candidate.id === project.id,
     );
+    if (cachedProject && cachedProject.version > project.version) return;
     const cachedProjectExists = Boolean(cachedProject);
     navigationCacheRef.current = {
       workspaces: navigationCacheRef.current.workspaces.map((workspace) =>

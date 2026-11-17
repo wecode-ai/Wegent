@@ -1,0 +1,27 @@
+{
+  "order": 73100,
+  "scenario": "./scenarios/collaboration-project-revalidation.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/src/features/collaboration/projectSnapshotRefresh*",
+    "wework/src/features/collaboration/ProjectSnapshotSyncNotice.tsx",
+    "wework/src/features/collaboration/projectSnapshotWriteGuard*",
+    "wework/src/features/collaboration/useProjectSnapshotWriteGuardApi.ts",
+    "wework/src/features/todo/WeworkCollaborationPlatform.tsx",
+    "wework/src/features/todo/WeworkSharedProject.snapshot.test.tsx",
+    "wework/src/features/todo/CloudTodoWorkspace*",
+    "packages/collaboration/src/CollaborationApp.tsx",
+    "packages/collaboration/src/platform/CollaborationPlatformApp.tsx",
+    "packages/collaboration/src/platform/useCollaborationPlatformController*",
+    "packages/collaboration/src/web-adapter/ProjectBoardAdapter.tsx",
+    "packages/collaboration/src/project-board/useSavedBoardViews.ts",
+    "packages/collaboration/src/workspace-controller/*"
+  ],
+  "ci": {
+    "core": {
+      "order": 18100,
+      "shard": 8,
+      "position": 18100
+    }
+  }
+}

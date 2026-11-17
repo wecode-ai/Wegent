@@ -40,6 +40,12 @@ export function useSavedBoardViews({
   if (selection.projectKey !== projectKey) {
     setSelection({ projectKey, id: null })
     setEditor(null)
+  } else if (
+    selection.id !== null &&
+    selection.id !== 'default' &&
+    !views.some(view => view.id === selection.id)
+  ) {
+    setSelection({ projectKey, id: null })
   }
   const selectedId =
     selection.projectKey === projectKey &&
@@ -60,6 +66,10 @@ export function useSavedBoardViews({
     if (supported && next) setEditor({ projectKey, view: next, revision, returnFocus })
   }
   const closeEditor = () => setEditor(null)
+  const completeSave = (id: string) => {
+    setSelection(current => (current === selection ? { projectKey, id } : current))
+    setEditor(current => (current === editor ? null : current))
+  }
   const saveView = async (
     next: SavedBoardView,
     expectedRevision = revision,
@@ -82,7 +92,7 @@ export function useSavedBoardViews({
       else if (defaultViewId === next.id) updated.default_view_id = 'default'
       await save(updated, settings)
     } else await save(updated)
-    select(next.id)
+    completeSave(next.id)
   }
   const deleteView = async (id: string, expectedRevision = revision) => {
     if (!supported) throw new Error(t('todo.board_view_future'))
@@ -93,7 +103,7 @@ export function useSavedBoardViews({
       views: views.filter(candidate => candidate.id !== id),
       ...(config?.default_view_id === id ? { default_view_id: 'default' } : {}),
     })
-    select('default')
+    completeSave('default')
   }
   return {
     view,

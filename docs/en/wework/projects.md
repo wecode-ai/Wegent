@@ -407,6 +407,8 @@ Empty columns also explain what belongs in each stage and name the creation acti
 
 ## Save and switch board views
 
+Saving project configuration immediately applies the returned title, tags, and board views. Returning to an open collaboration tab, reentering a project, or restoring window focus revalidates the current project without closing the window. The page shows configuration freshness. Offline or failed synchronization preserves existing data and pauses stage moves and board configuration saves; select **Retry** to synchronize and resume.
+
 The native task board's view dropdown on the right provides switching, creation, and board settings on the same toolbar as **Focus view** and **Archived**. The base board groups Issues by the five default statuses: Inbox, Pending, In progress, In review, and Completed. Status and custom tags remain separate Issue properties.
 
 Project administrators can save multiple views, bind each lane to a status or tag, reorder lanes, configure tag filters, and choose the project default view. Entering a project opens its default; subsequent switches apply to the current visit. Views and their default are shared with project members. Deleting the default view restores the base board. Lane settings and card fields are edited in one dialog and saved together; card fields apply to every view in the project.

@@ -1142,7 +1142,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     })
 
     await expect(api.projects.get('project/1')).resolves.toBe(project)
-    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1')
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1', { cache: 'no-store' })
 
     await expect(
       api.projects.importMessages('project/1', {

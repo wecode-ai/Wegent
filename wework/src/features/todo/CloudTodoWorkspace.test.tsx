@@ -625,6 +625,12 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
   workbenchServices.sharedWorkspaceApi = createWeworkSharedWorkspaceApi({
     client: {
       get: vi.fn(async (url: string) => {
+        const projectId = url.match(/\/v1\/cloud-projects\/([^/]+)$/)?.[1]
+        if (projectId) {
+          return (await deliveryApi.listCloudProjects()).items.find(
+            candidate => String(candidate.id) === decodeURIComponent(projectId)
+          )
+        }
         if (url.endsWith('/v1/workspaces')) {
           return { items: [{ id: project.workspace_id, name: 'Shared workspace' }] }
         }
@@ -763,6 +769,75 @@ describe('CloudTodoWorkspace', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     localStorage.clear()
+  })
+
+  it('revalidates project configuration on reentry and protects stale stages until retry', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
+      items: [{ ...item, tags: [] }],
+    })
+    const getProject = vi.spyOn(workbenchServices.sharedWorkspaceApi!.projects, 'get')
+    getProject.mockResolvedValue({ ...project, tags: [] })
+    const props = {
+      user: { id: 1, user_name: 'local' } as User,
+      localProjects: [],
+      services: workbenchServices,
+      activeProjectRef: { projectStore: 'backend' as const, projectId: project.id },
+    }
+    const page = render(<CloudTodoWorkspace {...props} workspaceActive />)
+    await waitFor(() =>
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'fresh'
+      )
+    )
+    expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveTextContent(item.title)
+    page.rerender(<CloudTodoWorkspace {...props} workspaceActive={false} />)
+    getProject.mockResolvedValue({
+      ...project,
+      version: 2,
+      name: 'Updated project',
+      tags: ['review'],
+      board_views: {
+        schema_version: 1,
+        default_view_id: 'review',
+        views: [
+          {
+            id: 'review',
+            name: 'Review stages',
+            columns: [{ id: 'review', type: 'tag', value: 'review' }],
+          },
+        ],
+      },
+    })
+    page.rerender(<CloudTodoWorkspace {...props} workspaceActive />)
+    await waitFor(() => expect(screen.getByTestId('cloud-todo-column-review')).toBeInTheDocument())
+    expect(screen.queryByTestId('cloud-todo-column-in_progress')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'fresh'
+      )
+    )
+    getProject.mockRejectedValueOnce(new Error('Network unavailable'))
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'stale'
+      )
+    )
+    expect(screen.getByTestId('cloud-todo-column-review')).toBeInTheDocument()
+    await expect(
+      workbenchServices.sharedWorkspaceApi!.projects.get(project.id)
+    ).resolves.toHaveProperty('version', 2)
+    await userEvent.click(screen.getByTestId('project-snapshot-retry'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'fresh'
+      )
+    )
   })
 
   it('opens the requested Issue after a parent rerender cancels the pending focus effect', async () => {
