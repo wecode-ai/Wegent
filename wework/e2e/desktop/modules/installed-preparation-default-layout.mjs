@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, parse } from 'node:path'
+import { dirname, join, parse } from 'node:path'
 
 import { INSTALLED_PREPARATION_ARGUMENT } from '../../../electron/src/runtime/installed-preparation-contract.mjs'
 import { parseStartupEvents } from './cold-package-startup.mjs'
@@ -23,8 +22,9 @@ export async function verifyDefaultLayoutInstalledPreparation({
   const root = join(resultDir, 'default-layout-install-preparation')
   // Windows resolves nested Chromium and runtime paths below HOME. Keep the
   // synthetic profile short so this exercises default-layout behavior rather
-  // than the length of the CI evidence directory.
-  const home = await mkdtemp(join(tmpdir(), 'wework-default-layout-'))
+  // than the length of the CI evidence directory. Keep it beside the evidence
+  // directory so the installer's initial rename stays on one filesystem.
+  const home = await mkdtemp(join(dirname(resultDir), 'wework-default-layout-'))
   const appData =
     process.platform === 'darwin'
       ? join(home, 'Library', 'Application Support')

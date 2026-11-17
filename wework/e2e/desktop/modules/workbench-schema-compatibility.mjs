@@ -55,7 +55,7 @@ export async function verifyWorkbenchSchemaCompatibility({ appBinary, appEnviron
   const installedPreparation = await verifyDefaultLayoutInstalledPreparation({
     appBinary,
     appEnvironment,
-    resultDir: join(root, 'installed-preparation'),
+    resultDir,
   })
   const windowsComponentPublication =
     process.platform === 'win32'
