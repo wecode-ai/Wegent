@@ -76,6 +76,10 @@ impl ExecutorEventHub {
         self.start(self.raw_tx.subscribe());
     }
 
+    pub(crate) fn raw_sender(&self) -> broadcast::Sender<Value> {
+        self.raw_tx.clone()
+    }
+
     fn start(&self, mut receiver: broadcast::Receiver<Value>) {
         if self
             .started

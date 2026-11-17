@@ -66,6 +66,9 @@ pub async fn register(
     socket_id: &str,
     data: Value,
 ) -> Result<Reply<Value>, ClientError> {
+    let Some(_online_write) = session.online_write().await else {
+        return Ok(Reply::payload(error_ack("Device connection is closed")));
+    };
     let payload = match RegisterPayload::parse(&data) {
         Ok(payload) => payload,
         Err(error) => {
@@ -568,6 +571,45 @@ fn stale_online_state(online: Option<Value>, socket_id: &str) -> Result<bool, ()
 
 /// `on_disconnect`.
 pub async fn disconnect(
+    state: &AppState,
+    runtime: &Arc<SocketRuntime>,
+    session: &DeviceSession,
+    socket_id: &str,
+) {
+    // The transport is gone even if its stable route already points to a new SID.
+    let close = session.close_online_writes();
+    publish_peer_closed(state, socket_id).await;
+    let _closed = close.await;
+    // Start retention after the last permitted heartbeat or registration write.
+    publish_peer_closed(state, socket_id).await;
+    disconnect_projection(state, runtime, session, socket_id).await;
+}
+
+async fn publish_peer_closed(state: &AppState, socket_id: &str) {
+    use brz_redis::Redis as _;
+    if let Some(rpc) = state.socketio_rpc.as_ref() {
+        rpc.disconnect(
+            socket_id,
+            "/local-executor",
+            Duration::from_secs(device::ONLINE_TTL_SECONDS),
+        );
+    }
+    if let Some(redis) = state.redis.as_ref() {
+        let message = serde_json::json!({"method":"runtime_peer_closed","sid":socket_id,"namespace":"/local-executor","retain_ms":device::ONLINE_TTL_SECONDS * 1000,"host_id":crate::socketio_emit::host_id()});
+        if redis
+            .publish(crate::socketio_emit::SOCKETIO_CHANNEL, message.to_string())
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                code = "runtime_peer_close_publish_failed",
+                "Device RPC disconnect notification deferred"
+            );
+        }
+    }
+}
+
+async fn disconnect_projection(
     state: &AppState,
     runtime: &Arc<SocketRuntime>,
     session: &DeviceSession,

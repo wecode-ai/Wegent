@@ -1213,6 +1213,12 @@ impl RuntimeWorkRpcHandler {
         }
         self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
+        if payload.get("resourceEventKeys").is_some() && payload.get("commandId").is_none() {
+            payload["commandId"] = payload
+                .get("clientUserMessageId")
+                .cloned()
+                .unwrap_or_else(|| json!(uuid::Uuid::new_v4().to_string()));
+        }
         let existing_link = self.local_task_link(&local_task_id);
         let mut payload = if let Some(link) = &existing_link {
             self.refresh_project_coordinator_payload(payload, link)
@@ -1222,6 +1228,16 @@ impl RuntimeWorkRpcHandler {
         };
         if let Some(receipt) = self.existing_payload_command(&payload).await? {
             return Ok(receipt);
+        }
+        if payload.get("resourceEventKeys").is_some()
+            && existing_link
+                .as_ref()
+                .is_some_and(|link| link.interaction_status.is_some())
+        {
+            return Err(AppIpcError::new(
+                "user_input_pending",
+                "Resource events cannot bypass the conversation's pending human input",
+            ));
         }
         let start_new_session = self.validate_session_start(existing_link.as_ref(), &payload)?;
         if payload["automaticStandIn"] == true
@@ -1317,6 +1333,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         self.resolve_local_model_reference(&mut request, &local_task_id)?;
+        self.prepare_resource_event_request(&local_task_id, &mut request)?;
         if let Some(link) = existing_link.as_ref() {
             super::mcp_apps::append_model_context(&mut request, link);
             // A failed preparation has no session yet. Retry its saved snapshot;
@@ -2817,7 +2834,9 @@ impl RuntimeWorkRpcHandler {
             link.updated_at = now_ms();
             set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
             apply_runtime_profile_handle(&mut link.runtime_handle, payload);
-            link.interaction_status = None;
+            if !super::automatic_turns::is_automatic_input(request) {
+                link.interaction_status = None;
+            }
         });
         if updated.is_some() {
             return;

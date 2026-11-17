@@ -20,6 +20,30 @@ from app.schemas.runtime_work import (
 PROTOCOL_DIR = Path(__file__).resolve().parents[3] / "shared" / "protocol"
 
 
+def test_connection_event_attribution_survives_cloud_transcript_and_send() -> None:
+    from app.schemas.runtime_work import NormalizedRuntimeMessage, RuntimeSendRequest
+
+    source = {"source": "connection_event"}
+    message = NormalizedRuntimeMessage.model_validate(
+        {"id": "event", "role": "user", "content": "Document updated", "source": source}
+    )
+    assert message.model_dump()["source"] == source
+    request = RuntimeSendRequest.model_validate(
+        {
+            "address": {"deviceId": "device", "taskId": "task"},
+            "message": "Continue after event",
+            "source": source,
+            "resourceEventKeys": ["a" * 64],
+        }
+    )
+    assert request.resource_event_keys == ["a" * 64]
+    assert request.model_dump(by_alias=True)["source"] == source
+    with pytest.raises(ValidationError):
+        NormalizedRuntimeMessage.model_validate(
+            {"id": "event", "role": "user", "source": {"source": "im"}}
+        )
+
+
 def test_transcript_preserves_canonical_turns_and_execution_state():
     from app.schemas.runtime_work import RuntimeTranscriptResponse
 

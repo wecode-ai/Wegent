@@ -327,7 +327,7 @@ const sharedMessages: Record<
     "todo.agent_picker_workspace_share":
       "添加后分组内项目可复用此智能体。原定义和私人凭据仍按原权限管理。",
     "common.actions": "操作",
-    "standIn.start_failed": "任务已创建，分身未能启动：",
+    "standIn.start_failed": "任务已创建，助理未能启动：",
     "standIn.retry": "重试处理",
     "issue_creation.do_myself": "我",
     "issue_creation.owner": "分配给",

@@ -57,11 +57,14 @@ export function createEmailProvider(accounts, network = { imapSession, parseMail
       return source
     },
     async initialize(ctx, source) {
-      if (source.boundary) return source.boundary
-      return session(ctx, source, async client => ({
-        partition: String(client.mailbox.uidValidity),
-        sequence: client.mailbox.uidNext - 1,
-      }))
+      if (source.boundary && ctx.initializationMode !== 'fresh') return source.boundary
+      return session(ctx, source, async client => {
+        const boundary = {
+          partition: String(client.mailbox.uidValidity),
+          sequence: client.mailbox.uidNext - 1,
+        }
+        return { ...boundary, activationBoundary: boundary }
+      })
     },
     async readSource(ctx, input) {
       const { source } = input

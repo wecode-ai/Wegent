@@ -1,5 +1,16 @@
 use super::*;
 
+pub(in crate::runtime_work::handler) fn continuation_operation_id(
+    device: &str,
+    task: &str,
+    key: &str,
+) -> String {
+    format!(
+        "op_{:x}",
+        Sha256::digest(format!("{device}\0{task}\0{key}"))
+    )
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn control_execution_payload(
         &self,
@@ -95,10 +106,7 @@ impl RuntimeWorkRpcHandler {
         let message = args["message"].as_str().unwrap();
         let key = args["request_key"].as_str().unwrap();
         let queue_if_busy = args["queue_if_busy"].as_bool().unwrap_or(true);
-        let operation_id = format!(
-            "op_{:x}",
-            Sha256::digest(format!("{device}\0{}\0{key}", link.local_task_id))
-        );
+        let operation_id = continuation_operation_id(device, &link.local_task_id, key);
         let fingerprint = format!(
             "{:x}",
             Sha256::digest(json!({"message":message,"queue_if_busy":queue_if_busy}).to_string())
@@ -150,6 +158,12 @@ impl RuntimeWorkRpcHandler {
             }
         };
         payload["queueIfBusy"] = json!(queue_if_busy);
+        if let Some(presentation) = args.get("user_message_presentation") {
+            payload["userMessagePresentation"] = presentation.clone();
+        }
+        if let Some(keys) = args.get("resource_event_keys") {
+            payload["resourceEventKeys"] = keys.clone();
+        }
         let mut receipt = json!({"operation_id":operation_id,"conversation_id":args["conversation_id"],
             "device_id":device,"task_id":link.local_task_id,"fingerprint":fingerprint,"delivery_status":"pending","created_at":now_ms()});
         let raced = workbench_control::journal::transact(&path, |state| {

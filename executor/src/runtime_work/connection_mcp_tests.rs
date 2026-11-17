@@ -6,6 +6,13 @@ use std::{
 
 type RpcReply = (&'static str, Result<Value, AppIpcError>);
 
+async fn execute(client: &impl McpRpc, payload: Value) -> Result<Value, AppIpcError> {
+    let (owner, mut cancellation) = tokio::sync::oneshot::channel();
+    let result = super::execute(client, payload, &mut cancellation).await;
+    drop(owner);
+    result
+}
+
 #[derive(Clone)]
 struct FakeRpc {
     replies: Arc<Mutex<VecDeque<RpcReply>>>,
@@ -319,6 +326,73 @@ async fn connection_mcp_deadline_releases_the_thread() {
         "connection_mcp_timeout"
     );
     client.0.complete();
+}
+
+#[tokio::test]
+async fn cancellation_during_discovery_or_thread_creation_never_dispatches_a_tool_and_preserves_cleanup(
+) {
+    #[derive(Clone)]
+    struct PhaseRpc {
+        inner: FakeRpc,
+        phase: &'static str,
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+    impl McpRpc for PhaseRpc {
+        fn request(&self, method: &'static str, params: Value) -> Reply {
+            let result = self.inner.request(method, params);
+            let this = self.clone();
+            Box::pin(async move {
+                if method == this.phase {
+                    this.entered.notify_one();
+                    this.release.notified().await;
+                }
+                result.await
+            })
+        }
+    }
+    for phase in ["plugin/read", "thread/start", "mcpServerStatus/list"] {
+        let mut steps = setup();
+        if phase == "plugin/read" {
+            steps.truncate(2);
+        }
+        if phase == "mcpServerStatus/list" {
+            steps.push(("mcpServerStatus/list", Ok(page())));
+        }
+        if phase != "plugin/read" {
+            steps.push(cleanup());
+        }
+        let client = PhaseRpc {
+            inner: FakeRpc::new(steps),
+            phase,
+            entered: Arc::default(),
+            release: Arc::default(),
+        };
+        let worker = client.clone();
+        let (owner, mut cancelled) = tokio::sync::oneshot::channel();
+        let running =
+            tokio::spawn(async move { super::execute(&worker, payload(), &mut cancelled).await });
+        client.entered.notified().await;
+        drop(owner);
+        client.release.notify_one();
+        let result = tokio::time::timeout(Duration::from_secs(1), running)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.unwrap_err().code, "request_cancelled");
+        client.inner.complete();
+        let calls = client.inner.calls.lock().unwrap();
+        assert!(!calls
+            .iter()
+            .any(|(method, _)| *method == "mcpServer/tool/call"));
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|(method, _)| *method == "thread/unsubscribe")
+                .count(),
+            usize::from(phase != "plugin/read")
+        );
+    }
 }
 
 #[tokio::test]

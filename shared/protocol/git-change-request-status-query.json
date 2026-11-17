@@ -1,0 +1,3 @@
+{
+  "fields": "number url title state isDraft mergedAt updatedAt headRefName headRefOid mergeable mergeStateStatus statusCheckRollup { state } commits(last: 1) { nodes { commit { committedDate } } } mergeQueueEntry { state } timelineItems(last: 10, itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { __typename ... on AddedToMergeQueueEvent { createdAt } ... on RemovedFromMergeQueueEvent { createdAt reason } } }"
+}

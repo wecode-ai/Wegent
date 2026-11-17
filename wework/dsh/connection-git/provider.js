@@ -188,12 +188,12 @@ export function createProvider(platform) {
       if (selection)
         return monitoringCheckpoint(platform, source, selection, { canonicalTopic, parseProfile })
       const boundary = usesWebhook(source)
-        ? (source.boundary ??
+        ? ((ctx.initializationMode !== 'fresh' ? source.boundary : undefined) ??
           (await ctx.git.inbox({
             operation: 'boundary',
             subscriptionId: source.subscriptionId,
             generation: source.generation,
-            resumePending: source.resumePending === true,
+            resumePending: ctx.initializationMode !== 'fresh' && source.resumePending === true,
           })))
         : undefined
       return {
@@ -203,17 +203,17 @@ export function createProvider(platform) {
         seen: {},
         tracked: {},
         sequence: boundary?.sequence ?? 0,
-        ...(boundary ? { partition: boundary.partition } : {}),
+        ...(boundary ? { partition: boundary.partition, activationBoundary: boundary } : {}),
       }
     },
-    async collect(ctx, { source, checkpoint }) {
+    async collect(ctx, { source, checkpoint, committedCheckpoint = checkpoint, force = false }) {
       const selection = validateMonitoringSource(platform, source, { fingerprint, invalid })
       if (selection && checkpoint.selectionSignature !== selection.collectionKey)
         checkpoint = monitoringCheckpoint(platform, source, selection, {
           canonicalTopic,
           parseProfile,
         })
-      if (checkpoint.nextCheckAt && Date.now() < checkpoint.nextCheckAt)
+      if (!force && checkpoint.nextCheckAt && Date.now() < checkpoint.nextCheckAt)
         return { events: [], nextCheckpoint: checkpoint, hasMore: false }
       if (selection) {
         const next = structuredClone(checkpoint)
@@ -283,8 +283,12 @@ export function createProvider(platform) {
         const binding = { subscriptionId: source.subscriptionId, generation: source.generation }
         // This checkpoint was read from durable Executor storage. Acknowledging
         // here never advances cloud state before local persistence succeeds.
-        if (checkpoint.sequence > 0)
-          await ctx.git.inbox({ ...binding, operation: 'ack', sequence: checkpoint.sequence })
+        if (committedCheckpoint.sequence > 0)
+          await ctx.git.inbox({
+            ...binding,
+            operation: 'ack',
+            sequence: committedCheckpoint.sequence,
+          })
         const response = await ctx.git.inbox({
           ...binding,
           operation: 'events',
@@ -783,24 +787,123 @@ async function collectTracked(ctx, platform, source, next) {
   } catch (error) {
     if (!['git_not_found', 'git_permission_denied'].includes(error?.code)) throw error
     if (step === 0) {
+      if (target.entityKind === 'change_request' && source.monitoredObjects) {
+        next.resourceStates ??= {}
+        const previous = next.resourceStates[target.url]
+        next.resourceStates[target.url] = {
+          kind: 'change_request',
+          provider: platform,
+          topicId: target.url,
+          observedAt: previous?.observedAt ?? new Date().toISOString(),
+          data: previous?.data ?? {},
+          errorCode: error.code,
+        }
+      }
       next.tracked[target.url].finished = true
       next.trackIndex = (next.trackIndex ?? 0) + 1
       next.trackStep = 0
       next.page = 1
     } else advanceTracked(next, steps)
-    return { events: [], nextCheckpoint: next, hasMore: true }
+    return {
+      events: [],
+      nextCheckpoint: next,
+      hasMore: true,
+      resourceStates: Object.values(next.resourceStates ?? {}),
+    }
   }
+  const stateEvents = []
   if (step === 0) {
     next.tracked[target.url].sha =
       response.data.head?.sha ?? response.data.sha ?? response.data.diff_refs?.head_sha
     if (response.data.state === 'closed' || response.data.state === 'merged')
       next.tracked[target.url].finished = true
     else delete next.tracked[target.url].finished
+    if (target.entityKind === 'change_request' && source.monitoredObjects) {
+      const data =
+        platform === 'github'
+          ? (
+              await ctx.git.read({
+                ...target,
+                ...parseProfile(source.profile),
+                profile: source.profile,
+                operation: 'change_request_status',
+              })
+            ).data
+          : response.data
+      const url = data.url ?? data.web_url
+      const sha = data.headRefOid ?? data.sha ?? data.diff_refs?.head_sha
+      if (url !== target.url || (sha && sha !== next.tracked[target.url].sha))
+        throw invalid('Observed change request identity or revision changed during collection')
+      const previousState = next.resourceStates?.[target.url]
+      next.resourceStates ??= {}
+      next.resourceStates[target.url] = {
+        kind: 'change_request',
+        provider: platform,
+        topicId: target.url,
+        observedAt: new Date().toISOString(),
+        data:
+          platform === 'github'
+            ? data
+            : {
+                iid: data.iid,
+                web_url: data.web_url,
+                title: data.title,
+                state: data.state,
+                draft: data.draft,
+                merged_at: data.merged_at,
+                updated_at: data.updated_at,
+                source_branch: data.source_branch,
+                sha,
+                head_pipeline: data.head_pipeline?.sha === sha ? data.head_pipeline : undefined,
+                observedPipeline: data.head_pipeline,
+                detailed_merge_status: data.detailed_merge_status,
+                has_conflicts: data.has_conflicts,
+              },
+      }
+      const projected = next.resourceStates[target.url]
+      if (
+        previousState &&
+        fingerprint(stableValue(previousState.data)) !== fingerprint(stableValue(projected.data))
+      ) {
+        const version = objectVersion(
+          platform,
+          source,
+          target.repository,
+          'change_request_state',
+          projected.data,
+          target.number
+        )
+        stateEvents.push({
+          id: `${version.objectId}:${version.version}`,
+          ...version,
+          eventType: 'git.event',
+          at: projected.observedAt,
+          topicId: target.url,
+          text: `${target.url}: change request status updated`,
+          external: {
+            platform,
+            eventType: 'tracked.status',
+            entityKind: 'change_request',
+            objectKind: 'change_request_state',
+            headSha: sha,
+            url: target.url,
+            payload: {
+              ...projected.data,
+              conclusion: String(
+                projected.data.statusCheckRollup?.state ??
+                  projected.data.head_pipeline?.status ??
+                  ''
+              ).toLowerCase(),
+            },
+          },
+        })
+      }
+    }
   }
   const rows = Array.isArray(response.data)
     ? response.data
     : (response.data.check_runs ?? [response.data])
-  const events = []
+  const events = stateEvents
   for (const row of rows) {
     const sourceAt = row.updated_at ?? row.completed_at ?? row.submitted_at ?? row.created_at
     const credibleTime = Number.isFinite(Date.parse(sourceAt))
@@ -863,7 +966,12 @@ async function collectTracked(ctx, platform, source, next) {
   }
   if (rows.length === 100) next.page = (next.page ?? 1) + 1
   else advanceTracked(next, steps)
-  return { events, nextCheckpoint: next, hasMore: true }
+  return {
+    events,
+    nextCheckpoint: next,
+    hasMore: true,
+    resourceStates: Object.values(next.resourceStates ?? {}),
+  }
 }
 
 function advanceTracked(next, steps) {
