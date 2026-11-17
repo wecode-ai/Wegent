@@ -86,10 +86,17 @@ impl LocalTaskStore {
                WHERE action.resource_type='stand_in_action'
                  AND json_extract(action.metadata,'$.userId')=?1
                  AND json_extract(action.metadata,'$.status')='failed'
-                 AND json_extract(action.metadata,'$.kind') IN ('create_work','continue_work','wait_for_work')
+                 AND json_extract(action.metadata,'$.kind')='create_work'
                  AND json_extract(intake.metadata,'$.userId')=?1
                  AND json_extract(intake.metadata,'$.status')='pending'
-                 AND event.value NOT IN (SELECT value FROM held)
+                 AND NOT EXISTS (
+                   SELECT 1 FROM json_each(action.metadata,'$.arguments.eventIds') AS member
+                   LEFT JOIN loop_items AS owned ON owned.id=member.value AND owned.resource_type='stand_in_event'
+                   WHERE member.type != 'text' OR owned.id IS NULL
+                     OR json_extract(owned.metadata,'$.userId') IS NOT ?1
+                     OR json_extract(owned.metadata,'$.status') IS NOT 'pending'
+                     OR member.value IN (SELECT value FROM held)
+                 )
              )
              UPDATE loop_items SET metadata=json_set(metadata,'$.status','pending','$.resolution','explicit_retry','$.retryRequestId',?3),updated_at=?2
              WHERE id IN (SELECT DISTINCT id FROM latest WHERE position=1
@@ -167,6 +174,18 @@ impl LocalTaskStore {
         )
     }
 
+    pub fn recent_stand_in_suggestions(&self, user: i64) -> Result<Vec<Value>, TaskRuntimeError> {
+        query_values(
+            &*self.connection()?,
+            "SELECT metadata FROM loop_items WHERE resource_type=?1
+             AND json_extract(metadata,'$.userId')=?2
+             AND json_extract(metadata,'$.kind')='suggest_action'
+             AND json_extract(metadata,'$.status') IS NOT 'cancelled'
+             ORDER BY created_at DESC,id DESC LIMIT 20",
+            params![ACTION, user],
+        )
+    }
+
     pub fn pending_stand_in_event_count(&self, user: i64) -> Result<usize, TaskRuntimeError> {
         Ok(self.connection()?.query_row(
             "SELECT count(*) FROM loop_items WHERE resource_type=?1
@@ -179,6 +198,34 @@ impl LocalTaskStore {
 mod tests {
     use super::super::stand_in_processing::write;
     use super::*;
+
+    #[test]
+    fn creation_retry_never_overlaps_live_consumed_or_foreign_input() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        for (id, user, status) in [
+            ("free", 7, "pending"),
+            ("busy", 7, "pending"),
+            ("done", 7, "handled"),
+            ("foreign", 8, "pending"),
+        ] {
+            write(
+                &*store.connection().unwrap(),
+                EVENT,
+                &json!({"id":id,"userId":user,"status":status}),
+            )
+            .unwrap();
+        }
+        write(&*store.connection().unwrap(), ACTION, &json!({"id":"live","userId":7,"status":"sending","kind":"continue_work","arguments":{"eventIds":["busy"]}})).unwrap();
+        for blocked in ["busy", "done", "foreign"] {
+            write(&*store.connection().unwrap(), ACTION, &json!({"id":format!("blocked-{blocked}"),"userId":7,"status":"failed","kind":"create_work","arguments":{"eventIds":["free",blocked]}})).unwrap();
+        }
+        store.save_stand_in_processing_state(7, &json!({"routingRetry":{"id":"request","before":(Utc::now()+chrono::Duration::seconds(1)).to_rfc3339()}})).unwrap();
+        assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 0);
+        let active = store.pending_stand_in_actions(7).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0]["id"], "live");
+    }
 
     #[test]
     fn explicit_retry_batches_use_latest_intents_once_and_preserve_owner_and_kind() {
@@ -201,6 +248,7 @@ mod tests {
                 ("foreign", 8, "create_work"),
                 ("assessment", 7, "assess"),
                 ("arrangement", 7, "run_arrangement"),
+                ("followup", 7, "continue_work"),
             ] {
                 write(&tx, ACTION, &json!({"id":id,"userId":user,"status":"failed","kind":kind,"arguments":{"eventIds":["event-0"]}})).unwrap();
             }
@@ -261,6 +309,12 @@ mod tests {
             "UPDATE loop_items SET metadata=json_set(metadata,'$.payload',json(?1)) WHERE id IN ('history','old-action')",
             [deep],
         ).unwrap();
+        connection
+            .execute(
+                "UPDATE loop_items SET created_at=?1 WHERE id IN ('history','old-action')",
+                [(Utc::now() - chrono::Duration::days(1)).to_rfc3339()],
+            )
+            .unwrap();
         drop(connection);
         assert_eq!(
             store.pending_stand_in_events(7).unwrap()[0]["id"],
@@ -275,6 +329,11 @@ mod tests {
             store.stand_in_event(7, "selected").unwrap()["id"],
             "selected"
         );
+        assert_eq!(
+            store.recent_stand_in_actions(7, 1).unwrap()[0]["id"],
+            "active"
+        );
+        assert!(store.recent_stand_in_suggestions(7).unwrap().is_empty());
         assert!(store.stand_in_event(8, "selected").is_err());
         assert!(store.pending_stand_in_actions(8).unwrap().is_empty());
         assert!(store.pending_stand_in_events(8).unwrap().is_empty());
