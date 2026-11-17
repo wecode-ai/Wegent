@@ -270,19 +270,27 @@ async fn cleanup_task_runtime<T: MysqlTransaction>(
     // Source builds a set of `(namespace, name)` pairs; only membership is
     // consulted, so a de-duplicated ordered list keeps the same contract.
     let mut unique_executors: Vec<(String, String)> = Vec::new();
-    for row in &subtasks {
-        let Some(name) =
-            subtask_column::<String>(row, "executor_name").filter(|name| !name.is_empty())
-        else {
-            continue;
-        };
-        let key = (
-            subtask_column::<String>(row, "executor_namespace").unwrap_or_default(),
-            name,
-        );
-        if !unique_executors.contains(&key) {
-            unique_executors.push(key);
+    let mut page = subtasks;
+    while !page.is_empty() {
+        let after_id = page
+            .last()
+            .and_then(|row| subtask_column::<i64>(row, "id"))
+            .unwrap_or(0);
+        for row in &page {
+            let Some(name) =
+                subtask_column::<String>(row, "executor_name").filter(|name| !name.is_empty())
+            else {
+                continue;
+            };
+            let key = (
+                subtask_column::<String>(row, "executor_namespace").unwrap_or_default(),
+                name,
+            );
+            if !unique_executors.contains(&key) {
+                unique_executors.push(key);
+            }
         }
+        page = executor_cleanup_page(transaction, tables, task_id, after_id).await?;
     }
 
     let sandbox_id = task_id.to_string();
@@ -338,26 +346,35 @@ async fn cleanup_task_runtime<T: MysqlTransaction>(
         return Ok(());
     }
 
-    let updates: Vec<(String, i64)> = subtasks
-        .iter()
-        .filter_map(|row| {
-            let key = (
-                subtask_column::<String>(row, "executor_namespace").unwrap_or_default(),
-                subtask_column::<String>(row, "executor_name").unwrap_or_default(),
-            );
-            if !sandbox_deleted && !successful_keys.contains(&key) {
-                return None;
-            }
-            // `subtask_store.update_fields` stamps each row's `updated_at`
-            // independently before the shared flush.
-            Some((
-                local_datetime(now_local()),
-                subtask_column::<i64>(row, "id").unwrap_or(0),
-            ))
-        })
-        .collect();
-    let sql = sql::update_subtask_executor_deleted(tables);
-    apply_executor_deleted_updates(transaction, &sql, &updates).await
+    let mut page = executor_cleanup_page(transaction, tables, task_id, 0).await?;
+    while !page.is_empty() {
+        let after_id = page
+            .last()
+            .and_then(|row| subtask_column::<i64>(row, "id"))
+            .unwrap_or(0);
+        let updates: Vec<(String, i64)> = page
+            .iter()
+            .filter_map(|row| {
+                let key = (
+                    subtask_column::<String>(row, "executor_namespace").unwrap_or_default(),
+                    subtask_column::<String>(row, "executor_name").unwrap_or_default(),
+                );
+                if !sandbox_deleted && !successful_keys.contains(&key) {
+                    return None;
+                }
+                // `subtask_store.update_fields` stamps each row's `updated_at`
+                // independently before the shared flush.
+                Some((
+                    local_datetime(now_local()),
+                    subtask_column::<i64>(row, "id").unwrap_or(0),
+                ))
+            })
+            .collect();
+        let sql = sql::update_subtask_executor_deleted(tables);
+        apply_executor_deleted_updates(transaction, &sql, &updates).await?;
+        page = executor_cleanup_page(transaction, tables, task_id, after_id).await?;
+    }
+    Ok(())
 }
 
 /// `_cleanup_task_runtime`'s `db_session` flush: every selected
@@ -424,19 +441,28 @@ async fn list_not_executor_deleted_by_task<T: MysqlTransaction>(
             return Vec::new();
         }
     }
-    transaction
-        .fetch_all(
-            sql::subtasks_not_executor_deleted_by_task(tables),
-            (task_id,),
-        )
+    executor_cleanup_page(transaction, tables, task_id, 0)
         .await
         .unwrap_or_default()
 }
 
+async fn executor_cleanup_page<T: MysqlTransaction>(
+    transaction: &mut T,
+    tables: Tables,
+    task_id: i64,
+    after_id: i64,
+) -> MysqlResult<Vec<MysqlRow>> {
+    transaction
+        .fetch_all(
+            sql::subtasks_not_executor_deleted_by_task(tables),
+            (task_id, after_id),
+        )
+        .await
+}
+
 /// Decode one column of a subtask projection positionally.
 fn subtask_column<T: FromMysqlCol>(row: &MysqlRow, column: &str) -> Option<T> {
-    let index = crate::task_store::subtask_column_index(column)?;
-    row.get_at::<Option<T>>(index).ok().flatten()
+    row.get::<T>(column).ok().flatten()
 }
 
 #[cfg(test)]

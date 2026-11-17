@@ -120,24 +120,33 @@ def list_subtask_summaries(
     user_id: int,
     limit: Optional[int] = None,
     offset: int = 0,
+    is_subscription: bool = False,
 ) -> dict[str, Any]:
     """Paged summaries for the task's non-deleted subtasks.
 
     Returns ``{"subtasks": [...], "total": int, "has_more": bool}``. ``limit=None``
     means no limit; ``limit=0`` returns an empty page (``total`` still reflects
-    all visible subtasks).
+    all visible subtasks). Subscription backtracking always caps a page at 50;
+    the total and offset still allow every older message to be reached.
     """
-    subtasks = subtask_store.list_new_messages_since(
-        db, task_id=task_id, owner_user_id=user_id
-    )
-    visible = [st for st in subtasks if st.status != SubtaskStatus.DELETE]
-    total = len(visible)
-
     offset = max(0, offset)
-    if limit is None:
-        window = visible[offset:]
-    else:
-        window = visible[offset : offset + max(0, limit)]
+    if is_subscription:
+        from app.services.subscription.history_window import MAX_SUBSCRIPTION_HISTORY
+
+        limit = (
+            MAX_SUBSCRIPTION_HISTORY
+            if limit is None
+            else min(MAX_SUBSCRIPTION_HISTORY, max(0, limit))
+        )
+    page_options = {"bounded_payload_sort": True} if is_subscription else {}
+    window, total = subtask_store.list_visible_history_page(
+        db,
+        task_id=task_id,
+        owner_user_id=user_id,
+        limit=limit,
+        offset=offset,
+        **page_options,
+    )
     summaries = [
         {
             "id": st.id,
