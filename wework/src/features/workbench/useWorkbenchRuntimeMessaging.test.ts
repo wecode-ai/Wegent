@@ -294,6 +294,81 @@ describe('runtime pane cancellation', () => {
       clearRuntimeConversationCacheForTests()
     }
   })
+
+  test('does not let a late cancelled send clear a newer send', async () => {
+    const { address, store, send, messaging } = messagingFixture()
+    const responses: Array<(value: { accepted: boolean; taskId: string; code?: string }) => void> =
+      []
+    send.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          responses.push(resolve)
+        })
+    )
+    const firstMessage = {
+      id: 'cancelled-before-dispatch',
+      role: 'user' as const,
+      content: 'Old prompt',
+      status: 'done' as const,
+    }
+    const replacementMessage = {
+      id: 'replacement-prompt',
+      role: 'user' as const,
+      content: 'Replacement prompt',
+      status: 'done' as const,
+    }
+    let firstSending: Promise<boolean> | null = null
+    let replacementSending: Promise<boolean> | null = null
+    try {
+      firstSending = messaging.sendRuntimePaneMessage(
+        {
+          address,
+          message: firstMessage.content,
+          clientUserMessageId: firstMessage.id,
+          modelId: 'test-model',
+        },
+        { optimisticUserMessage: firstMessage }
+      )
+      await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+      await messaging.cancelRuntimePaneTask(address, {
+        pendingClientUserMessageId: firstMessage.id,
+      })
+
+      replacementSending = messaging.sendRuntimePaneMessage(
+        {
+          address,
+          message: replacementMessage.content,
+          clientUserMessageId: replacementMessage.id,
+          modelId: 'test-model',
+        },
+        { optimisticUserMessage: replacementMessage }
+      )
+      await waitFor(() => expect(send).toHaveBeenCalledTimes(2))
+      expect(store.getTask(address)?.execution.phase).toBe('starting')
+
+      responses[0]({ accepted: false, code: 'cancelled', taskId: address.taskId })
+      await expect(firstSending).resolves.toBe(true)
+
+      expect(store.getTask(address)?.execution.phase).toBe('starting')
+      expect(getRuntimeConversationTurns(address)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ clientUserMessageId: replacementMessage.id }),
+        ])
+      )
+
+      responses[1]({ accepted: true, taskId: address.taskId })
+      await expect(replacementSending).resolves.toBe(true)
+    } finally {
+      responses[0]?.({ accepted: false, code: 'cancelled', taskId: address.taskId })
+      responses[1]?.({ accepted: true, taskId: address.taskId })
+      await Promise.allSettled([
+        firstSending ?? Promise.resolve(false),
+        replacementSending ?? Promise.resolve(false),
+      ])
+      store.remove(address)
+      clearRuntimeConversationCacheForTests()
+    }
+  })
 })
 
 describe.each([{ isSelectionReady: false }, { isConfiguredModelUnavailable: true }])(
