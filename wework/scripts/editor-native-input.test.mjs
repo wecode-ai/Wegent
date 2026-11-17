@@ -103,7 +103,7 @@ app.whenReady().then(async()=>{
   nestedInputs.push(await wc.executeJavaScript('document.querySelector("#shadow-input").shadowRoot.querySelector("textarea").value'))
   require('fs').writeFileSync(${JSON.stringify(output)},JSON.stringify({results,calls,nestedInputs}))
   progress('finished')
-  window.destroy();app.exit(0)
+  window.destroy();progress('window-destroyed');app.exit(0)
 }).catch(error=>{console.error(error);app.exit(1)})`
     )
     const child = spawn(electronRequire('electron'), [main], {

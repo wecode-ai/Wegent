@@ -88,6 +88,7 @@ app.whenReady().then(async()=>{
   const result=await window.webContents.executeJavaScript('window.runImageResizeContract()')
   require('fs').writeFileSync(${JSON.stringify(output)},JSON.stringify(result))
   window.destroy()
+  console.log('[image-resize-contract] window-destroyed')
   app.exit(0)
 }).catch(error=>{console.error(error);app.exit(1)})`
     )
@@ -95,6 +96,7 @@ app.whenReady().then(async()=>{
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '' },
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 60_000,
+      killSignal: 'SIGKILL',
     })
     let diagnostics = ''
     for (const stream of [child.stdout, child.stderr])

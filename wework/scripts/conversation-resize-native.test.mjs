@@ -38,10 +38,11 @@ progress('main-started')
 app.setPath('userData',${JSON.stringify(join(directory, 'profile'))})
 app.whenReady().then(async()=>{
   progress('app-ready')
-  const window=new BrowserWindow({show:false,webPreferences:{backgroundThrottling:false}})
+  const window=new BrowserWindow({show:true,focusable:false,webPreferences:{backgroundThrottling:false}})
   window.webContents.on('render-process-gone',(_event,details)=>console.error('[conversation-resize-contract] renderer exited',JSON.stringify(details)))
   await window.loadURL('data:text/html,'+encodeURIComponent('<div id="root"></div>'))
   await window.webContents.executeJavaScript(${JSON.stringify(await readFile(bundle, 'utf8'))})
+  if (!window.isVisible()) throw new Error('Conversation layout verification requires a visible native window')
   progress('fixture-loaded')
   const result=await window.webContents.executeJavaScript('window.runConversationResizeContract()')
   progress('conversation-finished')
@@ -49,6 +50,7 @@ app.whenReady().then(async()=>{
   require('fs').writeFileSync(${JSON.stringify(output)},JSON.stringify(result))
   progress('navigation-finished')
   window.destroy()
+  progress('window-destroyed')
   app.exit(0)
 }).catch(error=>{console.error(error);app.exit(1)})`
     )
@@ -56,6 +58,7 @@ app.whenReady().then(async()=>{
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '' },
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 60_000,
+      killSignal: 'SIGKILL',
     })
     let diagnostics = ''
     for (const stream of [child.stdout, child.stderr])
