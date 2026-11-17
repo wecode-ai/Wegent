@@ -220,7 +220,11 @@ pub(crate) fn workflow_definition_value(config: Option<&OpaqueJson>) -> Workflow
                 .assignee_roles
                 .unwrap_or_else(default_dependency_context),
         ),
-        feature_flags: opaque(input.feature_flags.unwrap_or_else(default_dependency_context)),
+        feature_flags: opaque(
+            input
+                .feature_flags
+                .unwrap_or_else(default_dependency_context),
+        ),
         nodes: input
             .nodes
             .unwrap_or_default()
