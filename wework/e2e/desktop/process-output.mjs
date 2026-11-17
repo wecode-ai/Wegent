@@ -1,24 +1,70 @@
-import { appendFileSync } from 'node:fs'
-import { basename } from 'node:path'
-import { performance } from 'node:perf_hooks'
+import { createWriteStream } from 'node:fs'
+import { finished } from 'node:stream/promises'
+
+const outputs = new Map()
+
+function outputFor(destination) {
+  let output = outputs.get(destination)
+  if (!output) {
+    output = { writer: createWriteStream(destination, { flags: 'a' }), sources: new Set() }
+    const sources = output.sources
+    output.writer.on('error', error => {
+      for (const source of sources) source.destroy(error)
+    })
+    outputs.set(destination, output)
+  }
+  return output
+}
 
 export function appendProcessOutput(stream, destination) {
   if (!stream) return
+  const output = outputFor(destination)
+  output.sources.add(stream)
+  const complete = () => output.sources.delete(stream)
+  stream.once('end', complete)
+  stream.once('close', complete)
   stream.on('data', chunk => {
-    // Preserve delivery order across stdout/stderr and finish writes before teardown.
-    const startedAt = performance.now()
-    appendFileSync(destination, chunk)
-    const elapsedMs = performance.now() - startedAt
-    if (elapsedMs >= 100) {
-      console.warn(
-        '[desktop-e2e:slow-process-output]',
-        JSON.stringify({
-          at: new Date().toISOString(),
-          destination: basename(destination),
-          bytes: chunk.length,
-          elapsedMs,
-        })
-      )
+    // A single writer preserves stdout/stderr order without blocking the model server.
+    if (!output.writer.write(chunk)) {
+      stream.pause()
+      output.writer.once('drain', () => stream.resume())
     }
   })
+}
+
+export async function flushProcessOutput() {
+  const results = await Promise.allSettled(
+    [...outputs].map(async ([destination, output]) => {
+      try {
+        const sources = Promise.allSettled(
+          [...output.sources].map(source =>
+            finished(source, { cleanup: true, readable: true, writable: false })
+          )
+        )
+        const written = finished(output.writer, { cleanup: true })
+        await Promise.all([
+          written,
+          sources.then(results => {
+            output.writer.end()
+            const failures = results.filter(result => result.status === 'rejected')
+            if (failures.length) {
+              throw new AggregateError(
+                failures.map(result => result.reason),
+                'Process output did not finish cleanly'
+              )
+            }
+          }),
+        ])
+      } finally {
+        outputs.delete(destination)
+      }
+    })
+  )
+  const failures = results.filter(result => result.status === 'rejected')
+  if (failures.length) {
+    throw new AggregateError(
+      failures.map(result => result.reason),
+      'Process log drainage failed'
+    )
+  }
 }

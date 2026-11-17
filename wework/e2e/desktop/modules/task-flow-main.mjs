@@ -5,6 +5,7 @@ import {
 
 import { tmpdir } from 'node:os'
 import { startAsyncResourceDiagnostics } from '../../../../.github/scripts/node-async-resource-diagnostics.mjs'
+import { flushProcessOutput } from '../process-output.mjs'
 import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
@@ -5122,6 +5123,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
+    await runTeardownStep('process output', flushProcessOutput)
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
         recursive: true,
