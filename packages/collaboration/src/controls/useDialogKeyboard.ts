@@ -81,8 +81,7 @@ export function useDialogKeyboard<T extends HTMLElement>(
     return () => {
       restoreBackground?.()
       dialog.removeEventListener('keydown', handleTab)
-      // Nested modal owners release inert during the same cleanup pass.
-      queueMicrotask(() => {
+      const restoreOpener = () => {
         const returnTarget =
           previousFocus instanceof HTMLElement &&
           previousFocus !== document.body &&
@@ -99,7 +98,11 @@ export function useDialogKeyboard<T extends HTMLElement>(
             (restoreFocus && focusContainer?.contains(document.activeElement)))
         )
           returnTarget.focus()
-      })
+      }
+      // Nested modal owners release inert during the same cleanup pass.
+      if (previousFocus instanceof HTMLElement && previousFocus.closest('[inert]'))
+        queueMicrotask(restoreOpener)
+      else restoreOpener()
     }
   }, [open, initialFocus, trapFocus, restoreFocus])
 
