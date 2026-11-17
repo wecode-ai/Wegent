@@ -161,6 +161,48 @@ afterEach(() => {
 });
 
 describe("Catalog reasoning and independent recommended presets", () => {
+  it.each(["zh-CN", "en"] as const)(
+    "names the fixed-model slider and preserves keyboard value changes in %s",
+    (locale) => {
+      renderSelector(model(), locale, {
+        reasoning: "high",
+        modelSelection: "model",
+      });
+      const track = element("model-control-reasoning-track");
+      expect(track.getAttribute("role")).toBe("slider");
+      expect(track.getAttribute("aria-label")).toBe(
+        locale === "en" ? "Reasoning effort" : "推理强度",
+      );
+      const description = document.getElementById(
+        track.getAttribute("aria-describedby")!,
+      );
+      expect(description).toBe(element("model-slider-description"));
+      expect(description?.textContent).toContain(
+        locale === "en" ? "reasoning" : "推理强度",
+      );
+      act(() => {
+        track.focus();
+        track.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "End", bubbles: true }),
+        );
+      });
+      expect(document.activeElement).toBe(track);
+      expect(track.getAttribute("aria-valuenow")).toBe(
+        String(efforts.length - 1),
+      );
+      expect(track.getAttribute("aria-valuetext")).toBe("Ultra");
+      act(() =>
+        track.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Home", bubbles: true }),
+        ),
+      );
+      expect(track.getAttribute("aria-valuenow")).toBe("0");
+      expect(track.getAttribute("aria-valuetext")).toBe(
+        locale === "en" ? "None" : "无",
+      );
+    },
+  );
+
   it("shows every enabled fixed-model effort, including max", () => {
     renderSelector(model(), "en", {
       reasoning: "high",

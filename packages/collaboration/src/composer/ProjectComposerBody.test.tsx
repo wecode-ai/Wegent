@@ -30,9 +30,15 @@ describe('shared PC composer body', () => {
   const submit = vi.fn()
   const change = vi.fn()
   const remove = vi.fn()
+  const rangeGeometry = Object.getOwnPropertyDescriptors(Range.prototype)
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     vi.clearAllMocks()
+    // jsdom omits the geometry ProseMirror reads when revealing the caret.
+    Object.defineProperties(Range.prototype, {
+      getClientRects: { configurable: true, value: () => [] },
+      getBoundingClientRect: { configurable: true, value: () => new DOMRect() },
+    })
     frames = []
     vi.stubGlobal('requestAnimationFrame', (fn: FrameRequestCallback) => frames.push(fn))
     vi.stubGlobal('cancelAnimationFrame', () => {})
@@ -50,6 +56,11 @@ describe('shared PC composer body', () => {
   afterEach(() => {
     act(() => root.unmount())
     container.remove()
+    for (const name of ['getClientRects', 'getBoundingClientRect']) {
+      const descriptor = rangeGeometry[name]
+      if (descriptor) Object.defineProperty(Range.prototype, name, descriptor)
+      else Reflect.deleteProperty(Range.prototype, name)
+    }
     vi.unstubAllGlobals()
   })
   function Harness({

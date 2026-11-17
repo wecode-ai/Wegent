@@ -79,6 +79,14 @@ test('opens a cloud attachment in the bound side panel using the keyboard', asyn
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
+test('keeps the preview opener focused for return from an Issue-owned dialog', () => {
+  const { openPreview } = renderAttachment()
+  const trigger = screen.getByTestId('attachment-document-preview-button')
+  trigger.click()
+  expect(trigger).toHaveFocus()
+  expect(openPreview).toHaveBeenCalledOnce()
+})
+
 test.each(['/tmp/pasted.txt', 'C:\\attachments\\pasted.txt'])(
   'previews a local pasted text attachment at %s without launching an external app',
   async localPath => {

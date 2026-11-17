@@ -51,6 +51,7 @@ def _list_local(task_id: int, limit: int | None, offset: int) -> dict[str, Any]:
     """Package-mode summary list — delegates to the shared backend service."""
     from app.db.session import SessionLocal
     from app.services.chat.subtask_history import list_subtask_summaries
+    from app.services.subscription.history_window import is_subscription_task
     from app.stores.tasks import task_store
 
     db = SessionLocal()
@@ -59,7 +60,12 @@ def _list_local(task_id: int, limit: int | None, offset: int) -> dict[str, Any]:
         if task is None:
             return {"subtasks": [], "total": 0, "has_more": False}
         return list_subtask_summaries(
-            db, task_id=task_id, user_id=task.user_id, limit=limit, offset=offset
+            db,
+            task_id=task_id,
+            user_id=task.user_id,
+            limit=limit,
+            offset=offset,
+            is_subscription=is_subscription_task(task),
         )
     finally:
         db.close()

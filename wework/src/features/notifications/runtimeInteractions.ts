@@ -267,7 +267,12 @@ export async function readRuntimeInteractions(
         running,
         project,
         source: interactionSource({ task, project }, origin),
-        sourceMessageIds: message.turnId ? sourceMessageIdsByTurn.get(message.turnId) : undefined,
+        sourceMessageIds: [
+          ...new Set([
+            message.id,
+            ...(message.turnId ? (sourceMessageIdsByTurn.get(message.turnId) ?? []) : []),
+          ]),
+        ],
       })
     }
   }
