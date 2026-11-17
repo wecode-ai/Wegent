@@ -92,8 +92,7 @@ pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
             // so the failure notifications still go out.
             tracing::error!(%error, task_id=event.task_id, "could not save the run result");
             failure_message = unsaved_result_message(&error);
-            let Some(execution) =
-                fail_unsaved_result(ctx, &mysql, event, &failure_message).await
+            let Some(execution) = fail_unsaved_result(ctx, &mysql, event, &failure_message).await
             else {
                 return;
             };
