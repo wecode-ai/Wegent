@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict'
 import { createDevtoolsClient } from '../../../scripts/ai-verify-devtools.mjs'
 import { getSingleElementMetrics } from './conversation-layout.mjs'
+import { startRendererTransitionTrace } from './renderer-transition-trace.mjs'
 import { join, resultDir, writeFile } from './shared.mjs'
 
 async function sampleDrawerMotion(control, scope, action, direction, timeoutMs, reduced = false) {
+  const stopTrace =
+    direction === 'close' && !reduced
+      ? await startRendererTransitionTrace(resultDir, 'issue-drawers-close.trace.json', timeoutMs)
+      : undefined
   try {
     await captureDrawerMotion(control, scope, action, direction, timeoutMs, reduced)
   } catch (error) {
+    await stopTrace?.()
     await captureDrawerFailure(direction, timeoutMs)
     throw error
+  } finally {
+    await stopTrace?.()
   }
 }
 

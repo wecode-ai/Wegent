@@ -133,10 +133,11 @@ describe('DevTools evidence analysis', () => {
     }
   })
   test('attributes sampled self and inclusive costs through the call tree and maps zero-based positions', () => {
+    const sourceRoot = join(tmpdir(), 'devtools source map')
     const frame = {
       scriptId: '1',
       functionName: 'hot',
-      url: 'file:///build/app.js',
+      url: pathToFileURL(join(sourceRoot, 'build', 'app.js')).href,
       lineNumber: 0,
       columnNumber: 0,
     }
@@ -144,7 +145,7 @@ describe('DevTools evidence analysis', () => {
       [
         '1',
         {
-          url: 'file:///build/app.js.map',
+          url: pathToFileURL(join(sourceRoot, 'build', 'app.js.map')).href,
           map: new SourceMap({
             version: 3,
             sources: ['../src/app.ts'],
@@ -169,7 +170,12 @@ describe('DevTools evidence analysis', () => {
       function: 'child',
       selfMs: 5,
       totalMs: 5,
-      location: { mapped: true, source: '/src/app.ts', line: 7, column: 1 },
+      location: {
+        mapped: true,
+        source: join(sourceRoot, 'src', 'app.ts'),
+        line: 7,
+        column: 1,
+      },
     })
     expect(result[1]).toMatchObject({ selfMs: 1, totalMs: 6 })
     expect(sourceLocation(frame)).toEqual({
