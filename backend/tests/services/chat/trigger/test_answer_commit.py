@@ -8,6 +8,44 @@ from app.services.chat.storage import db as chat_db
 from app.services.chat.trigger import lifecycle
 
 
+def test_completed_attempt_explicitly_rejects_a_duplicate_terminal(monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from app.models.subtask import SubtaskStatus
+    from app.services.chat.storage.answer_attempt import AnswerSaveResult
+
+    answer = SimpleNamespace(
+        id=12,
+        task_id=7,
+        status=SubtaskStatus.COMPLETED,
+        answer_generation_id="a" * 32,
+    )
+    task = SimpleNamespace(id=7, kind="Task", is_active=1, json={})
+    db = MagicMock()
+
+    @contextmanager
+    def session():
+        yield db
+
+    monkeypatch.setattr(chat_db, "_db_session", session)
+    for method in ("get_basic_by_id", "get_basic_by_id_for_update"):
+        monkeypatch.setattr(
+            chat_db.task_stores.subtask_store, method, lambda *a, **k: answer
+        )
+    monkeypatch.setattr(
+        chat_db.task_stores.task_store, "get_by_id_for_update", lambda *a, **k: task
+    )
+    assert (
+        chat_db.DatabaseHandler()._update_subtask_sync(
+            12, "COMPLETED", generation_id="a" * 32
+        )
+        is AnswerSaveResult.REJECTED
+    )
+    db.add.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_rejected_save_does_not_cleanup_or_complete(monkeypatch):
     import app.services.chat.storage as storage

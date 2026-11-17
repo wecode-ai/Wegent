@@ -292,7 +292,7 @@ class DatabaseHandler:
                                     auto_advance=pending,
                                     replay_result=subtask.result or {},
                                 )
-                        return None
+                        return AnswerSaveResult.REJECTED
 
                 db.refresh(subtask, with_for_update=True)
                 statuses = (
