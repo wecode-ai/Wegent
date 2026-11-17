@@ -30,6 +30,8 @@ The first model-routing task and real Harness CLI launch use the workbench start
 
 Numeric Process Explorer filters match the exact PID, excluding matches in other processes' launch arguments or PID substrings. Text filters still search process names and launch details. The application-menu checkpoint retains its assertion that filtering by the application PID excludes unrelated helpers.
 
+Model catalogs may publish reasoning capabilities after the picker opens. Keep the open model list on its current panel until an explicit model choice enters the effort panel. Catalog save waits observe native reload, editor dismissal, and restart confirmation together; a background reload log alone does not complete the save interaction. Mention-pagination fixtures use the shared batch processor for cleanup, with at most eight requests per batch and explicit failures, preventing teardown from exhausting the Backend pool and contaminating the next case.
+
 Ordinary desktop E2E writes redacted `[shutdown-step]` and `[application-quit]` records to `app.log` even without a release-slot directory. The stages include each service’s start, completion or failure and workspace-catalog log flushing, distinguishing unfinished cleanup from an Electron quit event followed by a surviving native process. Release slots retain their own `activation-diagnostics.log`. These diagnostics do not change exit budgets or process-liveness assertions.
 
 ## Running Tests

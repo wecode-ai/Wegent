@@ -17,7 +17,7 @@ import {
   assertCodexPhaseTransition,
   type PhaseRegressionStep,
 } from '../../utils/codex-phase-regression'
-import { settleMentionTasks } from '../../utils/mention-task-fixtures'
+import { forEachTaskFixtureBatch, settleMentionTasks } from '../../utils/mention-task-fixtures'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -1919,17 +1919,15 @@ test.describe('Agent conversation regression', () => {
   }
 
   async function cleanupCreatedTasks(request: APIRequestContext): Promise<void> {
-    const taskIds = [...createdTaskIds]
-    createdTaskIds.clear()
-    await Promise.all(
-      taskIds.map(taskId =>
-        request
-          .delete(`${API_BASE_URL}/api/tasks/${taskId}`, {
-            headers: authHeaders(),
-          })
-          .catch(() => null)
-      )
-    )
+    // Paginated mention fixtures can create hundreds of tasks. Their cleanup
+    // must settle without exhausting the Backend pool before the next case.
+    await forEachTaskFixtureBatch([...createdTaskIds], async taskId => {
+      const response = await request.delete(`${API_BASE_URL}/api/tasks/${taskId}`, {
+        headers: authHeaders(),
+      })
+      expect(response.status(), await response.text()).toBe(200)
+      createdTaskIds.delete(taskId)
+    })
   }
 
   async function cleanupCreatedProjects(request: APIRequestContext): Promise<void> {

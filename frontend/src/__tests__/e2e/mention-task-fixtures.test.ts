@@ -1,4 +1,7 @@
-import { settleMentionTasks } from '../../../e2e/utils/mention-task-fixtures'
+import {
+  forEachTaskFixtureBatch,
+  settleMentionTasks,
+} from '../../../e2e/utils/mention-task-fixtures'
 
 describe('mention task fixtures', () => {
   beforeEach(() => {
@@ -62,6 +65,29 @@ describe('mention task fixtures', () => {
     completions.splice(0).forEach(resolve => resolve())
     await jest.advanceTimersByTimeAsync(1000)
     await result
+  })
+
+  it('runs cleanup batches without the mention-order timestamp delay', async () => {
+    const clean = jest.fn().mockResolvedValue(undefined)
+    await forEachTaskFixtureBatch(
+      Array.from({ length: 17 }, (_, index) => index),
+      clean
+    )
+    expect(clean).toHaveBeenCalledTimes(17)
+    expect(jest.getTimerCount()).toBe(0)
+    expect(Date.now()).toBe(1250)
+  })
+
+  it('preserves cleanup failures and does not start the next batch', async () => {
+    const clean = jest.fn().mockRejectedValue(new Error('Cleanup failed'))
+    await expect(
+      forEachTaskFixtureBatch(
+        Array.from({ length: 17 }, (_, index) => index),
+        clean
+      )
+    ).rejects.toThrow('Cleanup failed')
+    expect(clean).toHaveBeenCalledTimes(8)
+    expect(jest.getTimerCount()).toBe(0)
   })
 
   it('surfaces fixture execution failures without retrying or touching timestamps', async () => {
