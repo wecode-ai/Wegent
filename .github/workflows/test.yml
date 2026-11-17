@@ -614,6 +614,7 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: |
           cargo test --all-features --lib runtime_work::git_connections::tests::hosting_cli_uses_path_shims_without_shell_interpolation
+          node --test --test-name-pattern='long snapshot refs' examples/hooks/turn-diff-logger/logger.test.mjs
           cargo test --all-features --lib runtime_work::store::tests::atomic_write
           cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::marketplace_sources::tests
           cargo test -p wegent-plugin-packages --all-features --lib services::workbench::recovery::tests
