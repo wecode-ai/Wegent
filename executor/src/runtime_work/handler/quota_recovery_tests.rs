@@ -250,10 +250,13 @@ fn quota_wait_can_be_cancelled_between_dequeue_and_preflight() {
                 .enqueue_forced(turn.clone());
             handler.reserve_turn_preparation(&turn);
             assert_eq!(
-                handler
-                    .cancel_task(json!({"taskId":"waiting"}))
-                    .await
-                    .unwrap()["accepted"],
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    handler.cancel_task(json!({"taskId":"waiting"})),
+                )
+                .await
+                .unwrap()
+                .unwrap()["accepted"],
                 true
             );
             handler.start_quota_turn(turn).await;
@@ -536,10 +539,13 @@ done
             .await
             .unwrap();
             assert_eq!(
-                handler
-                    .cancel_task(json!({"taskId":"waiting"}))
-                    .await
-                    .unwrap()["accepted"],
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    handler.cancel_task(json!({"taskId":"waiting"})),
+                )
+                .await
+                .unwrap()
+                .unwrap()["accepted"],
                 true
             );
             tokio::time::timeout(Duration::from_secs(2), async {
