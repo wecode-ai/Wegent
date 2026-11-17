@@ -331,9 +331,9 @@ mod connection_mcp;
 mod mcp_config;
 
 mod mcp_recovery;
-mod required_mcp;
 #[path = "codex/mcp_reload.rs"]
 mod mcp_reload;
+mod required_mcp;
 #[cfg(test)]
 use mcp_reload::config_reload_resume_thread_id;
 

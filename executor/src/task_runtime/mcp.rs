@@ -262,8 +262,7 @@ pub(crate) fn has_bound_issue_context(request: &ExecutionRequest) -> Result<bool
 }
 
 pub(crate) fn has_bound_project_context(request: &ExecutionRequest) -> Result<bool, String> {
-    space_context_grant(request)
-        .map(|grant| grant.is_some_and(|grant| grant.space_id.is_some()))
+    space_context_grant(request).map(|grant| grant.is_some_and(|grant| grant.space_id.is_some()))
 }
 
 pub(crate) fn space_mcp_client_config(
