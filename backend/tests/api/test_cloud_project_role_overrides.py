@@ -239,3 +239,137 @@ def test_direct_viewer_downgrade_revokes_work_without_faking_runtime_completion(
     assert not execution_authorized(test_db, run)
     assert run.status == ("cancel_requested" if initial == "running" else "cancelled")
     cancellation.assert_called_once()
+
+
+@pytest.mark.parametrize("initial_source", ["inherited", "direct"])
+@pytest.mark.parametrize("role_mode", ["exact", "at_least"])
+def test_member_post_role_mode_handles_an_intervening_maintainer_promotion(
+    test_client, test_db, scope, initial_source, role_mode
+):
+    invite(test_client, scope, "Viewer", project=initial_source == "direct")
+    project_id = int(scope["project"]["id"])
+    target_id = scope["user"].id
+    actor_id = scope["space"]["owner_user_id"]
+    endpoint = f"/api/v1/cloud-projects/{project_id}/members"
+    snapshot = cloud_project_service.list_members(test_db, project_id, actor_id)
+    stale_target = next(row for row in snapshot if row["user_id"] == target_id)
+    assert stale_target["role"] == "Viewer"
+
+    promoted = test_client.patch(
+        f"{endpoint}/{target_id}",
+        headers=scope["owner"],
+        json={"role": "Maintainer"},
+    )
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["role"] == "Maintainer"
+    assert promoted.json()["direct_role"] == "Maintainer"
+
+    delayed = test_client.post(
+        endpoint,
+        headers=scope["owner"],
+        json={"user_id": target_id, "role": "Developer", "role_mode": role_mode},
+    )
+    assert delayed.status_code == 201, delayed.text
+    expected = "Maintainer" if role_mode == "at_least" else "Developer"
+    assert delayed.json()["role"] == expected
+    assert delayed.json()["direct_role"] == expected
+    final = cloud_project_service.list_members(test_db, project_id, actor_id)
+    assert next(row for row in final if row["user_id"] == target_id)["role"] == (
+        expected
+    )
+    assert stale_target["role"] == "Viewer"
+    grant = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="CloudProject",
+            resource_id=project_id,
+            entity_type="user",
+            entity_id=str(target_id),
+        )
+        .one()
+    )
+    assert grant.role == expected
+
+
+@pytest.mark.parametrize("method", ["post", "patch"])
+def test_explicit_management_retains_role_demotion_and_parent_isolation(
+    test_client, test_db, scope, method
+):
+    invite(test_client, scope, "Developer")
+    invite(test_client, scope, "Maintainer", project=True)
+    project_id = scope["project"]["id"]
+    target_id = scope["user"].id
+    endpoint = f"/api/v1/cloud-projects/{project_id}/members"
+    payload = {"role": "Viewer"}
+    if method == "post":
+        payload["user_id"] = target_id
+    else:
+        endpoint = f"{endpoint}/{target_id}"
+
+    response = getattr(test_client, method)(
+        endpoint, headers=scope["owner"], json=payload
+    )
+    assert response.status_code == (201 if method == "post" else 200), response.text
+    assert response.json()["role"] == "Viewer"
+    assert response.json()["direct_role"] == "Viewer"
+    assert response.json()["inherited_role"] == "Developer"
+    parent = (
+        test_db.query(ResourceMember)
+        .filter_by(
+            resource_type="Workspace",
+            resource_id=int(scope["space"]["id"]),
+            entity_type="user",
+            entity_id=str(target_id),
+        )
+        .one()
+    )
+    assert parent.role == "Developer"
+
+
+@pytest.mark.parametrize("status", ["approved", "pending", "rejected"])
+def test_minimum_member_role_preserves_only_approved_roles_and_responsibilities(
+    test_client, test_db, scope, status
+):
+    invite(test_client, scope, "Viewer")
+    grant = _pending_grant(test_db, scope, status)
+    project_id = scope["project"]["id"]
+    target_id = scope["user"].id
+    endpoint = f"/api/v1/cloud-projects/{project_id}/members"
+    description = test_client.patch(
+        f"{endpoint}/{target_id}",
+        headers=scope["owner"],
+        json={"capability_description": "Release checks"},
+    )
+    assert description.status_code == 200, description.text
+
+    response = test_client.post(
+        endpoint,
+        headers=scope["owner"],
+        json={"user_id": target_id, "role": "Developer", "role_mode": "at_least"},
+    )
+
+    assert response.status_code == 201, response.text
+    expected = "Maintainer" if status == "approved" else "Developer"
+    assert response.json()["role"] == expected
+    assert response.json()["direct_role"] == expected
+    assert response.json()["capability_description"] == "Release checks"
+    test_db.refresh(grant)
+    assert grant.status == "approved"
+    assert grant.role == expected
+
+
+@pytest.mark.parametrize("actor_role", ["Viewer", "Developer"])
+def test_cp08_minimum_role_does_not_grant_member_administration(
+    test_client, scope, actor_role
+):
+    invite(test_client, scope, actor_role)
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{scope['project']['id']}/members",
+        headers=scope["member"],
+        json={
+            "user_id": scope["user"].id,
+            "role": "Maintainer",
+            "role_mode": "at_least",
+        },
+    )
+    assert response.status_code == 403, response.text

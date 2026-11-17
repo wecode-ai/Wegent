@@ -94,7 +94,9 @@ export async function configureProjectMembers({
   );
   const pendingIds = selectedIds.filter((userId) => !existingIds.has(userId));
   const results = await Promise.allSettled(
-    pendingIds.map((userId) => api.members.add(projectId, userId, "Developer")),
+    pendingIds.map((userId) =>
+      api.members.add(projectId, userId, "Developer", { roleMode: "at_least" }),
+    ),
   );
   const failures = new Map<number, string>();
   results.forEach((result, index) => {

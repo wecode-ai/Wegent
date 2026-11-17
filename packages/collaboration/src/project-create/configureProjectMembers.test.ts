@@ -26,26 +26,39 @@ function createMembersApi(initialMembers: CollaborationMember[] = []) {
   const api = {
     members: {
       list: vi.fn(async () => [...saved]),
-      add: vi.fn(async (_projectId: string, userId: number) => {
-        const index = saved.findIndex((entry) => entry.user_id === userId);
-        const added: CollaborationMember =
-          index < 0
-            ? member(userId)
-            : {
-                ...saved[index],
-                role: "Developer",
-                direct_role: "Developer",
-                permission_sources: [
-                  ...(saved[index].permission_sources ?? []).filter(
-                    (source) => source.type !== "direct",
-                  ),
-                  { type: "direct", role: "Developer" },
-                ],
-              };
-        if (index < 0) saved.push(added);
-        else saved[index] = added;
-        return added;
-      }),
+      add: vi.fn(
+        async (
+          _projectId: string,
+          userId: number,
+          _role?: string,
+          options?: { roleMode?: "exact" | "at_least" },
+        ) => {
+          const index = saved.findIndex((entry) => entry.user_id === userId);
+          if (
+            index >= 0 &&
+            options?.roleMode === "at_least" &&
+            ["Developer", "Maintainer", "Owner"].includes(saved[index].role)
+          )
+            return saved[index];
+          const added: CollaborationMember =
+            index < 0
+              ? member(userId)
+              : {
+                  ...saved[index],
+                  role: "Developer",
+                  direct_role: "Developer",
+                  permission_sources: [
+                    ...(saved[index].permission_sources ?? []).filter(
+                      (source) => source.type !== "direct",
+                    ),
+                    { type: "direct", role: "Developer" },
+                  ],
+                };
+          if (index < 0) saved.push(added);
+          else saved[index] = added;
+          return added;
+        },
+      ),
     },
   };
   return {
@@ -80,7 +93,9 @@ describe("configureProjectMembers", () => {
         memberUserIds: [1, 2, 2],
       });
 
-      expect(add).toHaveBeenCalledExactlyOnceWith("project-1", 2, "Developer");
+      expect(add).toHaveBeenCalledExactlyOnceWith("project-1", 2, "Developer", {
+        roleMode: "at_least",
+      });
       expect(verified.find((entry) => entry.user_id === 2)).toEqual({
         ...viewer,
         role: "Developer",
@@ -183,8 +198,8 @@ describe("configureProjectMembers", () => {
     });
 
     expect(add.mock.calls).toEqual([
-      ["project-1", 3, "Developer"],
-      ["project-1", 4, "Developer"],
+      ["project-1", 3, "Developer", { roleMode: "at_least" }],
+      ["project-1", 4, "Developer", { roleMode: "at_least" }],
     ]);
     expect(list).toHaveBeenCalledTimes(2);
     expect(verified.map(({ user_id }) => user_id)).toEqual([1, 2, 3, 4]);
@@ -322,6 +337,33 @@ describe("configureProjectMembers", () => {
       member(1),
       member(2),
     ]);
-    expect(add).toHaveBeenCalledExactlyOnceWith("project-1", 2, "Developer");
+    expect(add).toHaveBeenCalledExactlyOnceWith("project-1", 2, "Developer", {
+      roleMode: "at_least",
+    });
+  });
+
+  it("preserves a promotion committed after the project-create roster snapshot", async () => {
+    const { api, list, add, saved } = createMembersApi([
+      { ...member(2), role: "Viewer", direct_role: "Viewer" },
+    ]);
+    list.mockImplementationOnce(async () => {
+      const snapshot = saved.map((entry) => ({ ...entry }));
+      saved[0] = { ...saved[0], role: "Maintainer", direct_role: "Maintainer" };
+      return snapshot;
+    });
+
+    const verified = await configureProjectMembers({
+      api,
+      projectId: "project-1",
+      currentUserId: 1,
+      memberUserIds: [2],
+    });
+
+    expect(add).toHaveBeenCalledExactlyOnceWith("project-1", 2, "Developer", {
+      roleMode: "at_least",
+    });
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(saved[0].role).toBe("Maintainer");
+    expect(verified[0].role).toBe("Maintainer");
   });
 });

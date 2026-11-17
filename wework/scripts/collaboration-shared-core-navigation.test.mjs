@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { afterEach, expect, test, vi } from 'vitest'
 import { createProjectOnlyNavigationRegression } from '../e2e/desktop/modules/project-only-navigation.mjs'
 import {
+  assertCreatedMembers,
+  createOrdinaryTaskProject,
   selectProjectCreateMembers,
   verifyCollaborationMemberSettings,
 } from '../e2e/desktop/modules/collaboration-member-settings.mjs'
@@ -116,6 +118,57 @@ function backendFixture() {
 }
 
 afterEach(() => vi.unstubAllGlobals())
+
+test('ordinary project creation starts at the real Tasks board and shares member selection', async () => {
+  const project = { id: 'ordinary-project', name: 'Ordinary Tasks project' }
+  const members = [
+    { id: 8, user_name: 'alice' },
+    { id: 9, user_name: 'bob' },
+  ]
+  const command = vi.fn(async action => (action === 'getElementCount' ? '0' : ''))
+  const request = vi.fn(async () => ({ items: [project] }))
+  expect(
+    await createOrdinaryTaskProject({ command }, { name: project.name, members, owner, request })
+  ).toEqual(project)
+  expect(command).toHaveBeenCalledWith(
+    'waitFor',
+    '[data-testid="workspace-tab-content-fixed-task"] [data-testid="task-board-surface"]',
+    { visible: true }
+  )
+  expect(command).toHaveBeenCalledWith('click', '[data-testid="task-board-create-project-space"]')
+  for (const member of members) {
+    expect(command).toHaveBeenCalledWith(
+      'waitFor',
+      `[data-testid="collaboration-project-create-selected-member-${member.id}"]`,
+      { text: member.user_name }
+    )
+  }
+  expect(request).toHaveBeenCalledWith('/api/v1/cloud-projects')
+})
+
+test.each(['duplicate', 'viewer', 'inherited-only'])(
+  'both creation entries reject an unverified member roster: %s',
+  async failure => {
+    const member = {
+      user_id: 8,
+      role: failure === 'viewer' ? 'Viewer' : 'Developer',
+      direct_role: failure === 'inherited-only' ? null : 'Developer',
+    }
+    const roster = [{ user_id: owner.id }, member, ...(failure === 'duplicate' ? [member] : [])]
+    await expect(
+      assertCreatedMembers(
+        { command: vi.fn() },
+        {
+          scoped,
+          members: [{ id: 8, user_name: 'alice' }],
+          owner,
+          project: { id: 'ordinary-project' },
+          request: async () => roster,
+        }
+      )
+    ).rejects.toThrow()
+  }
+)
 
 test.each([0, 1])(
   'member creation follows the current search feedback and rejects a duplicate creator, count=%s',

@@ -2799,11 +2799,14 @@ describe("CollaborationPlatformApp real component flow", () => {
       project.name,
     );
     await click(byTestId("collaboration-project-create-confirm"));
-    expect(api.members.add).toHaveBeenCalledWith(project.id, 8, "Developer");
+    expect(api.members.add).toHaveBeenCalledWith(project.id, 8, "Developer", {
+      roleMode: "at_least",
+    });
     expect(api.members.add).not.toHaveBeenCalledWith(
       project.id,
       1,
       "Developer",
+      { roleMode: "at_least" },
     );
   });
 
@@ -2941,7 +2944,9 @@ describe("CollaborationPlatformApp real component flow", () => {
       project.name,
     );
     await click(byTestId("collaboration-project-create-confirm"));
-    expect(api.members.add).toHaveBeenCalledWith(project.id, 8, "Developer");
+    expect(api.members.add).toHaveBeenCalledWith(project.id, 8, "Developer", {
+      roleMode: "at_least",
+    });
     expect(
       byTestId("collaboration-project-create-add-collaborator").matches(
         ":disabled",
@@ -7445,6 +7450,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       project.id,
       member.user_id,
       "Developer",
+      { roleMode: "at_least" },
     );
     expect(api.agents.create).toHaveBeenCalledWith(
       project.id,
@@ -7750,6 +7756,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       project.id,
       member.user_id,
       "Developer",
+      { roleMode: "at_least" },
     );
     expect(api.agents.create).not.toHaveBeenCalled();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(

@@ -7,6 +7,7 @@ import {
   openCollaborationIssueCreation,
 } from '../modules/collaboration-personal-home.mjs'
 import { verifyCollaborationDeviceCleanup } from '../modules/collaboration-device-cleanup.mjs'
+import { waitForProjectIdentity } from '../modules/collaboration-project-navigation.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
@@ -15,6 +16,8 @@ import { createProjectSpacePickerRegression } from '../modules/project-space-pic
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import {
+  assertCreatedMembers,
+  createOrdinaryTaskProject,
   selectProjectCreateMembers,
   verifyCollaborationMemberSettings,
 } from '../modules/collaboration-member-settings.mjs'
@@ -25,6 +28,7 @@ import {
   verifyProjectCreateDialogUi,
 } from '../modules/project-create-dialog-regression.mjs'
 import {
+  openProjectBoard,
   selectProjectBoardGrouping,
   verifyPersonalBoardGrouping,
 } from '../modules/collaboration-board-personal-view.mjs'
@@ -217,6 +221,7 @@ export function createDesktopScenario({
   const selectedMembers = []
   let workspace = null
   let project = null
+  let ordinaryTaskProject = null
   let issue = null
   let agent = null
   let cloudEnvironment = null
@@ -262,6 +267,14 @@ export function createDesktopScenario({
         const latestWorkspace = await request(`/api/v1/workspaces/${workspace.id}`)
         if (latestWorkspace.status !== 'archived') {
           await request(`/api/v1/workspaces/${workspace.id}?version=${latestWorkspace.version}`, {
+            method: 'DELETE',
+          })
+        }
+      }
+      if (ordinaryTaskProject) {
+        const latest = await request(`/api/v1/cloud-projects/${ordinaryTaskProject.id}`)
+        if (latest.status !== 'archived') {
+          await request(`/api/v1/cloud-projects/${latest.id}?version=${latest.version}`, {
             method: 'DELETE',
           })
         }
@@ -322,6 +335,27 @@ export function createDesktopScenario({
 
       try {
         await ensureExperimentalFeaturesEnabled(control)
+        ordinaryTaskProject = await createOrdinaryTaskProject(control, {
+          name: `普通任务项目成员验收-${process.pid}`,
+          owner,
+          request,
+          members: selectedMembers,
+        })
+        await waitForProjectIdentity(control, ACTIVE_WORKBENCH_SELECTOR, ordinaryTaskProject.name)
+        await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'manage')
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-project-settings-members"]'),
+          { visible: true }
+        )
+        await assertCreatedMembers(control, {
+          scoped,
+          owner,
+          request,
+          project: ordinaryTaskProject,
+          members: selectedMembers,
+        })
+        await capture(control, 'collaboration-shared-core-ordinary-task-members-created.png')
         await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
           timeoutMs: workbenchReadyTimeoutMs,
         })
@@ -561,6 +595,23 @@ export function createDesktopScenario({
           project,
           members: selectedMembers,
         })
+        // Reuse the existing member-settings reload for both creation entry points.
+        await openProjectBoard(control, scoped, ordinaryTaskProject)
+        await selectCollaborationProjectView(control, ACTIVE_WORKBENCH_SELECTOR, 'manage')
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-project-settings-members"]'),
+          { visible: true }
+        )
+        await assertCreatedMembers(control, {
+          scoped,
+          owner,
+          request,
+          project: ordinaryTaskProject,
+          members: selectedMembers,
+        })
+        await capture(control, 'collaboration-shared-core-ordinary-task-members-reloaded.png')
+        await openProjectBoard(control, scoped, project)
         await verifyCollaborationSettingsUx(control, { scoped, request, project })
 
         // Creation authorizes the current runner; this recovery case needs an unassigned project.
@@ -1108,6 +1159,7 @@ export function createDesktopScenario({
         fixtureArchived,
         issueId: issue?.id ?? null,
         projectId: project?.id ?? null,
+        ordinaryTaskProjectId: ordinaryTaskProject?.id ?? null,
         selectedMemberIds: selectedMembers.map(member => member.id),
         workspaceId: workspace?.id ?? null,
       }

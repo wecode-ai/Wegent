@@ -101,6 +101,7 @@ import {
 } from '@/features/workspace-tabs/settingsReturnPath'
 import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
 import { TaskBoardCreateButton } from '@/features/todo/TaskBoardActions'
+import { TaskBoardProjectCreateAction } from '@/features/todo/TaskBoardProjectCreateAction'
 
 const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 960
 
@@ -1001,6 +1002,13 @@ export function DesktopWorkbenchLayout({
               />
             </TitlebarActionsPortal>
           ) : null}
+          {taskBoardOpen && (
+            <TaskBoardProjectCreateAction
+              services={services}
+              user={state.user ?? LOCAL_USER}
+              active={routeActive && !settingsOpen}
+            />
+          )}
           {taskBoardOpen ? (
             <div
               data-testid="task-view-board-transition"

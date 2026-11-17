@@ -41,7 +41,7 @@ export async function selectProjectCreateMembers(control, { members, owner }) {
   }
 }
 
-async function assertCreatedMembers(control, { scoped, members, owner, request, project }) {
+export async function assertCreatedMembers(control, { scoped, members, owner, request, project }) {
   const roster = await request(`/api/v1/cloud-projects/${project.id}/members`)
   assert.equal(new Set(roster.map(member => member.user_id)).size, roster.length)
   assert.equal(roster.filter(member => member.user_id === owner.id).length, 1)
@@ -54,6 +54,62 @@ async function assertCreatedMembers(control, { scoped, members, owner, request, 
       text: member.user_name,
     })
   }
+}
+
+export async function createOrdinaryTaskProject(control, { name, members, owner, request }) {
+  await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-task"]', {
+    visible: true,
+  })
+  await control.command(
+    'waitFor',
+    '[data-testid="workspace-tab-content-fixed-task"] [data-testid="runtime-task-view-menu-button"], [data-testid="expand-sidebar-button"]',
+    { visible: true }
+  )
+  if (
+    Number(
+      await control.command('getElementCount', '[data-testid="expand-sidebar-button"]', {
+        visible: true,
+      })
+    ) > 0
+  ) {
+    await control.command('clickWhenEnabled', '[data-testid="expand-sidebar-button"]', {
+      visible: true,
+    })
+  }
+  await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]', { visible: true })
+  await control.command('clickWhenEnabled', '[data-testid="runtime-task-view-menu-button"]', {
+    visible: true,
+  })
+  await control.command('click', '[data-testid="runtime-task-view-board"]')
+  await control.command(
+    'waitFor',
+    '[data-testid="workspace-tab-content-fixed-task"] [data-testid="task-board-surface"]',
+    { visible: true }
+  )
+  await control.command('clickWhenEnabled', '[data-testid="task-board-header-more"]', {
+    visible: true,
+  })
+  await control.command('click', '[data-testid="task-board-create-project-space"]')
+  await control.command('fill', '[data-testid="cloud-project-name"]', { value: name })
+  await selectProjectCreateMembers(control, { members, owner })
+  await control.command('clickWhenEnabled', '[data-testid="cloud-project-create-confirm"]', {
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="cloud-project-name"]', { visible: false })
+  for (const member of members) {
+    await control.command('waitFor', '[data-testid="transient-notice"]', {
+      text: member.user_name,
+      visible: true,
+    })
+  }
+  await control.command(
+    'waitFor',
+    '[data-testid="workspace-tab-select-fixed-board"][aria-selected="true"]'
+  )
+  const response = await request('/api/v1/cloud-projects')
+  const project = response.items.find(candidate => candidate.name === name)
+  assert.ok(project, 'Project creation from the ordinary Tasks board did not persist')
+  return project
 }
 
 // Called by the existing shared-core checkpoint after creating its own project.

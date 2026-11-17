@@ -20,7 +20,7 @@ sidebar_position: 2
 
 E2E 覆盖加入现有 `collaboration-shared-core` checkpoint，通过原有 Core CI shard 执行。它创建两个测试账号，验证真实成员搜索、Developer 持久化、成员列表和重载后仍存在。按根目录 `AGENTS.md` 的测试执行策略，本地未运行 E2E 或 `ai:verify`；这不替代 GitHub CI 的真实桌面验证结果。
 
-当前桌面外壳以 `embedded=true` 挂载普通任务工作区，隐藏该组件的创建侧栏，因此普通入口使用组件测试覆盖；没有为测试新增产品导航。
+普通任务页的看板实际由 `DesktopWorkbenchLayout` 挂载 `TaskBoardView`，项目页另行以 `embedded=true` 挂载 `CloudTodoWorkspace`。普通任务页现通过标题栏“更多 → 新建项目空间”打开共享创建对话框，项目页的更多菜单和无项目空态也能创建；这些入口共用 `ProjectSpaceCreateDialog` 宿主适配及同一资源配置工厂。侧栏“新建项目 → 云端项目”仍用于远程代码工作区。
 
 ## 初始基准已执行检查
 
@@ -123,6 +123,18 @@ Rust 验证通过：`runtime_work::handler::turns::tests` 17 项、`runtime_work
 真实 provider/collection 协议验证依次执行成功、CLI 不可用、重新发现失败及恢复后 MERGED，共 18 次操作通过。新增受控 deferred 回归证明：初次激活尚未完成时，旧场景准备条件已经返回 `prematurely-ready`；修复后等待现有状态弹层显示“状态同步正常”才进入下一次状态变更。恢复 CLI 后先确认重新启用的 observer 启动成功并完成同步，再写入 merged、触发新刷新；原 merged、checks、同步健康断言和等待时限全部保留。另一项真实 monitor 回归确认激活期间发起强制刷新会在激活后继续新采集并取得 merged，没有丢失请求。
 
 相关 EnvironmentInfoPopover、monitor、visibility、UI observer 共 4 文件、35 项测试通过；Wework typecheck、目标 ESLint、Prettier 与差异检查通过。产品行为未修改，没有本地执行 E2E、固定 sleep、放大超时、跳过断言或原提交 CI 重跑。完整桌面结果仍等待包含此次准备修复的新 head。
+
+## 2026-11-17 最新 QA 与 PR 评审修复
+
+最新评论 3196 的 MAN-08 未通过：任务已使用 B，明确改选 C 但尚未发送，删除 C 后自动恢复 B 并允许发送。前台和后台真实 model store / task-selection hook 集成测试均稳定复现，修复前得到 B 与 `selectionReady: true`。现在分别保存选择身份和可用状态；失效的 C 保留为用户当前选择并阻止发送，只有显式改选有效模型或 C 确实恢复才恢复可发送。选项编辑、重复目录刷新、切换任务以及刷新途中新改选均有回归覆盖，隐藏云模型继续使用原有独立验证路径。
+
+模型 worker 完成 6 文件、94 项验证，随后把刷新中改选案例扩为前台和后台两项，对应两文件 28 项通过。主执行另行验证 model readiness、diagnostics、任务选择、runtime controls 及任务 hooks 共 6 文件、66 项通过。完整 lint 发现 render 直接读取新 ref 的规则错误后，改为统一发布同一不可变 availability 快照给 render state 和即时事件 ref；三个直接受影响文件 34 项与目标 ESLint 通过。现有 CI 的 `task-model-deletion` 检查点已补充真实设置页创建、改选但不发送、删除 C、持续禁止发送及显式改选 B 后继续原任务的覆盖；保留原五次发送及全部断言，本地未运行 E2E。
+
+同一 PR 的静态评审还指出原需求中的实际入口、目录刷新、失败恢复和并发角色问题。目录缩小后旧候选继续存在，已由新增组件测试复现；选择器现在只使用最新目录，已选人员的显示信息单独保留，取消后不会再次成为旧候选。30 条失败原因和已确认成员列表移到既有滚动正文，页脚保留短摘要与重试、取消；使用单一可访问错误区域关联摘要，保留原 Platform 错误原因断言。这里的组件检查只证明 DOM 与既有 CSS 的滚动边界，不替代真实短窗口的几何验收。
+
+修复后的完整共享 Platform/App 测试 197 项通过（39.04 秒），共享创建与模板 32 文件、243 项通过；后续错误区域调整另由 5 个聚焦文件、45 项通过，并保留原平台失败原因断言。真实任务页入口在 1120/320 两种窗口宽度的宿主测试先因缺少入口失败，补齐后通过；普通入口、TaskBoardView 与 helper 完整回归共 109 项通过。最终入口、deferred 服务端名单确认、导航后提示与同项目重试共 37 项通过，最后英文与移动入口相关 10 项通过，双语文档契约 8 项通过。两入口 E2E 复用原有账号与成员设置 reload，不新增 CI job，预计增加 10–15 秒；真实结果须由新 head CI 确认。
+
+创建成员的延迟请求曾在读取 Viewer 后覆盖并发提升的 Maintainer，helper 回归已稳定失败。真实 API 交错用例进一步确认：先通过 PATCH 晋升为 Maintainer，再提交延迟的 Developer POST；旧写入在 inherited/direct Viewer 两种前提均返回 201 却降为 Developer。创建链现显式请求至少 Developer，普通管理请求保留精确角色及降权语义；同一参数通过共享 API、Web 与 Wework 适配器传递。服务端仍使用现有 Python-owned 成员写入 API，不迁移路由，不修改 CP 权限不变量。修复后角色覆盖、CP 契约及 guard 共 95 项通过（38.54 秒）；helper 12 项、Wework 传输与适配器 36 项、Web 适配器 14 项通过。MySQL RR 陈旧快照回归加入既有 CI 套件，本地未设置专用 URL，未计为本地通过。后续交接须采用包含本轮修复的新 head CI，不能沿用 `0a691d1f0c` 的绿色结论。
 
 # Verification and rollback
 

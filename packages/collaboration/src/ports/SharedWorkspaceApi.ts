@@ -756,6 +756,10 @@ export interface SharedWorkspaceTaskBindingsApi {
   ): Promise<void>;
 }
 
+export interface WorkspaceProjectMemberAddOptions {
+  roleMode?: "exact" | "at_least";
+}
+
 export interface SharedWorkspaceMembersApi {
   list(projectId: string): Promise<CollaborationMember[]>;
   searchUsers(query: string): Promise<CollaborationUser[]>;
@@ -763,6 +767,7 @@ export interface SharedWorkspaceMembersApi {
     projectId: string,
     userId: number,
     role?: Exclude<CollaborationRole, "Owner">,
+    options?: WorkspaceProjectMemberAddOptions,
   ): Promise<CollaborationMember>;
   update(
     projectId: string,

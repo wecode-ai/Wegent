@@ -64,8 +64,12 @@ describe('ordinary project resource setup', () => {
     await setup.configure({ id: 'new-project' } as CollaborationProject, selection)
 
     expect(api.members.add).toHaveBeenCalledTimes(2)
-    expect(api.members.add).toHaveBeenCalledWith('new-project', 2, 'Developer')
-    expect(api.members.add).toHaveBeenCalledWith('new-project', 3, 'Developer')
+    expect(api.members.add).toHaveBeenCalledWith('new-project', 2, 'Developer', {
+      roleMode: 'at_least',
+    })
+    expect(api.members.add).toHaveBeenCalledWith('new-project', 3, 'Developer', {
+      roleMode: 'at_least',
+    })
     expect(refresh).toHaveBeenCalledWith('new-project', members.slice(1))
   })
 

@@ -2816,7 +2816,8 @@ describe('CloudTodoWorkspace', () => {
           expect(workbenchServices.deliveryApi!.addCloudProjectMember).toHaveBeenCalledWith(
             '12',
             2,
-            'Developer'
+            'Developer',
+            { roleMode: 'at_least' }
           )
         )
       }
@@ -2846,69 +2847,117 @@ describe('CloudTodoWorkspace', () => {
     }
   )
 
-  it('persists selected members from ordinary project creation and shows the refreshed roster', async () => {
+  it('opens project space creation from the embedded empty state', async () => {
     const workbenchServices = services()
-    const owner = { id: 1, user_id: 1, user_name: 'local', email: null, role: 'Owner' as const }
-    const members: import('@/api/deliveries').CloudProjectMember[] = [owner]
-    workbenchServices.deliveryApi!.listCloudProjectMembers = vi.fn(async () => [...members])
-    workbenchServices.deliveryApi!.searchCloudProjectUsers = vi.fn(async () => ({
-      users: [
-        { id: 1, user_name: 'local', email: null },
-        { id: 2, user_name: 'alice', email: null },
-        { id: 3, user_name: 'bob', email: null },
-      ],
-      total: 3,
-    }))
-    workbenchServices.deliveryApi!.addCloudProjectMember = vi.fn(async (_id, userId, role) => {
-      const member = {
-        ...owner,
-        id: userId,
-        user_id: userId,
-        user_name: userId === 2 ? 'alice' : 'bob',
-        role: role!,
-      }
-      members.push(member)
-      return member
-    })
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({ items: [] })
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local' } as User}
         localProjects={[]}
         services={workbenchServices}
+        embedded
       />
     )
-    await userEvent.click(await screen.findByTestId('cloud-project-add'))
-    await userEvent.type(screen.getByTestId('cloud-project-name'), 'Member project')
-    await userEvent.click(screen.getByTestId('collaboration-project-create-add-collaborator'))
-    fireEvent.change(screen.getByTestId('collaboration-project-create-people-search'), {
-      target: { value: 'member' },
-    })
-    await userEvent.click(await screen.findByTestId('collaboration-project-create-member-2'))
-    await userEvent.click(screen.getByTestId('collaboration-project-create-add-collaborator'))
-    fireEvent.change(screen.getByTestId('collaboration-project-create-people-search'), {
-      target: { value: 'member' },
-    })
-    await userEvent.click(await screen.findByTestId('collaboration-project-create-member-3'))
-    expect(screen.queryByTestId('collaboration-project-create-member-1')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
-    await waitFor(() => expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument())
-    expect(screen.getByTestId('transient-notice')).toHaveTextContent('alice, bob')
-    expect(workbenchServices.deliveryApi!.addCloudProjectMember).toHaveBeenCalledTimes(2)
-    expect(workbenchServices.deliveryApi!.addCloudProjectMember).toHaveBeenCalledWith(
-      '12',
-      2,
-      'Developer'
-    )
-    expect(workbenchServices.deliveryApi!.addCloudProjectMember).toHaveBeenCalledWith(
-      '12',
-      3,
-      'Developer'
-    )
-    fireEvent.click(screen.getByTestId('cloud-project-manage-view'))
-    fireEvent.click(screen.getByTestId('cloud-project-settings-members'))
-    expect(await screen.findByTestId('cloud-project-member-2')).toHaveTextContent('alice')
-    expect(screen.getByTestId('cloud-project-member-3')).toHaveTextContent('bob')
+    const empty = await screen.findByTestId('cloud-project-unavailable')
+    expect(screen.queryByTestId('cloud-project-add')).not.toBeInTheDocument()
+    await userEvent.click(within(empty).getByRole('button', { name: '新建项目空间' }))
+    expect(await screen.findByTestId('cloud-project-name')).toBeVisible()
+    expect(screen.getByTestId('collaboration-project-create-add-collaborator')).toBeVisible()
   })
+
+  it.each([1120, 320])(
+    'persists selected members from the embedded task board at width %s and shows the refreshed roster',
+    async width => {
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(width)
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        width: 180,
+        height: 32,
+        x: 0,
+        y: 0,
+        left: 0,
+        right: 180,
+        top: 0,
+        bottom: 32,
+        toJSON: () => ({}),
+      })
+      const workbenchServices = services()
+      vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+        items: [{ ...project, id: 'default-work-items', project_key: 'WORK' }],
+      })
+      const owner = { id: 1, user_id: 1, user_name: 'local', email: null, role: 'Owner' as const }
+      const members: import('@/api/deliveries').CloudProjectMember[] = [owner]
+      workbenchServices.deliveryApi!.listCloudProjectMembers = vi.fn(async () => [...members])
+      workbenchServices.deliveryApi!.searchCloudProjectUsers = vi.fn(async () => ({
+        users: [
+          { id: 1, user_name: 'local', email: null },
+          { id: 2, user_name: 'alice', email: null },
+          { id: 3, user_name: 'bob', email: null },
+        ],
+        total: 3,
+      }))
+      workbenchServices.deliveryApi!.addCloudProjectMember = vi.fn(async (_id, userId, role) => {
+        const member = {
+          ...owner,
+          id: userId,
+          user_id: userId,
+          user_name: userId === 2 ? 'alice' : 'bob',
+          role: role!,
+        }
+        members.push(member)
+        return member
+      })
+      render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+          embedded
+          embeddedTitle="project"
+          defaultProjectRequested
+        />
+      )
+      await screen.findByTestId('cloud-project-header')
+      await userEvent.click(await screen.findByTestId('cloud-project-header-more'))
+      await userEvent.click(screen.getByTestId('cloud-project-header-create-project'))
+      await userEvent.type(screen.getByTestId('cloud-project-name'), 'Member project')
+      await userEvent.click(screen.getByTestId('collaboration-project-create-add-collaborator'))
+      fireEvent.change(screen.getByTestId('collaboration-project-create-people-search'), {
+        target: { value: 'member' },
+      })
+      await userEvent.click(await screen.findByTestId('collaboration-project-create-member-2'))
+      await userEvent.click(screen.getByTestId('collaboration-project-create-add-collaborator'))
+      fireEvent.change(screen.getByTestId('collaboration-project-create-people-search'), {
+        target: { value: 'member' },
+      })
+      await userEvent.click(await screen.findByTestId('collaboration-project-create-member-3'))
+      expect(screen.queryByTestId('collaboration-project-create-member-1')).not.toBeInTheDocument()
+      await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
+      await waitFor(() =>
+        expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument()
+      )
+      expect(screen.getByTestId('transient-notice')).toHaveTextContent('alice, bob')
+      expect(workbenchServices.deliveryApi!.addCloudProjectMember).toHaveBeenCalledTimes(2)
+      expect(workbenchServices.deliveryApi!.addCloudProjectMember).toHaveBeenCalledWith(
+        '12',
+        2,
+        'Developer',
+        { roleMode: 'at_least' }
+      )
+      expect(workbenchServices.deliveryApi!.addCloudProjectMember).toHaveBeenCalledWith(
+        '12',
+        3,
+        'Developer',
+        { roleMode: 'at_least' }
+      )
+      expect(screen.getByTestId('cloud-project-header-title')).toHaveTextContent('Member project')
+      const viewSelect = screen.queryByTestId('collaboration-project-view-select')
+      if (viewSelect) fireEvent.change(viewSelect, { target: { value: 'manage' } })
+      else fireEvent.click(screen.getByTestId('cloud-project-manage-view'))
+      fireEvent.click(screen.getByTestId('cloud-project-settings-members'))
+      expect(await screen.findByTestId('cloud-project-member-2')).toHaveTextContent('alice')
+      expect(screen.getByTestId('cloud-project-member-3')).toHaveTextContent('bob')
+    }
+  )
 
   it('retries failed members on the created ordinary project without duplicating successful additions', async () => {
     const workbenchServices = services()

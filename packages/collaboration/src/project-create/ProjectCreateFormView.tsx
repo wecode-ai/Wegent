@@ -50,7 +50,7 @@ interface ProjectCreateFormViewProps {
   testIds: { name?: string; description?: string; confirm?: string } | undefined
   props: ProjectCreateDialogProps
   groupGenerating: boolean
-  setAddedPeople: Dispatch<SetStateAction<CollaborationWorkspaceMember[]>>
+  setSelectedPeople: Dispatch<SetStateAction<CollaborationWorkspaceMember[]>>
   setCollaboratorPickerOpen: Dispatch<SetStateAction<boolean>>
   setGroupEditorDraft: Dispatch<SetStateAction<ProjectCreateCollaborationGroupDraft | null>>
   targets: ProjectCreateTarget[]
@@ -109,7 +109,7 @@ export function ProjectCreateFormView({
   testIds,
   props,
   groupGenerating,
-  setAddedPeople,
+  setSelectedPeople,
   setCollaboratorPickerOpen,
   setGroupEditorDraft,
   targets,
@@ -151,6 +151,7 @@ export function ProjectCreateFormView({
   const repositoryLabelId = useId()
   const repositoryHintId = useId()
   const repositoryErrorId = useId()
+  const setupErrorSummaryId = useId()
   return (
     <DialogForm
       hidden={groupModelPickerOpen || Boolean(templateConfiguration) || Boolean(discardTarget)}
@@ -196,7 +197,7 @@ export function ProjectCreateFormView({
                 value={props.workspaceSelection.value}
                 disabled={state.saving || Boolean(state.createdProject) || groupGenerating}
                 onChange={event => {
-                  setAddedPeople([])
+                  setSelectedPeople([])
                   commands.setMemberUserIds([])
                   commands.setAgentResourceIds([])
                   commands.setExecutionEnvironmentDeviceIds(null)
@@ -318,7 +319,7 @@ export function ProjectCreateFormView({
           {resourceSetup && (
             <TemplateCreateSection
               key={props.workspaceSelection?.value}
-              setup={{ ...resourceSetup, members: people }}
+              setup={resourceSetup}
               locale={labels.locale}
               initialTemplate={props.initialTemplate}
               configurationHost={{
@@ -463,7 +464,7 @@ export function ProjectCreateFormView({
                 labels={labels}
                 open={collaboratorPickerOpen && !collaboratorsLocked}
                 onOpenChange={setCollaboratorPickerOpen}
-                people={people.map(member => ({
+                people={resourceSetup.members.map(member => ({
                   id: member.user_id,
                   user_name: member.user_name,
                   email: member.email,
@@ -479,7 +480,7 @@ export function ProjectCreateFormView({
                 groupsError={resourceSetup.groupsError}
                 onSelectPerson={user => {
                   if (collaboratorsLocked) return
-                  setAddedPeople(current => [
+                  setSelectedPeople(current => [
                     ...current.filter(member => member.user_id !== user.id),
                     {
                       id: user.id,
@@ -572,7 +573,9 @@ export function ProjectCreateFormView({
           {state.location === 'local' &&
           (!resourceSetup ||
             (!resourceSetup.searchUsers &&
-              !people.some(member => member.user_id !== resourceSetup.currentUser.id))) ? (
+              !resourceSetup.members.some(
+                member => member.user_id !== resourceSetup.currentUser.id
+              ))) ? (
             <p
               className="collaboration-project-create-hint"
               data-testid="collaboration-project-create-members-unavailable"
@@ -715,17 +718,10 @@ export function ProjectCreateFormView({
             ) : null}
           </section>
         </fieldset>
-      </div>
-      {!groupEditorDraft && !groupModelPickerOpen ? (
-        <footer className="collaboration-project-create-footer">
-          {state.error && (
-            <div className="collaboration-project-create-error" role="alert">
-              <p>
-                {state.memberSetupFailed && state.memberFailures.length
-                  ? labels.projectCreatedSetupPending
-                  : state.error}
-              </p>
-              {state.memberFailures.length ? (
+        {state.error && (state.memberFailures.length || state.confirmedMembers.length) ? (
+          <div className="collaboration-project-create-error">
+            {state.memberFailures.length ? (
+              <div role="alert" aria-labelledby={setupErrorSummaryId}>
                 <ul data-testid="collaboration-project-create-member-failures">
                   {state.memberFailures.map(failure => (
                     <li key={failure.userId}>
@@ -735,17 +731,33 @@ export function ProjectCreateFormView({
                     </li>
                   ))}
                 </ul>
-              ) : null}
-              {state.confirmedMembers.length ? (
-                <div data-testid="collaboration-project-create-confirmed-members">
-                  <strong>{labels.confirmedMembers}</strong>
-                  <ul>
-                    {state.confirmedMembers.map(member => (
-                      <li key={member.user_id}>{member.user_name}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
+              </div>
+            ) : null}
+            {state.confirmedMembers.length ? (
+              <div data-testid="collaboration-project-create-confirmed-members">
+                <strong>{labels.confirmedMembers}</strong>
+                <ul>
+                  {state.confirmedMembers.map(member => (
+                    <li key={member.user_id}>{member.user_name}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      {!groupEditorDraft && !groupModelPickerOpen ? (
+        <footer className="collaboration-project-create-footer">
+          {state.error && (
+            <div
+              className="collaboration-project-create-error"
+              role={state.memberFailures.length ? undefined : 'alert'}
+            >
+              <p id={setupErrorSummaryId}>
+                {state.memberSetupFailed && state.memberFailures.length
+                  ? labels.projectCreatedSetupPending
+                  : state.error}
+              </p>
             </div>
           )}
           <div className="collaboration-project-create-footer-actions">

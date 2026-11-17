@@ -20,6 +20,23 @@ function createClient() {
 }
 
 describe('createWebSharedWorkspaceApi', () => {
+  it('preserves minimum-role requests and keeps explicit member management exact', async () => {
+    const client = createClient()
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+
+    await api.members.add('project/1', 8, 'Developer', { roleMode: 'at_least' })
+    await api.members.add('project/1', 8, 'Viewer')
+
+    expect(client.post).toHaveBeenNthCalledWith(1, '/v1/cloud-projects/project%2F1/members', {
+      user_id: 8,
+      role: 'Developer',
+      role_mode: 'at_least',
+    })
+    expect(client.post).toHaveBeenNthCalledWith(2, '/v1/cloud-projects/project%2F1/members', {
+      user_id: 8,
+      role: 'Viewer',
+    })
+  })
   it('bypasses browser caching so newer board snapshots can overtake pending reads', async () => {
     const client = createClient()
     client.get.mockResolvedValue({ items: [], members: [], agents: [], task_bindings: [] })

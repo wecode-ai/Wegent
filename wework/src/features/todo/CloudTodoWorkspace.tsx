@@ -16,7 +16,7 @@ import {
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
-import { createProjectResourceSetup } from '@/features/collaboration/createProjectResourceSetup'
+import { ProjectSpaceCreateDialog } from './ProjectSpaceCreateDialog'
 import {
   useCallback,
   useContext,
@@ -82,9 +82,7 @@ import {
   ProjectCollaborationGroups,
   ProjectExecutionEnvironments,
   ProjectIssueTable,
-  ProjectCreateDialog,
   ProjectSpaceSidebar,
-  projectCreateLabels,
   useCollaborationWorkspaceController,
   useIssueAssignmentsByIssueId,
   type CollaborationIssue,
@@ -212,7 +210,6 @@ import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { BoardQuickCreate } from './BoardQuickCreate'
 import { useParentIssueBoard } from '@wegent/collaboration/project-board'
 import { BoardQuickStartGuide } from './BoardQuickStartGuide'
-import { parseDingTalkAITableLink } from './projectProviderConfig'
 import {
   createLocalWorkspaceApi,
   projectRuntimeStatusSignature,
@@ -569,23 +566,6 @@ function CloudTodoStartupAnimation({ label }: { label: string }) {
   )
 }
 
-function cloudProjectRequestError(cause: unknown): string {
-  if (!(cause instanceof ApiError)) {
-    return cause instanceof Error ? cause.message : '创建项目空间失败'
-  }
-  if (cause.status === 422) {
-    const payload = cause.detail as { errors?: Array<{ loc?: string[]; msg?: string }> } | undefined
-    const fieldError = payload?.errors?.[0]
-    return fieldError?.msg
-      ? `${fieldError.loc?.at(-1) ?? '参数'}：${fieldError.msg}`
-      : '项目标识只能包含 2–16 位字母和数字'
-  }
-  if (cause.status === 404) {
-    return '项目空间接口返回 404，请重启当前分支的 Backend 后重试'
-  }
-  return cause.message || `创建项目空间失败（HTTP ${cause.status}）`
-}
-
 function automationSelectionCandidates(cause: unknown): AutomationSelectionCandidate[] | null {
   if (
     !(cause instanceof ApiError) ||
@@ -734,26 +714,18 @@ export function CloudTodoWorkspace({
       eager: false,
     },
   })
-  const projectCreateResourceSetup = useMemo(
-    () =>
-      createProjectResourceSetup(
-        cloudWorkspaceApi,
-        { id: Number(user.id), name: user.user_name },
-        async (projectId, members) => {
-          await cloudWorkspace.commands.loadProjectSnapshot(projectId, {
-            invalidate: true,
+  const onProjectMembersConfigured = useCallback(
+    async (projectId: string, members: CloudProjectMember[]) => {
+      await cloudWorkspace.commands.loadProjectSnapshot(projectId, { invalidate: true })
+      if (members.length) {
+        setProjectCreationNotice(
+          t('workbench.project_create_members_confirmed', {
+            members: members.map(member => member.user_name).join(', '),
           })
-          if (members.length) {
-            setProjectCreationNotice(
-              t('workbench.project_create_members_confirmed', {
-                members: members.map(member => member.user_name).join(', '),
-              })
-            )
-          }
-        },
-        t('workbench.project_create_members_verification_failed')
-      ),
-    [cloudWorkspace.commands, cloudWorkspaceApi, t, user.id, user.user_name]
+        )
+      }
+    },
+    [cloudWorkspace.commands, t]
   )
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
@@ -4296,9 +4268,18 @@ export function CloudTodoWorkspace({
             ) : !selectedProject ? (
               <div
                 data-testid="cloud-project-unavailable"
-                className="flex flex-1 items-center justify-center text-sm text-text-muted"
+                className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-sm text-text-muted"
               >
-                未找到要打开的项目
+                <span>未找到要打开的项目</span>
+                <button
+                  type="button"
+                  data-testid="cloud-project-create-empty"
+                  onClick={() => setCreateProjectOpen(true)}
+                  className="flex h-11 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 md:h-8"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t('todo.new_project_space', '新建项目空间')}
+                </button>
               </div>
             ) : (
               <CollaborationProjectViewShell
@@ -4410,15 +4391,22 @@ export function CloudTodoWorkspace({
                         ) : null}
                       </>
                     ) : null}
-                    {level >= 2 && (!projectAssistantOpen || projectView === 'board') ? (
+                    {embedded ||
+                    (level >= 2 && (!projectAssistantOpen || projectView === 'board')) ? (
                       <ActionMenu
                         ariaLabel={t('workbench.more', '更多')}
                         testId="cloud-project-header-more"
                         icon={Ellipsis}
                         placement="bottom-end"
-                        triggerClassName="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                        triggerClassName="electron-titlebar-interactive-region relative z-10 ml-2 flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary md:h-8 md:w-8"
                         items={[
-                          ...(!projectAssistantOpen
+                          {
+                            label: t('todo.new_project_space', '新建项目空间'),
+                            icon: Plus,
+                            testId: 'cloud-project-header-create-project',
+                            onSelect: () => setCreateProjectOpen(true),
+                          },
+                          ...(level >= 2 && !projectAssistantOpen
                             ? [
                                 {
                                   label: t('workbench.project_chat'),
@@ -4428,7 +4416,7 @@ export function CloudTodoWorkspace({
                                 },
                               ]
                             : []),
-                          ...(projectView === 'board'
+                          ...(level >= 2 && projectView === 'board'
                             ? [
                                 {
                                   label:
@@ -5815,31 +5803,12 @@ export function CloudTodoWorkspace({
           />
         )}
         {createProjectOpen && (
-          <ProjectCreateDialog
+          <ProjectSpaceCreateDialog
             targets={availableProjectSpaceApis}
             defaultLocation={projectSpaceApis.defaultLocation}
-            resourceSetup={projectCreateResourceSetup}
-            allowDingTalkAITable
-            labels={projectCreateLabels[i18n.language.startsWith('zh') ? 'zh-CN' : 'en']}
-            host={{
-              renderModal: ({ title, children, onClose, closeLabel }) => (
-                <Modal title={title} width="wide" onClose={onClose} closeLabel={closeLabel}>
-                  {children}
-                </Modal>
-              ),
-              parseDingTalkAITableLink,
-              formatError: cloudProjectRequestError,
-              track: event => {
-                if (event === 'created') {
-                  track('feature_action_completed', {
-                    domain: 'project_space',
-                    action: 'create',
-                  })
-                } else {
-                  track('operation_failed', { operation: 'project_space_action' })
-                }
-              },
-            }}
+            api={cloudWorkspaceApi}
+            user={user}
+            onMembersConfigured={onProjectMembersConfigured}
             onClose={() => setCreateProjectOpen(false)}
             onCreated={(project, location) => {
               const weworkProject = toWeworkCloudProject(project)

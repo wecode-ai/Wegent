@@ -10,6 +10,24 @@ import {
 import type { HttpClient } from './http'
 import { ApiError } from './http'
 
+it('opts into minimum member roles only for the project creation request', async () => {
+  const post = vi.fn().mockResolvedValue({ user_id: 8, role: 'Maintainer' })
+  const api = createDeliveryApi({ post } as unknown as HttpClient)
+
+  await api.addCloudProjectMember('project-1', 8, 'Developer', { roleMode: 'at_least' })
+  await api.addCloudProjectMember('project-1', 8, 'Viewer')
+
+  expect(post).toHaveBeenNthCalledWith(1, '/v1/cloud-projects/project-1/members', {
+    user_id: 8,
+    role: 'Developer',
+    role_mode: 'at_least',
+  })
+  expect(post).toHaveBeenNthCalledWith(2, '/v1/cloud-projects/project-1/members', {
+    user_id: 8,
+    role: 'Viewer',
+  })
+})
+
 it('updates delivered content in one multipart request', async () => {
   const patch = vi.fn().mockResolvedValue({ id: 'delivery-1', version: 4 })
   const api = createDeliveryApi({ patch } as unknown as HttpClient)

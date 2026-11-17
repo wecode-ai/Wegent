@@ -2460,6 +2460,33 @@ describe('DesktopWorkbenchLayout', () => {
     expect(workspace).toBeVisible()
   })
 
+  test.each([1120, 320])(
+    'creates a project space from the actual Tasks board header at width %s',
+    async width => {
+      deliveryApiMock.available = true
+      const portal = document.createElement('div')
+      portal.id = TITLEBAR_ACTIONS_PORTAL_ID
+      document.body.append(portal)
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+      await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
+      await userEvent.click(screen.getByTestId('runtime-task-view-board'))
+      expect(screen.getByTestId('task-board-surface')).toBeVisible()
+      expect(screen.queryByTestId('cloud-todo-workspace')).not.toBeInTheDocument()
+      act(() => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+        window.dispatchEvent(new Event('resize'))
+      })
+      const more = screen.getByTestId('task-board-header-more')
+      expect(more).toBeVisible()
+      await userEvent.click(more)
+      await userEvent.click(screen.getByTestId('task-board-create-project-space'))
+      expect(await screen.findByTestId('cloud-project-name')).toBeVisible()
+      expect(screen.getByTestId('collaboration-project-create-add-collaborator')).toBeVisible()
+      expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+      expect(baseProps.onCreateGitWorkspaceProject).not.toHaveBeenCalled()
+    }
+  )
+
   test.each(['button', 'menu'])('opens My Tasks from stand-in using the board %s', async entry => {
     window.history.replaceState({}, '', '/stand-in?profileId=default')
     const onNavigate = vi.fn((event: Event) => event.preventDefault())

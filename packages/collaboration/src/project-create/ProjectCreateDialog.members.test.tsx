@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
+import { readFileSync } from "node:fs";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -236,6 +237,117 @@ describe("shared project creation members", () => {
     expect(setup.searchUsers).toHaveBeenCalledTimes(4);
   });
 
+  it("uses the successful smaller directory without offering cached selected identities", async () => {
+    const setup = resourceSetup();
+    setup.members = [
+      { id: 2, user_id: 2, user_name: "Ada", email: null, role: "Developer" },
+      { id: 3, user_id: 3, user_name: "Grace", email: null, role: "Developer" },
+      { id: 4, user_id: 4, user_name: "Lin", email: null, role: "Developer" },
+    ];
+    setup.reloadMembers = vi.fn();
+    await mount(setup);
+    await input("cloud-project-name", "Keep my project draft");
+    await click("collaboration-project-create-add-collaborator");
+    await click("collaboration-project-create-member-2");
+    await mount({ ...setup, membersError: "Refresh unavailable" });
+    await click("collaboration-project-create-add-collaborator");
+    await click("collaboration-project-create-member-search-retry");
+    expect(setup.reloadMembers).toHaveBeenCalledOnce();
+    await mount({ ...setup, members: [setup.members[2]] });
+
+    expect(document.body.textContent).not.toContain("Refresh unavailable");
+    expect(
+      byTestId("collaboration-project-create-selected-member-2").textContent,
+    ).toContain("Ada");
+    expect(
+      document.querySelector(
+        '[data-testid="collaboration-project-create-member-3"]',
+      ),
+    ).toBeNull();
+    expect(
+      byTestId("collaboration-project-create-member-4").textContent,
+    ).toContain("Lin");
+    await click("collaboration-project-create-add-collaborator");
+    await act(async () =>
+      byTestId("collaboration-project-create-selected-member-2")
+        .querySelector<HTMLButtonElement>("button")!
+        .click(),
+    );
+    await click("collaboration-project-create-add-collaborator");
+    expect(
+      document.querySelector(
+        '[data-testid="collaboration-project-create-member-2"]',
+      ),
+    ).toBeNull();
+    expect((byTestId("cloud-project-name") as HTMLInputElement).value).toBe(
+      "Keep my project draft",
+    );
+  });
+
+  it("keeps long member failure details in the viewport-bounded scroll body outside retry and cancel", async () => {
+    const setup = resourceSetup();
+    const failures = Array.from({ length: 30 }, (_, index) => ({
+      userId: index + 2,
+      userName: `Member ${index + 2}`,
+      reason: "Permission denied with a detailed explanation. ".repeat(12),
+    }));
+    const confirmed = Array.from({ length: 30 }, (_, index) => ({
+      id: index + 40,
+      user_id: index + 40,
+      user_name: `Confirmed member ${index + 40}`,
+      email: null,
+      role: "Developer" as const,
+    }));
+    setup.configure = vi
+      .fn()
+      .mockRejectedValueOnce(new ProjectCreateMembersError(failures, confirmed))
+      .mockResolvedValueOnce(undefined);
+    const harness = await mount(setup);
+    await input("cloud-project-name", "Recover the project");
+    await click("cloud-project-create-confirm");
+
+    const body = document.querySelector<HTMLElement>(
+      ".collaboration-project-create-body",
+    )!;
+    const footer = document.querySelector<HTMLElement>(
+      ".collaboration-project-create-footer",
+    )!;
+    const failureList = byTestId(
+      "collaboration-project-create-member-failures",
+    );
+    const confirmedList = byTestId(
+      "collaboration-project-create-confirmed-members",
+    );
+    expect(failureList.querySelectorAll("li")).toHaveLength(30);
+    expect(confirmedList.querySelectorAll("li")).toHaveLength(30);
+    expect(body.contains(failureList)).toBe(true);
+    expect(body.contains(confirmedList)).toBe(true);
+    expect(footer.contains(failureList)).toBe(false);
+    expect(footer.contains(confirmedList)).toBe(false);
+    expect(
+      footer.contains(byTestId("collaboration-project-create-cancel")),
+    ).toBe(true);
+    expect(footer.contains(byTestId("cloud-project-create-confirm"))).toBe(
+      true,
+    );
+    expect(byTestId("cloud-project-create-confirm").matches(":disabled")).toBe(
+      false,
+    );
+    const css = readFileSync("src/platform/base.css", "utf8");
+    expect(css).toMatch(
+      /\.collaboration-project-create-dialog\s*\{[^}]*max-height:[^;]*100vh[^}]*overflow:\s*hidden/s,
+    );
+    expect(css).toMatch(
+      /\.collaboration-project-create-body\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/s,
+    );
+    expect(css).toMatch(
+      /\.collaboration-project-create-footer\s*\{[^}]*flex-shrink:\s*0/s,
+    );
+    await click("cloud-project-create-confirm");
+    expect(harness.create).toHaveBeenCalledOnce();
+    expect(harness.onCreated).toHaveBeenCalledWith(project, "cloud");
+  });
+
   it("names failed selected members, shows the verified roster and retries the created project", async () => {
     const setup = resourceSetup();
     setup.searchUsers = vi.fn(async () => [
@@ -271,6 +383,18 @@ describe("shared project creation members", () => {
     expect(
       byTestId("collaboration-project-create-confirmed-members").textContent,
     ).toContain("Owner");
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
+    const alert = container.querySelector('[role="alert"]')!;
+    expect(alert.textContent).toContain("Ada: Forbidden");
+    expect(
+      alert.contains(
+        byTestId("collaboration-project-create-confirmed-members"),
+      ),
+    ).toBe(false);
+    expect(
+      document.getElementById(alert.getAttribute("aria-labelledby")!)
+        ?.textContent,
+    ).toBe(projectCreateLabels.en.projectCreatedSetupPending);
     expect(byTestId("cloud-project-create-confirm").textContent).toBe(
       "Retry project setup",
     );

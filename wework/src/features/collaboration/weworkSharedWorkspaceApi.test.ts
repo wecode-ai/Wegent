@@ -625,6 +625,13 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     await api.members.list('project-1')
     await api.members.searchUsers('user')
     await api.members.add('project-1', 8, 'Developer')
+    await api.members.add('project-1', 8, 'Developer', { roleMode: 'at_least' })
+    expect(deliveryApi.addCloudProjectMember).toHaveBeenLastCalledWith(
+      'project-1',
+      8,
+      'Developer',
+      { roleMode: 'at_least' }
+    )
     await api.members.update('project-1', 8, {
       role: 'Maintainer',
       capabilityDescription: 'Reviewer',

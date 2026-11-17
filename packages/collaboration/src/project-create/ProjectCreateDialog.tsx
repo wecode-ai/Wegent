@@ -62,18 +62,24 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const translate = createCollaborationTranslator(labels.locale);
   const generationComposerRef = useRef<ComposerInputHandle>(null);
   const [collaboratorPickerOpen, setCollaboratorPickerOpen] = useState(false);
-  const [addedPeople, setAddedPeople] = useState<
+  const [selectedPeople, setSelectedPeople] = useState<
     CollaborationWorkspaceMember[]
   >([]);
   useEffect(() => {
     const directory = resourceSetup?.members ?? [];
-    setAddedPeople((current) => {
-      const additions = directory.filter(
-        (member) => !current.some((known) => known.user_id === member.user_id),
+    setSelectedPeople((current) => {
+      const next = [...directory, ...current].filter(
+        (member, index, all) =>
+          state.memberUserIds.includes(member.user_id) &&
+          all.findIndex((candidate) => candidate.user_id === member.user_id) ===
+            index,
       );
-      return additions.length ? [...current, ...additions] : current;
+      return next.length === current.length &&
+        next.every((member, index) => member === current[index])
+        ? current
+        : next;
     });
-  }, [resourceSetup?.members]);
+  }, [resourceSetup?.members, state.memberUserIds]);
   const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
   useEffect(() => {
     if (state.submitErrorField === "repository") setAdvancedSettingsOpen(true);
@@ -166,7 +172,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     [],
   );
   const collaboratorsLocked = state.saving || Boolean(state.createdProject);
-  const people = [...(resourceSetup?.members ?? []), ...addedPeople].filter(
+  const people = [...(resourceSetup?.members ?? []), ...selectedPeople].filter(
     (member, index, all) =>
       all.findIndex((candidate) => candidate.user_id === member.user_id) ===
       index,
@@ -836,7 +842,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
           testIds={testIds}
           props={props}
           groupGenerating={groupGenerating}
-          setAddedPeople={setAddedPeople}
+          setSelectedPeople={setSelectedPeople}
           setCollaboratorPickerOpen={setCollaboratorPickerOpen}
           setGroupEditorDraft={setGroupEditorDraft}
           targets={targets}

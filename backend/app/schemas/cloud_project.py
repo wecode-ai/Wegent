@@ -379,6 +379,7 @@ class CloudProjectListResponse(BaseModel):
 class CloudProjectMemberCreate(BaseModel):
     user_id: int = Field(ge=1)
     role: BaseRole = BaseRole.Developer
+    role_mode: Literal["exact", "at_least"] = "exact"
     capability_description: str = Field(default="", max_length=2_000)
 
     @field_validator("role")

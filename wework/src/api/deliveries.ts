@@ -1,4 +1,8 @@
-import type { Milestone, MilestoneInput } from '@wegent/collaboration'
+import type {
+  Milestone,
+  MilestoneInput,
+  WorkspaceProjectMemberAddOptions,
+} from '@wegent/collaboration'
 import type { IssueAttachmentContext } from '@wegent/collaboration'
 import type { CollaborationAssignmentReceipt as IssueAssignmentReceipt } from '@wegent/collaboration'
 import type { RunnerSelection } from '@wegent/collaboration'
@@ -1215,11 +1219,13 @@ export function createDeliveryApi(client: HttpClient) {
     addCloudProjectMember(
       projectId: CloudProjectIdInput,
       userId: number,
-      role: Exclude<CloudProjectMember['role'], 'Owner'> = 'Developer'
+      role: Exclude<CloudProjectMember['role'], 'Owner'> = 'Developer',
+      options?: WorkspaceProjectMemberAddOptions
     ): Promise<CloudProjectMember> {
       return client.post(`/v1/cloud-projects/${projectId}/members`, {
         user_id: userId,
         role,
+        ...(options?.roleMode ? { role_mode: options.roleMode } : {}),
       })
     },
     updateCloudProjectMember(
