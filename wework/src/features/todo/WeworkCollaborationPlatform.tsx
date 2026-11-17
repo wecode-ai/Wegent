@@ -484,6 +484,7 @@ export function WeworkSharedProject({
     },
   })
   const snapshotWriteGuardRef = useRef<ProjectSnapshotWriteGuard>({
+    scope: snapshotScope,
     projectId: String(project.id),
     issueIds: new Set(),
     canWrite: false,
@@ -533,12 +534,13 @@ export function WeworkSharedProject({
   useLayoutEffect(() => {
     snapshotWriteGuardRef.current = {
       ...snapshotWriteGuardRef.current,
+      scope: snapshotScope,
       projectId: String(project.id),
       canWrite: snapshotSync.canWrite,
       message: t('todo.project_snapshot_write_blocked'),
       acceptProject: incoming => snapshotControllerRef.current?.commands.replaceProject(incoming),
     }
-  }, [project.id, snapshotSync.canWrite, t])
+  }, [project.id, snapshotScope, snapshotSync.canWrite, t])
   const preferences = useAppPreferencesState()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const [closedConversationRequestKey, setClosedConversationRequestKey] = useState<string>()

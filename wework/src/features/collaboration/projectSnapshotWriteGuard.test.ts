@@ -22,6 +22,7 @@ function createGuardedApi(canWrite = false) {
     comments: { create: vi.fn() },
   }
   let guard: ProjectSnapshotWriteGuard = {
+    scope: {},
     projectId: 'one',
     issueIds: new Set(['issue-one']),
     canWrite,
@@ -136,5 +137,37 @@ describe('project snapshot write guard', () => {
     setGuard({ ...getGuard(), projectId: null })
     await api.issues.update('issue-one', { version: 1, status: 'pending' })
     expect(transport.issues.update).toHaveBeenCalledOnce()
+  })
+
+  it('does not accept a late mutation into the same project in another API scope', async () => {
+    const { api, transport, getGuard, setGuard } = createGuardedApi(true)
+    let resolve!: (project: CollaborationProject) => void
+    transport.projects.update.mockReturnValue(
+      new Promise<CollaborationProject>(done => (resolve = done))
+    )
+    const previousAccept = getGuard().acceptProject
+    const pending = api.projects.update('one', { version: 1, tags: [] })
+    setGuard({ ...getGuard(), scope: {}, acceptProject: vi.fn() })
+    const project = { id: 'one', version: 2 } as CollaborationProject
+    resolve(project)
+
+    await expect(pending).resolves.toBe(project)
+    expect(previousAccept).not.toHaveBeenCalled()
+    expect(getGuard().acceptProject).not.toHaveBeenCalled()
+  })
+
+  it('accepts a successful in-scope mutation after freshness changes', async () => {
+    const { api, transport, getGuard, setGuard } = createGuardedApi(true)
+    let resolve!: (project: CollaborationProject) => void
+    transport.projects.update.mockReturnValue(
+      new Promise<CollaborationProject>(done => (resolve = done))
+    )
+    const pending = api.projects.update('one', { version: 1, tags: [] })
+    setGuard({ ...getGuard(), canWrite: false, acceptProject: vi.fn() })
+    const project = { id: 'one', version: 2 } as CollaborationProject
+    resolve(project)
+
+    await expect(pending).resolves.toBe(project)
+    expect(getGuard().acceptProject).toHaveBeenCalledExactlyOnceWith(project)
   })
 })

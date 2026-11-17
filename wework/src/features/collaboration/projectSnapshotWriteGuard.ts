@@ -5,6 +5,8 @@
 import type { CollaborationProject, SharedWorkspaceApi } from '@wegent/collaboration'
 
 export interface ProjectSnapshotWriteGuard {
+  /** Stable API/project identity, independent of the current freshness state. */
+  scope: object | null
   projectId: string | null
   issueIds: ReadonlySet<string>
   canWrite: boolean
@@ -30,16 +32,17 @@ export function guardProjectSnapshotWrites(
   const assertProjectWritable = (projectId: string) => {
     const guard = getGuard()
     if (guard.projectId === projectId && !guard.canWrite) throw new Error(guard.message)
+    return guard
   }
   return {
     ...api,
     projects: {
       ...api.projects,
       async update(...args: Parameters<SharedWorkspaceApi['projects']['update']>) {
-        assertProjectWritable(args[0])
+        const { scope } = assertProjectWritable(args[0])
         const project = await api.projects.update(...args)
         const guard = getGuard()
-        if (guard.projectId === args[0]) guard.acceptProject?.(project)
+        if (guard.scope === scope && guard.projectId === args[0]) guard.acceptProject?.(project)
         return project
       },
     },

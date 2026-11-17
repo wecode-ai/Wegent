@@ -294,4 +294,46 @@ describe('production project snapshot lifecycle', () => {
     expect(screen.queryByText('Project v5')).not.toBeInTheDocument()
     expect(second.get).toHaveBeenCalledOnce()
   })
+
+  it('keeps a late mutation from the previous API out of a same-id project', async () => {
+    const first = createFixture('backend', 5)
+    const second = createFixture('backend', 1)
+    const pending = deferred<CollaborationProject>()
+    const onProjectUpdated = vi.fn()
+    vi.mocked(first.api.projects.update).mockReturnValueOnce(pending.promise)
+    const view = render(
+      <WeworkSharedProject {...first.props} onProjectUpdated={onProjectUpdated} />
+    )
+    await expectFresh()
+    await screen.findByTestId('snapshot-test-editor')
+    const mutation = editor.api!.projects.update('project-1', { version: 5, name: 'Late API A' })
+    expect(first.api.projects.update).toHaveBeenCalledOnce()
+
+    view.rerender(<WeworkSharedProject {...second.props} onProjectUpdated={onProjectUpdated} />)
+    await expectFresh()
+    expect(screen.getByText('Project v1')).toBeInTheDocument()
+    onProjectUpdated.mockClear()
+
+    await act(async () => {
+      pending.resolve({
+        ...first.props.project,
+        version: 6,
+        name: 'Late API A',
+        tags: ['late'],
+        board_views: {
+          schema_version: 1,
+          views: [
+            { id: 'late', name: 'Late', columns: [{ id: 'late', type: 'tag', value: 'late' }] },
+          ],
+        },
+      })
+      await mutation
+    })
+
+    expect(screen.getByText('Project v1')).toBeInTheDocument()
+    expect(screen.queryByText('Late API A')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-column-old')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-column-late')).not.toBeInTheDocument()
+    expect(onProjectUpdated).not.toHaveBeenCalled()
+  })
 })

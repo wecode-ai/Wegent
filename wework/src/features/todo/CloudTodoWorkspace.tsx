@@ -673,6 +673,7 @@ export function CloudTodoWorkspace({
       : null
   const changeRequestMonitor = changeRequestStatusEnabled ? issueChangeRequestMonitor : null
   const snapshotWriteGuardRef = useRef<ProjectSnapshotWriteGuard>({
+    scope: null,
     projectId: null,
     issueIds: new Set(),
     canWrite: true,
@@ -1570,6 +1571,7 @@ export function CloudTodoWorkspace({
   })
   useLayoutEffect(() => {
     snapshotWriteGuardRef.current = {
+      scope: snapshotScope,
       projectId: selectedProject?.location === 'cloud' ? String(selectedProject.id) : null,
       issueIds: new Set([
         ...cloudWorkspace.state.issues
@@ -1592,6 +1594,7 @@ export function CloudTodoWorkspace({
   }, [
     cloudWorkspace.commands,
     cloudWorkspace.state.issues,
+    snapshotScope,
     projectSnapshot.canWrite,
     selectedItem,
     selectedProject,
