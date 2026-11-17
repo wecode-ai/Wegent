@@ -33,12 +33,12 @@ impl RuntimeWorkRpcHandler {
         Ok(Some((task_id, key)))
     }
 
-    pub(super) async fn prepare_async_question_reply(
+    pub(super) async fn prepare_async_question_answer(
         &self,
         task_id: &str,
         response: &Value,
-        payload: &mut Value,
-    ) -> Result<(), AppIpcError> {
+        payload: &Value,
+    ) -> Result<PreparedQuestionReply, AppIpcError> {
         let transcript = self
             .transcript(json!({"taskId":task_id,"limit":1,"includeFullContent":true}))
             .await?;
@@ -64,6 +64,43 @@ impl RuntimeWorkRpcHandler {
         )
         .await
         .map_err(|error| AppIpcError::new("attachment_preparation_failed", error))?;
+        Ok(PreparedQuestionReply::Async {
+            session: runtime_session_id_from_link(&link),
+            answer: prepared,
+        })
+    }
+
+    pub(super) async fn apply_prepared_async_question_reply(
+        &self,
+        task_id: &str,
+        response: &Value,
+        payload: &mut Value,
+        prepared: Option<PreparedQuestionReply>,
+    ) -> Result<(), AppIpcError> {
+        let Some(PreparedQuestionReply::Async {
+            session,
+            answer: prepared,
+        }) = prepared
+        else {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "The question reply was not prepared",
+            ));
+        };
+        let link = self
+            .local_task_link(task_id)
+            .ok_or_else(|| AppIpcError::new("not_found", "Task no longer exists"))?;
+        let transcript = self
+            .transcript(json!({"taskId":task_id,"limit":1,"includeFullContent":true}))
+            .await?;
+        if session != runtime_session_id_from_link(&link)
+            || !pending_async_question(&transcript, response)
+        {
+            return Err(AppIpcError::new(
+                "stale_request_user_input",
+                "The question changed while preparing attachments",
+            ));
+        }
         if response["answers"].as_object().is_some_and(|answers| {
             answers.values().any(|answer| {
                 answer["attachments"]
@@ -71,15 +108,6 @@ impl RuntimeWorkRpcHandler {
                     .is_some_and(|files| !files.is_empty())
             })
         }) {
-            let transcript = self
-                .transcript(json!({"taskId":task_id,"limit":1,"includeFullContent":true}))
-                .await?;
-            if !pending_async_question(&transcript, response) {
-                return Err(AppIpcError::new(
-                    "stale_request_user_input",
-                    "The question changed while preparing attachments",
-                ));
-            }
             // Active turns use guidance; idle turns use the ordinary attachment prompt.
             payload["message"] = json!(prepared.response["answers"]
                 .as_object()

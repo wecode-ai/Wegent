@@ -83,16 +83,19 @@ impl RuntimeWorkRpcHandler {
         turn_id: &str,
         request_id: Option<&str>,
         response: &Value,
-    ) {
+    ) -> bool {
         let Ok(mut items) = self.active_codex_transcript_items.lock() else {
-            return;
+            return false;
         };
         let Some(active) = items
             .get_mut(local_task_id)
             .filter(|active| active.turn_id == turn_id)
         else {
-            return;
+            return false;
         };
+        let pending_mcp = active.items.iter().any(|item| {
+            super::super::mcp_elicitation::accepts_response(item, response) == Some(true)
+        });
         let newly_answered = request_id
             .and_then(|id| active.user_input_requests.get_mut(id))
             .is_some_and(|pending| std::mem::replace(pending, false));
@@ -108,6 +111,7 @@ impl RuntimeWorkRpcHandler {
         }
         // MCP requests stay pending until their own answered/cancelled/expired notification.
         self.set_pending_user_input_status(local_task_id, active);
+        newly_answered || pending_mcp
     }
 
     /// Replayed requests cannot reopen a settled card or extend its original deadline.

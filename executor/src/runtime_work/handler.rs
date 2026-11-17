@@ -125,6 +125,8 @@ mod active_transcript;
 mod archives;
 mod assignment_receipts;
 mod async_questions;
+mod question_replies;
+use question_replies::PreparedQuestionReply;
 mod automatic_turns;
 mod automation_rpc;
 mod background_terminals;

@@ -261,6 +261,35 @@ describe('question answer recovery', () => {
     )
   })
 
+  test.each([false, true])(
+    'restores attachment-only custom mode while preserving explicit option selection (%s)',
+    async explicitOption => {
+      const send = vi.fn().mockResolvedValue(false)
+      render(
+        <RequestUserInputCard
+          payload={{
+            ...payload,
+            questions: [
+              { id: 'details', question: 'Continue?', is_other: true, options: [{ label: 'Yes' }] },
+            ],
+          }}
+          draftAttachments={{ details: [file] }}
+          draftOptionAnswers={explicitOption ? { details: 'Yes' } : undefined}
+          onSubmit={send}
+        />
+      )
+      await waitFor(() => expect(submit()).toBeEnabled())
+      fireEvent.click(submit())
+      await waitFor(() =>
+        expect(send).toHaveBeenCalledWith(
+          expect.objectContaining({
+            answers: { details: { answers: [explicitOption ? 'Yes' : ''], attachments: [file] } },
+          })
+        )
+      )
+    }
+  )
+
   test('preserves both question attachment drafts when uploads finish together', async () => {
     const finish = new Map<string, (file: Attachment) => void>()
     const drafts = vi.fn()

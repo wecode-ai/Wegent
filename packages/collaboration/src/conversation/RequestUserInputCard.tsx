@@ -123,7 +123,13 @@ function RequestUserInputForm({
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({})
   const [customModes, setCustomModes] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(
-      Object.keys(draftOptionAnswers ?? {}).map((id) => [id, false]),
+      questions.flatMap<[string, boolean]>((question) => {
+        if (question.id in (draftOptionAnswers ?? {}))
+          return [[question.id, false]]
+        return question.allowCustom && draftAttachments?.[question.id]?.length
+          ? [[question.id, true]]
+          : []
+      }),
     ),
   )
   const [answerAttachments, setAnswerAttachments] = useState(

@@ -28,7 +28,7 @@ impl RuntimeWorkRpcHandler {
             self.store.update_task(&link.local_task_id, |link| {
                 link.thread_id = Some(thread.clone());
             });
-            return Box::pin(self.send_message_with_activity_checks(payload, activity))
+            return Box::pin(self.send_message_with_activity_checks(payload, activity, None))
                 .await
                 .map(Some);
         }

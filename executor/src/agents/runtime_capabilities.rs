@@ -49,7 +49,7 @@ use crate::services::workbench::archive_hash;
 pub use codex::prepare_codex_runtime;
 pub(crate) use codex::prepare_codex_runtime_locked;
 use skill_archive::{expected_hash, publish_archive};
-pub(crate) use user_input_attachments::prepare_user_input_response;
+pub(crate) use user_input_attachments::{prepare_user_input_response, PreparedUserInputResponse};
 pub(super) use wegent_filesystem::json_file::write_json_file;
 pub(crate) use wegent_mcp_runtime::mcp_environment;
 use wegent_mcp_runtime::toml_encoding::{

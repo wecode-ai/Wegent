@@ -106,7 +106,7 @@ export async function sendRuntimeQueuedMessage(
           queuePosition = response.queuePosition
         },
         onAccepted: response => {
-          if (response.guidanceId) guidanceTurnId = response.turnId
+          if (response.guidanceId) guidanceTurnId = response.turnId ?? response.turn_id
         },
         silentBusyRetry: options.silentBusyRetry,
       }

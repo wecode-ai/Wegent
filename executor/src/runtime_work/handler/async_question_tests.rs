@@ -219,3 +219,125 @@ fn globally_routed_async_question_persists_waiting_until_next_send() {
         .is_none());
     let _ = fs::remove_file(index_path);
 }
+
+#[tokio::test]
+async fn question_file_download_does_not_block_stop_or_deliver_after_stop() {
+    blocking_question_download_race(true).await;
+}
+
+#[tokio::test]
+async fn question_file_download_cannot_buffer_a_duplicate_for_the_next_question() {
+    blocking_question_download_race(false).await;
+}
+
+async fn blocking_question_download_race(stop: bool) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (handler, root) = isolated_runtime_work_handler(if stop {
+        "question-download-stop"
+    } else {
+        "question-download-duplicate"
+    });
+    handler.begin_active_codex_transcript("task", "thread", "turn");
+    let execution_id = start_test_execution(&handler, "task");
+    handler.record_active_codex_turn("task", execution_id, "thread".into(), "turn".into());
+    handler.record_active_codex_transcript_item(
+        "task",
+        "turn",
+        &json!({
+            "id":42,"method":"item/tool/requestUserInput","params":{
+                "threadId":"thread","turnId":"turn","itemId":"question",
+                "questions":[{"id":"q","question":"Continue?","options":[]}]}
+        }),
+    );
+    let (sender, mut receiver) = mpsc::channel(2);
+    handler.active_request_user_inputs.lock().unwrap().insert(
+        "task".into(),
+        ActiveRequestUserInput {
+            execution_id,
+            sender,
+        },
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (started, download_started) = oneshot::channel();
+    let (release, download_release) = oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut headers = Vec::new();
+        while !headers.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let mut buffer = [0; 1024];
+            let count = stream.read(&mut buffer).await.unwrap();
+            assert!(count > 0 && headers.len() < 8192);
+            headers.extend_from_slice(&buffer[..count]);
+        }
+        started.send(()).unwrap();
+        download_release.await.unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nbrief")
+            .await
+            .unwrap();
+    });
+    let file = json!({"id":1,"original_filename":"brief.txt"});
+    let answer = json!({"requestId":42,"interactionScope":"turn","answers":{"q":{"answers":["Yes"],"attachments":[file.clone()]}}});
+    let request = json!({"task_id":"task","subtask_id":"answer","prompt":"","project_workspace_path":root,
+        "auth_token":"test-token","backend_url":format!("http://{address}/api/"),"attachments":[file]});
+    let sending = {
+        let handler = handler.clone();
+        tokio::spawn(async move {
+            handler.send_message(json!({"taskId":"task","message":"Yes","requestUserInputResponse":answer,"executionRequest":request})).await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(3), download_started)
+        .await
+        .unwrap()
+        .unwrap();
+    if stop {
+        let stopped = tokio::time::timeout(
+            Duration::from_secs(1),
+            handler.cancel_task_with_timeout(json!({"taskId":"task"}), Duration::from_millis(100)),
+        )
+        .await;
+        release.send(()).unwrap();
+        assert!(stopped.expect("Stop waited for attachment I/O").unwrap()["success"] == true);
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            empty_request_user_input_response()
+        );
+    } else {
+        let other = json!({"requestId":42,"interactionScope":"turn","answers":{"q":{"answers":["Other answer"]}}});
+        assert_eq!(
+            handler
+                .send_request_user_input_response("task", other.clone(), None)
+                .await
+                .unwrap()["accepted"],
+            true
+        );
+        assert_eq!(receiver.try_recv().unwrap(), other);
+        handler.record_active_codex_transcript_item(
+            "task",
+            "turn",
+            &json!({
+                "id":43,"method":"item/tool/requestUserInput","params":{
+                    "threadId":"thread","turnId":"turn","itemId":"next-question",
+                    "questions":[{"id":"next","question":"Next?","options":[]}]}
+            }),
+        );
+        release.send(()).unwrap();
+    }
+    let result = tokio::time::timeout(Duration::from_secs(3), sending)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_ne!(
+        result["accepted"], true,
+        "stopped or answered question must not receive prepared files"
+    );
+    assert!(
+        receiver.try_recv().is_err(),
+        "a duplicate must not be buffered for the next question"
+    );
+    handler.finish_local_task_execution("task", execution_id);
+    server.await.unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
