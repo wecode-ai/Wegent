@@ -12,10 +12,13 @@ const fixtureTimeoutMs = 10_000
 // within the usual 5-second test budget without changing readiness assertions.
 const processTestTimeoutMs = fixtureTimeoutMs + 5_000
 
-const runningOpenbox = `#!/bin/sh
-echo $$ > "$OPENBOX_TEST_DIR/pid"
-touch "$OPENBOX_TEST_DIR/openbox-started"
-exec node -e 'setInterval(() => {}, 1000)'
+const runningOpenbox = `#!/usr/bin/env node
+const fs = require('node:fs')
+const directory = process.env.OPENBOX_TEST_DIR
+// Native Node cleanup requires process.pid, not an MSYS shell's unrelated $$.
+fs.writeFileSync(directory + '/pid', String(process.pid))
+fs.writeFileSync(directory + '/openbox-started', '')
+setInterval(() => {}, 1000)
 `
 
 const windowManagerProperties = `#!/bin/sh

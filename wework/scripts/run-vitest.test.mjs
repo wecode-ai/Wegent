@@ -68,8 +68,27 @@ test('the compact scripts suite covers every previous hook file with the same te
   assert.ok([process.execPath, ...commands[1].args].join(' ').length < 32767)
   assert.ok(!commands[0].args.includes('--exclude'))
   const hook = readFileSync(resolve(root, '../scripts/hooks/ai-push-gate.sh'), 'utf8')
-  assert.match(hook, /pnpm --filter wework test --suite=scripts/)
+  assert.match(
+    hook,
+    /pnpm --filter wework test --suite=scripts \\\s+--maxWorkers "\$\{WEWORK_PRE_PUSH_SCRIPT_TEST_WORKERS:-2\}"/
+  )
   assert.ok(!hook.includes('SCRIPT_TEST_FILES'))
+
+  for (const workers of ['1', '2']) {
+    const configured = createTestCommandPlan(root, ['--suite=scripts', '--maxWorkers', workers])
+    assert.deepEqual(configured[0], {
+      command: 'vitest',
+      args: [...commands[0].args, '--maxWorkers', workers],
+    })
+    assert.deepEqual(configured[1], commands[1])
+    const configuredWindowsCommand = wrapWindowsScriptCommand('vitest.cmd', configured[0].args, {
+      platform: 'win32',
+    })
+    assert.ok(
+      [configuredWindowsCommand.command, ...configuredWindowsCommand.args].join(' ').length < 8191
+    )
+    assert.ok(`pnpm --filter wework test --suite=scripts --maxWorkers ${workers}`.length < 8191)
+  }
 })
 
 test('default and focused commands preserve every engine without expanding exclusions on the command line', async () => {

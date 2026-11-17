@@ -320,6 +320,7 @@ run_wework_unit_tests() {
     if [ "$WEWORK_SCRIPTS_CHANGED" -eq 1 ]; then
         echo -e "   Running Wework script unit tests..."
         if ! pnpm --filter wework test --suite=scripts \
+            --maxWorkers "${WEWORK_PRE_PUSH_SCRIPT_TEST_WORKERS:-2}" \
             >> "$TEMP_DIR/wework_test.log" 2>&1; then
             test_exit=1
         fi

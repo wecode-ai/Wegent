@@ -1532,12 +1532,14 @@ export function CloudTodoWorkspace({
   const isExternalGitBoard =
     selectedProject?.task_provider === 'github' || selectedProject?.task_provider === 'gitlab'
   const usesSharedCloudBoard = selectedProject?.location === 'cloud'
+  const snapshotApi =
+    selectedProjectLocation === 'local' ? localProjectManageApi : cloudWorkspaceApi
   const snapshotScope = useMemo(
     () =>
       selectedProjectKey
-        ? { projectKey: selectedProjectKey, api: cloudWorkspaceApi, userId: user.id }
+        ? { projectKey: selectedProjectKey, api: snapshotApi, userId: user.id }
         : null,
-    [cloudWorkspaceApi, selectedProjectKey, user.id]
+    [selectedProjectKey, snapshotApi, user.id]
   )
   const projectSnapshot = useProjectSnapshotRefresh({
     scope: snapshotScope,
@@ -4836,6 +4838,11 @@ export function CloudTodoWorkspace({
                                 testId: 'cloud-project-settings-automatic-processing',
                                 content: (
                                   <ProjectAutomaticProcessing
+                                    onProjectChange={updated => {
+                                      if (snapshotWriteGuardRef.current.scope !== snapshotScope)
+                                        return
+                                      replaceProject(selectedProject, updated as CloudProject)
+                                    }}
                                     api={
                                       selectedProject.location === 'cloud'
                                         ? cloudWorkspaceApi!

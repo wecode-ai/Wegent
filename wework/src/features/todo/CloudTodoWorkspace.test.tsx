@@ -840,6 +840,130 @@ describe('CloudTodoWorkspace', () => {
     )
   })
 
+  it.each(['current scope', 'replaced API scope'] as const)(
+    'refreshes the project after saving automatic processing in the %s',
+    async scope => {
+      const workbenchServices = services()
+      const api = workbenchServices.sharedWorkspaceApi!
+      const initialProject = { ...project, tags: [] }
+      const updatedProject = {
+        ...initialProject,
+        name: 'Saved automatic processing',
+        version: 2,
+        tags: ['review'],
+        board_views: {
+          schema_version: 1 as const,
+          default_view_id: 'review',
+          views: [
+            {
+              id: 'review',
+              name: 'Review stages',
+              columns: [{ id: 'review', type: 'tag' as const, value: 'review' }],
+            },
+          ],
+        },
+      }
+      const rule = {
+        id: 'rule-1',
+        projectId: project.id,
+        name: 'Process new Issues',
+        prompt: 'Process the Issue',
+        triggerType: 'event' as const,
+        eventType: 'task.created' as const,
+        eventConfig: {},
+        cronExpression: null,
+        timezone: 'Asia/Shanghai',
+        executionDeviceId: null,
+        targetKind: 'human' as const,
+        targetId: '1',
+        targetName: 'local',
+        enabled: true,
+        nextRunAt: null,
+        lastRunAt: null,
+        lastRunStatus: null,
+        version: 1,
+        createdAt: project.created_at,
+        updatedAt: project.updated_at,
+      }
+      vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
+        items: [{ ...item, tags: [] }],
+      })
+      const getProject = vi.spyOn(api.projects, 'get').mockResolvedValue(initialProject)
+      vi.spyOn(api.automations!, 'list').mockResolvedValue([rule])
+      const updateRule = vi
+        .spyOn(api.automations!, 'update')
+        .mockResolvedValue({ ...rule, enabled: false, version: 2 })
+      const props = {
+        user: { id: 1, user_name: 'local' } as User,
+        localProjects: [],
+        services: workbenchServices,
+        activeProjectRef: { projectStore: 'backend' as const, projectId: project.id },
+      }
+      const page = render(<CloudTodoWorkspace {...props} />)
+      await screen.findByTestId(`cloud-todo-card-${item.id}`)
+      await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
+      await userEvent.click(screen.getByTestId('cloud-project-settings-automatic-processing'))
+      await screen.findByTestId('automatic-processing-enabled-rule-1')
+      await waitFor(() =>
+        expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+          'data-sync-state',
+          'fresh'
+        )
+      )
+      const readsBeforeSave = getProject.mock.calls.length
+      let resolveOldProject: ((value: typeof updatedProject) => void) | undefined
+      if (scope === 'current scope') getProject.mockResolvedValue(updatedProject)
+      else
+        getProject.mockImplementation(
+          () =>
+            new Promise(resolve => {
+              resolveOldProject = resolve
+            })
+        )
+
+      await userEvent.click(screen.getByTestId('automatic-processing-enabled-rule-1'))
+      expect(updateRule).toHaveBeenCalledWith(
+        project.id,
+        rule.id,
+        expect.objectContaining({ enabled: false, version: 1 })
+      )
+      await waitFor(() => expect(getProject).toHaveBeenCalledTimes(readsBeforeSave + 1))
+
+      if (scope === 'current scope') {
+        await waitFor(() =>
+          expect(screen.getByTestId('cloud-sidebar-project-11')).toHaveTextContent(
+            updatedProject.name
+          )
+        )
+        await userEvent.click(screen.getByTestId('cloud-project-board-view'))
+        expect(await screen.findByTestId('cloud-todo-column-review')).toBeInTheDocument()
+        expect(screen.queryByTestId('cloud-todo-column-in_progress')).not.toBeInTheDocument()
+      } else {
+        const replacementServices = services()
+        const replacementProject = { ...initialProject, name: 'Replacement API project' }
+        vi.mocked(replacementServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+          items: [replacementProject],
+        })
+        vi.spyOn(replacementServices.sharedWorkspaceApi!.projects, 'get').mockResolvedValue(
+          replacementProject
+        )
+        page.rerender(<CloudTodoWorkspace {...props} services={replacementServices} />)
+        await waitFor(() =>
+          expect(screen.getByTestId('cloud-sidebar-project-11')).toHaveTextContent(
+            replacementProject.name
+          )
+        )
+        await act(async () => resolveOldProject!(updatedProject))
+        expect(screen.getByTestId('cloud-sidebar-project-11')).toHaveTextContent(
+          replacementProject.name
+        )
+        expect(screen.getByTestId('cloud-sidebar-project-11')).not.toHaveTextContent(
+          updatedProject.name
+        )
+      }
+    }
+  )
+
   it('opens the requested Issue after a parent rerender cancels the pending focus effect', async () => {
     const workbenchServices = services()
     vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
