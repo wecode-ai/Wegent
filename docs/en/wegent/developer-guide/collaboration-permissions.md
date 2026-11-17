@@ -16,10 +16,13 @@ flowchart TD
     Public --> Receipt{Current assignment and Runtime turn match}
     Receipt -->|Yes| Complete[Update current assignment receipt]
     Receipt -->|No| History[Retain public reply and assignment state]
-    Public --> Trace{Source read permission}
+    Public --> Read[Client reads current viewer message by sequence with authorization]
+    Read --> Trace{Source read permission}
     Trace -->|Owner or canonical project execution| Scoped[Authorized source entry]
     Trace -->|Another owner's private assistant| Restricted[Summary and restricted state only]
 ```
+
+A restricted source notification from a shared room is not the current viewer's message view. The client reads that message by sequence through the existing subscription history endpoint, which revalidates project, Issue and source access. Only a response matching the message and subscription scope can update the source entry. Responses after unsubscribe and older responses superseded by a newer notification are discarded. A failed authorized read retains the received public projection and logs the error; bindings never imply private access.
 
 Manual source starts use the host snapshot's existing `origin.manual` and exact `standInSourceBindings`. Transient confirmation flags confer no durable authorization, and later arrivals cannot reuse the grant. Disabling automation does not block authorized manual workers or their completion reports. Queue admission revalidates the original message grant, source, identity and configuration version while retaining native confirmation. Automatic workers still require enabled role and source policies; revoking the binding blocks both workers and reports. Native manual-start, snapshot and source-task admission regressions protect these boundaries. CP01–CP20 remain unchanged.
 

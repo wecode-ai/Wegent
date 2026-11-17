@@ -1321,6 +1321,8 @@ async function main() {
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
         executeDatabase: (sql, params) => cloudEnvironment.executeDatabase(sql, params),
+        executeDatabaseTransaction: statements =>
+          cloudEnvironment.executeDatabaseTransaction(statements),
         queryDatabase: (sql, params) => cloudEnvironment.queryDatabase(sql, params),
         publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),

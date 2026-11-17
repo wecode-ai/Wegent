@@ -446,6 +446,7 @@ export function createBoardReplyModelRegression({
         const [replyRun] = await readPersistedExecutions(cloud, issue.id, [REPLY], uiTimeoutMs)
         assert.deepEqual(replyRun.runtimeAddress, initialRun.runtimeAddress)
         await verifyExecutionDetail(control, scope, replyRun, `${REPLY}_DONE`, uiTimeoutMs)
+        await control.command('scrollIntoView', initialBadge)
         await control.command('waitFor', `${initialBadge}[data-status="succeeded"]`, {
           timeoutMs: uiTimeoutMs,
         })

@@ -240,6 +240,13 @@ export async function verifyCollaborationExpPrivateMessage({
     control,
     `${testId('collaboration-exp-private-conversation')} [data-testid="send-message-button"]`
   )
+  const submitted = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  console.info(
+    '[collaboration-exp-private-submit]',
+    submitted.logs
+      .filter(entry => entry.args.some(value => String(value).includes('private conversation')))
+      .map(entry => entry.args)
+  )
   await waitForRunningRuntimeTask(
     async taskId => {
       const response = await rpc('runtime.tasks.get', { taskId })

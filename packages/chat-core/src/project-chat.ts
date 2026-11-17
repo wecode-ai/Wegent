@@ -183,6 +183,10 @@ export function createProjectChatClient(
     logger: console,
   })
   const subscriptionLeases = new Map<string, number>()
+  const leaveUnusedRoom = (projectId: string, taskId?: string) => {
+    if (!subscriptionLeases.has(JSON.stringify([projectId, taskId ?? null])))
+      client.socket.emit(UNSUBSCRIBE_EVENT, { projectId, taskId })
+  }
 
   const acquireSubscriptionLease = (projectId: string, taskId?: string) => {
     const key = JSON.stringify([projectId, taskId ?? null])
@@ -197,7 +201,7 @@ export function createProjectChatClient(
         return
       }
       subscriptionLeases.delete(key)
-      client.socket.emit(UNSUBSCRIBE_EVENT, { projectId, taskId })
+      leaveUnusedRoom(projectId, taskId)
     }
   }
 
@@ -216,11 +220,45 @@ export function createProjectChatClient(
         taskId,
       )
       let subscribed = false
+      let active = true
+      const revisions = new Map<string, number>()
       const handler = (message: ProjectChatMessage) => {
         if (message.projectId !== projectId) return
         if (taskId && message.taskId !== taskId) return
         if (!taskId && message.taskId) return
+        const revision = (revisions.get(message.messageId) ?? 0) + 1
+        revisions.set(message.messageId, revision)
         onMessage(message)
+        if (!message.traceRef || message.traceState !== 'restricted') return
+        // Room projections contain no private source. Resolve this viewer's
+        // view through the existing permission-checked history read.
+        void emitWithAck<ProjectChatSubscription>(client, SUBSCRIBE_EVENT, {
+          projectId,
+          taskId,
+          afterSequence: message.sequenceNumber - 1,
+          limit: 1,
+        })
+          .then((snapshot) => {
+            if (!active) {
+              leaveUnusedRoom(projectId, taskId)
+              return
+            }
+            if (revisions.get(message.messageId) !== revision) return
+            const resolved = snapshot.messages.find(
+              (row) =>
+                row.messageId === message.messageId &&
+                row.projectId === projectId &&
+                (row.taskId ?? undefined) === taskId,
+            )
+            if (resolved) onMessage(resolved)
+          })
+          .catch((error) => {
+            if (active)
+              console.warn(
+                '[Wework] Failed to resolve project chat source',
+                error,
+              )
+          })
       }
       const chunkHandler = (message: ProjectChatMessage) => {
         if (message.projectId !== projectId) return
@@ -262,6 +300,7 @@ export function createProjectChatClient(
         return {
           snapshot,
           unsubscribe: () => {
+            active = false
             client.socket.off(CREATED_EVENT, handler)
             client.socket.off(AGENT_CHUNK_EVENT, chunkHandler)
             client.socket.off('connect', reconnectHandler)
@@ -269,6 +308,7 @@ export function createProjectChatClient(
           },
         }
       } catch (error) {
+        active = false
         client.socket.off(CREATED_EVENT, handler)
         client.socket.off(AGENT_CHUNK_EVENT, chunkHandler)
         client.socket.off('connect', reconnectHandler)

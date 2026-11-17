@@ -688,6 +688,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await selectMilestone(control, localId, 'milestone-filter')
       await openMilestones(control)
+      await control.command('clickWhenEnabled', scoped('milestones-back'))
       await deleteMilestone(control, localId)
       await captureScreenshot(control, 'milestones-09-local-deleted.png', 'body')
       await selectCollaborationProjectView(control, CONTENT, 'board')
