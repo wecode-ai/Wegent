@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -303,6 +304,7 @@ class IssueAssignmentService:
         issue_id: str,
         assignment_id: str,
         user_id: int,
+        stage_metadata: dict[str, Any] | None = None,
     ) -> AssignmentEvent:
         """Validate the resulting owner before recording a public unassignment."""
         from app.services.stage_assignee_mutations import effective_assignee, lock_issue
@@ -321,10 +323,11 @@ class IssueAssignmentService:
         if not any(event.id == str(assignment_id) for event in active):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")
         remaining = [event for event in active if event.id != str(assignment_id)]
+        metadata = stage_metadata if stage_metadata is not None else item.metadata_json
         target_type, target_id = effective_assignee(
             item,
             self._legacy_assignment_values(db, remaining),
-            item.metadata_json or {},
+            metadata or {},
         )
         validate_stage_assignee(
             db,
@@ -332,6 +335,7 @@ class IssueAssignmentService:
             item=item,
             assignee_type=target_type,
             assignee_id=target_id,
+            metadata=metadata,
             actor_user_id=user_id,
         )
         assignment = self.remove(

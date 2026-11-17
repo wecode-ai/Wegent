@@ -53,6 +53,10 @@ from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
 from app.services.loop_items.change_requests import persist_external_badge_source
+from app.services.loop_items.external_assignment_constraints import (
+    external_assignment_item,
+    validate_external_assignment,
+)
 from app.services.loop_items.task_bindings import (
     owned_binding_cancellation_targets,
     uncovered_binding_cancellation_targets,
@@ -1272,6 +1276,24 @@ class ExternalLoopItemProvider:
             instruction=instruction,
         )
 
+    def assignment_stage_context(
+        self, db: Session, item_id: str, user_id: int
+    ) -> tuple[CloudProject, LoopItem]:
+        """Read the current remote phase before any assignment-side effects."""
+        project, number = self._resolve_project(db, item_id)
+        access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
+        current = self._get_issue(project, number)
+        values = self._response(db, project, current, access, user_id)
+        if not values["can_view_detail"]:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        require_issue_action(
+            access,
+            action=IssueAction.ASSIGN,
+            issue_creator_user_id=self._creator_id(self._labels(current)),
+            user_id=user_id,
+        )
+        return project, external_assignment_item(db, project=project, values=values)
+
     def assign(
         self,
         db: Session,
@@ -1299,6 +1321,20 @@ class ExternalLoopItemProvider:
             access,
             action=IssueAction.ASSIGN,
             issue_creator_user_id=self._creator_id(current_labels),
+            user_id=user_id,
+        )
+        stage_item = external_assignment_item(
+            db,
+            project=project,
+            values=self._response(db, project, current, access, user_id),
+        )
+        validate_external_assignment(
+            db,
+            project=project,
+            item=stage_item,
+            assignee_type=values.assignee_type,
+            assignee_id=values.assignee_id,
+            workflow_step=values.workflow_step,
             user_id=user_id,
         )
         previous_assignee = self._assignee_from_labels(current_labels)
