@@ -1,3 +1,4 @@
+import { e2eErrorLog } from './e2e-error-log.js'
 import type { WebContents } from 'electron'
 import { describe, expect, test, vi } from 'vitest'
 import { sendE2EKey, sendE2EText } from './e2e-keyboard.js'
@@ -268,4 +269,53 @@ describe('isolated native keyboard verification', () => {
       expect(focusWindow).not.toHaveBeenCalled()
     }
   )
+})
+
+test('records each native input phase without recording text content', async () => {
+  const { view, contents, focusWindow } = fixture()
+  let clock = 0
+  const now = vi.spyOn(performance, 'now').mockImplementation(() => clock)
+  const journal = vi.spyOn(e2eErrorLog, 'record').mockImplementation(() => undefined)
+  view.insertText.mockImplementation(async () => {
+    clock += 5
+  })
+  view.executeJavaScript.mockImplementation(async () => {
+    clock += 20
+  })
+  try {
+    await sendE2EText(contents, 'synthetic-secret\nsecond', focusWindow, environment)
+    const stopped = journal.mock.calls.find(call => call[1] === 'native-text-stopped')
+    expect(stopped?.[3]).toMatchObject({
+      completedLines: 2,
+      lineCount: 2,
+      frameCount: 3,
+      frameWaitMs: 60,
+      insertTextMs: 10,
+      elapsedMs: 70,
+    })
+    expect(journal.mock.calls.filter(call => call[1] === 'native-text-progress')).toHaveLength(2)
+    expect(JSON.stringify(journal.mock.calls)).not.toContain('synthetic-secret')
+  } finally {
+    journal.mockRestore()
+    now.mockRestore()
+  }
+})
+
+test('retains native input timing and the original insertion failure', async () => {
+  const { view, contents, focusWindow } = fixture()
+  const error = new Error('native insertion rejected')
+  view.insertText.mockRejectedValueOnce(error)
+  const journal = vi.spyOn(e2eErrorLog, 'record').mockImplementation(() => undefined)
+  try {
+    await expect(sendE2EText(contents, 'first\nsecond', focusWindow, environment)).rejects.toBe(
+      error
+    )
+    expect(journal.mock.calls.find(call => call[1] === 'native-text-stopped')?.[3]).toMatchObject({
+      completedLines: 0,
+      lineCount: 2,
+      frameCount: 0,
+    })
+  } finally {
+    journal.mockRestore()
+  }
 })

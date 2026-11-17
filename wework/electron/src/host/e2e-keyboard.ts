@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { e2eErrorLog } from './e2e-error-log.js'
 import type { KeyboardInputEvent, WebContents } from 'electron'
 import { HostCapabilityError } from './capability-router.js'
 
@@ -105,19 +107,63 @@ export async function sendE2EText(
   // Chromium's insertText truncates multiline text in structured editors.
   // Keep native Enter events, but avoid a renderer/host round trip per line.
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
-  const commitEdit = () =>
-    contents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => resolve()))')
-  for (const [index, line] of lines.entries()) {
-    requireAvailableContents(contents)
-    if (index > 0) {
-      await sendE2EKey(contents, 'Enter', focusWindow, environment, 'press', false)
-      // Enter must move the structured editor's selection before text insertion.
-      await commitEdit()
+  const batchId = randomUUID()
+  const startedAt = performance.now()
+  const timing = {
+    completedLines: 0,
+    frameCount: 0,
+    frameWaitMs: 0,
+    insertTextMs: 0,
+    keyDispatchMs: 0,
+  }
+  const record = (type: string) =>
+    e2eErrorLog.record('main', type, 'info', {
+      batchId,
+      webContentsId: contents.id,
+      lineCount: lines.length,
+      textLength: text.length,
+      elapsedMs: performance.now() - startedAt,
+      ...timing,
+    })
+  const commitEdit = async () => {
+    const startedAt = performance.now()
+    try {
+      await contents.executeJavaScript(
+        'new Promise(resolve => requestAnimationFrame(() => resolve()))'
+      )
+    } finally {
+      timing.frameWaitMs += performance.now() - startedAt
+      timing.frameCount += 1
     }
-    if (line || lines.length === 1) {
-      await contents.insertText(line)
-      if (lines.length > 1) await commitEdit()
+  }
+  record('native-text-started')
+  try {
+    for (const [index, line] of lines.entries()) {
+      requireAvailableContents(contents)
+      if (index > 0) {
+        const startedAt = performance.now()
+        try {
+          await sendE2EKey(contents, 'Enter', focusWindow, environment, 'press', false)
+        } finally {
+          timing.keyDispatchMs += performance.now() - startedAt
+        }
+        // Enter must move the structured editor's selection before text insertion.
+        await commitEdit()
+      }
+      if (line || lines.length === 1) {
+        const startedAt = performance.now()
+        try {
+          await contents.insertText(line)
+        } finally {
+          timing.insertTextMs += performance.now() - startedAt
+        }
+        if (lines.length > 1) await commitEdit()
+      }
+      timing.completedLines = index + 1
+      record('native-text-progress')
     }
+  } finally {
+    record('native-text-stopped')
   }
   return { backend: 'electron-insert-text', textLength: text.length }
 }
