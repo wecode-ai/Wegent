@@ -1,6 +1,9 @@
 #include <assert.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "fs/fd.h"
 #include "fs/real.h"
 #include "fs/path.h"
@@ -21,10 +24,51 @@ static bool exists(const char *path) {
     return generic_statat(AT_PWD, path, &stat, false) == 0;
 }
 
+static void executor_upgrade(void) {
+    const char *binary = "/opt/wegent-executor";
+    const char *temporary = "/opt/.wegent-executor-update";
+    const char *retained = "/root/upgrade-retained.txt";
+    write_file(retained);
+    char source[] = "/tmp/wework-executor-upgrade-XXXXXX";
+    int file = mkstemp(source);
+    assert(file >= 0 && write(file, "upgraded", 8) == 8 && close(file) == 0);
+    struct statbuf original, stat;
+    assert(generic_statat(AT_PWD, binary, &original, false) == 0);
+    ish_host_task_enter();
+    assert(ww_runtime_replace_executor_file(source) == _EBUSY);
+    ish_host_task_leave();
+    assert(ww_runtime_replace_executor_file("/no-such-upgrade-file") < 0);
+    assert(generic_symlinkat(retained, AT_PWD, temporary) == 0);
+    assert(ww_runtime_replace_executor_file(source) < 0);
+    assert(exists(retained));
+    assert(generic_unlinkat(AT_PWD, temporary) == 0);
+    assert(generic_renameat(AT_PWD, binary, AT_PWD, "/opt/previous-executor") == 0);
+    assert(generic_symlinkat(retained, AT_PWD, binary) == 0);
+    assert(ww_runtime_replace_executor_file(source) < 0);
+    assert(generic_unlinkat(AT_PWD, binary) == 0);
+    assert(generic_renameat(AT_PWD, "/opt/previous-executor", AT_PWD, binary) == 0);
+    assert(generic_statat(AT_PWD, binary, &stat, false) == 0 && stat.inode == original.inode);
+    // A previous interrupted copy is owned staging, never the active program.
+    write_file(temporary);
+    assert(ww_runtime_replace_executor_file(source) == 0);
+    assert(!exists(temporary) && exists(retained));
+    struct fd *fd = generic_open(binary, O_RDONLY_, 0);
+    assert(!IS_ERR(fd));
+    char contents[8];
+    assert(fd->ops->read(fd, contents, sizeof(contents)) == 8);
+    assert(memcmp(contents, "upgraded", 8) == 0);
+    assert(fd_close(fd) == 0);
+    assert(generic_statat(AT_PWD, binary, &stat, false) == 0 && (stat.mode & 0777) == 0755);
+    assert(ww_runtime_replace_executor_file(source) == 0);
+    assert(unlink(source) == 0);
+    puts("PASS native executor upgrade: idle-only, preserved inode on failure, symlink rejection, interrupted staging, guest metadata, permissions, and repeat");
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2);
     assert(mount_root(&fakefs, argv[1]) == 0);
     assert(become_first_process() == 0);
+    executor_upgrade();
     const char *home = "/root/.wework-codex";
     assert(ww_runtime_clean_catalogs() == 0);
     assert(generic_mkdirat(AT_PWD, home, 0700) == 0);

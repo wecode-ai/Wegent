@@ -1,9 +1,18 @@
-import CryptoKit
 import ExpoModulesCore
 import Foundation
 import Network
 import OSLog
 import UIKit
+
+private final class RuntimeNativeException: Exception, @unchecked Sendable {
+  private let summary: String
+  override var reason: String { summary }
+
+  init(_ failure: RuntimeFailure) {
+    summary = failure.message
+    super.init(name: failure.code, description: failure.message, code: failure.code)
+  }
+}
 
 struct RuntimeFailure: Error {
   let code: String
@@ -13,7 +22,7 @@ struct RuntimeFailure: Error {
     self.code = code; self.message = message; self.details = details
   }
   func reject(_ promise: Promise) {
-    let exception = Exception(name: code, description: message, code: code)
+    let exception = RuntimeNativeException(self)
     exception.cause = NSError(domain: "WeworkLocalRuntime", code: 1,
       userInfo: details.merging([NSLocalizedDescriptionKey: message]) { _, new in new })
     promise.reject(exception)
@@ -224,8 +233,9 @@ final class LocalRuntimeSupervisor {
             }
           }
         } catch {
+          let failure = (error as? RuntimeFailure) ?? RuntimeFailure("runtime_prepare", error.localizedDescription)
           self.queue.async {
-            self.failed((error as? RuntimeFailure)?.message ?? error.localizedDescription)
+            self.failed(failure.message, startupFailure: failure)
           }
         }
       }
@@ -251,10 +261,6 @@ final class LocalRuntimeSupervisor {
 
   private func prepare(scope: String) throws -> URL {
     guard let resources else { throw RuntimeFailure("runtime_unavailable", "本机资源缺失") }
-    let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: resources.appendingPathComponent("manifest.json"))) as? [String: Any]
-    guard let expected = manifest?["rootfsSha256"] as? String else {
-      throw RuntimeFailure("runtime_manifest", "本机资源清单无效")
-    }
     let root = try RuntimeProfiles.accountsDirectory(in: RuntimeProfiles.applicationSupport(create: true))
       .appendingPathComponent(scope, isDirectory: true)
     let attributes: [FileAttributeKey: Any] = [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
@@ -266,33 +272,21 @@ final class LocalRuntimeSupervisor {
     } catch {
       if RuntimeDiagnostics.shared.isEnabled { logger.error("Obsolete diagnostic cleanup failed") }
     }
-    let guest = root.appendingPathComponent("guest")
-    let stamp = root.appendingPathComponent("runtime-version")
-    if FileManager.default.fileExists(atPath: guest.path) {
-      guard (try? String(contentsOf: stamp, encoding: .utf8)) == expected else {
-        throw RuntimeFailure("runtime_version", "本机环境版本不匹配，需要迁移后才能启动")
+    try RuntimeImageInstaller.prepare(root: root, resources: resources, extract: { archive, staging in
+      let result = archive.path.withCString { archivePath in
+        staging.path.withCString { ww_runtime_prepare(archivePath, $0) }
       }
-      return root
-    }
-    let archive = resources.appendingPathComponent("runtime-rootfs.tar.gz")
-    let file = try FileHandle(forReadingFrom: archive)
-    defer { try? file.close() }
-    var hash = SHA256()
-    while let chunk = try file.read(upToCount: 1024 * 1024), !chunk.isEmpty { hash.update(data: chunk) }
-    guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == expected else {
-      throw RuntimeFailure("runtime_integrity", "本机资源校验失败")
-    }
-    let staging = root.appendingPathComponent("install-\(UUID().uuidString)")
-    let result = archive.path.withCString { archivePath in
-      staging.path.withCString { ww_runtime_prepare(archivePath, $0) }
-    }
-    guard result == 0 else {
-      try? FileManager.default.removeItem(at: staging)
-      throw RuntimeFailure("runtime_install", "本机环境解压失败（\(result)）")
-    }
-    try FileManager.default.setAttributes(attributes, ofItemAtPath: staging.path)
-    try FileManager.default.moveItem(at: staging, to: guest)
-    try Data(expected.utf8).write(to: stamp, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+      guard result == 0 else {
+        throw RuntimeFailure("runtime_install", "本机环境解压失败（\(result)）")
+      }
+    }, replaceExecutor: { data, binary in
+      let result = data.path.withCString { dataPath in
+        binary.path.withCString { ww_runtime_replace_executor(dataPath, $0) }
+      }
+      guard result == 0 else {
+        throw RuntimeFailure("runtime_upgrade", "本机执行程序升级失败（\(result)），现有数据已保留")
+      }
+    })
     return root
   }
 
@@ -500,10 +494,10 @@ final class LocalRuntimeSupervisor {
     } catch { completion(.failure(RuntimeFailure("invalid_request", "请求无法序列化"))) }
   }
 
-  private func failed(_ message: String) {
+  private func failed(_ message: String, startupFailure: RuntimeFailure? = nil) {
     if RuntimeDiagnostics.shared.isEnabled { logger.error("Runtime failed previousState=\(self.state, privacy: .public) generation=\(self.generation, privacy: .public) pending=\(self.pending.count, privacy: .public) sequence=\(self.journal.sequence, privacy: .public)") }
     state = "failed"; failure = message
-    startup.map { RuntimeFailure("runtime_start", message).reject($0) }; startup = nil
+    startup.map { (startupFailure ?? RuntimeFailure("runtime_start", message)).reject($0) }; startup = nil
     let callbacks = pending.values; pending.removeAll()
     workRequests.removeAll()
     for callback in callbacks { callback.completion(.failure(RuntimeFailure("runtime_failed", message))) }

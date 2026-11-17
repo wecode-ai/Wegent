@@ -68,6 +68,43 @@ PC 依据：`wework/electron/src/host/system-sleep-controller.ts` 及对应测�
   不包含 AOT 镜像、Minis offload 或 FFmpeg。Linux namespaces/seccomp 不可用，
   受限 Linux 沙盒请求明确拒绝，不能静默升级权限。
 
+## 已安装环境升级
+
+程序更新沿用 PC 的组件校验、停止后准备、持久数据保留原则，参考
+`wework/electron/src/runtime/component-update-manager.ts`、`release-after-stop-target.ts`
+及其对应测试。Mobile 的 fakefs 是平台适配边界；不改变 executor RPC、账号或项目所有权。
+
+```mermaid
+flowchart TD
+  S[Supervisor stopped / no process] --> V[Read delivered manifest and installed image record]
+  V --> N{Guest root exists?}
+  N -->|No| F[Verify archive / extract / verify executor / publish fresh guest]
+  N -->|Yes| B[Require identical base image and a recognized installed executor]
+  B --> H{Executor hash matches target?}
+  H -->|No| P[Verify archive and staged executor]
+  P --> O[Kernel owner: require zero guest threads / mount existing root]
+  O --> R[Write app-owned temporary executable / fsync / guest rename]
+  R --> C[Verify installed executor / atomically commit image record]
+  H -->|Yes| C
+  C --> E[Launch delivered executor in the same guest root]
+  F --> E
+```
+
+`runtime-version` 从旧的归档哈希升级为一个原子 JSON 记录，包含归档、基础系统和 executor
+哈希。已分发的两个旧归档有显式的不可变身份记录；它们包含相同的 1,286 个成员，除
+`opt/wegent-executor` 外的路径、内容和权限相同。不会把未知版本当作兼容环境。
+基础系统未变化时，仅通过 guest 文件 API 替换 `/opt/wegent-executor`，不移动、合并或
+重建用户环境，不修改项目、会话、模型配置、Codex 凭据或 fakefs 数据库结构。
+升级要求所有 guest 线程退出；程序替换后、版本记录提交前中断，下一次启动可校验并完成。
+基础系统不兼容、程序被用户修改、符号链接或完整性错误均隔离在本机启动，保留数据。
+此流程不宣称支持任意基础 Linux 系统升级。
+
+`RuntimeImageInstallerTests.swift` 覆盖新装、原地升级、数据保留、替换前后中断恢复、
+旧哈希记录、损坏归档/程序、未知版本及符号链接。可使用
+`scripts/test-local-runtime-upgrade.py` 指定旧版和新版资源、锁定 iSH 源码及 macOS ARM64
+静态库，验证实际 fakefs 迁移、字节级用户数据保留、executor.ready、health 和重启。
+该集成验证使用临时合成数据，不访问模型或真实凭据，也不代替 TestFlight 真机验收。
+
 ## 构建
 
 先通过 `scripts/prepare-ish-source.py` 准备锁定源代码。所有大文件和构建目录放在仓库外。
@@ -171,8 +208,7 @@ fraction 为 0 并判为 stalled，一次测试进入后台约 20 秒后过期�
 随后停止/重启健康检查通过。独立纯前台探针持续 45.088 秒，严格记录
 `backgroundTransitions=0`、exit 0，真实文件/Git 操作正常且未被误取消。
 真实模型、产品任务流式和产品取消全流程不能沿用上述原生探针结论。
-锁屏任务仍未验证。已有账号环境的 rootfs 版本不匹配时
-会明确要求迁移；当前不会覆盖或删除旧环境，尚未提供跨版本迁移。
+锁屏任务仍未验证。已安装环境的程序升级边界见上文；基础 Linux 系统升级仍需独立迁移方案。
 
 # Native on-device runtime
 
@@ -227,3 +263,13 @@ write), then passed native shutdown/restart checks. A separate foreground probe 
 after 45.088 seconds with `backgroundTransitions=0`, exit 0, and real file/Git operations,
 without premature cancellation. Model execution, product task streaming/cancellation, and
 lock-screen behavior still need their own evidence.
+
+Installed images now store archive, base-system and executor hashes in one atomic record.
+The recognized legacy archives share the same base and differ only in the executor.
+After all guest threads stop, the host verifies the delivered payload and replaces only
+`/opt/wegent-executor` through the guest filesystem, preserving the existing root and all
+user data. An interrupted replacement is completed idempotently on the next start. Unknown
+images, changed base systems, modified executors and symlink conflicts fail visibly without
+deleting data. This does not implement arbitrary Linux base-image upgrades. The native unit
+and real fakefs integration runners above cover the supported upgrade and recovery paths;
+TestFlight device acceptance remains separate.
