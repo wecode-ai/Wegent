@@ -5,6 +5,7 @@ import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { withProjectRenderer } from './project-create-test-utils.mjs'
 import { assertModelAccessibilityIsolation } from './project-create-accessibility.mjs'
 import { verifyReasoningSliderAccessibility } from './project-create-reasoning-slider.mjs'
+import { assertProjectKeyboardFocus } from './project-create-focus-indicator.mjs'
 
 const MENU = '[data-testid="model-selector-menu"]'
 
@@ -42,12 +43,41 @@ async function readModelDialog() {
             focusedInside: dialog.contains(document.activeElement),
             focusedIndex: focusable.indexOf(document.activeElement),
             focusable: focusable.map(selector),
-            radios: radios.map(element => ({ selector: selector(element), checked: element.getAttribute('aria-checked') === 'true', tabIndex: element.tabIndex })) }
+            radios: radios.map(element => ({ selector: selector(element), checked: element.getAttribute('aria-checked') === 'true', tabIndex: element.tabIndex,
+              preset: element.hasAttribute('data-model-preset') })) }
         })()`,
       },
     })
     return result.result?.value
   })
+}
+
+async function openAdvancedModels(control) {
+  if ((await control.command('getAttribute', MENU, { value: 'data-panel' })) === 'simple')
+    await control.command('clickWhenEnabled', `${MENU} [data-testid="model-advanced-toggle"]`)
+  return waitForValue(
+    readModelDialog,
+    value => value?.focusedInside && value.radios.length > 0,
+    'Advanced models must retain focus inside their dialog',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+}
+
+async function verifyFixedModelRowFocus(control) {
+  let state = await openAdvancedModels(control)
+  const row = state.radios.find(radio => !radio.preset)
+  assert.ok(row, 'The generation catalog must expose a fixed-model radio')
+  // Select the fixture first, then enter its roving tab stop through a real Tab.
+  await control.command('scrollIntoView', row.selector)
+  await control.command('clickWhenEnabled', row.selector)
+  state = await openAdvancedModels(control)
+  const selected = state.radios.find(radio => radio.checked && !radio.preset)
+  assert.ok(selected, 'The chosen model row must become the selected radio')
+  const index = state.focusable.indexOf(selected.selector)
+  assert.ok(index >= 0, 'The selected radio must be reachable in the tab sequence')
+  const previous = state.focusable[(index - 1 + state.focusable.length) % state.focusable.length]
+  await control.command('nativePress', previous, { key: 'Tab' })
+  await assertProjectKeyboardFocus(selected.selector, { checkClipping: true })
 }
 
 /** Real key events must enter the portaled picker, wrap there, and return to its opener. */
@@ -70,14 +100,7 @@ export async function verifyModelDialogKeyboard(control, configuration) {
   await control.command('nativePress', state.focusable[0], { key: 'Shift+Tab' })
   state = await readModelDialog()
   assert.equal(state.focusedIndex, state.focusable.length - 1)
-  if ((await control.command('getAttribute', MENU, { value: 'data-panel' })) === 'simple')
-    await control.command('clickWhenEnabled', `${MENU} [data-testid="model-advanced-toggle"]`)
-  state = await waitForValue(
-    readModelDialog,
-    value => value?.focusedInside && value.radios.length > 0,
-    'Advanced models must retain focus inside their dialog',
-    DEFAULT_STEP_TIMEOUT_MS
-  )
+  state = await openAdvancedModels(control)
   assert.equal(state.radios.filter(radio => radio.tabIndex === 0).length, 1)
   const current = Math.max(
     0,
@@ -86,6 +109,7 @@ export async function verifyModelDialogKeyboard(control, configuration) {
   const next = state.radios[(current + 1) % state.radios.length]
   await control.command('nativePress', state.radios[current].selector, { key: 'ArrowDown' })
   await control.command('waitFor', `${next.selector}[aria-checked="true"]`, {})
+  await verifyFixedModelRowFocus(control)
   await control.command('nativePress', ':focus', { key: 'Escape' })
   await control.command('waitFor', MENU, { visible: false })
   assert.equal(await control.command('getActiveElementTestId', 'body'), 'model-selector-button')

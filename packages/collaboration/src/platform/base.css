@@ -886,6 +886,8 @@
   color: rgb(var(--color-text-secondary));
   font-size: 12px;
   line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .collaboration-project-create-group-editor {

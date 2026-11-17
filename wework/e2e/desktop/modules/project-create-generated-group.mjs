@@ -14,6 +14,11 @@ import {
 } from './project-create-test-utils.mjs'
 import { assertMobileInlineTarget } from './project-create-interaction-checks.mjs'
 import { assertCollaboratorSearchLayout } from './project-create-accessibility.mjs'
+import {
+  editGroupPrinciples,
+  assertRenderedGroupPrinciples,
+  assertReopenedGroupPrinciples,
+} from './project-create-principles.mjs'
 
 const testId = value => `[data-testid="${value}"]`
 const MENU = testId('collaboration-project-create-collaborator-menu')
@@ -194,7 +199,8 @@ export async function verifyGeneratedGroupDraft(
   try {
     await waitForProjectCreateViewport(control, 375, 812)
     const modelTrigger = `${configuration} ${testId('model-selector-button')}`
-    await control.command('clickWhenEnabled', modelTrigger)
+    await control.command('waitFor', `${modelTrigger}:not(:disabled)`, { visible: true })
+    await control.command('nativePress', modelTrigger, { key: 'Enter' })
     const menu = testId('model-selector-menu')
     await control.command('waitFor', menu, { visible: true })
     if (Number(await control.command('getElementCount', `${menu}[data-panel="simple"]`)) > 0)
@@ -203,9 +209,14 @@ export async function verifyGeneratedGroupDraft(
     await control.command('scrollIntoView', cloudModel)
     await control.command('clickWhenEnabled', cloudModel)
     await control.command('waitFor', `${cloudModel}[aria-checked="true"]`, {})
-    // Desktop model selection retains the menu for options; dismiss it explicitly.
-    await control.command('nativePress', modelTrigger, { key: 'Escape' })
+    // The portaled menu owns focus while its parent form is inert.
+    assert.equal(
+      Number(await control.command('getElementCount', '[data-model-selector-layer="true"] :focus')),
+      1
+    )
+    await control.command('nativePress', ':focus', { key: 'Escape' })
     await control.command('waitFor', menu, { visible: false })
+    assert.equal(await control.command('getActiveElementTestId', 'body'), 'model-selector-button')
     await verifyIncompleteGroupRecovery(control, configuration, agents)
     await control.command(
       'fill',
@@ -289,6 +300,8 @@ export async function verifyGeneratedGroupDraft(
         `${configuration} ${testId('collaboration-project-create-apply-group')}`
       )
     }
+    const principles = '先确认\n再执行\n后验收'
+    await editGroupPrinciples(control, configuration, principles)
     await control.command('setMainWindowSize', 'body', { value: previousSize })
     await waitForProjectCreateViewport(control, original.width, original.height)
     await assertProjectCreateActionHit(
@@ -302,6 +315,7 @@ export async function verifyGeneratedGroupDraft(
     await control.command('waitFor', configuration, { visible: false })
     const summary = scoped(testId('collaboration-project-create-group-summary'))
     await control.command('waitFor', summary, { text: editedName })
+    await assertRenderedGroupPrinciples(control, summary, principles)
     await keepDraft(control, summary, 'back')
     await control.command('waitFor', summary, { text: editedName })
     assert.equal(
@@ -319,6 +333,8 @@ export async function verifyGeneratedGroupDraft(
     )
     await resizeWindow(control, 375, 812)
     await waitForProjectCreateViewport(control, 375, 812)
+    await assertRenderedGroupPrinciples(control, summary, principles)
+    await assertReopenedGroupPrinciples(control, summary, configuration, principles)
     const discover = scoped(testId('project-create-choose-template'))
     await control.command('scrollIntoView', discover)
     const discoverSize = await readMetrics(control, discover)

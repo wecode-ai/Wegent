@@ -139,7 +139,12 @@
   font-size: 14px;
   font-weight: 400;
   line-height: 20px;
-  outline: none;
+}
+
+.defaultItem:focus-visible,
+.modelItem:focus-visible {
+  outline: 2px solid rgb(var(--color-focus));
+  outline-offset: -2px;
 }
 
 .defaultItem {
