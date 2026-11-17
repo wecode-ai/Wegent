@@ -3,7 +3,7 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { nativeCloudAuthorizationFixture } from '../e2e/desktop/modules/native-cloud-authorization-client.mjs'
 
-const transport = vi.hoisted(() => ({ calls: [], failure: null, output: null }))
+const transport = vi.hoisted(() => ({ calls: [], failure: null, output: null, stderr: null }))
 vi.mock('node:child_process', async importOriginal => ({
   ...(await importOriginal()),
   execFile(binary, args, options, callback) {
@@ -15,7 +15,8 @@ vi.mock('node:child_process', async importOriginal => ({
           queueMicrotask(() =>
             callback(
               body.clear ? null : transport.failure,
-              transport.output ?? (body.clear ? 'cleared' : 'authorized')
+              transport.output ?? (body.clear ? 'cleared' : 'authorized'),
+              transport.stderr ?? ''
             )
           )
         },
@@ -31,6 +32,7 @@ afterEach(() => {
   transport.calls = []
   transport.failure = null
   transport.output = null
+  transport.stderr = null
 })
 
 test('real native login and cleanup use the same isolated profile and opaque snapshot', async () => {
@@ -68,6 +70,36 @@ test('an invalid acknowledgement fails without exposing subprocess output', asyn
   transport.output = `invalid-${cloud.authToken}`
   const fixture = nativeCloudAuthorizationFixture(cloud, '/fixture/profile', binary)
   await expect(fixture.authorize()).rejects.toThrow('Native cloud authorization did not complete')
+})
+
+test('records native termination metadata without exposing credential output', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  transport.failure = Object.assign(new Error('Native process terminated'), {
+    code: null,
+    signal: 'SIGKILL',
+    killed: false,
+  })
+  transport.output = `stdout-${cloud.authToken}`
+  transport.stderr = `stderr-${cloud.authToken}`
+  try {
+    const fixture = nativeCloudAuthorizationFixture(cloud, '/fixture/profile', binary)
+    await expect(fixture.authorize()).rejects.toBe(transport.failure)
+    expect(log).toHaveBeenCalledWith(
+      '[desktop-e2e-native-cloud-authorization]',
+      expect.objectContaining({
+        phase: 'authorize',
+        code: null,
+        signal: 'SIGKILL',
+        killed: false,
+        elapsedMs: expect.any(Number),
+        stdoutBytes: Buffer.byteLength(transport.output),
+        stderrBytes: Buffer.byteLength(transport.stderr),
+      })
+    )
+    expect(JSON.stringify(log.mock.calls)).not.toContain(cloud.authToken)
+  } finally {
+    log.mockRestore()
+  }
 })
 
 test("concurrent scenario fixtures cannot restore each other's native credentials", async () => {

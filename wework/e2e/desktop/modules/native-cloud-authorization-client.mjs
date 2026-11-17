@@ -11,6 +11,7 @@ export async function nativeCloudAuthorization(
   appBinary = process.env.WEWORK_E2E_APP_BIN
 ) {
   assert.ok(appBinary, 'Native cloud authorization requires the shared packaged application')
+  const startedAt = Date.now()
   await new Promise((resolve, reject) => {
     const child = execFile(
       appBinary,
@@ -19,9 +20,19 @@ export async function nativeCloudAuthorization(
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         timeout: 10000,
       },
-      (error, stdout) => {
-        if (error) reject(error)
-        else if (stdout !== (clear ? 'cleared' : 'authorized'))
+      (error, stdout, stderr) => {
+        if (error) {
+          console.error('[desktop-e2e-native-cloud-authorization]', {
+            phase: clear ? 'restore' : 'authorize',
+            code: error.code ?? null,
+            signal: error.signal ?? null,
+            killed: error.killed === true,
+            elapsedMs: Date.now() - startedAt,
+            stdoutBytes: Buffer.byteLength(stdout ?? ''),
+            stderrBytes: Buffer.byteLength(stderr ?? ''),
+          })
+          reject(error)
+        } else if (stdout !== (clear ? 'cleared' : 'authorized'))
           reject(new Error('Native cloud authorization did not complete'))
         else resolve()
       }
