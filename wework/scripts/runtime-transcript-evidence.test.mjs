@@ -43,3 +43,68 @@ describe('runtime interaction evidence', () => {
     ).toEqual([question.block])
   })
 })
+
+describe('committed transcript archive evidence', () => {
+  it('reads archive metadata after the held commit response becomes available', async () => {
+    const { TranscriptBackendEvidence } =
+      await import('../e2e/desktop/modules/transcript-backend-evidence.mjs')
+    const evidence = new TranscriptBackendEvidence({ backendUrl: 'http://127.0.0.1:1' })
+    const archive = { id: 'archive', toSequence: 1, sha256: 'digest' }
+    const objectId = 'transcript-1-digest'
+    const order = []
+    let held = false
+    let reads = 0
+    evidence.activeTranscriptId = 'transcript'
+    evidence.objects.set(objectId, Buffer.from('real object observed by fixture'))
+    evidence.firstCommit = {
+      status: 200,
+      readHeldResponse: () => held,
+      dropHeldResponse: () => {
+        order.push('drop')
+        return true
+      },
+    }
+    evidence.request = async path => {
+      if (path === '/api/wework-transcripts') return { items: [{ transcriptId: 'transcript' }] }
+      if (path.endsWith('/turns?limit=500')) {
+        held = true
+        order.push('commit-response')
+        return { turns: [] }
+      }
+      order.push('detail')
+      reads++
+      return { archives: reads === 1 ? [] : [archive] }
+    }
+    evidence.deleteObject = async id => {
+      expect(id).toBe(objectId)
+      expect(evidence.archives.has(id)).toBe(true)
+      order.push('delete')
+    }
+    await evidence.refresh()
+    expect(reads).toBe(2)
+    expect(order.lastIndexOf('detail')).toBeGreaterThan(order.indexOf('commit-response'))
+    expect(order.slice(-2)).toEqual(['delete', 'drop'])
+    expect(evidence.firstCommitResponseDropped).toBe(true)
+  })
+  it('still rejects a missing archive after reading committed backend state', async () => {
+    const { TranscriptBackendEvidence } =
+      await import('../e2e/desktop/modules/transcript-backend-evidence.mjs')
+    const evidence = new TranscriptBackendEvidence({ backendUrl: 'http://127.0.0.1:1' })
+    evidence.activeTranscriptId = 'transcript'
+    evidence.firstCommit = {
+      status: 200,
+      readHeldResponse: () => true,
+      dropHeldResponse: () => {
+        throw new Error('Cannot drop before archive verification')
+      },
+    }
+    evidence.request = async path =>
+      path === '/api/wework-transcripts'
+        ? { items: [{ transcriptId: 'transcript' }] }
+        : path.includes('/turns?')
+          ? { turns: [] }
+          : { archives: [] }
+    await expect(evidence.refresh()).rejects.toThrow('The real committed snapshot must exist')
+    expect(evidence.firstCommitResponseDropped).toBe(false)
+  })
+})

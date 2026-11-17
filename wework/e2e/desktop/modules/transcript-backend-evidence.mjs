@@ -80,37 +80,43 @@ export class TranscriptBackendEvidence {
     const list = await this.request('/api/wework-transcripts')
     this.leases.clear()
     for (const item of list.items) {
-      const path = `/api/wework-transcripts/${encodeURIComponent(item.transcriptId)}`
-      const detail = await this.request(path)
-      const turns = await this.request(`${path}/turns?limit=500`)
-      const transcript = this.transcripts.get(item.transcriptId) ?? {}
-      Object.assign(transcript, detail, { turns: turns.turns })
-      this.transcripts.set(item.transcriptId, transcript)
-      if (detail.writerLeaseExpiresAt && Date.parse(detail.writerLeaseExpiresAt) > Date.now())
-        this.leases.set(item.transcriptId, detail.writerClientId)
-      for (const archive of detail.archives) {
-        const id = `${item.transcriptId}-${archive.toSequence}-${archive.sha256}`
-        archive.objectId = id
-        this.archives.set(id, { transcriptId: item.transcriptId, ...archive })
-        if (this.objects.has(id)) continue
-        const response = await fetch(
-          `${this.cloud.backendUrl}${path}/archives/${archive.id}/download`,
-          {
-            headers: { Authorization: `Bearer ${this.cloud.authToken}` },
-          }
-        )
-        if (response.status === 404) continue
-        assert.ok(response.ok, `Real transcript archive download failed: ${response.status}`)
-        this.objects.set(id, Buffer.from(await response.arrayBuffer()))
-      }
+      await this.refreshTranscript(item.transcriptId)
     }
     if (this.firstCommit?.readHeldResponse?.() && !this.firstCommitResponseDropped) {
       assert.equal(this.firstCommit.status, 200, 'The real first segment must commit successfully')
+      // The held response can arrive after this refresh's earlier metadata read.
+      await this.refreshTranscript(this.activeTranscriptId)
       const archive = this.transcripts.get(this.activeTranscriptId)?.archives[0]
       assert.ok(archive, 'The real committed snapshot must exist before its response is lost')
       await this.deleteObject(archive.objectId)
       assert.equal(this.firstCommit.dropHeldResponse(), true)
       this.firstCommitResponseDropped = true
+    }
+  }
+
+  async refreshTranscript(transcriptId) {
+    const path = `/api/wework-transcripts/${encodeURIComponent(transcriptId)}`
+    const detail = await this.request(path)
+    const turns = await this.request(`${path}/turns?limit=500`)
+    const transcript = this.transcripts.get(transcriptId) ?? {}
+    Object.assign(transcript, detail, { turns: turns.turns })
+    this.transcripts.set(transcriptId, transcript)
+    if (detail.writerLeaseExpiresAt && Date.parse(detail.writerLeaseExpiresAt) > Date.now())
+      this.leases.set(transcriptId, detail.writerClientId)
+    for (const archive of detail.archives) {
+      const id = `${transcriptId}-${archive.toSequence}-${archive.sha256}`
+      archive.objectId = id
+      this.archives.set(id, { transcriptId, ...archive })
+      if (this.objects.has(id)) continue
+      const response = await fetch(
+        `${this.cloud.backendUrl}${path}/archives/${archive.id}/download`,
+        {
+          headers: { Authorization: `Bearer ${this.cloud.authToken}` },
+        }
+      )
+      if (response.status === 404) continue
+      assert.ok(response.ok, `Real transcript archive download failed: ${response.status}`)
+      this.objects.set(id, Buffer.from(await response.arrayBuffer()))
     }
   }
 
