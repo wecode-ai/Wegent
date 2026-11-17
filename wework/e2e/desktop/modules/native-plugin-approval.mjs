@@ -85,7 +85,13 @@ $iteration = 0
 while ([DateTime]::UtcNow -lt $deadline) {
   $iteration += 1
   [Console]::Error.WriteLine('Native decision stage: root-lookup-start ' + $iteration)
-  $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+  $roots = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+  # UIA exposes Electron's owned modal as a child of its main window.
+  # Preserve the isolated process boundary for both levels.
+  $windows = @(foreach ($root in $roots) {
+    $root
+    $root.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+  })
   [Console]::Error.WriteLine('Native decision stage: root-lookup-complete ' + $windows.Count)
   foreach ($window in $windows) {
     [Console]::Error.WriteLine('Native decision stage: window-name-start')
