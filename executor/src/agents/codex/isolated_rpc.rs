@@ -39,6 +39,26 @@ impl IsolatedRpcSender {
             .map_err(|_| "The owning isolated app-server stopped accepting requests".to_owned())?;
         Ok(receiver)
     }
+
+    async fn wait_for_release(&mut self, method: &str) -> Result<(), String> {
+        let started = tokio::time::Instant::now();
+        super::log_executor_event(
+            "codex source read waiting for isolated owner release",
+            &[("method", method.to_owned())],
+        );
+        self.released
+            .wait_for(|released| *released)
+            .await
+            .map_err(|_| "Isolated app-server release was not observed".to_owned())?;
+        super::log_executor_event(
+            "codex source read isolated owner released",
+            &[
+                ("method", method.to_owned()),
+                ("elapsed_ms", started.elapsed().as_millis().to_string()),
+            ],
+        );
+        Ok(())
+    }
 }
 
 #[derive(Clone, Default)]
@@ -133,35 +153,24 @@ impl super::CodexAppServerClient {
         params: Value,
     ) -> Result<Value, String> {
         use super::CodexAppToolError::{NotDispatched, OutcomeUnknown};
-        use tokio::time::{timeout, Duration, Instant};
+        use tokio::time::{timeout, Duration};
+        let registry = self.state.lock().await.isolated_rpc.clone();
+        let thread = params["threadId"].as_str().map(str::to_owned);
+        let Some(first_owner) = thread.as_deref().and_then(|thread| registry.get(thread)) else {
+            return self
+                .request_with_cloud_config_recovery(method, params)
+                .await;
+        };
+        let mut owner = Some(first_owner);
         let seconds = super::codex_rpc_timeout_seconds();
         timeout(Duration::from_secs(seconds), async {
-            let registry = self.state.lock().await.isolated_rpc.clone();
-            while let Some(mut owner) = params["threadId"]
-                .as_str()
-                .and_then(|thread| registry.get(thread))
-            {
-                let result = request_owner(owner.clone(), method, params.clone()).await;
-                if matches!(result, Err(NotDispatched(_))) && owner.requests.is_closed() {
+            while let Some(mut current) = owner.take() {
+                let result = request_owner(current.clone(), method, params.clone()).await;
+                if matches!(result, Err(NotDispatched(_))) && current.requests.is_closed() {
                     // No request was admitted. Keep the original deadline and
                     // wait for native reaping before resolving ownership again.
-                    let started = Instant::now();
-                    super::log_executor_event(
-                        "codex source read waiting for isolated owner release",
-                        &[("method", method.to_owned())],
-                    );
-                    owner
-                        .released
-                        .wait_for(|released| *released)
-                        .await
-                        .map_err(|_| "Isolated app-server release was not observed".to_owned())?;
-                    super::log_executor_event(
-                        "codex source read isolated owner released",
-                        &[
-                            ("method", method.to_owned()),
-                            ("elapsed_ms", started.elapsed().as_millis().to_string()),
-                        ],
-                    );
+                    current.wait_for_release(method).await?;
+                    owner = thread.as_deref().and_then(|thread| registry.get(thread));
                     continue;
                 }
                 return result.map_err(|error| match error {

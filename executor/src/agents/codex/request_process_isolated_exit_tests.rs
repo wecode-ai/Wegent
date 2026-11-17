@@ -3,6 +3,22 @@
 
 use super::*;
 
+#[tokio::test(start_paused = true)]
+async fn ordinary_source_reads_keep_their_existing_preparation_budget() {
+    let fixture = Fixture::new();
+    let preparation = fixture.client.state.lock().await;
+    let read = fixture
+        .client
+        .request("thread/read", json!({"threadId":"shared-source"}));
+    tokio::pin!(read);
+    assert!(futures_util::poll!(read.as_mut()).is_pending());
+    tokio::time::advance(Duration::from_secs(codex_rpc_timeout_seconds() + 1)).await;
+    tokio::time::resume();
+    drop(preparation);
+    assert!(read.await.unwrap()["pid"].as_u64().is_some());
+    fixture.client.restart().await;
+}
+
 #[tokio::test]
 async fn an_unadmitted_read_waits_for_release_before_starting_a_shared_process() {
     let fixture = Fixture::new();
