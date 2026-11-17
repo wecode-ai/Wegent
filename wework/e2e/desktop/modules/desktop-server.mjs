@@ -1384,17 +1384,15 @@ class DesktopE2EServer {
             ? 'anthropic'
             : null
     try {
-      if (
-        this.desktopScenario &&
-        request.method === 'POST' &&
-        ['/responses', '/v1/responses'].includes(url.pathname)
-      ) {
+      if (this.desktopScenario && request.method === 'POST' && modelProtocol) {
         const body = await readRequestBody(request)
-        if (await this.writeNativeApprovalReview(response, body, 'responses')) return
+        if (await this.writeNativeApprovalReview(response, body, modelProtocol)) return
         // Prediction history carries the task's ordinary markers. Route its
         // model request before scenario counters and held task responses.
         if (isReplyPredictionRequest(body) && !this.desktopScenario.handlesReplyPredictions) {
-          await this.handleModelResponse(request, response, 'responses')
+          await this.handleModelResponse(request, response, modelProtocol, {
+            acceptAnyBearer: officialCodexResponses,
+          })
           return
         }
       }

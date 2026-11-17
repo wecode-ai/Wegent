@@ -29,6 +29,67 @@ function predictionMetadata(requestKind = 'turn') {
   }
 }
 
+test.each([
+  ['/responses', 'responses'],
+  ['/v1/responses', 'responses'],
+  ['/backend-api/codex/responses', 'responses'],
+  ['/chat/completions', 'chat'],
+  ['/v1/chat/completions', 'chat'],
+  ['/messages', 'anthropic'],
+  ['/v1/messages', 'anthropic'],
+])('routes exact predictions before custom handlers for %s', async (path, protocol) => {
+  const server = new DesktopE2EServer('/tmp/prediction-protocol-routing', undefined, {
+    async handleHttp() {
+      assert.fail('A background prediction reached the foreground scenario')
+    },
+  })
+  server.url = 'http://fixture'
+  const messages = [{ role: 'user', content: REPLY_PREDICTION_PROMPT }]
+  const request = Readable.from([
+    JSON.stringify(protocol === 'responses' ? { input: messages } : { messages }),
+  ])
+  Object.assign(request, {
+    method: 'POST',
+    url: path,
+    headers: {
+      authorization:
+        path === '/backend-api/codex/responses'
+          ? 'Bearer synthetic-native-subscription'
+          : `Bearer ${MODEL_API_KEY}`,
+    },
+  })
+  const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
+  await server.handle(request, response)
+  assert.equal(response.status, 200)
+  const events = response.output
+    .split('\n')
+    .filter(line => line.startsWith('data: ') && line !== 'data: [DONE]')
+    .map(line => JSON.parse(line.slice(6)))
+  const text = events
+    .map(event =>
+      protocol === 'responses'
+        ? event.type === 'response.output_item.done'
+          ? event.item.content[0].text
+          : ''
+        : protocol === 'chat'
+          ? (event.choices[0].delta.content ?? '')
+          : event.type === 'content_block_delta'
+            ? event.delta.text
+            : ''
+    )
+    .join('')
+  assert.deepEqual(JSON.parse(text), { suggestion: null })
+  assert.ok(
+    response.output.includes(
+      protocol === 'responses'
+        ? 'response.completed'
+        : protocol === 'chat'
+          ? 'data: [DONE]'
+          : 'message_stop'
+    )
+  )
+})
+
 async function activeTemporaryChatScenario() {
   const scenario = createTemporaryChatScenario({ uiTimeoutMs: 100 })
   const stopBeforeUi = new Error('Stop before desktop UI setup')

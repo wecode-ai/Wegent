@@ -201,6 +201,8 @@ Custom scenarios requiring native cloud credentials declare `requiresNativeCloud
 
 Protocol-independent text replies in model fixtures must reuse `writeLocalAssistantMessage` to emit complete Responses, Chat Completions, or Anthropic termination events for the current request. Do not reset the selected model to accommodate a fixture with a fixed protocol or attribute stream failures caused by malformed fixture SSE to the official runtime.
 
+The shared model entry recognizes background predictions by native metadata or the complete prediction prompt before invoking ordinary scenario handlers, across Responses, Chat Completions, Anthropic, and the official Codex Responses path. Scenarios that explicitly own prediction behavior still handle it themselves. Prediction JSON uses the current wire protocol without advancing foreground counters or releasing held replies; historical keywords do not classify requests.
+
 Nested Goal scenarios must forward the shared runner's model request context through every layer. Text replies after restoring a conversation still use the current request protocol. Held or interrupted text streams reuse `modelTextStream`, preserving the Responses commentary phase, existing release conditions, and incomplete responses on interruption without changing business assertions or user model selection.
 
 The fourth `handleHttp` argument provides the shared `modelRequest` (protocol name and `reply(text)`), or `null` for non-model requests. Text-only custom scenarios reuse this routing and writer so they do not miss request paths for a valid selected model.
