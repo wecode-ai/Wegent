@@ -233,11 +233,16 @@ def verify_failed_bootstrap_rolls_back_and_can_retry(
 
     event.listen(model, "before_insert", reject_insert)
     try:
-        with pytest.raises(RuntimeError, match="test bootstrap write failure"):
+        with pytest.raises(
+            RuntimeError, match="test bootstrap write failure"
+        ) as failure:
             ensure_builtin_connector_apps(test_db)
     finally:
         event.remove(model, "before_insert", reject_insert)
 
+    # Keep the failed call's frames alive while checking rollback state.
+    assert str(failure.value) == "test bootstrap write failure"
+    assert not any(isinstance(row, Kind) for row in test_db.identity_map.values())
     assert (
         test_db.query(Kind)
         .filter(
