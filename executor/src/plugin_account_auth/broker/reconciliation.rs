@@ -7,12 +7,34 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
     transport: T,
     home: PathBuf,
     connected: Arc<AtomicBool>,
+    cancel: watch::Receiver<bool>,
+    requested: mpsc::Receiver<u64>,
+    interval: Duration,
+) {
+    run_observed(
+        transport,
+        home,
+        connected,
+        cancel,
+        requested,
+        interval,
+        super::super::e2e_reconcile_marker(),
+    )
+    .await;
+}
+
+async fn run_observed<T: super::super::PluginAuthTransport>(
+    transport: T,
+    home: PathBuf,
+    connected: Arc<AtomicBool>,
     mut cancel: watch::Receiver<bool>,
     mut requested: mpsc::Receiver<u64>,
     interval: Duration,
+    marker: Option<PathBuf>,
 ) {
     let mut inventory = crate::services::capability_activation::subscribe_changes();
-    let mut reconciler = super::super::automation::Reconciler::default();
+    let mut reconciler =
+        super::super::automation::Reconciler::with_reconcile_marker(marker.clone());
     let mut audit = tokio::time::Instant::now();
     let mut cycle_retry = None;
     let mut failures = 0_u32;
@@ -90,7 +112,7 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
                 cycle_retry = Some(cycle_retry.map_or(due, |previous| previous.min(due)));
             }
         }
-        if let Some(path) = super::super::e2e_reconcile_marker() {
+        if let Some(path) = &marker {
             if let Ok(mut marker) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)

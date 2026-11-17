@@ -11,6 +11,7 @@ import {
   verifyIndependentPluginMutations,
 } from './plugin-write-coordination.mjs'
 import { pluginApi, until } from './plugin-regression-fixture.mjs'
+import { observePluginAuthEnrollment } from './plugin-auth-observation.mjs'
 
 // Exercise the desktop IPC, real Executor broker and account adapter. Only the
 // synthetic credential provider is gated; backend responses are never replaced.
@@ -157,25 +158,32 @@ export async function verifyPluginAuthCoordination({
     await otherLease.release()
   }
   const backgroundRow = await holdInstalledPluginRow(cloud, installedId)
-  let pausedMarker
+  const enrollment = observePluginAuthEnrollment(reconcileMarker, installedId, 'mail')
+  let attempt
   try {
     await signalAutomaticRetry()
     await backgroundRow.waitFor('blocked')
-    pausedMarker = await readFile(reconcileMarker, 'utf8')
-    await verifyIndependentPluginMutations(cloud, independent, evidence)
-    assert.equal(
-      await readFile(reconcileMarker, 'utf8'),
-      pausedMarker,
-      'Background authentication finished before its real database fence was released'
+    attempt = await until(
+      () => enrollment.pending(),
+      Boolean,
+      'Background authentication never started its target request',
+      timeoutMs
     )
-    evidence.push({ case: 'background-authentication-does-not-block-other-plugin', installedId })
+    await verifyIndependentPluginMutations(cloud, independent, evidence)
+    await enrollment.assertPending(attempt)
+    evidence.push({
+      case: 'background-authentication-does-not-block-other-plugin',
+      installedId,
+      attempt,
+    })
   } finally {
     await backgroundRow.release()
   }
   await until(
-    () => readFile(reconcileMarker, 'utf8'),
-    value => value.length > pausedMarker.length,
-    'Background authentication did not recover after its row was released'
+    () => enrollment.succeeded(attempt),
+    Boolean,
+    'Background authentication did not recover after its row was released',
+    timeoutMs
   )
   await logout()
 
