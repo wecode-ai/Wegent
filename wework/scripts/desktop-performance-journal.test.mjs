@@ -187,7 +187,7 @@ test('counter regression retains rejected boundaries and values without certifyi
   const journal = new DesktopPerformanceJournal(metadata)
   journal.record('client', snapshot())
   const next = snapshot()
-  next.durationMs = 5
+  next.durationMs = 20
   next.renders.app = 1
   journal.record('client', next, 'click', 'result', 'command-1')
   const report = journal.report(true)
@@ -200,10 +200,59 @@ test('counter regression retains rejected boundaries and values without certifyi
       action: 'click',
       phase: 'result',
       commandId: 'command-1',
-      durationMs: 5,
+      durationMs: 20,
       previousDurationMs: 10,
       error: 'Performance counter reset: renders.app',
       regressions: [{ name: 'renders.app', previous: 2, current: 1 }],
     },
   ])
+})
+
+test('overlapping results retain every boundary in capture order without double counting', () => {
+  const journal = new DesktopPerformanceJournal(metadata)
+  for (const time of [0, 40, 10, 30, 20]) {
+    const value = snapshot()
+    value.durationMs = time
+    value.renders.app = time / 10
+    value.removals = time >= 20 ? [{ atMs: 15, parent: 'document', testIds: ['old-row'] }] : []
+    journal.record(
+      'client',
+      value,
+      'overlap',
+      time === 10 ? 'started' : 'result',
+      `command-${time}`
+    )
+  }
+  const report = journal.report(true)
+  assert.equal(report.complete, true)
+  assert.equal(report.metrics['renders.app'], 4)
+  assert.deepEqual(
+    report.observations.map(o => o.elapsedMs),
+    [0, 10, 20, 30, 40]
+  )
+  assert.deepEqual(
+    report.observations.map(o => o.changes['renders.app'] ?? 0),
+    [0, 1, 1, 1, 1]
+  )
+  assert.equal(report.observations.flatMap(o => o.removals).length, 1)
+  assert.equal(report.observations[2].removals[0].atMs, 15)
+  assert.deepEqual(report.rejectedSnapshots, [])
+})
+
+test('sorting late results does not hide a real counter regression or reused capture epoch', () => {
+  for (const changedEpoch of [false, true]) {
+    const journal = new DesktopPerformanceJournal(metadata)
+    const latest = snapshot()
+    latest.durationMs = 30
+    latest.renders.app = 2
+    journal.record('client', latest)
+    const late = snapshot()
+    late.durationMs = 20
+    late.renders.app = 3
+    if (changedEpoch) late.startedAt = '2026-11-17T00:00:00.000Z'
+    journal.record('client', late)
+    const report = journal.report(true)
+    assert.equal(report.complete, false)
+    assert.equal(report.rejectedSnapshots.length, 1)
+  }
 })

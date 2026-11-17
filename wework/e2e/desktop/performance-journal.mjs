@@ -76,11 +76,51 @@ export function flattenPerformance(snapshot) {
   return Object.fromEntries(metrics)
 }
 
+function regressions(previous, metrics) {
+  return Object.entries(previous ?? {})
+    .filter(([name, count]) => metrics && (metrics[name] === undefined || metrics[name] < count))
+    .map(([name, count]) => ({ name, previous: count, current: metrics[name] ?? null }))
+}
+
+function validateCounters(previous, metrics) {
+  const reset = regressions(previous, metrics)[0]
+  assert.ok(!reset, 'Performance counter reset: ' + reset?.name)
+}
+
+function frameObservation(frame, previous) {
+  return {
+    captureId: frame.captureId,
+    action: frame.action,
+    phase: frame.phase,
+    commandId: frame.commandId,
+    changes: Object.fromEntries(
+      Object.entries(frame.metrics)
+        .map(([name, count]) => [name, count - (previous?.metrics[name] ?? 0)])
+        .filter(([, count]) => count !== 0)
+    ),
+    observedAt: frame.finishedAt,
+    elapsedMs: frame.durationMs,
+    removals: frame.removals.filter(removal => removal.atMs >= (previous?.durationMs ?? 0)),
+  }
+}
+
+function framePosition(frames, durationMs) {
+  let left = 0,
+    right = frames.length
+  while (left < right) {
+    const middle = (left + right) >>> 1
+    if (frames[middle].durationMs <= durationMs) left = middle + 1
+    else right = middle
+  }
+  return left
+}
+
 /** Cumulative snapshots travel with the existing control protocol, without extra polling. */
 export class DesktopPerformanceJournal {
   constructor(metadata) {
     this.metadata = metadata
     this.contexts = new Map()
+    this.frames = new Map()
     this.errors = new Set()
     this.commands = new Map()
     this.observations = []
@@ -89,44 +129,52 @@ export class DesktopPerformanceJournal {
 
   record(clientId, snapshot, action = 'ready', phase = 'ready', commandId = null) {
     if (phase === 'started') this.commands.set(action, (this.commands.get(action) ?? 0) + 1)
-    const previous = this.contexts.get(snapshot?.captureId)
-    let metrics
+    let previous = this.contexts.get(snapshot?.captureId)
+    let following, metrics
     try {
       metrics = flattenPerformance(snapshot)
+      assert.ok(
+        Number.isFinite(snapshot.durationMs) && snapshot.durationMs >= 0,
+        'Missing or invalid capture elapsed time'
+      )
       if (previous) {
         assert.equal(previous.clientId, clientId, 'Performance capture changed control clients')
-        for (const [name, count] of Object.entries(previous.metrics)) {
-          assert.ok(
-            metrics[name] !== undefined && metrics[name] >= count,
-            `Performance counter reset: ${name}`
-          )
-        }
+        assert.equal(
+          previous.startedAt,
+          snapshot.startedAt,
+          'Performance capture changed start time'
+        )
       }
-      const changes = Object.fromEntries(
-        Object.entries(metrics)
-          .map(([name, count]) => [name, count - (previous?.metrics[name] ?? 0)])
-          .filter(([, count]) => count !== 0)
-      )
-      this.observations.push({
+      const frames = this.frames.get(snapshot.captureId) ?? []
+      const position = framePosition(frames, snapshot.durationMs)
+      previous = frames[position - 1]
+      following = frames[position]
+      validateCounters(previous?.metrics, metrics)
+      if (following) validateCounters(metrics, following.metrics)
+      const frame = {
+        clientId,
         captureId: snapshot.captureId,
+        metrics,
         action,
         phase,
         commandId,
-        changes,
-        observedAt: snapshot.finishedAt,
-        elapsedMs: snapshot.durationMs,
-        removals: (snapshot.removals ?? []).filter(
-          removal => removal.atMs >= (previous?.durationMs ?? 0)
-        ),
-      })
-      this.contexts.set(snapshot.captureId, {
-        clientId,
-        metrics,
         startedAt: snapshot.startedAt,
         finishedAt: snapshot.finishedAt,
         durationMs: snapshot.durationMs,
         removals: snapshot.removals ?? [],
-      })
+      }
+      frame.observation = frameObservation(frame, previous)
+      if (following) {
+        Object.assign(following.observation, frameObservation(following, frame))
+        this.observations.splice(
+          this.observations.indexOf(following.observation),
+          0,
+          frame.observation
+        )
+      } else this.observations.push(frame.observation)
+      frames.splice(position, 0, frame)
+      this.frames.set(snapshot.captureId, frames)
+      this.contexts.set(snapshot.captureId, frames.at(-1))
     } catch (error) {
       this.errors.add(error.message)
       this.rejectedSnapshots.push({
@@ -138,11 +186,13 @@ export class DesktopPerformanceJournal {
         durationMs: Number.isFinite(snapshot?.durationMs) ? snapshot.durationMs : null,
         previousDurationMs: previous?.durationMs ?? null,
         error: error.message,
-        regressions: Object.entries(previous?.metrics ?? {})
-          .filter(
-            ([name, count]) => metrics && (metrics[name] === undefined || metrics[name] < count)
-          )
-          .map(([name, count]) => ({ name, previous: count, current: metrics[name] ?? null })),
+        regressions: regressions(previous?.metrics, metrics),
+        ...(following
+          ? {
+              followingDurationMs: following.durationMs,
+              followingRegressions: regressions(metrics, following.metrics),
+            }
+          : {}),
       })
     }
   }
