@@ -573,7 +573,7 @@ async function writeProfileConfiguration(options: {
   await ensureCoreWorkspace(options.workspacePath)
 }
 
-async function copyManagedProfilePlugins(
+export async function copyManagedProfilePlugins(
   runtime: CoreDshRuntime,
   profileRoot: string,
   packageNames: string[]
@@ -588,9 +588,13 @@ async function copyManagedProfilePlugins(
     }
   }
   // Independent plugin trees can overlap filesystem latency without oversubscribing the disk.
-  await Promise.all(
+  // Wait for every started worker before propagating the first failure so a
+  // caller cannot clean the profile while another copy is still writing it.
+  const results = await Promise.allSettled(
     Array.from({ length: Math.min(MANAGED_PROFILE_COPY_WORKERS, packageNames.length) }, copyNext)
   )
+  const failure = results.find(result => result.status === 'rejected')
+  if (failure?.status === 'rejected') throw failure.reason
   return packageNames.length
 }
 

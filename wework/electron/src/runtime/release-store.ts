@@ -439,6 +439,8 @@ export class ReleaseStore {
     }
     for (const marker of plan.markers) await rm(marker, { force: true })
     for (const release of plan.releases) await removePhysicalRelease(release)
+    for (const preparation of plan.preparations)
+      await rm(preparation, { recursive: true, force: true })
     for (const snapshot of plan.snapshots) await rm(snapshot, { recursive: true, force: true })
     return { status: 'completed' }
   }

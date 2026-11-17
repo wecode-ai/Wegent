@@ -32,14 +32,32 @@ try {
 }
 
 function failStartup(error: unknown): void {
-  console.error('[release-bootstrap]', error instanceof Error ? error.message : 'Startup failed')
+  const message = error instanceof Error ? error.message : 'Startup failed'
+  console.error('[release-bootstrap]', message)
+  if (isInstalledPreparationRequest(process.argv)) {
+    // The installer uses ExecWait and cannot proceed while this process shows a
+    // recovery window. Record the failure, then always return a failing exit code.
+    const exit = () => app.exit(1)
+    const timeout = setTimeout(exit, 2_000)
+    void import('./runtime/release-diagnostics.js')
+      .then(({ recordReleaseDiagnostic }) =>
+        recordReleaseDiagnostic('installed-preparation-bootstrap-failed', { message }, true)
+      )
+      .catch(diagnosticError => {
+        console.warn('[install-preparation] Cannot record startup diagnostics', {
+          errorType:
+            diagnosticError instanceof Error ? diagnosticError.name : typeof diagnosticError,
+        })
+      })
+      .finally(() => {
+        clearTimeout(timeout)
+        exit()
+      })
+    return
+  }
   void import('./runtime/release-diagnostics.js')
     .then(({ recordReleaseDiagnostic }) =>
-      recordReleaseDiagnostic(
-        'bootstrap-failed',
-        { message: error instanceof Error ? error.message : 'Startup failed' },
-        true
-      )
+      recordReleaseDiagnostic('bootstrap-failed', { message }, true)
     )
     .catch(diagnosticError => {
       console.warn('[startup-recovery] Cannot record startup diagnostics', {

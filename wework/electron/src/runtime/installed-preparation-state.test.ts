@@ -21,6 +21,7 @@ import {
   installedPreparationMarkerFile,
   installedPreparationProfileRoot,
   installedPreparationSwitchFile,
+  recoverInstalledPreparationSwitch,
   writeInstalledPreparationMarker,
 } from './installed-preparation-state.js'
 import { currentCoreProfile, profileRevision } from './release-profile.js'
@@ -143,6 +144,44 @@ test('recovers an interrupted physical profile switch before applying again', as
   ).resolves.toEqual({ applied: true, reason: 'applied' })
   expect(await realpath(pointer)).toBe(await realpath(fixture.profileRoot))
   expect(await readFile(join(baseline, 'plugin.js'), 'utf8')).toBe('active plugin\n')
+})
+
+test('reinstalling resolves an interrupted switch before replacing its marker', async () => {
+  const fixture = await createFixture('directory')
+  const pointer = currentCoreProfile(fixture.root)
+  const preparationDirectory = installedPreparationDirectory(fixture.root, '1.2.3')
+  const token = '7cbbdce1-c1ca-4e50-b3ca-fbf0a282f0a5'
+  const baseline = join(preparationDirectory, 'previous-profiles', token)
+  await mkdir(dirname(baseline), { recursive: true })
+  await rename(pointer, baseline)
+  const marker = JSON.parse(
+    await readFile(installedPreparationMarkerFile(fixture.root, '1.2.3'), 'utf8')
+  )
+  await writeFile(
+    installedPreparationSwitchFile(fixture.root, '1.2.3'),
+    JSON.stringify({
+      schemaVersion: 1,
+      pointer,
+      profileRoot: fixture.profileRoot,
+      baseline,
+      previous: marker.source,
+    })
+  )
+
+  await recoverInstalledPreparationSwitch(fixture.root, '1.2.3')
+
+  expect(await realpath(pointer)).toBe(await realpath(fixture.activeProfile))
+  await expect(lstat(installedPreparationSwitchFile(fixture.root, '1.2.3'))).rejects.toMatchObject({
+    code: 'ENOENT',
+  })
+  await expect(
+    applyInstalledPreparation({
+      dataDirectory: fixture.root,
+      version: '1.2.3',
+      releaseTransactionInProgress: false,
+    })
+  ).resolves.toEqual({ applied: true, reason: 'applied' })
+  expect(await realpath(pointer)).toBe(await realpath(fixture.profileRoot))
 })
 
 async function createFixture(pointerKind: 'directory' | 'symbolicLink' = 'symbolicLink') {

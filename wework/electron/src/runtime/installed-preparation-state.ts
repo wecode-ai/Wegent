@@ -99,6 +99,25 @@ export async function inspectInstalledProfileSource(
   }
 }
 
+/** Finish an interrupted profile switch before installing this version again. */
+export async function recoverInstalledPreparationSwitch(
+  dataDirectory: string,
+  version: string
+): Promise<void> {
+  const switchFile = installedPreparationSwitchFile(dataDirectory, version)
+  const text = await optionalText(switchFile)
+  if (text === null) return
+  const preparationDirectory = installedPreparationDirectory(dataDirectory, version)
+  const journal = parseSwitchJournalForPaths(
+    text,
+    dataDirectory,
+    preparationDirectory,
+    installedPreparationProfileRoot(dataDirectory, version)
+  )
+  await recoverProfileSwitch(journal, preparationDirectory)
+  await rm(switchFile, { force: true })
+}
+
 export async function writeInstalledPreparationMarker(
   dataDirectory: string,
   marker: InstalledPreparationMarker
@@ -260,21 +279,62 @@ function parseSwitchJournal(
   text: string,
   marker: InstalledPreparationMarker
 ): InstalledPreparationSwitchJournal {
-  const value = JSON.parse(text) as Partial<InstalledPreparationSwitchJournal>
+  const value = parseSwitchJournalForPaths(
+    text,
+    resolve(marker.preparationDirectory, '..', '..'),
+    marker.preparationDirectory,
+    marker.profileRoot
+  )
   if (
-    value.schemaVersion !== 1 ||
-    value.pointer !== currentCoreProfile(resolve(marker.preparationDirectory, '..', '..')) ||
-    value.profileRoot !== marker.profileRoot ||
-    typeof value.baseline !== 'string' ||
-    !isWithin(marker.preparationDirectory, value.baseline) ||
-    !value.previous ||
     value.previous.kind !== marker.source.kind ||
     value.previous.pointerKind !== marker.source.pointerKind ||
     value.previous.resolvedPath !== marker.source.resolvedPath ||
     value.previous.revision !== marker.source.revision
   )
     throw new Error('Invalid installed preparation switch journal')
+  return value
+}
+
+function parseSwitchJournalForPaths(
+  text: string,
+  dataDirectory: string,
+  preparationDirectory: string,
+  profileRoot: string
+): InstalledPreparationSwitchJournal {
+  const value = JSON.parse(text) as Partial<InstalledPreparationSwitchJournal>
+  if (
+    value.schemaVersion !== 1 ||
+    value.pointer !== currentCoreProfile(dataDirectory) ||
+    typeof value.profileRoot !== 'string' ||
+    value.profileRoot !== profileRoot ||
+    typeof value.baseline !== 'string' ||
+    !isWithin(preparationDirectory, value.profileRoot) ||
+    !isWithin(preparationDirectory, value.baseline) ||
+    dirname(value.baseline) !== join(preparationDirectory, 'previous-profiles') ||
+    !validProfileSource(value.previous)
+  )
+    throw new Error('Invalid installed preparation switch journal')
   return value as InstalledPreparationSwitchJournal
+}
+
+function validProfileSource(
+  value: Partial<InstalledPreparationProfileSource> | undefined
+): boolean {
+  if (!value) return false
+  if (value.kind === 'missing')
+    return (
+      value.pointerKind === undefined &&
+      value.resolvedPath === undefined &&
+      value.revision === undefined
+    )
+  return (
+    value.kind === 'profile' &&
+    (value.pointerKind === 'directory' || value.pointerKind === 'symbolicLink') &&
+    typeof value.resolvedPath === 'string' &&
+    isAbsolute(value.resolvedPath) &&
+    typeof value.revision === 'string' &&
+    /^[a-f0-9]{64}$/.test(value.revision)
+  )
 }
 
 function parseMarker(text: string, dataDirectory: string): InstalledPreparationMarker {

@@ -275,6 +275,20 @@ test('a native launcher failure opens recovery without loading release records o
   }
 })
 
+test('installation preparation failures exit non-zero without opening recovery', async () => {
+  vi.stubEnv('WEWORK_STARTUP_RECOVERY', 'Selected program is unavailable')
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {})
+  process.argv.push('--wework-prepare-installation')
+  try {
+    await import('./bootstrap.js')
+    await vi.waitFor(() => expect(startup.exit).toHaveBeenCalledWith(1))
+    expect(startup.showRecovery).not.toHaveBeenCalled()
+  } finally {
+    process.argv.pop()
+    diagnostic.mockRestore()
+  }
+})
+
 test.each(['default', 'com.example.wework'])(
   'reads pending activation from the migrated %s userData directory',
   async namespace => {

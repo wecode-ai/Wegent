@@ -10,6 +10,7 @@ import {
   installedPreparationDirectory,
   installedPreparationMarkerFile,
   installedPreparationProfileRoot,
+  recoverInstalledPreparationSwitch,
   writeInstalledPreparationMarker,
   type InstalledPreparationMarker,
   type InstalledPreparationProfileSource,
@@ -54,6 +55,9 @@ export async function prepareInstalledEnvironment(
   const preparationDirectory = installedPreparationDirectory(options.dataDirectory, options.version)
   const profileRoot = installedPreparationProfileRoot(options.dataDirectory, options.version)
   const profilePointer = currentCoreProfile(options.dataDirectory)
+  // Reinstalling the same version must resolve the previous switch before the
+  // old marker is replaced with a different source revision and token.
+  await recoverInstalledPreparationSwitch(options.dataDirectory, options.version)
   await rm(installedPreparationMarkerFile(options.dataDirectory, options.version), { force: true })
   const componentDataDirectory = options.componentDataDirectory ?? options.dataDirectory
   const runtimeRoot =

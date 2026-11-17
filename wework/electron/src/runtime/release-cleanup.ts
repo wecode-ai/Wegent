@@ -22,12 +22,13 @@ interface PreservedOwner {
 export interface ReleaseCleanupPlan {
   markers: string[]
   releases: string[]
+  preparations: string[]
   snapshots: string[]
 }
 
 /** Resolve every live dependency before deleting any release or recovery metadata. */
 export async function planReleaseCleanup(store: ReleaseStore): Promise<ReleaseCleanupPlan> {
-  const plan: ReleaseCleanupPlan = { markers: [], releases: [], snapshots: [] }
+  const plan: ReleaseCleanupPlan = { markers: [], releases: [], preparations: [], snapshots: [] }
   const active = await store.active()
   if (!active) return plan
   if (!(await stat(active.profileRoot)).isDirectory())
@@ -58,6 +59,7 @@ export async function planReleaseCleanup(store: ReleaseStore): Promise<ReleaseCl
       plan.markers.push(join(store.slot(marker.slot), 'preserved-data-snapshot'))
   const obsolete = ids.filter(id => !retained.has(id))
   plan.releases = await releaseRemovalPaths(store, active, obsolete)
+  plan.preparations = await preparationRemovalPaths(store, active, retained, obsolete)
   plan.snapshots = (await directoryNames(join(store.root, 'snapshots')))
     .filter(id => !snapshots.has(id))
     .map(id => join(store.root, 'snapshots', id))
@@ -243,4 +245,59 @@ async function releaseRemovalPaths(
     paths.push(store.slot(id))
   }
   return paths
+}
+
+async function preparationRemovalPaths(
+  store: ReleaseStore,
+  active: DesktopRelease,
+  retained: Set<string>,
+  obsolete: string[]
+): Promise<string[]> {
+  const retainedPaths: string[] = []
+  for (const id of retained) {
+    const release = await store.read(id)
+    for (const path of releasePaths(release)) retainedPaths.push(await physicalPath(path))
+  }
+  const candidates = new Set<string>()
+  for (const id of obsolete) {
+    const release = await store.read(id)
+    const directory = installedPreparationDirectoryFor(release.profileRoot)
+    if (directory) {
+      const physical = await preparationDirectoryPath(directory)
+      if (!retainedPaths.some(path => pathWithin(physical, path))) candidates.add(physical)
+    }
+  }
+  const activeDirectory = installedPreparationDirectoryFor(active.profileRoot)
+  if (activeDirectory) {
+    const baselines = join(activeDirectory, 'previous-profiles')
+    const physical = await preparationDirectoryPath(baselines)
+    if (!retainedPaths.some(path => pathWithin(physical, path))) candidates.add(physical)
+  }
+  return [...candidates].sort((left, right) => left.length - right.length)
+}
+
+/** Resolve the versioned installer workspace without accepting arbitrary ancestors. */
+function installedPreparationDirectoryFor(profileRoot: string): string | null {
+  const path = resolve(profileRoot)
+  const marker = `${sep}install-preparations${sep}`
+  const index = path.lastIndexOf(marker)
+  if (index < 0) return null
+  const version = path.slice(index + marker.length).split(sep)[0]
+  if (!/^[0-9A-Za-z][0-9A-Za-z._-]{0,127}$/.test(version)) return null
+  return join(path.slice(0, index), 'install-preparations', version)
+}
+
+function pathWithin(parent: string, child: string): boolean {
+  const offset = relative(toNamespacedPath(parent), toNamespacedPath(child))
+  return offset === '' || (!isAbsolute(offset) && offset !== '..' && !offset.startsWith(`..${sep}`))
+}
+
+async function preparationDirectoryPath(path: string): Promise<string> {
+  const metadata = await lstat(path).catch(error => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  })
+  if (metadata?.isSymbolicLink())
+    throw new Error('Release cleanup encountered a linked preparation directory')
+  return physicalPath(path)
 }
