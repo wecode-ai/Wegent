@@ -549,6 +549,11 @@ jobs:
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Verify Windows process deadline and log retention
+        timeout-minutes: 1
+        shell: pwsh
+        run: .github/scripts/test-windows-standard-user-process.ps1
+
       - name: Prepare Windows Redis E2E tools
         shell: pwsh
         env:

@@ -178,4 +178,33 @@ assert.ok(
     "node wework/e2e/desktop/run-checkpoints.mjs --memory-only",
   ),
 );
+const windowsWorker = workflow
+  .split("  wework-desktop-windows-core-e2e:\n")[1]
+  .split(/\n  [\w-]+:\n/)[0];
+const stepBudget = Number(
+  windowsWorker.match(
+    /name: Run Windows Wework desktop Core shard E2E[\s\S]*?timeout-minutes: (\d+)/,
+  )?.[1],
+);
+const processWrapper = readFileSync(
+  new URL("./run-windows-standard-user-process.ps1", import.meta.url),
+  "utf8",
+);
+const processBudget = Number(
+  processWrapper.match(/\$remainingSeconds = (\d+) \* 60/)?.[1],
+);
+assert.ok(
+  processBudget > 0 && processBudget < stepBudget,
+  "The credentialed process must stop before CI cancellation so evidence can upload",
+);
+assert.match(
+  processWrapper,
+  /finally \{[\s\S]*stop-windows-standard-user-processes\.ps1/,
+  "Deadline failures must retain the existing SID-scoped cleanup",
+);
+assert.match(
+  workflow.split("  build-wework-desktop-windows-core-e2e:\n")[1],
+  /run: \.github\/scripts\/test-windows-standard-user-process\.ps1/,
+  "The shared Windows producer must verify the real process deadline contract",
+);
 console.log("Windows CI event coverage and required-result checks passed");
