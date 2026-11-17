@@ -26,7 +26,6 @@ pub mod chat_session;
 pub(crate) mod chat_support;
 pub mod chat_task_join;
 mod chat_trigger;
-mod python_answer;
 pub mod device;
 pub mod device_auth_sync;
 pub mod device_disconnect;
@@ -39,6 +38,7 @@ mod device_pull_payload;
 pub mod device_reconcile;
 #[cfg(test)]
 pub(crate) mod issue_timestamp_tests;
+mod python_answer;
 #[cfg(test)]
 pub(crate) use device_reconcile::verify_reconnect_projection;
 #[cfg(test)]
