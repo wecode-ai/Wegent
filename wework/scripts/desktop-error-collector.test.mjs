@@ -81,6 +81,7 @@ test('required source coverage cannot pass because a source produced no errors',
   )
   assert.throws(() => collector.assertErrors([], { after: -1 }), /nonnegative interval mark/)
   assert.throws(() => collector.assertErrors([], { after: 1000 }), /beyond the collected records/)
+  assert.throws(() => collector.assertErrors([], { before: 1000 }), /beyond the collected records/)
   assert.throws(
     () => collector.assertErrors([], { after: 2, before: 0 }),
     /end must follow its start/

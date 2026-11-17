@@ -134,6 +134,10 @@ export class DesktopErrorCollector {
         (Number.isSafeInteger(options.before) && options.before >= (options.after ?? 0)),
       'Error interval end must follow its start'
     )
+    assert.ok(
+      (options.before ?? records.length) <= records.length,
+      'Error interval end is beyond the collected records'
+    )
     const errors = selectRecords(records, { ...options, level: 'error' })
     const receipt = {
       after: options.after ?? 0,
