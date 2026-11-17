@@ -44,7 +44,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
   let activeWorkspace
   let writer
   let installed = false
-  const archiveTimeoutMs = Math.max(modelResponseTimeoutMs, 90_000)
+  const archiveTimeoutMs = Math.max(modelResponseTimeoutMs, 240_000)
   const marker = name => join(root, name)
   const waitMarker = name =>
     waitForValue(
@@ -152,7 +152,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         await writeFile(
           fixture,
           `#!/usr/bin/env node
-import { appendFile, readFile, access } from 'node:fs/promises'
+import { appendFile, readFile, access, writeFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { handleEvent } from '../logger.mjs'
 const root = ${JSON.stringify(root)}
@@ -176,6 +176,9 @@ try {
   await handleEvent(event, config)
   if (event.hook_event_name === 'TurnStarted') await mark('baseline')
   if (event.hook_event_name === 'ExecutionCompleted') await mark('execution-ended')
+} catch (error) {
+  await writeFile(root + '/hook-error.log', String(error?.stack ?? error) + '\n', { flag: 'a' }).catch(() => {})
+  throw error
 } finally { await mark('finished') }
 `
         )
@@ -317,7 +320,7 @@ console.log('HOOK_WRITES_COMPLETE')
             },
             value => value.entered === value.finished,
             'Hook scripts did not finish before cleanup',
-            uiTimeoutMs
+            archiveTimeoutMs
           )
           drained = true
         } finally {

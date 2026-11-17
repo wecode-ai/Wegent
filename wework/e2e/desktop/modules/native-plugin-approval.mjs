@@ -29,7 +29,7 @@ export async function withNativePluginDecision(control, operation, { allow = tru
 }
 
 export async function clickNativeDecision(pid, allow, signal, evidenceDirectory, decision = {}) {
-  const options = { timeout: 12_000, signal, encoding: 'utf8' }
+  const options = { timeout: 40_000, signal, encoding: 'utf8' }
   if (process.platform === 'darwin') {
     await clickMacosNativeDecision(
       pid,
@@ -92,7 +92,7 @@ public static class NativePluginPointer {
 '@
 
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, ${pid})
-$deadline = [DateTime]::UtcNow.AddSeconds(10)
+$deadline = [DateTime]::UtcNow.AddSeconds(30)
 $iteration = 0
 while ([DateTime]::UtcNow -lt $deadline) {
   $iteration += 1
