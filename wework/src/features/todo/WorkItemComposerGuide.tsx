@@ -55,31 +55,38 @@ function WorkItemComposerGuideContent({
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
-  const [refreshedItem, setRefreshedItem] = useState<CloudLoopItem | null>(null)
-  const [taskBindings, setTaskBindings] = useState<TaskBinding[] | null>(item ? null : [])
+  const [bindingResult, setBindingResult] = useState<{
+    api: ProjectSpaceApi
+    itemId: string
+    bindings: TaskBinding[]
+  } | null>(null)
+  const itemId = item?.id
   const canChangeProject = Boolean(onSelectProject)
   const menuOpen = open && canChangeProject
   const closeMenu = useCallback(() => setOpen(false), [])
 
   useEffect(() => {
-    if (!api || !item) return
+    if (!api || !itemId) return
     let active = true
-    void Promise.allSettled([
-      api.listTaskBindings(item.id),
-      currentTask ? api.findCloudContextForTask(currentTask) : Promise.resolve(null),
-    ]).then(([bindingsResult, contextResult]) => {
-      if (!active) return
-      if (bindingsResult.status === 'fulfilled') setTaskBindings(bindingsResult.value)
-      if (contextResult.status === 'fulfilled' && contextResult.value?.loop_item) {
-        setRefreshedItem(contextResult.value.loop_item)
+    void api.listTaskBindings(itemId).then(
+      bindings => {
+        if (active) setBindingResult({ api, itemId, bindings })
+      },
+      () => {
+        if (active) setBindingResult(null)
       }
-    })
+    )
     return () => {
       active = false
     }
-  }, [api, currentTask, item, refreshKey])
+  }, [api, itemId, refreshKey])
 
-  const resolvedItem = refreshedItem?.id === item?.id ? refreshedItem : (item ?? null)
+  const resolvedItem = item ?? null
+  const taskBindings = !item
+    ? []
+    : bindingResult && bindingResult.api === api && bindingResult.itemId === itemId
+      ? bindingResult.bindings
+      : null
   const taskCount = taskBindings?.length ?? null
   const otherTaskCount =
     taskBindings == null

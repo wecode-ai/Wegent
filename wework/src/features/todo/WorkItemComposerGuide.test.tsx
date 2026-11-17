@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
+import type { ProjectSpaceApi } from './projectSpaceSelection'
 
 const project = {
   id: 'work-items',
@@ -52,6 +53,71 @@ const pickerProjects: CloudProject[] = [
 ]
 
 describe('WorkItemComposerGuide', () => {
+  test('does not show binding counts from another source with the same Issue ID', async () => {
+    const bindings = [
+      { device_id: 'device', task_id: 'first' },
+      { device_id: 'device', task_id: 'second' },
+    ]
+    let completeOldRead!: (value: typeof bindings) => void
+    const oldApi = {
+      listTaskBindings: vi.fn().mockImplementation(
+        () =>
+          new Promise(resolve => {
+            completeOldRead = resolve
+          })
+      ),
+    } as unknown as ProjectSpaceApi
+    const newApi = { listTaskBindings: vi.fn().mockResolvedValue([]) } as unknown as ProjectSpaceApi
+    const item = { id: 'WORK-1', title: 'Current Issue' } as CloudLoopItem
+    const { rerender } = render(<WorkItemComposerGuide item={item} api={oldApi} />)
+    await waitFor(() => expect(oldApi.listTaskBindings).toHaveBeenCalled())
+    rerender(<WorkItemComposerGuide item={item} api={newApi} />)
+    completeOldRead(bindings)
+    await waitFor(() =>
+      expect(screen.queryByTestId('work-item-guide-summary-details')).not.toBeInTheDocument()
+    )
+    expect(screen.getByTestId('project-space-context-pill')).toHaveAttribute(
+      'title',
+      'Current Issue'
+    )
+  })
+
+  test('uses the owning context without rereading it as task and item objects change', async () => {
+    const listTaskBindings = vi.fn().mockResolvedValue([])
+    const findCloudContextForTask = vi.fn().mockResolvedValue({
+      loop_item: { id: 'WORK-1', title: 'Stale secondary context' },
+    })
+    const api = { listTaskBindings, findCloudContextForTask } as unknown as ProjectSpaceApi
+    const currentTask = { deviceId: 'device', taskId: 'task' }
+    const item = { id: 'WORK-1', title: 'Current owner title' } as CloudLoopItem
+    const { rerender } = render(
+      <WorkItemComposerGuide api={api} item={item} currentTask={currentTask} />
+    )
+    await waitFor(() => expect(listTaskBindings).toHaveBeenCalledTimes(1))
+    rerender(
+      <WorkItemComposerGuide
+        api={api}
+        item={{ ...item, title: 'Updated owner title' }}
+        currentTask={{ ...currentTask }}
+        refreshKey="running"
+      />
+    )
+    await waitFor(() => expect(listTaskBindings).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('work-item-guide-summary-title')).toHaveTextContent(
+      'Updated owner title'
+    )
+    expect(findCloudContextForTask).not.toHaveBeenCalled()
+    rerender(
+      <WorkItemComposerGuide
+        api={api}
+        item={{ ...item }}
+        currentTask={{ ...currentTask }}
+        refreshKey="running"
+      />
+    )
+    expect(listTaskBindings).toHaveBeenCalledTimes(2)
+  })
+
   test('keeps board changes usable while project options refresh', async () => {
     const user = userEvent.setup()
     const onSelectProject = vi.fn()

@@ -493,6 +493,8 @@ executor 的 `RuntimeTaskLink.running` 只存在于当前进程内存和 runtime
 
 发送路径不查询项目或 Issue 详情，不加载引用会话正文，也不等待列表刷新。项目上下文仅传递当前选择的 project_store、space_id、item_id；模型需要内容时先通过 wework_space.get_current_context 确认当前绑定，再按需读取 Issue、评论及附件。没有默认绑定时使用显式 ID。来源工具每次读取当前权威数据，预览和旧正文不能作为最新事实；读取失败或权限拒绝必须明确报告，不能换通道绕过。
 
+输入框的 Issue 提示直接读取所属会话维护的绑定状态，随来源变更事件更新；不因发送、执行状态变化或对象重建而再次读取完整上下文。提示组件仅拥有任务绑定数量查询，查询结果按 API 和 Issue 身份隔离。
+
 ```mermaid
 sequenceDiagram
     participant C as Composer
