@@ -531,6 +531,11 @@ class LoopItemService:
         """Ensure one active user explicitly participates in this Issue only."""
 
         require_active_issue_user(db, collaborator_user_id)
+        project = db.get(CloudProject, str(item.cloud_project_id))
+        if project is not None and project.task_provider != "local":
+            require_cloud_project_role(
+                db, item.cloud_project_id, collaborator_user_id, BaseRole.Viewer
+            )
         collaborator = (
             db.query(LoopItemCollaborator)
             .filter(
@@ -2234,7 +2239,7 @@ class LoopItemService:
         assignment_comment_id: str | None = None,
         commit: bool = True,
     ) -> LoopItem:
-        """Assign a task to a project member, project robot, or Wegent Team.
+        """Assign a task to an active person, project robot, or Wegent Team.
 
         The task itself records who assigned it to whom (the chain) and the
         derived execution state. There is no separate queue storage: a task

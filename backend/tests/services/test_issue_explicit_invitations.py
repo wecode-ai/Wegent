@@ -157,3 +157,18 @@ def test_invitee_can_manage_people_but_not_project_execution(
             ),
         )
     assert denied.value.status_code == 403
+
+
+def test_external_provider_does_not_receive_native_issue_invitations(
+    test_db: Session,
+    test_user: User,
+    delivery_project: CloudProject,
+    outsider: User,
+) -> None:
+    item = make_issue(test_db, delivery_project, test_user)
+    delivery_project.metadata_json = {"task_provider": "github"}
+    test_db.commit()
+    with pytest.raises(HTTPException) as denied:
+        loop_item_service.add_collaborator(test_db, item.id, outsider.id, test_user.id)
+    assert denied.value.status_code == 404
+    assert loop_item_service.list_collaborators(test_db, item.id, test_user.id) == []

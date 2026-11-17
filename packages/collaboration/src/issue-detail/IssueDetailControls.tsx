@@ -45,6 +45,10 @@ export function IssueDetailCollaboratorPicker({
   cancelLabel: string
   emptyLabel: string
 }) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
   const memberIds = projectMemberIds ?? new Set(members.map(member => member.user_id))
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Array<{ id: number; user_name: string }>>([])
@@ -62,6 +66,7 @@ export function IssueDetailCollaboratorPicker({
   return (
     <div className={`min-w-0 ${className ?? ''}`}>
       <MemberSearchPicker
+        inputRef={inputRef}
         query={query}
         onQueryChange={setQuery}
         users={users}
@@ -89,7 +94,7 @@ export function IssueDetailCollaboratorPicker({
             type="button"
             data-testid="cloud-todo-collaborator-retry"
             onClick={search.retry}
-            className="min-h-9 px-2 text-sm underline"
+            className="min-h-11 px-2 text-sm underline md:min-h-9"
           >
             {retryLabel}
           </button>
@@ -102,7 +107,7 @@ export function IssueDetailCollaboratorPicker({
               data-testid={`cloud-todo-selected-collaborator-${user.id}`}
               disabled={busy}
               aria-label={`${cancelLabel} ${user.user_name}`}
-              className="inline-flex min-h-8 items-center gap-1 rounded-lg bg-muted px-2 text-sm"
+              className="inline-flex min-h-11 items-center gap-1 rounded-lg bg-muted px-2 text-sm md:min-h-8"
               onClick={() => setSelected(current => current.filter(entry => entry.id !== user.id))}
             >
               {user.user_name}
@@ -115,7 +120,7 @@ export function IssueDetailCollaboratorPicker({
         type="button"
         data-testid="cloud-todo-confirm-collaborator"
         disabled={!selected.length || busy}
-        className="mt-2 min-h-9 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-40"
+        className="mt-2 min-h-11 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-40 md:min-h-9"
         onClick={() => {
           if (selected.some(user => !memberIds.has(user.id))) setConfirming(true)
           else void onAdd(selected.map(user => user.id)).catch(() => undefined)

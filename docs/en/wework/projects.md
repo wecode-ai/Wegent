@@ -161,7 +161,7 @@ Open **Milestones** in the project. The Issue-detail selector only associates ex
 
 ## Members, discussion assignment and archival
 
-In a cloud project Issue, open **Participants → +**, search by name or email, select multiple people across searches, then click **Add**. Results outside the project explain that access is limited to this Issue and require confirmation. Canceling creates no invitations. The assignee picker uses the same search and confirmation flow and saves after confirmation.
+In a native cloud project Issue, open **Participants → +**, search by name or email, select multiple people across searches, then click **Add**. Results outside the project explain that access is limited to this Issue and require confirmation. Canceling creates no invitations. The assignee picker uses the same search and confirmation flow and saves after confirmation. GitHub/GitLab and other external Issues retain their source provider membership and access policies.
 
 An outside participant manages only the invited Issue: reading, commenting, editing, inviting people and assigning to people. This grants no project membership, access to the project or other Issues, project administration, or project execution resources. The Issue link opens its details directly. Removing a participant revokes access unless they remain the current assignee; past assignments grant no continuing access. Multi-selection adds participants individually; errors remain visible and successful additions are retained.
 

@@ -187,7 +187,11 @@ export interface SharedIssueDetailExtensions {
     readAttachment(attachmentId: string): Promise<Blob>;
     onInlineAttachmentIdsChange(attachmentIds: string[]): void;
   }): ReactNode;
-  renderActivity?(context: SharedIssueDetailExtensionContext): ReactNode;
+  renderActivity?(
+    context: Omit<SharedIssueDetailExtensionContext, "project"> & {
+      project?: SharedEditorProject;
+    },
+  ): ReactNode;
   renderAITableFields?(context: {
     item: SharedEditorIssue;
     project: SharedEditorProject;
@@ -1005,11 +1009,12 @@ export function TodoEditor(props: TodoEditorProps) {
       {t("todo.collaborators_unavailable", "此项目暂不支持编辑参与者")}
     </span>
   ) : null;
+  const searchIssueUsers =
+    project?.task_provider && project.task_provider !== "local"
+      ? undefined
+      : editorPort.members.searchUsers;
   const [assigneeQuery, setAssigneeQuery] = useState("");
-  const assigneeSearch = useIssuePeopleSearch(
-    assigneeQuery,
-    editorPort.members.searchUsers,
-  );
+  const assigneeSearch = useIssuePeopleSearch(assigneeQuery, searchIssueUsers);
   const [outsideAssignee, setOutsideAssignee] = useState<{
     id: number;
     user_name: string;
@@ -2326,9 +2331,7 @@ export function TodoEditor(props: TodoEditorProps) {
   ];
 
   const activityView =
-    item &&
-    editProps?.project &&
-    editProps.project.task_provider !== "dingtalk_aitable"
+    item && editProps && editProps.project?.task_provider !== "dingtalk_aitable"
       ? extensions?.renderActivity?.({
           commentActions,
           item,
@@ -2338,7 +2341,9 @@ export function TodoEditor(props: TodoEditorProps) {
             canAssign || editable
               ? {
                   canAssignCurrent: canAssign,
-                  ...(editable ? { createChild: createCommentChild } : {}),
+                  ...(editable && editProps.project
+                    ? { createChild: createCommentChild }
+                    : {}),
                   options: assigneeOptions
                     .filter((option) => option.value !== "")
                     .map((option) => ({
@@ -2433,6 +2438,7 @@ export function TodoEditor(props: TodoEditorProps) {
               <button
                 type="button"
                 data-testid="cloud-todo-assignee-search-retry"
+                className="min-h-11 px-2 text-sm underline md:min-h-8"
                 onClick={assigneeSearch.retry}
               >
                 {t("common.retry", "重试")}
@@ -2767,7 +2773,7 @@ export function TodoEditor(props: TodoEditorProps) {
     projectMemberIds: new Set(projectMembers.map((member) => member.user_id)),
     excludedUserIds: new Set(collaborators.map((member) => member.user_id)),
     onAdd: addCollaborator,
-    searchUsers: editorPort.members.searchUsers,
+    searchUsers: searchIssueUsers,
     outsideLabel,
     retryLabel: t("common.retry", "重试"),
     confirmLabel: confirmPersonLabel,
