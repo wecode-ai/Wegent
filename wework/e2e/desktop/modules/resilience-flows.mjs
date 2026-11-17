@@ -436,10 +436,21 @@ async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control 
   assert.ok(anthropicModel, 'The Anthropic cloud model fixture is missing')
   control.setScenario('anthropic_empty_response')
   await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask === null && snapshot.pane?.currentRuntimeTask === null,
+    'The Anthropic recovery scenario did not activate its new conversation'
+  )
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await selectE2EModel(control, anthropicModel.optionIds, anthropicModel.labels)
+  await selectE2EModel(
+    control,
+    anthropicModel.optionIds,
+    anthropicModel.labels,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
   await sendPromptUntilScenarioRequest(
     control,
     composerSelector,

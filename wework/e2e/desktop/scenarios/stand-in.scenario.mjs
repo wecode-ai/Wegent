@@ -455,10 +455,53 @@ export async function createDesktopScenario({
           'Migration must preserve identity, versions and grants'
         )
         assert.equal(Object.hasOwn(migrated.primary, 'collaboration'), false)
+        const saved = await requestExecutor(
+          control,
+          'runtime.stand_in.personal.save',
+          { userId: USER_ID, settings: migrated },
+          uiTimeoutMs
+        )
+        const enabledAfter = identity => {
+          assert.equal(typeof identity.enabledAfter, 'string')
+          assert.ok(Number.isFinite(Date.parse(identity.enabledAfter)))
+          return identity.enabledAfter
+        }
+        assert.deepEqual(saved, {
+          ...migrated,
+          version: migrated.version + 1,
+          primary: {
+            ...migrated.primary,
+            enabledAfter: enabledAfter(saved.primary),
+            projectBoundaries: [],
+          },
+          roles: migrated.roles.map((role, index) => {
+            const actual = saved.roles[index]
+            const roleEnabledAfter = enabledAfter(actual)
+            if (typeof role.enabledAfter === 'string')
+              assert.equal(roleEnabledAfter, role.enabledAfter)
+            return {
+              ...role,
+              version: role.version + 1,
+              enabledAfter: roleEnabledAfter,
+              projectBoundaries: role.collaboration.projects.map(project => {
+                const boundary = actual.projectBoundaries.find(
+                  row => row.id === project.id && row.store === project.store
+                )
+                assert.ok(boundary)
+                const timestamp = enabledAfter(boundary)
+                const previous = role.projectBoundaries?.find(
+                  row => row.id === project.id && row.store === project.store
+                )
+                if (previous?.enabledAfter) assert.equal(timestamp, previous.enabledAfter)
+                return { ...project, enabledAfter: timestamp }
+              }),
+            }
+          }),
+        })
         const persisted = database
           .prepare('SELECT metadata FROM loop_items WHERE id=?')
           .get(`personal-stand-in:${USER_ID}`)
-        assert.deepEqual(JSON.parse(persisted.metadata), migrated)
+        assert.deepEqual(JSON.parse(persisted.metadata), saved)
         assert.deepEqual(
           await requestExecutor(
             control,
@@ -466,7 +509,7 @@ export async function createDesktopScenario({
             { userId: USER_ID },
             uiTimeoutMs
           ),
-          migrated,
+          saved,
           'Repeated reads must not change the migrated settings'
         )
       } finally {

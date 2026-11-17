@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   connect: vi.fn().mockResolvedValue({ running: true, ready: true }),
   disconnect: vi.fn().mockResolvedValue({ running: true, ready: true }),
   ensure: vi.fn().mockResolvedValue({ running: true, ready: true }),
+  start: vi.fn().mockResolvedValue({ running: true, ready: true }),
   runtimeTokenPost: vi.fn(),
   issueToken: vi.fn(),
   listApps: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock('@/desktop/localExecutor', () => ({
   connectLocalExecutorToBackend: mocks.connect,
   disconnectLocalExecutorFromBackend: mocks.disconnect,
   ensureLocalExecutorAvailable: mocks.ensure,
+  ensureLocalExecutorStarted: mocks.start,
   requestLocalExecutor: mocks.request,
 }))
 

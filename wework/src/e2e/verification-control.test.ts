@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { executeVerificationControlCommand } from './verification-control'
 import { loadDesktopE2ERuntimeConfig, setDesktopE2ECloudSessionToken } from './runtime-config'
 
-const { request, applyConnection } = vi.hoisted(() => ({
+const { request, applyConnection, prepareCatalog } = vi.hoisted(() => ({
   request: vi.fn(),
+  prepareCatalog: vi.fn(),
   applyConnection: vi.fn(),
 }))
+
+vi.mock('./local-model-catalog-readiness', () => ({ ensureLocalModelCatalogReady: prepareCatalog }))
 
 vi.mock('@/desktop/localExecutor', () => ({ requestLocalExecutor: request }))
 vi.mock('@/features/cloud-connection/localExecutorCloudConnection', () => ({
@@ -85,6 +88,7 @@ test('UI refresh commands measure transient DOM updates through the verification
 
 beforeEach(async () => {
   request.mockReset()
+  prepareCatalog.mockReset().mockResolvedValue(undefined)
   applyConnection.mockReset().mockResolvedValue({ connected: true })
   window.sessionStorage.clear()
   window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
@@ -208,4 +212,34 @@ describe('real Native cloud disconnect verification command', () => {
       value: '{"configured":true,"connected":true}',
     })
   })
+})
+
+test('background catalog preparation leaves control available during an injected restart hold', async () => {
+  let reject!: (error: Error) => void
+  prepareCatalog.mockImplementation(
+    () =>
+      new Promise((_, rejectPromise) => {
+        reject = rejectPromise
+      })
+  )
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  try {
+    await expect(
+      executeVerificationControlCommand(
+        { id: 'prepare', action: 'startLocalModelCatalogPreparation', selector: 'body' },
+        { elementEnabled: () => true }
+      )
+    ).resolves.toEqual({ handled: true, value: '' })
+    expect(prepareCatalog).toHaveBeenCalledOnce()
+    const interrupted = new Error('injected restart interruption')
+    reject(interrupted)
+    await vi.waitFor(() =>
+      expect(warning).toHaveBeenCalledWith(
+        '[desktop-e2e] Background catalog preparation failed',
+        interrupted
+      )
+    )
+  } finally {
+    warning.mockRestore()
+  }
 })

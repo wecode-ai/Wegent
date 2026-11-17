@@ -333,7 +333,7 @@ function localRuntimeModels(
   return [
     ...codexRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
     ...listLocalModelConfigs()
-      .filter(config => config.enabled && config.catalogReady)
+      .filter(config => config.enabled)
       .map(localModelConfigToUnifiedModel),
   ]
 }
@@ -516,6 +516,7 @@ interface RuntimeWorkIpcOptions {
   user?: User
   transportLabel?: 'Local' | 'Cloud'
   syncConfiguredModelCatalog?: boolean
+  prepareLocalModelCatalog?: () => Promise<void>
   requestModelCatalogSync?: (request: {
     deviceId: string
     deviceName: string
@@ -2286,6 +2287,7 @@ export function createRuntimeWorkApiFromIpc(
   }
 
   const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
+    await options.prepareLocalModelCatalog?.()
     if (!(await prepareConfiguredRuntimeModel(data))) return false
     // Creation profiles belong to the desktop's trusted local IPC. Cloud adapters
     // prepare their selected model through the existing catalog/send contract.
@@ -3602,6 +3604,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       user: deps.user,
       materializeRuntimeTask: deps.materializeRuntimeTask,
       getLocalRuntimeSidebarIdentity,
+      prepareLocalModelCatalog: async () => {
+        await ensureStatus()
+      },
       localIssueUserIds: localParticipationIdentity.viewerUserIds,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
@@ -3825,6 +3830,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     ]
       .filter(Boolean)
       .join('\n\n')
+    await ensureStatus()
     const payload = await createLocalRuntimeTaskPayload(
       {
         runtime: agent.runtime,
@@ -4058,11 +4064,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       // whole list and leaving the model selector empty.
       let localCodexSubscriptionEnabled: boolean
       try {
-        // Always reconcile pending local model catalogs (custom model
-        // interfaces) so they appear in the picker even when the Codex
-        // subscription is off.
-        await traceModelLoading(traceId, 'catalog.ensure_status', ensureStatus)
-        await runtimeWorkApi.prepareRuntimeModel({ deviceId: await getLocalDeviceId() })
+        // Reading the picker must not write catalogs or restart a running provider.
+        // Task preparation owns reconciliation before model execution.
+        await traceModelLoading(traceId, 'catalog.ensure_status', availableStatus)
         localCodexSubscriptionEnabled = (await getAppPreferences()).localCodexSubscriptionEnabled
       } catch (error) {
         console.warn('[Wework] Failed to read the local model environment', error)

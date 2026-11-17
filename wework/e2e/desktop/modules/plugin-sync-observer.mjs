@@ -137,9 +137,13 @@ export function observePluginSyncTransport(proxy, { holdCapability = () => false
       }
       observation.writes.push(entry)
       if (request.method === 'POST' && url.pathname.endsWith('/sync-device')) {
-        observation.reconciliations.push({
+        const reconciliation = {
           ...entry,
           reconcile: url.searchParams.get('reconcile') === 'true',
+        }
+        observation.reconciliations.push(reconciliation)
+        response.once('finish', () => {
+          reconciliation.completedAt = Date.now()
         })
       }
     }

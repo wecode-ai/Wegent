@@ -326,6 +326,13 @@ export async function executeVerificationControlCommand(
         value: JSON.stringify({ configured: status.configured, connected: status.connected }),
       }
     }
+    case 'startLocalModelCatalogPreparation': {
+      const { ensureLocalModelCatalogReady } = await import('./local-model-catalog-readiness')
+      void ensureLocalModelCatalogReady().catch(error => {
+        console.warn('[desktop-e2e] Background catalog preparation failed', error)
+      })
+      return { handled: true, value: '' }
+    }
     case 'ensureLocalModelCatalogReady': {
       const { ensureLocalModelCatalogReady } = await import('./local-model-catalog-readiness')
       await ensureLocalModelCatalogReady()

@@ -400,6 +400,17 @@ fn quota_wait_goal_pause_cancels_the_exact_durable_wait() {
 #[cfg(unix)]
 #[test]
 fn quota_wait_protocol_checks_windows_and_rejects_changed_native_owners() {
+    verify_quota_wait_protocol(false);
+}
+
+#[cfg(unix)]
+#[test]
+fn quota_interrupt_during_account_read_does_not_wait_for_the_send_gate() {
+    verify_quota_wait_protocol(true);
+}
+
+#[cfg(unix)]
+fn verify_quota_wait_protocol(interrupt: bool) {
     use std::os::unix::fs::PermissionsExt;
     let _lock = crate::test_env::lock();
     let home = tempfile::tempdir().unwrap();
@@ -535,21 +546,31 @@ done
             })
             .await
             .unwrap();
-            let cancellation = tokio::time::timeout(
-                Duration::from_secs(2),
-                handler.cancel_task(json!({"taskId":"waiting"})),
-            )
-            .await;
+            let cancellation = if interrupt {
+                // A malformed replacement isolates stop acknowledgement from starting another turn.
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    handler.interrupt_and_send(json!({"taskId":"waiting"})),
+                )
+                .await
+            } else {
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    handler.cancel_task(json!({"taskId":"waiting"})),
+                )
+                .await
+            };
             if cancellation.is_err() {
                 fs::remove_file(home.path().join("hold-account")).unwrap();
                 handler.codex_app_server.restart().await;
             }
-            assert_eq!(
-                cancellation
-                    .expect("Cancellation must not wait for the held quota request")
-                    .unwrap()["accepted"],
-                true
-            );
+            let cancellation =
+                cancellation.expect("Cancellation must not wait for the held quota request");
+            if interrupt {
+                assert_eq!(cancellation.unwrap_err().code, "bad_request");
+            } else {
+                assert_eq!(cancellation.unwrap()["accepted"], true);
+            }
             tokio::time::timeout(Duration::from_secs(2), async {
                 while handler.is_busy_local_task("waiting")
                     || handler
