@@ -27,6 +27,8 @@ export async function verifyPluginAuthCoordination({
   slug,
   homePath,
   installedId,
+  expectedDeviceId,
+  expectedDeviceBinding,
   connectionFor,
   signalAutomaticRetry,
   reconcileMarker,
@@ -222,6 +224,8 @@ export async function verifyPluginAuthCoordination({
           after,
           freshTargetSuccess: hasFreshPluginAuthSuccess(log, recoveryOffset, installedId),
           installedId,
+          expectedDeviceId,
+          expectedDeviceBinding,
         }
         return latestRecovery
       },
@@ -237,6 +241,8 @@ export async function verifyPluginAuthCoordination({
           after: [],
           freshTargetSuccess: false,
           installedId,
+          expectedDeviceId,
+          expectedDeviceBinding,
         }
       )
       const diagnosticName = 'plugin-auth-recovery-failure.json'

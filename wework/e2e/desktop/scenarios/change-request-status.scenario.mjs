@@ -260,6 +260,33 @@ async function refreshEnvironment(control) {
   await control.command('waitFor', '[data-testid="environment-info-popover"]')
 }
 
+export async function recoverChangeRequestStatus(control, { statePath, uiTimeoutMs }) {
+  // Repair the provider before re-enabling its observer; opening the summary refreshes it.
+  await writeFile(statePath, 'merged\n')
+  await control.command('click', '[data-testid="change-request-status-switch"]')
+  await waitForAttribute(
+    control,
+    '[data-testid="change-request-status-switch"]',
+    'aria-checked',
+    'true',
+    'Re-enabling PR/MR status lookup was not persisted'
+  )
+  await control.command('click', '[data-testid="settings-back-button"]')
+  await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
+  await control.command('click', ENVIRONMENT_BUTTON)
+  await control.command('waitFor', '[data-testid="environment-info-popover"]')
+
+  await control.command('waitFor', CHANGE_REQUEST_BUTTON, { text: '#2631' })
+  await control.command('waitFor', '[data-testid="change-request-state"]', { text: '已合并' })
+  await control.command('waitFor', '[data-testid="change-request-checks"]', { text: '检查通过' })
+  await control.command('click', '[data-testid="environment-change-request-status"]')
+  await control.command(
+    'waitFor',
+    '[data-testid="environment-change-request-status-popover"] [data-testid="resource-observation-status"]',
+    { text: '状态同步正常' }
+  )
+}
+
 export async function createDesktopScenario({
   captureScreenshot,
   homePath,
@@ -660,36 +687,7 @@ export async function createDesktopScenario({
       })
       await capture(control, 'change-request-status-07-settings-disabled.png', 'body')
 
-      await control.command('click', '[data-testid="change-request-status-switch"]')
-      await waitForAttribute(
-        control,
-        '[data-testid="change-request-status-switch"]',
-        'aria-checked',
-        'true',
-        'Re-enabling PR/MR status lookup was not persisted'
-      )
-      await control.command('click', '[data-testid="settings-back-button"]')
-      await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
-      await control.command('click', ENVIRONMENT_BUTTON)
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
-
-      await writeFile(statePath, 'merged\n')
-      await refreshEnvironment(control)
-      await control.command('waitFor', CHANGE_REQUEST_BUTTON, {
-        text: '#2631',
-      })
-      await control.command('waitFor', '[data-testid="change-request-state"]', {
-        text: '已合并',
-      })
-      await control.command('waitFor', '[data-testid="change-request-checks"]', {
-        text: '检查通过',
-      })
-      await control.command('click', '[data-testid="environment-change-request-status"]')
-      await control.command(
-        'waitFor',
-        '[data-testid="environment-change-request-status-popover"] [data-testid="resource-observation-status"]',
-        { text: '状态同步正常' }
-      )
+      await recoverChangeRequestStatus(control, { statePath, uiTimeoutMs })
       await capture(control, 'change-request-status-08-recovered-merged.png')
       await control.command('click', '[data-testid="environment-change-request-status"]')
     },

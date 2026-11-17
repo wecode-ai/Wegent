@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 
 export function assertBackgroundPluginAuthPaused({ before, after, fence }) {
   assert.equal(fence.held, true, 'The target database fence is no longer held')
   assert.equal(fence.blocked, true, 'The target database fence did not block a real write')
   // Global cycle markers and delayed logs do not identify a fenced target write.
-  assert.deepEqual(
-    after.target,
-    before.target,
+  assert.ok(
+    isDeepStrictEqual(after.target, before.target),
     'Background authentication changed the fenced target account'
   )
 }
@@ -46,21 +46,28 @@ function recoveryContext({ before, after, installedId }) {
   const old = intents.length === 1 ? intents[0] : undefined
   const completed = old
     ? targetRows(after, 'ConnectorMigration').find(
-        row => row.id === old.id && row.local_principal === old.local_principal
+        row => row.id === old.id && row.device_id === old.device_id
       )
     : undefined
-  const grants =
-    old &&
-    (typeof current?.local_grants === 'string'
-      ? JSON.parse(current.local_grants)
-      : current?.local_grants)
-  return { previous, current, intents, old, completed, grants }
+  const decode = value => (typeof value === 'string' ? JSON.parse(value) : value)
+  return {
+    previous,
+    current,
+    intents,
+    old,
+    completed,
+    grants: old && decode(current?.device_grants),
+    binding: old && decode(old.binding),
+    completedBinding: completed && decode(completed.binding),
+  }
 }
 
 function recoveryChecks(
-  { freshTargetSuccess },
-  { previous, current, intents, old, completed, grants }
+  { freshTargetSuccess, expectedDeviceId, expectedDeviceBinding },
+  { previous, current, intents, old, completed, grants, binding, completedBinding }
 ) {
+  const appRecord =
+    typeof expectedDeviceId === 'string' && expectedDeviceId.match(/^app-record-([1-9]\d*)$/)
   return {
     freshTargetSuccess: Boolean(freshTargetSuccess),
     baselineConnectionPresent: Boolean(previous),
@@ -69,15 +76,26 @@ function recoveryChecks(
     connectionActive: Number(current?.is_active) === 1,
     connectionConnected: current?.status === 'connected',
     credentialPresent: Number(current?.credential_present) === 1,
-    singleTargetPrincipal: intents.length === 1,
-    targetPrincipalPresent:
-      typeof old?.local_principal === 'string' && old.local_principal.length > 0,
-    targetPrincipalGranted: Boolean(old && grants?.[old.local_principal] === true),
+    singleTargetDevice: intents.length === 1,
+    expectedAppDevice: Boolean(
+      appRecord &&
+      expectedDeviceBinding?.deviceRowId === Number(appRecord[1]) &&
+      expectedDeviceBinding.runtimeDeviceId === expectedDeviceId &&
+      typeof expectedDeviceBinding.runtimeInstanceId === 'string' &&
+      expectedDeviceBinding.runtimeInstanceId.length > 0
+    ),
+    targetDeviceMatches: Boolean(old && old.device_id === expectedDeviceId),
+    targetAppBindingValid: Boolean(binding && isDeepStrictEqual(binding, expectedDeviceBinding)),
+    targetDeviceGranted: Boolean(binding && isDeepStrictEqual(grants?.[expectedDeviceId], binding)),
     matchingMigrationPresent: Boolean(completed),
+    migrationBindingUnchanged: Boolean(completed && isDeepStrictEqual(completedBinding, binding)),
     migrationExport: completed?.operation === 'export',
     migrationInactive: Boolean(completed && Number(completed.is_active) === 0),
-    migrationRevisionAdvanced: Boolean(
-      completed && Number(completed.revision) > Number(old.revision)
+    migrationNoncePresent: Boolean(
+      typeof old?.name === 'string' &&
+      /^[a-f0-9]{64}$/.test(old.name) &&
+      typeof completed?.name === 'string' &&
+      /^[a-f0-9]{64}$/.test(completed.name)
     ),
     migrationGenerationAdvanced: Boolean(
       completed && (completed.name !== old.name || Number(old.is_active) === 1)
@@ -98,12 +116,20 @@ export function describePluginAuthRecovery(observation) {
     value === undefined || value === null
       ? null
       : createHash('sha256').update(String(value)).digest('hex')
+  const bindingHash = value => {
+    const binding = typeof value === 'string' ? JSON.parse(value) : value
+    return binding
+      ? digest(
+          JSON.stringify([binding.deviceRowId, binding.runtimeDeviceId, binding.runtimeInstanceId])
+        )
+      : null
+  }
   const project = row => {
     const baseline = observation.before.find(
       candidate => candidate.id === row.id && candidate.kind === row.kind
     )
     const grants =
-      typeof row.local_grants === 'string' ? JSON.parse(row.local_grants) : row.local_grants
+      typeof row.device_grants === 'string' ? JSON.parse(row.device_grants) : row.device_grants
     return {
       kind: row.kind,
       id: row.id,
@@ -114,10 +140,12 @@ export function describePluginAuthRecovery(observation) {
       revision: row.revision,
       operation: row.operation,
       credentialPresent: Number(row.credential_present) === 1,
-      matchingPrincipalGrant: Boolean(
-        context.old && grants?.[context.old.local_principal] === true
+      matchingDeviceGrant: Boolean(
+        context.binding &&
+        isDeepStrictEqual(grants?.[observation.expectedDeviceId], context.binding)
       ),
-      principalHash: digest(row.local_principal),
+      deviceHash: digest(row.device_id),
+      bindingHash: bindingHash(row.binding),
       migrationNonceHash: row.kind === 'ConnectorMigration' ? digest(row.name) : null,
       migrationNonceChanged:
         row.kind === 'ConnectorMigration' && baseline ? row.name !== baseline.name : null,
@@ -125,6 +153,8 @@ export function describePluginAuthRecovery(observation) {
   }
   return {
     accepted: Object.values(checks).every(Boolean),
+    expectedDeviceHash: digest(observation.expectedDeviceId),
+    expectedBindingHash: bindingHash(observation.expectedDeviceBinding),
     checks,
     before: observation.before.map(project),
     after: observation.after.map(project),
@@ -138,12 +168,13 @@ export async function readPluginAuthTarget(cloud, installedId) {
        JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.installed_plugin_id'))) AS installed_plugin_id,
      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.connectorSlug')),
        JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.connector_slug'))) AS connector_slug,
-     JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.localPrincipal')) AS local_principal,
+     JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.device_id')) AS device_id,
+     JSON_EXTRACT(json, '$.spec.binding') AS binding,
      JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.operation')) AS operation,
      JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.status')) AS status,
      JSON_UNQUOTE(JSON_EXTRACT(json, '$.spec.revision')) AS revision,
      JSON_TYPE(JSON_EXTRACT(json, '$.spec.credential')) <> 'NULL' AS credential_present,
-     JSON_EXTRACT(json, '$.spec.localGrants') AS local_grants
+     JSON_EXTRACT(json, '$.spec.deviceGrants') AS device_grants
      FROM kinds WHERE user_id=1 AND (
        (id=%s AND namespace='default' AND kind='InstalledPlugin') OR
        (namespace='plugin-auth' AND kind='ConnectorConnection'
@@ -160,7 +191,7 @@ export async function readPluginAuthTarget(cloud, installedId) {
   assert.equal(
     rows.filter(row => row.kind === 'ConnectorMigration').length,
     1,
-    'The isolated native-auth fixture must have exactly one target principal'
+    'The isolated Socket auth fixture must have exactly one target App device'
   )
   return rows
 }
