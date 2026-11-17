@@ -92,6 +92,59 @@ const codeComment = {
 const continuation = 'Authorization is complete. Continue from the blocked operation.'
 let lifecycleStore: RuntimeTaskLifecycleStore
 
+test('skips async questions locally without sending, cancelling, or changing the active turn', async () => {
+  const { result } = await renderSession()
+  act(() => {
+    reconcileRuntimeConversationSnapshot(address, [
+      {
+        id: 'skip-turn',
+        status: 'streaming',
+        items: ['skipped', 'retained'].map(itemId => ({
+          id: itemId,
+          type: 'block',
+          block: {
+            id: itemId,
+            type: 'tool',
+            toolName: 'request_user_input_async',
+            status: 'done',
+            createdAt: 1,
+            renderPayload: {
+              kind: 'request_user_input',
+              delivery: 'async',
+              itemId,
+              questions: [{ id: 'question_1', question: `${itemId}?` }],
+            },
+          },
+        })),
+      },
+    ])
+    lifecycleStore.turnStarted(address, 'skip-turn')
+  })
+  const messages = result.current.messages
+  const lifecycle = lifecycleStore.getTask(address)
+  const revision = lifecycleStore.getTaskRevision(address)
+  act(() => {
+    result.current.skipRequestUserInput([
+      { itemId: 'skipped', delivery: 'async' },
+      { itemId: 'native-blocking' },
+    ])
+  })
+  expect(result.current.answeredRequestUserInputIds.has('item:skipped')).toBe(true)
+  expect(result.current.answeredRequestUserInputIds.has('item:native-blocking')).toBe(false)
+  expect(
+    pendingRequestUserInputPayload(
+      result.current.messages,
+      result.current.answeredRequestUserInputIds
+    )?.itemId
+  ).toBe('retained')
+  expect(result.current.messages).toBe(messages)
+  expect(lifecycleStore.getTask(address)).toStrictEqual(lifecycle)
+  expect(lifecycleStore.getTaskRevision(address)).toBe(revision)
+  expect(mocks.send).not.toHaveBeenCalled()
+  expect(mocks.guide).not.toHaveBeenCalled()
+  expect(mocks.cancel).not.toHaveBeenCalled()
+})
+
 test.each(
   ['accepted', 'rejected', 'queued'].flatMap(outcome => [
     { outcome, interrupt: false },

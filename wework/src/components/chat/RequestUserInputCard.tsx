@@ -1,4 +1,4 @@
-import { useContext, type ComponentProps } from 'react'
+import { useContext, useMemo, type ComponentProps } from 'react'
 import { MessageCircle } from 'lucide-react'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
@@ -20,6 +20,11 @@ import { DesktopConversationTranslation } from './DesktopConversationTranslation
 import { openExternalUrl } from '@/lib/external-links'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { useTranslation } from '@/hooks/useTranslation'
+import { AttachmentBadges } from './composer/AttachmentBadges'
+import {
+  getDesktopComposerEditorServices,
+  desktopComposerTransferServices,
+} from './composer/desktopComposerServices'
 import {
   isRequestUserInputBlock,
   requestUserInputPayloadKey,
@@ -113,6 +118,44 @@ export function RequestUserInputCard({
     discussion && address && props.onSubmit && canDiscussQuestion(props.payload)
   )
   const question = props.payload.questions?.[0]
+  const composerServices = useMemo(
+    () => ({
+      editorServices: getDesktopComposerEditorServices(),
+      transferServices: desktopComposerTransferServices,
+      uploadAttachment: pane?.services.attachmentApi?.uploadAttachment,
+      deleteAttachment: pane?.services.attachmentApi?.deleteAttachment,
+      renderAttachments: ({
+        state,
+        remove,
+        dismissError,
+      }: {
+        state: import('@wegent/collaboration/composer').MultiAttachmentUploadState
+        remove(id: number): void
+        dismissError(filename: string): void
+      }) => (
+        <AttachmentBadges
+          {...state}
+          onRemoveAttachment={remove}
+          onDismissAttachmentError={dismissError}
+        />
+      ),
+    }),
+    [pane?.services.attachmentApi]
+  )
+  const savedAttachments =
+    store && address
+      ? Object.fromEntries(
+          (props.payload.questions ?? []).flatMap(question => {
+            if (!question.id) return []
+            const target = requestUserInputQuestionTarget(props.payload, question.id)
+            const attachments =
+              store.sessions[questionDiscussionKey(address, target.payload)]?.attachments?.[
+                target.questionId
+              ]
+            return attachments ? [[question.id, attachments]] : []
+          })
+        )
+      : props.draftAttachments
   const questionId = question?.id
   const callId = questionId?.startsWith('mcp_tool_call_approval_')
     ? questionId.slice('mcp_tool_call_approval_'.length)
@@ -219,6 +262,24 @@ export function RequestUserInputCard({
     <DesktopConversationTranslation>
       <SharedRequestUserInputCard
         {...props}
+        allowSkip={canDiscussQuestion(props.payload)}
+        composerServices={props.composerServices ?? composerServices}
+        draftAttachments={savedAttachments}
+        onDraftAttachmentsChange={attachments => {
+          props.onDraftAttachmentsChange?.(attachments)
+          if (!store || !address) return
+          for (const [id, files] of Object.entries(attachments)) {
+            const target = requestUserInputQuestionTarget(props.payload, id)
+            store.update(questionDiscussionKey(address, target.payload), current => ({
+              ...current,
+              source: address,
+              payload: current?.payload ?? target.payload,
+              address: current?.address ?? null,
+              answers: current?.answers ?? {},
+              attachments: { ...current?.attachments, [target.questionId]: files },
+            }))
+          }
+        }}
         payload={
           canDiscuss && !isImplementationPlanRequestUserInput(payload)
             ? {

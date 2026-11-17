@@ -1,3 +1,4 @@
+import { setComposerValue } from '@/test/composer'
 import '@/i18n'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useContext, useEffect, useRef, useState } from 'react'
@@ -231,7 +232,7 @@ test('discusses independently, preserves defaults, fills an editable draft and s
   const answer = screen.getByTestId('request-user-input-custom-audience')
   expect(answer).toHaveValue('仅自己，可以保留草稿')
   expect(submit).not.toHaveBeenCalled()
-  fireEvent.change(answer, { target: { value: '仅自己，确认后发布' } })
+  setComposerValue(answer, '仅自己，确认后发布')
   fireEvent.click(screen.getByTestId('request-user-input-submit-button'))
   await waitFor(() =>
     expect(submit).toHaveBeenCalledWith(
@@ -566,7 +567,7 @@ test('refills the exact owner of a grouped asynchronous question', async () => {
   apply()
   await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
   expect(screen.getByTestId(`request-user-input-custom-${secondId}`)).toHaveValue('PDF')
-  expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue('仅自己')
+  expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue('')
 })
 
 test('does not revive an errored native question block', async () => {
@@ -601,8 +602,10 @@ test('returns a plan adjustment without approving implementation', async () => {
   changeConclusion('请先补充数据来源，再开始实施。')
   apply()
   await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
-  expect(screen.getByTestId('request-user-input-custom-adjustment')).toHaveValue(
-    '请先补充数据来源，再开始实施。'
+  await waitFor(() =>
+    expect(screen.getByTestId('request-user-input-custom-adjustment')).toHaveValue(
+      '请先补充数据来源，再开始实施。'
+    )
   )
   fireEvent.click(screen.getByTestId('request-user-input-submit-button'))
   await waitFor(() =>

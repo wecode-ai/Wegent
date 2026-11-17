@@ -6,6 +6,7 @@ import { canQuickReply, canReplyToInteraction, interactionId } from './runtimeIn
 import {
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
+  requestUserInputResponseText,
 } from '@/components/chat/requestUserInputMessages'
 
 interface RuntimeUserInputHost {
@@ -68,8 +69,8 @@ export function useRuntimeInteractionInputHost(
         if (!item || !canReplyToInteraction(item))
           return payload && canQuickReply(payload) ? false : undefined
         const answers = response.answers[item.payload.questions![0].id!]?.answers
-        if (answers?.length !== 1) return undefined
-        return interactions.respond(item, answers[0])
+        if (!answers) return undefined
+        return interactions.respond(item, requestUserInputResponseText(response), { response })
       },
     }
   }, [address, enabled, interactions])

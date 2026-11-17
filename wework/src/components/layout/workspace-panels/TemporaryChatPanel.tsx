@@ -40,13 +40,17 @@ import {
   RequestUserInputCard,
   type RequestUserInputPayload,
 } from '@/components/chat/RequestUserInputCard'
-import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputPayloads,
+} from '@/components/layout/requestUserInputOverlay'
 import {
   findRequestUserInputPayload,
   isAsyncRequestUserInputPayload,
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
   requestUserInputResponseText,
+  requestUserInputResponseAttachments,
 } from '@/components/chat/requestUserInputMessages'
 import type { ChatSubmitOptions, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
@@ -1315,6 +1319,7 @@ export function TemporaryChatPanel({
         const answerMessage: RuntimePaneQueuedMessage = {
           id: `queued-side-chat-${Date.now()}-${queuedMessages.length}`,
           content: requestUserInputResponseText(response),
+          attachments: requestUserInputResponseAttachments(response),
           status: 'queued',
           createdAt: new Date().toISOString(),
           ...selectedModelFields,
@@ -1460,6 +1465,16 @@ export function TemporaryChatPanel({
                       requestUserInputHost?.setDraft(pendingRequest, answers)
                     }
                     onCollapse={onCollapse}
+                    onSkip={() => {
+                      const keys = pendingRequestUserInputPayloads(
+                        messages,
+                        hiddenRequestUserInputIds
+                      )
+                        .filter(isAsyncRequestUserInputPayload)
+                        .map(requestUserInputPayloadKey)
+                        .filter((key): key is string => Boolean(key))
+                      setHiddenRequestUserInputIds(current => new Set([...current, ...keys]))
+                    }}
                     onSubmit={submitRequestUserInput}
                     onIgnore={() => void ignoreRequestUserInput(pendingRequest)}
                   />

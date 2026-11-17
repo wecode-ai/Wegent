@@ -10,6 +10,7 @@ import {
 import {
   isAsyncRequestUserInputPayload,
   requestUserInputResponseText,
+  requestUserInputResponseAttachments,
 } from '@wegent/chat-core/runtime-user-input'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -49,6 +50,7 @@ import { sendSystemNotification } from '@/features/workbench/runtimeTaskSystemNo
 import { isPersonalStandInTask } from '@/features/workbench/runtimeTaskNotificationContent'
 import { weworkInteractionScheme } from './scheme'
 import { replyToInteractionProject } from './interactionProjectReply'
+import { prepareRuntimeQuestionResponse } from '@/features/workbench/useWorkbenchRuntimeMessaging'
 import { prepareRuntimeContinuationModel } from '@/features/workbench/runtimeContinuationModel'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
@@ -673,7 +675,11 @@ function RuntimeInteractionsState({
     async (
       item: RuntimeInteraction,
       answer: string,
-      options?: { clientMessageId?: string; send?: () => Promise<boolean> }
+      options?: {
+        clientMessageId?: string
+        send?: () => Promise<boolean>
+        response?: import('@wegent/chat-core/runtime').RequestUserInputResponse
+      }
     ): Promise<boolean> => {
       const api = sourceRef.current?.services?.runtimeWorkApi
       if (
@@ -704,7 +710,8 @@ function RuntimeInteractionsState({
               answer,
               options?.clientMessageId ?? crypto.randomUUID(),
               services,
-              t('interactions.failed')
+              t('interactions.failed'),
+              options?.response ? requestUserInputResponseAttachments(options.response) : []
             )
           }
           await refreshIssueInteractions()
@@ -743,15 +750,26 @@ function RuntimeInteractionsState({
           )
             throw new Error(t('interactions.expired'))
           if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
-          const response = interactionResponse(live.payload, {
-            [live.payload.questions![0].id!]: { answers: [answer] },
-          })
+          const originalResponse =
+            options?.response ??
+            interactionResponse(live.payload, {
+              [live.payload.questions![0].id!]: { answers: [answer] },
+            })
+          const response = live.project
+            ? originalResponse
+            : await prepareRuntimeQuestionResponse(
+                originalResponse,
+                live.task.address.deviceId,
+                sourceRef.current?.devices ?? [],
+                sourceRef.current?.services?.attachmentApi?.uploadLocalAttachmentToCloud
+              )
           const previousClient = clientIds.current.get(item.id)
           const id =
             options?.clientMessageId ??
             (previousClient?.answer === answer ? previousClient.id : crypto.randomUUID())
           clientIds.current.set(item.id, { answer, id })
           const message = requestUserInputResponseText(response)
+          const attachments = requestUserInputResponseAttachments(response)
           const asyncInput = isAsyncRequestUserInputPayload(live.payload)
           const result = options?.send
             ? { accepted: await options.send(), error: undefined }
@@ -761,12 +779,14 @@ function RuntimeInteractionsState({
                   message,
                   id,
                   sourceRef.current!.services!,
-                  t('interactions.failed')
+                  t('interactions.failed'),
+                  attachments
                 ).then(() => ({ accepted: true, error: undefined }))
               : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
                 ? await api.guideRuntimeTask({
                     address: live.task.address,
                     message,
+                    ...(attachments.length ? { attachments } : {}),
                     clientGuidanceId: id,
                   })
                 : await api.sendRuntimeMessage(
@@ -774,6 +794,7 @@ function RuntimeInteractionsState({
                       {
                         address: live.task.address,
                         message,
+                        ...(attachments.length ? { attachments } : {}),
                         ...(asyncInput
                           ? {
                               queueIfBusy: true,

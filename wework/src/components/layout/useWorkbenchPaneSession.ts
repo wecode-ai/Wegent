@@ -75,6 +75,7 @@ import {
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
   requestUserInputResponseText,
+  requestUserInputResponseAttachments,
 } from '@/components/chat/requestUserInputMessages'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
@@ -1491,6 +1492,17 @@ export function useWorkbenchPaneSession({
     ]
   )
 
+  const skipRequestUserInput = useCallback(
+    (payloads: RequestUserInputPayload[]) => {
+      const keys = payloads
+        .filter(isAsyncRequestUserInputPayload)
+        .map(requestUserInputPayloadKey)
+        .filter((key): key is string => Boolean(key))
+      setAnsweredRequestUserInputIds(current => new Set([...current, ...keys]))
+    },
+    [setAnsweredRequestUserInputIds]
+  )
+
   const ignoreRequestUserInput = useCallback(
     async (payload: RequestUserInputPayload | RequestUserInputPayload[]) => {
       const requestUserInputKeys = (Array.isArray(payload) ? payload : [payload])
@@ -1723,6 +1735,7 @@ export function useWorkbenchPaneSession({
       if (!currentRuntimeTask) return false
 
       const message = requestUserInputResponseText(response)
+      const attachments = requestUserInputResponseAttachments(response)
       const requestUserInputKey = requestUserInputResponseKey(response)
       const operation = beginRuntimeConversationOperation(currentRuntimeTask, {
         requestUserInputKey,
@@ -1751,6 +1764,9 @@ export function useWorkbenchPaneSession({
           const answerMessage: RuntimePaneQueuedMessage = {
             id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
             content: message,
+            ...(attachments.length
+              ? { attachments: persistAttachmentReferences(attachments) }
+              : {}),
             status: 'queued',
             createdAt: new Date().toISOString(),
             ...getRuntimeModelFields(runtimeModelOverride),
@@ -2982,6 +2998,7 @@ export function useWorkbenchPaneSession({
     retryFailedMessage: retryFailedMessageInPane,
     editLastUserMessage: editLastUserMessageInPane,
     sendRequestUserInputResponse,
+    skipRequestUserInput,
     ignoreRequestUserInput,
     addCodeComment,
     replaceBrowserCodeComments,

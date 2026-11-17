@@ -57,8 +57,22 @@ it('shares the existing draft and submission coordinator with the original contr
   result.current!.setDraft(interactionQuestion, { compatibility: 'Updated' })
   expect(value.setDraft).toHaveBeenCalledExactlyOnceWith(item.id, 'Updated')
   expect(await result.current!.submit(response, interactionQuestion)).toBe(true)
-  expect(value.respond).toHaveBeenCalledExactlyOnceWith(item, 'keep')
+  expect(value.respond).toHaveBeenCalledExactlyOnceWith(item, 'keep', { response })
 })
+it.each([{ answers: [] }, { answers: ['file-only'] }])(
+  'preserves empty answers and attachments through coordination: %j',
+  async ({ answers }) => {
+    const { value, result } = host()
+    const response = interactionResponse(interactionQuestion, {
+      compatibility: {
+        answers,
+        attachments: [{ id: -1, filename: 'brief.txt' } as import('@/types/api').Attachment],
+      },
+    })
+    expect(await result.current!.submit(response, interactionQuestion)).toBe(true)
+    expect(value.respond).toHaveBeenCalledExactlyOnceWith(item, answers[0] ?? '继续', { response })
+  }
+)
 it('does not fall through to an uncoordinated send for an unregistered ordinary request', async () => {
   const { value, result } = host({ pending: [] })
   expect(await result.current!.submit(response, interactionQuestion)).toBe(false)

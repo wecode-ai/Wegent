@@ -8,6 +8,9 @@ import {
 } from '@/features/workbench/workbenchServices'
 import type { RuntimeInteraction } from './runtimeInteractions'
 import { createWorkbenchDeviceResolver } from '@/lib/workbench-device'
+import type { Attachment } from '@/types/api'
+import { issueCommentBody } from '@wegent/collaboration'
+import { prepareCloudAttachments } from '@/lib/cloud-attachments'
 
 async function ownsInteraction(
   owner: ReturnType<typeof cardSessionAddress>,
@@ -56,14 +59,37 @@ export async function replyToInteractionProject(
   text: string,
   clientMessageId: string,
   services: WorkbenchServices,
-  failedText: string
+  failedText: string,
+  attachments: Attachment[] = []
 ): Promise<void> {
   const binding = item.project
   const client =
     binding?.store === 'local' ? services.localProjectChatClient : services.projectChatClient
   if (!binding?.rootCommentId || !client?.executeTaskComment)
     throw new Error(`${failedText} [interaction_issue_client_unavailable]`)
+  const prepareReply = async () => {
+    if (!attachments.length) return { text, attachments }
+    const api =
+      binding.store === 'local'
+        ? (services.projectSpaceApis?.local ?? services.deliveryApi)
+        : (services.projectSpaceApis?.cloud ?? services.deliveryApi)
+    if (!api) throw new Error(`${failedText} [interaction_issue_attachments_unavailable]`)
+    const prepared =
+      binding.store === 'local'
+        ? attachments
+        : (
+            await prepareCloudAttachments(
+              attachments,
+              services.attachmentApi?.uploadLocalAttachmentToCloud
+            )
+          ).attachments
+    const imported = await api.importLoopItemAttachments(binding.issueId, prepared)
+    if (imported.length !== prepared.length)
+      throw new Error(`${failedText} [interaction_issue_attachment_import_failed]`)
+    return { text: issueCommentBody(text, imported), attachments: prepared }
+  }
   if (item.sharedRequest) {
+    const prepared = await prepareReply()
     const result = await dispatchTaskCommentReply({
       client,
       projectId: binding.projectId,
@@ -72,7 +98,8 @@ export async function replyToInteractionProject(
       humanRequestId: item.sharedRequest.id,
       reply: {
         id: clientMessageId,
-        content: text,
+        content: prepared.text,
+        attachments: prepared.attachments,
         createdAt: new Date().toISOString(),
         status: 'queued',
       },
@@ -102,6 +129,7 @@ export async function replyToInteractionProject(
       throw new Error(
         `${failedText} [interaction_issue_owner_mismatch] expected=${JSON.stringify({ deviceId: item.task.address.deviceId, taskId: item.task.address.taskId })} actual=${JSON.stringify(owner && { deviceId: owner.deviceId, taskId: owner.taskId })}`
       )
+    const prepared = await prepareReply()
     const result = await dispatchTaskCommentReply({
       client,
       projectId: binding.projectId,
@@ -109,7 +137,8 @@ export async function replyToInteractionProject(
       rootMessageId: card.root.messageId,
       reply: {
         id: clientMessageId,
-        content: text,
+        content: prepared.text,
+        attachments: prepared.attachments,
         createdAt: new Date().toISOString(),
         status: 'queued',
       },

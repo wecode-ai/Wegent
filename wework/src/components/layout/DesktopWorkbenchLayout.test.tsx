@@ -88,6 +88,7 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { setComposerValue as setAnswerValue } from '@/test/composer'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { useEffect, useMemo } from 'react'
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -1748,6 +1749,7 @@ describe('DesktopWorkbenchLayout', () => {
       sendRequestUserInputResponse:
         props.onRequestUserInputSubmit ?? baseProps.onRequestUserInputSubmit,
       ignoreRequestUserInput: vi.fn(),
+      skipRequestUserInput: vi.fn(),
       answeredRequestUserInputIds: new Set(),
       addCodeComment: vi.fn(),
       clearCodeComments: vi.fn(),
@@ -2279,7 +2281,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await user.type(screen.getByTestId('request-user-input-custom-adjustment'), '先缩小范围')
+    setAnswerValue(screen.getByTestId('request-user-input-custom-adjustment'), '先缩小范围')
     await user.click(screen.getByTestId('request-user-input-submit-button'))
 
     const response = {

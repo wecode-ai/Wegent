@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef } from 'react'
-import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
+import type { Attachment, RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import {
   hasRequestUserInputResponse,
   isImplementationPlanRequestUserInput,
@@ -80,6 +80,7 @@ export interface QuestionDiscussionSession {
   payload: RequestUserInputPayload
   address: RuntimeTaskAddress | null
   answers: Record<string, string>
+  attachments?: Record<string, Attachment[]>
   input?: string
 }
 

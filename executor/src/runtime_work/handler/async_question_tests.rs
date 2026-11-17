@@ -24,6 +24,7 @@ async fn unknown_question_ids_cannot_consume_an_empty_native_request_map() {
             json!({
                 "requestId":42,"interactionScope":"turn","answers":{"q":{"answers":["Yes"]}}
             }),
+            None,
         )
         .await
         .unwrap();
@@ -59,14 +60,14 @@ async fn synchronous_question_answers_reject_duplicates_and_wrong_request_ids() 
     let mut wrong = answer.clone();
     wrong["requestId"] = json!(43);
     let rejected = handler
-        .send_request_user_input_response("task", wrong)
+        .send_request_user_input_response("task", wrong, None)
         .await
         .unwrap();
     assert_eq!(rejected["code"], "stale_request_user_input");
     assert!(receiver.try_recv().is_err());
     assert_eq!(
         handler
-            .send_request_user_input_response("task", answer.clone())
+            .send_request_user_input_response("task", answer.clone(), None)
             .await
             .unwrap()["accepted"],
         true
@@ -74,7 +75,7 @@ async fn synchronous_question_answers_reject_duplicates_and_wrong_request_ids() 
     assert_eq!(receiver.recv().await.unwrap(), answer);
     assert_eq!(
         handler
-            .send_request_user_input_response("task", answer)
+            .send_request_user_input_response("task", answer, None)
             .await
             .unwrap()["code"],
         "stale_request_user_input"

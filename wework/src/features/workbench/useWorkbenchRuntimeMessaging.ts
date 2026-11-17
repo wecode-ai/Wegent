@@ -5,6 +5,7 @@ import {
 import {
   applyRequestUserInputResponseToBlock,
   isAsyncRequestUserInputPayload,
+  requestUserInputResponseAttachments,
 } from '@wegent/chat-core/runtime-user-input'
 import { pendingRequestUserInputPayload } from '@/components/layout/requestUserInputOverlay'
 import { useCallback, useRef } from 'react'
@@ -45,6 +46,7 @@ import {
 } from '@/lib/workbench-device'
 import type {
   Attachment,
+  RequestUserInputResponse,
   ModelType,
   ModelSelectionConfig,
   ModelOptions,
@@ -164,6 +166,30 @@ export async function prepareRuntimeAttachmentsForDevice(
   }
 
   return prepareCloudAttachments(attachments, uploadLocalAttachmentToCloud, attachmentIds)
+}
+
+export async function prepareRuntimeQuestionResponse(
+  response: RequestUserInputResponse,
+  deviceId: string,
+  devices: WorkbenchState['devices'],
+  uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
+): Promise<RequestUserInputResponse> {
+  const answers = Object.fromEntries(
+    await Promise.all(
+      Object.entries(response.answers).map(async ([id, answer]) => {
+        if (!answer.attachments?.length) return [id, answer]
+        const prepared = await prepareRuntimeAttachmentsForDevice(
+          deviceId,
+          devices,
+          [],
+          answer.attachments,
+          uploadLocalAttachmentToCloud
+        )
+        return [id, { ...answer, attachments: prepared.attachments }]
+      })
+    )
+  )
+  return { ...response, answers }
 }
 
 export function runtimeExecutablePathForTarget({
@@ -414,8 +440,28 @@ export function useWorkbenchRuntimeMessaging({
 
   const prepareRuntimeSendRequest = useCallback(
     async (input: RuntimeSendRequest): Promise<RuntimeSendRequest> => {
+      const originalResponse = input.requestUserInputResponse ?? input.request_user_input_response
+      const response = originalResponse
+        ? await prepareRuntimeQuestionResponse(
+            originalResponse,
+            input.address.deviceId,
+            state.devices,
+            services.attachmentApi?.uploadLocalAttachmentToCloud
+          )
+        : undefined
+      const responseAttachments = response ? requestUserInputResponseAttachments(response) : []
       const request = await prepareRuntimeContinuationModel(
-        applyReadyRuntimeTaskModel(input),
+        applyReadyRuntimeTaskModel(
+          responseAttachments.length
+            ? {
+                ...input,
+                ...(input.requestUserInputResponse
+                  ? { requestUserInputResponse: response }
+                  : { request_user_input_response: response }),
+                attachments: responseAttachments,
+              }
+            : input
+        ),
         state.runtimeWork,
         () => executorClient.runtime.listRuntimeWork()
       )

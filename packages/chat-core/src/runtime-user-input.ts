@@ -89,6 +89,10 @@ export function requestUserInputResponseText(response: RequestUserInputResponse)
   return answers.length > 0 ? answers.join('\n') : '继续'
 }
 
+export function requestUserInputResponseAttachments(response: RequestUserInputResponse) {
+  return Object.values(response.answers).flatMap(answer => answer.attachments ?? [])
+}
+
 export function isImplementationPlanRequestUserInput(
   payload: RequestUserInputPayload | null | undefined
 ): boolean {

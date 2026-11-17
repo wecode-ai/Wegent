@@ -1,0 +1,104 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { Attachment } from '@wegent/chat-core/runtime'
+import { ComposerTextInput, type ComposerTextInputProps } from '../composer/ComposerTextInput'
+import { useComposerAttachments } from '../composer/useComposerAttachments'
+import type { MultiAttachmentUploadState } from '../composer/useComposerAttachments'
+import { useConversationTranslation } from './ConversationTranslation'
+
+export interface RequestUserInputComposerServices {
+  editorServices?: ComposerTextInputProps['editorServices']
+  transferServices?: ComposerTextInputProps['transferServices']
+  uploadAttachment?: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
+  deleteAttachment?: (id: number) => Promise<void>
+  renderAttachments?: (props: {
+    state: MultiAttachmentUploadState
+    remove(id: number): void
+    dismissError(filename: string): void
+  }) => ReactNode
+}
+
+export function RequestUserInputAnswerEditor({
+  questionId,
+  labelId,
+  value,
+  disabled,
+  initialAttachments,
+  services,
+  onChange,
+  onSubmit,
+  onAttachmentsChange,
+  onReadyChange,
+}: {
+  questionId: string
+  labelId: string
+  value: string
+  disabled: boolean
+  initialAttachments?: Attachment[]
+  services?: RequestUserInputComposerServices
+  onChange(value: string): void
+  onSubmit(value: string): void
+  onAttachmentsChange(attachments: Attachment[]): void
+  onReadyChange(ready: boolean): void
+}) {
+  const { t } = useConversationTranslation()
+  const textareaRef = useRef<HTMLElement | null>(null)
+  const [transferReady, setTransferReady] = useState(true)
+  const attachments = useComposerAttachments({
+    initialAttachments,
+    uploadAttachment:
+      services?.uploadAttachment ??
+      (async () => {
+        throw new Error(t('request_user_input.files_unavailable'))
+      }),
+    deleteAttachment: services?.deleteAttachment ?? (async () => undefined),
+  })
+  const ready =
+    transferReady && attachments.isAttachmentReadyToSend && attachments.errors.size === 0
+  const callbacks = useRef({ onAttachmentsChange, onReadyChange })
+  callbacks.current = { onAttachmentsChange, onReadyChange }
+  useEffect(() => {
+    callbacks.current.onAttachmentsChange(attachments.attachments)
+  }, [attachments.attachments])
+  useEffect(() => {
+    callbacks.current.onReadyChange(ready)
+    return () => callbacks.current.onReadyChange(true)
+  }, [ready])
+  useEffect(() => {
+    textareaRef.current?.setAttribute('aria-labelledby', labelId)
+  }, [labelId])
+
+  return (
+    <div className="min-w-0 flex-1">
+      {services?.renderAttachments?.({
+        state: attachments.state,
+        remove: id => {
+          void attachments.removeAttachment(id)
+        },
+        dismissError: attachments.dismissAttachmentError,
+      })}
+      {!services?.renderAttachments &&
+        [...attachments.errors].map(([filename, error]) => (
+          <p key={filename} role="alert">
+            {filename}: {error}
+          </p>
+        ))}
+      <ComposerTextInput
+        value={value}
+        onChange={onChange}
+        onSubmit={onSubmit}
+        canSend={!disabled && ready}
+        disabled={disabled}
+        placeholder={t('request_user_input.custom_placeholder')}
+        testId={`request-user-input-custom-${questionId}`}
+        rows={1}
+        textareaRef={textareaRef}
+        className="w-full bg-transparent text-sm leading-5 text-text-primary outline-none"
+        scrollContainerClassName="max-h-48 overflow-y-auto"
+        editorServices={services?.editorServices}
+        transferServices={services?.transferServices}
+        onPasteFiles={files => attachments.handleFileSelect(files)}
+        onTransferReadyChange={setTransferReady}
+      />
+    </div>
+  )
+}

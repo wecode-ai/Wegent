@@ -1,6 +1,7 @@
 import { insertComposerReference } from './insertComposerReference'
 import {
   useCallback,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -35,6 +36,7 @@ export interface ComposerTextInputProps {
   onCompositionEnd?: () => void
   nativeEmptyCaret?: boolean
   onPasteFiles?: (files: File[]) => void | Promise<void>
+  onTransferReadyChange?: (ready: boolean) => void
   sendKey?: 'enter' | 'cmd_enter'
   isStreaming?: boolean
   followUpBehavior?: ComposerFollowUpBehavior
@@ -65,6 +67,7 @@ export function ComposerTextInput({
   onCompositionEnd,
   nativeEmptyCaret,
   onPasteFiles,
+  onTransferReadyChange,
   sendKey,
   isStreaming,
   followUpBehavior,
@@ -116,6 +119,19 @@ export function ComposerTextInput({
     },
     [onChange]
   )
+  const transfers = useComposerTransfers({
+    editorRef,
+    commitEditorValue,
+    disabled,
+    onPasteFiles,
+    services: transferServices,
+  })
+  const transferReady = !transfers.isTransferring && !transfers.transferError
+  const transferReadyCallback = useRef(onTransferReadyChange)
+  transferReadyCallback.current = onTransferReadyChange
+  useEffect(() => {
+    transferReadyCallback.current?.(transferReady)
+  }, [transferReady])
   const events = useComposerInputEvents({
     editorRef,
     valueRef,
@@ -126,15 +142,8 @@ export function ComposerTextInput({
     sendKey,
     isStreaming,
     followUpBehavior,
-    canSend,
+    canSend: canSend && transferReady,
     onKeyDown,
-  })
-  const transfers = useComposerTransfers({
-    editorRef,
-    commitEditorValue,
-    disabled,
-    onPasteFiles,
-    services: transferServices,
   })
   const links = useComposerLinkEditing(editorRef, commitEditorValue)
 

@@ -619,6 +619,73 @@ fn mcp_elicitation_history_keeps_reused_request_ids_scoped_to_their_turn() {
 }
 
 #[tokio::test]
+async fn question_files_use_native_context_but_preserve_the_original_reply_in_history() {
+    let (handler, root) = interaction_handler("question-files-history");
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.record_active_codex_turn("task-1", execution_id, "thread-1".into(), "turn-1".into());
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &ordinary_request(json!(9), "turn-1"),
+    );
+    let (sender, mut receiver) = mpsc::channel(1);
+    handler.active_request_user_inputs.lock().unwrap().insert(
+        "task-1".into(),
+        ActiveRequestUserInput {
+            execution_id,
+            sender,
+        },
+    );
+    let path = root.join("brief.txt");
+    fs::write(&path, "Real question file").unwrap();
+    let file = json!({"id": -1, "filename": "brief.txt", "local_path": path, "status": "ready"});
+    let response = json!({"requestId": 9, "interactionScope": "turn-1", "answers": {"choice": {"answers": ["Review"], "attachments": [file.clone()]}}});
+    let mut stale = response.clone();
+    stale["interactionScope"] = json!("old-turn");
+    assert_eq!(
+        handler
+            .send_request_user_input_response("task-1", stale, None)
+            .await
+            .unwrap()["code"],
+        "stale_request_user_input"
+    );
+    assert!(handler
+        .send_request_user_input_response(
+            "task-1",
+            response.clone(),
+            Some(ExecutionRequest::default())
+        )
+        .await
+        .is_err());
+    assert!(receiver.try_recv().is_err());
+    assert_eq!(
+        handler.active_codex_transcript_items.lock().unwrap()["task-1"].items[0]["renderPayload"]
+            ["interactionStatus"],
+        "pending"
+    );
+    let mut request = ExecutionRequest::default();
+    request.extra.insert("attachments".into(), json!([file]));
+    assert_eq!(
+        handler
+            .send_request_user_input_response("task-1", response.clone(), Some(request))
+            .await
+            .unwrap()["success"],
+        true
+    );
+    let native = receiver.recv().await.unwrap();
+    assert!(native["answers"]["choice"]["answers"]
+        .to_string()
+        .contains("<attachment>"));
+    assert!(native["answers"]["choice"].get("attachments").is_none());
+    assert_eq!(
+        handler.active_codex_transcript_items.lock().unwrap()["task-1"].items[0]["renderPayload"]
+            ["response"],
+        response
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn mcp_elicitation_rejects_late_answers_and_answers_from_previous_turn() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
@@ -645,27 +712,27 @@ async fn mcp_elicitation_rejects_late_answers_and_answers_from_previous_turn() {
         json!({"answers": {}}),
     ] {
         let rejected = handler
-            .send_request_user_input_response("task-1", invalid)
+            .send_request_user_input_response("task-1", invalid, None)
             .await
             .unwrap();
         assert_eq!(rejected["code"], "stale_request_user_input");
     }
     let mut answer = json!({"requestId": 0, "interactionScope": "turn-old", "answers": {"action": {"answers": ["production"]}}});
     let stale = handler
-        .send_request_user_input_response("task-1", answer.clone())
+        .send_request_user_input_response("task-1", answer.clone(), None)
         .await
         .unwrap();
     assert_eq!(stale["code"], "stale_request_user_input");
     answer["interactionScope"] = json!("turn-1");
     let accepted = handler
-        .send_request_user_input_response("task-1", answer.clone())
+        .send_request_user_input_response("task-1", answer.clone(), None)
         .await
         .unwrap();
     assert_eq!(accepted["success"], true);
     assert_eq!(receiver.recv().await.unwrap(), answer);
     let generic = json!({"requestId": 42, "interactionScope": "turn-1", "answers": {"choice": {"answers": ["yes"]}}});
     let unregistered = handler
-        .send_request_user_input_response("task-1", generic.clone())
+        .send_request_user_input_response("task-1", generic.clone(), None)
         .await
         .unwrap();
     assert_eq!(unregistered["code"], "stale_request_user_input");
@@ -676,7 +743,7 @@ async fn mcp_elicitation_rejects_late_answers_and_answers_from_previous_turn() {
         &ordinary_request(json!(42), "turn-1"),
     );
     let accepted = handler
-        .send_request_user_input_response("task-1", generic.clone())
+        .send_request_user_input_response("task-1", generic.clone(), None)
         .await
         .unwrap();
     assert_eq!(
@@ -688,7 +755,7 @@ async fn mcp_elicitation_rejects_late_answers_and_answers_from_previous_turn() {
     pending["params"]["interactionStatus"] = json!("expired");
     handler.record_active_codex_transcript_item("task-1", "turn-1", &pending);
     let stale = handler
-        .send_request_user_input_response("task-1", answer)
+        .send_request_user_input_response("task-1", answer, None)
         .await
         .unwrap();
     assert_eq!(stale["code"], "stale_request_user_input");

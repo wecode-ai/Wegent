@@ -47,8 +47,8 @@ describe('unified human response', () => {
     )
     const input = (await screen.findByTestId(
       'request-user-input-custom-details'
-    )) as HTMLInputElement
-    const value = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!
+    )) as HTMLElement & { value: string }
+    const value = Object.getOwnPropertyDescriptor(input, 'value')!
     const writes: string[] = []
     Object.defineProperty(input, 'value', {
       configurable: true,
@@ -62,11 +62,13 @@ describe('unified human response', () => {
     })
     input.focus()
     fireEvent.compositionStart(input)
-    fireEvent.input(input, { target: { value: 'ni' }, isComposing: true })
+    act(() => value.set!.call(input, 'ni'))
+    fireEvent.input(input, { isComposing: true })
     expect(writes).not.toContain('')
     expect(input).toHaveValue('ni')
     expect(input).toHaveFocus()
-    fireEvent.input(input, { target: { value: '你好' }, isComposing: true })
+    act(() => value.set!.call(input, '你好'))
+    fireEvent.input(input, { isComposing: true })
     fireEvent.compositionEnd(input, { data: '你好' })
     expect(writes).not.toContain('ni')
     expect(input).toHaveValue('你好')

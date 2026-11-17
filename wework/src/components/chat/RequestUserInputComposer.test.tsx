@@ -1,3 +1,4 @@
+import { setComposerValue } from '@/test/composer'
 import '@/i18n'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -45,7 +46,7 @@ test.each(['button', 'Escape'])(
   async action => {
     const h = setup()
     const answer = screen.getByTestId('request-user-input-custom-audience')
-    await userEvent.type(answer, 'Project members only')
+    setComposerValue(answer, 'Project members only')
     const collapse = screen.getByTestId('request-user-input-ignore-button')
     expect(collapse).toHaveTextContent('收起')
     if (action === 'button') await userEvent.click(collapse)
@@ -66,7 +67,7 @@ test.each(['button', 'Escape'])(
 
 test('retains folded answers across failed submissions and closes when the request is settled', async () => {
   const h = setup()
-  await userEvent.type(screen.getByTestId('request-user-input-custom-audience'), 'Saved answer')
+  setComposerValue(screen.getByTestId('request-user-input-custom-audience'), 'Saved answer')
   await userEvent.click(screen.getByTestId('request-user-input-submit-button'))
   expect(h.submit).toHaveBeenCalledOnce()
   await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
@@ -82,7 +83,7 @@ test('retains folded answers across failed submissions and closes when the reque
 
 test('opens newly arriving questions without inheriting an old collapsed answer', async () => {
   const h = setup()
-  await userEvent.type(screen.getByTestId('request-user-input-custom-audience'), 'Old answer')
+  setComposerValue(screen.getByTestId('request-user-input-custom-audience'), 'Old answer')
   await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
   h.update({ ...payload, requestId: 92 })
   expect(screen.queryByTestId('request-user-input-expand')).not.toBeInTheDocument()
@@ -116,10 +117,7 @@ test('keeps the ordinary composer and focus when a folded question expires or di
 
 test('reveals added grouped questions while preserving the first answer', async () => {
   const h = setup()
-  await userEvent.type(
-    screen.getByTestId('request-user-input-custom-audience'),
-    'Saved first answer'
-  )
+  setComposerValue(screen.getByTestId('request-user-input-custom-audience'), 'Saved first answer')
   await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
   h.update({
     ...payload,

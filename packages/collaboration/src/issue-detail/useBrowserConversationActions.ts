@@ -10,6 +10,7 @@ import {
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
   requestUserInputResponseText,
+  requestUserInputResponseAttachments,
 } from '@wegent/chat-core/runtime-user-input'
 import type { createRuntimeConversationSession } from '@wegent/chat-core/runtime-conversation-session'
 import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
@@ -103,13 +104,21 @@ export function useBrowserConversationActions(
                 // Retry creates this identity before invoking the host transport.
                 const clientMessageId = request.clientUserMessageId!
                 if (owner.current === session)
-                  setRetryProgress({ owner: session, clientMessageId, queued: false })
+                  setRetryProgress({
+                    owner: session,
+                    clientMessageId,
+                    queued: false,
+                  })
                 const result = await runtime.work.sendRuntimeMessage(request)
                 if (!result.accepted)
                   throw new Error(result.error || translate('workbench.retry_failed'))
                 queued = result.status === 'queued'
                 if (queued && owner.current === session)
-                  setRetryProgress({ owner: session, clientMessageId, queued: true })
+                  setRetryProgress({
+                    owner: session,
+                    clientMessageId,
+                    queued: true,
+                  })
                 return {
                   accepted: true,
                   queued,
@@ -143,10 +152,12 @@ export function useBrowserConversationActions(
         )
         // Codex steers the turn that is still running and starts a new one once
         // the model has stopped, so the answer is never rejected mid-turn.
+        const attachments = requestUserInputResponseAttachments(response)
         if (appendUserMessage && session.getSnapshot().running) {
           const guided = await runtime.work.guideRuntimeTask({
             address,
             message,
+            ...(attachments.length ? { attachments } : {}),
             clientGuidanceId: `queued-runtime-pane-${Date.now()}`,
           })
           if (guided.accepted === false || guided.success === false)
@@ -156,6 +167,7 @@ export function useBrowserConversationActions(
         const accepted = await runtime.work.sendRuntimeMessage({
           address,
           message,
+          ...(attachments.length ? { attachments } : {}),
           ...(appendUserMessage ? {} : { requestUserInputResponse: response }),
         })
         if (!accepted.accepted) throw new Error(accepted.error || translate('todo.send_failed'))

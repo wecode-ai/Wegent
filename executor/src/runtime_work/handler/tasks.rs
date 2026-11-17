@@ -1240,7 +1240,11 @@ impl RuntimeWorkRpcHandler {
                     .await?;
             } else {
                 return self
-                    .send_request_user_input_response(&local_task_id, response)
+                    .send_request_user_input_response(
+                        &local_task_id,
+                        response,
+                        execution_request(&payload),
+                    )
                     .await;
             }
         }
@@ -2331,6 +2335,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: &str,
         response: Value,
+        attachment_request: Option<ExecutionRequest>,
     ) -> Result<Value, AppIpcError> {
         let pending_request = self
             .active_request_user_inputs
@@ -2396,6 +2401,37 @@ impl RuntimeWorkRpcHandler {
                 "taskId": local_task_id, "runtime": "codex",
             }));
         }
+        let has_files = response["answers"].as_object().is_some_and(|answers| {
+            answers.values().any(|answer| {
+                answer["attachments"]
+                    .as_array()
+                    .is_some_and(|files| !files.is_empty())
+            })
+        });
+        // Keep the original reply in the transcript; only the native protocol
+        // receives attachment context, after the exact request is validated.
+        let native_response = if has_files {
+            let request = attachment_request.ok_or_else(|| {
+                AppIpcError::new(
+                    "bad_request",
+                    "executionRequest is required for question attachments",
+                )
+            })?;
+            let prepared = crate::agents::runtime_capabilities::prepare_user_input_response(
+                request,
+                response.clone(),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("attachment_preparation_failed", error))?;
+            if !self.is_current_local_task_execution(local_task_id, pending_request.execution_id) {
+                return Ok(
+                    json!({"success": false, "code": "stale_request_user_input", "error": "The question execution changed while preparing attachments"}),
+                );
+            }
+            prepared
+        } else {
+            response.clone()
+        };
         let response_key = active_turn.as_ref().and_then(|turn| {
             self.request_user_input_response_key(local_task_id, &turn.turn_id, &response)
         });
@@ -2420,7 +2456,7 @@ impl RuntimeWorkRpcHandler {
                 );
             }
         }
-        permit.send(response);
+        permit.send(native_response);
         Ok(json!({
             "success": true,
             "accepted": true,

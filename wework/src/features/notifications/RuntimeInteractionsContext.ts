@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react'
 import type { InteractionSource, RuntimeInteraction } from './runtimeInteractions'
 import type { ValidatedIssueResolution } from './issueHumanInteractions'
+import type { RequestUserInputResponse } from '@wegent/chat-core/runtime'
 
 export interface InteractionHistory {
   source?: InteractionSource
@@ -33,7 +34,11 @@ export interface RuntimeInteractionsValue {
   respond: (
     item: RuntimeInteraction,
     answer: string,
-    options?: { clientMessageId?: string; send?: () => Promise<boolean> }
+    options?: {
+      clientMessageId?: string
+      send?: () => Promise<boolean>
+      response?: RequestUserInputResponse
+    }
   ) => Promise<boolean>
   dismiss: (item: RuntimeInteraction | InteractionHistory) => Promise<void>
   isDismissed?: (id: string, questionIdentity?: string | null, handoff?: string) => boolean

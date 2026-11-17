@@ -14,6 +14,7 @@ export interface ComposerAttachmentsOptions {
   uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
   deleteAttachment: (attachmentId: number) => Promise<void>
   scopeKey?: string
+  initialAttachments?: Attachment[]
 }
 
 const DEFAULT_ATTACHMENT_SCOPE_KEY = 'default'
@@ -63,7 +64,14 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
   const sourcesByScope = useRef(new Map<string, Map<string, AttachmentSource>>())
   const attachmentSourcesByScope = useRef(new Map<string, Map<number, AttachmentSource>>())
   const storedState = stateByScope[scopeKey]
-  const state = useMemo(() => storedState ?? emptyAttachmentState(), [scopeKey, storedState])
+  const state = useMemo(
+    () =>
+      storedState ?? {
+        ...emptyAttachmentState(),
+        attachments: options.initialAttachments ?? [],
+      },
+    [scopeKey, storedState, options.initialAttachments]
+  )
 
   const updateScopeState = useCallback(
     (
@@ -71,7 +79,10 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
       updater: (current: MultiAttachmentUploadState) => MultiAttachmentUploadState
     ) => {
       setStateByScope(currentByScope => {
-        const current = currentByScope[targetScopeKey] ?? emptyAttachmentState()
+        const current = currentByScope[targetScopeKey] ?? {
+          ...emptyAttachmentState(),
+          attachments: targetScopeKey === scopeKey ? (options.initialAttachments ?? []) : [],
+        }
         const next = updater(current)
         if (next === current) return currentByScope
         return {
@@ -80,7 +91,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
         }
       })
     },
-    []
+    [scopeKey, options.initialAttachments]
   )
 
   const isUploading = state.uploadingFiles.size > 0
@@ -93,7 +104,12 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
     (targetScopeKey: string, attachment: Attachment, file?: File) => {
       if (file) {
         const id = `${file.name}:${++uploadSequence.current}`
-        const source: AttachmentSource = { file, filename: file.name, cancelled: false, attachment }
+        const source: AttachmentSource = {
+          file,
+          filename: file.name,
+          cancelled: false,
+          attachment,
+        }
         const sources = sourcesByScope.current.get(targetScopeKey) ?? new Map()
         sources.set(id, source)
         sourcesByScope.current.set(targetScopeKey, sources)
@@ -136,7 +152,11 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
       const selections = fileList.map(file => {
         if (!trackSource) return { file, fileId: undefined, source: undefined }
         const fileId = `${file.name}:${++uploadSequence.current}`
-        const source: AttachmentSource = { file, filename: file.name, cancelled: false }
+        const source: AttachmentSource = {
+          file,
+          filename: file.name,
+          cancelled: false,
+        }
         const sources = sourcesByScope.current.get(targetScopeKey) ?? new Map()
         sources.set(fileId, source)
         sourcesByScope.current.set(targetScopeKey, sources)
@@ -319,7 +339,9 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
 
   const removeAttachmentForScope = useCallback(
     async (targetScopeKey: string, attachmentId: number) => {
-      const scopedState = stateByScope[targetScopeKey] ?? emptyAttachmentState()
+      const scopedState =
+        stateByScope[targetScopeKey] ??
+        (targetScopeKey === scopeKey ? state : emptyAttachmentState())
       const attachment = scopedState.attachments.find(item => item.id === attachmentId)
       const attachmentsToRemove = attachment?.ui_group_id
         ? scopedState.attachments.filter(item => item.ui_group_id === attachment.ui_group_id)
@@ -342,7 +364,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
         throw error
       }
     },
-    [deleteAttachment, stateByScope, updateScopeState, options.onAction]
+    [deleteAttachment, stateByScope, scopeKey, state, updateScopeState, options.onAction]
   )
 
   const resetAttachmentsForScope = useCallback(
@@ -355,7 +377,9 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
       }
       sourcesByScope.current.delete(targetScopeKey)
       attachmentSourcesByScope.current.delete(targetScopeKey)
-      const scopedState = stateByScope[targetScopeKey] ?? emptyAttachmentState()
+      const scopedState =
+        stateByScope[targetScopeKey] ??
+        (targetScopeKey === scopeKey ? state : emptyAttachmentState())
       scopedState.attachments.forEach(releaseAttachmentPreview)
       updateScopeState(targetScopeKey, current => ({
         ...current,
@@ -364,7 +388,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
         errors: new Map(),
       }))
     },
-    [stateByScope, updateScopeState]
+    [stateByScope, scopeKey, state, updateScopeState]
   )
 
   const addExistingAttachment = useCallback(

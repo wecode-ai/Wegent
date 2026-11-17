@@ -2,6 +2,7 @@ import enCommon from '@/i18n/locales/en/common.json'
 import zhCommon from '@/i18n/locales/zh-CN/common.json'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { setComposerValue } from '@/test/composer'
 import { createInstance } from 'i18next'
 import { StrictMode, type ComponentProps } from 'react'
 import { useStandInConversationModel } from '@/features/todo/useStandInConversationModel'
@@ -3240,10 +3241,7 @@ describe('TemporaryChatPanel', () => {
         />
       )
       const { rerender } = render(panel())
-      await userEvent.type(
-        screen.getByTestId('request-user-input-custom-audience'),
-        'Saved recipients'
-      )
+      setComposerValue(screen.getByTestId('request-user-input-custom-audience'), 'Saved recipients')
       await userEvent.click(screen.getByTestId('request-user-input-ignore-button'))
       let finish!: () => void
       mocks.sendRuntimePaneMessage.mockImplementationOnce(

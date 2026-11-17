@@ -4,6 +4,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeInteraction } from './runtimeInteractions'
 import { interactionQuestion, interactionTask } from './runtimeInteractions.fixtures'
 import { replyToInteractionProject } from './interactionProjectReply'
+import type { Attachment } from '@/types/api'
 
 function setup(store: 'local' | 'backend' = 'backend') {
   const item: RuntimeInteraction = {
@@ -42,6 +43,53 @@ function setup(store: 'local' | 'backend' = 'backend') {
   } as unknown as WorkbenchServices
   return { item, send, execute, subscribe, unsubscribe, services, root, run, bareSend }
 }
+
+it.each(['local', 'backend'] as const)(
+  'persists question files on the owning %s Issue before continuing',
+  async store => {
+    const h = setup(store)
+    const attachment = {
+      id: store === 'local' ? -1 : 42,
+      filename: 'brief.txt',
+      local_path: '/tmp/brief.txt',
+      status: 'ready',
+    } as Attachment
+    const importFiles = vi
+      .fn()
+      .mockResolvedValue([{ display_name: 'brief.txt', markdown_url: 'attachment://brief' }])
+    h.services.projectSpaceApis = {
+      defaultLocation: 'cloud',
+      [store === 'local' ? 'local' : 'cloud']: { importLoopItemAttachments: importFiles },
+    } as WorkbenchServices['projectSpaceApis']
+    await replyToInteractionProject(h.item, 'Review this', 'reply-file', h.services, 'Failed', [
+      attachment,
+    ])
+    expect(importFiles).toHaveBeenCalledWith('issue', [
+      expect.objectContaining({ filename: 'brief.txt' }),
+    ])
+    expect(h.send).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Review this\n\n[brief.txt](attachment://brief)' })
+    )
+    expect(h.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ attachmentIds: store === 'local' ? [] : [42] })
+    )
+  }
+)
+
+it('leaves the question unanswered if Issue attachment import fails', async () => {
+  const h = setup('local')
+  h.services.projectSpaceApis = {
+    defaultLocation: 'local',
+    local: { importLoopItemAttachments: vi.fn().mockRejectedValue(new Error('Import failed')) },
+  } as unknown as WorkbenchServices['projectSpaceApis']
+  await expect(
+    replyToInteractionProject(h.item, 'Review this', 'reply-file', h.services, 'Failed', [
+      { id: -1 } as Attachment,
+    ])
+  ).rejects.toThrow('Import failed')
+  expect(h.send).not.toHaveBeenCalled()
+  expect(h.execute).not.toHaveBeenCalled()
+})
 
 it('recognizes authenticated transport aliases of the same runtime without loosening task ownership', async () => {
   const h = setup()
