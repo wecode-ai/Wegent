@@ -1010,7 +1010,7 @@ function installDshWindowLabelHeaders(): void {
           : ['http://127.0.0.1/*', 'http://localhost/*'],
     },
     details => {
-      recordE2ENetworkError(details)
+      recordE2ENetworkError(details, session.defaultSession)
       rendererStartupLoader.requestFailed(details)
       const diagnostic = {
         at: new Date().toISOString(),

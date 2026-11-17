@@ -191,6 +191,8 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 
 本地目录就绪使用共享 `ensureLocalModelCatalogReady` 控制命令，不以当前模型按钮的 `data-model-provider-id` 判定。该属性只描述当前本地 Codex provider；有效云端选择可以不带该属性，同时本地模型目录已经可用。目录去重、目标选项和协议行为仍分别断言，不因启动来源的先后替换有效模型选择。
 
+Session 的网络失败记录补充 `sinceSendHeadersMs`（首次发送请求头至失败或 HTTP 完成）和 `responseHeadersAfterSendMs`（首次发送至收到响应头），均使用宿主单调时钟。未观察到的阶段为 `null`，不能解释为零耗时；这些值不包含发送前的排队时间，也不是服务端处理耗时。时序按 Session 和请求 ID 隔离，完成后释放；默认 Session 覆盖错误回调时仍须向共享记录函数传入该 Session。只保存时间和既有安全字段，不采集请求头、正文或查询凭据。
+
 累计快照发生计数回退、来源复用或字段缺失时，`performance.json.rejectedSnapshots` 保留拒收的操作边界、前后耗时及回退计数，帮助区分重置与乱序；报告继续标为不完整，拒收值不覆盖已确认指标。
 
 MCP App 目录失败保留任务与线程标识、来源读取状态、是否执行恢复及来源读取后的耗时，不记录工具参数或凭据；Windows 原生插件确认失败保留固定 UI Automation 阶段、退出信号和终止状态，不输出任意子进程内容。这些诊断用于后续定位，不能作为故障修复或官方 runtime 已兼容的证明。
