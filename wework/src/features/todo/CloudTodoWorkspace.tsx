@@ -1,3 +1,4 @@
+import { issueRuntimePort } from './issueRuntimePort'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collaboration'
@@ -5506,6 +5507,16 @@ export function CloudTodoWorkspace({
                     closeTaskPanel()
                     setSelectedItem(locatedChild)
                   }}
+                  existingTaskSource={
+                    selectedItemProject &&
+                    issueRuntimePort(selectedItemProject.project_store, services)
+                      ? {
+                          work: runtimeWork,
+                          port: issueRuntimePort(selectedItemProject.project_store, services)!,
+                          onLinked: () => setBoardRefreshNonce(value => value + 1),
+                        }
+                      : undefined
+                  }
                   onCreateTask={async () => {
                     if (!selectedItemProject) return
                     setTaskDispatchError(null)
