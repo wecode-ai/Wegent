@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
 import { selectE2EModel, waitForLogPattern } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { openSynchronizedChangeRequestSummary } from '../modules/change-request-observation.mjs'
 
 const execFileAsync = promisify(execFile)
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -660,6 +661,9 @@ export async function createDesktopScenario({
       })
       await capture(control, 'change-request-status-07-settings-disabled.png', 'body')
 
+      // Restore the CLI before establishing the re-enabled activation and its fresh baseline.
+      const recoveryLogOffset = (await readFile(executorLogPath, 'utf8')).length
+      await writeFile(statePath, 'success\n')
       await control.command('click', '[data-testid="change-request-status-switch"]')
       await waitForAttribute(
         control,
@@ -670,8 +674,12 @@ export async function createDesktopScenario({
       )
       await control.command('click', '[data-testid="settings-back-button"]')
       await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
-      await control.command('click', ENVIRONMENT_BUTTON)
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
+      await waitForLogPattern(
+        executorLogPath,
+        /app IPC request finished .*command_key=connection_observer_start .*ok=true/,
+        { fromOffset: recoveryLogOffset, timeoutMs: uiTimeoutMs }
+      )
+      await openSynchronizedChangeRequestSummary(control)
 
       await writeFile(statePath, 'merged\n')
       await refreshEnvironment(control)

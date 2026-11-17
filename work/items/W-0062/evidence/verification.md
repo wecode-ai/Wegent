@@ -118,6 +118,12 @@ Rust 验证通过：`runtime_work::handler::turns::tests` 17 项、`runtime_work
 
 冲突整合后的 Rust focused lib 测试共 20 项通过：turns 17 项、handler hooks 1 项、hooks lifecycle 2 项；沿用 locked、all-features 与既有共享临时 target，Rustfmt 检查通过。没有修改任何 Rust 测试或新增重跑逻辑。
 
+本轮 `e21c1c0c8` 的桌面 Core shard 7 在 `change-request-status` 检查点等待“已合并”超时，其他独立检查通过。官方 job `133995168162` 与 artifact `14322429103` 显示：重新激活 observer 到 11:21:50.570 才完成，随后强制刷新到 11:21:59.111 完成；原断言于 11:21:58.263 超时。`failure-followup.json` 记录 `outcome=settled-after-failure`、`settledAfterFailureMs=1168`，后续界面已显示“已合并”。因此没有证据表明合并解析或产品恢复失败，实际失败窗口包含首次激活的剩余工作及下一次采集。
+
+真实 provider/collection 协议验证依次执行成功、CLI 不可用、重新发现失败及恢复后 MERGED，共 18 次操作通过。新增受控 deferred 回归证明：初次激活尚未完成时，旧场景准备条件已经返回 `prematurely-ready`；修复后等待现有状态弹层显示“状态同步正常”才进入下一次状态变更。恢复 CLI 后先确认重新启用的 observer 启动成功并完成同步，再写入 merged、触发新刷新；原 merged、checks、同步健康断言和等待时限全部保留。另一项真实 monitor 回归确认激活期间发起强制刷新会在激活后继续新采集并取得 merged，没有丢失请求。
+
+相关 EnvironmentInfoPopover、monitor、visibility、UI observer 共 4 文件、35 项测试通过；Wework typecheck、目标 ESLint、Prettier 与差异检查通过。产品行为未修改，没有本地执行 E2E、固定 sleep、放大超时、跳过断言或原提交 CI 重跑。完整桌面结果仍等待包含此次准备修复的新 head。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

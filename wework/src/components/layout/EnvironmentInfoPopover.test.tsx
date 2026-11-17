@@ -1,10 +1,21 @@
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import '@/i18n'
 import { installDshUiTestContributions } from '@/test/setup.dom'
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { linkedChangeRequestTarget } from '@/api/changeRequests'
+import { outputAsRecord, type DeviceCommandApi } from '@/api/environment'
+import {
+  ChangeRequestMonitor,
+  useTaskChangeRequest,
+} from '@/features/workbench/changeRequestMonitor'
+import { createConnectionObserverFixture } from '@/test/connection-observer'
+import type { DeviceCommandResponse, DeviceInfo } from '@/types/api'
+import { openSynchronizedChangeRequestSummary } from '../../../e2e/desktop/modules/change-request-observation.mjs'
 import { EnvironmentInfoPopover } from './EnvironmentInfoPopover'
+import { applySharedChangeRequestSnapshot } from './useWorkbenchPaneEnvironment'
 
 describe('EnvironmentInfoPopover', () => {
   const portalContainers: HTMLElement[] = []
@@ -81,6 +92,101 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.getByTestId('environment-change-request-status-open')).toHaveTextContent(
       '打开 PR'
     )
+  })
+
+  test('establishes synchronized recovery before the next change-request transition', async () => {
+    const reply = createConnectionObserverFixture()
+    const executeCommand = vi
+      .fn<DeviceCommandApi['executeCommand']>()
+      .mockImplementation(async (_device, request) => {
+        const result = reply(request)
+        const observation = outputAsRecord(outputAsRecord(result.stdout)?.observation)
+        if (observation) observation.refreshPending = false
+        return result
+      })
+    const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(null, [
+      {
+        device_id: 'device',
+        runtime_features: { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } },
+      },
+    ] as DeviceInfo[])
+    const target = linkedChangeRequestTarget('device', 'https://github.com/org/repo/pull/1')!
+    const stop = monitor.register(target)
+    await monitor.refresh()
+    executeCommand.mockRejectedValueOnce(new Error('git_cli_missing'))
+    await monitor.refresh({ shareInflight: false })
+    stop()
+
+    let completeActivation!: (value: DeviceCommandResponse) => void
+    const activation = new Promise<DeviceCommandResponse>(resolve => {
+      completeActivation = resolve
+    })
+    executeCommand.mockImplementationOnce(() => activation)
+    function Summary() {
+      const [open, setOpen] = useState(false)
+      const snapshot = useTaskChangeRequest(monitor, target)!
+      return (
+        <EnvironmentInfoPopover
+          info={applySharedChangeRequestSnapshot(
+            { additions: '+0', deletions: '-0', executionTarget: 'local', branchName: 'feature' },
+            snapshot
+          )}
+          docked={false}
+          popoverContainer={null}
+          open={open}
+          onOpenChange={setOpen}
+          onRefresh={() => monitor.refresh({ shareInflight: false })}
+        />
+      )
+    }
+    const view = render(<Summary />)
+    let ready = false
+    let waitingForObservation!: () => void
+    const observationWait = new Promise<void>(resolve => {
+      waitingForObservation = resolve
+    })
+    const preparation = openSynchronizedChangeRequestSummary({
+      async command(action: string, selector: string, options: { text?: string } = {}) {
+        if (action === 'click') fireEvent.click(document.querySelector(selector)!)
+        else if (action === 'waitFor') {
+          if (options.text === '状态同步正常') waitingForObservation()
+          await waitFor(() => {
+            const element = document.querySelector(selector)
+            expect(element).toBeInTheDocument()
+            if (options.text) expect(element).toHaveTextContent(options.text)
+          })
+        } else throw new Error(`Unexpected control action: ${action}`)
+        return ''
+      },
+    }).then(() => {
+      ready = true
+    })
+    try {
+      const phase = await Promise.race([
+        preparation.then(() => 'prematurely-ready'),
+        observationWait.then(() => 'waiting-for-observation'),
+      ])
+      expect(phase).toBe('waiting-for-observation')
+      expect(screen.getByTestId('change-request-button')).toHaveTextContent('#1')
+      expect(ready).toBe(false)
+      const start = executeCommand.mock.calls.findLast(
+        ([, request]) => request.command_key === 'connection_observer_start'
+      )![1]
+      await act(async () => {
+        completeActivation(reply(start))
+        await preparation
+      })
+      expect(ready).toBe(true)
+      expect(monitor.getSnapshot(target)?.observation?.state).toBe('observing')
+    } finally {
+      const start = executeCommand.mock.calls.findLast(
+        ([, request]) => request.command_key === 'connection_observer_start'
+      )![1]
+      completeActivation(reply(start))
+      await preparation
+      view.unmount()
+    }
   })
 
   test('opens Git hosting settings from a GitLab CLI recovery hint', async () => {
