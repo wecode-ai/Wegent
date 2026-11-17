@@ -27,9 +27,7 @@ import styles from "./ProjectAgentConfiguration.module.css";
 import { ProjectAgentPicker } from "./ProjectAgentPicker";
 import { ConfirmationDialog } from "../controls/ConfirmationDialog";
 
-function errorMessage(cause: unknown, fallback: string): string {
-  return cause instanceof Error && cause.message ? cause.message : fallback;
-}
+import { requestFailureMessage as errorMessage } from "../controls/requestFailure";
 
 export function ProjectAgentConfiguration({
   api,

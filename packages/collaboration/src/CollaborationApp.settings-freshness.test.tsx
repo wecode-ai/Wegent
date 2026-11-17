@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { act, useState } from "react";
+import { Activity, act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +10,14 @@ import { CollaborationApp } from "./CollaborationApp";
 import { collaborationMessages } from "./i18n";
 import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
 import type { CollaborationLocation, CollaborationProject } from "./types";
+import {
+  RetainedProjectSettingsPages,
+  type ProjectSettingsPagesProps,
+} from "./project-manage/ProjectSettingsPages";
+
+function RetainedSettingsPages(props: ProjectSettingsPagesProps) {
+  return <RetainedProjectSettingsPages {...props} boundary={Activity} />;
+}
 
 const project = {
   id: "project-a",
@@ -58,6 +66,11 @@ function createApi() {
       },
     },
     issues: {
+      listPage: vi.fn(async () => ({
+        items: [],
+        taskBindings: [],
+        nextCursor: null,
+      })),
       getBoardSnapshot: vi.fn(async () => ({
         items: [],
         members: [],
@@ -96,7 +109,12 @@ async function render(api: SharedWorkspaceApi) {
         api={api}
         initialProject={project}
         pollIntervalMs={0}
-        host={{ location, navigate, capabilities: {} }}
+        host={{
+          location,
+          navigate,
+          capabilities: {},
+          settingsPages: RetainedSettingsPages,
+        }}
       />
     );
   }
@@ -109,6 +127,101 @@ const environment = (suffix: string) =>
   query(`collaboration-project-execution-environment${suffix}`);
 
 describe("project settings metadata freshness", () => {
+  it.each(["Owner", null] as const)(
+    "retains a provider draft across settings sections and gates writes until its current role is %s",
+    async (role) => {
+      const api = createApi();
+      const selected: CollaborationProject = {
+        ...project,
+        project_store: "backend",
+        task_provider: "github",
+        provider_config: { repository: "original/repo" },
+      };
+      vi.mocked(api.projects.get).mockResolvedValue(selected);
+      container = document.createElement("div");
+      document.body.append(container);
+      root = createRoot(container);
+      function Host() {
+        const [location, navigate] = useState<CollaborationLocation>({
+          projectId: project.id,
+          issueId: null,
+          view: "manage",
+          projectSettingsSection: "project",
+        });
+        return (
+          <CollaborationApp
+            api={api}
+            initialProject={selected}
+            host={{
+              location,
+              navigate,
+              capabilities: {},
+              settingsPages: RetainedSettingsPages,
+            }}
+            pollIntervalMs={0}
+          />
+        );
+      }
+      await act(async () => root!.render(<Host />));
+      const input = query(
+        "cloud-project-provider-manage-repository",
+      ) as HTMLInputElement;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )!.set!.call(input, "https://github.com/unsaved/draft");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () =>
+        query("collaboration-project-settings-environments")!.click(),
+      );
+      const pending = deferred<CollaborationProject>();
+      vi.mocked(api.projects.get).mockReturnValueOnce(pending.promise);
+      await act(async () =>
+        query("collaboration-project-settings-project")!.click(),
+      );
+      const save = query(
+        "cloud-project-provider-manage-save",
+      ) as HTMLButtonElement;
+      expect(query("cloud-project-provider-manage-repository")).toBe(input);
+      expect(save.matches(":disabled")).toBe(true);
+      await act(async () => save.click());
+      expect(api.projects.update).not.toHaveBeenCalled();
+      await act(async () => pending.reject(new Error("Current read failed")));
+      expect(
+        query("collaboration-project-settings-read")?.getAttribute("role"),
+      ).toBe("alert");
+      expect(query("cloud-project-provider-manage-repository")).toBe(input);
+      expect(save.matches(":disabled")).toBe(true);
+      await act(async () => save.click());
+      expect(api.projects.update).not.toHaveBeenCalled();
+      const retry = deferred<CollaborationProject>();
+      vi.mocked(api.projects.get).mockReturnValueOnce(retry.promise);
+      await act(async () =>
+        query("collaboration-project-settings-read-retry")!.click(),
+      );
+      expect(save.matches(":disabled")).toBe(true);
+      await act(async () => retry.resolve({ ...selected, access_role: role }));
+
+      if (role === null) {
+        expect(query("cloud-project-provider-manage-repository")).toBeNull();
+        expect(query("cloud-project-provider-manage-save")).toBeNull();
+        expect(api.projects.update).not.toHaveBeenCalled();
+        return;
+      }
+      expect(
+        (query("cloud-project-provider-manage-repository") as HTMLInputElement)
+          .value,
+      ).toBe("https://github.com/unsaved/draft");
+      expect(query("cloud-project-provider-manage-repository")).toBe(input);
+      expect(api.projects.get).toHaveBeenCalledTimes(4);
+      expect(save.matches(":disabled")).toBe(false);
+      await act(async () => save.click());
+      expect(api.projects.update).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("keeps the same-project provider draft mounted when the application language changes", async () => {
     const api = createApi();
     const providerProject: CollaborationProject = {
@@ -205,6 +318,14 @@ describe("project settings metadata freshness", () => {
   it("keeps navigation and cached runners available during a current project read", async () => {
     const api = createApi();
     await render(api);
+    const policy = environment("-workspace-policy") as HTMLSelectElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype,
+        "value",
+      )!.set!.call(policy, "project");
+      policy.dispatchEvent(new Event("change", { bubbles: true }));
+    });
     expect(environment("-1")).not.toBeNull();
     await act(async () => environment("-add")!.click());
     expect(environment("-candidate-2")).not.toBeNull();
@@ -229,6 +350,12 @@ describe("project settings metadata freshness", () => {
     expect(query("collaboration-project-settings-agents")).not.toBeNull();
     expect(environment("-1")).not.toBeNull();
     expect(environment("-loading")).toBeNull();
+    expect(environment("-workspace-policy")).toBe(policy);
+    expect(policy.value).toBe("project");
+    expect(policy.matches(":disabled")).toBe(true);
+    const save = environment("-save-configuration") as HTMLButtonElement;
+    await act(async () => save.click());
+    expect(api.projects.update).not.toHaveBeenCalled();
     expect((environment("-add") as HTMLButtonElement).disabled).toBe(false);
     await act(async () => environment("-add")!.click());
     expect(environment("-candidate-2")).not.toBeNull();
@@ -236,10 +363,34 @@ describe("project settings metadata freshness", () => {
     expect((environment("-initialize-1") as HTMLButtonElement).disabled).toBe(
       true,
     );
-    await act(async () => current.resolve({ ...project, version: 3 }));
-    expect((environment("-initialize-1") as HTMLButtonElement).disabled).toBe(
-      false,
+    await act(async () => environment("-initialize-1")!.click());
+    expect(api.projects.initializeExecutionEnvironment).not.toHaveBeenCalled();
+    await act(async () =>
+      current.reject(new Error("Current metadata unavailable")),
     );
+    expect(environment("-configuration-read")?.getAttribute("role")).toBe(
+      "alert",
+    );
+    expect(environment("-workspace-policy")).toBe(policy);
+    expect(policy.matches(":disabled")).toBe(true);
+    await act(async () => save.click());
+    expect(api.projects.update).not.toHaveBeenCalled();
+    await act(async () => environment("-initialize-1")!.click());
+    expect(api.projects.initializeExecutionEnvironment).not.toHaveBeenCalled();
+    const recovered = deferred<CollaborationProject>();
+    vi.mocked(api.projects.get).mockReturnValueOnce(recovered.promise);
+    await act(async () => environment("-configuration-read-retry")!.click());
+    expect((environment("-initialize-1") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    await act(async () => recovered.resolve({ ...project, version: 3 }));
+    expect(environment("-workspace-policy")).toBe(policy);
+    expect(policy.value).toBe("project");
+    expect(policy.matches(":disabled")).toBe(false);
+    expect((environment("-initialize-1") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(save.matches(":disabled")).toBe(false);
     await act(async () => candidates.resolve([]));
     expect(environment("-candidate-2")).toBeNull();
   });

@@ -1,4 +1,4 @@
-import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
+import { DEFAULT_WORK_ITEM_PROJECT_ID, type CloudProject, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
 import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
 import { createPersonalHomeTaskDraftStore } from './personalHomeTaskDrafts'
@@ -1036,18 +1036,27 @@ describe('Wework collaboration workspace API', () => {
     const getProject = vi.mocked(localDeliveryApi.getCloudProject)
     const project = {
       id: 'local-project',
+      public_id: 'local-project',
       name: 'Local project',
       project_key: 'LOCAL',
+      description: '',
       project_store: 'local' as const,
+      task_provider: 'local',
+      provider_config: {},
       access_role: 'Owner' as const,
+      created_by_user_id: 1,
+      status: 'active',
+      tags: [],
       version: 3,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
       metadata: { code_project_key: 'runtime-project' },
       execution_environment: {
         workspace_policy: 'git_worktree' as const,
         repositories: [],
         setup_steps: [],
       },
-    }
+    } satisfies CloudProject
     const originalGetProject = getProject.getMockImplementation()!
     getProject.mockImplementation(projectId =>
       String(projectId) === project.id

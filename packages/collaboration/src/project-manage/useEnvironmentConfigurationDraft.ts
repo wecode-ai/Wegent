@@ -113,6 +113,20 @@ export function useEnvironmentConfigurationDraft({
     },
     [scope]
   )
+  const rebaseConfiguration = useCallback(
+    (nextVersion: number, nextConfiguration: Source['configuration']) => {
+      setDraft(current =>
+        current.source.scope === scope
+          ? {
+              ...current,
+              source: { scope, version: nextVersion, configuration: nextConfiguration },
+              version: nextVersion,
+            }
+          : current
+      )
+    },
+    [scope]
+  )
 
   return {
     ready: initialized,
@@ -122,6 +136,7 @@ export function useEnvironmentConfigurationDraft({
     setupSteps: sameScope ? draft.setupSteps : [],
     configurationDirty: sameScope && draft.dirty,
     commitConfiguration,
+    rebaseConfiguration,
     setWorkspacePolicy: (value: SetStateAction<Draft['workspacePolicy']>) =>
       setField('workspacePolicy', value),
     setRepositories: useCallback(

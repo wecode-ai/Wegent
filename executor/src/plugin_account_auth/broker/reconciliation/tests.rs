@@ -39,6 +39,79 @@ async fn next(received: &mut tokio::sync::mpsc::UnboundedReceiver<Value>) -> Val
 }
 
 #[tokio::test]
+async fn selected_installations_are_sorted_before_discovery_batches() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir(home.path().join("capabilities")).unwrap();
+    let plugins: serde_json::Map<_, _> = (42..60)
+        .map(|id| {
+            (
+                id.to_string(),
+                json!({"installed_plugin_id":id,"managed":true,"enabled":true}),
+            )
+        })
+        .collect();
+    std::fs::write(
+        home.path().join("capabilities/manifest-v2.json"),
+        json!({"plugins":plugins}).to_string(),
+    )
+    .unwrap();
+    let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let mut requested: Vec<_> = (42..60).rev().collect();
+    requested.push(99);
+    super::super::super::automation::Reconciler::with_reconcile_marker(None)
+        .reconcile_selected(Transport(calls), home.path(), &requested)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        next(&mut received).await,
+        json!({"installed_plugin_ids":(42..58).collect::<Vec<_>>(),"prepare_only":true})
+    );
+    assert_eq!(
+        next(&mut received).await,
+        json!({"installed_plugin_ids":[58,59],"prepare_only":true})
+    );
+    assert!(received.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn startup_audit_precedes_already_queued_lifecycle_events() {
+    for requested_id in 42..60 {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir(home.path().join("capabilities")).unwrap();
+        std::fs::write(
+            home.path().join("capabilities/manifest-v2.json"),
+            json!({"plugins":{
+                "a":{"installed_plugin_id":requested_id,"managed":true,"enabled":true},
+                "b":{"installed_plugin_id":99,"managed":true,"enabled":true}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let (cancel, cancelled) = watch::channel(false);
+        let (events, requested) = tokio::sync::mpsc::channel(16);
+        events.send(requested_id).await.unwrap();
+        let task = tokio::spawn(run(
+            Transport(calls),
+            home.path().to_owned(),
+            Arc::new(AtomicBool::new(true)),
+            cancelled,
+            requested,
+            Duration::from_secs(3600),
+        ));
+        let initial = next(&mut received).await;
+        let targeted = next(&mut received).await;
+        cancel.send_replace(true);
+        task.await.unwrap();
+
+        assert_eq!(initial["installed_plugin_ids"], json!([requested_id, 99]));
+        assert_eq!(targeted["installed_plugin_ids"], json!([requested_id]));
+        assert!(received.try_recv().is_err());
+    }
+}
+
+#[tokio::test]
 async fn lifecycle_and_inventory_events_run_before_the_long_audit() {
     let home = tempfile::tempdir().unwrap();
     std::fs::create_dir(home.path().join("capabilities")).unwrap();

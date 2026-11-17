@@ -30,62 +30,24 @@ import {
   environmentDraftId as draftId,
   useEnvironmentConfigurationDraft,
 } from './useEnvironmentConfigurationDraft'
-import { repositoryKey } from './environmentConfiguration'
+import {
+  projectSettingsContentClassName,
+  projectSettingsPageClassName,
+} from './ProjectSettingsPage'
+import {
+  environmentConfigurationSnapshot,
+  environmentConfigurationConflictMessage,
+  repositoryKey,
+  executionEnvironmentErrorSummary,
+  repositoryShortName,
+  repositoryShortNameFromUrl,
+} from './environmentConfiguration'
 import { environmentAuthorizationError } from './environmentAuthorization'
 import { useExecutionEnvironmentList } from '../execution-environment/useExecutionEnvironmentList'
 import { compareExecutionEnvironments } from '../execution-environment/compareExecutionEnvironments'
 import { ensureWorkspaceEnvironmentSharing } from '../execution-environment/ensureWorkspaceEnvironmentSharing'
 import { GitAccountConfigurationButton } from '../controls/GitAccountConfiguration'
-
-// Device errors embed the executor's absolute paths and the whole git stderr;
-// keep the stage prefix and git's decisive line, the full text stays in title.
-const LEGACY_REPOSITORY_FREE_ERROR =
-  'Execution environment must have exactly one primary repository'
-
-function executionEnvironmentErrorSummary(
-  message: string,
-  repositoryFree: boolean,
-  translate: CollaborationTranslate
-): string {
-  const gitFailure = parseGitAccessFailure(message)
-  if (gitFailure) {
-    return translate(
-      `common:workbench.git_access_${gitFailure.code.replaceAll('-', '_')}`,
-      gitFailure.message,
-      { domain: gitFailure.domain }
-    )
-  }
-  if (repositoryFree && message.includes(LEGACY_REPOSITORY_FREE_ERROR)) {
-    return translate(
-      'todo.execution_environment_blank_workspace_upgrade_required',
-      '当前设备的 Executor 不支持空白执行环境，请升级或重启 Executor 后重试；也可以先添加一个主代码仓库。'
-    )
-  }
-  const fatalLines = message.match(/fatal: [^\n]+/g)
-  if (!fatalLines?.length) {
-    return message
-  }
-  const detail = fatalLines[fatalLines.length - 1]
-  const stage = message.match(/^(Failed to [^:\n]+):/)
-  return stage ? `${stage[1]}: ${detail}` : detail
-}
-
-// Short name used for both the display name and the clone directory, for
-// example "wegent" for "wecode-ai/Wegent".
-function repositoryShortName(repository: WorkspaceGitRepository) {
-  const segment = repository.fullName.split('/').filter(Boolean).pop() ?? repository.name
-  return segment.replace(/\.git$/, '') || repository.name
-}
-
-function repositoryShortNameFromUrl(url: string) {
-  return (
-    url
-      .split(/[/:]/)
-      .filter(Boolean)
-      .pop()
-      ?.replace(/\.git$/, '') ?? ''
-  )
-}
+import { requestFailureMessage } from '../controls/requestFailure'
 
 type BranchState = {
   status: 'loading' | 'ready' | 'error'
@@ -186,6 +148,8 @@ function ScopedProjectExecutionEnvironments({
   const initialConfig = workspace?.execution_environment ?? project?.execution_environment
   const [configurationSaved, setConfigurationSaved] = useState(false)
   const [configurationError, setConfigurationError] = useState('')
+  const [configurationConflict, setConfigurationConflict] = useState(false)
+  const [configurationNotice, setConfigurationNotice] = useState('')
   const [deviceStates, setDeviceStates] = useState<DeviceStateMap>(
     initialConfig?.devices ?? NO_DEVICE_STATES
   )
@@ -210,6 +174,7 @@ function ScopedProjectExecutionEnvironments({
     setSetupSteps,
     configVersion,
     commitConfiguration,
+    rebaseConfiguration,
     configurationDirty,
     setConfigurationDirty,
   } = useEnvironmentConfigurationDraft({
@@ -260,17 +225,47 @@ function ScopedProjectExecutionEnvironments({
 
   const incomingVersion = workspace?.version ?? project!.version
   const incomingDevices = initialConfig?.devices ?? NO_DEVICE_STATES
+  const incomingConfiguration = environmentConfigurationSnapshot(initialConfig)
+  const observedConfiguration = useRef(incomingConfiguration)
+  const observedDevices = useRef({ scope: configurationScope, devices: incomingDevices })
 
-  // The parent re-fetches the project on a poll, so the server-owned per-device
-  // states must follow the prop instead of staying stuck at the mount-time
-  // values. While a create is in flight the flow writes these itself from the
-  // device response. Versioned form drafts are synchronized separately.
+  // Device status follows current server data; the draft owns its content and base version.
   useEffect(() => {
-    if (initializationInFlight.current || saving || incomingVersion < configVersion) return
-    setDeviceStates(incomingDevices)
-    const errorKey = environmentErrorDeviceKey.current
-    setEnvironmentError(errorKey ? (incomingDevices[errorKey]?.error ?? '') : '')
-  }, [incomingVersion, incomingDevices, configurationScope, configVersion])
+    if (
+      initializationInFlight.current ||
+      saving ||
+      !configurationReady ||
+      incomingVersion < configVersion
+    )
+      return
+    const configurationChanged = incomingConfiguration !== observedConfiguration.current
+    if (configurationDirty && configurationChanged) {
+      setConfigurationConflict(true)
+      setConfigurationError(environmentConfigurationConflictMessage(translate))
+    } else if (!configurationDirty) {
+      observedConfiguration.current = incomingConfiguration
+      setConfigurationConflict(false)
+    }
+    if (
+      observedDevices.current.scope !== configurationScope ||
+      observedDevices.current.devices !== incomingDevices
+    ) {
+      observedDevices.current = { scope: configurationScope, devices: incomingDevices }
+      setDeviceStates(incomingDevices)
+      const errorKey = environmentErrorDeviceKey.current
+      setEnvironmentError(errorKey ? (incomingDevices[errorKey]?.error ?? '') : '')
+    }
+  }, [
+    incomingVersion,
+    incomingDevices,
+    incomingConfiguration,
+    configurationScope,
+    configVersion,
+    configurationReady,
+    configurationDirty,
+    saving,
+    translate,
+  ])
 
   const loadRepositoryOptions = useCallback(async () => {
     if (!gitRepositoriesApi || repositoriesInFlight.current) return
@@ -366,9 +361,7 @@ function ScopedProjectExecutionEnvironments({
         return { ...draft, url: option.cloneUrl, name, path, ref }
       })
     )
-    setConfigurationDirty(true)
-    setConfigurationSaved(false)
-    setConfigurationError('')
+    markConfigurationDirty()
     void loadBranches(option)
   }
 
@@ -426,9 +419,7 @@ function ScopedProjectExecutionEnvironments({
         return repository.id === id ? { ...repository, ...patch } : repository
       })
     )
-    setConfigurationDirty(true)
-    setConfigurationSaved(false)
-    setConfigurationError('')
+    markConfigurationDirty()
   }
 
   function updateRepositoryUrl(id: string, url: string) {
@@ -449,9 +440,7 @@ function ScopedProjectExecutionEnvironments({
         return { ...repository, url, name, path }
       })
     )
-    setConfigurationDirty(true)
-    setConfigurationSaved(false)
-    setConfigurationError('')
+    markConfigurationDirty()
   }
 
   function addRepository() {
@@ -466,9 +455,7 @@ function ScopedProjectExecutionEnvironments({
         primary: current.length === 0,
       },
     ])
-    setConfigurationDirty(true)
-    setConfigurationSaved(false)
-    setConfigurationError('')
+    markConfigurationDirty()
   }
 
   function removeRepository(id: string) {
@@ -479,22 +466,19 @@ function ScopedProjectExecutionEnvironments({
       }
       return remaining
     })
-    setConfigurationDirty(true)
-    setConfigurationSaved(false)
-    setConfigurationError('')
+    markConfigurationDirty()
   }
 
   function updateSetupStep(id: string, patch: Partial<CollaborationExecutionEnvironmentSetupStep>) {
     setSetupSteps(current => current.map(step => (step.id === id ? { ...step, ...patch } : step)))
-    setConfigurationDirty(true)
-    setConfigurationSaved(false)
-    setConfigurationError('')
+    markConfigurationDirty()
   }
 
   function markConfigurationDirty() {
     setConfigurationDirty(true)
     setConfigurationSaved(false)
-    setConfigurationError('')
+    if (!configurationConflict) setConfigurationError('')
+    setConfigurationNotice('')
   }
 
   async function saveConfiguration() {
@@ -503,6 +487,7 @@ function ScopedProjectExecutionEnvironments({
       !canManage ||
       !configurationDirty ||
       saving ||
+      configurationConflict ||
       configurationSaveInFlight.current
     )
       return
@@ -533,6 +518,7 @@ function ScopedProjectExecutionEnvironments({
     }
 
     configurationSaveInFlight.current = true
+    setConfigurationNotice('')
     setSaving(true)
     setError('')
     setConfigurationError('')
@@ -558,14 +544,63 @@ function ScopedProjectExecutionEnvironments({
               return updatedProject
             })
       commitConfiguration(updated.version, updated.execution_environment)
+      observedConfiguration.current = environmentConfigurationSnapshot(
+        updated.execution_environment
+      )
       setDeviceStates(updated.execution_environment?.devices ?? NO_DEVICE_STATES)
       setConfigurationSaved(true)
       setEnvironmentError('')
       environmentErrorDeviceKey.current = ''
     } catch (saveError) {
-      setConfigurationError(saveError instanceof Error ? saveError.message : String(saveError))
+      const message = saveError instanceof Error ? saveError.message : String(saveError)
+      const conflict = /^(Cloud project|Workspace) changed$/.test(message)
+      setConfigurationConflict(conflict)
+      setConfigurationError(
+        conflict
+          ? environmentConfigurationConflictMessage(translate)
+          : requestFailureMessage(
+              saveError,
+              translate('todo.settings_connection_failed', '无法连接服务，请检查连接后重试。')
+            )
+      )
     } finally {
       configurationSaveInFlight.current = false
+      setSaving(false)
+    }
+  }
+
+  async function refreshConfiguration(keepDraft: boolean) {
+    if (saving) return
+    setSaving(true)
+    try {
+      const latest = isWorkspaceScope
+        ? await api.workspaces!.get(scopeId)
+        : await api.projects.get(scopeId)
+      const configuration = latest.execution_environment
+      observedConfiguration.current = environmentConfigurationSnapshot(configuration)
+      if (keepDraft) rebaseConfiguration(latest.version, configuration)
+      else commitConfiguration(latest.version, configuration)
+      setDeviceStates(configuration?.devices ?? NO_DEVICE_STATES)
+      if (!isWorkspaceScope) onProjectChange?.(latest as CollaborationProject)
+      setConfigurationConflict(false)
+      setConfigurationError('')
+      setConfigurationSaved(false)
+      setConfigurationNotice(
+        keepDraft
+          ? translate(
+              'todo.execution_environment_draft_rebased',
+              '已读取最新版本。草稿尚未保存，请检查后再保存。'
+            )
+          : translate('todo.execution_environment_configuration_reloaded', '已载入最新配置。')
+      )
+    } catch {
+      setConfigurationError(
+        translate(
+          'todo.execution_environment_refresh_failed',
+          '读取最新配置失败，草稿已保留。请重试读取。'
+        )
+      )
+    } finally {
       setSaving(false)
     }
   }
@@ -643,11 +678,7 @@ function ScopedProjectExecutionEnvironments({
       assigned.update(current => current.filter(item => item.id !== environment.id))
       onEnvironmentsChange?.()
     } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : translate('todo.execution_environment_remove_failed', '移除执行环境失败')
-      )
+      setError(environmentAuthorizationError(saveError, translate))
     } finally {
       setSaving(false)
     }
@@ -698,6 +729,7 @@ function ScopedProjectExecutionEnvironments({
       const nextDeviceStates = initializedConfig?.devices ?? NO_DEVICE_STATES
       const deviceState = nextDeviceStates[deviceKey]
       commitConfiguration(initialized.version, initializedConfig)
+      observedConfiguration.current = environmentConfigurationSnapshot(initializedConfig)
       setDeviceStates(nextDeviceStates)
       environmentErrorDeviceKey.current = deviceKey
       setEnvironmentError(deviceState?.error ?? '')
@@ -718,15 +750,11 @@ function ScopedProjectExecutionEnvironments({
   }
 
   return (
-    <div
-      className={
-        presentation === 'devices' ? 'min-w-0' : 'min-h-0 flex-1 overflow-y-auto px-8 py-7'
-      }
-    >
-      <div className="mx-auto max-w-[840px]">
+    <div className={presentation === 'devices' ? 'min-w-0' : projectSettingsPageClassName}>
+      <div className={projectSettingsContentClassName}>
         {presentation === 'page' && (
           <>
-            <h1 className="text-heading-lg font-semibold">
+            <h1 className="heading-base text-text-primary">
               {translate(
                 isWorkspaceScope
                   ? 'todo.workspace_execution_environments'
@@ -734,7 +762,7 @@ function ScopedProjectExecutionEnvironments({
                 '执行环境'
               )}
             </h1>
-            <p className="mt-1 text-sm text-text-muted">
+            <p className="mt-1 text-sm text-text-secondary">
               {translate(
                 isWorkspaceScope
                   ? 'todo.workspace_execution_environments_intro'
@@ -880,58 +908,61 @@ function ScopedProjectExecutionEnvironments({
                 ) : null}
               </summary>
               <ProjectSettingsReadBoundary
+                scope={configurationScope}
+                disabled={!canManage || !configurationReady}
                 read={configurationRead}
                 translate={translate}
                 testId={`${testIdPrefix}-configuration-read`}
               >
-                {configurationReady && (
-                  <ProjectEnvironmentConfiguration
-                    {...{
-                      testIdPrefix,
-                      translate,
-                      canManage,
-                      saving,
-                      workspacePolicy,
-                      repositories,
-                      setupSteps,
-                      repositoryOptions,
-                      repositoriesByUrl,
-                      repositoriesLoadFailed,
-                      branchesByRepository,
-                      loadRepositoryOptions,
-                      loadBranches,
-                      selectRepository,
-                      updateRepository,
-                      updateRepositoryUrl,
-                      removeRepository,
-                      addRepository,
-                      updateSetupStep,
-                      configurationError,
-                      configurationSaved,
-                      configurationDirty,
-                      saveConfiguration,
-                    }}
-                    onWorkspacePolicyChange={value => {
-                      setWorkspacePolicy(value)
-                      markConfigurationDirty()
-                    }}
-                    addSetupStep={() => {
-                      setSetupSteps(current => [
-                        ...current,
-                        {
-                          id: draftId('setup'),
-                          command: '',
-                          working_directory: '',
-                        },
-                      ])
-                      markConfigurationDirty()
-                    }}
-                    removeSetupStep={id => {
-                      setSetupSteps(current => current.filter(step => step.id !== id))
-                      markConfigurationDirty()
-                    }}
-                  />
-                )}
+                <ProjectEnvironmentConfiguration
+                  {...{
+                    testIdPrefix,
+                    translate,
+                    canManage,
+                    saving,
+                    workspacePolicy,
+                    repositories,
+                    setupSteps,
+                    repositoryOptions,
+                    repositoriesByUrl,
+                    repositoriesLoadFailed,
+                    branchesByRepository,
+                    loadRepositoryOptions,
+                    loadBranches,
+                    selectRepository,
+                    updateRepository,
+                    updateRepositoryUrl,
+                    removeRepository,
+                    addRepository,
+                    updateSetupStep,
+                    configurationError,
+                    configurationConflict,
+                    configurationNotice,
+                    refreshConfiguration,
+                    configurationSaved,
+                    configurationDirty,
+                    saveConfiguration,
+                  }}
+                  onWorkspacePolicyChange={value => {
+                    setWorkspacePolicy(value)
+                    markConfigurationDirty()
+                  }}
+                  addSetupStep={() => {
+                    setSetupSteps(current => [
+                      ...current,
+                      {
+                        id: draftId('setup'),
+                        command: '',
+                        working_directory: '',
+                      },
+                    ])
+                    markConfigurationDirty()
+                  }}
+                  removeSetupStep={id => {
+                    setSetupSteps(current => current.filter(step => step.id !== id))
+                    markConfigurationDirty()
+                  }}
+                />
               </ProjectSettingsReadBoundary>
             </details>
           )}

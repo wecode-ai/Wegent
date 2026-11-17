@@ -36,6 +36,7 @@ async fn run_observed<T: super::super::PluginAuthTransport>(
     let mut reconciler =
         super::super::automation::Reconciler::with_reconcile_marker(marker.clone());
     let mut audit = tokio::time::Instant::now();
+    let mut initial_audit = true;
     let mut cycle_retry = None;
     let mut failures = 0_u32;
     loop {
@@ -50,24 +51,29 @@ async fn run_observed<T: super::super::PluginAuthTransport>(
             reconciler.next_retry().map(tokio::time::Instant::from_std),
             transport.available(connected.load(Ordering::Acquire)),
         );
-        let trigger = tokio::select! {
-            _ = cancel.changed() => break,
-            _ = tokio::time::sleep_until(audit) => Trigger::Audit,
-            changed = inventory.changed() => {
-                if changed.is_err() { break; }
-                Trigger::Inventory
-            },
-            target = requested.recv() => {
-                let Some(id) = target else { break; };
-                let mut ids = vec![id];
-                while let Ok(id) = requested.try_recv() { ids.push(id); }
-                ids.sort_unstable(); ids.dedup();
-                if ids.contains(&0) { Trigger::Audit } else { Trigger::Targets(ids) }
-            },
-            _ = async { match retry {
-                Some(due) => tokio::time::sleep_until(due).await,
-                None => std::future::pending::<()>().await,
-            }} => Trigger::Retry,
+        let trigger = if initial_audit {
+            initial_audit = false;
+            Trigger::Audit
+        } else {
+            tokio::select! {
+                _ = cancel.changed() => break,
+                _ = tokio::time::sleep_until(audit) => Trigger::Audit,
+                changed = inventory.changed() => {
+                    if changed.is_err() { break; }
+                    Trigger::Inventory
+                },
+                target = requested.recv() => {
+                    let Some(id) = target else { break; };
+                    let mut ids = vec![id];
+                    while let Ok(id) = requested.try_recv() { ids.push(id); }
+                    ids.sort_unstable(); ids.dedup();
+                    if ids.contains(&0) { Trigger::Audit } else { Trigger::Targets(ids) }
+                },
+                _ = async { match retry {
+                    Some(due) => tokio::time::sleep_until(due).await,
+                    None => std::future::pending::<()>().await,
+                }} => Trigger::Retry,
+            }
         };
         // An event never postpones the audit deadline.
         if matches!(trigger, Trigger::Audit) && tokio::time::Instant::now() >= audit {

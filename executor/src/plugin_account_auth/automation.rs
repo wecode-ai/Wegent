@@ -63,8 +63,7 @@ impl Reconciler {
         home: &Path,
     ) -> Result<(), AuthError> {
         let inventory = installed_inventory(home)?;
-        let mut ids: Vec<_> = inventory.keys().copied().collect();
-        ids.sort_unstable();
+        let ids: Vec<_> = inventory.keys().copied().collect();
         self.inventory = inventory;
         self.reconcile_selected(transport, home, &ids).await
     }
@@ -124,11 +123,12 @@ impl Reconciler {
         self.retries
             .retain(|(id, _), until| owned.contains(id) && *until > Instant::now());
         self.failures.retain(|(id, _), _| owned.contains(id));
-        let ids: Vec<_> = requested
+        let mut ids: Vec<_> = requested
             .iter()
             .copied()
             .filter(|id| owned.contains(id))
             .collect();
+        ids.sort_unstable();
         for selected in ids.chunks(16) {
             self.reconcile_batch(transport.clone(), home, selected)
                 .await?;

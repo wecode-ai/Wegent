@@ -1712,7 +1712,14 @@ describe('CloudTodoWorkspace', () => {
             .querySelectorAll<HTMLButtonElement>('aside nav button')
         ).map(button => button.textContent)
       )
-      .toEqual(['基本信息', '执行环境', '自动处理', '智能体', '成员', '协作团队'])
+      .toEqual(['基本信息', '项目成员', '自动处理', '智能体', '协作小组', '执行环境'])
+    expect(
+      Array.from(
+        screen
+          .getByTestId('project-settings-shell')
+          .querySelectorAll('[data-testid="project-settings-shell-group-ai-team"] + nav button')
+      ).map(button => button.textContent)
+    ).toEqual(['智能体', '协作小组', '执行环境'])
     await userEvent.click(screen.getByTestId('cloud-project-settings-agents'))
     expect(screen.getByTestId('cloud-project-settings-agents')).toHaveAttribute(
       'aria-current',
@@ -1724,7 +1731,7 @@ describe('CloudTodoWorkspace', () => {
         'cloud-project-settings-members',
         'cloud-project-settings-groups',
       ].map(testId => screen.getByTestId(testId).textContent)
-    ).toEqual(['智能体', '成员', '协作团队'])
+    ).toEqual(['智能体', '项目成员', '协作小组'])
     await userEvent.click(screen.getByTestId('cloud-project-settings-groups'))
     expect(await screen.findByTestId('collaboration-group-open-create')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-settings-agents'))

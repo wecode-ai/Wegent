@@ -643,7 +643,15 @@ function reduceWorkspaceState(
         assignments: [],
         executions: [],
       };
-    case "replace-project":
+    case "replace-project": {
+      const current =
+        state.projects.find((project) => project.id === action.project.id) ??
+        state.project;
+      if (
+        current?.id === action.project.id &&
+        current.version > action.project.version
+      )
+        return state;
       return {
         ...state,
         project:
@@ -656,6 +664,7 @@ function reduceWorkspaceState(
             )
           : [action.project, ...state.projects],
       };
+    }
     case "remove-project": {
       const current = state.project?.id === action.projectId;
       return {
@@ -1571,6 +1580,13 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     replaceProject: (project) => {
+      if (
+        catalogProjects.some(
+          (current) =>
+            current.id === project.id && current.version > project.version,
+        )
+      )
+        return;
       markProjectMutated(project.id);
       catalogProjects = catalogProjects.map((item) =>
         item.id === project.id ? project : item,

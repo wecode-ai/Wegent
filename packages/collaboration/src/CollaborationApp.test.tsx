@@ -656,7 +656,15 @@ describe("CollaborationApp API boundary", () => {
         "environments",
         "automatic-processing",
       ]);
-      expect(groupsSection?.group).toEqual({ id: "ai-team", label: "AI 团队" });
+      expect(groupsSection?.group).toEqual({ id: "ai-team", label: "AI 配置" });
+      expect(
+        settingsShell?.props.sections
+          .filter(
+            (section: { group?: { id: string } }) =>
+              section.group?.id === "ai-team",
+          )
+          .map((section: { id: string }) => section.id),
+      ).toEqual(["agents", "groups", "environments"]);
       const groups = findByType(
         groupsSection?.content.props.children,
         ProjectCollaborationGroups,

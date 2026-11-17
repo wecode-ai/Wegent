@@ -15,11 +15,19 @@
 .collaboration-template-card footer,
 .collaboration-template-notice,
 .collaboration-template-dialog > header,
+.collaboration-template-detail > header,
 .collaboration-template-dialog > footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.collaboration-template-detail > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 20px;
 }
 
 .collaboration-template-page h2,
@@ -160,6 +168,17 @@
   padding: 20px;
   border: 1px solid rgb(var(--color-border));
   border-radius: 12px;
+}
+.collaboration-template-card footer {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.collaboration-template-card footer > span {
+  flex-basis: 100%;
+}
+.collaboration-template-card footer > button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .collaboration-template-card h3 {
   margin: 16px 0 8px;
@@ -390,18 +409,6 @@
 .collaboration-template-binding p {
   margin: 3px 0 0;
   font-size: var(--text-sm);
-  color: rgb(var(--color-text-secondary));
-}
-.collaboration-template-settings {
-  padding: 24px;
-  max-width: 800px;
-}
-.collaboration-template-settings section {
-  padding: 24px 0;
-  border-bottom: 1px solid rgb(var(--color-border));
-}
-.collaboration-template-settings p {
-  margin: 8px 0 16px;
   color: rgb(var(--color-text-secondary));
 }
 

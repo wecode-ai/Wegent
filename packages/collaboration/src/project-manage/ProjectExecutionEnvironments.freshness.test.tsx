@@ -46,6 +46,7 @@ function deferred<T>() {
 function createApi() {
   return {
     projects: {
+      get: vi.fn(async () => project),
       listExecutionEnvironments: vi.fn(async () => [device]),
       update: vi.fn(async () => project),
       initializeExecutionEnvironment: vi.fn(async () => project),
@@ -148,11 +149,11 @@ describe('execution environment configuration snapshots', () => {
     }
   )
 
-  it('keeps dirty content and its original base version during a newer prop refresh', async () => {
+  it('requires an explicit rebase before saving dirty content over a newer configuration', async () => {
     const api = createApi()
     await render(api)
     await selectPolicy('project')
-    await render(api, {
+    const latest = {
       ...project,
       version: 3,
       execution_environment: {
@@ -167,12 +168,30 @@ describe('execution environment configuration snapshots', () => {
         ],
         setup_steps: [],
       },
+    } as CollaborationProject
+    vi.mocked(api.projects.get).mockResolvedValue(latest)
+    vi.mocked(api.projects.update).mockResolvedValue({
+      ...latest,
+      version: 4,
+      execution_environment: {
+        workspace_policy: 'project',
+        repositories: [],
+        setup_steps: [],
+      },
     })
+    await render(api, latest)
+    expect(element<HTMLSelectElement>('-workspace-policy').value).toBe('project')
+    expect(container.querySelector('[data-testid$="-repository-name-0"]')).toBeNull()
+    await act(async () => element<HTMLButtonElement>('-save-configuration').click())
+    expect(element<HTMLButtonElement>('-save-configuration').disabled).toBe(true)
+    expect(api.projects.update).not.toHaveBeenCalled()
+    await act(async () => element<HTMLButtonElement>('-rebase-configuration').click())
+    expect(api.projects.get).toHaveBeenCalledExactlyOnceWith(project.id)
     expect(element<HTMLSelectElement>('-workspace-policy').value).toBe('project')
     expect(container.querySelector('[data-testid$="-repository-name-0"]')).toBeNull()
     await act(async () => element<HTMLButtonElement>('-save-configuration').click())
     expect(api.projects.update).toHaveBeenCalledExactlyOnceWith(project.id, {
-      version: 1,
+      version: 3,
       executionEnvironment: { workspacePolicy: 'project', repositories: [], setupSteps: [] },
     })
   })
