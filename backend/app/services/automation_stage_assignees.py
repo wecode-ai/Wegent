@@ -118,17 +118,27 @@ def preflight_automation_assignee(
         if not run.task_id
         else None
     )
-    item = (
-        db.query(LoopItem)
-        .filter(
-            LoopItem.id == run.task_id, LoopItem.cloud_project_id == str(project.id)
+    external = bool(run.task_id) and project.task_provider in {"github", "gitlab"}
+    if external:
+        from app.services.loop_items.external_provider import (
+            external_loop_item_provider,
         )
-        .with_for_update()
-        .populate_existing()
-        .one_or_none()
-        if run.task_id
-        else None
-    )
+
+        _, item = external_loop_item_provider.assignment_stage_context(
+            db, str(run.task_id), owner.id
+        )
+    else:
+        item = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.id == run.task_id, LoopItem.cloud_project_id == str(project.id)
+            )
+            .with_for_update()
+            .populate_existing()
+            .one_or_none()
+            if run.task_id
+            else None
+        )
     if item is None:
         item = LoopItem(
             id=run.task_id or f"{project.project_key}-{project.next_item_number}",
@@ -144,7 +154,7 @@ def preflight_automation_assignee(
         item=item,
         assignee_type=target_type,
         assignee_id=identity,
-        allow_stage_advance=bool(run.task_id),
+        allow_stage_advance=bool(run.task_id) and not external,
         actor_user_id=owner.id,
     )
     return AutomationAssignee(target_type, identity, workflow)

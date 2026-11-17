@@ -132,14 +132,20 @@ def test_later_stage_mismatch_has_no_partial_assignment_or_notification(
     fixture.push.assert_not_called()
 
 
+@pytest.mark.parametrize("manager_reference", ["canonical", "team_alias"])
 def test_matching_human_stage_and_replay_materialize_once(
     test_db: Session,
     test_user: User,
     collaboration_dispatch: SimpleNamespace,
+    manager_reference: str,
 ) -> None:
     fixture = collaboration_dispatch
     _constrain(fixture, test_user)
     values = _values(fixture, test_user)
+    if manager_reference == "team_alias":
+        for agent in (fixture.manager, fixture.worker, fixture.reviewer):
+            agent.metadata_json = {**agent.metadata_json, "runtime": "codex"}
+        values.manager_agent_id = str(fixture.manager.metadata_json["wegent_team_id"])
     values.items = values.items[:1]
     test_db.commit()
 

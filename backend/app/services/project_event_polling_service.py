@@ -32,6 +32,7 @@ from app.services.project_event_polling import (
     PolledInput,
     poller_for,
 )
+from app.services.project_quality_observations import prepare_quality_inputs
 
 MAX_SCAN_PAGES = 20
 POLL_LEASE_SECONDS = 300
@@ -256,10 +257,14 @@ class ProjectEventPollingService:
             db.query(ProjectIncomingHook)
             .filter(ProjectIncomingHook.id == hook_id)
             .with_for_update()
+            .populate_existing()
             .one_or_none()
         )
         if hook is None or hook.status != "active":
             raise EventPollingError("Event subscription is unavailable")
+        metadata = _mapping(hook.metadata_json)
+        poll = _mapping(metadata.get("poll"))
+        inputs = prepare_quality_inputs(inputs, poll, str(hook.id))
         identities = {
             item.identity: hashlib.sha256(
                 f"{hook.id}:{source_type}:{item.identity}".encode()
@@ -307,8 +312,6 @@ class ProjectEventPollingService:
                 )
             )
             created += 1
-        metadata = _mapping(hook.metadata_json)
-        poll = _mapping(metadata.get("poll"))
         poll["cursor"] = dict(next_cursor)
         poll["last_page_at"] = utcnow().isoformat()
         metadata["poll"] = poll

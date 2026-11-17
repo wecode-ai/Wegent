@@ -18,7 +18,13 @@ from fastapi import HTTPException
 from sqlalchemy import String, cast
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem, LoopItemComment
+from app.models.delivery import (
+    CloudProject,
+    LoopItem,
+    LoopItemComment,
+    ProjectIncomingHook,
+    loop_datetime_is_unset,
+)
 from app.models.user import User
 from app.services.issue_assignments import (
     ASSIGNMENT_EVENT_TYPE,
@@ -29,6 +35,19 @@ from app.services.loop_item_status_history import (
     write_status_change,
 )
 from app.services.project_automation_domain import ProjectAutomationEvent, utcnow
+from app.services.project_quality_observations import quality_snapshot_signature
+from app.services.quality_observations import (
+    ORDER_FIELDS,
+    linked_pr_urls,
+    newer_collector_head,
+    observed_heads,
+    preserve_head_proof,
+    reconcile_links,
+    retained_block,
+    stale_observation,
+    trusted_observation,
+    unverified_head_change,
+)
 from app.services.stage_assignee_mutations import stage_observer_user_ids
 from app.services.stage_assignees import (
     STAGE_NAMES,
@@ -374,6 +393,7 @@ def _ready(snapshot: dict[str, Any]) -> bool:
     checks = snapshot.get("required_checks")
     return bool(
         snapshot.get("complete") is True
+        and snapshot.get("head_verified") is not False
         and bool(snapshot.get("head_sha"))
         and snapshot.get("draft") is False
         and _text(snapshot.get("state")).lower() == "open"
@@ -390,26 +410,14 @@ def _ready(snapshot: dict[str, Any]) -> bool:
 
 
 def _linked_urls(item: LoopItem) -> set[str]:
-    return {
-        _text(badge.get("url"))
-        for badge in _mapping(item.metadata_json).get("badges", [])
-        if isinstance(badge, dict)
-        and badge.get("icon") == "git-pull-request"
-        and "github.com/" in _text(badge.get("url"))
-    }
+    return linked_pr_urls(_mapping(item.metadata_json))
 
 
 def require_quality_snapshot(item: LoopItem, metadata: dict[str, Any]) -> None:
     """Reject manual quality entry without current, complete PR observations."""
     handoff = _mapping(metadata.get("quality_handoff"))
     snapshots = _mapping(handoff.get("pr_heads"))
-    urls = {
-        _text(badge.get("url"))
-        for badge in metadata.get("badges", [])
-        if isinstance(badge, dict)
-        and badge.get("icon") == "git-pull-request"
-        and "github.com/" in _text(badge.get("url"))
-    }
+    urls = linked_pr_urls(metadata)
     if (
         not urls
         or handoff.get("quality_blocked")
@@ -440,8 +448,6 @@ def process_quality_event(db: Session, event: ProjectAutomationEvent) -> int:
         return 0
     if not stage_assignee_enforcement_enabled(project, {}):
         return 0
-    from app.models.delivery import loop_datetime_is_unset
-
     # SessionLocal disables autoflush. Preserve earlier observations in a
     # multi-event transaction before refreshing the locked Issue identities.
     db.flush()
@@ -459,12 +465,44 @@ def process_quality_event(db: Session, event: ProjectAutomationEvent) -> int:
         .populate_existing()
         .all()
     )
+    if not items or _superseded_by_collector(db, project, snapshot):
+        return 0
     changed = 0
     for item in items:
         workflow = _workflow(item, project)
         if _enabled(workflow, project) and snapshot["url"] in _linked_urls(item):
             changed += int(_process_issue(db, project, item, event, snapshot, workflow))
     return changed
+
+
+def _superseded_by_collector(
+    db: Session, project: CloudProject, snapshot: dict[str, Any]
+) -> bool:
+    # Issue locks precede this current read. Lock only matching subscriptions so
+    # their watermarks include polls whose identical event was deduplicated.
+    hooks = (
+        db.query(ProjectIncomingHook)
+        .filter(
+            ProjectIncomingHook.cloud_project_id == str(project.id),
+            ProjectIncomingHook.source == "github",
+            ProjectIncomingHook.status == "active",
+            loop_datetime_is_unset(ProjectIncomingHook.deleted_at),
+            ProjectIncomingHook.metadata_json["collection_mode"]
+            .as_string()
+            .in_(["poll", "hybrid"]),
+            cast(
+                ProjectIncomingHook.metadata_json["poll"]["quality_observations"],
+                String,
+            ).contains(snapshot["url"], autoescape=True),
+        )
+        .order_by(ProjectIncomingHook.id)
+        .with_for_update()
+        .populate_existing()
+        .all()
+    )
+    return any(
+        newer_collector_head(_mapping(hook.metadata_json), snapshot) for hook in hooks
+    )
 
 
 def _process_issue(
@@ -482,8 +520,17 @@ def _process_issue(
     metadata = _mapping(item.metadata_json)
     handoff = _mapping(metadata.get("quality_handoff"))
     was_blocked = bool(handoff.get("quality_blocked"))
+    urls = _linked_urls(item)
+    links_changed = reconcile_links(handoff, urls)
     heads = _mapping(handoff.get("pr_heads"))
     previous = _mapping(heads.get(snapshot["url"]))
+    uncertain = _mapping(handoff.get("unverified_pr_observations"))
+    previous_uncertain = _mapping(uncertain.get(snapshot["url"]))
+    unverified = unverified_head_change(previous, snapshot)
+    if stale_observation(previous, snapshot):
+        return False
+    if unverified and stale_observation(previous_uncertain, snapshot):
+        return False
     if (
         snapshot.get("event_type") == "change_request.checks_failed"
         and not snapshot.get("complete")
@@ -495,20 +542,102 @@ def _process_issue(
         return False
     # A callback for an already superseded head cannot reclaim ownership.
     superseded = list(previous.get("superseded_heads") or [])
-    if snapshot["head_sha"] in superseded:
+    if (
+        snapshot["head_sha"] != previous.get("head_sha")
+        and snapshot["head_sha"] in superseded
+        and not trusted_observation(snapshot)
+        and not unverified
+    ):
         return False
-    if previous.get("head_sha") and previous.get("head_sha") != snapshot["head_sha"]:
+    if (
+        not unverified
+        and previous.get("head_sha")
+        and previous.get("head_sha") != snapshot["head_sha"]
+    ):
         superseded.append(previous["head_sha"])
-    signature = hashlib.sha256(
-        json.dumps(snapshot, sort_keys=True, default=str).encode()
-    ).hexdigest()
-    if previous.get("signature") == signature and not handoff.get("waiting_assignee"):
+    if (
+        not snapshot.get("observed_at")
+        and previous.get("head_sha") == snapshot["head_sha"]
+    ):
+        snapshot = {
+            **snapshot,
+            **{key: previous[key] for key in ORDER_FIELDS if key in previous},
+        }
+    signature = quality_snapshot_signature(snapshot)
+    prior_state = previous_uncertain if unverified else previous
+    ordering_changed = any(
+        prior_state.get(key) != snapshot.get(key) for key in ORDER_FIELDS
+    )
+    if (
+        prior_state.get("signature") == signature
+        and not handoff.get("waiting_assignee")
+        and not links_changed
+        and not (previous_uncertain and trusted_observation(snapshot))
+        and (
+            not handoff.get("accepted_heads") or set(handoff["accepted_heads"]) == urls
+        )
+    ):
+        if ordering_changed:
+            if unverified:
+                uncertain[snapshot["url"]] = {**previous_uncertain, **snapshot}
+                handoff["unverified_pr_observations"] = uncertain
+            else:
+                heads[snapshot["url"]] = preserve_head_proof(
+                    previous, {**previous, **snapshot}
+                )
+            handoff["pr_heads"] = heads
+            metadata["quality_handoff"] = handoff
+            _persist_observation(item, metadata, event)
+            return True
         return False
     snapshot = {**snapshot, "signature": signature, "superseded_heads": superseded}
-    heads[snapshot["url"]] = snapshot
+    if unverified:
+        uncertain[snapshot["url"]] = snapshot
+    else:
+        heads[snapshot["url"]] = preserve_head_proof(previous, snapshot)
+        if trusted_observation(snapshot):
+            uncertain.pop(snapshot["url"], None)
+    handoff["unverified_pr_observations"] = uncertain
     handoff["pr_heads"] = heads
-    reason = _failure(snapshot)
-    all_ready = all(_ready(_mapping(heads.get(url))) for url in _linked_urls(item))
+    technical = _failure(snapshot)
+    if not unverified and (
+        technical == "pr_checks_failed"
+        or (
+            trusted_observation(snapshot)
+            and previous_uncertain.get("head_sha") == snapshot["head_sha"]
+            and _failure(previous_uncertain) == "pr_checks_failed"
+        )
+    ):
+        failed = _mapping(handoff.get("technical_blocked_heads"))
+        failed[snapshot["url"]] = snapshot["head_sha"]
+        handoff["technical_blocked_heads"] = failed
+    reason = (
+        retained_block(handoff, heads, urls)
+        or next(
+            (
+                _failure(_mapping(heads.get(url)))
+                for url in sorted(urls)
+                if _failure(_mapping(heads.get(url)))
+            ),
+            None,
+        )
+        or next(
+            (
+                _failure(value) or "quality_observation_unavailable"
+                for url, value in uncertain.items()
+                if url in urls
+            ),
+            None,
+        )
+    )
+    all_ready = bool(urls) and all(_ready(_mapping(heads.get(url))) for url in urls)
+    current_heads = observed_heads(heads, urls)
+    same_accepted_heads = (
+        len(current_heads) == len(urls)
+        and handoff.get("accepted_heads") == current_heads
+    )
+    if reason or not all_ready or not same_accepted_heads:
+        handoff["acceptance_complete"] = False
     if reason is None and not all_ready:
         # Persist pending observations so multiple required PRs can converge.
         if handoff.get("accepted_heads"):
@@ -556,9 +685,6 @@ def _process_issue(
         metadata["quality_handoff"] = handoff
         _persist_observation(item, metadata, event)
         return True
-    same_accepted_heads = handoff.get("accepted_heads") == {
-        url: heads[url]["head_sha"] for url in _linked_urls(item)
-    }
     role = "engineering" if reason else "qa"
     if (
         not reason
@@ -583,7 +709,12 @@ def _process_issue(
         if reason
         else _role_targets(project, item, role)
     )
-    user = _resolve_human(db, project, candidates)
+    invalid_initial_role = (
+        not reason
+        and role == "qa"
+        and quality.get("required_assignee_role") not in {None, "qa"}
+    )
+    user = None if invalid_initial_role else _resolve_human(db, project, candidates)
     if (
         not reason
         and same_accepted_heads
@@ -597,9 +728,12 @@ def _process_issue(
         _persist_observation(item, metadata, event)
         return True
     transition = {
-        "heads": {url: heads[url]["head_sha"] for url in sorted(heads)},
+        "heads": current_heads,
         "role": role,
-        "reason": reason or "quality_ready",
+        "reason": reason
+        or (
+            "quality_initial_role_invalid" if invalid_initial_role else "quality_ready"
+        ),
         "assignee_user_id": user.id if user else None,
     }
     if handoff.get("last_transition") == transition and (
@@ -640,12 +774,13 @@ def _process_issue(
     handoff.update(
         {
             "required_assignee_role": role,
-            "quality_blocked": bool(reason and current_quality),
+            "quality_blocked": bool(reason and current_quality) or invalid_initial_role,
             "waiting_assignee": user is None,
             "resolved_assignee": (
                 {"assignee_type": "user", "assignee_id": str(user.id)} if user else None
             ),
             "reason_code": reason
+            or ("quality_initial_role_invalid" if invalid_initial_role else None)
             or ("waiting_assignee" if user is None else "quality_ready"),
             "issue_version": item.version,
             "at": utcnow().isoformat(),
@@ -653,9 +788,7 @@ def _process_issue(
     )
     handoff["last_transition"] = transition
     if not reason:
-        handoff["accepted_heads"] = {
-            url: heads[url]["head_sha"] for url in _linked_urls(item)
-        }
+        handoff["accepted_heads"] = current_heads
     metadata["quality_handoff"] = handoff
     item.metadata_json = metadata
     item.version += 1
@@ -817,6 +950,15 @@ def submit_quality_review(
             "acceptance_complete": role == "ui" and decision != "changes_requested",
         }
     )
+    if decision == "changes_requested":
+        handoff["review_blocked_heads"] = dict(accepted)
+        handoff["reason_code"] = "quality_changes_requested"
+        handoff["last_transition"] = {
+            "heads": dict(accepted),
+            "role": "engineering",
+            "reason": "quality_changes_requested",
+            "assignee_user_id": user.id if user else None,
+        }
     metadata["quality_handoff"] = handoff
     item.metadata_json = metadata
     item.updated_by_user_id = user_id

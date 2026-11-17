@@ -69,6 +69,43 @@ def test_wrong_owner_is_rejected_before_persistence(stage_scenario, entrypoint):
     assert s.issue.assignee_user_id == s.owner.id
 
 
+@pytest.mark.parametrize("field", ["assignee_agent_id", "assignee_team_id"])
+def test_clearing_an_inactive_assignee_field_retains_the_required_owner(
+    stage_scenario, field
+):
+    s = stage_scenario
+    s.db.commit()
+    before = _counts(s.db)
+
+    saved = loop_item_service.update(
+        s.db,
+        s.issue.id,
+        s.owner.id,
+        LoopItemUpdate(version=s.issue.version, **{field: None}),
+    )
+
+    assert saved.assignee_user_id == s.owner.id
+    assert not saved.assignee_agent_id
+    assert saved.assignee_team_id is None
+    assert "stage_assignee_history" not in saved.metadata_json
+    assert s.db.query(LoopItemExecution).count() == before[1]
+    assert s.db.query(WeworkNotification).count() == before[2]
+    assert saved.metadata_json["assignment_history"][-1]["to_type"] == "user"
+    assert saved.metadata_json["assignment_history"][-1]["to_id"] == str(s.owner.id)
+
+    with pytest.raises(HTTPException) as error:
+        loop_item_service.update(
+            s.db,
+            saved.id,
+            s.owner.id,
+            LoopItemUpdate(version=saved.version, assignee_user_id=None),
+        )
+    assert error.value.detail["reason_code"] == "stage_assignee_mismatch"
+    assert error.value.detail["actual_assignee"]["assignee_id"] is None
+    s.db.refresh(saved)
+    assert saved.assignee_user_id == s.owner.id
+
+
 @pytest.mark.parametrize("entrypoint", ["assign", "patch"])
 @pytest.mark.usefixtures("pilot_policy")
 def test_introduction_reassignment_commits_review_with_owner(

@@ -23,7 +23,12 @@ from app.services.stage_assignees import (
     resolve_role_assignee,
     validate_stage_assignee,
 )
-from tests.utils.collaboration import authorize_project, authorize_project_agent
+from tests.utils.agent_resources import create_runnable_wegent_team
+from tests.utils.collaboration import (
+    authorize_project,
+    authorize_project_agent,
+    authorize_resource,
+)
 
 
 @pytest.fixture
@@ -180,6 +185,56 @@ def test_agent_permission_revocation_is_rechecked(stage_scenario):
     with pytest.raises(HTTPException) as error:
         validate(s, metadata=metadata, assignee_type="agent", assignee_id=agent.id)
     assert error.value.detail["reason"] == "Required assignee lost project access"
+
+
+@pytest.mark.parametrize("target_type", ["agent", "team"])
+def test_explicit_engineering_role_accepts_authorized_nonhuman_targets(
+    stage_scenario, target_type
+):
+    s = stage_scenario
+    metadata = deepcopy(s.issue.metadata_json)
+    node = metadata["workflow"]["nodes"][0]
+    node.pop("required_assignee_type")
+    node.pop("required_assignee_id")
+    node["required_assignee_role"] = "engineering"
+    team = (
+        create_runnable_wegent_team(
+            s.db, user_id=s.owner.id, name_prefix="engineering-role"
+        )
+        if target_type == "team"
+        else None
+    )
+    agent = ProjectChatAgent(
+        id="engineering-agent",
+        cloud_project_id=str(s.project.id),
+        name="Engineering agent",
+        created_by_user_id=s.owner.id,
+        status="active",
+        metadata_json={"wegent_team_id": team.id} if team else {},
+    )
+    authorize_project_agent(s.db, agent)
+    if team:
+        authorize_resource(s.db, s.project, team)
+    target_id = str(team.id) if team else agent.id
+    metadata["workflow"]["assignee_roles"] = {
+        "engineering": [{"assignee_type": target_type, "assignee_id": target_id}]
+    }
+
+    assert (
+        validate(s, metadata=metadata, assignee_type=target_type, assignee_id=target_id)
+        == metadata
+    )
+    with pytest.raises(HTTPException) as error:
+        validate(s, metadata=metadata, assignee_type=target_type, assignee_id="wrong")
+    assert error.value.detail["reason_code"] == "stage_assignee_mismatch"
+    if team:
+        team.is_active = False
+    else:
+        agent.status = "inactive"
+    s.db.flush()
+    with pytest.raises(HTTPException) as error:
+        validate(s, metadata=metadata, assignee_type=target_type, assignee_id=target_id)
+    assert error.value.detail["reason_code"] == "stage_assignee_mismatch"
 
 
 @pytest.mark.parametrize("disabled", [False, True])

@@ -47,14 +47,8 @@ def effective_assignee(
     group = metadata.get("collaboration_group")
     if isinstance(group, dict) and group.get("id"):
         return "group", str(group["id"])
-    selected = [(field, kind) for field, kind in ASSIGNEE_FIELDS if updates.get(field)]
-    if selected:
-        field, kind = selected[0]
-        return kind, str(updates[field])
-    if any(field in updates for field, _ in ASSIGNEE_FIELDS):
-        return "user", None
     for field, kind in ASSIGNEE_FIELDS:
-        value = getattr(item, field, None)
+        value = updates.get(field, getattr(item, field, None))
         if value:
             return kind, str(value)
     return "user", None

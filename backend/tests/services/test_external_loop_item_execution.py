@@ -152,6 +152,12 @@ def _item_id(project: CloudProject) -> str:
     return f"{project.project_key}-1"
 
 
+def _current_version(db: Session, project: CloudProject, user: User) -> int:
+    return int(
+        external_loop_item_provider.get(db, _item_id(project), user.id)["version"]
+    )
+
+
 def _mock_issue(monkeypatch: pytest.MonkeyPatch) -> None:
     """Mock provider reads/writes with an in-memory issue (labels round-trip)."""
 
@@ -682,7 +688,11 @@ def test_assign_robot_on_gitlab_creates_index_row_and_execution(
         test_db,
         _item_id(project),
         test_user.id,
-        LoopItemAssign(version=1, assignee_type="agent", assignee_id=bot.id),
+        LoopItemAssign(
+            version=_current_version(test_db, project, test_user),
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
     )
 
     assert response["assignee_agent_id"] == bot.id
@@ -722,7 +732,7 @@ def test_assign_wegent_runtime_robot_on_gitlab_keeps_robot_identity(
         _item_id(project),
         test_user.id,
         LoopItemAssign(
-            version=1,
+            version=_current_version(test_db, project, test_user),
             assignee_type="agent",
             assignee_id=bot.id,
         ),
@@ -904,7 +914,7 @@ def test_reassigning_same_external_collaboration_group_dispatches_once(
         lambda _db, _project_id, _user_id: [group],
     )
     assignment = LoopItemAssign(
-        version=1,
+        version=_current_version(test_db, project, test_user),
         assignee_type="group",
         assignee_id=str(group["id"]),
     )
@@ -919,7 +929,9 @@ def test_reassigning_same_external_collaboration_group_dispatches_once(
         test_db,
         _item_id(project),
         test_user.id,
-        assignment,
+        assignment.model_copy(
+            update={"version": _current_version(test_db, project, test_user)}
+        ),
     )
 
     executions = (
@@ -969,7 +981,7 @@ def test_assign_user_on_gitlab_creates_index_row_without_execution(
             _item_id(project),
             test_user.id,
             LoopItemAssign(
-                version=1,
+                version=_current_version(test_db, project, test_user),
                 assignee_type="user",
                 assignee_id=str(member.id),
             ),
@@ -1008,7 +1020,11 @@ def test_external_response_merges_execution_state(
         test_db,
         _item_id(project),
         test_user.id,
-        LoopItemAssign(version=1, assignee_type="agent", assignee_id=bot.id),
+        LoopItemAssign(
+            version=_current_version(test_db, project, test_user),
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
     )
 
     view = external_loop_item_provider.get(test_db, _item_id(project), test_user.id)
@@ -1072,7 +1088,11 @@ def test_approve_run_on_gitlab_project(
         test_db,
         _item_id(project),
         test_user.id,
-        LoopItemAssign(version=1, assignee_type="agent", assignee_id=bot.id),
+        LoopItemAssign(
+            version=_current_version(test_db, project, test_user),
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
     )
 
     response = external_loop_item_provider.approve_run(
@@ -1100,7 +1120,11 @@ def test_external_response_keeps_ai_state_after_run_completes(
         test_db,
         _item_id(project),
         test_user.id,
-        LoopItemAssign(version=1, assignee_type="agent", assignee_id=bot.id),
+        LoopItemAssign(
+            version=_current_version(test_db, project, test_user),
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
     )
     execution = _active_execution(test_db, _item_id(project))
     assert execution is not None
@@ -1127,7 +1151,11 @@ def test_assign_response_roundtrip(
         test_db,
         _item_id(project),
         test_user.id,
-        LoopItemAssign(version=1, assignee_type="agent", assignee_id=bot.id),
+        LoopItemAssign(
+            version=_current_version(test_db, project, test_user),
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
     )
     parsed = LoopItemResponse.model_validate(response)
 
@@ -1175,7 +1203,11 @@ def test_unassign_on_gitlab_cancels_robot_run(
         test_db,
         _item_id(project),
         test_user.id,
-        LoopItemAssign(version=1, assignee_type="agent", assignee_id=bot.id),
+        LoopItemAssign(
+            version=_current_version(test_db, project, test_user),
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
     )
 
     response = external_loop_item_provider.update(
@@ -1301,7 +1333,11 @@ def test_external_assigned_task_chat_start_creates_message(
         test_db,
         _item_id(project),
         test_user.id,
-        LoopItemAssign(version=1, assignee_type="agent", assignee_id=bot.id),
+        LoopItemAssign(
+            version=_current_version(test_db, project, test_user),
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
     )
 
     response = project_chat_service.start_agent_response(
@@ -1345,7 +1381,11 @@ def test_external_archive_cancels_unstarted_execution(
         test_db,
         _item_id(project),
         test_user.id,
-        LoopItemAssign(version=1, assignee_type="agent", assignee_id=bot.id),
+        LoopItemAssign(
+            version=_current_version(test_db, project, test_user),
+            assignee_type="agent",
+            assignee_id=bot.id,
+        ),
     )
     execution = _active_execution(test_db, _item_id(project))
     assert execution is not None

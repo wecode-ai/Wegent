@@ -207,8 +207,6 @@ def _engineering_assignee(
     actor_user_id: int | None,
 ) -> dict[str, Any] | None:
     for target in engineering_assignee_targets(project, metadata):
-        if target.get("assignee_type") != "user":
-            continue
         try:
             return require_stage_target(
                 db, project=project, target=target, actor_user_id=actor_user_id

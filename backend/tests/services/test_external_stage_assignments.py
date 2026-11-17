@@ -15,6 +15,7 @@ from app.models.resource_member import ResourceMember
 from app.models.wework_notification import WeworkNotification
 from app.schemas.project_chat import LoopItemAssign
 from app.services.issue_assignments import issue_assignment_service
+from app.services.loop_items import external_provider as external_provider_module
 from app.services.loop_items.external_provider import external_loop_item_provider
 from tests.services.test_external_loop_item_execution import (
     _issue,
@@ -98,6 +99,90 @@ def test_provider_assignment_checks_remote_root_and_requested_scope_before_write
             ),
         )
     assert error.value.detail["reason_code"] == "stage_assignee_mismatch"
+    assert _counts(test_db) == before
+    write.assert_not_called()
+
+
+def test_empty_remote_stage_does_not_reuse_stale_unconstrained_pointer(
+    test_db, test_user, test_admin_user, monkeypatch
+):
+    project, write = _scenario(
+        test_db, test_user, test_admin_user, monkeypatch, shadow=True
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_get_issue", lambda *a: _issue())
+    before = _counts(test_db)
+
+    with pytest.raises(HTTPException) as error:
+        external_loop_item_provider.assign(
+            test_db,
+            _item_id(project),
+            test_user.id,
+            LoopItemAssign(
+                version=external_loop_item_provider._derived_version(
+                    _issue()["updated_at"]
+                ),
+                assignee_type="user",
+                assignee_id=str(test_admin_user.id),
+            ),
+        )
+
+    assert error.value.detail["reason_code"] == "stage_assignee_mismatch"
+    assert error.value.detail["reason"] == "Workflow stage selection is required"
+    assert _counts(test_db) == before
+    write.assert_not_called()
+
+
+@pytest.mark.parametrize("context_only", [True, False])
+def test_remote_phase_is_read_after_the_shared_issue_lock(
+    test_db, test_user, test_admin_user, monkeypatch, context_only
+):
+    project, write = _scenario(
+        test_db, test_user, test_admin_user, monkeypatch, shadow=True
+    )
+    locked = False
+    original = external_provider_module.lock_external_assignment_item
+
+    def acquire(*args, **kwargs):
+        nonlocal locked
+        result = original(*args, **kwargs)
+        locked = True
+        return result
+
+    def fresh_remote(*args):
+        assert locked, "The remote observation must follow the Issue lock"
+        return {
+            **_issue(),
+            "labels": ["开发实现"],
+            "updated_at": "2026-08-07T00:01:00Z",
+        }
+
+    monkeypatch.setattr(
+        external_provider_module, "lock_external_assignment_item", acquire
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_get_issue", fresh_remote)
+    before = _counts(test_db)
+
+    if context_only:
+        _, item = external_loop_item_provider.assignment_stage_context(
+            test_db, _item_id(project), test_user.id
+        )
+        assert item.metadata_json["workflow"]["current_stage_id"] == "build"
+    else:
+        with pytest.raises(HTTPException) as error:
+            external_loop_item_provider.assign(
+                test_db,
+                _item_id(project),
+                test_user.id,
+                LoopItemAssign(
+                    version=external_loop_item_provider._derived_version(
+                        _issue()["updated_at"]
+                    ),
+                    assignee_type="user",
+                    assignee_id=str(test_user.id),
+                ),
+            )
+        assert error.value.status_code == 409
+        assert error.value.detail["code"] == "version_conflict"
     assert _counts(test_db) == before
     write.assert_not_called()
 

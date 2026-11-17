@@ -12,6 +12,16 @@ from urllib.parse import quote
 
 import httpx
 
+from app.services.project_event_polling_inputs import (
+    PolledInput,
+    _failed_check_run_inputs,
+    _github_repository_payload,
+    _mapping,
+    _pull_request_conflict_input,
+    _pull_request_merged_input,
+    _text,
+)
+
 POLL_PAGE_SIZE = 50
 POLL_OVERLAP_SECONDS = 120
 MAX_NESTED_PAGES = 10
@@ -30,15 +40,6 @@ class EventPollingError(RuntimeError):
         super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
         self.disable_subscription = disable_subscription
-
-
-@dataclass(frozen=True)
-class PolledInput:
-    identity: str
-    title: str
-    payload: dict[str, Any]
-    headers: dict[str, str]
-    occurred_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -450,11 +451,13 @@ class GitHubEventPoller(_HttpPoller):
                             pull=detail,
                         )
                         for change in changes:
-                            if (
-                                change.payload.get("pull_request", {}).get("number")
-                                == number
-                                or change.payload.get("check_run", {}).get("head_sha")
-                                == head_sha
+                            if change.payload.get("pull_request", {}).get(
+                                "number"
+                            ) == number or any(
+                                request.get("number") == number
+                                for request in change.payload.get("check_run", {}).get(
+                                    "pull_requests", []
+                                )
                             ):
                                 change.payload["quality_snapshot"] = (
                                     quality_input.payload["quality_snapshot"]
@@ -899,105 +902,6 @@ def _retry_after_seconds(response: httpx.Response) -> int:
     return 300
 
 
-def _github_repository_payload(
-    repository: str,
-    pull: Mapping[str, Any],
-) -> dict[str, Any]:
-    base_repo = _mapping(_mapping(pull.get("base")).get("repo"))
-    return {
-        "id": base_repo.get("id"),
-        "full_name": _text(base_repo.get("full_name")) or repository,
-        "html_url": _text(base_repo.get("html_url")),
-    }
-
-
-def _pull_request_conflict_input(
-    *,
-    number: int,
-    pull: Mapping[str, Any],
-    repository_payload: dict[str, Any],
-) -> PolledInput | None:
-    head_sha = _text(_mapping(pull.get("head")).get("sha"))
-    mergeable_state = _text(pull.get("mergeable_state")).lower()
-    if pull.get("mergeable") is not False and mergeable_state not in {
-        "dirty",
-        "conflicting",
-    }:
-        return None
-    return PolledInput(
-        identity=f"pull_request:{number}:conflict:{head_sha}",
-        title=f"github: pull_request #{number}",
-        payload={
-            "action": "synchronize",
-            "pull_request": dict(pull),
-            "repository": repository_payload,
-        },
-        headers={"x-github-event": "pull_request"},
-        occurred_at=_text(pull.get("updated_at")) or None,
-    )
-
-
-def _failed_check_run_inputs(
-    *,
-    number: int,
-    head_sha: str,
-    checks: list[dict[str, Any]],
-    pull_requests: list[dict[str, Any]],
-    repository_payload: dict[str, Any],
-) -> list[PolledInput]:
-    changes: list[PolledInput] = []
-    for check in checks:
-        conclusion = _text(check.get("conclusion")).lower()
-        if _text(check.get("status")).lower() == "completed" and conclusion in {
-            "failure",
-            "timed_out",
-            "cancelled",
-            "action_required",
-        }:
-            changes.append(
-                PolledInput(
-                    identity=f"check_run:{check.get('id')}:{conclusion}:{head_sha}",
-                    title=f"github: check_run #{number}",
-                    payload={
-                        "action": "completed",
-                        "check_run": {
-                            **check,
-                            "pull_requests": pull_requests,
-                            "head_sha": head_sha,
-                        },
-                        "repository": repository_payload,
-                    },
-                    headers={"x-github-event": "check_run"},
-                    occurred_at=_text(check.get("completed_at")) or None,
-                )
-            )
-    return changes
-
-
-def _pull_request_merged_input(
-    *,
-    number: int,
-    pull: Mapping[str, Any],
-    repository_payload: dict[str, Any],
-) -> PolledInput:
-    merge_sha = _text(pull.get("merge_commit_sha")) or _text(
-        _mapping(pull.get("head")).get("sha")
-    )
-    return PolledInput(
-        identity=f"pull_request:{number}:merged:{merge_sha}",
-        title=f"github: pull_request #{number}",
-        payload={
-            "action": "closed",
-            "pull_request": dict(pull),
-            "repository": repository_payload,
-        },
-        headers={"x-github-event": "pull_request"},
-        occurred_at=_text(pull.get("merged_at"))
-        or _text(pull.get("updated_at"))
-        or None,
-    )
-
-
 def _gitlab_merge_request_payload(value: Mapping[str, Any]) -> dict[str, Any]:
     return {
         **dict(value),
@@ -1089,11 +993,3 @@ def _required_text(value: Mapping[str, Any], key: str) -> str:
     if not result:
         raise EventPollingError(f"Observed resource requires {key}")
     return result
-
-
-def _mapping(value: object) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
-
-
-def _text(value: object) -> str:
-    return value.strip() if isinstance(value, str) else ""

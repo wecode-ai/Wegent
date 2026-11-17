@@ -55,6 +55,7 @@ from app.services.loop_items.assignment_notification import (
 from app.services.loop_items.change_requests import persist_external_badge_source
 from app.services.loop_items.external_assignment_constraints import (
     external_assignment_item,
+    lock_external_assignment_item,
     validate_external_assignment,
     validate_external_creation,
 )
@@ -1290,6 +1291,7 @@ class ExternalLoopItemProvider:
         """Read the current remote phase before any assignment-side effects."""
         project, number = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
+        lock_external_assignment_item(db, project=project, item_id=item_id)
         current = self._get_issue(project, number)
         values = self._response(db, project, current, access, user_id)
         if not values["can_view_detail"]:
@@ -1321,6 +1323,7 @@ class ExternalLoopItemProvider:
 
         project, number = self._resolve_project(db, item_id)
         access = require_cloud_project_role(db, project.id, user_id, BaseRole.Viewer)
+        lock_external_assignment_item(db, project=project, item_id=item_id)
         current = self._get_issue(project, number)
         current_labels = self._labels(current)
         if not self._response(db, project, current, access, user_id)["can_view_detail"]:
@@ -1345,6 +1348,11 @@ class ExternalLoopItemProvider:
             workflow_step=values.workflow_step,
             user_id=user_id,
         )
+        if stage_item.version != values.version:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                {"code": "version_conflict", "message": "TODO changed"},
+            )
         previous_assignee = self._assignee_from_labels(current_labels)
         agent: ProjectChatAgent | None = None
         team: Kind | None = None

@@ -3,8 +3,7 @@
 
 """Collect a head-bound GitHub required-check snapshot for quality handoffs."""
 
-import hashlib
-import json
+from datetime import datetime, timezone
 from typing import Any, Mapping
 from urllib.parse import quote
 
@@ -45,6 +44,7 @@ async def collect_quality_snapshot(
     headers: Mapping[str, str],
     repository_payload: dict[str, Any],
 ) -> PolledInput:
+    observed_at = datetime.now(timezone.utc).isoformat()
     owner, name = repository.split("/", 1)
     endpoint = (
         "https://api.github.com/graphql"
@@ -92,6 +92,8 @@ async def collect_quality_snapshot(
             )
         contexts = (commit.get("statusCheckRollup") or {}).get("contexts") or {}
         for check in contexts.get("nodes") or []:
+            if not isinstance(check, dict):
+                raise EventPollingError("GitHub required-check proof is unavailable")
             observed.append(
                 {
                     "name": check.get("name") or check.get("context"),
@@ -111,6 +113,7 @@ async def collect_quality_snapshot(
             "complete": not page.get("hasNextPage", False),
             "url": pull.get("url"),
             "head_sha": expected_head,
+            "head_verified": True,
             "draft": pull.get("isDraft"),
             "state": pull.get("state"),
             "mergeable": pull.get("mergeable"),
@@ -159,6 +162,7 @@ async def collect_quality_snapshot(
     ]
     snapshot["expected_required_checks"] = expected
     snapshot["complete"] = snapshot["complete"] and rules_complete
+    snapshot["observed_at"] = observed_at
     return _quality_input(number, repository_payload, snapshot)
 
 
@@ -174,6 +178,7 @@ async def observe_quality_snapshot(
     pull: dict[str, Any],
 ) -> PolledInput:
     """Preserve base polling events when additional quality proof is unavailable."""
+    observed_at = datetime.now(timezone.utc).isoformat()
     try:
         return await collect_quality_snapshot(
             client,
@@ -189,6 +194,7 @@ async def observe_quality_snapshot(
             "url": pull.get("html_url")
             or f"https://github.com/{repository}/pull/{number}",
             "head_sha": (pull.get("head") or {}).get("sha"),
+            "head_verified": False,
             "draft": pull.get("draft"),
             "state": pull.get("state"),
             "mergeable": (
@@ -197,6 +203,7 @@ async def observe_quality_snapshot(
             "required_checks": [],
             "observation_error": str(exc),
             "reason_code": "quality_observation_unavailable",
+            "observed_at": observed_at,
         }
         return _quality_input(number, repository_payload, snapshot)
 
@@ -206,9 +213,9 @@ def _quality_input(
     repository_payload: dict[str, Any],
     snapshot: dict[str, Any],
 ) -> PolledInput:
-    signature = hashlib.sha256(
-        json.dumps(snapshot, sort_keys=True).encode()
-    ).hexdigest()[:24]
+    from app.services.project_quality_observations import quality_snapshot_signature
+
+    signature = quality_snapshot_signature(snapshot)[:24]
     return PolledInput(
         identity=f"pull_request:{number}:quality:{signature}",
         title=f"github: pull_request quality #{number}",

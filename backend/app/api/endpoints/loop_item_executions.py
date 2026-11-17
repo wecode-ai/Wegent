@@ -463,7 +463,7 @@ def enqueue_execution_batch(
         db, item=item, dispatch_id=values.dispatch_id, round_id=values.round_id
     )
     if assignment_message is not None:
-        if not same_batch_request(assignment_message, values):
+        if not same_batch_request(assignment_message, values, manager.id):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 {

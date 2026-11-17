@@ -461,12 +461,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       dueAt: null,
       automationRuleId: null,
       position: { beforeItemId: 'anchor' },
-      qualityReview: {
-        decision: 'no_objection',
-        evidence: ['https://example.com/qa-report'],
-        idempotencyKey: 'qa-head-1',
-        prHeadSha: 'head-1',
-      },
     })
     expect(deliveryApi.updateLoopItem).toHaveBeenCalledWith(
       'issue-1',
@@ -476,12 +470,6 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         start_at: null,
         due_at: null,
         position: { beforeItemId: 'anchor' },
-        quality_review: {
-          decision: 'no_objection',
-          evidence: ['https://example.com/qa-report'],
-          idempotency_key: 'qa-head-1',
-          pr_head_sha: 'head-1',
-        },
       })
     )
     await api.issues.assign('project-1', 'issue-1', {
@@ -503,6 +491,31 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       item_ids: ['issue-1'],
     })
     await api.issues.markRead('issue-1')
+  })
+
+  it('submits quality review as a separate versioned request', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+
+    await api.issues.update('issue-1', {
+      version: 3,
+      qualityReview: {
+        decision: 'no_objection',
+        evidence: ['https://example.com/qa-report'],
+        idempotencyKey: 'qa-head-1',
+        prHeadSha: 'head-1',
+      },
+    })
+
+    expect(deliveryApi.updateLoopItem).toHaveBeenCalledExactlyOnceWith('issue-1', {
+      version: 3,
+      quality_review: {
+        decision: 'no_objection',
+        evidence: ['https://example.com/qa-report'],
+        idempotency_key: 'qa-head-1',
+        pr_head_sha: 'head-1',
+      },
+    })
   })
 
   it('omits absent project and issue fields while preserving explicit null values', async () => {

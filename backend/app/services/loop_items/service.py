@@ -707,7 +707,7 @@ class LoopItemService:
         group_id = payload.pop("assignee_group_id", None)
         collaboration_group: dict[str, Any] | None = None
         payload["assignee_agent_id"] = agent_id or ""
-        task_metadata: dict[str, Any] = {}
+        task_metadata: dict[str, Any] = {"tags": tags} if tags else {}
         if values.request_id:
             task_metadata["creation_request_id"] = values.request_id
         if milestone_id is not None:
@@ -931,8 +931,6 @@ class LoopItemService:
             metadata_json=task_metadata or None,
             **payload,
         )
-        if tags:
-            item.metadata_json = {**task_metadata, "tags": tags}
         if item.status == "completed":
             item.completed_at = self._now()
         target_type, target_id = effective_assignee(item, {}, item.metadata_json or {})
@@ -1965,19 +1963,7 @@ class LoopItemService:
             if isinstance(updates.get("metadata_json"), dict):
                 metadata = dict(updates["metadata_json"])
             metadata.pop("collaboration_group", None)
-            if updates.get("assignee_team_id"):
-                target_type = "team"
-                target_id = str(updates["assignee_team_id"])
-            elif updates.get("assignee_agent_id"):
-                target_type = "agent"
-                target_id = str(updates["assignee_agent_id"])
-            else:
-                target_type = "user"
-                target_id = (
-                    str(updates["assignee_user_id"])
-                    if updates.get("assignee_user_id")
-                    else None
-                )
+            target_type, target_id = effective_assignee(item, updates, metadata)
             if target_id is None:
                 if (
                     "assignee_user_id" in values.model_fields_set

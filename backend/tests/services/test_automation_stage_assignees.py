@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
@@ -18,9 +19,13 @@ from app.models.delivery import (
 )
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
+from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
+from app.services.automation_stage_assignees import preflight_automation_assignee
+from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_automation_execution import ProjectAutomationExecution
+from tests.services.test_external_loop_item_execution import _issue
 from tests.services.test_loop_item_assignment import _make_bot
 from tests.utils.collaboration import authorize_project
 
@@ -261,3 +266,118 @@ async def test_matching_agent_automation_creates_one_assigned_execution(
     assert len(executions) == 1
     assert executions[0].agent_id == agent.id
     assert s.run.assignee_agent_id == agent.id
+
+
+@pytest.mark.parametrize("shadow", [True, False])
+@pytest.mark.parametrize("matching", [True, False])
+def test_existing_external_automation_uses_current_remote_stage(
+    test_db, test_user, test_admin_user, monkeypatch, automation_stage, shadow, matching
+):
+    s = automation_stage
+    s.project.metadata_json = {
+        **s.project.metadata_json,
+        "task_provider": "gitlab",
+        "provider_config": {"repository": "group/project"},
+        "workflow_definition": {
+            "nodes": [
+                {
+                    "id": "initial",
+                    "name": "Initial",
+                    "required_assignee_type": "user",
+                    "required_assignee_id": str(test_admin_user.id),
+                },
+                {
+                    "id": "review",
+                    "name": "Review",
+                    "depends_on": ["initial"],
+                    "required_assignee_type": "user",
+                    "required_assignee_id": str(test_user.id),
+                },
+            ]
+        },
+    }
+    test_db.add(
+        ResourceMember.create(
+            resource_type="CloudProject",
+            resource_id=int(s.project.id),
+            entity_id=str(test_admin_user.id),
+            role="Developer",
+            status="approved",
+        )
+    )
+    s.run.task_id = f"{s.project.project_key}-1"
+    if shadow:
+        test_db.add(
+            LoopItem(
+                id=s.run.task_id,
+                cloud_project_id=str(s.project.id),
+                created_by_user_id=test_user.id,
+                metadata_json={"external_index": True},
+            )
+        )
+    test_db.commit()
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_get_issue",
+        lambda *a: {**_issue(), "labels": ["Review"]},
+    )
+    target = test_user if matching else test_admin_user
+    before = _counts(test_db)
+
+    def preflight():
+        return preflight_automation_assignee(
+            test_db,
+            project=s.project,
+            rule=s.rule,
+            run=s.run,
+            owner=test_user,
+            dispatch_target={"kind": "human", "id": str(target.id)},
+        )
+
+    if matching:
+        result = preflight()
+        assert result.assignee_id == str(test_user.id)
+    else:
+        with pytest.raises(HTTPException) as error:
+            preflight()
+        assert error.value.detail["reason_code"] == "stage_assignee_mismatch"
+        assert error.value.detail["stage_id"] == "review"
+    assert _counts(test_db) == before
+
+
+def test_external_automation_cannot_advance_a_remote_proposal(
+    test_db, test_user, test_admin_user, monkeypatch, automation_stage
+):
+    s = automation_stage
+    test_user.user_name = "jiangyang7"
+    s.project.metadata_json = {
+        "task_provider": "gitlab",
+        "provider_config": {"repository": "group/project"},
+        "workflow_definition": {
+            "feature_flags": {"collab.enforceStageAssignee.v1": True},
+            "nodes": [
+                {"id": "proposal", "name": "需求提出"},
+                {"id": "review", "name": "共同评审", "depends_on": ["proposal"]},
+            ],
+        },
+    }
+    s.run.task_id = f"{s.project.project_key}-1"
+    test_db.commit()
+    remote = {**_issue(), "labels": ["需求提出"]}
+    monkeypatch.setattr(external_loop_item_provider, "_get_issue", lambda *a: remote)
+    before = _counts(test_db)
+
+    with pytest.raises(HTTPException) as error:
+        preflight_automation_assignee(
+            test_db,
+            project=s.project,
+            rule=s.rule,
+            run=s.run,
+            owner=test_user,
+            dispatch_target={"kind": "human", "id": str(test_admin_user.id)},
+        )
+
+    assert error.value.detail["reason_code"] == "stage_assignee_mismatch"
+    assert error.value.detail["stage_id"] == "proposal"
+    assert remote["labels"] == ["需求提出"]
+    assert _counts(test_db) == before

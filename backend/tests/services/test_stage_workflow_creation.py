@@ -14,6 +14,7 @@ from app.models.resource_member import ResourceMember
 from app.models.wework_notification import WeworkNotification
 from app.schemas.delivery import LoopItemCreate
 from app.services.loop_items.service import loop_item_service
+from tests.services.test_loop_item_assignment import _make_bot
 from tests.services.test_stage_assignees import stage_scenario  # noqa: F401
 
 
@@ -138,3 +139,32 @@ def test_unconstrained_project_preserves_custom_creation_workflow(
 
     assert created.assignee_user_id == test_admin_user.id
     assert created.metadata_json["workflow"]["current_stage_id"] == "custom"
+
+
+@pytest.mark.parametrize("pilot_enabled", [None, False, True])
+def test_tag_only_preparing_stage_sets_initial_robot_status_only_for_pilot_policy(
+    stage_scenario, monkeypatch, pilot_enabled
+):
+    s = stage_scenario
+    definition = {}
+    if pilot_enabled is not None:
+        definition["feature_flags"] = {"collab.enforceStageAssignee.v1": pilot_enabled}
+    s.project.metadata_json = {"workflow_definition": definition}
+    s.project.next_item_number = 2
+    bot = _make_bot(s.db, s.project, s.owner)
+    monkeypatch.setattr("app.core.async_utils.schedule_async_task", lambda *_args: None)
+
+    created = loop_item_service.create(
+        s.db,
+        int(s.project.id),
+        s.owner.id,
+        LoopItemCreate(
+            title="Prepare implementation",
+            assignee_agent_id=bot.id,
+            tags=["开发准备"],
+            notify_assignee=False,
+        ),
+    )
+
+    assert created.status == ("pending" if pilot_enabled else "in_progress")
+    assert created.metadata_json["tags"] == ["开发准备"]

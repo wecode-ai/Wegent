@@ -23,12 +23,30 @@ def _stage_metadata(
         for node in workflow.get("nodes", [])
         if node.get("name") in result["tags"]
     ]
-    if tagged:
-        workflow.pop("current_stage_id", None)
-        if len(tagged) == 1:
-            workflow["current_stage_id"] = tagged[0]
-        result["workflow"] = workflow
+    workflow.pop("current_stage_id", None)
+    if len(tagged) == 1:
+        workflow["current_stage_id"] = tagged[0]
+    result["workflow"] = workflow
     return result
+
+
+def lock_external_assignment_item(
+    db: Session,
+    *,
+    project: CloudProject,
+    item_id: str,
+) -> LoopItem | None:
+    """Serialize mutations before observing the provider's current state."""
+    return (
+        db.query(LoopItem)
+        .filter(
+            LoopItem.id == item_id,
+            LoopItem.cloud_project_id == str(project.id),
+        )
+        .with_for_update()
+        .populate_existing()
+        .one_or_none()
+    )
 
 
 def external_assignment_item(
@@ -38,12 +56,8 @@ def external_assignment_item(
     values: dict[str, Any],
 ) -> LoopItem:
     """Combine authoritative remote tags with the locked local policy snapshot."""
-    existing = (
-        db.query(LoopItem)
-        .filter(LoopItem.id == str(values["id"]))
-        .with_for_update()
-        .populate_existing()
-        .one_or_none()
+    existing = lock_external_assignment_item(
+        db, project=project, item_id=str(values["id"])
     )
     metadata = _stage_metadata(
         project,

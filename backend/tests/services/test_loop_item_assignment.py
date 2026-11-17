@@ -2024,7 +2024,11 @@ def test_external_assign_preserves_creator_label(
         f"{project.project_key}-7",
         developer.id,
         LoopItemAssign(
-            version=1,
+            version=int(
+                external_loop_item_provider.get(
+                    test_db, f"{project.project_key}-7", developer.id
+                )["version"]
+            ),
             assignee_type="user",
             assignee_id=str(assignee.id),
             notify_assignee=False,

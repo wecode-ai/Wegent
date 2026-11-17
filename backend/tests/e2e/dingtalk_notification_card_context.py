@@ -942,7 +942,11 @@ async def run() -> None:
             external_item_id,
             owner.id,
             LoopItemAssign(
-                version=1,
+                version=int(
+                    external_loop_item_provider.get(db, external_item_id, owner.id)[
+                        "version"
+                    ]
+                ),
                 assignee_type="user",
                 assignee_id=str(external_assignee.id),
             ),

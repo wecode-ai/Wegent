@@ -37,11 +37,13 @@ def round_assignment_message(
 
 
 def same_batch_request(
-    message: ProjectChatMessage, values: LoopItemExecutionBatchCreate
+    message: ProjectChatMessage,
+    values: LoopItemExecutionBatchCreate,
+    manager_agent_id: str,
 ) -> bool:
     metadata = message.metadata_json
     if (
-        message.agent_id != values.manager_agent_id
+        message.agent_id != manager_agent_id
         or metadata.get("manager_runtime_task_id") != values.manager_runtime_task_id
     ):
         return False

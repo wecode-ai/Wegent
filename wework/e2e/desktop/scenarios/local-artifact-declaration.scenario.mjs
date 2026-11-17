@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 import { waitForRuntimePaneReadyToSend } from '../modules/streaming-text-fixture.mjs'
+import { waitForRestoredTranscript } from '../modules/transcript-restoration.mjs'
 import { assertMarkdownPreviewAndSource } from '../modules/markdown-file-preview.mjs'
 import {
   assistantMessage,
@@ -134,9 +135,13 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, workbenchRea
       })
       await assertMarkdownPreviewAndSource(control, 'Generated without a Backend Task.')
       await verifyPreview(control)
+      const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      const taskId = snapshot.pane?.currentRuntimeTask?.taskId
+      assert.ok(taskId, 'The artifact conversation must have a runtime task before reload')
       const readyCount = control.readyCount
       await control.command('reloadMainWindow', 'body')
       await control.awaitReadyAfter(readyCount)
+      await waitForRestoredTranscript(control, taskId, workbenchReadyTimeoutMs)
       await verifyPreview(control)
     },
   }
