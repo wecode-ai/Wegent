@@ -21,6 +21,8 @@ use serde_json::{json, Map, Value};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex, Semaphore};
 use tokio::time::sleep;
 
+use codex_model_provider::{current_codex_model_provider_from_config, CodexModelProviderInfo};
+
 use crate::{
     agents::{
         codex_notification_requires_user_input, codex_runtime_approval_policy,
@@ -134,6 +136,7 @@ mod bounded_history;
 mod claude_turns;
 mod codex_accounts;
 mod codex_config;
+mod codex_model_provider;
 mod collection;
 mod command_items;
 mod command_journal;
@@ -424,67 +427,6 @@ fn workspace_segment(value: &str) -> String {
 
 fn home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(env::temp_dir)
-}
-
-#[derive(Clone)]
-struct CodexModelProviderInfo {
-    id: String,
-    display_name: String,
-    kind: &'static str,
-    current: bool,
-}
-
-fn current_codex_model_provider_from_config(config_response: &Value) -> CodexModelProviderInfo {
-    let configured_provider = crate::agents::configured_inference_model_provider();
-    current_codex_model_provider(config_response, &configured_provider)
-}
-
-fn current_codex_model_provider(
-    config_response: &Value,
-    configured_provider: &str,
-) -> CodexModelProviderInfo {
-    let config = config_response
-        .get("config")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let runtime_provider = string_from_map(&config, "modelProvider")
-        .or_else(|| string_from_map(&config, "model_provider"))
-        .filter(|provider| {
-            provider != crate::server::codex_model_catalog::PROVIDER_ID
-                && provider != crate::server::codex_model_catalog::LEGACY_PROVIDER_ID
-                && provider != "wework-catalog"
-        });
-    let current_provider = if configured_provider != CODEX_OFFICIAL_PROVIDER_ID {
-        configured_provider.to_owned()
-    } else {
-        runtime_provider.unwrap_or_else(|| configured_provider.to_owned())
-    };
-    let display_name = config
-        .get("model_providers")
-        .or_else(|| config.get("modelProviders"))
-        .and_then(Value::as_object)
-        .and_then(|providers| providers.get(&current_provider))
-        .and_then(Value::as_object)
-        .and_then(|provider| string_from_map(provider, "name"))
-        .unwrap_or_else(|| {
-            if current_provider == CODEX_OFFICIAL_PROVIDER_ID {
-                CODEX_OFFICIAL_PROVIDER_NAME.to_owned()
-            } else {
-                current_provider.clone()
-            }
-        });
-    let kind = if current_provider == CODEX_OFFICIAL_PROVIDER_ID {
-        "official"
-    } else {
-        "provider"
-    };
-    CodexModelProviderInfo {
-        id: current_provider,
-        display_name,
-        kind,
-        current: true,
-    }
 }
 
 fn codex_models_with_provider(response: &Value, provider: &CodexModelProviderInfo) -> Vec<Value> {
