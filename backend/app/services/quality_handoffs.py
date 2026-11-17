@@ -22,7 +22,6 @@ from app.models.delivery import (
     CloudProject,
     LoopItem,
     LoopItemComment,
-    ProjectIncomingHook,
     loop_datetime_is_unset,
 )
 from app.models.user import User
@@ -38,14 +37,16 @@ from app.services.project_automation_domain import ProjectAutomationEvent, utcno
 from app.services.project_quality_observations import quality_snapshot_signature
 from app.services.quality_observations import (
     ORDER_FIELDS,
+    collector_blocks_quality,
+    collector_snapshot_signature,
     linked_pr_urls,
-    newer_collector_head,
     observed_heads,
     preserve_head_proof,
     reconcile_links,
     retained_block,
     stale_observation,
     trusted_observation,
+    unresolved_quality_observations,
     unverified_head_change,
 )
 from app.services.stage_assignee_mutations import stage_observer_user_ids
@@ -344,6 +345,7 @@ def _snapshot(event: ProjectAutomationEvent) -> dict[str, Any]:
     snapshot = _mapping(payload.get("quality_snapshot"))
     return {
         **snapshot,
+        "collector_signature": collector_snapshot_signature(snapshot),
         "url": _text(snapshot.get("url") or subject.get("url")),
         "head_sha": _text(snapshot.get("head_sha") or subject.get("head_commit")),
         "event_head_matches": not subject.get("head_commit")
@@ -413,7 +415,13 @@ def _linked_urls(item: LoopItem) -> set[str]:
     return linked_pr_urls(_mapping(item.metadata_json))
 
 
-def require_quality_snapshot(item: LoopItem, metadata: dict[str, Any]) -> None:
+def require_quality_snapshot(
+    item: LoopItem,
+    metadata: dict[str, Any],
+    *,
+    db: Session,
+    project: CloudProject,
+) -> None:
     """Reject manual quality entry without current, complete PR observations."""
     handoff = _mapping(metadata.get("quality_handoff"))
     snapshots = _mapping(handoff.get("pr_heads"))
@@ -421,7 +429,11 @@ def require_quality_snapshot(item: LoopItem, metadata: dict[str, Any]) -> None:
     if (
         not urls
         or handoff.get("quality_blocked")
+        or unresolved_quality_observations(handoff, urls)
         or not all(_ready(_mapping(snapshots.get(url))) for url in urls)
+        or collector_blocks_quality(
+            db, project_id=str(project.id), snapshots=snapshots, urls=urls
+        )
     ):
         raise HTTPException(
             409,
@@ -478,30 +490,11 @@ def process_quality_event(db: Session, event: ProjectAutomationEvent) -> int:
 def _superseded_by_collector(
     db: Session, project: CloudProject, snapshot: dict[str, Any]
 ) -> bool:
-    # Issue locks precede this current read. Lock only matching subscriptions so
-    # their watermarks include polls whose identical event was deduplicated.
-    hooks = (
-        db.query(ProjectIncomingHook)
-        .filter(
-            ProjectIncomingHook.cloud_project_id == str(project.id),
-            ProjectIncomingHook.source == "github",
-            ProjectIncomingHook.status == "active",
-            loop_datetime_is_unset(ProjectIncomingHook.deleted_at),
-            ProjectIncomingHook.metadata_json["collection_mode"]
-            .as_string()
-            .in_(["poll", "hybrid"]),
-            cast(
-                ProjectIncomingHook.metadata_json["poll"]["quality_observations"],
-                String,
-            ).contains(snapshot["url"], autoescape=True),
-        )
-        .order_by(ProjectIncomingHook.id)
-        .with_for_update()
-        .populate_existing()
-        .all()
-    )
-    return any(
-        newer_collector_head(_mapping(hook.metadata_json), snapshot) for hook in hooks
+    return collector_blocks_quality(
+        db,
+        project_id=str(project.id),
+        snapshots={snapshot["url"]: snapshot},
+        urls={snapshot["url"]},
     )
 
 
@@ -529,7 +522,7 @@ def _process_issue(
     unverified = unverified_head_change(previous, snapshot)
     if stale_observation(previous, snapshot):
         return False
-    if unverified and stale_observation(previous_uncertain, snapshot):
+    if stale_observation(previous_uncertain, snapshot):
         return False
     if (
         snapshot.get("event_type") == "change_request.checks_failed"
@@ -885,11 +878,15 @@ def submit_quality_review(
     if (
         not accepted
         or set(accepted) != _linked_urls(item)
+        or unresolved_quality_observations(handoff, set(accepted))
         or values.get("pr_head_sha") not in accepted.values()
         or any(
             _mapping(observed.get(url)).get("head_sha") != head
             or not _ready(_mapping(observed.get(url)))
             for url, head in accepted.items()
+        )
+        or collector_blocks_quality(
+            db, project_id=str(project.id), snapshots=observed, urls=set(accepted)
         )
     ):
         raise HTTPException(409, {"reason_code": "quality_review_head_mismatch"})

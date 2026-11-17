@@ -355,6 +355,7 @@ def _require_server_quality_state(item: LoopItem, metadata: dict[str, Any]) -> N
 
 
 def _require_quality_entry(
+    db: Session,
     project: CloudProject,
     item: LoopItem,
     metadata: dict[str, Any],
@@ -372,7 +373,7 @@ def _require_quality_entry(
         return
     from app.services.quality_handoffs import require_quality_snapshot
 
-    require_quality_snapshot(item, metadata)
+    require_quality_snapshot(item, metadata, db=db, project=project)
 
 
 def validate_stage_assignee(
@@ -419,7 +420,7 @@ def validate_stage_assignee(
             normalized_assignee(db, assignee_type, assignee_id),
             selection_error,
         )
-    _require_quality_entry(project, item, effective, node)
+    _require_quality_entry(db, project, item, effective, node)
     if expected is None:
         return effective
     actual = normalized_assignee(db, assignee_type, assignee_id)

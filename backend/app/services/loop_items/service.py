@@ -2362,6 +2362,8 @@ class LoopItemService:
                 actor_user_id=user_id,
             )
         if values.assignee_type != "group":
+            metadata.pop("collaboration_group", None)
+            metadata.pop("collaboration_group_assignment_key", None)
             record_stage_transition(
                 db, project=project, item=item, metadata=metadata, user_id=user_id
             )

@@ -83,10 +83,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _require_project_agent(
+def _find_project_agent(
     db: Session, *, project_id: int, agent_id: str
-) -> ProjectChatAgent:
-    """Resolve a group member by project-agent id or its bound Wegent Team id."""
+) -> ProjectChatAgent | None:
+    """Look up an existing project agent by its ID or bound Team alias."""
 
     agents = (
         db.query(ProjectChatAgent)
@@ -96,7 +96,13 @@ def _require_project_agent(
         )
         .all()
     )
-    agent = resolve_collaboration_group_agent(agents, agent_id)
+    return resolve_collaboration_group_agent(agents, agent_id)
+
+
+def _require_project_agent(
+    db: Session, *, project_id: int, agent_id: str
+) -> ProjectChatAgent:
+    agent = _find_project_agent(db, project_id=project_id, agent_id=agent_id)
     if agent is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Robot not found")
     return agent
@@ -562,12 +568,21 @@ def _prepare_batch_assignments(
     allowed_members = _collaboration_group_execution_members(group)
     assignment_activity: list[dict[str, object]] = []
     for command in values.items:
+        agent = (
+            _find_project_agent(
+                db,
+                project_id=int(project.id),
+                agent_id=command.assignee_id,
+            )
+            if command.assignee_type == "agent"
+            else None
+        )
         validate_stage_assignee(
             db,
             project=project,
             item=item,
             assignee_type="user" if command.assignee_type == "human" else "agent",
-            assignee_id=command.assignee_id,
+            assignee_id=agent.id if agent is not None else command.assignee_id,
             stage_id=command.workflow_stage_id,
         )
         member_key = (command.assignee_type, command.assignee_id)
@@ -582,11 +597,10 @@ def _prepare_batch_assignments(
                 "Assignment target is not part of the collaboration group",
             )
         if command.assignee_type == "agent":
-            agent = _require_project_agent(
-                db,
-                project_id=int(project.id),
-                agent_id=command.assignee_id,
-            )
+            if agent is None:
+                agent = _require_project_agent(
+                    db, project_id=int(project.id), agent_id=command.assignee_id
+                )
             if collaboration_group_agent_matches(group.get("leader"), agent):
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -16,6 +16,7 @@ from app.services.quality_handoffs import (
     process_quality_event,
     require_quality_snapshot,
 )
+from app.services.stage_assignees import validate_stage_assignee
 from tests.services.test_quality_handoffs import (  # noqa: F401
     PR,
     graph_snapshot,
@@ -46,6 +47,24 @@ def _counts(s):
     return s.item.version, s.db.query(WeworkNotification).count()
 
 
+def _persist_observation(s, hook, event):
+    snapshot = event.payload["quality_snapshot"]
+    return project_event_polling_service._persist_page(
+        s.db,
+        hook_id=hook.id,
+        source_type="github",
+        inputs=(
+            PolledInput(
+                identity=f"pull_request:12:quality:{snapshot['head_sha']}:{snapshot['observed_at']}",
+                title="Quality evidence",
+                payload={"quality_snapshot": snapshot},
+                headers={},
+            ),
+        ),
+        next_cursor={},
+    )
+
+
 def _complete(s):
     process_quality_event(s.db, observation(s))
     for role in ("qa", "product", "ui"):
@@ -63,8 +82,205 @@ def test_first_failed_pr_assigns_engineering_when_another_pr_has_no_snapshot(
         observation(s, required_checks=[{"name": "unit", "conclusion": "FAILURE"}]),
     )
     assert s.item.assignee_user_id == s.users["engineering"].id
+
     assert s.item.metadata_json["workflow"]["current_stage_id"] == "build"
     assert s.item.metadata_json["quality_handoff"]["reason_code"] == "pr_checks_failed"
+
+
+def test_manual_quality_entry_waits_for_each_unverified_linked_pr(quality_scenario):
+    s = quality_scenario
+    _link(s, OTHER_PR)
+    process_quality_event(
+        s.db,
+        observation(s, head_verified=True, observed_at="2026-11-17T12:00:10Z"),
+    )
+    process_quality_event(
+        s.db,
+        observation(
+            s,
+            head="head-2",
+            complete=False,
+            head_verified=False,
+            observed_at="2026-11-17T12:00:12Z",
+        ),
+    )
+    process_quality_event(
+        s.db,
+        _event(
+            s,
+            url=OTHER_PR,
+            head="other-head",
+            head_verified=True,
+            observed_at="2026-11-17T12:00:13Z",
+        ),
+    )
+    assert s.item.metadata_json["workflow"]["current_stage_id"] == "build"
+    assert not s.item.metadata_json["quality_handoff"]["quality_blocked"]
+    with pytest.raises(HTTPException) as error:
+        require_quality_snapshot(
+            s.item, s.item.metadata_json, db=s.db, project=s.project
+        )
+    assert error.value.detail["reason_code"] == "quality_pr_snapshot_required"
+    old_uncertainty = deepcopy(
+        s.item.metadata_json["quality_handoff"]["unverified_pr_observations"]
+    )
+    process_quality_event(
+        s.db,
+        observation(
+            s, head="head-2", head_verified=True, observed_at="2026-11-17T12:00:14Z"
+        ),
+    )
+    require_quality_snapshot(s.item, s.item.metadata_json, db=s.db, project=s.project)
+    metadata = deepcopy(s.item.metadata_json)
+    metadata["quality_handoff"]["unverified_pr_observations"] = old_uncertainty
+    require_quality_snapshot(s.item, metadata, db=s.db, project=s.project)
+
+
+def test_older_trusted_proof_cannot_clear_newer_head_uncertainty(quality_scenario):
+    s = quality_scenario
+    process_quality_event(
+        s.db, observation(s, head_verified=True, observed_at="2026-11-17T12:00:10Z")
+    )
+    process_quality_event(
+        s.db,
+        observation(
+            s,
+            head="head-2",
+            complete=False,
+            head_verified=False,
+            observed_at="2026-11-17T12:00:12Z",
+        ),
+    )
+    before = _counts(s)
+    assert (
+        process_quality_event(
+            s.db, observation(s, head_verified=True, observed_at="2026-11-17T12:00:11Z")
+        )
+        == 0
+    )
+    assert _counts(s) == before
+    assert s.item.metadata_json["quality_handoff"]["quality_blocked"]
+    assert s.item.assignee_user_id == s.users["engineering"].id
+    process_quality_event(
+        s.db,
+        observation(
+            s, head="head-2", head_verified=True, observed_at="2026-11-17T12:00:13Z"
+        ),
+    )
+    assert s.item.assignee_user_id == s.users["qa"].id
+    assert not s.item.metadata_json["quality_handoff"]["quality_blocked"]
+
+
+@pytest.mark.parametrize(
+    "latest",
+    ["new_head", "unverified_other_head", "unverified_same_head", "same_head_failed"],
+)
+def test_quality_review_checks_newer_persisted_collector_evidence(
+    quality_scenario, latest
+):
+    s = quality_scenario
+    first = observation(s, head_verified=True, observed_at="2026-11-17T12:00:10Z")
+    process_quality_event(s.db, first)
+    hook = _watermark_hook(s)
+    metadata = deepcopy(hook.metadata_json)
+    metadata["poll"] = {}
+    hook.metadata_json = metadata
+    s.db.commit()
+
+    def persist(event):
+        return _persist_observation(s, hook, event)
+
+    persist(first)
+    changes = {
+        "head_verified": latest in {"new_head", "same_head_failed"},
+        "complete": latest in {"new_head", "same_head_failed"},
+        "observed_at": "2026-11-17T12:00:12Z",
+    }
+    if latest == "same_head_failed":
+        changes["required_checks"] = [
+            {"name": "unit", "conclusion": "FAILURE", "head_sha": "head-1"}
+        ]
+    claimed_head = (
+        "head-1" if latest in {"unverified_same_head", "same_head_failed"} else "head-2"
+    )
+    latest_event = observation(s, head=claimed_head, **changes)
+    persist(latest_event)
+    before = _counts(s)
+    previous = deepcopy(s.item.metadata_json)
+    with pytest.raises(HTTPException) as error:
+        review(s, "qa", "stale-collector-approval")
+    assert error.value.detail["reason_code"] == "quality_review_head_mismatch"
+    assert _counts(s) == before
+    assert s.item.metadata_json == previous
+    assert s.item.assignee_user_id == s.users["qa"].id
+    with pytest.raises(HTTPException) as error:
+        require_quality_snapshot(
+            s.item, s.item.metadata_json, db=s.db, project=s.project
+        )
+    assert error.value.detail["reason_code"] == "quality_pr_snapshot_required"
+    with pytest.raises(HTTPException) as error:
+        validate_stage_assignee(
+            s.db,
+            project=s.project,
+            item=s.item,
+            assignee_type="user",
+            assignee_id=str(s.users["qa"].id),
+            stage_id="quality",
+        )
+    assert error.value.detail["reason_code"] == "quality_pr_snapshot_required"
+    assert _counts(s) == before
+    assert process_quality_event(s.db, latest_event) == 1
+    recovery = observation(
+        s, head="head-2", head_verified=True, observed_at="2026-11-17T12:00:13Z"
+    )
+    process_quality_event(s.db, recovery)
+    assert s.item.assignee_user_id == s.users["qa"].id
+    result = review(s, "qa", "current-collector-approval", pr_head_sha="head-2")
+    assert result["next_role"] == "product"
+    assert review(s, "qa", "current-collector-approval", pr_head_sha="head-2") == result
+
+
+def test_review_rejects_a_higher_source_sequence_at_the_same_collection_time(
+    quality_scenario,
+):
+    s = quality_scenario
+    hook = _watermark_hook(s)
+    metadata = deepcopy(hook.metadata_json)
+    metadata["poll"] = {}
+    hook.metadata_json = metadata
+    s.db.commit()
+    first = observation(s, head_verified=True, observed_at="2026-11-17T12:00:10Z")
+    _persist_observation(s, hook, first)
+    first.payload["quality_snapshot"] = deepcopy(
+        s.db.query(ProjectIncomingEvent)
+        .filter(ProjectIncomingEvent.parent_id == hook.id)
+        .one()
+        .metadata_json["payload"]["quality_snapshot"]
+    )
+    assert first.payload["quality_snapshot"]["observation_sequence"] == 1
+    process_quality_event(s.db, first)
+    failed = observation(
+        s,
+        head_verified=True,
+        observed_at="2026-11-17T12:00:10Z",
+        required_checks=[
+            {"name": "unit", "conclusion": "FAILURE", "head_sha": "head-1"}
+        ],
+    )
+    _persist_observation(s, hook, failed)
+    state = hook.metadata_json["poll"]["quality_observations"][PR]
+    assert state["sequence"] == 2
+    assert state["observation_source"] == str(hook.id)
+    before = _counts(s)
+    with pytest.raises(HTTPException) as error:
+        review(s, "qa", "same-clock-stale-approval")
+    assert error.value.detail["reason_code"] == "quality_review_head_mismatch"
+    assert _counts(s) == before
+    with pytest.raises(HTTPException) as error:
+        require_quality_snapshot(
+            s.item, s.item.metadata_json, db=s.db, project=s.project
+        )
+    assert error.value.detail["reason_code"] == "quality_pr_snapshot_required"
 
 
 @pytest.mark.parametrize("role", ["product", "ui", "engineering"])
@@ -132,7 +348,9 @@ def test_enterprise_pr_is_required_by_automatic_and_manual_quality_gates(
     process_quality_event(s.db, observation(s))
     assert s.item.metadata_json["workflow"]["current_stage_id"] == "build"
     with pytest.raises(HTTPException) as error:
-        require_quality_snapshot(s.item, s.item.metadata_json)
+        require_quality_snapshot(
+            s.item, s.item.metadata_json, db=s.db, project=s.project
+        )
     assert error.value.detail["reason_code"] == "quality_pr_snapshot_required"
     process_quality_event(s.db, _event(s, url=ENTERPRISE_PR, head="enterprise-head"))
     assert s.item.assignee_user_id == s.users["qa"].id
@@ -336,6 +554,7 @@ def test_deduplicated_poll_watermark_rejects_an_older_other_source_head(
     assert hook.metadata_json["poll"]["quality_observations"][PR]["observed_at"] == (
         "2026-11-17T12:00:12Z"
     )
+    assert review(s, "qa", "identical-collector-proof")["next_role"] == "product"
     before = _counts(s)
     assert (
         process_quality_event(

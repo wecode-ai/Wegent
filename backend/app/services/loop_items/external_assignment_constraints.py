@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Validate provider-owned Issues without creating local assignment state."""
+"""Validate provider-owned Issues against their persisted workflow policy."""
 
 from copy import deepcopy
 from typing import Any
@@ -80,7 +80,7 @@ def validate_external_creation(
     tags: list[str],
     assignee: dict[str, str] | None,
     user_id: int,
-) -> None:
+) -> dict[str, Any]:
     """Check the provider's final labels before creating any remote Issue."""
     target = assignee or {}
     item = LoopItem(
@@ -99,6 +99,33 @@ def validate_external_creation(
         workflow_step=None,
         user_id=user_id,
     )
+    return deepcopy(item.metadata_json)
+
+
+def persist_external_creation_policy(
+    db: Session,
+    *,
+    project: CloudProject,
+    item_id: str,
+    metadata: dict[str, Any],
+    user_id: int,
+) -> None:
+    """Store the authorizing snapshot only after remote creation succeeds."""
+    row = lock_external_assignment_item(db, project=project, item_id=item_id)
+    if row is None:
+        row = LoopItem(
+            id=item_id,
+            cloud_project_id=str(project.id),
+            created_by_user_id=user_id,
+            metadata_json={"external_index": True},
+            version=1,
+        )
+        db.add(row)
+    stored = dict(row.metadata_json or {})
+    stored.setdefault("workflow", deepcopy(metadata["workflow"]))
+    stored.setdefault("tags", list(metadata["tags"]))
+    row.metadata_json = stored
+    db.flush()
 
 
 def validate_external_assignment(

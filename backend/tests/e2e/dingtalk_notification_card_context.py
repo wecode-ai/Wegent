@@ -976,6 +976,7 @@ async def run() -> None:
         assert external_notification.payload["itemTitle"] == external_title
         assert [(method, path) for method, path, _body in gitlab_server.requests] == [
             ("GET", "/api/v4/projects/wegent%2Fcard-e2e/issues/1"),
+            ("GET", "/api/v4/projects/wegent%2Fcard-e2e/issues/1"),
             ("PUT", "/api/v4/projects/wegent%2Fcard-e2e/issues/1"),
         ]
 

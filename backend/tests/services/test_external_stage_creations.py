@@ -3,6 +3,7 @@
 
 """External creation enforces stage targets before remote or execution writes."""
 
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -15,6 +16,7 @@ from app.models.resource_member import ResourceMember
 from app.models.wework_notification import WeworkNotification
 from app.schemas.delivery import LoopItemCreate
 from app.schemas.issue_workflow import ProjectWorkflowDefinition, instantiate_workflow
+from app.schemas.project_chat import LoopItemAssign
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.stage_assignees import STAGE_ASSIGNEE_FLAG
 from tests.services.test_external_loop_item_execution import (
@@ -236,3 +238,116 @@ def test_external_create_api_rejects_stage_mismatch_before_remote_write(
     assert response.json()["detail"]["reason_code"] == "stage_assignee_mismatch"
     creation_scenario.remote_create.assert_not_called()
     assert _counts(test_db) == before
+
+
+def test_external_create_persists_the_policy_that_authorized_creation(
+    test_db, test_user, test_admin_user, creation_scenario, monkeypatch
+):
+    s = creation_scenario
+    definition = deepcopy(s.project.metadata_json["workflow_definition"])
+    definition["feature_flags"] = {STAGE_ASSIGNEE_FLAG: True}
+    definition["assignee_roles"] = {
+        "engineering": [{"assignee_type": "user", "assignee_id": str(test_user.id)}]
+    }
+    s.project.metadata_json = {
+        **s.project.metadata_json,
+        "workflow_definition": definition,
+    }
+    test_db.commit()
+    remote = {}
+
+    def create_issue(_project, title, body, labels):
+        remote.update(
+            {**_issue(), "title": title, "description": body, "labels": labels}
+        )
+        live = deepcopy(definition)
+        live["nodes"][1]["required_assignee_id"] = str(test_admin_user.id)
+        s.project.metadata_json = {
+            **s.project.metadata_json,
+            "workflow_definition": live,
+        }
+        return dict(remote)
+
+    def update_issue(_project, _number, payload):
+        remote["labels"] = list(payload["labels"])
+        remote["updated_at"] = "2026-08-07T00:01:00Z"
+        return dict(remote)
+
+    s.remote_create.side_effect = create_issue
+    monkeypatch.setattr(
+        external_loop_item_provider, "_get_issue", lambda *_: dict(remote)
+    )
+    remote_update = Mock(side_effect=update_issue)
+    monkeypatch.setattr(external_loop_item_provider, "_update_issue", remote_update)
+
+    result = _create(test_db, test_user, s, assignee_user_id=test_user.id)
+
+    row = test_db.get(LoopItem, result["id"])
+    snapshot = {**definition, "current_stage_id": "build"}
+    assert row is not None
+    assert row.metadata_json["workflow"] == snapshot
+    test_db.expire_all()
+    with pytest.raises(HTTPException) as error:
+        external_loop_item_provider.assign(
+            test_db,
+            result["id"],
+            test_user.id,
+            LoopItemAssign(
+                version=result["version"],
+                assignee_type="user",
+                assignee_id=str(test_admin_user.id),
+                notify_assignee=False,
+            ),
+        )
+    assert error.value.detail["expected_assignee"]["assignee_id"] == str(test_user.id)
+    remote_update.assert_not_called()
+    external_loop_item_provider.assign(
+        test_db,
+        result["id"],
+        test_user.id,
+        LoopItemAssign(
+            version=result["version"],
+            assignee_type="user",
+            assignee_id=str(test_user.id),
+            notify_assignee=False,
+        ),
+    )
+    assert row.metadata_json["workflow"] == snapshot
+
+
+def test_remote_creation_failure_does_not_persist_a_policy_or_execution(
+    test_db, test_user, creation_scenario
+):
+    s = creation_scenario
+    s.remote_create.side_effect = HTTPException(502, "Provider unavailable")
+    before = _counts(test_db)
+
+    with pytest.raises(HTTPException) as error:
+        _create(test_db, test_user, s, assignee_user_id=test_user.id)
+
+    assert error.value.status_code == 502
+    assert _counts(test_db) == before
+
+
+def test_repeated_external_create_keeps_the_first_policy_snapshot(
+    test_db, test_user, test_admin_user, creation_scenario
+):
+    s = creation_scenario
+    first = _create(test_db, test_user, s, assignee_user_id=test_user.id)
+    row = test_db.get(LoopItem, first["id"])
+    original = deepcopy(row.metadata_json["workflow"])
+    definition = deepcopy(s.project.metadata_json["workflow_definition"])
+    definition["nodes"][1]["required_assignee_id"] = str(test_admin_user.id)
+    s.project.metadata_json = {
+        **s.project.metadata_json,
+        "workflow_definition": definition,
+    }
+    test_db.commit()
+
+    repeated = _create(test_db, test_user, s, assignee_user_id=test_admin_user.id)
+
+    assert repeated["id"] == first["id"]
+    test_db.refresh(row)
+    assert row.metadata_json["workflow"] == original
+    assert test_db.query(LoopItem).filter_by(id=first["id"]).count() == 1
+    assert test_db.query(LoopItemExecution).count() == 0

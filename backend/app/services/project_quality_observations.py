@@ -55,15 +55,28 @@ def prepare_quality_inputs(
         url = snapshot["url"]
         signature = quality_snapshot_signature(snapshot)
         previous = states.get(url) or {}
-        before = _observed_at(previous.get("observed_at"))
+        before = _observed_at(
+            previous.get("last_observed_at") or previous.get("observed_at")
+        )
         incoming = _observed_at(snapshot.get("observed_at"))
+        quality_event = ":quality:" in item.identity
         if before and incoming and incoming < before:
+            if not quality_event:
+                payload = deepcopy(item.payload)
+                payload.pop("quality_snapshot", None)
+                prepared.append(replace(item, payload=payload))
             continue
         changed = previous.get("signature") != signature
         verified = snapshot.get("head_verified", snapshot.get("complete")) is True
         record = {
             "signature": signature,
             "sequence": int(previous.get("sequence") or 0) + int(changed),
+            "observation_source": source_id,
+            "last_observed_at": snapshot.get("observed_at")
+            or previous.get("last_observed_at"),
+            "latest_head_sha": snapshot.get("head_sha"),
+            "latest_head_verified": verified,
+            "latest_complete": snapshot.get("complete") is True,
             "observed_at": (
                 snapshot.get("observed_at") if verified else previous.get("observed_at")
             ),
@@ -74,7 +87,6 @@ def prepare_quality_inputs(
             "emitted": not changed and previous.get("emitted", True),
         }
         states[url] = record
-        quality_event = ":quality:" in item.identity
         if quality_event and record["emitted"]:
             continue
         payload = deepcopy(item.payload)

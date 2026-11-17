@@ -63,6 +63,9 @@ def test_polling_persists_returning_state_and_deduplicates_consecutive_replays(
             )
         )
     assert created == [1, 0, 1, 1, 0]
+    assert hook.metadata_json["poll"]["quality_observations"][PR][
+        "observation_source"
+    ] == str(hook.id)
     rows = sorted(
         test_db.query(ProjectIncomingEvent).all(),
         key=lambda row: row.metadata_json["payload"]["quality_snapshot"][
@@ -143,6 +146,67 @@ def test_older_provider_observation_cannot_replace_a_newer_persisted_state():
     assert len(prepare_quality_inputs((current,), poll, "hook")) == 1
     assert prepare_quality_inputs((_input("FAILURE"),), poll, "hook") == ()
     assert poll["quality_observations"][PR]["sequence"] == 1
+
+
+@pytest.mark.parametrize(
+    "identity", ["pull_request:12:conflict:head-1", "check_run:77:failure"]
+)
+def test_stale_enrichment_preserves_independent_base_event(identity):
+    poll = {}
+    prepare_quality_inputs(
+        (_input("SUCCESS", instant="2026-11-17T13:02:00Z"),), poll, "hook"
+    )
+    before = deepcopy(poll)
+    base = replace(_input("FAILURE"), identity=identity)
+    base.payload["base_event"] = {"id": 77, "action": "completed"}
+
+    result = prepare_quality_inputs((base,), poll, "hook")
+
+    assert len(result) == 1
+    assert result[0].identity == identity
+    assert result[0].payload["base_event"] == base.payload["base_event"]
+    assert "quality_snapshot" not in result[0].payload
+    assert "quality_snapshot" in base.payload
+    assert poll == before
+
+
+@pytest.mark.parametrize("has_verified_head", [False, True])
+def test_unverified_observation_advances_order_without_advancing_verified_head(
+    has_verified_head,
+):
+    poll = {}
+    if has_verified_head:
+        prepare_quality_inputs((_input("SUCCESS"),), poll, "hook")
+    uncertain = _input("FAILURE", instant="2026-11-17T13:03:00Z")
+    uncertain.payload["quality_snapshot"].update(
+        head_sha="unverified-head", head_verified=False, complete=False
+    )
+    prepare_quality_inputs((uncertain,), poll, "hook")
+    before = deepcopy(poll)
+    observation = poll["quality_observations"][PR]
+    assert observation["last_observed_at"] == "2026-11-17T13:03:00Z"
+    assert observation["latest_head_sha"] == "unverified-head"
+    assert observation["latest_head_verified"] is False
+    assert observation["latest_complete"] is False
+    assert observation["head_sha"] == ("head-1" if has_verified_head else None)
+    assert observation["observed_at"] == (
+        "2026-11-17T13:00:00+00:00" if has_verified_head else None
+    )
+
+    delayed = _input("SUCCESS", instant="2026-11-17T13:02:00Z")
+    assert prepare_quality_inputs((delayed,), poll, "hook") == ()
+    assert poll == before
+
+    fresh = _input("SUCCESS", instant="2026-11-17T13:04:00Z")
+    fresh.payload["quality_snapshot"].update(
+        head_sha="verified-head", head_verified=True
+    )
+    assert len(prepare_quality_inputs((fresh,), poll, "hook")) == 1
+    observation = poll["quality_observations"][PR]
+    assert observation["last_observed_at"] == observation["observed_at"]
+    assert observation["head_sha"] == "verified-head"
+    assert observation["latest_head_verified"] is True
+    assert observation["latest_complete"] is True
 
 
 @pytest.mark.asyncio

@@ -1,16 +1,21 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Pure identity and ordering rules for trusted quality observations."""
+"""Head proofs and locked collection state for quality admission."""
 
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from sqlalchemy import String, cast, or_
+from sqlalchemy.orm import Session
+
+from app.models.delivery import ProjectIncomingHook, loop_datetime_is_unset
 from app.services.loop_items.change_requests import extract_change_request_urls
 from app.services.project_change_request_bindings import (
     project_change_request_binding_service,
 )
 from app.services.project_event_sources import resource_matches
+from app.services.project_quality_observations import quality_snapshot_signature
 
 ORDER_FIELDS = {"observed_at", "observation_sequence", "observation_source"}
 
@@ -90,10 +95,57 @@ def stale_observation(previous: Mapping[str, Any], snapshot: Mapping[str, Any]) 
     )
 
 
-def newer_collector_head(
+def collector_observations(
+    db: Session, *, project_id: str, urls: set[str]
+) -> list[dict[str, Any]]:
+    """Call after Issue locks; lock matching subscriptions in a stable order."""
+    if not urls:
+        return []
+    quality_states = cast(
+        ProjectIncomingHook.metadata_json["poll"]["quality_observations"], String
+    )
+    hooks = (
+        db.query(ProjectIncomingHook)
+        .filter(
+            ProjectIncomingHook.cloud_project_id == project_id,
+            ProjectIncomingHook.source == "github",
+            ProjectIncomingHook.status == "active",
+            loop_datetime_is_unset(ProjectIncomingHook.deleted_at),
+            ProjectIncomingHook.metadata_json["collection_mode"]
+            .as_string()
+            .in_(["poll", "hybrid"]),
+            or_(
+                *(quality_states.contains(url, autoescape=True) for url in sorted(urls))
+            ),
+        )
+        .order_by(ProjectIncomingHook.id)
+        .with_for_update()
+        .populate_existing()
+        .all()
+    )
+    return [dict(hook.metadata_json or {}) for hook in hooks]
+
+
+def collector_snapshot_signature(snapshot: Mapping[str, Any]) -> str:
+    internal = {
+        "collector_signature",
+        "signature",
+        "superseded_heads",
+        "verified_head_at",
+        "event_head_matches",
+        "event_type",
+        "conclusion",
+        "mergeable_state",
+        "check",
+    }
+    return quality_snapshot_signature(
+        {key: value for key, value in snapshot.items() if key not in internal}
+    )
+
+
+def _collector_state(
     metadata: Mapping[str, Any], snapshot: Mapping[str, Any]
-) -> bool:
-    """A deduplicated poll still contributes its persisted collection watermark."""
+) -> dict[str, Any]:
     url = str(snapshot["url"])
     instance, repository = project_change_request_binding_service._identity_from_url(
         "github", url, int(url.rsplit("/", 1)[-1])
@@ -107,22 +159,93 @@ def newer_collector_head(
             "path": repository,
         },
     ):
-        return False
+        return {}
     poll = metadata.get("poll")
     states = poll.get("quality_observations") if isinstance(poll, dict) else None
     observation = states.get(url) if isinstance(states, dict) else None
-    if (
-        not isinstance(observation, dict)
-        or not observation.get("head_sha")
-        or observation.get("head_verified") is not True
-    ):
-        return False
-    collected_at = _observed_at(observation)
+    return observation if isinstance(observation, dict) else {}
+
+
+def newer_collector_head(
+    metadata: Mapping[str, Any], snapshot: Mapping[str, Any]
+) -> bool:
+    """Queued collector evidence must gate admission before event application."""
+    observation = _collector_state(metadata, snapshot)
+    collected_at = _observed_at(
+        {
+            "observed_at": observation.get("last_observed_at")
+            or observation.get("observed_at")
+        }
+    )
     incoming_at = _observed_at(snapshot)
+    source = observation.get("observation_source")
+    source_matches = source and source == snapshot.get("observation_source")
+    sequence, incoming_sequence = observation.get("sequence"), snapshot.get(
+        "observation_sequence"
+    )
+    if (
+        source_matches
+        and isinstance(sequence, int)
+        and isinstance(incoming_sequence, int)
+        and sequence != incoming_sequence
+    ):
+        newer = sequence > incoming_sequence
+    else:
+        newer = collected_at is not None and (
+            incoming_at is None or collected_at > incoming_at
+        )
+    if not newer:
+        return False
+    if observation.get("last_observed_at"):
+        if (
+            observation.get("latest_head_verified") is False
+            or observation.get("latest_complete") is False
+        ):
+            return True
+        latest_head = observation.get("latest_head_sha")
+    else:
+        latest_head = (
+            observation.get("head_sha")
+            if observation.get("head_verified") is True
+            else None
+        )
     return bool(
-        observation["head_sha"] != snapshot.get("head_sha")
-        and collected_at is not None
-        and (incoming_at is None or collected_at > incoming_at)
+        latest_head
+        and (
+            latest_head != snapshot.get("head_sha")
+            or (
+                observation.get("signature")
+                and observation["signature"]
+                != (
+                    snapshot.get("collector_signature")
+                    or collector_snapshot_signature(snapshot)
+                )
+            )
+        )
+    )
+
+
+def unresolved_quality_observations(handoff: Mapping[str, Any], urls: set[str]) -> bool:
+    heads = handoff.get("pr_heads") or {}
+    uncertain = handoff.get("unverified_pr_observations") or {}
+    return any(
+        url in urls
+        and (
+            not trusted_observation(heads.get(url) or {})
+            or stale_observation(observation, heads.get(url) or {})
+        )
+        for url, observation in uncertain.items()
+    )
+
+
+def collector_blocks_quality(
+    db: Session, *, project_id: str, snapshots: Mapping[str, Any], urls: set[str]
+) -> bool:
+    collectors = collector_observations(db, project_id=project_id, urls=urls)
+    return any(
+        newer_collector_head(collector, snapshots[url])
+        for url in urls
+        for collector in collectors
     )
 
 

@@ -12,6 +12,8 @@ sidebar_position: 36
 
 人类阶段负责人必须具有项目 Developer 权限；单个 Issue 的显式邀请不替代该资格。无约束 Issue 仍按 CP14 接受有效外部受邀人，assignment 删除也复验当前 Issue 权限；撤销邀请后立即拒绝，阶段约束在删除记录前校验。`test_issue_explicit_invitations.py` 覆盖邀请、撤销、删除及阶段资格的交叉边界。
 
+质量准入和人工评审在 Issue 锁后按稳定顺序锁定匹配的采集订阅；更新的 head、失败检查或不确定观察即使尚未投影到 Issue，也会阻止沿用旧证明。采集顺序水位与已验证 head 的时间分别保存，乱序或重放不能清除更新的阻塞；`test_project_quality_observations.py` 与 `test_quality_handoff_edges.py` 覆盖采集、事件处理和人工写入之间的边界。
+
 节点显式配置的 `required_assignee_type/id` 或 `required_assignee_role` 默认强制校验，不需要开启试点策略。固定试点规则需要在权威工作流的 `feature_flags['collab.enforceStageAssignee.v1']` 中显式设置 `true`：需求提出固定由产品 jiangyang7 负责，改派时原子进入共同评审，质量验收应用 PR 准入与 QA → 产品 → UI 交接。仅使用相同中文阶段名或标签、未启用策略的旧流程保持原有成员校验与派发行为，不会隐式绑定固定账号或增加 PR 门禁。
 
 项目在 `workflow_definition` 中启用后，新建或显式应用的工作流实例复制该标志。已有 Issue 的工作流快照独立决定策略范围：快照没有该标志时不视为已启用，不会因项目后来设为 `true` 而追溯应用；只有没有工作流快照的 Issue 才使用项目定义。维护者可显式更新或应用快照。紧急回滚时，将项目 `workflow_definition.feature_flags['collab.enforceStageAssignee.v1']` 设为 `false`，即可关闭本项目所有 Issue 的阶段负责人约束及试点交接；该项目级关闭优先于 Issue 快照。保留已持久化的负责人配置，无需删除角色映射或节点约束。
