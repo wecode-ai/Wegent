@@ -224,12 +224,13 @@ def verify_failed_bootstrap_rolls_back_and_can_retry(
     test_db: Session, failed_slug: str | None
 ) -> None:
     model = Kind if failed_slug else SystemConfig
+    failure = RuntimeError("test bootstrap write failure")
 
     def reject_insert(
         _mapper: object, _connection: object, row: Kind | SystemConfig
     ) -> None:
         if isinstance(row, SystemConfig) or row.name == failed_slug:
-            raise RuntimeError("test bootstrap write failure")
+            raise failure
 
     event.listen(model, "before_insert", reject_insert)
     try:
@@ -238,6 +239,8 @@ def verify_failed_bootstrap_rolls_back_and_can_retry(
     finally:
         event.remove(model, "before_insert", reject_insert)
 
+    # The retained traceback must not leave rolled-back apps mapped to reused IDs.
+    assert not any(isinstance(row, Kind) for row in test_db.identity_map.values())
     assert (
         test_db.query(Kind)
         .filter(
