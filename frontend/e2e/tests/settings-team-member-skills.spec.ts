@@ -145,6 +145,10 @@ const test = base.extend<{ memberSkills: MemberSkills }>({
     } finally {
       await context.close()
       for (const agent of agents) {
+        const unbound = await api.put('/api/resource-library/agents/' + agent.id + '/bindings', {
+          group_names: [],
+        })
+        expect(unbound.status, JSON.stringify(unbound.data)).toBe(200)
         expect(
           (
             await api.delete(
@@ -160,8 +164,18 @@ const test = base.extend<{ memberSkills: MemberSkills }>({
         expect((await api.delete('/api/bots/' + bot.id + '?force=true')).status).toBe(200)
         await deleteDedicatedBotModel(api, bot.name, bot.namespace)
       }
-      if (skillId !== undefined)
+      if (skillId !== undefined) {
+        for (const group of groups) {
+          const unbound = await admin.delete(
+            '/api/v1/kinds/skills/' +
+              skillId +
+              '/bindings/groups?group_name=' +
+              encodeURIComponent(group)
+          )
+          expect([204, 404], JSON.stringify(unbound.data)).toContain(unbound.status)
+        }
         expect((await admin.delete('/api/v1/kinds/skills/' + skillId)).status).toBe(204)
+      }
       for (const group of groups) {
         const removed = await admin.deleteGroup(group)
         expect(removed.status, JSON.stringify(removed.data)).toBe(204)
