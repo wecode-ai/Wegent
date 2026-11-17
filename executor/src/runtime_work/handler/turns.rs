@@ -1134,6 +1134,7 @@ impl RuntimeWorkRpcHandler {
 
     fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
         self.store.update_task(local_task_id, |link| {
+            settle_pending_native_admission(link, "cancelled");
             link.running = false;
             link.status = "cancelled".to_owned();
             link.thread_status = "cancelled".to_owned();
@@ -3031,3 +3032,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "preparation_terminal_tests.rs"]
+mod preparation_terminal_tests;
