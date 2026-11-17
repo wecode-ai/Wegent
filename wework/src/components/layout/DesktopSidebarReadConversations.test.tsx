@@ -192,6 +192,68 @@ describe('DesktopSidebar read conversation collapse', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
   })
 
+  test.each([
+    { group: 'regular project', taskId: 'project-read', expanded: true, projectIds: [8] },
+    { group: 'pinned project', taskId: 'project-unread', expanded: false, projectIds: [7] },
+    { group: 'pinned task', taskId: 'pinned-read', expanded: false, projectIds: [] },
+  ])(
+    'restores the new account preferences before revealing its selected $group task',
+    ({ taskId, expanded, projectIds }) => {
+      const storedPreferences = {
+        projectsExpanded: 'false',
+        chatsExpanded: 'false',
+        priorityShowPinned: 'true',
+        showOfflineDeviceItems: 'false',
+        expandedProjectIds: '[]',
+      }
+      const storageKey = (key: string, userId: number) => `wework.desktop.sidebar.${key}.${userId}`
+      for (const [key, value] of Object.entries(storedPreferences)) {
+        localStorage.setItem(storageKey(key, 2), value)
+      }
+      const view = renderSidebar({ currentRuntimeTask: { deviceId: 'local-device', taskId } })
+      const previousPreferences = Object.keys(storedPreferences).map(key => ({
+        key: storageKey(key, 1),
+        value: localStorage.getItem(storageKey(key, 1)),
+      }))
+      const setItem = vi.spyOn(Storage.prototype, 'setItem')
+      try {
+        view.rerenderProps({
+          user: { id: 2, user_name: 'bob', email: 'bob@example.com' },
+        })
+
+        expect(screen.getByTestId('projects-section-toggle')).toHaveAttribute(
+          'aria-expanded',
+          String(expanded)
+        )
+        expect(screen.getByTestId(rowId(taskId))).toBeInTheDocument()
+        const expectedPreferences = {
+          ...storedPreferences,
+          projectsExpanded: String(expanded),
+          expandedProjectIds: JSON.stringify(projectIds),
+        }
+        for (const [key, value] of Object.entries(expectedPreferences)) {
+          expect(localStorage.getItem(storageKey(key, 2))).toBe(value)
+        }
+        for (const { key, value } of previousPreferences) {
+          expect(localStorage.getItem(key)).toBe(value)
+        }
+        const sidebarWrites = setItem.mock.calls.filter(([key]) =>
+          key.startsWith('wework.desktop.sidebar.')
+        )
+        const expectedWrites = Object.entries(expectedPreferences).map(([key, value]) => [
+          storageKey(key, 2),
+          value,
+        ])
+        expect(sidebarWrites).toEqual(expect.arrayContaining(expectedWrites))
+        for (const write of sidebarWrites) {
+          expect(expectedWrites).toContainEqual(write)
+        }
+      } finally {
+        setItem.mockRestore()
+      }
+    }
+  )
+
   test('does not preserve a different device conversation with the same task ID', async () => {
     const work = runtimeWork()
     work.chats.push({
