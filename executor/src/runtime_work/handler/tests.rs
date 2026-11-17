@@ -4575,6 +4575,9 @@ async fn pending_inventory_does_not_spawn_codex_but_sidebar_bootstrap_still_does
     let _ = fs::remove_dir_all(root);
 }
 
+#[path = "query_reconciliation_tests.rs"]
+mod query_reconciliation_tests;
+
 #[tokio::test]
 async fn create_task_keeps_board_comment_session_persistent_across_store_reload() {
     let (handler, root) = isolated_runtime_work_handler("create-board-comment-task");

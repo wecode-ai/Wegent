@@ -9,19 +9,12 @@ impl RuntimeWorkRpcHandler {
         &self,
         archived: bool,
     ) -> Vec<RuntimeTaskLink> {
-        self.collect_links_catalog(archived, Some(CODEX_THREAD_LIST_MAX_ITEMS))
+        self.collect_query_links(archived, Some(CODEX_THREAD_LIST_MAX_ITEMS))
             .await
             .0
     }
 
     pub(in crate::runtime_work::handler) async fn collect_query_links(
-        &self,
-        archived: bool,
-    ) -> (Vec<RuntimeTaskLink>, bool) {
-        self.collect_links_catalog(archived, None).await
-    }
-
-    async fn collect_links_catalog(
         &self,
         archived: bool,
         limit: Option<usize>,
