@@ -90,6 +90,33 @@ test.each([
   )
 })
 
+test.each([undefined, 'Bearer desktop-e2e'])(
+  'rejects unauthenticated predictions before foreground handlers: %s',
+  async authorization => {
+    const server = new DesktopE2EServer('/tmp/prediction-auth-routing', undefined, {
+      async handleHttp() {
+        assert.fail('An unauthenticated prediction reached the foreground scenario')
+      },
+    })
+    server.url = 'http://fixture'
+    const request = Readable.from([
+      JSON.stringify({ input: [{ role: 'user', content: REPLY_PREDICTION_PROMPT }] }),
+    ])
+    Object.assign(request, {
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization ? { authorization } : {},
+    })
+    const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
+    await server.handle(request, response)
+    assert.equal(response.status, 401)
+    assert.equal(
+      JSON.parse(response.output).error,
+      'The Desktop E2E model API key was not forwarded by Codex'
+    )
+  }
+)
+
 async function activeTemporaryChatScenario() {
   const scenario = createTemporaryChatScenario({ uiTimeoutMs: 100 })
   const stopBeforeUi = new Error('Stop before desktop UI setup')

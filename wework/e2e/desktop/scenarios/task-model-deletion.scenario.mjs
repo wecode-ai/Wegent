@@ -8,6 +8,7 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   CLOUD_PUBLIC_MODEL_NAME,
+  MODEL_API_KEY,
   createSingleRootLocalProject,
   fetchJson,
   selectE2EModel,
@@ -63,7 +64,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
     await control.command('fill', '[data-testid="provider-base-url"]', {
       value: cloud.modelServerUrl,
     })
-    await control.command('fill', '[data-testid="provider-api-key"]', { value: 'desktop-e2e' })
+    await control.command('fill', '[data-testid="provider-api-key"]', { value: MODEL_API_KEY })
     await control.command('click', '[data-testid="provider-model-add"]')
     const editor = JSON.parse(await control.command('snapshot', '[data-testid="provider-editor"]'))
     const input = editor.testIds.find(id => id.startsWith('provider-model-id-'))
@@ -254,7 +255,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
                 model: 'openai',
                 model_id: modelName,
                 base_url: `${cloud.modelServerUrl}/v1`,
-                api_key: 'desktop-e2e',
+                api_key: MODEL_API_KEY,
               },
               is_active: true,
               wework_available: true,
@@ -348,7 +349,7 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
                     model: 'openai',
                     model_id: offlineModelName,
                     base_url: `${cloud.modelServerUrl}/v1`,
-                    api_key: 'desktop-e2e',
+                    api_key: MODEL_API_KEY,
                   },
                 },
               },
