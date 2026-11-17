@@ -114,10 +114,6 @@
       "types": "./src/controls/index.ts",
       "import": "./src/controls/index.ts"
     },
-    "./controls/useDialogKeyboard": {
-      "types": "./src/controls/useDialogKeyboard.ts",
-      "import": "./src/controls/useDialogKeyboard.ts"
-    },
     "./controls/platform": {
       "types": "./src/controls/platform.ts",
       "import": "./src/controls/platform.ts"
@@ -442,6 +438,10 @@
       "types": "./src/controls/DialogForm.tsx",
       "import": "./src/controls/DialogForm.tsx"
     },
+    "./controls/useDialogKeyboard": {
+      "types": "./src/controls/useDialogKeyboard.ts",
+      "import": "./src/controls/useDialogKeyboard.ts"
+    },
     "./controls/Textarea": {
       "types": "./src/controls/Textarea.tsx",
       "import": "./src/controls/Textarea.tsx"
@@ -473,6 +473,7 @@
     "@types/plantuml-encoder": "1.4.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "aria-hidden": "1.2.6",
     "mdast-util-from-markdown": "2.0.3",
     "mdast-util-math": "3.0.0",
     "micromark-util-types": "2.0.3",

@@ -65,7 +65,7 @@ describe('CloudConnectionDialog', () => {
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveAccessibleName()
     expect(screen.getByTestId('cloud-backend-url-input')).toHaveFocus()
-    expect(container.inert).toBe(true)
+    expect(container).toHaveAttribute('inert')
     screen.getByTestId('cloud-authorization-submit-button').focus()
     await userEvent.tab()
     expect(screen.getByTestId('cloud-connection-close-button')).toHaveFocus()
@@ -73,7 +73,7 @@ describe('CloudConnectionDialog', () => {
     expect(screen.getByTestId('cloud-authorization-submit-button')).toHaveFocus()
     await userEvent.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(container.inert).not.toBe(true)
+    expect(container).not.toHaveAttribute('inert')
     expect(trigger).toHaveFocus()
   })
 

@@ -32,6 +32,7 @@ import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbenc
 import { WorkbenchContext, type WorkbenchContextValue } from '@/features/workbench/useWorkbench'
 import { projectRuntimeConversationTurns } from '@wegent/chat-core/runtime-conversation-turns'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import { registerProjectSpaceChatDraftTests } from './projectSpaceChatDraftTests'
 import type { ConversationModelControls } from './conversationModelControls'
 import * as runtimeModelSelection from '@/features/workbench/runtimeModelSelection'
 import {
@@ -499,7 +500,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
       setSelectedModelAndOptions: mocks.setGlobalModel,
       setSelectedModelOption: mocks.setGlobalModel,
       isModelSelectionReady: mocks.globalModelReady,
-      selectedModelOptions: undefined,
+      selectedModelOptions: {},
       resolveRuntimeTaskModelSelection: (taskAddress: RuntimeTaskAddress) => {
         const selection =
           mocks.activeModelSelection ?? modelSelectionFromRuntimeHandle(taskAddress.runtimeHandle)
@@ -529,6 +530,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
       setRuntimeTaskSelectedModelOption: vi.fn(),
     },
     createTemporaryRuntimeTask: vi.fn(),
+    createProjectRuntimeTask: mocks.createTask,
     sendRuntimePaneMessage: mocks.sendRuntimePaneMessage,
     interruptAndSendRuntimePaneMessage: mocks.interruptAndSendRuntimePaneMessage,
     sendRuntimePaneGuidance: mocks.sendRuntimePaneGuidance,
@@ -638,6 +640,7 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
 })
 
 describe('TemporaryChatPanel', () => {
+  registerProjectSpaceChatDraftTests(mocks)
   it.each(['accepted', 'newer-edit', 'edited-back', 'failed', 'rejected'] as const)(
     'submits an immediate buffered native edit transactionally: %s',
     async outcome => {

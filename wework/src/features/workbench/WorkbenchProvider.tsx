@@ -19,7 +19,6 @@ import {
   notifyMainRuntimeWorkChanged,
 } from '@/desktop/runtimeWorkSync'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
 import { CoreDshModelSync } from '@/features/dsh-models/CoreDshModelSyncBridge'
 import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 import { QuestionDiscussionScope } from '@/features/notifications/QuestionDiscussionScope'
@@ -2042,7 +2041,6 @@ function OwnedWorkbenchProvider({
                 models={conversationModels}
                 services={resolvedServices}
               />
-              <RunnerSelectionHost />
               <DesktopGitAccountConfigurationProvider>
                 <WorkbenchCloudDeviceRestarts
                   devices={state.devices}

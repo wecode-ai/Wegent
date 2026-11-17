@@ -63,8 +63,7 @@ export function CloudConnectionDialog({
   const dialogRef = useDialogKeyboard<HTMLDivElement>(
     onClose,
     open,
-    '[data-testid="cloud-backend-url-input"]',
-    { inertBackground: true }
+    '[data-testid="cloud-backend-url-input"]'
   )
 
   if (!open) return null

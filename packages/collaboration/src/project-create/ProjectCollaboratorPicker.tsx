@@ -1,6 +1,6 @@
 import * as Popover from '@radix-ui/react-popover'
 import { Bot, Plus, Search, UserRound, UsersRound } from 'lucide-react'
-import { useEffect, useState, type ReactNode, type Ref } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   CollaborationParticipantsTabs,
   type ParticipantTab,
@@ -23,8 +23,6 @@ export function ProjectCollaboratorPicker({
   onSelectAgent,
   onSelectGroup,
   groupAction,
-  triggerRef,
-  onCloseAutoFocus,
 }: {
   labels: ProjectCreateLabels
   open: boolean
@@ -38,8 +36,6 @@ export function ProjectCollaboratorPicker({
   onSelectAgent(id: string): void
   onSelectGroup(id: string): void
   groupAction?: ReactNode
-  triggerRef?: Ref<HTMLButtonElement>
-  onCloseAutoFocus?(event: Event): void
 }) {
   const theme = useCollaborationPortalTheme()
   const [query, setQuery] = useState('')
@@ -90,12 +86,33 @@ export function ProjectCollaboratorPicker({
   )
   const availableAgents = agents.filter(agent => matches(agent.name))
   const availableGroups = groups.filter(group => matches(group.name, group.description))
-  const empty = <p>{labels.noAvailableCollaborators}</p>
+  const peopleSearchStatus =
+    !open || activeTab !== 'members' || !query.trim() || failed
+      ? ''
+      : loading
+        ? labels.searchingPeople
+        : users.length
+          ? `${labels.availablePeople}: ${users.length}`
+          : labels.noMatchingCollaborators
+  const empty = (message: string) => (
+    <div className="collaboration-project-create-collaborator-empty">
+      <p>{query.trim() ? labels.noMatchingCollaborators : message}</p>
+      <p>
+        {activeTab === 'members' && !query.trim() && searchUsers
+          ? labels.searchPeopleHint
+          : labels.collaboratorsOptionalHint}
+      </p>
+    </div>
+  )
+  const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null)
+  const modalContainer = trigger?.closest<HTMLElement>(
+    '[role="dialog"][aria-modal="true"], dialog[open]'
+  )
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
       <Popover.Trigger asChild>
         <button
-          ref={triggerRef}
+          ref={setTrigger}
           type="button"
           className="collaboration-project-create-collaborator-trigger"
           data-testid="collaboration-project-create-add-collaborator"
@@ -105,16 +122,20 @@ export function ProjectCollaboratorPicker({
           <span>{labels.addCollaborator}</span>
         </button>
       </Popover.Trigger>
-      <Popover.Portal>
+      <Popover.Portal container={modalContainer}>
         <Popover.Content
-          onCloseAutoFocus={onCloseAutoFocus}
           {...theme}
           side="bottom"
           align="start"
           sideOffset={6}
+          collisionBoundary={trigger?.closest('.collaboration-project-create-body')}
           collisionPadding={8}
           className={`${theme.className ?? ''} collaboration-project-create-collaborator-menu`}
           data-testid="collaboration-project-create-collaborator-menu"
+          aria-label={labels.addCollaborator}
+          onCloseAutoFocus={event => {
+            if (trigger?.closest('[hidden], [inert]')) event.preventDefault()
+          }}
         >
           <div className="collaboration-project-collaborator-picker">
             <label className="collaboration-project-collaborator-search">
@@ -127,6 +148,15 @@ export function ProjectCollaboratorPicker({
                 onChange={event => setQuery(event.target.value)}
               />
             </label>
+            <p
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              className="sr-only"
+              data-testid="collaboration-project-create-people-search-status"
+            >
+              {peopleSearchStatus}
+            </p>
             <CollaborationParticipantsTabs
               ariaLabel={labels.collaborators}
               initialTab="members"
@@ -138,7 +168,7 @@ export function ProjectCollaboratorPicker({
               groupsLabel={labels.availableGroups}
               membersContent={
                 <>
-                  {loading && <p role="status">{labels.searchingPeople}</p>}
+                  {loading && <p aria-hidden="true">{labels.searchingPeople}</p>}
                   {failed && <p role="alert">{labels.peopleSearchFailed}</p>}
                   {users.map(user => (
                     <button
@@ -154,7 +184,7 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!users.length && !loading && !failed && empty}
+                  {!users.length && !loading && !failed && empty(labels.noAvailablePeople)}
                 </>
               }
               agentsContent={
@@ -172,7 +202,7 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!availableAgents.length && empty}
+                  {!availableAgents.length && empty(labels.noAvailableAgents)}
                 </>
               }
               groupsContent={
@@ -191,7 +221,7 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!availableGroups.length && empty}
+                  {!availableGroups.length && empty(labels.noAvailableGroups)}
                   {groupAction}
                 </>
               }

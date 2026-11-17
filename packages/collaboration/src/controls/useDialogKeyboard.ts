@@ -1,11 +1,16 @@
 import { useEffect, useRef } from 'react'
 import { useEscapeKey } from '../markdown/useEscapeKey'
+import { isolateModalBackground } from './dialogAccessibility'
 
 const focusableSelector =
-  'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"]:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])'
 
 function isFocusable(element: HTMLElement) {
-  if (element.tabIndex < 0 || element.closest('[hidden], [aria-hidden="true"], [inert]'))
+  if (
+    (element.tabIndex < 0 &&
+      (!element.matches('[contenteditable="true"]') || element.hasAttribute('tabindex'))) ||
+    element.closest('[hidden], [aria-hidden="true"], [inert]')
+  )
     return false
   for (let node: HTMLElement | null = element; node; node = node.parentElement) {
     const style = getComputedStyle(node)
@@ -18,7 +23,8 @@ export function useDialogKeyboard<T extends HTMLElement>(
   onClose: () => void,
   open = true,
   initialFocus?: string,
-  options?: { inertBackground?: boolean; returnFocus?: Element | null }
+  trapFocus = true,
+  restoreFocus?: string
 ) {
   const ref = useRef<T>(null)
   useEscapeKey(onClose, open, ref)
@@ -26,7 +32,8 @@ export function useDialogKeyboard<T extends HTMLElement>(
   useEffect(() => {
     const dialog = ref.current
     if (!open || !dialog) return
-    const previousFocus = options?.returnFocus ?? document.activeElement
+    const previousFocus = document.activeElement
+    const focusContainer = dialog.closest('[role="dialog"]')
     if (!dialog.contains(previousFocus)) {
       const preferred = Array.from(
         dialog.querySelectorAll<HTMLElement>(
@@ -40,17 +47,7 @@ export function useDialogKeyboard<T extends HTMLElement>(
         dialog
       target.focus()
     }
-    const background = options?.inertBackground
-      ? Array.from(document.body.children)
-          .filter(
-            (element): element is HTMLElement =>
-              element instanceof HTMLElement && !element.contains(dialog)
-          )
-          .map(element => ({ element, inert: element.inert }))
-      : []
-    background.forEach(({ element }) => {
-      element.inert = true
-    })
+    const restoreBackground = isolateModalBackground(dialog, trapFocus)
     const handleTab = (event: KeyboardEvent) => {
       if (event.key !== 'Tab' || event.defaultPrevented) return
       const elements = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector)).filter(
@@ -72,20 +69,28 @@ export function useDialogKeyboard<T extends HTMLElement>(
         first.focus()
       }
     }
-    dialog.addEventListener('keydown', handleTab)
+    if (trapFocus) dialog.addEventListener('keydown', handleTab)
     return () => {
+      restoreBackground?.()
       dialog.removeEventListener('keydown', handleTab)
-      background.forEach(({ element, inert }) => {
-        element.inert = inert
-      })
-      if (
+      const returnTarget =
         previousFocus instanceof HTMLElement &&
+        previousFocus !== document.body &&
         previousFocus.isConnected &&
-        (dialog.contains(document.activeElement) || document.activeElement === document.body)
+        !previousFocus.closest('[hidden], [inert]')
+          ? previousFocus
+          : restoreFocus
+            ? focusContainer?.querySelector<HTMLElement>(restoreFocus)
+            : null
+      if (
+        returnTarget &&
+        (dialog.contains(document.activeElement) ||
+          document.activeElement === document.body ||
+          (restoreFocus && focusContainer?.contains(document.activeElement)))
       )
-        previousFocus.focus()
+        returnTarget.focus()
     }
-  }, [open, initialFocus, options?.inertBackground, options?.returnFocus])
+  }, [open, initialFocus, trapFocus, restoreFocus])
 
   return ref
 }

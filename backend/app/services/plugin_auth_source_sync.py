@@ -26,7 +26,9 @@ class PluginAuthSourceSync:
     def target(
         self, db: Session, user_id: int, spec: dict, account_id: str
     ) -> Kind | None:
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(
+            db, user_id, installed_id=spec["installed_plugin_id"]
+        )
         row = (
             self.connections._query(db, user_id)
             .populate_existing()
@@ -100,7 +102,7 @@ class PluginAuthSourceSync:
         source: dict,
         observation: dict,
     ) -> PluginAccountConnectionResponse:
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(db, user_id, connection_id=connection_id)
         row = self.connections._get(db, user_id, connection_id)
         spec = deepcopy(row.json["spec"])
         spec["localAuthSources"] = {
@@ -116,7 +118,9 @@ class PluginAuthSourceSync:
     def consume(
         self, db: Session, user_id: int, spec: dict, request: PluginNativeEnrollment
     ):
-        self.connections._coordinate_owner(db, user_id)
+        self.connections._coordinate_owner(
+            db, user_id, installed_id=spec["installed_plugin_id"]
+        )
         row = self.target(db, user_id, spec, request.account_id)
         previous = (
             row.json["spec"].get("localAuthSources", {}).get(spec["device_id"])

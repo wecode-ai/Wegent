@@ -33,6 +33,7 @@ import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
 import { resolveWorkbenchOwnership } from '@/features/workbench/workbenchOwnership'
 import {
   registerRuntimeTaskLifecycleAutomation,
@@ -946,6 +947,18 @@ function browserWorkspaceTabStorageScope(): string {
 }
 
 function AppShell() {
+  const { user } = useAuth()
+  const connection = useCloudConnection()
+  const { key } = resolveWorkbenchOwnership(connection, user)
+  return (
+    <>
+      {user && <RunnerSelectionHost key={key} />}
+      <AppShellContent />
+    </>
+  )
+}
+
+function AppShellContent() {
   const { t } = useTranslation('common')
   const dshContext = useDshClientContext()
   const appearanceContext = useOptionalAppearance()

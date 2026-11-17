@@ -3145,10 +3145,10 @@ describe("CollaborationPlatformApp real component flow", () => {
         });
         await new Promise((resolve) => window.setTimeout(resolve, 100));
         onEvent?.({
-          type: "participant_delta",
+          type: "participant_responsibility",
           kind: "agent",
           id: input.agents[0]!.id,
-          delta: "拆解任务并综合验收",
+          text: "拆解任务并综合验收",
         });
         await new Promise((resolve) => window.setTimeout(resolve, 200));
         onEvent?.({
@@ -3158,11 +3158,19 @@ describe("CollaborationPlatformApp real component flow", () => {
           leader: false,
         });
         onEvent?.({
-          type: "participant_delta",
+          type: "participant_responsibility",
           kind: "agent",
           id: input.agents[1]!.id,
-          delta: "负责交互设计",
+          text: "负责交互设计",
         });
+        for (const text of ["确认目标与验收条件", "处理阻塞并反馈决策"]) {
+          onEvent?.({
+            type: "participant_responsibility",
+            kind: "human",
+            id: String(input.currentUser.id),
+            text,
+          });
+        }
         onEvent?.({
           type: "principle",
           text: "负责人拆解、分派、验收并汇总",
@@ -3186,7 +3194,7 @@ describe("CollaborationPlatformApp real component flow", () => {
             {
               kind: "human" as const,
               id: String(input.currentUser.id),
-              responsibility: "确认目标并验收",
+              responsibility: "确认目标与验收条件\n处理阻塞并反馈决策",
             },
             ...input.agents.slice(1).map((candidate) => ({
               kind: "agent" as const,
@@ -3259,14 +3267,17 @@ describe("CollaborationPlatformApp real component flow", () => {
       container.querySelector(
         '[data-testid="collaboration-project-create-model-picker"]',
       ),
-    ).toBeNull();
+    ).toBe(portalByTestId("collaboration-project-create-model-picker"));
     expect(
-      portalByTestId("collaboration-project-create-model-picker").textContent,
-    ).toContain("组织协作小组");
+      portalByTestId("collaboration-project-create-model-picker")
+        .closest('[role="dialog"]')
+        ?.querySelector("h2")?.textContent,
+    ).toBe("组织协作小组");
     expect(
-      portalByTestId(
-        "collaboration-project-create-model-picker",
-      ).parentElement?.classList.contains("z-system"),
+      document.querySelectorAll('[role="dialog"][aria-modal="true"]'),
+    ).toHaveLength(1);
+    expect(
+      byTestId("collaboration-project-name-input").closest("form")?.hidden,
     ).toBe(true);
     expect(
       portalByTestId(
@@ -3298,6 +3309,13 @@ describe("CollaborationPlatformApp real component flow", () => {
       portalByTestId("collaboration-project-create-generation-progress")
         .textContent,
     ).toContain("AI 正在分析项目并生成分工");
+    const generationStatus = portalByTestId(
+      "collaboration-project-create-generation-status",
+    );
+    expect(generationStatus.getAttribute("role")).toBe("status");
+    expect(generationStatus.getAttribute("aria-live")).toBe("polite");
+    expect(generationStatus.getAttribute("aria-atomic")).toBe("true");
+    expect(generationStatus.textContent).toBe("AI 正在分析项目并生成分工");
     expect(
       portalByTestId("collaboration-project-create-assignment-queue")
         .textContent,
@@ -3330,10 +3348,16 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       document.body.querySelector(".is-excited")?.textContent,
     ).not.toContain("拆解任务并综合验收");
+    expect(
+      document.body.querySelector(
+        ".is-human-standing .collaboration-project-create-responsibility",
+      )?.textContent,
+    ).toBe("确认目标与验收条件\n处理阻塞并反馈决策");
     await waitForUi(300);
     expect(
       portalByTestId("collaboration-project-create-group-editor").textContent,
     ).toContain("AI 分工建议");
+    expect(generationStatus.textContent).toBe("分工已生成，可编辑并保存。");
     expect(
       document.body.querySelector(
         '[data-testid="collaboration-project-create-generation-progress"]',
@@ -3389,6 +3413,23 @@ describe("CollaborationPlatformApp real component flow", () => {
       expect.any(Function),
       expect.any(Function),
     );
+    await click(
+      portalByTestId(
+        "collaboration-project-create-model-picker",
+      ).querySelector<HTMLButtonElement>(
+        '[data-testid="collaboration-project-create-configuration-back"]',
+      )!,
+    );
+    const discard = portalByTestId("collaboration-project-create-discard");
+    expect(discard.textContent).toContain("本次未保存的分工和生成结果将丢失");
+    await click(
+      discard.querySelector<HTMLButtonElement>(
+        '[data-testid="collaboration-project-create-configuration-back"]',
+      )!,
+    );
+    expect(
+      portalByTestId("collaboration-project-create-group-editor").textContent,
+    ).toContain("负责人参与实现，成员及时反馈阻塞");
     await click(portalByTestId("collaboration-project-create-apply-group"));
 
     expect(
@@ -3397,6 +3438,29 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       byTestId("collaboration-project-create-group-summary").textContent,
     ).toContain("负责人 · 仅协调");
+    expect(
+      Array.from(
+        byTestId("collaboration-project-create-group-summary").querySelectorAll(
+          "small",
+        ),
+      ).map((element) => element.textContent),
+    ).toContain("确认目标与验收条件\n处理阻塞并反馈决策");
+    await click(portalByTestId("collaboration-project-create-edit-group"));
+    await click(
+      portalByTestId(
+        "collaboration-project-create-model-picker",
+      ).querySelector<HTMLButtonElement>(
+        '[data-testid="collaboration-project-create-configuration-back"]',
+      )!,
+    );
+    expect(
+      document.querySelector(
+        '[data-testid="collaboration-project-create-discard"]',
+      ),
+    ).toBeNull();
+    expect(
+      byTestId("collaboration-project-create-group-summary").textContent,
+    ).toContain("产品交付小组");
   });
 
   it("keeps Agents unselected when project resources finish loading", async () => {
@@ -5237,6 +5301,17 @@ describe("CollaborationPlatformApp real component flow", () => {
       )!,
     );
     expect(onHandled).toHaveBeenCalledOnce();
+    const discard = byTestId("collaboration-project-create-discard");
+    expect(discard).toBeTruthy();
+    expect(
+      byTestId<HTMLInputElement>("collaboration-project-name-input").value,
+    ).toBe(document.spec.resources.collaboration.project.name);
+    await click(
+      discard.querySelector<HTMLButtonElement>(
+        '[data-testid="collaboration-project-create-discard-confirm"]',
+      )!,
+    );
+    expect(onHandled).toHaveBeenCalledOnce();
     expect(
       container.querySelector(
         '[data-testid="collaboration-project-name-input"]',
@@ -5409,21 +5484,6 @@ describe("CollaborationPlatformApp real component flow", () => {
       ownerId: 7,
       persistence: { read: async () => [], write: async () => {} },
     });
-    const resolveTemplateAgentRouting = vi.fn(async () => ({
-      executionPolicy: {
-        mode: "fixed" as const,
-        environment_id: environment.id,
-      },
-      modelPolicy: {
-        mode: "fixed" as const,
-        model: {
-          runtime: "codex" as const,
-          provider: "openai",
-          model_id: "default",
-          source: "native" as const,
-        },
-      },
-    }));
     await render(
       <PlatformHarness
         api={api}
@@ -7314,9 +7374,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       portalByTestId("collaboration-project-create-group-roster").textContent,
     ).toContain(agent.name);
     await click(
-      portalByTestId(
-        "collaboration-project-create-model-picker",
-      ).querySelector<HTMLButtonElement>('[aria-label="取消"]')!,
+      portalByTestId("collaboration-project-create-configuration-back"),
     );
     expect(
       document.body.querySelector(

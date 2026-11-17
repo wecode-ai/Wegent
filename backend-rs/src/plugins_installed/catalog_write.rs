@@ -32,38 +32,27 @@ fn now_literal() -> String {
 
 pub(super) async fn write_kind<Q: PluginQuery>(
     mysql: &mut Q,
-    id: i64,
-    json: &Value,
+    row: &InstalledKindRow,
+    document: &Value,
     name: Option<&str>,
     is_active: Option<bool>,
 ) -> MysqlResult<()> {
-    let serialized = serde_json::to_string(json).expect("kind document serializes");
-    let updated_at = now_literal();
-    match (name, is_active) {
-        (Some(name), Some(is_active)) => {
-            mysql
-                .execute(
-                    "UPDATE kinds SET json=?, name=?, is_active=?, updated_at=? WHERE kinds.id = ?",
-                    (serialized, name.to_string(), is_active, updated_at, id),
-                )
-                .await?;
-        }
-        (Some(name), None) => {
-            mysql
-                .execute(
-                    "UPDATE kinds SET json=?, name=?, updated_at=? WHERE kinds.id = ?",
-                    (serialized, name.to_string(), updated_at, id),
-                )
-                .await?;
-        }
-        _ => {
-            mysql
-                .execute(
-                    "UPDATE kinds SET json=?, is_active=?, updated_at=? WHERE kinds.id = ?",
-                    (serialized, is_active, updated_at, id),
-                )
-                .await?;
-        }
+    let old = row.json.0.to_value();
+    let revision = super::write_coordination::business_revision(&old)?;
+    let write_revision = super::write_coordination::installation_write_revision(&old)?;
+    let mut replacement = document.clone();
+    replacement["spec"]["revision"] = Value::from(revision + 1);
+    replacement["spec"]["writeRevision"] = Value::from(write_revision);
+    let updated = mysql.execute(
+        "UPDATE kinds SET json=?,name=?,is_active=?,updated_at=? WHERE id=? AND user_id=? AND kind='InstalledPlugin' AND namespace='default' AND name=? AND COALESCE(JSON_EXTRACT(json,'$.spec.revision'),0)=? AND COALESCE(JSON_EXTRACT(json,'$.spec.writeRevision'),0)=?",
+        (serde_json::to_string(&replacement).expect("kind document serializes"),
+         name.unwrap_or(&row.name), is_active.unwrap_or(row.is_active), now_literal(),
+         row.id, row.user_id, row.name.as_str(), revision, write_revision),
+    ).await?;
+    if updated.rows_affected != 1 {
+        return Err(super::write_coordination::coordination_error(
+            "plugin_write_conflict",
+        ));
     }
     Ok(())
 }
@@ -192,7 +181,7 @@ pub(super) async fn apply_catalog_ref_to_installed_kind<Q: PluginQuery>(
     if let Some(metadata) = document.get_mut("metadata").and_then(Value::as_object_mut) {
         metadata.insert("name".to_string(), Value::String(name.clone()));
     }
-    write_kind(mysql, row.id, &document, Some(&name), None).await
+    write_kind(mysql, row, &document, Some(&name), None).await
 }
 
 /// `_detach_stale_catalog_ref_from_installed_kind` applied in place.
@@ -229,7 +218,7 @@ pub(super) async fn deactivate_orphaned_catalog_install<Q: PluginQuery>(
             Value::String("uninstalled".to_string()),
         );
     }
-    write_kind(mysql, row.id, &document, None, Some(false)).await
+    write_kind(mysql, row, &document, None, Some(false)).await
 }
 
 /// `_deactivate_duplicate_installed_kind`. Returns whether the row changed.
@@ -249,7 +238,7 @@ pub(super) async fn deactivate_duplicate_installed_kind<Q: PluginQuery>(
             Value::String("uninstalled".to_string()),
         );
     }
-    write_kind(mysql, row.id, &document, None, Some(false)).await?;
+    write_kind(mysql, row, &document, None, Some(false)).await?;
     clear_device_installations(mysql, row.id).await?;
     Ok(true)
 }
