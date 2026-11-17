@@ -6,7 +6,7 @@ const { launch } = vi.hoisted(() => ({ launch: vi.fn().mockResolvedValue({ taskI
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
     createProjectRuntimeTask: launch,
-    state: { currentProject: null, selectedDeviceWorkspaceId: null },
+    state: { currentProject: null, selectedDeviceWorkspaceId: 42 },
   }),
 }))
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
@@ -97,3 +97,48 @@ it.each(['added', 'replaced'])(
     )
   }
 )
+
+it('uses currently authorized content and never attaches files from another task draft', async () => {
+  const issue = { id: 'independent', title: 'Old content', metadata: {} } as IndependentIssue
+  const current = {
+    ...issue,
+    title: 'Current title',
+    description: 'Latest authorized requirements',
+  }
+  const get = vi.fn().mockResolvedValue(current)
+  launch.mockResolvedValue({ deviceId: 'mine', taskId: 'new-task' })
+  render(
+    <IndependentIssueTaskButton
+      issue={issue}
+      api={{ get } as unknown as PersonalIssuesApi}
+      onError={vi.fn()}
+    />
+  )
+  fireEvent.click(screen.getByTestId('independent-issue-create-task'))
+  await waitFor(() => expect(launch).toHaveBeenCalledOnce())
+  expect(get).toHaveBeenCalledWith(issue.id)
+  expect(launch.mock.calls[0][0]).toContain(current.description)
+  expect(launch.mock.calls[0][1]).toMatchObject({
+    attachments: [],
+    project: null,
+    deviceWorkspaceId: 42,
+  })
+})
+
+it('does not start an AI task after the invitation was revoked', async () => {
+  const onError = vi.fn()
+  render(
+    <IndependentIssueTaskButton
+      issue={{ id: 'revoked', metadata: {} } as IndependentIssue}
+      api={
+        {
+          get: vi.fn().mockRejectedValue(new Error('Issue not found')),
+        } as unknown as PersonalIssuesApi
+      }
+      onError={onError}
+    />
+  )
+  fireEvent.click(screen.getByTestId('independent-issue-create-task'))
+  await waitFor(() => expect(onError).toHaveBeenCalledWith('Issue not found'))
+  expect(launch).not.toHaveBeenCalled()
+})

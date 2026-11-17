@@ -344,12 +344,13 @@ fs.writeFileSync('.coverage', 'guard coverage')
     chmodSync(git, 0o755);
     const log = join(directory, "uv.log");
     const run = (step, extra = {}) =>
-      spawnSync("bash", ["-c", step.run], {
+      spawnSync("bash", ["--noprofile", "--norc", "-c", step.run], {
         cwd: backend,
         encoding: "utf8",
         env: {
           ...process.env,
           ...job.env,
+          BASH_ENV: "",
           PATH: `${bin}:${process.env.PATH}`,
           TEST_UV_LOG: log,
           TEST_HEAD: "a".repeat(40),
@@ -531,18 +532,23 @@ test("platform image reuse checks the registry before starting a builder", () =>
       const image = "ghcr.io/example/platform-e2e:content-hash";
       writeFileSync(
         join(root, "docker"),
-        `#!${process.execPath}\nconst assert = require('node:assert/strict')\nassert.deepEqual(process.argv.slice(2), ['manifest', 'inspect', process.env.IMAGE])\nprocess.exit(${exists ? 0 : 1})\n`,
+        `#!/usr/bin/env node\nconst assert = require('node:assert/strict')\nassert.deepEqual(process.argv.slice(2), ['manifest', 'inspect', process.env.IMAGE])\nprocess.exit(${exists ? 0 : 1})\n`,
       );
       chmodSync(join(root, "docker"), 0o755);
-      const probe = spawnSync("bash", ["-e", "-c", steps[checkIndex].run], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${root}:${process.env.PATH}`,
-          IMAGE: image,
-          GITHUB_OUTPUT: output,
+      const probe = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-c", steps[checkIndex].run],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            BASH_ENV: "",
+            PATH: `${root}:${process.env.PATH}`,
+            IMAGE: image,
+            GITHUB_OUTPUT: output,
+          },
         },
-      });
+      );
       assert.equal(probe.status, 0, probe.stderr);
       assert.equal(readFileSync(output, "utf8"), `exists=${exists}\n`);
     } finally {
@@ -735,7 +741,7 @@ for (const [mode, expectedStatus, expectedTests] of [
     try {
       const log = join(root, "calls.jsonl");
       const evidence = join(root, "evidence");
-      const stub = `#!${process.execPath}
+      const stub = `#!/usr/bin/env node
 const fs = require('node:fs')
 const path = require('node:path')
 const command = path.basename(process.argv[1])
@@ -939,7 +945,7 @@ for (const [mode, expectedStatus, expectedTests] of [
     const root = mkdtempSync(join(tmpdir(), "e2e-resource-reuse-"));
     try {
       const log = join(root, "calls.jsonl");
-      const stub = `#!${process.execPath}
+      const stub = `#!/usr/bin/env node
 const fs = require('node:fs')
 const path = require('node:path')
 const command = path.basename(process.argv[1])
