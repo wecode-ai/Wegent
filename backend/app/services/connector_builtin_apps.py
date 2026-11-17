@@ -133,7 +133,7 @@ def _seed_builtin_connector_apps(db: Session) -> tuple[list[str], list[str]]:
                 definition.slug,
             )
             continue
-        ConnectorAppService.create_app(
+        app = ConnectorAppService.create_app(
             db,
             ConnectorAppWrite(
                 slug=definition.slug,
@@ -150,9 +150,9 @@ def _seed_builtin_connector_apps(db: Session) -> tuple[list[str], list[str]]:
             SimpleNamespace(id=0),
             commit=False,
         )
-        app_row = _active_builtin_row(db, definition.slug)
-        if app_row is not None:
-            _set_builtin_loading_mode(app_row, keywords=definition.keywords)
+        # Keep the inserted ORM identity; reloading a discarded instance loses
+        # its new-object rollback tracking and can leave a phantom identity.
+        _set_builtin_loading_mode(app.row, keywords=definition.keywords)
         created.append(definition.slug)
     return created, updated
 
