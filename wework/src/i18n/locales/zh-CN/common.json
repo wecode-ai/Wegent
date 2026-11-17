@@ -2596,6 +2596,8 @@
     "smart_apps_remove_local": "从本机移除",
     "smart_apps_remove_local_title": "从本机移除工作台？",
     "smart_apps_remove_local_description": "将停止运行并删除本机文件。已发布版本和分享范围不会受到影响。",
+    "smart_apps_remove_local_revalidating": "正在重新确认本机安装状态，确认完成前无法移除。",
+    "smart_apps_remove_local_revalidation_failed": "无法重新确认本机安装状态（{{error}}）。请取消此对话框，在页面重试后再移除。",
     "smart_apps_unlink_local_description": "将停止运行并从列表中移除，但不会删除工作台文件夹。",
     "smart_apps_remove_local_confirm": "移除",
     "smart_apps_private": "仅自己",
