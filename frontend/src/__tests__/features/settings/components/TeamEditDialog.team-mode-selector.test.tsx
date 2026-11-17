@@ -7,7 +7,9 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps, ReactNode } from 'react'
 
 import { botApis } from '@/apis/bots'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
+import type TeamEditDrawer from '@/features/settings/components/TeamEditDrawer'
 import type TeamModeEditor from '@/features/settings/components/team-edit/TeamModeEditor'
 import type SimpleTeamEditForm from '@/features/settings/components/team-edit/SimpleTeamEditForm'
 import { createTeam, updateTeam } from '@/features/settings/services/teams'
@@ -144,9 +146,15 @@ jest.mock('@/features/settings/components/team-edit/TeamModeEditor', () => ({
     selectedBotKeys,
     setLeaderBotId,
     setSelectedBotKeys,
+    onEditBot,
+    onCloneBot,
+    onCreateBot,
   }: ComponentProps<typeof TeamModeEditor>) => (
     <div data-testid="member-editor">
       <span>{mode}</span>
+      <button onClick={() => onEditBot(10)}>Edit member</button>
+      <button onClick={() => onCloneBot(10)}>Clone member</button>
+      <button onClick={onCreateBot}>Create member</button>
       <output data-testid="selected-members">
         {leaderBotId}:{selectedBotKeys.join(',')}
       </output>
@@ -218,7 +226,27 @@ jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => (
 
 jest.mock('@/features/settings/components/TeamEditDrawer', () => ({
   __esModule: true,
-  default: () => null,
+  default: ({
+    visible,
+    targetGroupNames,
+    crossNamespaceClone,
+    targetGroupsLoading,
+    targetGroupsError,
+    onRetryTargetGroups,
+  }: ComponentProps<typeof TeamEditDrawer>) =>
+    visible ? (
+      <div>
+        <output data-testid="member-binding-context">
+          {JSON.stringify({
+            targetGroupNames,
+            crossNamespaceClone,
+            targetGroupsLoading,
+            targetGroupsError,
+          })}
+        </output>
+        <button onClick={onRetryTargetGroups}>Retry bindings</button>
+      </div>
+    ) : null,
 }))
 
 const bots: Bot[] = [10, 20].map(id => ({
@@ -262,6 +290,204 @@ function createProps(): ComponentProps<typeof TeamEditDialog> {
     toast: jest.fn(),
   }
 }
+
+describe('TeamEditDialog member binding context', () => {
+  const pipelineTeam: Team = {
+    ...existingTeam,
+    workflow: { mode: 'pipeline', leader_bot_id: '10' },
+  }
+
+  function deferredBindings() {
+    let resolve!: (value: { group_names: string[] }) => void
+    let reject!: (error: Error) => void
+    const promise = new Promise<Awaited<ReturnType<typeof resourceLibraryApi.getAgentBindings>>>(
+      (res, rej) => {
+        resolve = value => res({ agent_id: 1, personal: true, ...value })
+        reject = rej
+      }
+    )
+    return { promise, resolve, reject }
+  }
+
+  function bindingContext() {
+    return JSON.parse(screen.getByTestId('member-binding-context').textContent || '{}')
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    jest.mocked(resourceLibraryApi.getAgentBindings).mockReset()
+    jest
+      .mocked(resourceLibraryApi.getAgentBindings)
+      .mockResolvedValue({ agent_id: 1, personal: true, group_names: [] })
+  })
+
+  it.each(['personal', 'group'] as const)(
+    'preserves target groups when editing a member from %s scope',
+    async scope => {
+      const namespace = scope === 'group' ? 'engineering' : 'default'
+      const team = { ...pipelineTeam, namespace }
+      jest.mocked(resourceLibraryApi.getAgentBindings).mockResolvedValue({
+        agent_id: 1,
+        personal: true,
+        group_names: ['engineering', 'research'],
+      })
+      render(
+        <TeamEditDialog
+          {...createProps()}
+          editingTeamId={team.id}
+          teams={[team]}
+          scope={scope}
+          groupName={scope === 'group' ? namespace : undefined}
+          bots={bots.map(bot => ({ ...bot, namespace }))}
+        />
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Edit member' }))
+      await waitFor(() => expect(bindingContext().targetGroupsLoading).toBe(false))
+      expect(bindingContext()).toMatchObject({
+        targetGroupNames: ['engineering', 'research'],
+        crossNamespaceClone: false,
+        targetGroupsError: false,
+      })
+    }
+  )
+
+  it.each([
+    { scope: 'personal', sourceNamespace: 'default', expected: false },
+    { scope: 'personal', sourceNamespace: undefined, expected: false },
+    { scope: 'group', sourceNamespace: 'engineering', expected: false },
+    { scope: 'personal', sourceNamespace: 'engineering', expected: true },
+    { scope: 'group', sourceNamespace: 'default', expected: true },
+  ] as const)('classifies a clone from $sourceNamespace to $scope', async scenario => {
+    jest.mocked(resourceLibraryApi.getAgentBindings).mockResolvedValue({
+      agent_id: 1,
+      personal: true,
+      group_names: ['engineering'],
+    })
+    render(
+      <TeamEditDialog
+        {...createProps()}
+        editingTeamId={pipelineTeam.id}
+        teams={[pipelineTeam]}
+        scope={scenario.scope}
+        groupName={scenario.scope === 'group' ? 'engineering' : undefined}
+        bots={bots.map(bot => ({ ...bot, namespace: scenario.sourceNamespace }))}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Clone member' }))
+    await waitFor(() => expect(bindingContext().targetGroupsLoading).toBe(false))
+    expect(bindingContext().crossNamespaceClone).toBe(scenario.expected)
+    expect(bindingContext().targetGroupNames).toEqual(['engineering'])
+  })
+
+  it('keeps failure and retry visible while the personal agent has no known groups', async () => {
+    const retry = deferredBindings()
+    jest
+      .mocked(resourceLibraryApi.getAgentBindings)
+      .mockRejectedValueOnce(new Error('Bindings unavailable'))
+      .mockReturnValueOnce(retry.promise)
+    render(<TeamEditDialog {...createProps()} editingTeamId={1} teams={[pipelineTeam]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit member' }))
+    await waitFor(() => expect(bindingContext().targetGroupsError).toBe(true))
+    expect(bindingContext().targetGroupNames).toEqual([])
+    fireEvent.click(screen.getByRole('button', { name: 'Retry bindings' }))
+    expect(bindingContext()).toMatchObject({ targetGroupsLoading: true, targetGroupsError: false })
+    await act(async () => retry.resolve({ group_names: ['engineering'] }))
+    expect(bindingContext()).toMatchObject({
+      targetGroupNames: ['engineering'],
+      targetGroupsLoading: false,
+      targetGroupsError: false,
+    })
+  })
+
+  it.each(['pending', 'failed'] as const)(
+    'clears a %s edit load before creating a member in a new agent',
+    async state => {
+      const load = deferredBindings()
+      jest.mocked(resourceLibraryApi.getAgentBindings).mockReturnValueOnce(load.promise)
+      const props = { ...createProps(), editingTeamId: 1, teams: [pipelineTeam] }
+      const { rerender } = render(<TeamEditDialog {...props} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit member' }))
+      expect(bindingContext().targetGroupsLoading).toBe(true)
+      if (state === 'failed') {
+        await act(async () => load.reject(new Error('Bindings unavailable')))
+        expect(bindingContext().targetGroupsError).toBe(true)
+      }
+      rerender(<TeamEditDialog {...props} open={false} />)
+      rerender(<TeamEditDialog {...props} editingTeamId={0} />)
+      fireEvent.click(screen.getByTestId('select-mode-label-pipeline'))
+      fireEvent.click(screen.getByRole('button', { name: 'Create member' }))
+      expect(bindingContext()).toMatchObject({
+        targetGroupNames: [],
+        targetGroupsLoading: false,
+        targetGroupsError: false,
+        crossNamespaceClone: false,
+      })
+      if (state === 'pending') {
+        await act(async () => load.resolve({ group_names: ['engineering'] }))
+        expect(bindingContext().targetGroupNames).toEqual([])
+      }
+      expect(resourceLibraryApi.getAgentBindings).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.each(['resolve', 'reject'] as const)(
+    'ignores a stale retry that will %s while another agent is loading',
+    async result => {
+      const retryA = deferredBindings()
+      const loadB = deferredBindings()
+      jest
+        .mocked(resourceLibraryApi.getAgentBindings)
+        .mockRejectedValueOnce(new Error('Initial failure'))
+        .mockReturnValueOnce(retryA.promise)
+        .mockReturnValueOnce(loadB.promise)
+      const props = { ...createProps(), editingTeamId: 1, teams: [pipelineTeam] }
+      const { rerender } = render(<TeamEditDialog {...props} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit member' }))
+      await waitFor(() => expect(bindingContext().targetGroupsError).toBe(true))
+      fireEvent.click(screen.getByRole('button', { name: 'Retry bindings' }))
+      const other = { ...pipelineTeam, id: 2, name: 'other-agent', namespace: 'research' }
+      rerender(<TeamEditDialog {...props} editingTeamId={2} teams={[pipelineTeam, other]} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit member' }))
+      expect(bindingContext()).toMatchObject({
+        targetGroupNames: ['research'],
+        targetGroupsLoading: true,
+        targetGroupsError: false,
+      })
+      await act(async () => {
+        if (result === 'resolve') retryA.resolve({ group_names: ['engineering'] })
+        else retryA.reject(new Error('Late failure'))
+      })
+      expect(bindingContext()).toMatchObject({
+        targetGroupNames: ['research'],
+        targetGroupsLoading: true,
+        targetGroupsError: false,
+      })
+      expect(props.toast).toHaveBeenCalledTimes(1)
+      await act(async () => loadB.resolve({ group_names: ['research', 'design'] }))
+      expect(bindingContext()).toMatchObject({
+        targetGroupNames: ['research', 'design'],
+        targetGroupsLoading: false,
+        targetGroupsError: false,
+      })
+    }
+  )
+
+  it('invalidates a retry when the parent unmounts', async () => {
+    const retry = deferredBindings()
+    jest
+      .mocked(resourceLibraryApi.getAgentBindings)
+      .mockRejectedValueOnce(new Error('Initial failure'))
+      .mockReturnValueOnce(retry.promise)
+    const props = { ...createProps(), editingTeamId: 1, teams: [pipelineTeam] }
+    const { unmount } = render(<TeamEditDialog {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit member' }))
+    await waitFor(() => expect(bindingContext().targetGroupsError).toBe(true))
+    fireEvent.click(screen.getByRole('button', { name: 'Retry bindings' }))
+    unmount()
+    await act(async () => retry.reject(new Error('Late failure')))
+    expect(props.toast).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe('TeamEditDialog team mode selector', () => {
   beforeEach(() => {

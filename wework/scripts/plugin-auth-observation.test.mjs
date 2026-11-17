@@ -55,6 +55,19 @@ test('an error settles its exact attempt and cannot count as recovery', async ()
   })
 })
 
+test('another successful attempt for the same target cannot release a fenced attempt', async () => {
+  await fixture(async ({ event, observation }) => {
+    await event('fenced-mail', 'requesting')
+    await event('other-mail', 'requesting')
+    await event('other-mail', 'finished', { ok: true })
+    assert.equal(await observation.pending(), 'fenced-mail')
+    await observation.assertPending('fenced-mail')
+    assert.equal(await observation.succeeded('fenced-mail'), false)
+    await event('fenced-mail', 'finished', { ok: true })
+    assert.equal(await observation.succeeded('fenced-mail'), true)
+  })
+})
+
 test('an incomplete append cannot create a completed observation', async () => {
   await fixture(async ({ marker, event, observation }) => {
     assert.equal(await observation.pending(), undefined)
