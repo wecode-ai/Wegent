@@ -183,6 +183,7 @@ export interface CreateProjectRuntimeTaskOptions {
 }
 
 export interface RuntimePaneActionOptions {
+  pendingClientUserMessageId?: string
   isCurrent?: () => boolean
   onError?: (error: string) => void
   onQueued?: (response: RuntimeSendResponse) => void

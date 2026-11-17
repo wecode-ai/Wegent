@@ -1741,7 +1741,9 @@ describe('composer cancellation rollback', () => {
         await result.current.pauseCurrentResponse()
       })
 
-      expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(address)
+      expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(address, {
+        pendingClientUserMessageId: 'cancelled-before-start',
+      })
       if (accepted) {
         await waitFor(() =>
           expect(result.current.messages).not.toContainEqual(

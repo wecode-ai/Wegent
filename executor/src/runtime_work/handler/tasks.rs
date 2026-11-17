@@ -1147,6 +1147,34 @@ impl RuntimeWorkRpcHandler {
                 ],
             );
         }
+        if let Some(client_user_message_id) = string_field(&payload, "clientUserMessageId")
+            .or_else(|| string_field(&payload, "client_user_message_id"))
+        {
+            let cancelled = {
+                let mut pending = self
+                    .cancelled_pending_sends
+                    .lock()
+                    .expect("cancelled pending sends lock should not be poisoned");
+                if pending.get(&local_task_id).map(String::as_str)
+                    == Some(client_user_message_id.as_str())
+                {
+                    pending.remove(&local_task_id);
+                    true
+                } else {
+                    false
+                }
+            };
+            if cancelled {
+                return Ok(json!({
+                    "success": false,
+                    "accepted": false,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                    "code": "cancelled",
+                    "error": "send was cancelled before executor dispatch",
+                }));
+            }
+        }
         self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
         let existing_link = self.local_task_link(&local_task_id);
@@ -2363,7 +2391,11 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let send_gate = self.task_send_gate(&local_task_id);
+        let _send_guard = send_gate.lock().await;
         self.invalidate_stand_in_owner_request(&local_task_id);
+        let pending_client_user_message_id = string_field(&payload, "clientUserMessageId")
+            .or_else(|| string_field(&payload, "client_user_message_id"));
         let link = self.local_task_link(&local_task_id);
         let thread_id = link.as_ref().and_then(runtime_session_id_from_link);
         let is_codex = link
@@ -2386,7 +2418,8 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if self.cancel_preparing_turn(&local_task_id) {
+        let cancelled_preparing_turn = self.cancel_preparing_turn(&local_task_id);
+        if cancelled_preparing_turn {
             self.request_active_turn_stop(&local_task_id);
             return Ok(match link {
                 Some(link) => task_action_success(&link),
@@ -2397,6 +2430,18 @@ impl RuntimeWorkRpcHandler {
                     "runtime": "codex",
                 }),
             });
+        }
+        let cancels_pending_send = pending_client_user_message_id.is_some()
+            && !had_active_local_execution
+            && !removed_queued
+            && !cancelled_preparing_turn;
+        if let (true, Some(client_user_message_id)) =
+            (cancels_pending_send, pending_client_user_message_id)
+        {
+            self.cancelled_pending_sends
+                .lock()
+                .expect("cancelled pending sends lock should not be poisoned")
+                .insert(local_task_id.clone(), client_user_message_id);
         }
         let had_active_local_execution =
             self.request_active_turn_stop(&local_task_id) || had_active_local_execution;
@@ -2439,12 +2484,16 @@ impl RuntimeWorkRpcHandler {
         if !local_stopped && !require_stopped {
             self.force_settle_local_task_execution(
                 &local_task_id,
-                thread_id,
+                thread_id.clone(),
                 "cancelled",
                 "cancel_timeout",
             );
         }
         let cleanup_pending = !local_stopped || !provider_stopped;
+
+        if cancels_pending_send {
+            self.settle_cancelled_idle_task(&local_task_id, thread_id.clone());
+        }
 
         Ok(match self.local_task_link(&local_task_id).or(link) {
             Some(link) => {

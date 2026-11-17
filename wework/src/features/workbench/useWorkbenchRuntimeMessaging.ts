@@ -529,6 +529,23 @@ export function useWorkbenchRuntimeMessaging({
           sendRequested = true
         }
         const response = await executorClient.runtime.sendRuntimeMessage(outboundRequest)
+        if (!response.accepted && response.code === 'cancelled') {
+          if (optimisticUserMessage) {
+            removeRuntimeConversationTurn(outboundRequest.address, {
+              clientUserMessageId: optimisticUserMessage.id,
+            })
+          }
+          lifecycleStore.stopRequested(outboundRequest.address)
+          lifecycleStore.turnSettled(outboundRequest.address, undefined, 'cancelled')
+          lifecycleStore.executorSettled(outboundRequest.address)
+          await refreshWorkLists().catch(error => {
+            console.warn('[Wework] Cancelled stale send but work list refresh failed', {
+              taskId: outboundRequest.address.taskId,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          })
+          return isCurrent()
+        }
         if (!isCurrent()) return false
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
@@ -815,7 +832,11 @@ export function useWorkbenchRuntimeMessaging({
   const cancelRuntimePaneTask = useCallback(
     async (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): Promise<boolean> => {
       try {
-        const ack = await executorClient.runtime.cancelRuntimeTask(address)
+        const ack = await executorClient.runtime.cancelRuntimeTask(
+          options?.pendingClientUserMessageId
+            ? { ...address, clientUserMessageId: options.pendingClientUserMessageId }
+            : address
+        )
         if (!ack.accepted) {
           reportError(normalizeGuidanceError(ack.error ?? '取消当前回复失败'), options)
           return false

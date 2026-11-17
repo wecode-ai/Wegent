@@ -4515,6 +4515,100 @@ async fn runtime_tasks_send_after_cancel_resumes_started_thread_not_local_task_i
 }
 
 #[tokio::test]
+async fn runtime_tasks_cancel_rejects_the_matching_pre_dispatch_send() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-cancel-pre-dispatch-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-cancel-pre-dispatch-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    seed_persisted_runtime_task(&executor_home, "local-task-1", "thread-1");
+    let log_path = temp_path("runtime-cancel-pre-dispatch-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let cancelled = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1",
+                "clientUserMessageId": "cancelled-before-dispatch"
+            }
+        }))
+        .await
+        .expect("cancel should be accepted");
+    assert_eq!(cancelled["accepted"], true);
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list", "payload": {"runtime": "codex"}
+        }))
+        .await
+        .expect("cancelled task should remain listed");
+    let task = listed["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+        .find(|task| task["taskId"] == "local-task-1")
+        .expect("cancelled task should be present");
+    assert_eq!(task["status"], "cancelled");
+    assert_eq!(task["running"], false);
+
+    let stale = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1",
+                "message": "stale prompt",
+                "clientUserMessageId": "cancelled-before-dispatch",
+                "executionRequest": codex_execution_request(
+                    "stale prompt",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("stale send should return a contract response");
+    assert_eq!(stale["accepted"], false);
+    assert_eq!(stale["code"], "cancelled");
+    assert_eq!(
+        read_json_lines(&log_path)
+            .iter()
+            .filter(|call| call["method"] == "turn/start")
+            .count(),
+        0,
+        "the cancelled pre-dispatch send must not start a native turn"
+    );
+
+    let replacement = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-1",
+                "message": "replacement prompt",
+                "clientUserMessageId": "replacement-prompt",
+                "executionRequest": codex_execution_request(
+                    "replacement prompt",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("replacement send should be accepted");
+    assert_eq!(replacement["accepted"], true);
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+}
+
+#[tokio::test]
 async fn runtime_tasks_send_uses_nested_address_runtime_handle_without_local_index() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(

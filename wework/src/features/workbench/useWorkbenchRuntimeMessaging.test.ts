@@ -248,6 +248,52 @@ describe('runtime pane cancellation', () => {
       }
     }
   )
+
+  test('settles a send rejected after its optimistic cancellation', async () => {
+    const { address, store, cancel, send, messaging } = messagingFixture()
+    let finishSend!: (value: { accepted: boolean; taskId: string; code: string }) => void
+    send.mockReturnValueOnce(
+      new Promise(resolve => {
+        finishSend = resolve
+      })
+    )
+    const optimisticUserMessage = {
+      id: 'cancelled-before-dispatch',
+      role: 'user' as const,
+      content: 'Old prompt',
+      status: 'done' as const,
+    }
+    try {
+      const sending = messaging.sendRuntimePaneMessage(
+        {
+          address,
+          message: 'Old prompt',
+          clientUserMessageId: optimisticUserMessage.id,
+          modelId: 'test-model',
+        },
+        { optimisticUserMessage }
+      )
+      await waitFor(() => expect(send).toHaveBeenCalledOnce())
+      await messaging.cancelRuntimePaneTask(address, {
+        pendingClientUserMessageId: optimisticUserMessage.id,
+      })
+      finishSend({ accepted: false, code: 'cancelled', taskId: address.taskId })
+
+      await expect(sending).resolves.toBe(true)
+      expect(cancel).toHaveBeenCalledExactlyOnceWith({
+        ...address,
+        clientUserMessageId: optimisticUserMessage.id,
+      })
+      expect(store.getTask(address)).toMatchObject({
+        execution: { phase: 'idle' },
+        turn: { active: false, outcome: 'cancelled' },
+      })
+      expect(getRuntimeConversationTurns(address)).toEqual([])
+    } finally {
+      store.remove(address)
+      clearRuntimeConversationCacheForTests()
+    }
+  })
 })
 
 describe.each([{ isSelectionReady: false }, { isConfiguredModelUnavailable: true }])(
