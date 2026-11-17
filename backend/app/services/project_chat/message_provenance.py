@@ -1,12 +1,16 @@
 """Derive public authorship from persisted identities, never message text."""
 
+import logging
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models.delivery import ProjectChatAgent
+from app.db.session import get_db_session
+from app.models.delivery import ProjectChatAgent, loop_datetime_is_unset
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 
 SHARED_METADATA_KEYS = frozenset(
     {
@@ -63,19 +67,58 @@ def shared_message_metadata(
     return {key: metadata[key] for key in keys if key in metadata}
 
 
-def shared_message_payload(message: dict[str, Any]) -> dict[str, Any]:
-    """Sanitize a room broadcast that is not scoped to one viewer."""
+def broadcast_message_payload(message: dict[str, Any]) -> dict[str, Any] | None:
+    """Project a committed message for API and cross-process room delivery."""
+
+    try:
+        with get_db_session() as db:
+            return shared_message_payload(message, db=db)
+    except Exception:
+        logger.exception(
+            "[ProjectChat] Room projection failed message_id=%s",
+            message.get("messageId"),
+        )
+        return None
+
+
+def shared_message_payload(
+    message: dict[str, Any], *, db: Session
+) -> dict[str, Any] | None:
+    """Derive room authority from persisted identity, never the sender's view."""
+
+    from app.services.project_chat.service import project_chat_service
+
+    row = (
+        db.query(ProjectChatMessage)
+        .filter_by(
+            message_id=message.get("messageId"),
+            project_id=message.get("projectId"),
+            task_id=message.get("taskId") or "",
+        )
+        .filter(loop_datetime_is_unset(ProjectChatMessage.deleted_at))
+        .first()
+    )
+    if row is None:
+        return None
+    runtime_shared = message_runtime_is_shared(db, row)
+    canonical = project_chat_service.to_view(row, db=db)
 
     shared = dict(message)
     if "metadata" in shared:
-        shared["metadata"] = shared_message_metadata(shared["metadata"])
+        shared["metadata"] = shared_message_metadata(
+            shared["metadata"], include_runtime=runtime_shared
+        )
     if shared.get("type") in {"agent_status", "agent_chunk"}:
         shared["content"] = ""
-    if "runtimeAddress" in shared:
-        shared["runtimeAddress"] = None
-        shared["traceState"] = (
-            "restricted" if shared.get("traceRef") else "history-unavailable"
-        )
+    shared["actorUserId"] = canonical.actor_user_id
+    shared["actorDisplayName"] = canonical.actor_display_name
+    shared["runtimeAddress"] = canonical.runtime_address if runtime_shared else None
+    shared["traceRef"] = canonical.trace_ref
+    shared["traceState"] = (
+        canonical.trace_state
+        if runtime_shared
+        else ("restricted" if canonical.trace_ref else "history-unavailable")
+    )
     return shared
 
 

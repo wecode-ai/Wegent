@@ -312,9 +312,20 @@ def test_shared_agent_runtime_is_available_without_private_metadata(test_db, tes
     assert member_view.metadata["workflow_task_title"] == "Assigned task"
 
 
-def test_shared_room_payload_never_contains_a_runtime_address_or_process_body():
+def test_shared_room_payload_never_contains_a_private_runtime_or_process_body(test_db):
+    row = message(
+        message_id="private-runtime",
+        runtime_device_id="device",
+        runtime_task_id="task",
+        status="streaming",
+    )
+    test_db.add(row)
+    test_db.flush()
     payload = shared_message_payload(
         {
+            "messageId": row.message_id,
+            "projectId": row.project_id,
+            "taskId": row.task_id,
             "type": "agent_chunk",
             "content": "private tool output",
             "runtimeAddress": {"deviceId": "device", "taskId": "task"},
@@ -326,10 +337,75 @@ def test_shared_room_payload_never_contains_a_runtime_address_or_process_body():
                 "contentMode": "delta",
                 "dispatch_assignments": [],
             },
-        }
+        },
+        db=test_db,
     )
 
     assert payload["runtimeAddress"] is None
     assert payload["traceState"] == "restricted"
     assert payload["content"] == ""
     assert payload["metadata"] == {"run_status": "running", "dispatch_assignments": []}
+
+
+@pytest.mark.parametrize("source", ["shared", "private", "stand_in", "foreign_project"])
+def test_room_projection_uses_persisted_runtime_scope(test_db, source):
+    agent = ProjectChatAgent(
+        id="room-agent",
+        cloud_project_id=(
+            "other-project" if source == "foreign_project" else "project-one"
+        ),
+        title="Agent",
+        name="Agent",
+        created_by_user_id=999,
+        metadata_json={"visibility": "private" if source == "private" else "public"},
+    )
+    metadata = {
+        "workflow_task_title": "Collect evidence",
+        "execution_id": 42,
+        "private_prompt": "private",
+        "runtime_shared": True,
+    }
+    if source == "stand_in":
+        metadata["stand_in"] = {"user_id": 999}
+    row = message(
+        message_id="room-result",
+        agent_id=agent.id,
+        metadata_json=metadata,
+        runtime_device_id="actual-device",
+        runtime_task_id="actual-task",
+        status="completed",
+    )
+    test_db.add_all([agent, row])
+    test_db.flush()
+    owner = project_chat_service.to_shared_view(row, db=test_db, viewer_user_id=999)
+    view = owner.model_dump(by_alias=True)
+    view["runtimeAddress"] = {"deviceId": "spoofed", "taskId": "spoofed"}
+
+    payload = shared_message_payload(view, db=test_db)
+
+    assert payload is not None
+    assert payload["status"] == "completed"
+    assert "private_prompt" not in payload["metadata"]
+    assert "runtime_shared" not in payload["metadata"]
+    if source == "shared":
+        assert payload["runtimeAddress"] == {
+            "deviceId": "actual-device",
+            "taskId": "actual-task",
+        }
+        assert payload["traceState"] == "available"
+        assert payload["metadata"]["workflow_task_title"] == "Collect evidence"
+        assert payload["metadata"]["execution_id"] == 42
+    else:
+        assert payload["runtimeAddress"] is None
+        assert payload["traceState"] == "restricted"
+        assert "workflow_task_title" not in payload["metadata"]
+        assert "execution_id" not in payload["metadata"]
+
+
+def test_room_projection_rejects_a_different_issue_identity(test_db):
+    row = message(message_id="scoped-message", status="completed")
+    test_db.add(row)
+    test_db.flush()
+    view = project_chat_service.to_view(row, db=test_db).model_dump(by_alias=True)
+    view["taskId"] = "OTHER-ISSUE"
+    assert shared_message_payload(view, db=test_db) is None

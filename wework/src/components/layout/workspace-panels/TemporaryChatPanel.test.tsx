@@ -1452,6 +1452,42 @@ describe('TemporaryChatPanel', () => {
     expect(bound.deviceId).toBe('app-record-42')
   })
 
+  it('opens files in the host workspace without navigating away from the temporary chat', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'delivery',
+        role: 'assistant',
+        content: 'cart-review.md',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    const onOpenWorkspaceFile = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="temporary-file-preview"
+        initialAddress={address}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('mock-open-file'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledExactlyOnceWith('cart-fixture/cart-review.md', {
+      lineStart: 3,
+      lineEnd: 7,
+    })
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    expect(mocks.readTask).not.toHaveBeenCalled()
+    expect(
+      consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, address.taskId)
+    ).toBeNull()
+  })
+
   it('preserves the first file action and line range while navigating to its owning task', async () => {
     mocks.conversationMessages = [
       {

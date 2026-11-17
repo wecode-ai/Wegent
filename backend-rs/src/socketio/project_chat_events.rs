@@ -837,7 +837,9 @@ async fn emit_created(state: &AppState, runtime: &Arc<SocketRuntime>, view: &Val
         .unwrap_or_default();
     let task_id = view.get("taskId").and_then(Value::as_str);
     let room = project_chat_room(project_id, task_id);
-    let shared = shared_message_payload(view);
+    let Some(shared) = shared_message_payload(state, view).await else {
+        return;
+    };
     if let Err(error) = runtime
         .emitters()
         .project_chat_message(&room, false, &shared)

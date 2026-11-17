@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LiquidGlassButton, LiquidGlassGroup, LiquidGlassSurface } from './LiquidGlass'
+import { setDiagnosticRecording } from '@/services/mobileDiagnostics'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -180,26 +181,33 @@ describe('native glass presentation', () => {
     expect(renderer.root.findAllByType('GlassView' as never)).toHaveLength(0)
   })
 
-  it('reports preference-read failure and remains usable with opaque controls', async () => {
-    const failure = new Error('Accessibility preference unavailable')
-    native.readTransparency.mockRejectedValue(failure)
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      const renderer = await render(surface())
+  it.each([false, true])(
+    'keeps controls usable on preference failure and diagnoses only with opt-in (%s)',
+    async enabled => {
+      const failure = new Error('Accessibility preference unavailable')
+      native.readTransparency.mockRejectedValue(failure)
+      const warning = vi.spyOn(console, 'info').mockImplementation(() => {})
+      setDiagnosticRecording(enabled)
+      try {
+        const renderer = await render(surface())
 
-      expect(warning).toHaveBeenCalledWith(
-        'Unable to read the reduced transparency setting',
-        failure
-      )
-      expect(renderer.root.findAllByType('GlassView' as never)).toHaveLength(0)
-      expect(renderer.root.findByType('span').children).toEqual(['Content'])
+        if (enabled)
+          expect(warning).toHaveBeenCalledWith('Unable to read the reduced transparency setting', {
+            errorType: 'Error',
+          })
+        else expect(warning).not.toHaveBeenCalled()
+        expect(JSON.stringify(warning.mock.calls)).not.toContain(failure.message)
+        expect(renderer.root.findAllByType('GlassView' as never)).toHaveLength(0)
+        expect(renderer.root.findByType('span').children).toEqual(['Content'])
 
-      await act(() => native.listeners.forEach(listener => listener(false)))
-      expect(renderer.root.findAllByType('GlassView' as never)).toHaveLength(1)
-    } finally {
-      warning.mockRestore()
+        await act(() => native.listeners.forEach(listener => listener(false)))
+        expect(renderer.root.findAllByType('GlassView' as never)).toHaveLength(1)
+      } finally {
+        setDiagnosticRecording(false)
+        warning.mockRestore()
+      }
     }
-  })
+  )
 
   it('keeps disabled button semantics and disables native interaction', async () => {
     const renderer = await render(

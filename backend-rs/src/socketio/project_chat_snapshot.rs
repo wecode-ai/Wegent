@@ -942,7 +942,9 @@ pub(crate) async fn handle(
             .unwrap_or_default();
         let task_id = message.get("taskId").and_then(Value::as_str);
         let room = project_chat_room(project_id, task_id);
-        let shared = shared_message_payload(message);
+        let Some(shared) = shared_message_payload(state, message).await else {
+            continue;
+        };
         if let Err(error) = runtime
             .emitters()
             .project_chat_message(&room, false, &shared)

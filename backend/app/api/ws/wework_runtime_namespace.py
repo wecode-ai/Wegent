@@ -741,13 +741,16 @@ def project_chat_room(project_id: str, task_id: str | None) -> str:
 async def emit_project_chat_message(
     namespace: WeworkRuntimeNamespace, message: dict[str, Any]
 ) -> None:
-    from app.services.project_chat.message_provenance import shared_message_payload
+    from app.services.project_chat.message_provenance import broadcast_message_payload
 
     project_id = str(message["projectId"])
     task_id = message.get("taskId")
+    shared = await run_sync_in_executor(broadcast_message_payload, message)
+    if shared is None:
+        return
     await namespace.emit(
         PROJECT_CHAT_CREATED_EVENT,
-        shared_message_payload(message),
+        shared,
         room=project_chat_room(project_id, str(task_id) if task_id else None),
     )
 

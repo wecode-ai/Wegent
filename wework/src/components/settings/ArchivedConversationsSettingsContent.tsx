@@ -403,7 +403,7 @@ function sanitizeTestId(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, '-')
 }
 
-function formatArchivedTime(value?: string | null) {
+function formatArchivedTime(value?: string | number | null) {
   if (!value) return ''
   try {
     return new Intl.DateTimeFormat(undefined, {

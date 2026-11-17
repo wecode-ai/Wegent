@@ -3176,17 +3176,20 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     message.get("status"),
                 )
                 from app.services.project_chat.message_provenance import (
-                    shared_message_payload,
+                    broadcast_message_payload,
                 )
 
-                await get_sio().emit(
-                    PROJECT_CHAT_CREATED_EVENT,
-                    shared_message_payload(message),
-                    room=project_chat_room(
-                        project_id, str(project_task_id) if project_task_id else None
-                    ),
-                    namespace=WEWORK_RUNTIME_NAMESPACE,
-                )
+                shared = await run_sync_in_executor(broadcast_message_payload, message)
+                if shared is not None:
+                    await get_sio().emit(
+                        PROJECT_CHAT_CREATED_EVENT,
+                        shared,
+                        room=project_chat_room(
+                            project_id,
+                            str(project_task_id) if project_task_id else None,
+                        ),
+                        namespace=WEWORK_RUNTIME_NAMESPACE,
+                    )
 
         if _is_runtime_task_reply_status(status) and not content.strip():
             logger.info(
@@ -3307,15 +3310,19 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 else PROJECT_CHAT_CREATED_EVENT
             )
             from app.services.project_chat.message_provenance import (
-                shared_message_payload,
+                broadcast_message_payload,
             )
 
-            await get_sio().emit(
-                event_name,
-                shared_message_payload(message),
-                room=project_chat_room(project_id, str(task_id) if task_id else None),
-                namespace=WEWORK_RUNTIME_NAMESPACE,
-            )
+            shared = await run_sync_in_executor(broadcast_message_payload, message)
+            if shared is not None:
+                await get_sio().emit(
+                    event_name,
+                    shared,
+                    room=project_chat_room(
+                        project_id, str(task_id) if task_id else None
+                    ),
+                    namespace=WEWORK_RUNTIME_NAMESPACE,
+                )
         relay_payload = payload
         if relay_device_id:
             relay_payload = {

@@ -47,6 +47,7 @@ mod client;
 mod config;
 mod connection;
 mod connection_controller;
+mod connection_service;
 mod extension;
 mod handlers;
 mod runtime_events;
@@ -248,7 +249,8 @@ where
                     &config,
                 )))),
                 Some(device_route_id.clone()),
-            ),
+            )
+            .with_connection_observation_device_type(&config.device_type),
         );
         Self::new_with_runtime_work_handler(
             config,
@@ -888,9 +890,13 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
 
 pub async fn serve_remote_local_backend(config: DeviceConfig) -> Result<(), String> {
     let backend_config = LocalBackendConfig::from_device_config(config);
-    LocalBackendRunner::new(backend_config, SocketIoTransport::default())
-        .run_forever()
-        .await
+    let runner = LocalBackendRunner::new(backend_config, SocketIoTransport::default());
+    let service = connection_service::supervise(&runner);
+    tokio::pin!(service);
+    tokio::select! {
+        result = runner.run_forever() => result,
+        _ = &mut service => unreachable!("connection supervision stays available for retries"),
+    }
 }
 
 fn app_ipc_sidecar_device_id(config: &LocalBackendConfig) -> String {

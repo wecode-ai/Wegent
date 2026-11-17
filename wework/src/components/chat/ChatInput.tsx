@@ -34,6 +34,7 @@ import type {
   RuntimeGoalExecutionStatus,
   RuntimePlanEventPayload,
   RuntimeTaskAddress,
+  RuntimeTaskInteractionStatus,
   RuntimeWorkListResponse,
   SkillRef,
   UnifiedModel,
@@ -51,7 +52,8 @@ import {
 } from '@/lib/conversation-mentions'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
-import { GoalStatusBar } from './composer/GoalStatusBar'
+import { ConversationEventContext } from './composer/ConversationEventContext'
+import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
 import { TaskPlanProgress } from './composer/TaskPlanProgress'
 import { buildRefinedPluginPrompt, buildTrialTemplatePrompt } from '@/features/plugins/pluginTrial'
@@ -241,6 +243,12 @@ export interface ChatInputProps {
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
   goalExecutionStatus?: RuntimeGoalExecutionStatus | null
+  eventSubscriptions?: unknown
+  eventSubscriptionScope?: string
+  onCancelEventSubscription?: (key: string) => Promise<void>
+  eventCancellationUnavailable?: boolean
+  eventCancellationUnsupported?: boolean
+  interactionStatus?: RuntimeTaskInteractionStatus | null
   taskPlan?: RuntimePlanEventPayload | null
   goalDraftActive?: boolean
   onSetGoal?: () => void
@@ -375,6 +383,12 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     goal,
     goalContinuing = false,
     goalExecutionStatus = null,
+    eventSubscriptions,
+    eventSubscriptionScope,
+    onCancelEventSubscription,
+    eventCancellationUnavailable,
+    eventCancellationUnsupported,
+    interactionStatus,
     taskPlan,
     goalDraftActive = false,
     onSetGoal,
@@ -790,29 +804,38 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             collapseWhenIdle={collapseWhenIdle}
             alwaysShowComposerToolbar={alwaysShowComposerToolbar || isMobile}
             contextHeader={
-              (contextHeader || (displayedGoal && !goalDraftActive)) && (
+              (contextHeader ||
+                onCancelEventSubscription ||
+                connectionEventSubscriptions(eventSubscriptions).length > 0 ||
+                (displayedGoal && !goalDraftActive)) && (
                 <div
                   data-testid="composer-context-rail"
                   className={[
-                    'mb-1 min-w-0 items-center text-sm text-text-secondary [&>*]:min-w-0 [&>*]:max-w-full',
+                    'mb-1 min-w-0 items-center text-sm text-text-secondary empty:hidden [&>*]:min-w-0 [&>*]:max-w-full',
                     contextHeader && displayedGoal && !goalDraftActive
                       ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
-                      : 'flex',
+                      : 'flex flex-wrap',
                   ].join(' ')}
                 >
-                  {displayedGoal && !goalDraftActive && (
-                    <GoalStatusBar
-                      integrated
-                      goal={displayedGoal}
-                      continuing={goalContinuing}
-                      executionStatus={goalExecutionStatus}
-                      onEditGoal={onEditGoal}
-                      onPauseGoal={onPauseGoal}
-                      onResumeGoal={onResumeGoal}
-                      onClearGoal={onClearGoal}
-                    />
-                  )}
-                  {contextHeader}
+                  <ConversationEventContext
+                    integrated
+                    goal={goal}
+                    goalDraftActive={goalDraftActive}
+                    continuing={goalContinuing}
+                    executionStatus={goalExecutionStatus}
+                    subscriptions={eventSubscriptions}
+                    eventSubscriptionScope={eventSubscriptionScope}
+                    onCancelEventSubscription={onCancelEventSubscription}
+                    eventCancellationUnavailable={eventCancellationUnavailable}
+                    eventCancellationUnsupported={eventCancellationUnsupported}
+                    interactionStatus={interactionStatus}
+                    onEditGoal={onEditGoal}
+                    onPauseGoal={onPauseGoal}
+                    onResumeGoal={onResumeGoal}
+                    onClearGoal={onClearGoal}
+                  >
+                    {contextHeader}
+                  </ConversationEventContext>
                 </div>
               )
             }
@@ -857,17 +880,22 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
           onApplyRefinedPrompt={applyRefinedPrompt}
           onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
         />
-        {displayedGoal && !goalDraftActive && (
-          <GoalStatusBar
-            goal={displayedGoal}
-            continuing={goalContinuing}
-            executionStatus={goalExecutionStatus}
-            onEditGoal={onEditGoal}
-            onPauseGoal={onPauseGoal}
-            onResumeGoal={onResumeGoal}
-            onClearGoal={onClearGoal}
-          />
-        )}
+        <ConversationEventContext
+          goal={goal}
+          goalDraftActive={goalDraftActive}
+          continuing={goalContinuing}
+          executionStatus={goalExecutionStatus}
+          subscriptions={eventSubscriptions}
+          eventSubscriptionScope={eventSubscriptionScope}
+          onCancelEventSubscription={onCancelEventSubscription}
+          eventCancellationUnavailable={eventCancellationUnavailable}
+          eventCancellationUnsupported={eventCancellationUnsupported}
+          interactionStatus={interactionStatus}
+          onEditGoal={onEditGoal}
+          onPauseGoal={onPauseGoal}
+          onResumeGoal={onResumeGoal}
+          onClearGoal={onClearGoal}
+        />
         <CompactChatComposer
           ref={composerRef}
           {...composerProps}

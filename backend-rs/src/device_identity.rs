@@ -376,6 +376,8 @@ pub struct RuntimeRouteIdentity {
     /// `runtime_device_id`: the transport identity used for the Redis online
     /// key and the Socket.IO room (`_runtime_device_id`).
     pub runtime_device_id: String,
+    /// The local executor identity reported by an App installation.
+    pub app_device_id: Option<String>,
     /// `runtime_instance_id`: the pinned installation identity, when the
     /// device registered one.
     pub runtime_instance_id: Option<String>,
@@ -414,6 +416,10 @@ pub(crate) fn identity_from_device(device: &DeviceKindRow) -> Option<RuntimeRout
         logical_device_id: record_route_id(device),
         device_type: DeviceType::from_spec(&device.spec()),
         runtime_device_id,
+        app_device_id: device
+            .spec()
+            .app_device_id
+            .filter(|id| !id.trim().is_empty()),
         runtime_instance_id: runtime_instance_id(device),
     })
 }
@@ -986,11 +992,12 @@ mod tests {
         let app = DeviceKindRow {
             id: 268663,
             name: "local-device".to_string(),
-            json: serde_json::json!({"spec": {"deviceType": "app"}}),
+            json: serde_json::json!({"spec": {"deviceType": "app", "appDeviceId": "electron-host"}}),
         };
         let identity = identity_from_device(&app).expect("app identity");
         assert_eq!(identity.logical_device_id, "app-record-268663");
         assert_eq!(identity.runtime_device_id, "app-record-268663");
+        assert_eq!(identity.app_device_id.as_deref(), Some("electron-host"));
         assert_eq!(identity.device_type, DeviceType::App);
 
         // No runtime route id means no identity, like `_identity_from_device`.

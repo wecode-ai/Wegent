@@ -261,7 +261,9 @@ pub(super) async fn emit_project_chat(
     } else {
         PROJECT_CHAT_CREATED_EVENT
     };
-    let shared = shared_message_payload(message);
+    let Some(shared) = shared_message_payload(state, message).await else {
+        return;
+    };
     if let Err(error) = runtime
         .emitters()
         .project_chat_message(&room, projected.delta, &shared)

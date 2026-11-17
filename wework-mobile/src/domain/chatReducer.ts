@@ -17,7 +17,14 @@ import {
 } from './requestUserInput'
 
 import { visibleRuntimeUserMessage } from './runtimeUserMessage'
-import { runtimeAssistantViewId } from '../../../packages/chat-core/src/runtime-turn-projection'
+import { eventBase } from '../../../packages/chat-core/src/response-api-decoder'
+import {
+  bindStreamUser,
+  mergeLatestMessages,
+  uniqueMessages,
+  updateStreamAssistant as updateAssistant,
+  type StreamIdentity,
+} from './mobileMessageOrdering'
 import { normalizeTurnFileChanges } from '../../../packages/chat-core/src/turn-file-changes'
 import { normalizeProcessingBlock } from '../../../packages/chat-core/src/runtime-transcript-blocks'
 import { mergeProcessingBlockUpdate } from '../../../packages/chat-core/src/workbench-message-reducer'
@@ -46,12 +53,6 @@ export type ChatAction =
   | { type: 'user-delivered'; id: string }
   | { type: 'user-input-response'; response: RequestUserInputResponse }
   | { type: 'user-input-cancelled'; key: string }
-
-interface StreamIdentity {
-  taskId?: string
-  subtaskId: string
-  itemId?: string
-}
 
 interface BlockUpdates {
   content?: string
@@ -83,7 +84,7 @@ function reduceChat(state: ChatMessage[], action: ChatAction): ChatMessage[] {
     case 'merge-latest':
       return preserveMobileUserInput(
         state,
-        uniqueMessages([...state, ...transcriptMessages(action.messages)])
+        mergeLatestMessages(state, transcriptMessages(action.messages))
       )
     case 'user-delivered':
       return state.map(message =>
@@ -137,6 +138,7 @@ function toChatMessage(message: RuntimeTranscriptMessage, index: number): ChatMe
         ? (message.clientUserMessageId ?? message.client_user_message_id ?? message.id)
         : message.id || `history-${index}`,
     role,
+    ...(message.runtimeItemId && { runtimeItemId: message.runtimeItemId }),
     ...(subtaskId && { subtaskId }),
     ...(turnId && { turnId }),
     content:
@@ -162,6 +164,7 @@ function toChatMessage(message: RuntimeTranscriptMessage, index: number): ChatMe
 function applyRuntimeEvent(state: ChatMessage[], event: RuntimeStreamEvent): ChatMessage[] {
   const identity = streamIdentity(event.payload)
   if (!identity) return state
+  state = bindStreamUser(state, identity)
   const data = eventData(event.payload)
 
   if (event.name === 'response.created' || event.name === 'response.in_progress') {
@@ -187,7 +190,13 @@ function applyRuntimeEvent(state: ChatMessage[], event: RuntimeStreamEvent): Cha
     if (!content) return state
     const itemId = idValue(data.itemId) ?? idValue(data.item_id) ?? `text-${identity.subtaskId}`
     return updateAssistant(state, identity, message =>
-      appendTextItem(message, itemId, content, eventOffset(event.payload), 'delta')
+      appendTextItem(
+        message,
+        itemId,
+        content,
+        finiteNumber(data.block_offset) ?? eventOffset(event.payload),
+        'delta'
+      )
     )
   }
 
@@ -318,6 +327,12 @@ function appendTextItem(
   offset: number | undefined,
   mode: 'delta' | 'snapshot'
 ): ChatMessage {
+  const block = message.blocks?.find(block => block.id === itemId && block.type === 'text')
+  if (block?.type === 'text')
+    return updateBlock(message, itemId, {
+      content: mode === 'snapshot' ? incoming : appendDelta(block.content, incoming, offset),
+      ...(mode === 'snapshot' && { status: 'done' }),
+    })
   const items = [...(message.textItems ?? initialTextItems(message))]
   const index = items.findIndex(item => item.id === itemId)
   const current = index >= 0 ? items[index] : { id: itemId, content: '' }
@@ -349,26 +364,23 @@ function initialTextItems(message: ChatMessage): ChatTextItem[] {
 
 function createBlock(message: ChatMessage, incoming: ChatProcessingBlock): ChatMessage {
   let blocks = finalizeNarrativeBlocks(message.blocks, incoming.createdAt)
-  let content = message.content
-  let textItems = message.textItems
-  if (incoming.type !== 'text' && content.trim()) {
+  // A completed commentary block can reuse an ID that first arrived as output
+  // deltas. Promote the pending representation without inventing another ID.
+  for (const item of message.textItems ?? initialTextItems(message))
     blocks = mergeBlock(blocks, {
-      id: `text-${message.subtaskId}-${blocks.filter(block => block.type === 'text').length + 1}`,
+      id: item.id,
       subtaskId: message.subtaskId ?? incoming.subtaskId,
       type: 'text',
-      content,
+      content: item.content,
       status: 'done',
       createdAt: incoming.createdAt,
       completedAt: incoming.createdAt,
     })
-    content = ''
-    textItems = undefined
-  }
   blocks = mergeBlock(blocks, incoming)
   return {
     ...clearError(message),
-    content,
-    textItems,
+    content: '',
+    textItems: undefined,
     blocks,
     ...(incoming.type === 'file_changes' && { fileChanges: incoming.fileChanges }),
     status: isActiveStatus(incoming.status) ? 'streaming' : message.status,
@@ -651,43 +663,6 @@ function normalizeBlock(
   return null
 }
 
-function updateAssistant(
-  state: ChatMessage[],
-  identity: StreamIdentity,
-  update: (message: ChatMessage) => ChatMessage
-): ChatMessage[] {
-  const ownsTurn = (message: ChatMessage) =>
-    message.role === 'assistant' && message.subtaskId === identity.subtaskId
-  const owner = identity.itemId
-    ? state.findIndex(
-        message =>
-          ownsTurn(message) &&
-          (message.textItems?.some(item => item.id === identity.itemId) ||
-            message.blocks?.some(block => block.id === identity.itemId))
-      )
-    : -1
-  const index = owner >= 0 ? owner : state.findLastIndex(ownsTurn)
-  if (index < 0) {
-    return [
-      ...state,
-      update({
-        id: runtimeAssistantViewId(identity.subtaskId),
-        taskId: identity.taskId,
-        subtaskId: identity.subtaskId,
-        role: 'assistant',
-        content: '',
-        status: 'pending',
-        createdAt: Date.now(),
-      }),
-    ]
-  }
-  return state.map((message, messageIndex) =>
-    messageIndex === index
-      ? update({ ...message, taskId: identity.taskId ?? message.taskId })
-      : message
-  )
-}
-
 function updateAssistantById(
   state: ChatMessage[],
   id: string,
@@ -711,11 +686,13 @@ function updateAssistantById(
 
 function streamIdentity(payload: Record<string, unknown>): StreamIdentity | null {
   const data = eventData(payload)
-  const subtaskId = idValue(payload.subtaskId) ?? idValue(data.subtaskId)
+  const base = eventBase(payload)
+  const subtaskId = base.subtaskId
   if (!subtaskId) return null
   return {
     subtaskId,
-    taskId: idValue(payload.taskId) ?? idValue(data.taskId),
+    taskId: base.taskId,
+    clientUserMessageId: base.clientUserMessageId,
     itemId:
       idValue(data.itemId) ??
       idValue(data.item_id) ??
@@ -868,15 +845,6 @@ function upsertMessage(state: ChatMessage[], message: ChatMessage): ChatMessage[
   const index = state.findIndex(current => current.id === message.id)
   if (index < 0) return [...state, message]
   return state.map((current, currentIndex) => (currentIndex === index ? message : current))
-}
-
-function uniqueMessages(messages: ChatMessage[]): ChatMessage[] {
-  const unique = new Map<string, ChatMessage>()
-  for (const message of messages) {
-    const attachments = message.attachments ?? unique.get(message.id)?.attachments
-    unique.set(message.id, attachments ? { ...message, attachments } : message)
-  }
-  return [...unique.values()]
 }
 
 export function appendDelta(current: string, delta: string, offset?: number): string {

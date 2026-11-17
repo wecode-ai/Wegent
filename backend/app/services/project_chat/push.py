@@ -50,9 +50,13 @@ def push_project_chat_message(message: dict[str, Any]) -> None:
             WEWORK_RUNTIME_NAMESPACE,
             project_chat_room,
         )
-        from app.services.project_chat.message_provenance import shared_message_payload
+        from app.services.project_chat.message_provenance import (
+            broadcast_message_payload,
+        )
 
-        shared = shared_message_payload(message)
+        shared = broadcast_message_payload(message)
+        if shared is None:
+            return
         project_id = str(shared["projectId"])
         task_id = shared.get("taskId")
         _publish_manager().emit(

@@ -982,6 +982,25 @@ export function WeworkSharedProject({
       userId,
     ]
   )
+  const openIssueExecutionConversation = (
+    issue: CollaborationIssue,
+    address: RuntimeTaskAddress
+  ) => {
+    taskComposerSequenceRef.current += 1
+    const issueExecution = { projectId: String(project.id), issueId: issue.id }
+    const resolvedAddress = {
+      ...hydrateRuntimeTaskAddress(runtimeWork, address),
+      issueExecution,
+      ...(project.project_store === 'backend' ? { projectSession: issueExecution } : {}),
+    }
+    setTaskComposer({
+      issue,
+      address: resolvedAddress,
+      conversationKey: `${issue.id}:${resolvedAddress.deviceId}:${resolvedAddress.taskId}`,
+    })
+    projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+  }
+
   const openBoundTaskConversation = useCallback(
     async (issue: CollaborationIssue, address: RuntimeTaskAddress) => {
       const requestSequence = ++taskComposerSequenceRef.current
@@ -1321,6 +1340,7 @@ export function WeworkSharedProject({
         taskComposer?.issue.id === issue.id ? (taskComposer.address?.taskId ?? null) : null
       }
       aitableApi={project.task_provider === 'dingtalk_aitable' ? services.aitableApi : undefined}
+      existingTaskSource={runtimePort ? { work: runtimeWork, port: runtimePort } : undefined}
       onCreateTask={onCreateTask}
       onDelete={onDelete}
       deleteLabel={createCollaborationTranslator(locale)('todo.archive_issue')}
@@ -1328,6 +1348,9 @@ export function WeworkSharedProject({
         String(issueId) === String(issue.id)
           ? openNewTaskConversation(issue, humanTaskDispatchInput(dispatch))
           : undefined
+      }
+      onOpenRuntimeTask={
+        runtimePort ? address => openIssueExecutionConversation(issue, address) : onOpenRuntimeTask
       }
       onOpenTaskConversation={
         runtimePort

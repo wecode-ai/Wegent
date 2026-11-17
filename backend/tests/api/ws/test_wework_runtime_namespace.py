@@ -542,14 +542,21 @@ async def test_runtime_event_projects_logical_id_but_publishes_runtime_route(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("room_available", [True, False])
 async def test_device_runtime_event_persists_project_chat_before_browser_relay(
     monkeypatch,
+    room_available,
 ):
+    from app.services.project_chat.message_provenance import broadcast_message_payload
+
     namespace = DeviceNamespace()
     calls: list[str] = []
     sio = AsyncMock()
 
-    async def project_event(*args, **kwargs):
+    async def project_event(func, *args, **kwargs):
+        if func is broadcast_message_payload:
+            calls.append("project_room")
+            return args[0] if room_available else None
         calls.append("persist")
         return {
             "mode": "snapshot",
@@ -583,11 +590,16 @@ async def test_device_runtime_event_persists_project_chat_before_browser_relay(
     )
 
     assert result == {"success": True}
-    assert calls == ["persist", "emit", "emit"]
-    assert sio.emit.await_args_list[0].args[0] == (
-        "wework:project_chat:message:created"
-    )
-    assert sio.emit.await_args_list[1].args[0] == "runtime:event"
+    if room_available:
+        assert calls == ["persist", "project_room", "emit", "emit"]
+        assert sio.emit.await_args_list[0].args[0] == (
+            "wework:project_chat:message:created"
+        )
+        assert sio.emit.await_args_list[1].args[0] == "runtime:event"
+    else:
+        assert calls == ["persist", "project_room", "emit"]
+        sio.emit.assert_awaited_once()
+        assert sio.emit.await_args.args[0] == "runtime:event"
 
 
 @pytest.mark.asyncio
@@ -1074,6 +1086,8 @@ async def test_project_chat_send_broadcasts_only_its_task_room(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_project_chat_agent_start_creates_one_streaming_message(monkeypatch):
+    from app.services.project_chat.message_provenance import broadcast_message_payload
+
     namespace = WeworkRuntimeNamespace()
     message = {
         "sequenceNumber": 6,
@@ -1089,7 +1103,15 @@ async def test_project_chat_agent_start_creates_one_streaming_message(monkeypatc
     )
     monkeypatch.setattr(namespace, "emit", AsyncMock())
     start = AsyncMock(return_value=message)
-    monkeypatch.setattr(wework_runtime_namespace, "run_sync_in_executor", start)
+
+    async def run_in_executor(func, *args, **kwargs):
+        if func is broadcast_message_payload:
+            return args[0]
+        return await start(func, *args, **kwargs)
+
+    monkeypatch.setattr(
+        wework_runtime_namespace, "run_sync_in_executor", run_in_executor
+    )
 
     response = await namespace.on_project_chat_agent_start(
         "browser-sid",

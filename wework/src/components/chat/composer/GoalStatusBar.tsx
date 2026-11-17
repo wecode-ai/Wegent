@@ -3,11 +3,13 @@ import { CircleDot, Pause, Pencil, Play, Target, Trash2 } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeGoal, RuntimeGoalExecutionStatus, RuntimeGoalStatus } from '@/types/api'
+import type { ConnectionGoalWaitState } from '@/lib/runtime-connection-events'
 
 interface GoalStatusBarProps {
   goal: RuntimeGoal
   continuing?: boolean
   executionStatus?: RuntimeGoalExecutionStatus | null
+  eventWaitState?: ConnectionGoalWaitState
   onEditGoal?: () => void
   onPauseGoal?: () => void
   onResumeGoal?: () => void
@@ -28,6 +30,7 @@ export function GoalStatusBar({
   goal,
   continuing = false,
   executionStatus = null,
+  eventWaitState,
   onEditGoal,
   onPauseGoal,
   onResumeGoal,
@@ -35,14 +38,19 @@ export function GoalStatusBar({
   integrated = false,
 }: GoalStatusBarProps) {
   const { t } = useTranslation('common')
+  const waitingForEvent = Boolean(eventWaitState) && executionStatus !== 'needsAttention'
   const statusLabel =
-    executionStatus === 'recovering'
-      ? { key: 'workbench.goal_status_compact_recovering', fallback: '正在恢复' }
-      : executionStatus === 'needsAttention'
-        ? { key: 'workbench.goal_status_compact_needs_attention', fallback: '需要恢复' }
-        : continuing
-          ? { key: 'workbench.goal_status_compact_continuing', fallback: '正在开始下一轮' }
-          : (goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active)
+    executionStatus === 'needsAttention'
+      ? { key: 'workbench.goal_status_compact_needs_attention', fallback: '需要恢复' }
+      : executionStatus === 'recovering'
+        ? { key: 'workbench.goal_status_compact_recovering', fallback: '正在恢复' }
+        : waitingForEvent && goal.status === 'blocked'
+          ? eventWaitState === 'received'
+            ? { key: 'workbench.goal_status_waiting_execution', fallback: '等待继续执行' }
+            : { key: 'workbench.goal_status_waiting_event', fallback: '等待事件' }
+          : continuing
+            ? { key: 'workbench.goal_status_compact_continuing', fallback: '正在开始下一轮' }
+            : (goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active)
   const timerKey = goalTimerKey(goal)
   const [timerState, setTimerState] = useState(() => createTimerState(timerKey, Date.now()))
   const [actionsRevealed, setActionsRevealed] = useState(false)
@@ -52,9 +60,18 @@ export function GoalStatusBar({
   )
   const elapsed = formatGoalElapsed(elapsedSeconds)
   const resumable =
-    goal.status === 'paused' || goal.status === 'blocked' || executionStatus === 'needsAttention'
-  const canToggle = goal.status === 'active' || resumable
-  const showStatus = !canToggle || continuing || executionStatus !== null
+    goal.status === 'paused' ||
+    (goal.status === 'blocked' && !waitingForEvent) ||
+    executionStatus === 'needsAttention'
+  const canToggle =
+    goal.status === 'active' || resumable || (goal.status === 'blocked' && waitingForEvent)
+  const showStatus =
+    goal.status === 'paused' ||
+    goal.status === 'blocked' ||
+    waitingForEvent ||
+    !canToggle ||
+    continuing ||
+    executionStatus !== null
   const ToggleIcon = resumable ? Play : Pause
   const toggleLabel = resumable
     ? t('workbench.goal_start', '开始目标')

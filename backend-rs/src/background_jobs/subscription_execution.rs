@@ -159,6 +159,7 @@ async fn execute_inner(app: &AppState, input: &Execute) -> Result<Value> {
             knowledge_base_names: &[],
             web_runtime_guidance: false,
             subtask_bot_resolved: false,
+            attachment_ids: &[],
         },
         data.spec["skillRefs"]
             .as_array()

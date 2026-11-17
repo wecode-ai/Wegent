@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-use super::{MessageRow, ack_error, message_view};
+use super::{MessageRow, ack_error, load_message_by_message_id, message_view};
 use crate::sql_support::StatementArg;
 use crate::state::AppState;
 
@@ -25,6 +25,21 @@ pub(crate) async fn message_views(
     if rows.is_empty() {
         return Ok(Vec::new());
     }
+    let authors = message_authors(state, rows).await?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let mut view = message_view(row);
+            apply_message_access(&mut view, row, viewer_user_id, authors.get(&row.message_id));
+            view
+        })
+        .collect())
+}
+
+async fn message_authors(
+    state: &AppState,
+    rows: &[MessageRow],
+) -> Result<HashMap<String, AuthorshipRow>, Value> {
     let placeholders = vec!["?"; rows.len()].join(",");
     let sql = format!(
         "SELECT m.message_id, u.id AS actor_user_id, u.user_name AS actor_display_name, \
@@ -61,29 +76,29 @@ pub(crate) async fn message_views(
         tracing::error!(%error, "project message authorship lookup failed");
         ack_error("INVALID_MESSAGE", "database query failed")
     })?;
-    let authors: HashMap<_, _> = authors
+    Ok(authors
         .into_iter()
         .map(|row| (row.message_id.clone(), row))
-        .collect();
-    Ok(rows
-        .iter()
-        .map(|row| {
-            let mut view = message_view(row);
-            let author = authors.get(&row.message_id);
-            if let Some(author) = author {
-                view["actorUserId"] = json!(author.actor_user_id.map(|id| id.to_string()));
-                view["actorDisplayName"] = json!(author.actor_display_name);
-            }
-            apply_private_source_access(
-                &mut view,
-                row,
-                viewer_user_id,
-                author.and_then(|value| value.runtime_owner_user_id),
-                author.is_some_and(|value| value.runtime_shared == 1),
-            );
-            view
-        })
         .collect())
+}
+
+fn apply_message_access(
+    view: &mut Value,
+    row: &MessageRow,
+    viewer: i64,
+    author: Option<&AuthorshipRow>,
+) {
+    if let Some(author) = author {
+        view["actorUserId"] = json!(author.actor_user_id.map(|id| id.to_string()));
+        view["actorDisplayName"] = json!(author.actor_display_name);
+    }
+    apply_private_source_access(
+        view,
+        row,
+        viewer,
+        author.and_then(|value| value.runtime_owner_user_id),
+        author.is_some_and(|value| value.runtime_shared == 1),
+    );
 }
 
 pub(crate) async fn message_view_with_actor(
@@ -115,6 +130,9 @@ fn apply_private_source_access(
         }
     }
     let (runtime_device_id, runtime_task_id) = effective_runtime_source(row);
+    view["runtimeAddress"] = Value::Null;
+    view["traceRef"] = Value::Null;
+    view["traceState"] = json!("history-unavailable");
     if runtime_device_id.is_empty() || runtime_task_id.is_empty() {
         return;
     }
@@ -166,10 +184,37 @@ fn effective_runtime_source(row: &MessageRow) -> (String, String) {
     )
 }
 
-pub(crate) fn shared_message_payload(view: &Value) -> Value {
+/// Resolve room authority from the persisted message, never the sender's view.
+pub(crate) async fn shared_message_payload(state: &AppState, view: &Value) -> Option<Value> {
+    let project_id = view["projectId"].as_str()?;
+    let message_id = view["messageId"].as_str()?;
+    let row = match load_message_by_message_id(state, project_id, message_id).await {
+        Ok(Some(row)) if view["taskId"].as_str().unwrap_or_default() == row.task_id => row,
+        Ok(_) => return None,
+        Err(error) => {
+            tracing::error!(%error, message_id, "project broadcast source lookup failed");
+            return None;
+        }
+    };
+    let authors = match message_authors(state, std::slice::from_ref(&row)).await {
+        Ok(authors) => authors,
+        Err(error) => {
+            tracing::error!(%error, message_id, "project broadcast authority lookup failed");
+            return None;
+        }
+    };
+    Some(room_payload(view, &row, authors.get(message_id)))
+}
+
+fn room_payload(view: &Value, row: &MessageRow, author: Option<&AuthorshipRow>) -> Value {
     let mut shared = view.clone();
+    // User IDs are positive; the room projection never receives owner authority.
+    apply_message_access(&mut shared, row, 0, author);
     if let Some(metadata) = view.get("metadata") {
-        shared["metadata"] = json!(shared_metadata(metadata, false));
+        shared["metadata"] = json!(shared_metadata(
+            metadata,
+            author.is_some_and(|value| value.runtime_shared == 1),
+        ));
     }
     if matches!(
         view.get("type").and_then(Value::as_str),
@@ -177,14 +222,6 @@ pub(crate) fn shared_message_payload(view: &Value) -> Value {
     ) {
         shared["content"] = json!("");
     }
-    shared["runtimeAddress"] = Value::Null;
-    shared["traceState"] = json!(
-        if view.get("traceRef").is_some_and(|value| !value.is_null()) {
-            "restricted"
-        } else {
-            "history-unavailable"
-        }
-    );
     shared
 }
 
@@ -353,12 +390,54 @@ mod tests {
         owner_view["runtimeAddress"] = json!({"deviceId":"device","taskId":"task"});
         owner_view["traceRef"] = json!("trace");
         owner_view["traceState"] = json!("available");
-        let shared = shared_message_payload(&owner_view);
+        let shared = room_payload(&owner_view, &row(), None);
         assert_eq!(shared["runtimeAddress"], Value::Null);
         assert_eq!(shared["traceState"], "restricted");
         assert!(shared["metadata"].get("private_prompt").is_none());
         assert!(shared["metadata"].get("execution_id").is_none());
         assert!(shared["metadata"].get("contentMode").is_none());
+    }
+
+    #[test]
+    fn shared_terminal_broadcast_preserves_the_canonical_task_and_title() {
+        let mut activity = row();
+        activity.metadata.as_mut().unwrap().0["workflow_task_title"] = json!("Collect evidence");
+        let mut view = message_view(&activity);
+        view["runtimeAddress"] = json!({"deviceId":"foreign","taskId":"foreign"});
+        let author = AuthorshipRow {
+            message_id: activity.message_id.clone(),
+            actor_user_id: Some(7),
+            actor_display_name: Some("Owner".into()),
+            runtime_owner_user_id: Some(7),
+            runtime_shared: 1,
+        };
+        let shared = room_payload(&view, &activity, Some(&author));
+        assert_eq!(shared["status"], "completed");
+        assert_eq!(
+            shared["runtimeAddress"],
+            json!({"deviceId":"device","taskId":"task"})
+        );
+        assert_eq!(shared["traceState"], "available");
+        assert_eq!(
+            shared["metadata"]["workflow_task_title"],
+            "Collect evidence"
+        );
+        assert_eq!(shared["metadata"]["execution_id"], 42);
+        assert!(shared["metadata"].get("private_prompt").is_none());
+    }
+
+    #[test]
+    fn room_payload_cannot_invent_a_runtime_source_from_metadata() {
+        let mut activity = row();
+        activity.runtime_device_id.clear();
+        activity.runtime_task_id.clear();
+        let mut view = message_view(&activity);
+        view["runtimeAddress"] = json!({"deviceId":"foreign","taskId":"foreign"});
+        view["metadata"]["runtime_shared"] = json!(true);
+        let shared = room_payload(&view, &activity, None);
+        assert_eq!(shared["runtimeAddress"], Value::Null);
+        assert_eq!(shared["traceState"], "history-unavailable");
+        assert!(shared["metadata"].get("runtime_shared").is_none());
     }
 
     #[test]

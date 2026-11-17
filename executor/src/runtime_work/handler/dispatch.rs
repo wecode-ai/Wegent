@@ -122,9 +122,35 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.connection_call("catalog", None, payload).await },
                 )
             }
+            "runtime.connections.observations.sync" => {
+                boxed_rpc(
+                    move || async move { self.sync_cloud_connection_subscription(payload).await },
+                )
+            }
+            "runtime.connections.subscriptions.cancel" => boxed_rpc(move || async move {
+                self.cancel_connection_subscription_from_ui(payload).await
+            }),
+            "runtime.connections.observations.refresh" => {
+                boxed_rpc(move || async move { self.refresh_connection_observation(payload).await })
+            }
+            "runtime.connections.observers.start" => boxed_rpc(move || async move {
+                self.connection_observer_operation("start", payload).await
+            }),
+            "runtime.connections.observers.renew" => boxed_rpc(move || async move {
+                self.connection_observer_operation("renew", payload).await
+            }),
+            "runtime.connections.observers.refresh" => boxed_rpc(move || async move {
+                self.connection_observer_operation("refresh", payload).await
+            }),
+            "runtime.connections.observers.stop" => boxed_rpc(move || async move {
+                self.connection_observer_operation("stop", payload).await
+            }),
             "runtime.connections.git.read" => {
                 boxed_rpc(move || async move { super::super::git_connections::read(payload).await })
             }
+            "runtime.connections.observations.collect" => boxed_rpc(move || async move {
+                self.collect_cloud_connection_observation(payload).await
+            }),
             "runtime.connections.git.webhooks" => {
                 boxed_rpc(move || async move { self.git_connection_webhook(payload).await })
             }
@@ -149,16 +175,11 @@ impl RuntimeWorkRpcHandler {
                     .await
                 }
             }),
-            "runtime.connections.dependencies.install" => boxed_rpc(move || async move {
-                {
-                    self.connection_call(
-                        "installDependencies",
-                        payload["providerId"].as_str(),
-                        payload.clone(),
-                    )
-                    .await
-                }
-            }),
+            "runtime.connections.dependencies.install" => {
+                boxed_rpc(
+                    move || async move { self.install_connection_dependencies(payload).await },
+                )
+            }
             "runtime.connections.mcp" => boxed_rpc(move || async move {
                 {
                     let mut payload = payload;

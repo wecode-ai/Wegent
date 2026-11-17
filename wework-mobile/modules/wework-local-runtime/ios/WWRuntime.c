@@ -1,4 +1,5 @@
 #include "WWRuntime.h"
+#include "RuntimeStorage.h"
 #include <errno.h>
 #include <stdlib.h>
 #ifdef WWR_EMBEDDED_ISH
@@ -11,6 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
 #include "kernel/calls.h"
@@ -20,6 +22,8 @@
 #include "fs/fd.h"
 #include "fs/path.h"
 #include "fs/real.h"
+#include "fs/sock.h"
+#include "fs/sockrestart.h"
 #include "tools/fakefs.h"
 
 enum { WAIT_ALL = 0, WAIT_PID = 1, WAIT_NOHANG = 1, WAIT_EXITED = 4, WAIT_KEEP = 1 << 24 };
@@ -28,6 +32,9 @@ extern int wework_ish_memory_start(void);
 extern void ish_host_task_enter(void);
 extern void ish_host_task_leave(void);
 extern unsigned ish_host_task_count(void);
+extern void ish_set_host_logging(bool enabled);
+
+void ww_runtime_set_diagnostics_enabled(int enabled) { ish_set_host_logging(enabled != 0); }
 
 struct ww_process {
     struct task *task;
@@ -163,6 +170,7 @@ static int select_root(const char *data) {
     if (construction_failed) return -ECANCELED;
     if (mounted_root != NULL && strcmp(mounted_root, data) == 0) return 0;
     if (init_task == NULL) {
+        ish_set_listener_recovery(true);
         int result = wework_ish_memory_start();
         if (result < 0) return result;
         result = mount_root(&fakefs, data);
@@ -240,6 +248,8 @@ static int launch(void *opaque) {
     struct start_arguments *args = opaque;
     int err = select_root(args->data);
     if (err < 0) return err;
+    int maintenance = ww_runtime_clean_catalogs();
+    if (maintenance < 0) printk("wework catalog cleanup failed: %d\n", maintenance);
     err = refresh_dns(NULL);
     if (err < 0) return err;
     struct ww_process *process = calloc(1, sizeof(*process));
@@ -411,6 +421,23 @@ int ww_runtime_start(const char *data, const char *device, struct ww_process **o
 int ww_runtime_input(struct ww_process *process) { return process->input; }
 int ww_runtime_output(struct ww_process *process) { return process->output; }
 int ww_runtime_error(struct ww_process *process) { return process->error; }
+struct ww_transport_diagnostics ww_runtime_transport_diagnostics(struct ww_process *process) {
+    struct ish_accept_diagnostics sockets = ish_get_accept_diagnostics();
+    struct ish_listener_diagnostics listeners = ish_get_listener_diagnostics();
+    struct ww_transport_diagnostics result = {
+        .accept_calls = sockets.calls, .accept_failures = sockets.failures,
+        .accept_host_error = sockets.host_error, .accepting_pid = sockets.guest_pid,
+        .listeners_restored = listeners.restored, .listener_failures = listeners.failures,
+        .listener_host_error = listeners.host_error,
+        .input_bytes = -1, .output_bytes = -1,
+    };
+    int bytes;
+    if (process != NULL) {
+        if (ioctl(process->input, FIONREAD, &bytes) == 0) result.input_bytes = bytes;
+        if (ioctl(process->output, FIONREAD, &bytes) == 0) result.output_bytes = bytes;
+    }
+    return result;
+}
 int ww_runtime_wait(struct ww_process *process, int *status) {
     pthread_mutex_lock(&host_lock);
     while (!process->finished) pthread_cond_wait(&host_changed, &host_lock);
@@ -438,6 +465,11 @@ int ww_runtime_import(const char *source, const char *destination) {
 void ww_runtime_release(struct ww_process *process) { free(process); }
 int ww_runtime_refresh_dns(void) { return execute(refresh_dns, NULL); }
 #else
+void ww_runtime_set_diagnostics_enabled(int enabled) { (void)enabled; }
+struct ww_transport_diagnostics ww_runtime_transport_diagnostics(struct ww_process *process) {
+    (void)process;
+    return (struct ww_transport_diagnostics) {.input_bytes = -1, .output_bytes = -1};
+}
 int ww_runtime_available(void) { return 0; }
 int ww_runtime_prepare(const char *archive, const char *root) { return -ENOTSUP; }
 int ww_runtime_start(const char *data, const char *device, struct ww_process **out) { return -ENOTSUP; }

@@ -105,7 +105,7 @@ def parse_command(content: str) -> Optional[ParsedCommand]:
         "/chat": CommandType.CHAT,
         "/standin": CommandType.STAND_IN,
         "/stand-in": CommandType.STAND_IN,
-        "/分身": CommandType.STAND_IN,
+        "/助理": CommandType.STAND_IN,
         "/task": CommandType.TASK,
         "/switch": CommandType.SWITCH,
         "/notify": CommandType.NOTIFY,
@@ -161,9 +161,9 @@ HELP_MESSAGE = """📋 **可用命令**
 **会话管理**
 • `/new` - 开始新对话
 • `/bind` - 绑定当前私聊会话
-• `/mode` - 查看私聊的聊天/分身模式
+• `/mode` - 查看私聊的聊天/助理模式
 • `/chat` - 返回 Wegent 聊天模式
-• `/standin` - 进入 Wework 分身模式
+• `/standin` - 进入 Wework 助理模式
 • `/notify on|off|status` - 管理全局 IM 任务通知
 • `/status` - 查看当前状态
 • `/help` - 显示此帮助
@@ -224,9 +224,9 @@ IM_CHANNEL_CONTEXT_HINT = """
 - `/status` - 查看当前状态
 - `/new` - 开始新对话
 - `/bind` - 绑定当前私聊会话
-- `/mode` - 查看私聊的聊天/分身模式
+- `/mode` - 查看私聊的聊天/助理模式
 - `/chat` - 返回 Wegent 聊天模式
-- `/standin` - 进入 Wework 分身模式
+- `/standin` - 进入 Wework 助理模式
 - `/notify on|off|status` - 管理全局 IM 任务通知
 - `/help` - 显示完整帮助
 

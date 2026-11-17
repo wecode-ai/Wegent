@@ -263,6 +263,13 @@ class ExecutionRequest:
         """Alias for auth_token, used by MCP configs as ${{task_token}}."""
         return self.auth_token
 
+    @property
+    def backend_api_url(self) -> str:
+        """Backend API base for MCP templates, with exactly one API prefix."""
+        base = self.backend_url.strip().rstrip("/")
+        root = base.removesuffix("/api")
+        return f"{root}/api" if root else ""
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExecutionRequest":
         """Create from dict - automatically deserializes.

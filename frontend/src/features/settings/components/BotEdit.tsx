@@ -125,12 +125,24 @@ interface BotEditProps {
   groupName?: string
   /** Existing Agent context; never applied when creating or cloning a Bot */
   teamId?: number
+  /** Team groups that authorize shared Skills when saving a member Bot */
   targetGroupNames?: string[]
+  /** Whether a cloned Bot is saved into a different namespace from its source Team */
+  crossNamespaceClone?: boolean
+  /** Whether the owning Team's target groups are still being resolved */
+  targetGroupsLoading?: boolean
+  /** Whether the owning Team's target groups failed to load */
+  targetGroupsError?: boolean
+  /** Retry loading the owning Team's target groups */
+  onRetryTargetGroups?: () => void
   /** Model category allowed by the owning team's bind mode */
   modelCategoryType?: ModelCategoryType
   /** Allow a Chat Bot to bind a generation model as its primary model */
   allowGenerationPrimaryModel?: boolean
 }
+
+const EMPTY_TARGET_GROUP_NAMES: string[] = []
+
 const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   {
     bots,
@@ -148,7 +160,11 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     scope,
     groupName,
     teamId,
-    targetGroupNames,
+    targetGroupNames = EMPTY_TARGET_GROUP_NAMES,
+    crossNamespaceClone = false,
+    targetGroupsLoading = false,
+    targetGroupsError = false,
+    onRetryTargetGroups,
     modelCategoryType = 'llm',
     allowGenerationPrimaryModel = false,
   },
@@ -450,6 +466,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     {
       botId: editingBotId > 0 ? editingBotId : undefined,
       namespace: editingBot?.namespace || (scope === 'group' ? groupName : undefined) || 'default',
+      targetGroupNames:
+        targetGroupNames.length > 0 && !crossNamespaceClone ? targetGroupNames : undefined,
     },
     supportsSkills,
     scope === 'public'
@@ -962,13 +980,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           preload_skills: botData.preload_skills,
           preload_skill_refs: botData.preload_skill_refs,
           namespace: scope === 'group' && groupName ? groupName : undefined,
+          target_group_names: crossNamespaceClone ? [] : targetGroupNames,
         }
 
         if (editingBotId && editingBotId > 0) {
           const updated = await botApis.updateBot(editingBotId, {
             ...botReq,
             team_id: teamId,
-            target_group_names: targetGroupNames,
+            target_group_names: crossNamespaceClone ? [] : targetGroupNames,
           })
           setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
           return updated.id
@@ -998,6 +1017,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     groupName,
     teamId,
     targetGroupNames,
+    crossNamespaceClone,
   ])
 
   // Expose methods via ref
@@ -1161,6 +1181,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             groupName
           ),
           namespace: scope === 'group' && groupName ? groupName : undefined,
+          target_group_names: crossNamespaceClone ? [] : targetGroupNames,
         }
 
         if (editingBotId && editingBotId > 0) {
@@ -1168,7 +1189,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           const updated = await botApis.updateBot(editingBotId, {
             ...botReq,
             team_id: teamId,
-            target_group_names: targetGroupNames,
+            target_group_names: crossNamespaceClone ? [] : targetGroupNames,
           })
           setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)))
         } else {
@@ -1229,13 +1250,22 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               )}
               <Button
                 onClick={handleSave}
-                disabled={botSaving}
+                disabled={botSaving || targetGroupsLoading || targetGroupsError}
                 variant="primary"
                 data-testid="save-button"
               >
                 {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {botSaving ? t('common:actions.saving') : t('common:actions.save')}
               </Button>
+              {targetGroupsError && onRetryTargetGroups && (
+                <Button
+                  onClick={onRetryTargetGroups}
+                  variant="outline"
+                  data-testid="retry-target-groups-button"
+                >
+                  {t('common:actions.retry')}
+                </Button>
+              )}
             </div>
           ))}
       </div>

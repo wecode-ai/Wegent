@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     listProfilesAsync: vi.fn(),
     addListener: vi.fn(() => ({ remove: vi.fn() })),
     getEventsAsync: vi.fn(),
+    requestAsync: vi.fn(),
   },
 }))
 vi.mock('expo', () => ({ requireOptionalNativeModule: () => mocks.native }))
@@ -100,4 +101,31 @@ describe('local capability startup isolation', () => {
     expect(state!.runtime).toBe(runtime)
     expect(state!.error).toEqual(new Error('keychain locked'))
   })
+
+  it.each(['stopped', 'failed'] as const)(
+    'restores a %s executor after unlocking without resubmitting user work',
+    async nativeState => {
+      await act(() => {
+        renderer = create(<Harness />)
+      })
+      const runtime = state!.runtime
+      const recovered = vi.fn()
+      runtime!.onRecovery(recovered)
+      let current: LocalRuntimeStatus = { ...running, state: nativeState }
+      mocks.native.getStatusAsync.mockImplementation(async () => current)
+      mocks.native.stopAsync.mockImplementation(async () => {
+        current = { ...current, state: 'stopped' }
+      })
+      mocks.native.startAsync.mockImplementation(async () => {
+        current = { ...running, generation: 2 }
+        return current
+      })
+      await act(() => mocks.foreground('active'))
+      expect(state!.runtime).toBe(runtime)
+      expect(state!.status).toMatchObject({ state: 'running', generation: 2, accountScope: scope })
+      expect(mocks.native.startAsync).toHaveBeenCalledTimes(2)
+      expect(recovered).toHaveBeenCalledOnce()
+      expect(mocks.native.requestAsync).not.toHaveBeenCalled()
+    }
+  )
 })
