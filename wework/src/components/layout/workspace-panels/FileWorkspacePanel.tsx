@@ -12,7 +12,11 @@ import {
 import { flushSync } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
-import { resolveWorkspaceFilePath, workspaceParentPath } from './workspaceFilePaths'
+import {
+  resolveMarkdownFilePath,
+  resolveWorkspaceFilePath,
+  workspaceParentPath,
+} from './workspaceFilePaths'
 import {
   createFilePreviewTraceId,
   filePreviewElapsedMs,
@@ -905,6 +909,10 @@ export function FileWorkspacePanel({
       </WorkspaceFileToolbar>
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <WorkspaceFilePreview
+          onOpenFile={(path, options) => {
+            if (displayedPreview)
+              openFilePath(resolveMarkdownFilePath(displayedPreview.path, path), options)
+          }}
           file={displayedPreview}
           binaryFile={binaryPreview}
           loading={previewLoading}

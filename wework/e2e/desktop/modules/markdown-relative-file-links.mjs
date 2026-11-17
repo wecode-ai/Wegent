@@ -1,0 +1,73 @@
+import assert from 'node:assert/strict'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { CLOUD_DEVICE_ID, DEFAULT_STEP_TIMEOUT_MS, IMAGE_ARTIFACT_BASE64 } from './shared.mjs'
+
+export async function verifyMarkdownRelativeFileLinks({ control, workspacePath }) {
+  const directory = join(workspacePath, 'markdown-link-fixture')
+  const documentName = 'relative-image-report.md'
+  const documentPath = join(directory, 'reports', documentName).replaceAll('\\', '/')
+  const imageName = '相对路径 截图.png'
+  const imagePath = join(directory, 'reports', imageName).replaceAll('\\', '/')
+  const parentImagePath = join(directory, 'parent.png').replaceAll('\\', '/')
+  await mkdir(join(directory, 'reports'), { recursive: true })
+  const image = Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
+  await writeFile(imagePath, image)
+  await writeFile(parentImagePath, image)
+  await writeFile(
+    documentPath,
+    [
+      '# Relative image links',
+      `[Same directory](<./${imageName}>)`,
+      '[Parent directory](../parent.png)',
+      '[Missing image](./missing.png)',
+    ].join('\n\n')
+  )
+
+  const panel = `[data-testid="workspace-file-panel"][data-workspace-device-id="${CLOUD_DEVICE_ID}"]`
+  const preview = `${panel} [data-testid="workspace-markdown-preview"]`
+  const links = `${preview} [data-testid="assistant-markdown-link"]`
+  const openDocument = async () => {
+    const toggle = `${panel} [data-testid="workspace-file-toggle-tree-button"]`
+    if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true') {
+      await control.command('clickWhenEnabled', toggle)
+    }
+    await control.command('fill', `${panel} [data-testid="workspace-file-search-input"]`, {
+      value: documentName,
+    })
+    const entry = `${panel} button[data-type="item"][aria-label="${documentName}"]`
+    await control.command('waitFor', entry, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+    await control.command('clickWhenEnabled', entry)
+    await control.command('waitFor', preview, { text: 'Relative image links' })
+  }
+  const assertImage = async expectedPath => {
+    await control.command('waitFor', `${panel} [data-testid="workspace-file-path"]`, {
+      text: expectedPath,
+    })
+    assert.equal(
+      await control.command('getText', `${panel} [data-testid="workspace-file-path"]`),
+      expectedPath,
+      'The relative link did not resolve against the Markdown document directory'
+    )
+    await control.command('waitFor', `${panel} [data-testid="workspace-binary-file-preview"] img`, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
+
+  try {
+    await openDocument()
+    await control.command('clickElementWithText', links, { text: 'Same directory' })
+    await assertImage(imagePath)
+    await openDocument()
+    await control.command('clickElementWithText', links, { text: 'Parent directory' })
+    await assertImage(parentImagePath)
+    await openDocument()
+    await control.command('clickElementWithText', links, { text: 'Missing image' })
+    await control.command('waitFor', `${panel} [data-testid="workspace-file-preview-error"]`)
+    await openDocument()
+    await control.command('clickElementWithText', links, { text: 'Same directory' })
+    await assertImage(imagePath)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+}

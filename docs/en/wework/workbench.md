@@ -234,6 +234,8 @@ The titlebar's **Open workspace location** and neighboring IDE dropdown open the
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
+In a Markdown preview in the right-side Files tab, click a text link to an image or another file to open it. Relative paths resolve from the current Markdown document’s directory, such as `./screenshot.png` or `../images/screenshot.png`, and load from the device that owns the tab. Missing files show a read error; retry or select the document again to continue browsing.
+
 Selecting a writable plain text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown and HTML files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
 
 Local file and directory links in an AI response open in the Files tab. Document links with URL-encoded separators in an absolute Windows path are recognized as local references rather than external protocols. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
