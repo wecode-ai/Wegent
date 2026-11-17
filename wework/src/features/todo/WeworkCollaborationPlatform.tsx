@@ -1321,6 +1321,7 @@ export function WeworkSharedProject({
         taskComposer?.issue.id === issue.id ? (taskComposer.address?.taskId ?? null) : null
       }
       aitableApi={project.task_provider === 'dingtalk_aitable' ? services.aitableApi : undefined}
+      existingTaskSource={runtimePort ? { work: runtimeWork, port: runtimePort } : undefined}
       onCreateTask={onCreateTask}
       onConfigureAssistant={() => {
         setTaskComposer(null)

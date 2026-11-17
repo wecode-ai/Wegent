@@ -1,3 +1,4 @@
+import { mobileProjectCreatableDevices } from '@/domain/deviceOrdering'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import { useEffect, useMemo, useState } from 'react'
@@ -30,13 +31,9 @@ export function ProjectDialog(props: ProjectDialogProps) {
   const [deviceId, setDeviceId] = useState(props.selectedDeviceId ?? '')
   const [name, setName] = useState('')
   const [workspacePath, setWorkspacePath] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
   const [submitting, setSubmitting] = useState(false)
-  const onlineDevices = useMemo(
-    () =>
-      props.devices.filter(device => device.status !== 'offline' && device.device_type !== 'app'),
-    [props.devices]
-  )
+  const onlineDevices = useMemo(() => mobileProjectCreatableDevices(props.devices), [props.devices])
 
   useEffect(() => {
     if (!props.visible) return
@@ -47,7 +44,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
 
   const submit = async () => {
     if (!deviceId || !workspacePath.trim()) {
-      setError('请选择 Executor 并填写远程绝对路径')
+      setError('请选择执行设备并填写项目绝对路径')
       return
     }
     setSubmitting(true)
@@ -58,7 +55,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
       setWorkspacePath('')
       props.onDismiss()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(cause)
     } finally {
       setSubmitting(false)
     }
@@ -81,7 +78,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
         testID="project-form-scroll"
       >
         <Pressable
-          accessibilityLabel="取消新建云端项目"
+          accessibilityLabel="取消新建项目"
           accessibilityRole="button"
           onPress={props.onDismiss}
           style={[
@@ -110,10 +107,10 @@ export function ProjectDialog(props: ProjectDialogProps) {
                 <View style={styles.header}>
                   <View style={styles.titleBlock}>
                     <Text style={styles.title} variant="headlineSmall">
-                      新建云端项目
+                      新建项目
                     </Text>
                     <Text style={{ color: theme.colors.onSurfaceVariant }} variant="bodyMedium">
-                      选择 Executor，并指定项目所在的远程路径
+                      选择执行设备，并填写该设备上的项目目录
                     </Text>
                   </View>
                   <LiquidGlassButton
@@ -206,7 +203,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
                     size={21}
                   />
                   <TextInput
-                    accessibilityLabel="远程绝对路径"
+                    accessibilityLabel="项目绝对路径"
                     autoCapitalize="none"
                     autoCorrect={false}
                     onChangeText={setWorkspacePath}

@@ -79,6 +79,8 @@ export function createDesktopScenario(options) {
             local_model_id: modelName,
             label: 'Mobile Responses',
             is_default: false,
+            default_reasoning_effort: 'high',
+            supported_reasoning_efforts: ['low', 'high', 'xhigh'],
             modelConfig: configured,
           },
         ],
@@ -153,12 +155,61 @@ export function createDesktopScenario(options) {
       assert.equal(created.taskId, taskId)
       assert.equal(created.deviceId, deviceId)
       const first = await waitForReply(INITIAL_DONE)
+      const mobileTranscript = builders.projectMobileRuntimeTranscript(first.transcript)
+      // A viewer can receive the reply before the history read exposes its user message.
+      const replyFirst = builders.chatReducer([], {
+        type: 'replace',
+        messages: mobileTranscript.messages.filter(message => message.role === 'assistant'),
+      })
+      const hydrated = builders.chatReducer(replyFirst, {
+        type: 'merge-latest',
+        messages: mobileTranscript.messages,
+      })
+      const userIndex = hydrated.findIndex(message => message.id === `${taskId}-initial`)
+      const replyIndex = hydrated.findIndex(message => message.role === 'assistant')
+      assert.ok(
+        userIndex >= 0 && replyIndex > userIndex,
+        'Mobile placed the streamed reply before its user'
+      )
+      const mobileWork = builders.adaptRuntimeWorkListResponse(
+        await rpc('runtime.tasks.list', {}),
+        deviceId
+      )
+      const conversation = builders
+        .flattenConversations(mobileWork)
+        .find(item => item.address.taskId === taskId)
+      assert.ok(conversation, 'The created task was absent from the Mobile work list')
+      const restoredSelection = builders.modelSelectionFromRuntimeHandle(
+        conversation.address.runtimeHandle
+      )
+      assert.equal(restoredSelection?.modelName, modelName, 'Mobile lost the task model')
+      assert.equal(restoredSelection.modelType, 'runtime')
+      assert.equal(restoredSelection.options.runnerModelProvider, provider)
+      const mobileCatalog = builders.runnerModelCatalog(
+        catalog.models,
+        [{ name: 'different-cloud-default', type: 'public', provider: 'cloud' }],
+        'codex'
+      )
+      assert.equal(
+        builders.findModelForSelection(
+          mobileCatalog.map(item => item.model),
+          restoredSelection
+        )?.runtime?.provider,
+        provider,
+        'Mobile replaced the task provider with a catalog default'
+      )
+      const restoredModel = builders.findModelForSelection(
+        mobileCatalog.map(item => item.model),
+        restoredSelection
+      )
+      assert.deepEqual(builders.reasoningEfforts(restoredModel), ['low', 'high', 'xhigh'])
+      assert.equal(builders.resolvedReasoningEffort(restoredModel, undefined), 'high')
       const sent = await rpc('runtime.tasks.send', {
-        address,
+        address: conversation.address,
         taskId,
         message: FOLLOW_UP,
         clientUserMessageId: `${taskId}-follow-up`,
-        modelSelection: { modelName, modelType: 'runtime', options: modelOptions },
+        modelSelection: restoredSelection,
         executionRequest: executionRequest(FOLLOW_UP, false, `${taskId}-follow-up`),
       })
       assert.equal(sent.accepted, true, sent.error)

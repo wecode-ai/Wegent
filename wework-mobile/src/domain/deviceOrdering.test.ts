@@ -62,7 +62,9 @@ describe('mobileOperableDevices', () => {
       },
     }
     expect(mobileCreatableDevices([app]).map(item => item.device_id)).toEqual(['app-record-11'])
-    expect(mobileProjectCreatableDevices([app])).toEqual([])
+    expect(mobileProjectCreatableDevices([app]).map(item => item.device_id)).toEqual([
+      'app-record-11',
+    ])
     for (const invalid of [
       { ...app, status: 'offline' as const },
       {
@@ -82,6 +84,7 @@ describe('mobileOperableDevices', () => {
       },
     ]) {
       expect(mobileCreatableDevices([invalid])).toEqual([])
+      expect(mobileProjectCreatableDevices([invalid])).toEqual([])
     }
   })
 

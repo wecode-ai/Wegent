@@ -77,3 +77,44 @@ describe('adaptRuntimeWorkListResponse', () => {
     expect(result.projects[0]?.deviceWorkspaces[0]?.deviceId).toBe('device-1')
   })
 })
+
+it('retains PC project management metadata and multi-root identity', () => {
+  const result = adaptRuntimeWorkListResponse(
+    {
+      workspaces: [
+        {
+          workspacePath: '/first',
+          projectKey: 'project-1',
+          projectKind: 'local',
+          projectSource: 'local_project',
+          projectRoots: ['/first', '/second'],
+          projectPinned: true,
+          projectPinnedOrder: 2,
+          projectSidebarOrder: 3,
+          projectAppearance: { color: 'blue' },
+          projectAiSettings: { instructions: 'Rules' },
+          tasks: [],
+        },
+        { workspacePath: '/second', projectKey: 'project-1', tasks: [] },
+      ],
+    },
+    'app-record-11'
+  )
+  expect(result.projects).toHaveLength(1)
+  expect(result.projects[0]!.project).toMatchObject({
+    key: 'project-1',
+    stateDeviceId: 'app-record-11',
+    ownerDeviceId: 'app-record-11',
+    source: 'local_project',
+    roots: [
+      { kind: 'local', path: '/first' },
+      { kind: 'local', path: '/second' },
+    ],
+    pinned: true,
+    pinnedOrder: 2,
+    sidebarOrder: 3,
+    appearance: { color: 'blue' },
+    aiSettings: { instructions: 'Rules' },
+  })
+  expect(result.projects[0]!.deviceWorkspaces).toHaveLength(2)
+})
