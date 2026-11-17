@@ -162,6 +162,84 @@ test('rejects an ambiguous native confirmation before sending any key', async ()
   expect(native.execute.mock.calls.some(([, args]) => args[0] === 'windowfocus')).toBe(false)
 })
 
+test('keeps the live owned modal when another enumerated window is destroyed before its title read', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  native.execute.mockImplementation(async (_command, args) => {
+    if (args[0] === 'search') return { stdout: '4194314\n99\n' }
+    if (args[0] === 'getwindowname' && args[1] === '4194314') {
+      throw Object.assign(new Error('Window destroyed'), {
+        code: 1,
+        stderr: 'X Error of failed request:  BadWindow (invalid Window parameter)\n',
+      })
+    }
+    if (args[0] === 'getwindowname') return { stdout: 'Confirm Core plugin installation\n' }
+    return { stdout: '' }
+  })
+
+  await expect(
+    withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => 'done')
+  ).resolves.toBe('done')
+
+  expect(native.execute).toHaveBeenCalledWith(
+    'xdotool',
+    ['windowfocus', '--sync', '99'],
+    expect.anything()
+  )
+  expect(native.execute.mock.calls.filter(([, args]) => args[0] === 'search')).toHaveLength(1)
+})
+
+test('preserves title read failures other than a destroyed X11 window', async () => {
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  const original = Object.assign(new Error('X connection failed'), {
+    code: 1,
+    stderr: 'No display',
+  })
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  native.execute.mockImplementation(async (command, args) => {
+    if (command === 'xprop') return { stdout: '' }
+    if (args[0] === 'search') return { stdout: '99\n' }
+    throw original
+  })
+  try {
+    await expect(
+      withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => null)
+    ).rejects.toBe(original)
+    expect(native.execute.mock.calls.some(([, args]) => args[0] === 'windowfocus')).toBe(false)
+  } finally {
+    log.mockRestore()
+  }
+})
+
+test('waits for a live modal within the same deadline when every enumerated window disappeared', async () => {
+  vi.useFakeTimers()
+  Object.defineProperty(process, 'platform', { value: 'linux' })
+  let searches = 0
+  native.execute.mockImplementation(async (_command, args) => {
+    if (args[0] === 'search') return { stdout: ++searches === 1 ? '4194314\n' : '99\n' }
+    if (args[0] === 'getwindowname' && args[1] === '4194314') {
+      throw Object.assign(new Error('Window destroyed'), {
+        code: 1,
+        stderr: 'X Error of failed request:  BadWindow (invalid Window parameter)\n',
+      })
+    }
+    if (args[0] === 'getwindowname') return { stdout: 'Confirm Core plugin installation\n' }
+    return { stdout: '' }
+  })
+  const decision = withNativePluginDecision(
+    { applicationProcessId: 123, command: vi.fn() },
+    async () => null
+  )
+  await vi.advanceTimersByTimeAsync(0)
+  expect(native.execute.mock.calls.some(([, args]) => args[0] === 'windowfocus')).toBe(false)
+  await vi.advanceTimersByTimeAsync(100)
+  await decision
+  expect(native.execute).toHaveBeenCalledWith(
+    'xdotool',
+    ['windowfocus', '--sync', '99'],
+    expect.objectContaining({ timeout: 11_900 })
+  )
+})
+
 test('captures only the owned modal before input and preserves the native rejection', async () => {
   Object.defineProperty(process, 'platform', { value: 'linux' })
   const log = vi.spyOn(console, 'log').mockImplementation(() => {})
