@@ -280,22 +280,23 @@ pub(super) async fn roster_entries(
             .map(|user| user.user_name)
             .unwrap_or_else(|| "未知成员（历史数据）".into());
         let enabled = row.status == "active";
-        let entry = entry_from_row(project_id, row, user_name, enabled);
+        let mut entry = entry_from_row(project_id, row, user_name, enabled);
         if entry.enabled && entry.endpoint_kind == "wegent_agent" {
-            let Some(agent_id) = wegent_agent_id(&entry.endpoint_ref) else {
-                continue;
+            let authorized = match wegent_agent_id(&entry.endpoint_ref) {
+                Some(agent_id) => crate::background_jobs::project::authority::agent(
+                    state,
+                    project_id,
+                    agent_id,
+                    i64::from(user_id),
+                    true,
+                )
+                .await
+                .is_ok(),
+                None => false,
             };
-            if crate::background_jobs::project::authority::agent(
-                state,
-                project_id,
-                agent_id,
-                i64::from(user_id),
-                true,
-            )
-            .await
-            .is_err()
-            {
-                continue;
+            if !authorized {
+                // Keep the version visible so the owner can disable or repair it.
+                entry.enabled = false;
             }
         }
         entries.push(entry);

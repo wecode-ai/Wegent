@@ -31,6 +31,11 @@ export function createAssistantEndpoint(
   const endpointRef = input.endpointRef?.trim();
   if (endpointRef && !endpointRef.startsWith(`${input.kind}:`))
     throw new TypeError("Assistant endpoint reference does not match its kind");
+  if (endpointRef && !endpointIdentityMatches(endpointRef, input)) {
+    throw new TypeError(
+      "Assistant endpoint reference does not match its owner and role",
+    );
+  }
   if (input.kind === "wegent_agent" && !endpointRef)
     throw new TypeError(
       "Wegent assistant endpoints require the exact agent reference",
@@ -49,6 +54,27 @@ export function createAssistantEndpoint(
       skills: [...(input.capabilities?.skills ?? [])],
     },
   };
+}
+
+function endpointIdentityMatches(
+  endpointRef: string,
+  input: Pick<AssistantEndpointInput, "kind" | "ownerUserId" | "roleId">,
+) {
+  const parts = endpointRef.split(":");
+  if (input.kind === "wegent_agent")
+    return (
+      parts.length === 4 &&
+      parts[0] === input.kind &&
+      parts[1] === String(input.ownerUserId) &&
+      Boolean(parts[2]) &&
+      parts[3] === input.roleId.trim()
+    );
+  return (
+    parts.length === 3 &&
+    parts[0] === input.kind &&
+    parts[1] === String(input.ownerUserId) &&
+    parts[2] === input.roleId.trim()
+  );
 }
 
 export function assistantEndpointFromRoster(

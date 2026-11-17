@@ -356,6 +356,19 @@ describe('assistant endpoint adapters', () => {
     ).toThrow('Assistant conversation scope is required')
   })
 
+  it('rejects endpoint references that claim another owner or role', () => {
+    const input = { ownerUserId: 7, roleId: 'review', displayName: 'Reviewer' }
+    expect(() => localWeworkEndpoint({ ...input, endpointRef: 'local_wework:8:review' })).toThrow(
+      'does not match its owner and role'
+    )
+    expect(() =>
+      wegentAgentEndpoint({
+        ...input,
+        endpointRef: 'wegent_agent:7:agent-1:other',
+      })
+    ).toThrow('does not match its owner and role')
+  })
+
   it('projects a roster record into the shared endpoint capability contract', () => {
     expect(
       assistantEndpointFromRoster({
