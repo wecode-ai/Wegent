@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 
 const copy = vi.hoisted(() => ({ plugin: vi.fn() }))
@@ -23,10 +26,15 @@ describe('managed profile copy', () => {
       await new Promise(resolve => setTimeout(resolve, 25))
       finished = true
     })
+    const profileRoot = await mkdtemp(join(tmpdir(), 'wework-profile-copy-'))
 
-    await expect(
-      copyManagedProfilePlugins(runtime as never, '/profile', ['first-plugin', 'slow-plugin'])
-    ).rejects.toThrow('first copy failed')
-    expect(finished).toBe(true)
+    try {
+      await expect(
+        copyManagedProfilePlugins(runtime as never, profileRoot, ['first-plugin', 'slow-plugin'])
+      ).rejects.toThrow('first copy failed')
+      expect(finished).toBe(true)
+    } finally {
+      await rm(profileRoot, { recursive: true, force: true })
+    }
   })
 })
