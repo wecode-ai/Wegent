@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { issueCommentFormSelector } from './issue-comment-selectors.mjs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
@@ -329,7 +330,7 @@ export function createBoardReplyModelRegression({
       active = true
       try {
         const activity = scope(`[data-testid="cloud-task-activity-${issue.id}"]`)
-        const composer = `${activity} [data-testid="cloud-task-activity-composer"]`
+        const composer = `${scope(issueCommentFormSelector(issue.id))} [data-testid="cloud-task-activity-composer"]`
         const agents = await requestJson(
           cloud,
           `/api/v1/cloud-projects/${cloud.projectId}/chat-agents`

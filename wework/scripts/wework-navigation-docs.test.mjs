@@ -80,6 +80,22 @@ function validateIndex(document, entries, translations, language) {
   }
 }
 
+test('each category contribution can render in either locale regardless of registration order', async () => {
+  const entries = (await registeredNavigation()).filter(entry => entry.category)
+  for (const locale of ['zh-CN', 'en']) {
+    const { workbench } = JSON.parse(
+      await readFile(join(root, 'src/i18n/locales', locale, 'common.json'))
+    )
+    for (const entry of entries) {
+      assert.ok(
+        entry.categoryLabelKey,
+        `${entry.id}: category translation must not depend on another contributor`
+      )
+      assert.ok(workbench[entry.categoryLabelKey], `${locale}: missing ${entry.categoryLabelKey}`)
+    }
+  }
+})
+
 test('both navigation indexes cover registered settings/sidebar entries and current labels', async () => {
   const entries = await registeredNavigation()
   for (const [language, locale] of [

@@ -87,7 +87,7 @@ After you send a local image, Wework keeps its preview in the message. The image
 
 ### Voice input
 
-Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also prepare the model under **Settings → General → Voice input**.
+Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also open **bottom-left account menu → Settings → Personal → General** and prepare the model in **Voice input**, below the basic preferences. This section appears when the official voice plugin has loaded and does not require Experimental features. Opening the page does not download a model or start recording.
 
 Start with **INT8 (lightweight)** for everyday dictation to reduce download size and memory use. If it makes frequent recognition errors, try **FP32 (full precision)**, which retains full 32-bit floating-point precision with a larger download and higher memory use. Both the settings page and the first-use setup dialog explain these choices.
 
@@ -199,7 +199,7 @@ Wework remembers the model, selection mode, and reasoning effort separately for 
 
 After a conversation starts, you can still switch between official GPT/Codex models and third-party models. Wework asks for confirmation when the selected model changes, and the new model applies to the next message.
 
-If the existing context contains encrypted reasoning or compaction state produced by the previous provider, the executor removes those non-portable fields from the switch request so the target model does not return `invalid_encrypted_content`. Portable messages, tool results, and other context remain available.
+In Codex tasks using official OAuth, official GPT and third-party models share the same compatibility layer. On a switch, the executor clears encrypted reasoning or compaction state owned by the previous provider. If third-party history stores readable reasoning in `reasoning.content`, the request sent to official GPT promotes it to `summary_text` and clears the restricted `content` array. These changes apply only to the outgoing copy; the original thread history stays intact. Portable messages, tool results, and other context remain available, so switching models does not require a new conversation or a reference to the old one.
 
 ## Control a running task
 

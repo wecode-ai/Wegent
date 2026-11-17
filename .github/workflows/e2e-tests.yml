@@ -882,23 +882,6 @@ jobs:
         if: matrix.dingtalkOAuth
         run: bash .github/scripts/setup-dingtalk-oauth-e2e.sh
 
-      # Terminal handoff faults revoke default-user commands. Keep consumers on
-      # equivalent independent permissions so a fault cannot terminate Celery.
-      - name: Isolate consumers from Backend Redis fault injection
-        if: matrix.shardIndex == 1
-        working-directory: ./backend
-        run: |
-          uv run --no-sync python - <<'PY'
-          import os
-          from redis import Redis
-
-          with Redis.from_url(os.environ['REDIS_URL']) as redis:
-              redis.execute_command(
-                  'ACL', 'SETUSER', 'e2e-services', 'reset', 'on', 'nopass',
-                  '+@all', '~*', '&*',
-              )
-          PY
-
       - name: Start backend server
         env:
           PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:..:.:tests/e2e', github.workspace) || '..:.:tests/e2e' }}
@@ -944,44 +927,6 @@ jobs:
           E2E_PYTHON_LOG: ${{ github.workspace }}/backend/backend.log
         run: uv run --no-sync python tests/e2e/socketio_ack_readiness.py
 
-      - name: Start parallel Backend index worker
-        working-directory: ./backend
-        env:
-          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
-          CELERY_BROKER_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
-          CELERY_RESULT_BACKEND: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
-          REDIS_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
-          SECRET_KEY: test-secret-key-for-ci-testing
-          ENVIRONMENT: development
-          DB_AUTO_MIGRATE: "false"
-          INIT_DATA_ENABLED: "false"
-          EMBEDDED_CELERY_ENABLED: "false"
-          RAG_RUNTIME_MODE: remote
-          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
-          KNOWLEDGE_CONVERSION_ENABLED: "true"
-          KNOWLEDGE_CONVERSION_FILE_TYPES: "pdf"
-          CHUNK_STORAGE_ENABLED: "true"
-          ATTACHMENT_S3_ENDPOINT: minio:9000
-          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
-          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
-          ATTACHMENT_S3_USE_SSL: "false"
-          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:..:.', github.workspace) || '..:.' }}
-          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
-        run: |
-          uv run --no-sync celery -A app.core.celery_app worker \
-            --pool=threads --concurrency=4 --queues=wegent_online --beat \
-            --hostname=e2e-index@%h --loglevel=INFO > index-worker.log 2>&1 &
-          echo $! > index-worker.pid
-          for i in {1..60}; do
-            if grep -q ' ready.' index-worker.log; then
-              exit 0
-            fi
-            kill -0 "$(cat index-worker.pid)" || { cat index-worker.log; exit 1; }
-            sleep 1
-          done
-          cat index-worker.log
-          exit 1
-
       - name: Start Knowledge Runtime
         env:
           PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:{0}', github.workspace) || '' }}
@@ -997,7 +942,6 @@ jobs:
       - name: Start Chat Shell server
         working-directory: ./backend
         env:
-          REDIS_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
           CHAT_SHELL_MODE: http
           CHAT_SHELL_STORAGE_TYPE: remote
           CHAT_SHELL_REMOTE_STORAGE_URL: http://localhost:8000/api/internal
@@ -1021,27 +965,6 @@ jobs:
           # Workspace dependencies are already restored; start their installed CLI directly.
           node ./node_modules/tsx/dist/cli.mjs e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
-
-      - name: Start Knowledge Doc Converter
-        env:
-          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:{0}', github.workspace) || '' }}
-          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
-          BACKEND_BASE_URL: http://localhost:8000
-          BACKEND_INTERNAL_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
-          CELERY_BROKER_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
-          CELERY_RESULT_BACKEND: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/1' || 'redis://redis:6379/1' }}
-          REDIS_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
-          MINERU_API_BASE_URL: http://localhost:9999/mineru
-          MINERU_POLL_INTERVAL_SECONDS: "1"
-          KNOWLEDGE_CONVERSION_QUEUE: knowledge_conversion
-          LOG_FILE_ENABLED: "false"
-        run: |
-          nohup uv run --project knowledge_doc_converter --no-sync celery \
-            -A knowledge_doc_converter.celery_app worker \
-            --queues=knowledge_conversion \
-            --concurrency=1 \
-            --loglevel=INFO > knowledge_doc_converter/ci.log 2>&1 &
-          echo $! > knowledge_doc_converter/ci.pid
 
       - name: Wait for services
         run: |
@@ -1092,7 +1015,7 @@ jobs:
       - name: Start remote workspace Executor Manager
         working-directory: ./executor_manager
         env:
-          REDIS_URL: ${{ matrix.shardIndex == 1 && 'redis://e2e-services:@redis:6379/0' || 'redis://redis:6379/0' }}
+          REDIS_URL: redis://redis:6379/0
           DOCKER_HOST_ADDR: host.docker.internal
           SERVICE_POOL: e2e-workspace
           EXECUTOR_READY_MAX_RETRIES: "30"
@@ -1182,6 +1105,64 @@ jobs:
           mkdir -p "$E2E_REPORT_DIR"
           uv run --no-sync python tests/e2e/terminal_handoff_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/terminal-handoff.log"
+
+      # Redis ACL fault injection must finish before shared Celery consumers start.
+      - name: Start parallel Backend index worker
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          REDIS_URL: redis://redis:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "false"
+          EMBEDDED_CELERY_ENABLED: "false"
+          RAG_RUNTIME_MODE: remote
+          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          KNOWLEDGE_CONVERSION_ENABLED: "true"
+          KNOWLEDGE_CONVERSION_FILE_TYPES: "pdf"
+          CHUNK_STORAGE_ENABLED: "true"
+          ATTACHMENT_S3_ENDPOINT: minio:9000
+          ATTACHMENT_S3_ACCESS_KEY: wegent-e2e
+          ATTACHMENT_S3_SECRET_KEY: wegent-e2e-secret
+          ATTACHMENT_S3_USE_SSL: "false"
+          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:..:.', github.workspace) || '..:.' }}
+          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
+        run: |
+          uv run --no-sync celery -A app.core.celery_app worker \
+            --pool=threads --concurrency=4 --queues=wegent_online --beat \
+            --hostname=e2e-index@%h --loglevel=INFO > index-worker.log 2>&1 &
+          echo $! > index-worker.pid
+          for i in {1..60}; do
+            if grep -q ' ready.' index-worker.log; then
+              exit 0
+            fi
+            kill -0 "$(cat index-worker.pid)" || { cat index-worker.log; exit 1; }
+            sleep 1
+          done
+          cat index-worker.log
+          exit 1
+
+      - name: Start Knowledge Doc Converter
+        env:
+          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:{0}', github.workspace) || '' }}
+          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
+          BACKEND_BASE_URL: http://localhost:8000
+          BACKEND_INTERNAL_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
+          CELERY_BROKER_URL: redis://redis:6379/0
+          CELERY_RESULT_BACKEND: redis://redis:6379/1
+          REDIS_URL: redis://redis:6379/0
+          MINERU_API_BASE_URL: http://localhost:9999/mineru
+          MINERU_POLL_INTERVAL_SECONDS: "1"
+          KNOWLEDGE_CONVERSION_QUEUE: knowledge_conversion
+          LOG_FILE_ENABLED: "false"
+        run: |
+          nohup uv run --project knowledge_doc_converter --no-sync celery \
+            -A knowledge_doc_converter.celery_app worker \
+            --queues=knowledge_conversion \
+            --concurrency=1 \
+            --loglevel=INFO > knowledge_doc_converter/ci.log 2>&1 &
+          echo $! > knowledge_doc_converter/ci.pid
 
       - name: Upload subscription callback gateway E2E report
         if: always() && matrix.shardIndex == 1

@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # W-0061 复现与实现证据
 
-本次实现已适配主线 `c4d4194b8`，并采用 Issue 版本 9 的接单回执契约。
+本次实现已适配主线 `cbacc633a`，并采用 Issue 版本 9 的接单回执契约。
 保留主线的 Rust Socket.IO 主路径、拆分后的 Task 存储、稳定 Issue 会话、
 admission reservation、失败启动恢复和项目配置入口。
 
@@ -46,9 +46,9 @@ admission reservation、失败启动恢复和项目配置入口。
   本地保存不是服务端声明确认；声明仍通过现有注册和心跳发布。
 - 同轮 Platform shard 1 的订阅执行全部停在 PENDING。日志确认前置故障注入撤销
   共享 Redis default 用户的 ZADD 后，Celery 在 QoS 写入时不可恢复退出。
-  CI 现在让独立消费者使用同一 Redis/DB 的等权专用用户，Backend 仍使用原故障目标；
-  原故障、恢复及业务断言均保留。任务专用 Redis 的实际 Kombu 协议验证先复现拒绝，
-  隔离后通过，并确认 Backend 的 ZADD/PUBLISH/SUBSCRIBE 故障仍被拒绝且可恢复。
+  任务专用 Redis 的实际 Kombu 协议验证稳定复现了同一拒绝。
+  最新主线已把消费者启动移至故障注入之后，本次采用该时序修复；
+  原故障、恢复及业务断言均保留，没有增加 Redis 用户、服务或测试套件。
 
 ## 实现边界
 
@@ -68,11 +68,14 @@ admission reservation、失败启动恢复和项目配置入口。
 
 ## 本地验证
 
-- Rust Backend 全库：3692 passed，0 failed，43 项主线既有 ignored。
-- Python 最终 7 文件：154 passed；包括回执、权限、幂等、取消、隐私及列表查询预算。
-- Executor 最终默认助理回归：20 passed；默认工作区独立集成回归：1 passed。
-- 共享 UI：37 passed；桌面相关 3 文件：73 passed；Web adapter：17 passed。
-- 双语文档：7 passed；既有桌面 checkpoint 静态契约：8 passed。
+- 前一轮主线的 Rust Backend 全库：3692 passed，0 failed，43 项主线既有 ignored。
+  最新主线合入后，设备授权、执行身份和 Runtime 投影三组回归：46 passed。
+- 最新主线合入后的 Python 7 文件：160 passed；包括回执、权限、幂等、取消、隐私及列表查询预算。
+- 最新主线合入后的 Executor 派发、MCP、计划任务及异步问题回归：68 passed。
+  前序默认工作区独立集成回归：1 passed。
+- 最新主线合入后的共享 UI：67 passed；桌面相关 5 文件：170 passed。
+  前序 Web adapter 验证：17 passed。
+- 最新双语文档契约：8 passed；前序桌面 checkpoint 静态契约：8 passed。
 - 共享包构建、Wework/frontend TypeScript、相关 ESLint、Python Black/isort、Rust 格式通过。
 - PR CI 发现的两处 Rust `cmp_owned` 已稳定复现并修复。显式字符串比较保留冻结身份；
   15 项设备授权及 4 项运行事件回归通过，数值 ID 和带前导零的 ID 均被拒绝。

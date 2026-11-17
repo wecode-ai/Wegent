@@ -169,6 +169,7 @@ export interface SharedIssueDetailPort {
     remove(attachmentId: string): Promise<void>;
   };
   collaborators: {
+    editingSupported?: boolean;
     list(issueId: string): Promise<SharedIssueDetailCollaborator[]>;
     add(
       issueId: string,

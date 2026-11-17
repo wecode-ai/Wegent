@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { issueCommentFormSelector } from '../modules/issue-comment-selectors.mjs'
 import { setTimeout as poll } from 'node:timers/promises'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { verifyStandInConversationAssignmentIndependence } from '../modules/stand-in-conversation-assignment-independence.mjs'
@@ -310,7 +311,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         value: `wework://boards/${project.id}/issues/${issue.id}`,
       })
       const activity = `${ACTIVE} [data-testid="cloud-task-activity-${issue.id}"]`
-      const form = `${activity} [data-testid="task-comment-form"]`
+      const form = `${ACTIVE} ${issueCommentFormSelector(issue.id)}`
       const editor = `${form} [data-testid="cloud-task-activity-composer"]`
       await control.command('waitFor', editor)
       await control.command('fill', editor, {

@@ -167,7 +167,10 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
         }
-        if matches!(name, "list_schedules" | "schedule_task" | "cancel_schedule") {
+        if matches!(
+            name,
+            "list_schedules" | "schedule_task" | "update_schedule" | "cancel_schedule"
+        ) {
             if identity.coordinator_batch.is_some() {
                 return Err(AppIpcError::new(
                     "permission_denied",
