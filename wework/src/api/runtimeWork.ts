@@ -1,3 +1,4 @@
+import type { RuntimeTaskArchiveRequest } from '../../../packages/chat-core/src/runtime-management-types'
 import { createRuntimeConversationApi } from '@wegent/chat-core/runtime-conversation-api'
 import { readRuntimeTranscript } from '@wegent/chat-core'
 import type { LocalRuntimeSidebarOptions } from '@/lib/local-runtime-sidebar-identity'
@@ -308,7 +309,7 @@ export function createRuntimeWorkApi(client: HttpClient) {
     ): Promise<ArchivedConversationsListResponse> {
       return client.post('/runtime-work/archived-conversations/list', data)
     },
-    archiveConversation(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+    archiveConversation(address: RuntimeTaskArchiveRequest): Promise<RuntimeTaskArchiveResponse> {
       return client.post('/runtime-work/archived-conversations/archive', address)
     },
     archiveProjectConversations(

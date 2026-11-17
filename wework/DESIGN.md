@@ -1017,6 +1017,39 @@ component-level validation outlines to override the native-outline reset.
 
 ### 7.1 Forms
 
+- Project settings share a `20px` horizontal gutter, `24px` top inset, a
+  `max-w-4xl` reading width and the small heading role. Human access belongs
+  under Project members; AI configuration groups Agents, Collaboration groups and execution environments.
+- Preserve drafts when moving between settings sections within one project.
+  Mount sections on first visit and suspend hidden effects; do not preload
+  unrelated settings or keep their requests active. Project changes reset
+  drafts. Explanatory settings text uses the secondary foreground so small
+  text remains readable, including on neutral surfaces.
+- The desktop host supplies its retained-page lifecycle through the collaboration
+  host adapter. The shared settings shell owns layout and navigation; Web uses
+  active-page rendering with its framework-owned React runtime.
+- Keep the settings frame mounted across project navigation and reset the
+  project-owned page drafts inside it by resource identity.
+- In narrow project settings, collapse collaboration navigation behind an
+  explicit disclosure while keeping project context and settings entries visible.
+  Preserve every navigation entry and clear its expanded state after navigation.
+- Keep group identity compact above independently expandable configuration
+  rows for members, rules, environment and sharing. Collapsed rows summarize
+  their current draft values. Keep save status and discard/save actions together.
+  Do not repeat avatars,
+  source labels, counters or bordered profile cards that push editing below
+  the first viewport. Template pickers replace their list with details in the
+  same dialog; role summaries give way to their editing controls.
+- Group member editing uses aligned compact rows, with responsibilities and
+  participant identity visible together. The save bar follows the actual
+  settings scroll container, including when multiple configuration regions open.
+  Returning with unsaved changes requires an explicit discard choice. Group
+  sharing identifies that its snapshot uses the saved version.
+- Settings placeholders use the secondary foreground and full opacity. Validation
+  associates errors with their fields and focuses the error summary. Dialogs
+  share keyboard ownership, preserve nested native or popover boundaries, and
+  restore their trigger after closing, including fields that autofocus on mount.
+
 - Every field has an accessible name; ordinary settings fields also have a
   persistent visible label.
 - Placeholder text is an example or prompt, not the only label.

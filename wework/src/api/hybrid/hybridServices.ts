@@ -1,3 +1,4 @@
+import type { RuntimeTaskArchiveRequest } from '../../../../packages/chat-core/src/runtime-management-types'
 import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
@@ -87,6 +88,7 @@ import type {
   RuntimeSendRequest,
   RuntimeSidebarMutationResponse,
   RuntimeTaskAddress,
+  RuntimeTaskCancelRequest,
   RuntimeTaskCreateRequest,
   RuntimeTaskForkRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
@@ -1396,7 +1398,7 @@ export function createHybridWorkbenchServices(
         rememberedCloudArchives.get(requestCacheKey(request)) ?? emptyArchiveList()
       return mergeArchiveLists(localResult, cloudResult)
     },
-    archiveConversation(address: RuntimeTaskAddress) {
+    archiveConversation(address: RuntimeTaskArchiveRequest) {
       const request = routeByAddress(address).archiveConversation(address)
       if (isLocalDeviceId(address.deviceId)) return request
       return request.then(response => {
@@ -1474,7 +1476,7 @@ export function createHybridWorkbenchServices(
         ? localServices.runtimeWorkApi!.cleanupArchivedConversations({ items: localItems })
         : emptyCleanupResponse()
     },
-    cancelRuntimeTask(address: RuntimeTaskAddress) {
+    cancelRuntimeTask(address: RuntimeTaskCancelRequest) {
       return routeByAddress(address).cancelRuntimeTask(address)
     },
     forceStartRuntimeTask(address: RuntimeTaskAddress) {

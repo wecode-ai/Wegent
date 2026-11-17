@@ -63,6 +63,7 @@ from app.schemas.runtime_work import (
     RuntimeSessionReadRequest,
     RuntimeSupervisorCreateInput,
     RuntimeTaskAddress,
+    RuntimeTaskArchiveRequest,
     RuntimeTaskArchiveResponse,
     RuntimeTaskCancelResponse,
     RuntimeTaskCreatePayload,
@@ -1107,7 +1108,15 @@ async def archive_runtime_task(
             user_id=user_id,
             device_id=normalized_address.device_id,
             method="runtime.tasks.archive",
-            payload=_runtime_task_address_payload(normalized_address),
+            payload={
+                **_runtime_task_address_payload(normalized_address),
+                **(
+                    {"cleanupWorktree": True}
+                    if isinstance(address, RuntimeTaskArchiveRequest)
+                    and address.cleanup_worktree
+                    else {}
+                ),
+            },
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
@@ -2534,6 +2543,7 @@ def _runtime_archive_response(
         accepted=bool(result.get("accepted", True)),
         taskId=str(result.get("taskId") or address.local_task_id),
         workspacePath=result.get("workspacePath") or address.workspace_path,
+        cleanupError=result.get("cleanupError"),
         error=result.get("error"),
     )
 

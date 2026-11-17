@@ -99,6 +99,7 @@ let ensureLocalExecutorAvailablePromise: Promise<LocalExecutorStatus> | null = n
 let scheduledLocalExecutorAvailability: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorConfiguredPromise: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
+let backendConnectionWrite: Promise<unknown> = Promise.resolve()
 let localExecutorIdentityEpoch = 0
 let availableLocalExecutorStatus: LocalExecutorStatus | null = null
 let initializedLocalExecutorStatus: LocalExecutorStatus | null = null
@@ -634,6 +635,7 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
 }
 
 export function resetLocalExecutorStateForTests(): void {
+  backendConnectionWrite = Promise.resolve()
   localExecutorIdentityEpoch += 1
   bundledPluginUpdateEpoch += 1
   bundledPluginRetryListener?.()
@@ -701,19 +703,27 @@ export function copyLocalExecutorDebugInfo(text: string): Promise<void> {
 export function connectLocalExecutorToBackend(
   connection: LocalExecutorBackendConnection
 ): Promise<LocalExecutorStatus> {
-  return requestDshExecutor('executor.backend.configure', {
+  return configureLocalExecutorBackend({
     backend_url: connection.backendUrl,
     socket_url: connection.socketBaseUrl,
     auth_token: connection.authToken,
     runtime_auth_token: connection.runtimeAuthToken ?? null,
     device_type: connection.deviceType,
-  }).then(() => ensureLocalExecutorAvailable())
+  })
 }
 
 export function disconnectLocalExecutorFromBackend(): Promise<LocalExecutorStatus> {
-  return requestDshExecutor('executor.backend.configure', {}).then(() =>
-    ensureLocalExecutorAvailable()
-  )
+  return configureLocalExecutorBackend({})
+}
+
+function configureLocalExecutorBackend(
+  params: Record<string, unknown>
+): Promise<LocalExecutorStatus> {
+  // Backend configuration is one mutable host resource; admit writes in caller order.
+  const write = () => requestDshExecutor('executor.backend.configure', params)
+  const pending = backendConnectionWrite.then(write, write)
+  backendConnectionWrite = pending
+  return pending.then(() => ensureLocalExecutorAvailable())
 }
 
 export function requestLocalExecutor<T = unknown>(

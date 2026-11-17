@@ -14,6 +14,7 @@ import {
 } from './modelSelection'
 import type { UnifiedModel } from '@/types/runtime'
 import { runnerModelCatalog } from '../../../packages/collaboration/src/agent-form/runnerModelCatalog'
+import { getControlsForModel } from '../../../packages/collaboration/src/controls/model-ui'
 
 function model(overrides: Partial<UnifiedModel>): UnifiedModel {
   return {
@@ -26,6 +27,19 @@ function model(overrides: Partial<UnifiedModel>): UnifiedModel {
 }
 
 describe('defaultModel', () => {
+  it.each(['runtime', 'public'] as const)(
+    'shows the PC reasoning controls for a %s GPT snapshot before discovery',
+    type => {
+      const snapshot = model({
+        name: 'gpt-6.1-sol',
+        type,
+        provider: type === 'runtime' ? 'local' : 'cloud',
+      })
+      const control = getControlsForModel(snapshot).find(item => item.id === 'reasoning')!
+      expect(reasoningEfforts(snapshot)).toEqual(control.options.map(option => option.value))
+      expect(resolvedReasoningEffort(snapshot, undefined)).toBe(control.defaultValue)
+    }
+  )
   it('does not automatically select an unauthenticated Codex official model', () => {
     const unauthenticated = model({
       name: 'codex-official',
@@ -184,6 +198,17 @@ describe('defaultModel', () => {
 
     expect(reasoningEfforts(interfaceModel)).toEqual([])
     expect(resolvedReasoningEffort(interfaceModel, 'high')).toBeUndefined()
+  })
+
+  it('keeps an explicit empty GPT reasoning declaration and normalizes supported selections like PC', () => {
+    const disabled = model({
+      name: 'gpt-6.1-sol',
+      config: { ui: { family: 'gpt', reasoningEfforts: [] } },
+    })
+    expect(reasoningEfforts(disabled)).toEqual([])
+    expect(resolvedReasoningEffort(disabled, 'high')).toBeUndefined()
+    const enabled = model({ name: 'gpt-6.1-sol' })
+    expect(resolvedReasoningEffort(enabled, 'extra_high')).toBe('xhigh')
   })
 
   it('preserves the complete PC model label', () => {

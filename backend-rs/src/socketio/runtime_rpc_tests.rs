@@ -181,6 +181,30 @@ fn worktree_responses_project_nested_device_identities() {
 }
 
 #[test]
+fn app_worktree_response_uses_the_verified_installation_identity() {
+    let route = Route {
+        logical_device_id: "app-record-11".into(),
+        runtime_device_id: "app-record-11".into(),
+        app_device_id: Some("electron-shared-host".into()),
+        device_type: DeviceType::App,
+        socket_id: "installation-socket".into(),
+        online: Map::new(),
+    };
+    let result = json!({"deviceId":"electron-shared-host", "worktrees":[
+        {"deviceId":"electron-shared-host"}, {"deviceId":"other-host"}
+    ]});
+    let projected = project_response_device_ids(
+        result.as_object().unwrap(),
+        "runtime.worktrees.preflight",
+        route.response_device_id(),
+        &route.logical_device_id,
+    );
+    assert_eq!(projected["deviceId"], "app-record-11");
+    assert_eq!(projected["worktrees"][0]["deviceId"], "app-record-11");
+    assert_eq!(projected["worktrees"][1]["deviceId"], "other-host");
+}
+
+#[test]
 fn model_configs_nested_in_the_payload_receive_the_account_proxy() {
     let mut payload = json!({
         "modelConfig": {"base_url": "http://provider"},
@@ -225,4 +249,21 @@ fn url_path_trims_the_gateway_suffix() {
         Some("/api/runtime-work/llm-responses-proxy")
     );
     assert_eq!(url_path("https://host").as_deref(), Some(""));
+}
+
+#[test]
+fn archived_items_keep_the_selected_installation_route() {
+    let result = json!({"items":[{"deviceId":"shared-host", "runtimeHandle":{"device_id":"shared-host"}}, {"deviceId":"another-host"}]});
+    let projected = project_response_device_ids(
+        result.as_object().unwrap(),
+        "runtime.archived_conversations.list",
+        "shared-host",
+        "app-record-11",
+    );
+    assert_eq!(projected["items"][0]["deviceId"], "app-record-11");
+    assert_eq!(
+        projected["items"][0]["runtimeHandle"]["device_id"],
+        "app-record-11"
+    );
+    assert_eq!(projected["items"][1]["deviceId"], "another-host");
 }

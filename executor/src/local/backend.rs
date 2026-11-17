@@ -33,7 +33,9 @@ use crate::{
         session_gateway::start_session_gateway,
         workspace_files::{execute_workspace_file_command, is_workspace_file_command},
     },
-    logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
+    logging::{
+        format_executor_log, log_executor_event, write_executor_error_line, write_executor_log_line,
+    },
     protocol::ExecutionRequest,
     runtime_work::RuntimeWorkRpcHandler,
     server::TaskRunner,
@@ -808,13 +810,26 @@ pub async fn serve_local_app_endpoint(
     token: &str,
     owner_token: &str,
 ) -> Result<(), String> {
-    local_app_ipc_server(config)
-        .await?
+    let started = Instant::now();
+    log_executor_event(
+        "app IPC local endpoint startup",
+        &[("phase", "server_initialization_started".to_owned())],
+    );
+    let server = local_app_ipc_server(config).await?;
+    log_executor_event(
+        "app IPC local endpoint startup",
+        &[
+            ("phase", "server_initialized".to_owned()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+        ],
+    );
+    server
         .serve_local_endpoint(endpoint, token, owner_token)
         .await
 }
 
 async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, String> {
+    let started = Instant::now();
     let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runtime_instance_id = backend_config.runtime_instance_id.clone();
@@ -833,6 +848,13 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
             Some(device_route_id.clone()),
         ),
     );
+    log_executor_event(
+        "app IPC local endpoint startup",
+        &[
+            ("phase", "runtime_handler_ready".to_owned()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+        ],
+    );
     let backend_connection = LocalBackendConnectionController::start_with_runtime(
         config,
         runtime_work_handler.clone(),
@@ -841,12 +863,26 @@ async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, Stri
         device_route_id.clone(),
     )
     .await;
+    log_executor_event(
+        "app IPC local endpoint startup",
+        &[
+            ("phase", "backend_controller_ready".to_owned()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+        ],
+    );
     let server = AppIpcServer::new()
         .with_device_id(app_ipc_device_id)
         .with_runtime_instance_id(runtime_instance_id)
         .with_device_route_id_slot(device_route_id)
         .with_shared_runtime_work_handler(runtime_work_handler, runtime_event_tx, event_hub)
         .with_backend_connection_handler(backend_connection);
+    log_executor_event(
+        "app IPC local endpoint startup",
+        &[
+            ("phase", "server_assembled".to_owned()),
+            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+        ],
+    );
     Ok(server)
 }
 

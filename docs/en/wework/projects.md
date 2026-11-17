@@ -7,6 +7,11 @@ sidebar_position: 3
 <a id="project-controls"></a>
 
 <!-- ui-source: ../packages/collaboration/src/project-manage/ProjectSettingsPage.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/GroupConfigurationView.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/GroupCreationDialog.tsx -->
+<!-- ui-source: ../packages/collaboration/src/platform/GroupRulesSection.tsx -->
+<!-- ui-source: ../packages/collaboration/src/project-manage/AutomaticProcessingDialogFooter.tsx -->
+<!-- ui-source: ../packages/collaboration/src/project-manage/ProjectEnvironmentConfiguration.tsx -->
 <!-- ui-source: ../packages/collaboration/src/platform/ResourceCatalogPage.tsx -->
 <!-- ui-source: ../packages/collaboration/src/templates/CollaborationTemplatePage.tsx -->
 <!-- ui-source: ../packages/collaboration/src/milestones/MilestonesPage.tsx -->
@@ -47,7 +52,7 @@ If a Git repository address has an invalid format, the creation window expands a
 
 Select a group name to open its home and review cross-project operations and items needing attention. When the content exceeds the window height, scroll down in the main content area on the right to reach the remaining projects and items.
 
-Global catalogs, group settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace group membership management.
+Global catalogs, group settings, and project settings remain separate levels. Code directories are separate resources, and project AI configuration settings do not replace group membership management.
 
 | Feature                           | Entry and steps                                                                                                                              | Conditions and limits                                                                                                       |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -158,7 +163,7 @@ Open **Milestones** in the project. The Issue-detail selector only associates ex
 
 | Feature                            | Steps                                                                                                                       | Conditions and result                                                                                              |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Add project member                 | Project settings → AI team → Members → Add member → search username/email → choose role → click result                      | Clicking adds immediately; no extra Save button; requires management permission                                    |
+| Add project member                 | Project settings → Project members → Add member → search username/email → choose role → click result                      | Clicking adds immediately; no extra Save button; requires management permission                                    |
 | Responsibilities, role and removal | Edit responsibilities/capabilities on the row and blur to save; change role/remove where allowed                            | Inherited membership, effective role and permissions constrain actions; not every member can be removed            |
 | Discuss, assign or move            | Issue details → discussion composer → Assign to or Move to → select target → Send and update                                | Selection only stages changes; without text, select Update issue; use × to cancel a selection                      |
 | Close and reopen                   | Issue details → arrow beside Send inside the composer, bottom right → Close issue or Reopen issue                           | With a draft, the action is Comment and close; details stay open and closure uses the existing Completed state     |
@@ -291,7 +296,7 @@ When two or more agents are selected, the creation flow recommends organizing th
 
 ### Use workspace agents in a project
 
-After creating or adding an agent under **Project settings → AI team → Agents**, an administrator can select it under **Assignee → Workspace agents** on a new or existing Issue. Assignment executes according to project configuration. Use **Add agent → Existing agents** on that settings page to enable it beforehand. Catalogs show the configured display name or the resource name when no display name is set.
+After creating or adding an agent under **Project settings → AI configuration → Agents**, an administrator can select it under **Assignee → Workspace agents** on a new or existing Issue. Assignment executes according to project configuration. Use **Add agent → Existing agents** on that settings page to enable it beforehand. Catalogs show the configured display name or the resource name when no display name is set.
 
 Local spaces save the agent configuration in the project, preserving its resource name, display name, model policy, and tools. In cloud spaces, workspace sharing grants use permission, while a project binding determines where the agent is available. Sharing does not grant permission to edit its source definition. Execution still requires an authorized project device and model.
 
@@ -299,9 +304,9 @@ Local spaces save the agent configuration in the project, preserving its resourc
 
 ### Agent capabilities and disabled state
 
-Open **Project settings → AI team → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. Project Maintainers can edit project-owned definitions, including entries created by other members; explicitly private definitions remain creator-only. Shared and personal Agent source definitions still require their original editing permission. Unchanged hidden MCP configuration is preserved; editing a project definition does not grant access to another person's private credentials. Click **Save** to apply changes and refresh the project list. A failed write keeps the form open with its values and an error. If the write succeeds but refreshing the list fails, the editor closes and the list offers a retry that only reloads data. Saving other fields preserves untouched routing; older Agents do not need a model-policy upgrade first.
+Open **Project settings → AI configuration → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. Project Maintainers can edit project-owned definitions, including entries created by other members; explicitly private definitions remain creator-only. Shared and personal Agent source definitions still require their original editing permission. Unchanged hidden MCP configuration is preserved; editing a project definition does not grant access to another person's private credentials. Click **Save** to apply changes and refresh the project list. A failed write keeps the form open with its values and an error. If the write succeeds but refreshing the list fails, the editor closes and the list offers a retry that only reloads data. Saving other fields preserves untouched routing; older Agents do not need a model-policy upgrade first.
 
-Assignment errors identify the Agent, the Issue's bound environment, the policy environment and the denial reason. For a policy conflict, open **Runtime settings** in the editor above and configure the Agent to use the Issue's bound device. For missing workspace or project authorization, restore the grant on the indicated **Execution environments** page, then assign again. When group members have no common runner, the error lists each member and its eligible devices. Rejected assignments preserve the saved assignee and do not automatically move historical sessions to another device.
+Assignment errors identify the Agent, the Issue's bound environment, the policy environment and the denial reason. For a policy conflict, open **How it runs** in the editor above and configure the Agent to use the Issue's bound device. For missing workspace or project authorization, restore the grant on the indicated **Execution environments** page, then assign again. When group members have no common runner, the error lists each member and its eligible devices. Rejected assignments preserve the saved assignee and do not automatically move historical sessions to another device.
 
 In a global, space or project agent create/settings form, check resource ownership and choose the capability source:
 
@@ -309,7 +314,7 @@ In a global, space or project agent create/settings form, check resource ownersh
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Follow runtime device (recommended) | Uses that running device's current user's plugins, Skills, MCP and local capabilities; today's device preview is not a guarantee for a different device               |
 | Fix capabilities to Agent           | Search/add/remove plugins and Skills to store them with the agent; plugin capability selection is Codex-only and configured capabilities synchronize before execution |
-| Advanced MCP                        | In fixed mode, edit MCP JSON in advanced settings and check format/source trust; do not put credentials in prose or chat                                              |
+| Advanced MCP                        | In fixed mode, edit MCP JSON in Tools and skills and check format/source trust; do not put credentials in prose or chat                                              |
 | Prompt references                   | Plugin/Skill references require fixed capabilities and lock required selections; review/remove the reference before changing its required item                        |
 | Save                                | Explicitly save after reviewing capabilities, execution environment and model; choosing an option alone does not save                                                 |
 | Disable                             | Disabling in project agent configuration submits immediately, without another confirmation dialog; not deletion of the source agent or termination of an existing run |
@@ -320,10 +325,12 @@ In a global, space or project agent create/settings form, check resource ownersh
 
 When adding an Agent, search existing Agents by name or owning space, or open
 the creation form. New Agents default to **Automatic selection** for execution
-and the first available cloud model. The basic tab shows the current environment
-and model in its footer, so you can create the Agent without opening runtime settings.
+and the first available cloud model. Enter the name and responsibilities first,
+then independently expand **Tools and skills** and **How it runs** as needed.
+Both sections preserve your draft. The collapsed runtime section labels the
+environment and model separately; the footer contains only Cancel and Save.
 
-Open **Runtime settings** to change these defaults. The environment menu lists
+Open **How it runs** to change these defaults. The environment menu lists
 automatic selection, selection at run time, and specific devices, with project
 shared devices before personal devices. Search by name or device ID. Only online
 devices appear initially; use **Show offline devices** in the bottom-right corner
@@ -470,6 +477,28 @@ Calendar and Gantt filters, grouping, and sorting are first stored as personal s
 
 ## Execution environment in Project settings
 
+Switching between settings pages within the same project keeps unsaved drafts on visited pages, including execution-environment repositories and setup steps, and collaboration-group rules and stages. Returning lets you continue editing. Switching pages neither saves changes nor runs setup commands. Drafts are discarded when leaving project settings, switching projects, or reloading the app; use the owning page's Save action first.
+
+Opening a collaboration group shows its name and goal first, followed by summary rows for members, rules, environment requirements and sharing. Expand each row to edit; multiple regions can remain open. The footer shows whether changes are saved. **Discard changes** restores the saved configuration, and **Save** submits the changes. Expanding or collapsing a region never saves configuration.
+
+Reference stages have a **Stage description** and an **Executor**. Choosing **Back to groups** with unsaved changes offers **Continue editing** or **Discard and return**. Group sharing uses the last saved version and explicitly identifies unsaved changes; save the group first to include them.
+
+Agent, group-creation and automatic-rule dialogs keep Tab / Shift+Tab inside the active dialog. Escape closes the topmost layer and focus returns to its trigger. Deleting an automatic rule requires confirmation; canceling preserves it. Users without project management access can inspect rules through a read-only editor.
+
+In the processing-target list, use arrow keys or Home / End to move focus and Enter to confirm. Escape closes the list and returns focus to its trigger. When the server rejects a Cron expression, the editor preserves the draft, opens advanced settings and focuses the invalid field. Correct the expression and save again.
+
+In narrow windows, **Collaboration navigation** above project settings expands Home, projects and the other collaboration entries. Selecting a location collapses it again to leave room for configuration.
+
+Each setup step has **Setup command** and **Working directory (optional)** fields. An incomplete repository associates the validation error with its empty fields and focuses the error message. Complete or remove the repository and save again. Editing or saving configuration in settings does not execute setup commands. Initialize starts environment preparation.
+
+**Project members** manages human access. **AI configuration → Agents / Collaboration groups / Execution environments** manages execution and coordination. **Basic information → Tags → New tag** provides a persistent **Tag name** label; enter the name and submit **New tag**.
+
+After saving a collaboration group or automatic rule, you can return directly to Basic information without reloading. If **Configuration saved, but project details could not be refreshed. Retry the refresh.** appears, **Retry** only reads project details again; it never repeats the configuration write.
+
+An Agent's **How it runs → Automatic allocation** uses cloud models. When no models are available for this mode, choose **Specify device** to open the same execution-environment picker and select a device for its native models. No device is bound automatically.
+
+Opening a template under **Configuration sharing → Choose template** shows its details within the same dialog. Choose **Back to templates** to continue browsing. **Confirm collaboration configuration → Customize members** switches between the role summary and editing form. Use **Save to My templates** to retain the current configuration or **Export configuration (YAML)** to download it.
+
 In a collaboration project, open **Project settings → Execution environment** to add a repository and initialize an execution environment when needed. A project without a repository can use a blank workspace. Normally, selecting a repository or entering its Git URL is enough: the name and directory are derived automatically. Expand **Advanced options** only to customize the name, directory, or branch. Setup steps are optional; no placeholder fields are required to save the configuration.
 
 Manual work does not require execution-environment initialization or an extra form. Choose status or assignee in Issue details; property changes save independently of unsaved description. See this page's [project operations](#project-controls) for discussion assignment, archive and restore.
@@ -489,6 +518,12 @@ Send a message directly without selecting another project or working directory. 
 Opening a conversation does not enable background project coordination. For work that needs a tracked owner, status, and deliverables, create a board task and assign a member, robot, or collaboration group.
 
 ## Issue details and execution tasks
+
+<a id="issue-linked-existing-tasks"></a>
+
+### Link an existing task
+
+Beside **Linked tasks** in Issue details, click **Link existing task**, search by title or ID, and select an existing task from your current task list. Saving the link adds it to the linked task list without starting it or changing the Issue status. A task has one active Issue link; any existing Issue link moves to the current Issue. Read-only Issues hide this action. A failed link keeps the picker open for retry.
 
 In Issue activity, click an attachment link or embedded image to preview it and download the original. Images, Markdown documents and other files share resource resolution and authenticated reads for the current Issue. An attachment ID identifies a file directly; local and relative paths match the link label and full basename exactly. Only a unique match opens. Execution paths are never read as files on the viewer's device.
 
@@ -652,4 +687,7 @@ In the Issue comment composer toolbar, use the **Assignment mode** branch icon a
 
 Use **Create child Issue** beside any existing visible comment, including comments with or without mentions. Confirming the assignee also adds a discussion reply linking to the new child. Current Issue edit and comment permissions apply; mentions grant no additional access. Children retain the stricter of parent visibility and the project default so copied comments do not become project-public.
 
-Project maintainers can choose **Project settings → AI team → Agents → Delete** and confirm removal. Existing tasks, execution history and shared source resources remain intact. Replace or remove all leader, member and stage references in collaboration groups first. System-managed current-device Agents cannot be deleted. Removing a collaboration group also requires confirmation; Cancel leaves it unchanged.
+Project maintainers can choose **Project settings → AI configuration → Agents → Delete** and confirm removal. Existing tasks, execution history and shared source resources remain intact. Replace or remove all leader, member and stage references in collaboration groups first. System-managed current-device Agents cannot be deleted. Removing a collaboration group also requires confirmation; Cancel leaves it unchanged.
+
+Use **Project settings → AI configuration → Execution environments** to maintain AI devices, repositories and setup steps. Explicit preparation shows **Project directory ready** on completion. Version conflicts preserve your draft. **Load latest configuration** replaces the draft with server values; **Keep draft and refresh version** retains your input without submitting it. Review it before clicking **Save configuration**, which replaces the latest environment configuration. A failed read can be retried without repeating a write.
+
