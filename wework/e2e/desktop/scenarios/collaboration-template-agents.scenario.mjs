@@ -13,6 +13,10 @@ import {
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
+  confirmProjectTemplateConfiguration,
+  openProjectTemplateConfiguration,
+} from '../modules/project-create-template-navigation.mjs'
+import {
   configureFirstProjectExecutionEnvironment,
   createLocalCollaborationProject,
   selectCollaborationProjectView,
@@ -21,7 +25,7 @@ import {
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const selector = name => `${CONTENT} [data-testid="${name}"]`
-const PICKER = `${selector('collaboration-project-create-dialog')} [data-testid="collaboration-template-dialog"]`
+const PICKER = `${selector('collaboration-project-create-dialog')} [data-testid="project-create-template-catalog"]`
 const pickerSelector = name => `${PICKER} [data-testid="${name}"]`
 
 export function createDesktopScenario({
@@ -259,6 +263,7 @@ export function createDesktopScenario({
       await control.command('waitFor', pickerSelector('template-use'))
       await control.command('click', pickerSelector('template-use'))
       await control.command('waitFor', PICKER, { visible: false })
+      await confirmProjectTemplateConfiguration(control, CONTENT)
       await control.command('waitFor', selector('project-create-template-section'), {
         text: `待配置模型模板-${process.pid}`,
       })
@@ -316,6 +321,7 @@ export function createDesktopScenario({
       await control.command('waitFor', pickerSelector('template-use'))
       await control.command('click', pickerSelector('template-use'))
       await control.command('waitFor', PICKER, { visible: false })
+      await confirmProjectTemplateConfiguration(control, CONTENT)
       await control.command('waitFor', selector('project-create-template-section'), {
         text: savedName,
       })
@@ -446,6 +452,7 @@ export function createDesktopScenario({
       await control.command('click', selector('template-tab-mine'))
       await control.command('click', selector(card.replace('template-card-', 'template-details-')))
       await control.command('click', selector('template-use'))
+      await openProjectTemplateConfiguration(control, CONTENT)
       await control.command('waitFor', selector('template-agents-summary'), {
         text: '将创建 6 个智能体',
       })
@@ -455,6 +462,7 @@ export function createDesktopScenario({
       await control.command('waitFor', selector('template-agents-summary'), {
         text: '将创建 5 个智能体',
       })
+      await confirmProjectTemplateConfiguration(control, CONTENT)
       await control.command('click', selector('project-create-choose-template'))
       await control.command('click', pickerSelector('template-tab-mine'))
       const savedDetails = pickerSelector(card.replace('template-card-', 'template-details-'))
@@ -483,6 +491,7 @@ export function createDesktopScenario({
         'The coordinator must remain required'
       )
       const reducedName = `模板精简角色-${process.pid}`
+      await confirmProjectTemplateConfiguration(control, CONTENT)
       await control.command('fill', selector('collaboration-project-name-input'), {
         value: reducedName,
       })

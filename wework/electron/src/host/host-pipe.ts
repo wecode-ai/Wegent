@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { createInterface, type Interface } from 'node:readline'
 import type { Readable, Writable } from 'node:stream'
+import { JsonLineReader } from './json-line-reader.mjs'
 import { SmartAppVerificationError } from './smart-app-verification-types.js'
 import { e2eErrorLog } from './e2e-error-log.js'
 import {
@@ -19,7 +19,7 @@ const MAX_FRAME_BYTES = 64 * 1024 * 1024
 interface HostPipeSession {
   input: Readable
   output: Writable
-  lines: Interface
+  lines: JsonLineReader
   principal: string | null
   child: ChildProcessWithoutNullStreams | null
 }
@@ -66,7 +66,7 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
     child: ChildProcessWithoutNullStreams | null = null
   ): void {
     this.detach()
-    const lines = createInterface({ input })
+    const lines = new JsonLineReader(input, MAX_FRAME_BYTES)
     const session: HostPipeSession = {
       input,
       output,
@@ -76,6 +76,9 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
     }
     this.session = session
     lines.on('line', line => void this.handleLine(session, line))
+    lines.on('overflow', () =>
+      this.protocolFailure(session, new Error('Desktop host frame exceeds size limit'))
+    )
     const handleOutputError = (error: Error) => this.protocolFailure(session, error)
     output.on('error', handleOutputError)
     output.once('close', () => output.removeListener('error', handleOutputError))
@@ -96,10 +99,6 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
   }
 
   private async handleLine(session: HostPipeSession, rawLine: string): Promise<void> {
-    if (Buffer.byteLength(rawLine) > MAX_FRAME_BYTES) {
-      this.protocolFailure(session, new Error('Desktop host frame exceeds size limit'))
-      return
-    }
     let message: unknown
     try {
       message = JSON.parse(rawLine)

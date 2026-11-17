@@ -1588,27 +1588,34 @@ async function selectE2EModel(
     label === DEFAULT_MODEL_LABEL ? [label, 'GPT-5.6 Luna'] : [label]
   )
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
-  await control.command('waitFor', modelSelectorButton, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    visible: true,
-  })
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const pickerOpen = initialSnapshot.testIds.includes('model-selector-menu')
+  if (!pickerOpen) {
+    await control.command('waitFor', modelSelectorButton, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      visible: true,
+    })
+  }
   if (expectedProviderId) {
     // The recovery control stays mounted while startup reconciles the local catalog.
     await control.command('ensureLocalModelCatalogReady', 'body', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
   }
-  const selectedModelLabel = await control.command('getText', modelSelectorButton, {
-    visible: true,
-  })
-  const selectedProviderId = await control.command('getAttribute', modelSelectorButton, {
-    value: 'data-model-provider-id',
-  })
-  if (
-    labels.some(label => selectedModelLabel.includes(label)) &&
-    (!expectedProviderId || selectedProviderId === expectedProviderId)
-  ) {
-    return
+  // An open modal picker isolates its background trigger, including retry entry points.
+  if (!pickerOpen) {
+    const selectedModelLabel = await control.command('getText', modelSelectorButton, {
+      visible: true,
+    })
+    const selectedProviderId = await control.command('getAttribute', modelSelectorButton, {
+      value: 'data-model-provider-id',
+    })
+    if (
+      labels.some(label => selectedModelLabel.includes(label)) &&
+      (!expectedProviderId || selectedProviderId === expectedProviderId)
+    ) {
+      return
+    }
   }
 
   await ensureModelOptionVisible(control, modelIds, modelSelectorButton, expectedProviderId)

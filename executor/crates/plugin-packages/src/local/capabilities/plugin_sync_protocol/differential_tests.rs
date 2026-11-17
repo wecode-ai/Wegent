@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use std::time::Duration;
 
 #[derive(Default)]
 struct Packages(AtomicUsize);
@@ -257,6 +258,76 @@ async fn only_changed_plugins_are_synchronized_and_omitted_plugins_are_removed()
 }
 
 #[tokio::test]
+async fn another_plugin_cannot_publish_inside_a_metadata_comparison() {
+    let (_root, handler) = shared_fixture(true);
+    let handler = std::sync::Arc::new(handler);
+    let a = desired("alpha", 1);
+    let mut b = desired("beta", 2);
+    let initial = handler
+        .apply_sync(complete(10, vec![a.clone(), b.clone()]))
+        .await
+        .unwrap();
+    assert_eq!(initial["success"], true, "{initial}");
+    b["enabled"] = json!(false);
+    let publisher = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let saved = publisher.clone();
+    let other = handler.clone();
+    runtime_recovery::set_metadata_probe_hook(
+        &handler.store.manifest.path,
+        "alpha@wework",
+        move || {
+            let (available, state) = std::sync::mpsc::channel();
+            let (finished, completion) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        let locking = other.sync_lock.lock();
+                        tokio::pin!(locking);
+                        match futures_util::poll!(&mut locking) {
+                            std::task::Poll::Ready(guard) => {
+                                drop(guard);
+                                available.send(true).unwrap();
+                            }
+                            std::task::Poll::Pending => {
+                                available.send(false).unwrap();
+                                drop(locking.await);
+                            }
+                        }
+                        let result = other.apply_sync(delta(11, vec![b], vec![])).await.unwrap();
+                        let _ = finished.send(());
+                        result
+                    })
+            });
+            *saved.lock().unwrap() = Some(worker);
+            if state.recv_timeout(Duration::from_secs(5)).unwrap() {
+                // Without the read fence, force the other publication between
+                // planning metadata and comparing it with the live files.
+                completion.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+        },
+    );
+    let result = handler
+        .apply_sync(delta(11, vec![a], vec![]))
+        .await
+        .unwrap();
+    let worker = publisher
+        .lock()
+        .unwrap()
+        .take()
+        .expect("Metadata comparison did not run");
+    let other = worker.join().unwrap();
+    assert_eq!(other["success"], true, "{other}");
+    assert_eq!(result["success"], true, "{result}");
+    assert_eq!(result["plugins"][0]["unchanged"], true, "{result}");
+    let manifest = handler.store.manifest.load().unwrap();
+    assert_eq!(manifest["plugins"]["alpha@wework"]["enabled"], true);
+    assert_eq!(manifest["plugins"]["beta@wework"]["enabled"], false);
+}
+
+#[tokio::test]
 async fn identity_version_and_component_changes_cannot_reuse_the_old_installation() {
     for (field, value) in [
         ("installed_plugin_id", json!(99)),
@@ -441,6 +512,72 @@ async fn runtime_corruption_and_native_configuration_drift_are_not_hidden_by_mat
 }
 
 #[tokio::test]
+async fn cancelled_legacy_preparation_keeps_publication_locked_until_worker_finishes() {
+    let (_root, handler) = shared_fixture(true);
+    let desired = desired("alpha", 1);
+    let installed = handler
+        .apply_sync(complete(10, vec![desired.clone()]))
+        .await
+        .unwrap();
+    assert_eq!(installed["success"], true);
+    let handler = std::sync::Arc::new(handler);
+    let snapshot = handler.store.manifest.load().unwrap();
+    let spec = PluginSyncSpec::from_value(&desired).unwrap();
+    let lease = std::sync::Arc::new(plugin_preparation::PreparationLease {
+        _lane: None,
+        _slot: handler
+            .plugin_preparation
+            .slots
+            .clone()
+            .acquire_owned()
+            .await
+            .unwrap(),
+    });
+    let publication = std::sync::Arc::new(handler.sync_lock.clone().lock_owned().await);
+    let (entered, ready) = tokio::sync::oneshot::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    runtime_recovery::set_metadata_probe_hook(
+        &handler.store.manifest.path,
+        "alpha@wework",
+        move || {
+            entered.send(()).unwrap();
+            resume.recv_timeout(Duration::from_secs(5)).unwrap();
+        },
+    );
+    let worker = handler.clone();
+    let preparing = tokio::spawn(async move {
+        worker
+            .prepare_plugin(&spec, &snapshot, lease, Some(publication))
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), ready)
+        .await
+        .unwrap()
+        .unwrap();
+    preparing.abort();
+    assert!(matches!(preparing.await, Err(error) if error.is_cancelled()));
+    assert!(
+        handler.sync_lock.try_lock().is_err(),
+        "Cancelled caller released an active publication"
+    );
+    release.send(()).unwrap();
+    let _publication = tokio::time::timeout(Duration::from_secs(5), handler.sync_lock.lock())
+        .await
+        .expect("Completed worker did not release publication");
+    let _slots = tokio::time::timeout(
+        Duration::from_secs(5),
+        handler
+            .plugin_preparation
+            .slots
+            .clone()
+            .acquire_many_owned(plugin_preparation::MAX_PLUGIN_PREPARATIONS as u32),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+}
+
+#[tokio::test]
 async fn native_metadata_probe_waits_for_publication_before_comparing() {
     let (_root, handler) = shared_fixture(true);
     let desired = desired("alpha", 1);
@@ -464,11 +601,8 @@ async fn native_metadata_probe_waits_for_publication_before_comparing() {
     });
     let publication = handler.sync_lock.lock().await;
     let worker = handler.clone();
-    let mut preparing = tokio::spawn(async move {
-        worker
-            .prepare_plugin(&spec, &snapshot, lease, Some(worker.sync_lock.clone()))
-            .await
-    });
+    let mut preparing =
+        tokio::spawn(async move { worker.prepare_plugin(&spec, &snapshot, lease, None).await });
     // An active writer must exclude the complete metadata read/compare transaction.
     let while_writing =
         tokio::time::timeout(std::time::Duration::from_millis(100), &mut preparing).await;
