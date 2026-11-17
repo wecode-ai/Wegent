@@ -1,8 +1,38 @@
 use super::*;
 use crate::task_runtime::LocalTaskStore;
 
+fn is_isolated_case(name: &str) -> bool {
+    // Other tests' handlers can outlive environment guards and capture the default store.
+    const CASE_ENV: &str = "WEGENT_ASSISTANT_DISPATCH_TEST_CASE";
+    if env::var(CASE_ENV).ok().as_deref() == Some(name) {
+        return true;
+    }
+    let output = std::process::Command::new(env::current_exe().unwrap())
+        .args([
+            "--exact",
+            &format!("local::backend::tests::assistant_dispatch::{name}"),
+            "--nocapture",
+        ])
+        .env(CASE_ENV, name)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("1 passed"), "{stdout}");
+    false
+}
+
 #[test]
 fn assistant_dispatch_heartbeat_uses_the_authorized_app_installation_identity() {
+    if !is_isolated_case(
+        "assistant_dispatch_heartbeat_uses_the_authorized_app_installation_identity",
+    ) {
+        return;
+    }
     let _guard = env_lock();
     let root = tempfile::tempdir().unwrap();
     let previous_home = env::var_os("WEGENT_EXECUTOR_HOME");
@@ -56,6 +86,9 @@ fn assistant_dispatch_heartbeat_uses_the_authorized_app_installation_identity() 
 
 #[test]
 fn assistant_dispatch_does_not_borrow_another_installations_grant() {
+    if !is_isolated_case("assistant_dispatch_does_not_borrow_another_installations_grant") {
+        return;
+    }
     let _guard = env_lock();
     let root = tempfile::tempdir().unwrap();
     let previous_home = env::var_os("WEGENT_EXECUTOR_HOME");
