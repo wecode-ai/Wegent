@@ -12,6 +12,71 @@ fn advertised_role(owner: i64) -> Value {
         "handlingPolicy":{"automatic":true}})
 }
 
+#[tokio::test]
+async fn automation_receipts_guard_the_run_assignment_and_project_in_the_same_write() {
+    let origin = json!({"human_automation":{"automation_run_id":"run","human_assignment_id":"human",
+        "assignment_id":"assignment","idempotency_key":"run:human","workflow_stage_id":"ux_spec",
+        "non_workflow":false,"required_deliverables":[{"id":"ux_spec_file","value_type":"file"}]}});
+    let receipt = super::super::human_automation::receipt(
+        "completed",
+        "succeeded",
+        17,
+        "owned-device",
+        "task",
+    );
+    let mut tx = RecordingTransaction::default();
+    super::super::human_automation::project_on(
+        &mut tx,
+        &origin,
+        "different-run",
+        "1001",
+        "issue-1",
+        &receipt,
+    )
+    .await
+    .unwrap();
+    assert!(tx.writes.is_empty());
+    super::super::human_automation::project_on(
+        &mut tx,
+        &origin,
+        "run",
+        "1001",
+        "issue-1",
+        &json!({"state":"succeeded"}),
+    )
+    .await
+    .unwrap();
+    assert!(tx.writes.is_empty());
+    super::super::human_automation::project_on(
+        &mut tx, &origin, "run", "1001", "issue-1", &receipt,
+    )
+    .await
+    .unwrap();
+    assert_eq!(tx.writes.len(), 2);
+    let (sql, bindings) = &tx.writes[0];
+    assert_eq!(*bindings, 10);
+    for predicate in [
+        "cloud_project_id=?",
+        "task_id=?",
+        "human_automation.idempotency_key",
+        "human_automation.assignment_id",
+        "status NOT IN ('succeeded','failed','cancelled','skipped')",
+        "JSON_CONTAINS",
+    ] {
+        assert!(sql.contains(predicate), "{sql}");
+    }
+    assert!(!sql.contains("different-run"));
+    assert_eq!(receipt["state"], "blocked");
+    let activity = &tx.writes[1].0;
+    assert!(activity.contains("'$.run_status'"));
+    assert!(activity.contains("'$.human_automation'"));
+    assert!(activity.contains("JSON_REMOVE"));
+    for field in ["endpoint_ref", "runtime_device_id", "runtime_task_id"] {
+        assert!(activity.contains(&format!("'$.{field}'")));
+    }
+    assert!(activity.contains("activity.project_id=? AND activity.task_id=?"));
+}
+
 fn declared_device(value: Value) -> DeviceKindRow {
     DeviceKindRow {
         id: 9,

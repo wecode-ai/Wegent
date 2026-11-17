@@ -6,6 +6,7 @@ import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-
 import {
   createAutomationExecutionCatalogApi,
   createSharedWorkspaceHttpApi,
+  mapAutomationBackendRunDto,
   mapCollaborationExecutionDto,
   mapCollaborationIssueDto,
   mapWorkspaceDeliveryAssetDto,
@@ -953,24 +954,31 @@ export function createWebSharedWorkspaceApi(
           `/v1/cloud-projects/${encoded(projectId)}/automations/${encoded(automationId)}`
         )
       },
-      runNow(projectId, automationId) {
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/automations/${encoded(automationId)}/run`
+      async runNow(projectId, automationId) {
+        return mapAutomationBackendRunDto(
+          await client.post(
+            `/v1/cloud-projects/${encoded(projectId)}/automations/${encoded(automationId)}/run`
+          )
         )
       },
-      listRuns(projectId, automationId) {
-        return client.get(
+      async listRuns(projectId, automationId) {
+        const runs = await client.get<unknown[]>(
           `/v1/cloud-projects/${encoded(projectId)}/automations/${encoded(automationId)}/runs`
         )
+        return runs.map(mapAutomationBackendRunDto)
       },
-      cancelRun(projectId, runId) {
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/automation-runs/${encoded(runId)}/cancel`
+      async cancelRun(projectId, runId) {
+        return mapAutomationBackendRunDto(
+          await client.post(
+            `/v1/cloud-projects/${encoded(projectId)}/automation-runs/${encoded(runId)}/cancel`
+          )
         )
       },
-      retryRun(projectId, runId) {
-        return client.post(
-          `/v1/cloud-projects/${encoded(projectId)}/automation-runs/${encoded(runId)}/retry`
+      async retryRun(projectId, runId) {
+        return mapAutomationBackendRunDto(
+          await client.post(
+            `/v1/cloud-projects/${encoded(projectId)}/automation-runs/${encoded(runId)}/retry`
+          )
         )
       },
     },

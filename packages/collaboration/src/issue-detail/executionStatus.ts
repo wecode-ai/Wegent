@@ -8,6 +8,9 @@ export type ExecutionDisplayStatus =
   | "queued"
   | "starting"
   | "waiting_runtime"
+  | "waiting"
+  | "waiting_user"
+  | "blocked"
   | "running"
   | "cancelling"
   | "succeeded"
@@ -44,6 +47,9 @@ const STATUS_ALIASES: Readonly<Record<string, ExecutionDisplayStatus>> = {
   waiting_device: "waiting_runtime",
   waiting_approval: "waiting_approval",
   waiting_runtime: "waiting_runtime",
+  waiting: "waiting",
+  waiting_user: "waiting_user",
+  blocked: "blocked",
 };
 
 const ACTIVE_DISPLAY_STATUSES = new Set<ExecutionDisplayStatus>([
@@ -51,6 +57,9 @@ const ACTIVE_DISPLAY_STATUSES = new Set<ExecutionDisplayStatus>([
   "queued",
   "starting",
   "waiting_runtime",
+  "waiting",
+  "waiting_user",
+  "blocked",
   "running",
   "cancelling",
   "unknown",

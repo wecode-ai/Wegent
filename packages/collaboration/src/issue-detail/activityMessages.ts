@@ -77,6 +77,24 @@ export const activityMessages: Record<
     "activity.queue_state_starting": "正在启动",
     "activity.queue_state_unknown": "状态待核实",
     "activity.queue_state_waiting_runtime": "等待运行时确认",
+    "activity.automation_state_waiting": "等待助理",
+    "activity.automation_state_waiting_user": "等待人工处理",
+    "activity.automation_state_blocked": "处理受阻",
+    "activity.automation_stage": "阶段",
+    "activity.automation_requirements": "所需交付",
+    "activity.automation_endpoint": "助理端点",
+    "activity.automation_runtime_task": "助理任务",
+    "activity.automation_delivery": "交付",
+    "activity.automation_reason_required_delivery_pending":
+      "助理执行已结束，仍需提交本阶段的全部交付。",
+    "activity.automation_reason_assistant_receipts_unavailable":
+      "尚未收到可核验的助理接单回执。",
+    "activity.automation_reason_awaiting_runtime":
+      "设备已受理，等待助理实际开始执行。",
+    "activity.automation_reason_assignment_superseded":
+      "这次分配已被新的分配替代。",
+    "activity.automation_reason_cancel_requested": "正在停止助理处理。",
+    "activity.automation_reason_waiting_user": "助理正在等待人工处理。",
     "activity.task_activity_ai_execution": "AI 执行",
     "activity.task_activity_manager_role": "负责人",
     "activity.task_activity_member_role": "执行成员",
@@ -203,6 +221,26 @@ export const activityMessages: Record<
     "activity.queue_state_starting": "Starting",
     "activity.queue_state_unknown": "Status unknown",
     "activity.queue_state_waiting_runtime": "Awaiting runtime",
+    "activity.automation_state_waiting": "Waiting for assistant",
+    "activity.automation_state_waiting_user": "Waiting for human input",
+    "activity.automation_state_blocked": "Processing blocked",
+    "activity.automation_stage": "Stage",
+    "activity.automation_requirements": "Required deliverables",
+    "activity.automation_endpoint": "Assistant endpoint",
+    "activity.automation_runtime_task": "Assistant task",
+    "activity.automation_delivery": "Delivery",
+    "activity.automation_reason_required_delivery_pending":
+      "The assistant execution ended; all deliverables for this stage are still required.",
+    "activity.automation_reason_assistant_receipts_unavailable":
+      "No verifiable assistant acceptance receipt has arrived.",
+    "activity.automation_reason_awaiting_runtime":
+      "The device accepted this work; the assistant has not started executing yet.",
+    "activity.automation_reason_assignment_superseded":
+      "A new assignment replaced this one.",
+    "activity.automation_reason_cancel_requested":
+      "Assistant processing is stopping.",
+    "activity.automation_reason_waiting_user":
+      "The assistant is waiting for human input.",
     "activity.task_activity_ai_execution": "AI execution",
     "activity.task_activity_manager_role": "Manager",
     "activity.task_activity_member_role": "Executor",

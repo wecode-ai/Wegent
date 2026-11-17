@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models.delivery import CloudProject, LoopItem, LoopNode
+from app.core.config import settings
+from app.models.delivery import CloudProject, LoopItem, LoopItemComment, LoopNode
 from app.models.user import User
 from app.services import collaboration_human_assignments
 from app.services.channels.dingtalk.notification_card import card_param_map
@@ -149,6 +150,66 @@ def test_collaboration_dispatch_keeps_personal_task_actions_and_issue_context(
     }
     payload = notification["payload"]
     assert {key: payload[key] for key in expected_actions} == expected_actions
+
+
+def test_automation_notification_reads_stage_and_requirements_from_assignment(
+    capture_notification, monkeypatch
+):
+    monkeypatch.setattr(settings, "HUMAN_AUTOMATION_RECEIPTS_ENABLED", True)
+    human = User(id=2, user_name="Assignee")
+    actor = User(id=3, user_name="Owner")
+    project, issue = _project(), _issue()
+    human_id = collaboration_human_assignments.direct_human_assignment_id(
+        issue_id=issue.id, assignment_id="assignment-one"
+    )
+    requirements = [{"id": "report", "value_type": "text"}]
+    contract = {
+        "automation_run_id": "run-one",
+        "assignment_id": "assignment-one",
+        "owner_user_id": human.id,
+        "human_assignment_id": human_id,
+        "workflow_stage_id": "review",
+        "required_deliverables": requirements,
+        "non_workflow": False,
+        "idempotency_key": f"run-one:{human_id}",
+    }
+    assignment = LoopItemComment(
+        id="assignment-one",
+        loop_item_id=issue.id,
+        cloud_project_id=project.id,
+        metadata_json={
+            "target_type": "human",
+            "target_id": str(human.id),
+            "workflow_step": "review",
+            "automation": {"run_id": "run-one"},
+            "human_automation": contract,
+        },
+    )
+    db = _db(human, actor)
+    get = db.get.side_effect
+    db.get.side_effect = lambda model, key: (
+        assignment
+        if model is LoopItemComment and key == assignment.id
+        else get(model, key)
+    )
+
+    collaboration_human_assignments.notify_direct_human_assignment(
+        db,
+        project=project,
+        issue=issue,
+        human=human,
+        actor_user_id=actor.id,
+        assignment_id=assignment.id,
+        workflow_stage_id="review",
+        automation_context={"run_id": "run-one"},
+    )
+
+    payload = capture_notification.call_args.kwargs["payload"]
+    assert payload["automationRunId"] == "run-one"
+    assert payload["workflowStageId"] == "review"
+    assert payload["requiredDeliverables"] == requirements
+    assert payload["nonWorkflow"] is False
+    assert payload["idempotencyKey"] == contract["idempotency_key"]
 
 
 def test_external_assignment_card_uses_the_provider_target_not_the_sparse_index(

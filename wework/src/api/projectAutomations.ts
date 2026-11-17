@@ -1,18 +1,10 @@
 import type { HttpClient } from './http'
-import type { RunnerSelection } from '@wegent/collaboration'
+import { mapAutomationBackendRunDto, type RunnerSelection } from '@wegent/collaboration'
+import type { AutomationBackendRun, AutomationRunStatus } from '@wegent/collaboration/automation'
 import type { LocalLoopItemExecution } from './local/localDelivery'
 import type { ProjectWorkflowDefinition } from './deliveries'
 
-export type ProjectAutomationRunStatus =
-  | 'pending'
-  | 'queued'
-  | 'waiting_runtime'
-  | 'waiting_device'
-  | 'running'
-  | 'succeeded'
-  | 'failed'
-  | 'skipped'
-  | 'cancelled'
+export type ProjectAutomationRunStatus = AutomationRunStatus
 
 export type ProjectAutomationEventType =
   | 'task.created'
@@ -51,28 +43,7 @@ export interface ProjectAutomationRule {
   updatedAt: string
 }
 
-export interface ProjectAutomationRun {
-  id: string
-  automationId: string
-  projectId: string
-  trigger: 'scheduled' | 'manual' | 'event'
-  status: ProjectAutomationRunStatus
-  timezone: string
-  scheduledFor: string
-  expiresAt: string | null
-  taskId: string | null
-  taskTitle?: string | null
-  backendTaskId: number | null
-  deviceId: string | null
-  error: string | null
-  createdAt: string
-  updatedAt: string
-  completedAt: string | null
-  retryable?: boolean
-  triggerType?: 'schedule' | 'event' | 'workflow' | null
-  eventType?: ProjectAutomationEventType | null
-  eventConfig?: Record<string, unknown> | null
-}
+export type ProjectAutomationRun = AutomationBackendRun
 
 export interface ProjectAutomationInput {
   name: string
@@ -209,27 +180,34 @@ export function createProjectAutomationApi(client: HttpClient) {
         `/v1/cloud-projects/${projectId}/automations/${automationId}`
       )
     },
-    runNow(projectId: string, automationId: string) {
-      return client.post<ProjectAutomationRun>(
-        `/v1/cloud-projects/${projectId}/automations/${automationId}/run`,
-        {}
+    async runNow(projectId: string, automationId: string) {
+      return mapAutomationBackendRunDto(
+        await client.post<ProjectAutomationRun>(
+          `/v1/cloud-projects/${projectId}/automations/${automationId}/run`,
+          {}
+        )
       )
     },
-    listRuns(projectId: string, automationId: string) {
-      return client.get<ProjectAutomationRun[]>(
+    async listRuns(projectId: string, automationId: string) {
+      const runs = await client.get<ProjectAutomationRun[]>(
         `/v1/cloud-projects/${projectId}/automations/${automationId}/runs`
       )
+      return runs.map(mapAutomationBackendRunDto)
     },
-    cancelRun(projectId: string, runId: string) {
-      return client.post<ProjectAutomationRun>(
-        `/v1/cloud-projects/${projectId}/automation-runs/${runId}/cancel`,
-        {}
+    async cancelRun(projectId: string, runId: string) {
+      return mapAutomationBackendRunDto(
+        await client.post<ProjectAutomationRun>(
+          `/v1/cloud-projects/${projectId}/automation-runs/${runId}/cancel`,
+          {}
+        )
       )
     },
-    retryRun(projectId: string, runId: string) {
-      return client.post<ProjectAutomationRun>(
-        `/v1/cloud-projects/${projectId}/automation-runs/${runId}/retry`,
-        {}
+    async retryRun(projectId: string, runId: string) {
+      return mapAutomationBackendRunDto(
+        await client.post<ProjectAutomationRun>(
+          `/v1/cloud-projects/${projectId}/automation-runs/${runId}/retry`,
+          {}
+        )
       )
     },
   }

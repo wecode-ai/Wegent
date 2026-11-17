@@ -36,6 +36,7 @@ pub mod device_pull;
 pub mod device_pull_claim;
 mod device_pull_payload;
 pub mod device_reconcile;
+pub(crate) mod human_automation;
 #[cfg(test)]
 pub(crate) mod issue_timestamp_tests;
 pub(crate) mod personal_assistant_dispatch;

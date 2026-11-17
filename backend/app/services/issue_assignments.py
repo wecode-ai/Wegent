@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
@@ -12,6 +13,7 @@ from hashlib import sha256
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.timezone import database_datetime_as_utc
 from app.models.delivery import (
     CloudProject,
@@ -170,8 +172,20 @@ class IssueAssignmentService:
         existing = current.get(
             (normalized_type, normalized_id, self._workflow_step(workflow_step))
         )
+        automation = automation_history_actor(automation_context).get("automation")
+        human_automation = (
+            settings.HUMAN_AUTOMATION_RECEIPTS_ENABLED
+            and normalized_type == "human"
+            and isinstance(automation, dict)
+        )
+        same_automation = not human_automation or (
+            existing is not None
+            and existing.metadata.get("automation", {}).get("run_id")
+            == automation["run_id"]
+        )
         if (
             existing is not None
+            and same_automation
             and not replace_root_assignments
             and not (
                 existing.metadata.get("trigger") == "default" and trigger != "default"
@@ -181,11 +195,15 @@ class IssueAssignmentService:
 
             ensure_dispatch(db, existing)
             return existing, False
-        if (
+        replace_root = (
             normalized_type == "human" or replace_root_assignments
-        ) and not self._workflow_step(workflow_step):
+        ) and not self._workflow_step(workflow_step)
+        if replace_root or (human_automation and existing is not None):
             for previous in current.values():
-                if previous.workflow_step:
+                if not (
+                    (replace_root and not previous.workflow_step)
+                    or (human_automation and previous is existing)
+                ):
                     continue
                 from app.services.human_assistant_dispatch import (
                     cancel_assignment_dispatch,
@@ -241,6 +259,41 @@ class IssueAssignmentService:
         else:
             comment.metadata_json = metadata
         db.flush()
+        if human_automation:
+            from app.services.collaboration_human_assignments import (
+                direct_human_assignment_id,
+            )
+
+            stage_input = (automation_context or {}).get("workflow_stage_input")
+            stage = (
+                stage_input.get("target_stage")
+                if isinstance(stage_input, dict)
+                else None
+            )
+            stage = stage if isinstance(stage, dict) else {}
+            stage_id = stage.get("id") or None
+            if stage_id != (self._workflow_step(workflow_step) or None):
+                raise HTTPException(
+                    422, "Automation assignment stage does not match its snapshot"
+                )
+            human_id = direct_human_assignment_id(
+                issue_id=issue_id, assignment_id=str(comment.id)
+            )
+            snapshot = {
+                "automation_run_id": automation["run_id"],
+                "assignment_id": str(comment.id),
+                "owner_user_id": int(normalized_id),
+                "workflow_stage_id": stage_id,
+                "required_deliverables": deepcopy(
+                    stage.get("required_deliverables") or []
+                ),
+                "non_workflow": stage_id is None,
+                "idempotency_key": f"{automation['run_id']}:{human_id}",
+                "human_assignment_id": human_id,
+            }
+            metadata = {**metadata, "human_automation": snapshot}
+            comment.metadata_json = metadata
+            db.flush()
         event = AssignmentEvent(comment=comment, metadata=metadata)
         from app.services.human_assistant_dispatch import ensure_dispatch
 

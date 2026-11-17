@@ -77,6 +77,7 @@ fn dispatch_matches(row: &ExecutionRow, assignment_id: &str, dispatch: &Value) -
     let origin = origin(row);
     let execution_id = row.id.to_string();
     origin["assignment_id"] == assignment_id
+        && super::human_automation::identity_matches(&origin, dispatch)
         && dispatch["assignmentId"] == assignment_id
         && dispatch["executionId"].as_str() == Some(execution_id.as_str())
         && dispatch["assignmentVersion"].is_i64()
@@ -133,14 +134,14 @@ pub(super) async fn current(
         ) && event.metadata.target_id.as_deref() == Some(owner_id.as_str())
             && event
                 .metadata
-                .workflow_step
-                .as_deref()
-                .is_none_or(str::is_empty)
-            && event
-                .metadata
                 .human_assistant_dispatch
                 .as_ref()
-                .is_some_and(|dispatch| dispatch_matches(row, &event.comment.id, dispatch))
+                .is_some_and(|dispatch| {
+                    super::human_automation::stage_matches(
+                        event.metadata.workflow_step.as_deref(),
+                        dispatch,
+                    ) && dispatch_matches(row, &event.comment.id, dispatch)
+                })
     });
     let Some(assignment) = assignment else {
         return Ok(None);
@@ -191,6 +192,38 @@ pub(super) async fn current(
         return Ok(None);
     }
     Ok(Some((assignment.comment.id.clone(), name)))
+}
+
+pub(super) async fn project_automation_on(
+    tx: &mut impl MysqlTransaction,
+    row: &ExecutionRow,
+    status: &str,
+    observed: &str,
+) -> MysqlResult<bool> {
+    let origin = origin(row);
+    if !is_personal(row) || super::human_automation::context(&origin).is_none() {
+        return Ok(false);
+    }
+    let receipt = super::human_automation::receipt(
+        status,
+        observed,
+        row.id,
+        row.runtime_device_id
+            .as_deref()
+            .or(row.execution_device_id.as_deref())
+            .unwrap_or_default(),
+        row.runtime_task_id.as_deref().unwrap_or_default(),
+    );
+    super::human_automation::project_on(
+        tx,
+        &origin,
+        row.automation_run_id.as_deref().unwrap_or_default(),
+        row.cloud_project_id.as_deref().unwrap_or_default(),
+        row.loop_item_id.as_deref().unwrap_or_default(),
+        &receipt,
+    )
+    .await?;
+    Ok(true)
 }
 
 /// Shared activity never contains the private Runtime address or tool stream.

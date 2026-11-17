@@ -200,6 +200,11 @@ def _receipt(db: Session, dispatch: dict, execution: LoopItemExecution | None) -
         "executionId": dispatch.get("executionId"),
         "assignmentVersion": dispatch["assignmentVersion"],
         "createdAt": dispatch["createdAt"],
+        **(
+            {"human_automation": dispatch["human_automation"]}
+            if isinstance(dispatch.get("human_automation"), dict)
+            else {}
+        ),
     }
 
 

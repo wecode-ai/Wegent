@@ -16,6 +16,45 @@ function createClient() {
 }
 
 describe('workspace resource configuration adapter', () => {
+  it('preserves human automation stage context across run responses', async () => {
+    const client = createClient()
+    const run = {
+      id: 'run-1',
+      status: 'waiting',
+      humanAutomation: {
+        automation_run_id: 'run-1',
+        assignment_id: 'assignment-1',
+        human_assignment_id: 'human-1',
+        workflow_stage_id: 'ux_spec',
+        required_deliverables: [{ id: 'design', value_type: 'text' }],
+        non_workflow: false,
+        idempotency_key: 'run-1:human-1',
+        owner_user_id: 7,
+        state: 'waiting',
+        reason_code: 'no_authorized_assistant',
+      },
+    }
+    client.get.mockResolvedValue([run])
+    client.post.mockResolvedValue(run)
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+    const expected = {
+      id: 'run-1',
+      status: 'waiting',
+      humanAutomation: {
+        workflowStageId: 'ux_spec',
+        requiredDeliverables: [{ id: 'design', value_type: 'text' }],
+        reasonCode: 'no_authorized_assistant',
+        runtimeTaskId: null,
+      },
+    }
+    await expect(api.automations!.runNow('project-1', 'rule-1')).resolves.toMatchObject(expected)
+    await expect(api.automations!.listRuns('project-1', 'rule-1')).resolves.toMatchObject([
+      expected,
+    ])
+    await expect(api.automations!.cancelRun('project-1', 'run-1')).resolves.toMatchObject(expected)
+    await expect(api.automations!.retryRun('project-1', 'run-1')).resolves.toMatchObject(expected)
+  })
+
   it('maps the durable receipt on detail, board and assignment responses', async () => {
     const client = createClient()
     const receipt = {

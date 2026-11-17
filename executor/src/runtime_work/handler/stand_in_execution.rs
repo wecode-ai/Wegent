@@ -234,6 +234,13 @@ impl RuntimeWorkRpcHandler {
         if durable {
             prompt.push_str("\n\n[共享结果约束]\n最终回复将回写到共享 Issue。仅提供简洁的工作摘要、可核验的证据引用和仍需确认的事项；不要包含私人偏好、工作区私密信息、工具调用过程或内部推理。执行完成不代表 Issue 自动完成，状态变更、审批、合并、部署和外部发布继续遵守项目授权与门禁。");
         }
+        if let Some(dispatch) = super::human_assistant_dispatch::dispatch(config, issue, binding) {
+            super::human_assistant_dispatch::append_automation_brief(
+                &mut prompt,
+                dispatch,
+                binding,
+            );
+        }
         let origin = self.stand_in_issue_origin(config, issue, binding);
         let mut payload = json!({"taskId":task_id,"title":issue["title"],"message":prompt,"cloudProjectId":project,"origin":origin});
         if let Some(message) = config["triggerMessage"].as_str() {
@@ -269,6 +276,11 @@ impl RuntimeWorkRpcHandler {
                 .get("executionId")
                 .unwrap_or(&dispatch["executionId"])
                 .clone();
+            super::human_assistant_dispatch::append_automation_origin(
+                &mut origin,
+                dispatch,
+                binding,
+            );
         }
         origin
     }

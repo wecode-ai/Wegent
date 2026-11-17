@@ -45,6 +45,9 @@ export function workspaceIssueOperationState(
     case "queued":
     case "starting":
     case "waiting_runtime":
+    case "waiting":
+    case "waiting_user":
+    case "blocked":
     case "cancelling":
     case "unknown":
     case "succeeded":

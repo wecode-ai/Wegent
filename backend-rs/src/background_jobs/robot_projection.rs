@@ -94,7 +94,8 @@ pub(super) async fn terminal_on(
     notify: bool,
 ) -> MysqlResult<Effects> {
     let mut output = Vec::new();
-    if let Some(mut message) = linked(tx, row).await? {
+    let personal_automation = crate::socketio::human_automation::context(&row.context()).is_some();
+    if !personal_automation && let Some(mut message) = linked(tx, row).await? {
         super::activity::finish(tx, &mut message, status, detail).await?;
         save_message(tx, &message).await?;
         let children:Vec<Message>=tx.fetch_all(format!("SELECT * FROM project_chat_messages WHERE project_id=? AND task_id=? AND trigger_message_id=? AND sender_type='agent' AND {LIVE} ORDER BY id"),(message.project_id.as_str(),message.task_id.as_str(),message.message_id.as_str())).await?;
@@ -115,7 +116,33 @@ pub(super) async fn terminal_on(
             output.push(child);
         }
     }
-    if !row.automation_run_id.is_empty() {
+    if personal_automation {
+        crate::socketio::human_automation::project_on(
+            tx,
+            &row.context(),
+            &row.automation_run_id,
+            &row.cloud_project_id,
+            &row.loop_item_id,
+            &crate::socketio::human_automation::receipt(
+                status,
+                "",
+                row.id,
+                &row.runtime_device_id,
+                &row.runtime_task_id,
+            ),
+        )
+        .await?;
+        let activity: Option<Message> = tx.fetch_optional(
+            format!("SELECT activity.* FROM project_chat_messages activity JOIN loop_items run \
+             ON activity.message_id=JSON_UNQUOTE(JSON_EXTRACT(run.metadata,'$.activity_message_id')) \
+             WHERE run.id=? AND run.cloud_project_id=? AND run.task_id=? \
+             AND run.resource_type='automation_run' AND activity.project_id=? \
+             AND activity.task_id=? AND {live} LIMIT 1", live=LIVE.replace("deleted_at", "activity.deleted_at")),
+            (row.automation_run_id.as_str(),row.cloud_project_id.as_str(),row.loop_item_id.as_str(),
+                row.cloud_project_id.as_str(),row.loop_item_id.as_str()),
+        ).await?;
+        output.extend(activity);
+    } else if !row.automation_run_id.is_empty() {
         let run_status = match status {
             "completed" => "succeeded",
             "failed" => "failed",

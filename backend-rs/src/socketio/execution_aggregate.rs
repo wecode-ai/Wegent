@@ -245,9 +245,10 @@ pub(super) async fn set_automation_run_status<T: MysqlTransaction>(
         .execute(
             format!(
                 "UPDATE loop_items SET status=?, version=version+1, updated_at=UTC_TIMESTAMP(6) \
-                 WHERE id=? AND resource_type='automation_run' AND status NOT IN ({terminal})"
+                 WHERE id=? AND resource_type='automation_run' AND status NOT IN ({terminal}) \
+                 AND NOT (?='succeeded' AND COALESCE(JSON_TYPE(JSON_EXTRACT(metadata,'$.human_automation')),'NULL')='OBJECT')"
             ),
-            (status, run_id),
+            (status, run_id, status),
         )
         .await?;
     Ok(())

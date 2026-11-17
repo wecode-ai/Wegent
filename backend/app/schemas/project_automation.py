@@ -17,6 +17,9 @@ AutomationRunStatus = Literal[
     "queued",
     "waiting_runtime",
     "waiting_device",
+    "waiting",
+    "waiting_user",
+    "blocked",
     "running",
     "succeeded",
     "failed",
@@ -161,3 +164,4 @@ class ProjectAutomationRunView(ProjectChatSchema):
     trigger_type: Literal["schedule", "event", "workflow"] | None = None
     event_type: AutomationEventType | None = None
     event_config: dict[str, Any] | None = None
+    human_automation: dict[str, Any] | None = None

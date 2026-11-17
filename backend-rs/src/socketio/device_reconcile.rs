@@ -661,7 +661,17 @@ async fn observe_running<T: MysqlTransaction>(
             (next_status, now, started_at, version, now, row.id),
         )
         .await?;
-    set_automation_run_status(transaction, row.automation_run_id.as_deref(), "running").await
+    if !super::human_assistant_execution::project_automation_on(
+        transaction,
+        row,
+        next_status,
+        "running",
+    )
+    .await?
+    {
+        set_automation_run_status(transaction, row.automation_run_id.as_deref(), "running").await?;
+    }
+    Ok(())
 }
 
 /// `row.lease_expires_at = now + timedelta(seconds=DEFAULT_LEASE_SECONDS)` for
@@ -907,7 +917,9 @@ async fn project_terminal(
         "failed" => "failed",
         _ => "cancelled",
     };
-    set_automation_run_status(tx, row.automation_run_id.as_deref(), run_status).await?;
+    if !super::human_assistant_execution::project_automation_on(tx, row, status, status).await? {
+        set_automation_run_status(tx, row.automation_run_id.as_deref(), run_status).await?;
+    }
     let messages = runtime_projection::finish_runtime_activity(
         tx,
         row,

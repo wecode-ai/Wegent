@@ -322,6 +322,14 @@ class ProjectAutomationExecution:
             context["execution_device_id"] = configured_device
 
         if target_kind == "human":
+            stage_input = context.get("workflow_stage_input")
+            if settings.HUMAN_AUTOMATION_RECEIPTS_ENABLED and stage_input is not None:
+                stage = stage_input.get("target_stage")
+                workflow_step = (
+                    text(stage.get("id")) if isinstance(stage, dict) else None
+                )
+                if not workflow_step:
+                    raise RuntimeError("Workflow stage execution has no target stage")
             self._assign_human_target(
                 db,
                 owner=owner,
@@ -431,9 +439,21 @@ class ProjectAutomationExecution:
             workflow_step=workflow_step,
             context=context,
         )
-        run.status = "succeeded"
-        run.completed_at = utcnow()
-        run.version += 1
+        if settings.HUMAN_AUTOMATION_RECEIPTS_ENABLED:
+            from app.services.project_automation_human import (
+                initialize_human_automation,
+            )
+
+            initialize_human_automation(
+                db,
+                run=run,
+                context=context,
+                target_user_id=int(target_id),
+            )
+        else:
+            run.status = "succeeded"
+            run.completed_at = utcnow()
+            run.version += 1
         db.commit()
 
     def _assign_team_target(
@@ -757,6 +777,9 @@ class ProjectAutomationExecution:
             "runtime_profile_id": (configured_runtime_profile_id or runtime_profile_id),
             "runtime_subject_user_id": runtime_subject_user_id,
         }
+        stage_input = run_metadata.get("workflow_stage_input")
+        if isinstance(stage_input, dict):
+            context["workflow_stage_input"] = stage_input
         if workflow_config:
             from app.schemas.issue_workflow import WorkflowExecutionConfig
 

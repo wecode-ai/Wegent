@@ -33,6 +33,15 @@ describe('executionStatus', () => {
     expect(executionDisplayStatus('')).toBeNull()
   })
 
+  it.each(['waiting', 'waiting_user', 'blocked'])(
+    'preserves the human automation %s state before delivery',
+    state => {
+      expect(executionDisplayStatus(state)).toBe(state)
+      expect(isExecutionActive(state)).toBe(true)
+      expect(isExecutionTerminal(state)).toBe(false)
+    }
+  )
+
   it('keeps active, terminal, cancellable and failed decisions independent', () => {
     expect(isExecutionFailed('failed')).toBe(true)
     expect(isExecutionFailed('cancelled')).toBe(false)

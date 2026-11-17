@@ -80,7 +80,16 @@ class DeliveryService:
         user_id: int,
         values: DeliveryCreate,
     ) -> Delivery:
-        item = require_loop_item_access(db, item_id, user_id, BaseRole.Developer)
+        authorized_item = require_loop_item_access(
+            db, item_id, user_id, BaseRole.Developer
+        )
+        item = (
+            db.query(LoopItem)
+            .filter(LoopItem.id == authorized_item.id)
+            .with_for_update()
+            .populate_existing()
+            .one()
+        )
         if item.status == "completed":
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO is already completed")
         markdown = values.markdown.encode()
@@ -103,6 +112,25 @@ class DeliveryService:
         source_binding, source_snapshot = self._resolve_source_task(
             db, item, values.source_task, user_id
         )
+        automation = (source_snapshot or {}).get("humanAutomation")
+        if automation:
+            previous = (
+                db.query(Delivery)
+                .filter(
+                    Delivery.loop_item_id == item.id,
+                    Delivery.created_by_user_id == user_id,
+                    loop_datetime_is_unset(Delivery.deleted_at),
+                )
+                .with_for_update()
+                .all()
+            )
+            for candidate in previous:
+                existing = (candidate.source_task_snapshot or {}).get("humanAutomation")
+                if (
+                    isinstance(existing, dict)
+                    and existing.get("idempotency_key") == automation["idempotency_key"]
+                ):
+                    return candidate
         delivery_id = str(uuid.uuid4())
         prefix = _delivery_prefix(project.public_id, item.id, delivery_id)
         markdown_key = f"{prefix}/markdown.md"
@@ -284,7 +312,7 @@ class DeliveryService:
         user_id: int,
         values: DeliveryFinalize,
     ) -> Delivery:
-        delivery = self._require_delivery(db, delivery_id, user_id, draft=True)
+        delivery = self._require_delivery(db, delivery_id, user_id)
         authorized_item = require_loop_item_access(
             db, delivery.loop_item_id, user_id, BaseRole.Developer
         )
@@ -292,21 +320,46 @@ class DeliveryService:
             db.query(LoopItem)
             .filter(LoopItem.id == authorized_item.id)
             .with_for_update()
+            .populate_existing()
             .first()
         )
         if item is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        delivery = self._require_delivery(db, delivery_id, user_id, draft=True)
         source_binding = None
         if delivery.source_task_binding_id:
             source_binding = self._require_active_task_binding(
                 db, item.id, delivery.source_task_binding_id
             )
+        from app.services.project_automation_human import delivery_context
+
+        automation_run, automation = delivery_context(
+            db, source_binding, delivery.source_task_snapshot or {}
+        )
+        if automation and (
+            delivery.created_by_user_id != user_id
+            or source_binding.task_user_id != user_id
+        ):
+            raise HTTPException(
+                403, "Only the assigned assistant owner can finalize this Delivery"
+            )
         assets = self.list_assets(db, delivery.id)
         fulfillments = self._validate_fulfillments(
-            None,
+            automation if automation and not automation["non_workflow"] else None,
             assets,
             values.fulfillments,
         )
+        if automation:
+            required = {
+                requirement["id"] for requirement in automation["required_deliverables"]
+            }
+            submitted = {value["requirement_id"] for value in fulfillments}
+            missing = required - submitted
+            if missing:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    f"Automation Delivery is missing required deliverables: {', '.join(sorted(missing))}",
+                )
         if source_binding is not None:
             for fulfillment in fulfillments:
                 if fulfillment.get("kind") != "pull_request":
@@ -360,6 +413,14 @@ class DeliveryService:
             delivery.manifest_object_key = manifest_key
             delivery.status = "delivered"
             delivery.delivered_at = now
+            if automation_run is not None:
+                from app.services.project_automation_human import (
+                    complete_human_delivery,
+                )
+
+                complete_human_delivery(
+                    db, run=automation_run, contract=automation, delivery=delivery
+                )
             item.current_delivery_id = delivery.id
             item.metadata_json = advance_content_revision(
                 item.metadata_json, actor_user_id=user_id
@@ -560,7 +621,7 @@ class DeliveryService:
     ) -> Delivery:
         query = db.query(Delivery).filter(Delivery.id == delivery_id)
         if draft:
-            query = query.with_for_update()
+            query = query.with_for_update().populate_existing()
         delivery = query.first()
         if delivery is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Delivery not found")
@@ -585,13 +646,18 @@ class DeliveryService:
     ) -> tuple[LoopItemTaskBinding | None, dict[str, Any] | None]:
         if source_task is None:
             return None, None
-        binding = active_task_binding_query(
-            db,
-            item_id=item.id,
-            user_id=user_id,
-            device_id=source_task.device_id,
-            task_id=source_task.task_id,
-        ).first()
+        binding = (
+            active_task_binding_query(
+                db,
+                item_id=item.id,
+                user_id=user_id,
+                device_id=source_task.device_id,
+                task_id=source_task.task_id,
+            )
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
         if binding is None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -606,6 +672,7 @@ class DeliveryService:
         metadata = (
             binding.metadata_json if isinstance(binding.metadata_json, dict) else {}
         )
+        self._require_automation_source_identity(source_task, metadata)
         for source_key, target_key in (
             ("human_assignment_id", "humanAssignmentId"),
             ("dispatch_id", "dispatchId"),
@@ -615,7 +682,43 @@ class DeliveryService:
             value = metadata.get(source_key)
             if isinstance(value, str) and value:
                 snapshot[target_key] = value
+        from app.services.project_automation_human import delivery_context
+
+        _, automation = delivery_context(db, binding)
+        if automation is not None:
+            snapshot["humanAutomation"] = automation
         return binding, snapshot
+
+    @staticmethod
+    def _require_automation_source_identity(
+        source_task: LoopItemTaskBind, metadata: dict[str, Any]
+    ) -> None:
+        automation = metadata.get("human_automation")
+        if not isinstance(automation, dict):
+            return
+        submitted = (source_task.execution_context or {}).get("human_automation")
+        identities = {
+            "assignment_id": source_task.assignment_id,
+            "human_assignment_id": source_task.human_assignment_id,
+            "automation_run_id": (
+                submitted.get("automation_run_id")
+                if isinstance(submitted, dict)
+                else None
+            ),
+            "idempotency_key": (
+                submitted.get("idempotency_key")
+                if isinstance(submitted, dict)
+                else None
+            ),
+        }
+        if any(
+            not isinstance(value, str) or value != automation.get(key)
+            for key, value in identities.items()
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Delivery source automation identity is missing or no longer current",
+            )
 
     @staticmethod
     def _require_active_task_binding(
@@ -629,6 +732,8 @@ class DeliveryService:
                 loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
                 loop_datetime_is_unset(LoopItemTaskBinding.deleted_at),
             )
+            .with_for_update()
+            .populate_existing()
             .first()
         )
         if binding is None:

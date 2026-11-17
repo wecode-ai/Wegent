@@ -4,6 +4,7 @@ import {
   AlertCircle,
   Bot,
   Check,
+  Clock3,
   ExternalLink,
   Hash,
   Monitor,
@@ -133,14 +134,19 @@ export function RuntimeExecutionDetails({
       queued: "activity.queue_state_queued",
       starting: "activity.queue_state_starting",
       waiting_runtime: "activity.queue_state_waiting_runtime",
+      waiting: "activity.automation_state_waiting",
+      waiting_user: "activity.automation_state_waiting_user",
+      blocked: "activity.automation_state_blocked",
       running: "activity.queue_state_running",
       cancelling: "activity.queue_state_cancelling",
       unknown: "activity.queue_state_unknown",
     }[displayStatus];
     return (
       <>
-        {displayStatus === "unknown" ? (
+        {displayStatus === "unknown" || displayStatus === "blocked" ? (
           <AlertCircle className="h-3 w-3" />
+        ) : displayStatus === "waiting" || displayStatus === "waiting_user" ? (
+          <Clock3 className="h-3 w-3" />
         ) : (
           <CompositedSpinner className="h-3 w-3" />
         )}

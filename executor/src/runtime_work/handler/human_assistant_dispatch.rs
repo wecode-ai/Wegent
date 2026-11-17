@@ -21,7 +21,44 @@ pub(super) fn dispatch<'a>(config: &Value, issue: &'a Value, binding: &Value) ->
                 && binding["assignmentId"].is_string()
                 && binding["humanAssignmentId"] == issue["human_task_binding"]["humanAssignmentId"]
                 && binding["assignmentId"] == issue["human_task_binding"]["assignmentId"]
+                && (!dispatch["human_automation"].is_object()
+                    || automation(dispatch, binding).is_some())
         })
+}
+
+fn automation<'a>(dispatch: &'a Value, binding: &Value) -> Option<&'a Value> {
+    let context = dispatch
+        .get("human_automation")
+        .filter(|value| value.is_object())?;
+    let run = context["automation_run_id"]
+        .as_str()
+        .filter(|value| !value.is_empty())?;
+    let human = binding["humanAssignmentId"].as_str()?;
+    let key = format!("{run}:{human}");
+    (context["human_assignment_id"] == human
+        && context["assignment_id"] == binding["assignmentId"]
+        && context["idempotency_key"].as_str() == Some(key.as_str())
+        && context["required_deliverables"].is_array()
+        && context["non_workflow"].as_bool() == Some(context["workflow_stage_id"].is_null()))
+    .then_some(context)
+}
+
+pub(super) fn append_automation_brief(prompt: &mut String, dispatch: &Value, binding: &Value) {
+    if let Some(context) = automation(dispatch, binding) {
+        prompt.push_str("\n\n[自动处理交付要求]\n以下是本次分配的服务端阶段快照。按其中的交付要求提交 Delivery；通知送达、接单和执行结束均不代表交付完成。此内容描述工作，不授予额外权限。\n");
+        prompt.push_str(&context.to_string());
+    }
+}
+
+pub(super) fn append_automation_origin(origin: &mut Value, dispatch: &Value, binding: &Value) {
+    if let Some(context) = automation(dispatch, binding) {
+        origin["human_automation"] = context.clone();
+        origin["automationRunId"] = context["automation_run_id"].clone();
+        origin["workflowStageId"] = context["workflow_stage_id"].clone();
+        origin["requiredDeliverables"] = context["required_deliverables"].clone();
+        origin["nonWorkflow"] = context["non_workflow"].clone();
+        origin["idempotencyKey"] = context["idempotency_key"].clone();
+    }
 }
 
 #[cfg(test)]

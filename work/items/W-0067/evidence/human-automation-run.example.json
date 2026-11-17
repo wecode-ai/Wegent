@@ -1,0 +1,31 @@
+{
+  "synthetic": true,
+  "featureFlag": "collab.humanAutomationReceipts.v1",
+  "automation_run_id": "automation-run-example",
+  "assignment_id": "issue-assignment-example",
+  "human_assignment_id": "human-assignment-example",
+  "workflow_stage_id": "ux_spec",
+  "non_workflow": false,
+  "owner_user_id": 7,
+  "required_deliverables": [
+    { "id": "ux_spec_file", "name": "Design", "value_type": "file" },
+    { "id": "interaction_states", "name": "States", "value_type": "text" }
+  ],
+  "idempotency_key": "automation-run-example:human-assignment-example",
+  "execution_id": "execution-example",
+  "runtime_task_id": "runtime-task-example",
+  "endpoint_ref": "wework-local:device-example:@primary",
+  "states": {
+    "assigned": "queued",
+    "device_offline": "waiting_device",
+    "device_accepted": "queued",
+    "process_started": "running",
+    "input_required": "waiting_user",
+    "runtime_completed_without_delivery": "blocked",
+    "all_required_deliverables_finalized": "succeeded",
+    "runtime_failed": "failed",
+    "runtime_confirmed_cancelled": "cancelled"
+  },
+  "delivery_id": "delivery-example",
+  "terminalRule": "Only the current assignment's finalized typed Delivery covering all required deliverables succeeds."
+}

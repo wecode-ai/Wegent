@@ -119,6 +119,12 @@ pub(crate) struct SpaceContextGrant {
     manager_agent_id: Option<String>,
     automation_run_id: Option<String>,
     #[serde(default)]
+    assignment_id: Option<String>,
+    #[serde(default)]
+    human_assignment_id: Option<String>,
+    #[serde(default)]
+    human_automation: Option<Value>,
+    #[serde(default)]
     role: Option<SpaceContextRole>,
     #[serde(default)]
     categories: HashSet<BoardToolCategory>,
@@ -650,9 +656,64 @@ fn delivery_address(
         task_title: None,
         backend_task_id: None,
         model_selection: None,
-        execution_context: None,
+        execution_context: grant
+            .human_automation
+            .as_ref()
+            .map(|context| json!({"human_automation":context})),
         workflow_node_id: None,
     })
+}
+
+fn delivery_source_task(grant: Option<&SpaceContextGrant>, address: &RuntimeTaskAddress) -> Value {
+    let mut source = json!({"deviceId":address.device_id,"taskId":address.task_id});
+    if let Some(grant) = grant.filter(|grant| grant.human_automation.is_some()) {
+        source["assignmentId"] = json!(grant.assignment_id);
+        source["humanAssignmentId"] = json!(grant.human_assignment_id);
+        source["executionContext"] = json!({"human_automation":grant.human_automation});
+    }
+    source
+}
+
+fn automation_identity_matches(origin: &Value, snapshot: &Value) -> bool {
+    [
+        "automation_run_id",
+        "human_assignment_id",
+        "assignment_id",
+        "idempotency_key",
+    ]
+    .iter()
+    .all(|key| {
+        origin[*key]
+            .as_str()
+            .is_some_and(|value| !value.is_empty() && snapshot[*key] == value)
+    })
+}
+
+fn automation_delivery_requirements(
+    address: &RuntimeTaskAddress,
+    binding_context: Option<&Value>,
+) -> Result<Option<Value>, String> {
+    let Some(context) = address
+        .execution_context
+        .as_ref()
+        .and_then(|context| context.get("human_automation"))
+    else {
+        return Ok(None);
+    };
+    if !context["required_deliverables"].is_array()
+        || binding_context
+            .and_then(|binding| binding.get("human_automation"))
+            .is_some_and(|binding| !automation_identity_matches(context, binding))
+    {
+        return Err("The current Runtime task belongs to another automation assignment".to_owned());
+    }
+    Ok(Some(json!({
+        "workflow_node_id":context["workflow_stage_id"],
+        "workflow_stage_id":context["workflow_stage_id"],
+        "required_deliverables":context["required_deliverables"],
+        "non_workflow":context["non_workflow"],
+        "delivery_ids":[]
+    })))
 }
 
 fn delivery_scope_error(
@@ -681,6 +742,21 @@ fn delivery_scope_error(
         || source_task != Some(address.task_id.as_str())
     {
         return Some("The requested Delivery belongs to another Runtime task".to_owned());
+    }
+    let origin = address
+        .execution_context
+        .as_ref()
+        .and_then(|context| context.get("human_automation"));
+    let snapshot = source.get("humanAutomation");
+    if origin.is_some() || snapshot.is_some() {
+        let matches = origin
+            .zip(snapshot)
+            .is_some_and(|(origin, snapshot)| automation_identity_matches(origin, snapshot));
+        if !matches {
+            return Some(
+                "The requested Delivery belongs to another automation assignment".to_owned(),
+            );
+        }
     }
     None
 }
@@ -1393,11 +1469,20 @@ async fn call_tool_with_runtime_context(
                                 .get_task(project_id, item_id)
                                 .await
                                 .and_then(|item| serde_json::to_value(item).map_err(invalid_json))
-                                .map(|item| {
-                                    delivery_requirements(
-                                        &item,
-                                        binding.workflow_node_id.as_deref(),
+                                .and_then(|item| {
+                                    automation_delivery_requirements(
+                                        &address,
+                                        binding.execution_context.as_ref(),
                                     )
+                                    .map_err(super::TaskRuntimeError::Invalid)
+                                    .map(|snapshot| {
+                                        snapshot.unwrap_or_else(|| {
+                                            delivery_requirements(
+                                                &item,
+                                                binding.workflow_node_id.as_deref(),
+                                            )
+                                        })
+                                    })
                                 })
                         }
                         Ok(_) => Err(super::TaskRuntimeError::Invalid(
@@ -2342,6 +2427,12 @@ async fn call_backend_tool(
                 .ok_or_else(|| {
                     "The current Runtime task is not bound to this Issue".to_owned()
                 })?;
+            if let Some(snapshot) = automation_delivery_requirements(
+                &address,
+                binding.get("executionContext").or_else(|| binding.get("execution_context")),
+            )? {
+                return Ok(snapshot);
+            }
             let node_id = binding
                 .get("workflow_node_id")
                 .and_then(Value::as_str);
@@ -2402,10 +2493,7 @@ async fn call_backend_tool(
                         .get("chat_selection")
                         .cloned()
                         .unwrap_or(Value::Null),
-                    "source_task": {
-                        "deviceId": address.device_id,
-                        "taskId": address.task_id,
-                    }
+                    "source_task": delivery_source_task(grant, &address)
                 }))
         }
         "upload_delivery_asset" => {

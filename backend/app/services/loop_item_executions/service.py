@@ -2959,6 +2959,10 @@ class LoopItemExecutionService:
                 }
 
         if execution.owns_automation_run:
+            from app.services.project_automation_human import project_human_execution
+
+            if project_human_execution(db, execution=execution):
+                return activity
             run = db.get(ProjectAutomationRun, execution.automation_run_id)
             if run is not None:
                 run_status = {
@@ -3252,6 +3256,12 @@ class LoopItemExecutionService:
         commit: bool = False,
     ) -> None:
         if not execution.owns_automation_run:
+            return
+        from app.services.project_automation_human import project_human_execution
+
+        if project_human_execution(db, execution=execution):
+            if commit:
+                db.commit()
             return
         from app.models.delivery import ProjectAutomationRun
 

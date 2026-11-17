@@ -34,6 +34,8 @@ import { IssueActivityContent } from "./IssueActivityContent";
 import { formatIssueTimestamp, issueActivityTimestamp } from "./issueTimestamp";
 import { managerActivityPresentation } from "./managerActivity";
 import { HumanAssistantResultProvenance } from "./HumanAssistantResultProvenance";
+import { HumanAutomationRunDetails } from "../automation/HumanAutomationRunDetails";
+import { mapHumanTargetAutomationRunReceiptDto } from "../dto-mappers/automationDtoMappers";
 
 export interface ExecutionTaskSummary {
   title: string;
@@ -46,6 +48,9 @@ type TaskExecutionStatusKind =
   | "queued"
   | "starting"
   | "waiting_runtime"
+  | "waiting"
+  | "waiting_user"
+  | "blocked"
   | "running"
   | "cancelling"
   | "succeeded"
@@ -87,6 +92,9 @@ export function IssueExecutionStatusControl({
     queued: t("activity.queue_state_queued"),
     starting: t("activity.queue_state_starting"),
     waiting_runtime: t("activity.queue_state_waiting_runtime"),
+    waiting: t("activity.automation_state_waiting"),
+    waiting_user: t("activity.automation_state_waiting_user"),
+    blocked: t("activity.automation_state_blocked"),
     running: t("activity.queue_state_running"),
     cancelling: t("activity.queue_state_cancelling"),
     succeeded: t("activity.task_activity_status_succeeded"),
@@ -100,11 +108,17 @@ export function IssueExecutionStatusControl({
   const Icon =
     kind === "succeeded"
       ? CircleCheck
-      : kind === "failed"
+      : kind === "failed" || kind === "blocked"
         ? AlertCircle
         : kind === "cancelled" || kind === "skipped" || kind === "interrupted"
           ? CircleSlash
-          : ["waiting_approval", "queued", "waiting_runtime"].includes(kind)
+          : [
+                "waiting_approval",
+                "queued",
+                "waiting_runtime",
+                "waiting",
+                "waiting_user",
+              ].includes(kind)
             ? Clock3
             : LoaderCircle;
   const animated = ["starting", "running", "cancelling"].includes(kind);
@@ -298,15 +312,26 @@ export function IssueChatMessage({
   const deviceName = executionDeviceName?.trim() || null;
   const modelName =
     typeof message.metadata.model === "string" ? message.metadata.model : null;
+  const automationReceipt = mapHumanTargetAutomationRunReceiptDto(
+    message.metadata.human_automation,
+  );
+  const automationRunId = message.metadata.automation_run_id;
+  const humanAutomation =
+    typeof automationRunId === "string" &&
+    automationReceipt?.automationRunId !== automationRunId
+      ? null
+      : automationReceipt;
   const runStatus =
-    executionStatus ?? resolveMessageRunStatus(taskAiState, message);
+    humanAutomation?.state ??
+    executionStatus ??
+    resolveMessageRunStatus(taskAiState, message);
   const displayStatus = executionDisplayStatus(runStatus);
   const isStreaming =
-    executionStatus === undefined
+    executionStatus === undefined && !humanAutomation
       ? message.status === "streaming"
       : displayStatus === "running";
   const isSucceeded =
-    executionStatus === undefined
+    executionStatus === undefined && !humanAutomation
       ? message.status === "completed"
       : displayStatus === "succeeded";
   const backendExecution = isAgent ? backendTaskExecution(message) : null;
@@ -410,6 +435,10 @@ export function IssueChatMessage({
               onStopExecution={onStopExecution}
               stopping={stopping}
             />
+            <HumanAutomationRunDetails
+              receipt={humanAutomation}
+              translate={t}
+            />
             {deviceName || runId || modelName ? (
               <details>
                 <summary
@@ -463,6 +492,7 @@ export function IssueChatMessage({
     );
   const body = (
     <>
+      <HumanAutomationRunDetails receipt={humanAutomation} translate={t} />
       <HumanAssistantResultProvenance
         message={message}
         translate={t}
@@ -489,6 +519,7 @@ export function IssueChatMessage({
           )}
         </div>
       ) : message.type === "agent_status" &&
+        !humanAutomation &&
         !backendExecution &&
         (executionStatus === undefined || isStreaming) ? (
         <span className="text-sm text-text-muted">
@@ -610,6 +641,10 @@ export function IssueChatMessage({
             />
           </div>
           <div className="task-detail-ai-run-body">
+            <HumanAutomationRunDetails
+              receipt={humanAutomation}
+              translate={t}
+            />
             {text ? (
               <div
                 data-testid={`cloud-task-activity-task-summary-${message.messageId}`}
@@ -647,7 +682,7 @@ export function IssueChatMessage({
         avatar={avatar}
         hideTime={hideTime}
         metadata={
-          isAgent && showInlineExecutionStatus ? (
+          isAgent && (showInlineExecutionStatus || humanAutomation) ? (
             isManager ? (
               <span
                 className="text-xs text-text-muted"
@@ -745,7 +780,7 @@ export function IssueChatMessage({
             {isAgent && modelName ? ` · ${modelName}` : ""}
           </span>
         </span>
-        {backendExecution ? (
+        {backendExecution || humanAutomation ? (
           <ExecutionStatusBadge
             translate={t}
             testId={executionTestId}
@@ -793,6 +828,9 @@ function ExecutionStatusBadge({
     queued: t("activity.queue_state_queued"),
     starting: t("activity.queue_state_starting"),
     waiting_runtime: t("activity.queue_state_waiting_runtime"),
+    waiting: t("activity.automation_state_waiting"),
+    waiting_user: t("activity.automation_state_waiting_user"),
+    blocked: t("activity.automation_state_blocked"),
     running: t("activity.queue_state_running"),
     cancelling: t("activity.queue_state_cancelling"),
     succeeded: t("activity.project_chat_completed"),
@@ -805,11 +843,17 @@ function ExecutionStatusBadge({
   const StatusIcon =
     kind === "succeeded"
       ? Check
-      : kind === "failed"
+      : kind === "failed" || kind === "blocked"
         ? AlertCircle
         : kind === "cancelled" || kind === "skipped" || kind === "interrupted"
           ? CircleSlash
-          : ["waiting_approval", "queued", "waiting_runtime"].includes(kind)
+          : [
+                "waiting_approval",
+                "queued",
+                "waiting_runtime",
+                "waiting",
+                "waiting_user",
+              ].includes(kind)
             ? Clock3
             : LoaderCircle;
   const animated = ["starting", "running", "cancelling"].includes(kind);

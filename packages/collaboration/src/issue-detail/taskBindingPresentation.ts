@@ -21,6 +21,9 @@ export function taskExecutionStatusLabel(
     queued: ['todo.execution_queued', '排队中'],
     starting: ['todo.execution_starting', '启动中'],
     waiting_runtime: ['todo.execution_waiting_runtime', '等待执行环境'],
+    waiting: ['activity.automation_state_waiting', '等待助理'],
+    waiting_user: ['activity.automation_state_waiting_user', '等待人工处理'],
+    blocked: ['activity.automation_state_blocked', '处理受阻'],
     running: ['todo.execution_running', '执行中'],
     cancelling: ['todo.execution_cancelling', '取消中'],
     succeeded: ['todo.execution_succeeded', '已完成'],
@@ -38,7 +41,7 @@ export function taskExecutionDotClass(
 ): string {
   if (status === 'running') return 'is-running'
   if (status === 'succeeded' || status === 'skipped') return 'is-success'
-  if (status === 'failed' || status === 'cancelled') return 'is-failed'
+  if (status === 'failed' || status === 'cancelled' || status === 'blocked') return 'is-failed'
   if (status !== 'unknown' && isExecutionActive(status)) return 'is-queued'
   return 'is-idle'
 }

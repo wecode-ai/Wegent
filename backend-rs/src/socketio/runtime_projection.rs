@@ -512,8 +512,21 @@ pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
             if updated != 1 {
                 return Ok(None);
             }
-            set_automation_run_status(transaction, row.automation_run_id.as_deref(), "running")
-                .await?;
+            if !super::human_assistant_execution::project_automation_on(
+                transaction,
+                &row,
+                if row.status_or_empty() == "cancel_requested" {
+                    "cancel_requested"
+                } else {
+                    "running"
+                },
+                observed_state,
+            )
+            .await?
+            {
+                set_automation_run_status(transaction, row.automation_run_id.as_deref(), "running")
+                    .await?;
+            }
             let turn_id = identity
                 .payload
                 .get("subtaskId")
@@ -583,7 +596,17 @@ pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
         "failed" => "failed",
         _ => "cancelled",
     };
-    set_automation_run_status(transaction, row.automation_run_id.as_deref(), run_status).await?;
+    if !super::human_assistant_execution::project_automation_on(
+        transaction,
+        &row,
+        status,
+        observed_state,
+    )
+    .await?
+    {
+        set_automation_run_status(transaction, row.automation_run_id.as_deref(), run_status)
+            .await?;
+    }
     *messages = activity::finish_runtime_activity(
         transaction,
         &row,

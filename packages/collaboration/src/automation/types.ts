@@ -3,6 +3,9 @@ export type AutomationRunStatus =
   | "queued"
   | "waiting_runtime"
   | "waiting_device"
+  | "waiting"
+  | "waiting_user"
+  | "blocked"
   | "running"
   | "succeeded"
   | "failed"
@@ -93,6 +96,25 @@ export interface AutomationBackendRun {
   triggerType?: "schedule" | "event" | "workflow" | null;
   eventType?: AutomationEventType | null;
   eventConfig?: AutomationEventConfig | null;
+  humanAutomation?: HumanTargetAutomationRunReceipt | null;
+}
+
+export interface HumanTargetAutomationRunReceipt {
+  automationRunId: string;
+  assignmentId: string;
+  humanAssignmentId: string;
+  workflowStageId: string | null;
+  requiredDeliverables: WorkflowDeliverableRequirement[];
+  nonWorkflow: boolean;
+  idempotencyKey: string;
+  ownerUserId: number;
+  state: AutomationRunStatus | null;
+  reasonCode: string | null;
+  runtimeTaskId: string | null;
+  runtimeDeviceId: string | null;
+  endpointRef: string | null;
+  deliveryId: string | null;
+  executionId: string | null;
 }
 
 export interface WorkflowExecutionConfig {

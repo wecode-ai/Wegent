@@ -17,6 +17,42 @@ struct Fixture {
     assignments: Arc<AtomicUsize>,
 }
 
+#[test]
+fn automation_brief_and_origin_preserve_the_same_assignment_snapshot() {
+    let binding = json!({"humanAssignmentId":"human","assignmentId":"assignment"});
+    let context = json!({"automation_run_id":"run","human_assignment_id":"human",
+        "assignment_id":"assignment","workflow_stage_id":"ux_spec","non_workflow":false,
+        "required_deliverables":[{"id":"ux_spec_file","value_type":"file"}],
+        "idempotency_key":"run:human"});
+    let dispatch = json!({"human_automation":context});
+    let mut prompt = String::new();
+    append_automation_brief(&mut prompt, &dispatch, &binding);
+    assert!(prompt.contains("ux_spec_file"));
+    assert!(prompt.contains("ux_spec"));
+    assert!(prompt.contains("run:human"));
+    let mut origin = json!({});
+    append_automation_origin(&mut origin, &dispatch, &binding);
+    assert_eq!(origin["human_automation"], context);
+    assert_eq!(origin["workflowStageId"], "ux_spec");
+    assert_eq!(origin["automationRunId"], "run");
+    assert_eq!(origin["idempotencyKey"], "run:human");
+    for changed in [
+        json!({"humanAssignmentId":"another-human","assignmentId":"assignment"}),
+        json!({"humanAssignmentId":"human","assignmentId":"another-assignment"}),
+    ] {
+        let mut stale = json!({});
+        append_automation_origin(&mut stale, &dispatch, &changed);
+        assert!(stale.get("human_automation").is_none());
+    }
+    let mut ordinary = dispatch.clone();
+    ordinary["human_automation"]["workflow_stage_id"] = Value::Null;
+    ordinary["human_automation"]["non_workflow"] = json!(true);
+    let mut origin = json!({});
+    append_automation_origin(&mut origin, &ordinary, &binding);
+    assert_eq!(origin["workflowStageId"], Value::Null);
+    assert_eq!(origin["nonWorkflow"], true);
+}
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.server.abort();

@@ -2524,7 +2524,10 @@ class LoopItemService:
                 or automation_context is not None
                 or values.notify_self
             )
-            and previous_assignee_user_id != target_user_id
+            and (
+                previous_assignee_user_id != target_user_id
+                or (automation_run_requested and assignment_created)
+            )
         ):
             from app.services.collaboration_human_assignments import (
                 notify_direct_human_assignment,
@@ -2552,6 +2555,8 @@ class LoopItemService:
                 human=human,
                 actor_user_id=user_id,
                 assignment_id=assignment.id,
+                workflow_stage_id=values.workflow_step,
+                automation_context=automation_context,
             )
 
         metadata = advance_content_revision(metadata, actor_user_id=user_id)
@@ -2949,6 +2954,9 @@ class LoopItemService:
         from app.services.human_assistant_dispatch import claim_for_binding
 
         assistant_execution_id = claim_for_binding(db, item, values, user_id)
+        from app.services.project_automation_human import human_binding_metadata
+
+        assistant_metadata = human_binding_metadata(db, assistant_execution_id)
         self._validate_backend_task(db, values.backend_task_id, user_id)
         logger.info(
             "[LoopItem] Bind runtime session: item=%s runtime_task=%s team=%s model_selected=%s",
@@ -2985,6 +2993,7 @@ class LoopItemService:
                     active.metadata_json = {
                         **(active.metadata_json or {}),
                         "execution_id": assistant_execution_id,
+                        **assistant_metadata,
                     }
                 self.ensure_collaborator(
                     db, item, user_id, user_id, "task", commit=False
@@ -3013,6 +3022,7 @@ class LoopItemService:
             binding.metadata_json = {
                 **(binding.metadata_json or {}),
                 "execution_id": assistant_execution_id,
+                **assistant_metadata,
             }
         self.ensure_collaborator(db, item, user_id, user_id, "task", commit=False)
         if commit:

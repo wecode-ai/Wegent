@@ -121,9 +121,40 @@ def _save(event: AssignmentEvent, dispatch: dict) -> None:
     event.comment.metadata_json = metadata
 
 
+def _automation_context(event: AssignmentEvent) -> dict | None:
+    from app.services.collaboration_human_assignments import human_automation_context
+
+    return human_automation_context(event)
+
+
+def _current_assignment(
+    db: Session, item: LoopItem, user_id: int, assignment_id: str
+) -> AssignmentEvent | None:
+    from app.services.issue_assignments import AssignmentEvent, issue_assignment_service
+
+    submitted = db.get(LoopItemComment, assignment_id)
+    automation = None
+    if submitted is not None and submitted.loop_item_id == item.id:
+        automation = _automation_context(
+            AssignmentEvent(comment=submitted, metadata=submitted.metadata_json or {})
+        )
+    return issue_assignment_service.active(
+        db,
+        issue_id=item.id,
+        member_type="human",
+        member_id=str(user_id),
+        workflow_step=automation["workflow_stage_id"] if automation else None,
+    )
+
+
 def ensure_dispatch(db: Session, event: AssignmentEvent) -> dict | None:
     """Create once under the Issue lock, independently of notification delivery."""
-    if not enabled() or event.member_type != "human" or event.workflow_step:
+    automation = _automation_context(event)
+    if (
+        not enabled()
+        or event.member_type != "human"
+        or (event.workflow_step and automation is None)
+    ):
         return None
     if event.metadata.get("trigger") in {"default", "collaboration_round"}:
         return None
@@ -135,10 +166,8 @@ def ensure_dispatch(db: Session, event: AssignmentEvent) -> dict | None:
     if (
         project is None
         or project.task_provider != "local"
-        or any(
-            metadata.get(key)
-            for key in ("workflow", "external_index", "external_shadow")
-        )
+        or (metadata.get("workflow") and automation is None)
+        or any(metadata.get(key) for key in ("external_index", "external_shadow"))
     ):
         return None
     # Current reads preserve one intent when two device heartbeats resolve it.
@@ -146,8 +175,14 @@ def ensure_dispatch(db: Session, event: AssignmentEvent) -> dict | None:
     previous = (event.comment.metadata_json or {}).get(DISPATCH_KEY)
     if isinstance(previous, dict):
         return previous
+    if automation and not settings.HUMAN_AUTOMATION_RECEIPTS_ENABLED:
+        return None
     version = int(event.metadata.get("assignment_version") or 1)
-    key = f"{item.cloud_project_id}:{item.id}:{event.id}:{version}"
+    key = (
+        automation["idempotency_key"]
+        if automation
+        else f"{item.cloud_project_id}:{item.id}:{event.id}:{version}"
+    )
     now = _now().isoformat() + "Z"
     dispatch = {
         "dispatchId": str(uuid5(NAMESPACE_URL, f"wegent:human-assistant:{key}")),
@@ -163,6 +198,18 @@ def ensure_dispatch(db: Session, event: AssignmentEvent) -> dict | None:
         "idempotencyKey": key,
         "createdAt": now,
         "updatedAt": now,
+        **(
+            {
+                "automationRunId": automation["automation_run_id"],
+                "human_automation": automation,
+                "humanAssignmentId": automation["human_assignment_id"],
+                "workflowStageId": automation["workflow_stage_id"],
+                "requiredDeliverables": automation["required_deliverables"],
+                "nonWorkflow": automation["non_workflow"],
+            }
+            if automation
+            else {}
+        ),
     }
     _save(event, dispatch)
     return _resolve_dispatch(db, item, event, dispatch)
@@ -174,6 +221,8 @@ def _resolve_dispatch(
     if dispatch["dispatchState"] in TERMINAL | {"superseded"}:
         return dispatch
     if dispatch.get("executionId"):
+        return dispatch
+    if _automation_context(event) and not settings.HUMAN_AUTOMATION_RECEIPTS_ENABLED:
         return dispatch
     endpoint, reason = _endpoint_resolution(db, int(event.member_id), item)
     if endpoint is None:
@@ -200,10 +249,14 @@ def _resolve_dispatch(
             ),
         }
         if not dispatch.get("executionId") and item.status != "completed":
+            automation = _automation_context(event)
             execution = LoopItemExecution(
                 loop_item_id=item.id,
                 cloud_project_id=str(item.cloud_project_id),
                 executor_owner_user_id=int(event.member_id),
+                automation_run_id=(
+                    automation["automation_run_id"] if automation else None
+                ),
                 agent_id="",
                 team_id=0,
                 assigner_user_id=int(event.member_id),
@@ -226,6 +279,8 @@ def _resolve_dispatch(
                             "assigned_by_user_id": event.assigned_by_user_id,
                             "stand_in_id": role["id"],
                             "publish_policy": "summary_and_evidence_only",
+                            **(automation or {}),
+                            **({"human_automation": automation} if automation else {}),
                         },
                     }
                 ),
@@ -266,11 +321,18 @@ def dispatch_resources(
         )
     dispatches = {}
     for item in candidates:
-        for assignment in assignments[item.id]:
+        active = assignments[item.id]
+        automated = [
+            assignment
+            for assignment in active
+            if assignment.member_id == str(item.assignee_user_id)
+            and _automation_context(assignment)
+        ]
+        for assignment in automated[-1:] or active:
             if (
                 assignment.member_type == "human"
                 and assignment.member_id == str(item.assignee_user_id)
-                and not assignment.workflow_step
+                and (not assignment.workflow_step or _automation_context(assignment))
             ):
                 dispatch = (assignment.comment.metadata_json or {}).get(DISPATCH_KEY)
                 if isinstance(dispatch, dict):
@@ -378,14 +440,11 @@ def execution_current(db: Session, execution: LoopItemExecution) -> bool:
         or item.assignee_user_id != execution.executor_owner_user_id
     ):
         return False
-    from app.services.issue_assignments import issue_assignment_service
-
-    event = issue_assignment_service.active(
+    event = _current_assignment(
         db,
-        issue_id=item.id,
-        member_type="human",
-        member_id=str(execution.executor_owner_user_id),
-        workflow_step=None,
+        item,
+        execution.executor_owner_user_id,
+        str(execution.runtime_origin_context.get("assignment_id") or ""),
     )
     if event is not None:
         db.refresh(event.comment, with_for_update=True)
@@ -432,19 +491,12 @@ def claim_for_binding(
     if not values.human_assignment_id or not values.assignment_id:
         raise HTTPException(422, "Assistant dispatch requires its assignment")
     from app.services.device.identity import resolve_owned_device_alias
-    from app.services.issue_assignments import issue_assignment_service
 
     submitted = db.get(LoopItemComment, values.assignment_id)
     submitted_dispatch = (
         (submitted.metadata_json or {}).get(DISPATCH_KEY) if submitted else None
     )
-    event = issue_assignment_service.active(
-        db,
-        issue_id=item.id,
-        member_type="human",
-        member_id=str(user_id),
-        workflow_step=None,
-    )
+    event = _current_assignment(db, item, user_id, values.assignment_id)
     if event is not None:
         db.refresh(event.comment, with_for_update=True)
     dispatch = (event.comment.metadata_json or {}).get(DISPATCH_KEY) if event else None
@@ -475,10 +527,18 @@ def claim_for_binding(
     if endpoint is None or device is None or endpoint[0].id != device.id:
         raise HTTPException(403, "Default assistant is not authorized on this device")
     dispatch = _resolve_dispatch(db, item, event, dispatch)
+    if not dispatch.get("executionId"):
+        raise HTTPException(409, "Automatic assistant dispatch is disabled")
     execution = db.get(LoopItemExecution, dispatch["executionId"])
     if not execution_current(db, execution):
         raise HTTPException(403, "Assistant execution permission is unavailable")
-    if execution.status == "waiting_runtime" and not enabled():
+    if execution.status == "waiting_runtime" and (
+        not enabled()
+        or (
+            _automation_context(event)
+            and not settings.HUMAN_AUTOMATION_RECEIPTS_ENABLED
+        )
+    ):
         raise HTTPException(409, "Automatic assistant dispatch is disabled")
     if execution.status != "waiting_runtime":
         if (

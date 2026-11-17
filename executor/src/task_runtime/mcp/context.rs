@@ -81,6 +81,13 @@ pub(super) fn space_context_grant(
         dispatch_id,
         manager_agent_id: origin_value("managerAgentId", "manager_agent_id").and_then(id_value),
         automation_run_id: None,
+        assignment_id: origin_value("assignmentId", "assignment_id").and_then(id_value),
+        human_assignment_id: origin_value("humanAssignmentId", "human_assignment_id")
+            .and_then(id_value),
+        human_automation: origin
+            .and_then(|origin| origin.get("human_automation"))
+            .filter(|context| context.is_object())
+            .cloned(),
         role,
         categories: role
             .map(role_categories)
@@ -118,6 +125,108 @@ fn id_value(value: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delivery_identity_is_frozen_in_the_execution_grant() {
+        let context = json!({"automation_run_id":"run-a","human_assignment_id":"human-a",
+            "assignment_id":"assignment-a","idempotency_key":"run-a:human-a"});
+        let mut request = ExecutionRequest {
+            task_id: "reused-personal-task".into(),
+            device_id: Some("device".into()),
+            ..ExecutionRequest::default()
+        };
+        request.extra.insert(
+            "origin".into(),
+            json!({"cloudProjectId":"project",
+            "loopItemId":"issue","humanAssignmentId":"human-a","assignmentId":"assignment-a",
+            "human_automation":context}),
+        );
+        let grant = space_context_grant(&request).unwrap().unwrap();
+        let mut next_request = request.clone();
+        next_request.extra.get_mut("origin").unwrap()["human_automation"] = json!({
+            "automation_run_id":"run-b","idempotency_key":"run-b:human-b"});
+        let next_grant = space_context_grant(&next_request).unwrap().unwrap();
+        assert_ne!(grant.human_automation, next_grant.human_automation);
+        let address = delivery_address(Some(&grant)).unwrap();
+        let source = delivery_source_task(Some(&grant), &address);
+        assert_eq!(source["deviceId"], "device");
+        assert_eq!(source["taskId"], "reused-personal-task");
+        assert_eq!(source["assignmentId"], "assignment-a");
+        assert_eq!(source["humanAssignmentId"], "human-a");
+        assert_eq!(source["executionContext"]["human_automation"], context);
+        assert_eq!(
+            address.execution_context.unwrap()["human_automation"],
+            context
+        );
+    }
+
+    #[test]
+    fn stale_execution_identity_cannot_mutate_a_draft_after_task_reuse() {
+        let context = json!({"automation_run_id":"run-a","human_assignment_id":"human-a",
+            "assignment_id":"assignment-a","idempotency_key":"run-a:human-a"});
+        let grant = SpaceContextGrant {
+            task_id: "reused-task".into(),
+            device_id: Some("device".into()),
+            human_automation: Some(context.clone()),
+            ..SpaceContextGrant::default()
+        };
+        let mut address = delivery_address(Some(&grant)).unwrap();
+        let mut draft = json!({"loop_item_id":"issue","status":"draft",
+            "source_task_snapshot":{"deviceId":"device","taskId":"reused-task",
+                "humanAutomation":context}});
+        assert!(delivery_scope_error(&draft, &address, "issue").is_none());
+        for key in [
+            "automation_run_id",
+            "human_assignment_id",
+            "assignment_id",
+            "idempotency_key",
+        ] {
+            let mut newer = draft.clone();
+            newer["source_task_snapshot"]["humanAutomation"][key] = json!("new-assignment");
+            assert!(delivery_scope_error(&newer, &address, "issue").is_some());
+        }
+        address.execution_context = None;
+        assert!(delivery_scope_error(&draft, &address, "issue").is_some());
+        draft["source_task_snapshot"]
+            .as_object_mut()
+            .unwrap()
+            .remove("humanAutomation");
+        assert!(delivery_scope_error(&draft, &address, "issue").is_none());
+        address.execution_context = Some(json!({"human_automation":context}));
+        assert!(delivery_scope_error(&draft, &address, "issue").is_some());
+    }
+
+    #[test]
+    fn automation_requirements_use_the_grant_snapshot_and_reject_reused_bindings() {
+        let context = json!({"automation_run_id":"run","human_assignment_id":"human",
+            "assignment_id":"assignment","idempotency_key":"run:human","workflow_stage_id":"ux_spec",
+            "required_deliverables":[{"id":"frozen-file","value_type":"file"}],"non_workflow":false});
+        let grant = SpaceContextGrant {
+            task_id: "task".into(),
+            device_id: Some("device".into()),
+            human_automation: Some(context.clone()),
+            ..SpaceContextGrant::default()
+        };
+        let address = delivery_address(Some(&grant)).unwrap();
+        let binding = json!({"human_automation":context});
+        let requirements = automation_delivery_requirements(&address, Some(&binding))
+            .unwrap()
+            .unwrap();
+        assert_eq!(requirements["workflow_stage_id"], "ux_spec");
+        assert_eq!(
+            requirements["required_deliverables"],
+            context["required_deliverables"]
+        );
+        let mut changed_binding = binding.clone();
+        changed_binding["human_automation"]["workflow_stage_id"] = json!("implementation");
+        changed_binding["human_automation"]["required_deliverables"] = json!([]);
+        assert_eq!(
+            automation_delivery_requirements(&address, Some(&changed_binding)).unwrap(),
+            Some(requirements)
+        );
+        changed_binding["human_automation"]["idempotency_key"] = json!("new-run:human");
+        assert!(automation_delivery_requirements(&address, Some(&changed_binding)).is_err());
+    }
 
     #[test]
     fn project_automation_null_dispatch_fields_do_not_declare_an_agent_role() {

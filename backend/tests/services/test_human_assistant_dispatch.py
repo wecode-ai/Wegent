@@ -16,6 +16,7 @@ from app.services.human_assistant_dispatch import (
     current_dispatch,
     execution_current,
 )
+from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_items.service import loop_item_service
 from tests.services.test_loop_item_assignment import (
@@ -124,6 +125,125 @@ def test_human_assignment_creates_a_durable_assistant_intent(
     assert rows[0].status == "waiting_runtime"
     assert first == current_dispatch(test_db, item)
     assert item.status == "inbox"
+
+
+def _automation_assignment(db, project, item, user, *, run_id, stage=None):
+    context = {"rule_id": "rule-1", "run_id": run_id}
+    if stage is not None:
+        context["workflow_stage_input"] = {"target_stage": stage}
+    return issue_assignment_service.record(
+        db,
+        project_id=project.id,
+        issue_id=item.id,
+        member_type="human",
+        member_id=str(user.id),
+        assigned_by_user_id=user.id,
+        workflow_step=stage["id"] if stage else None,
+        notify=False,
+        trigger="automation",
+        automation_context=context,
+    )
+
+
+def test_automation_replay_reuses_assignment_but_next_run_replaces_it(
+    test_db, test_user, dispatch_enabled, monkeypatch
+):
+    monkeypatch.setattr(settings, "HUMAN_AUTOMATION_RECEIPTS_ENABLED", True)
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    _device(test_db, test_user)
+    _assign(test_db, project, item, test_user, test_user)
+    first, created = _automation_assignment(
+        test_db, project, item, test_user, run_id="run-one"
+    )
+    replay, replay_created = _automation_assignment(
+        test_db, project, item, test_user, run_id="run-one"
+    )
+    first_dispatch = first.comment.metadata_json["human_assistant_dispatch"]
+    second, second_created = _automation_assignment(
+        test_db, project, item, test_user, run_id="run-two"
+    )
+
+    assert created and second_created and not replay_created
+    assert replay.id == first.id
+    assert second.id != first.id
+    contract = first.metadata["human_automation"]
+    assert contract["assignment_id"] == first.id
+    assert contract["owner_user_id"] == test_user.id
+    assert contract["workflow_stage_id"] is None
+    assert contract["non_workflow"] is True
+    assert contract["idempotency_key"] == f"run-one:{contract['human_assignment_id']}"
+    assert (
+        test_db.get(LoopItemExecution, first_dispatch["executionId"]).status
+        == "cancelled"
+    )
+    assert (
+        issue_assignment_service.active(
+            test_db,
+            issue_id=item.id,
+            member_type="human",
+            member_id=str(test_user.id),
+            workflow_step=None,
+        ).id
+        == second.id
+    )
+
+
+def test_stage_automation_dispatch_binding_and_claim_share_the_snapshot(
+    test_db, test_user, dispatch_enabled, monkeypatch
+):
+    monkeypatch.setattr(settings, "HUMAN_AUTOMATION_RECEIPTS_ENABLED", True)
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    _device(test_db, test_user)
+    _assign(test_db, project, item, test_user, test_user)
+    stage = {
+        "id": "review",
+        "required_deliverables": [{"id": "report", "value_type": "text"}],
+    }
+    event, _ = _automation_assignment(
+        test_db, project, item, test_user, run_id="stage-run", stage=stage
+    )
+    test_db.commit()
+    stage["required_deliverables"][0]["id"] = "mutated-later"
+    contract = event.metadata["human_automation"]
+    assert contract["required_deliverables"][0]["id"] == "report"
+    assert contract["workflow_stage_id"] == "review"
+    assert contract["non_workflow"] is False
+    binding = _bind(test_db, item, test_user)
+    execution = test_db.get(LoopItemExecution, binding.execution_id)
+
+    assert execution.automation_run_id == "stage-run"
+    assert execution.runtime_origin_context["human_automation"] == contract
+    assert execution.runtime_origin_context["workflow_stage_id"] == "review"
+    assert execution.status == "claimed"
+    assert execution_current(test_db, execution)
+    monkeypatch.setattr(settings, "HUMAN_AUTOMATION_RECEIPTS_ENABLED", False)
+    assert execution_current(test_db, execution)
+    assert _bind(test_db, item, test_user).execution_id == binding.execution_id
+
+
+def test_stage_assignment_without_automation_contract_has_no_personal_dispatch(
+    test_db, test_user, dispatch_enabled, monkeypatch
+):
+    monkeypatch.setattr(settings, "HUMAN_AUTOMATION_RECEIPTS_ENABLED", True)
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    _device(test_db, test_user)
+    event, _ = issue_assignment_service.record(
+        test_db,
+        project_id=project.id,
+        issue_id=item.id,
+        member_type="human",
+        member_id=str(test_user.id),
+        assigned_by_user_id=test_user.id,
+        workflow_step="review",
+        notify=False,
+        trigger="manual",
+    )
+
+    assert "human_automation" not in event.metadata
+    assert "human_assistant_dispatch" not in event.comment.metadata_json
 
 
 def test_flag_disabled_reproduces_notification_only_assignment(test_db, test_user):

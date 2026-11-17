@@ -10,10 +10,12 @@ from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.delivery import (
     CloudProject,
     Delivery,
     LoopItem,
+    LoopItemComment,
     LoopItemTaskBinding,
     loop_datetime_is_unset,
 )
@@ -29,6 +31,34 @@ if TYPE_CHECKING:
     from app.services.issue_assignments import AssignmentEvent
 
 DIRECT_HUMAN_ROUND_ID = "direct"
+
+
+def human_automation_context(event: AssignmentEvent) -> dict | None:
+    """Read the server-owned automation identity of an assignment event."""
+    context = event.metadata.get("human_automation")
+    automation = event.metadata.get("automation")
+    if not isinstance(context, dict) or not isinstance(automation, dict):
+        return None
+    human_id = direct_human_assignment_id(
+        issue_id=event.loop_item_id, assignment_id=event.id
+    )
+    run_id = automation.get("run_id")
+    stage_id = event.workflow_step or None
+    if (
+        event.member_type != "human"
+        or not isinstance(run_id, str)
+        or not run_id
+        or context.get("automation_run_id") != run_id
+        or context.get("assignment_id") != event.id
+        or str(context.get("owner_user_id")) != event.member_id
+        or context.get("human_assignment_id") != human_id
+        or context.get("workflow_stage_id") != stage_id
+        or context.get("non_workflow") is not (stage_id is None)
+        or context.get("idempotency_key") != f"{run_id}:{human_id}"
+        or not isinstance(context.get("required_deliverables"), list)
+    ):
+        return None
+    return context
 
 
 def human_task_bindings(
@@ -51,13 +81,23 @@ def human_task_bindings(
     rounds = []
     for item in eligible:
         active = assignments[item.id]
+        automated = [
+            event
+            for event in active
+            if event.member_id == str(item.assignee_user_id)
+            and human_automation_context(event)
+        ]
+        if automated:
+            active = [automated[-1]]
         if len(active) != 1:
             continue
         assignment = active[0]
+        automation = human_automation_context(assignment)
         if (
             assignment.member_type != "human"
             or assignment.metadata.get("trigger") == "default"
-            or assignment.workflow_step
+            or (assignment.workflow_step and automation is None)
+            or ((item.metadata_json or {}).get("workflow") and automation is None)
             or assignment.member_id != str(item.assignee_user_id)
         ):
             continue
@@ -71,6 +111,17 @@ def human_task_bindings(
             "dispatchId": f"direct-human:{assignment.id}",
             "dispatchRoundId": DIRECT_HUMAN_ROUND_ID,
             "assignmentId": assignment.id,
+            **(
+                {
+                    "automationRunId": automation["automation_run_id"],
+                    "workflowStageId": automation["workflow_stage_id"],
+                    "requiredDeliverables": automation["required_deliverables"],
+                    "nonWorkflow": automation["non_workflow"],
+                    "idempotencyKey": automation["idempotency_key"],
+                }
+                if automation
+                else {}
+            ),
         }
     for issue_id, binding in _round_human_task_bindings(db, rounds).items():
         result[issue_id] = {
@@ -93,8 +144,7 @@ def _human_binding_items(
             project is not None
             and project.task_provider == "local"
             and not any(
-                metadata.get(key)
-                for key in ("workflow", "external_index", "external_shadow")
+                metadata.get(key) for key in ("external_index", "external_shadow")
             )
         ):
             eligible.append(item)
@@ -193,6 +243,8 @@ def notify_direct_human_assignment(
     task_title: str | None = None,
     instructions: str | None = None,
     notification_target: NotificationTarget | None = None,
+    workflow_stage_id: str | None = None,
+    automation_context: dict | None = None,
 ) -> None:
     """Notify a direct assignee without creating or mutating another Issue."""
 
@@ -203,6 +255,33 @@ def notify_direct_human_assignment(
         assignment_id=assignment_id,
     )
     actor = db.get(User, actor_user_id)
+    automation = None
+    if settings.HUMAN_AUTOMATION_RECEIPTS_ENABLED and automation_context:
+        from app.services.issue_assignments import AssignmentEvent
+
+        comment = db.get(LoopItemComment, assignment_id)
+        if (
+            comment is not None
+            and comment.loop_item_id == issue.id
+            and str(comment.cloud_project_id) == str(project.id)
+        ):
+            event = AssignmentEvent(
+                comment=comment, metadata=comment.metadata_json or {}
+            )
+            if event.member_id == str(human.id):
+                automation = human_automation_context(event)
+        if automation is None:
+            raise ValueError(
+                "Automation notification requires its persisted assignment"
+            )
+        if automation.get("automation_run_id") != automation_context.get("run_id"):
+            raise ValueError(
+                "Automation notification run does not match its assignment"
+            )
+        if automation["workflow_stage_id"] != workflow_stage_id:
+            raise ValueError(
+                "Automation notification stage does not match its assignment"
+            )
     notify_collaboration_human_assignment(
         db,
         project=project,
@@ -216,10 +295,11 @@ def notify_direct_human_assignment(
         assignment_id=assignment_id,
         task_title=resolved_title,
         instructions=resolved_instructions or resolved_title,
-        workflow_stage_id=None,
+        workflow_stage_id=automation["workflow_stage_id"] if automation else None,
         body="这个 Issue 已分配给你。打开后可直接处理，或按需使用 AI 辅助。",
         action="open_issue",
         notification_target=notification_target,
+        human_automation=automation,
     )
 
 
@@ -241,6 +321,7 @@ def notify_collaboration_human_assignment(
     body: str = "负责人向你分配了协作任务。",
     action: str = "create_personal_task",
     notification_target: NotificationTarget | None = None,
+    human_automation: dict | None = None,
 ) -> None:
     """Notify the person without creating a board child Issue."""
 
@@ -299,6 +380,16 @@ def notify_collaboration_human_assignment(
             "instructions": instructions,
             "workflowStageId": workflow_stage_id,
             "idempotencyKey": f"human-assignment:{human_assignment_id}",
+            **(
+                {
+                    "automationRunId": human_automation["automation_run_id"],
+                    "requiredDeliverables": human_automation["required_deliverables"],
+                    "nonWorkflow": human_automation["non_workflow"],
+                    "idempotencyKey": human_automation["idempotency_key"],
+                }
+                if human_automation
+                else {}
+            ),
         },
     )
 

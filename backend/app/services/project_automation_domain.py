@@ -29,6 +29,9 @@ ACTIVE_RUN_STATUSES = {
     "queued",
     "waiting_runtime",
     "waiting_device",
+    "waiting",
+    "waiting_user",
+    "blocked",
     "running",
 }
 

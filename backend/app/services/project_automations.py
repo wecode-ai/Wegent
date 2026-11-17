@@ -662,6 +662,7 @@ class ProjectAutomationService:
             run,
             str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
             _metadata(rule),
+            viewer_user_id=user_id,
         )
 
     async def retry_run(
@@ -673,6 +674,9 @@ class ProjectAutomationService:
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or str(run.cloud_project_id) != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation run not found")
+
+        if isinstance(_metadata(run).get("human_automation"), dict):
+            return self._run_view_from_db(db, run, viewer_user_id=user_id)
 
         # A previous process may have written only the execution outcome. Repair
         # the aggregate before deciding whether this run is retryable.
@@ -696,6 +700,7 @@ class ProjectAutomationService:
             run,
             str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
             _metadata(rule),
+            viewer_user_id=user_id,
         )
 
     def list_runs(
@@ -736,7 +741,8 @@ class ProjectAutomationService:
             visible_rows = [row for row in rows if self._is_visible_run(row)][:100]
         rule_metadata = _metadata(rule)
         return [
-            self._run_view(row, timezone_name, rule_metadata) for row in visible_rows
+            self._run_view(row, timezone_name, rule_metadata, viewer_user_id=user_id)
+            for row in visible_rows
         ]
 
     async def cancel_run(
@@ -763,7 +769,8 @@ class ProjectAutomationService:
                 raise HTTPException(
                     status.HTTP_404_NOT_FOUND, "Automation run not found"
                 )
-            return self._run_view_from_db(db, run)
+            if not isinstance(_metadata(run).get("human_automation"), dict):
+                return self._run_view_from_db(db, run)
         if run.status not in ACTIVE_RUN_STATUSES:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Automation run cannot be cancelled"
@@ -856,6 +863,16 @@ class ProjectAutomationService:
         if run.status == "cancelled":
             return
         run.status = "cancelled"
+        human = _metadata(run).get("human_automation")
+        if isinstance(human, dict):
+            run.metadata_json = {
+                **_metadata(run),
+                "human_automation": {
+                    **human,
+                    "state": "cancelled",
+                    "reason_code": "cancelled_by_user",
+                },
+            }
         run.version += 1
         project_automation_execution.finish_activity(
             db,
@@ -1169,7 +1186,11 @@ class ProjectAutomationService:
         row: ProjectAutomationRun,
         fallback_timezone: str = "Asia/Shanghai",
         rule_metadata: dict | None = None,
+        *,
+        viewer_user_id: int | None = None,
     ) -> dict:
+        from app.services.project_automation_human import visible_context
+
         run_metadata = _metadata(row)
         automation_metadata = rule_metadata or {}
         trigger_type = text(automation_metadata.get("trigger_type")) or None
@@ -1201,13 +1222,17 @@ class ProjectAutomationService:
             "created_at": _utc_aware(row.created_at),
             "updated_at": _utc_aware(row.updated_at),
             "completed_at": _utc_aware(row.completed_at),
-            "retryable": row.status == "failed",
+            "retryable": row.status == "failed"
+            and not run_metadata.get("human_automation"),
             "trigger_type": trigger_type,
             "event_type": event_type or None,
             "event_config": (
                 automation_metadata.get("event_config")
                 if trigger_type == "event"
                 else None
+            ),
+            "human_automation": visible_context(
+                run_metadata.get("human_automation"), viewer_user_id
             ),
         }
 
@@ -1216,6 +1241,8 @@ class ProjectAutomationService:
         cls,
         db: Session,
         row: ProjectAutomationRun,
+        *,
+        viewer_user_id: int | None = None,
     ) -> dict:
         rule = (
             db.get(ProjectAutomationRule, row.parent_id)
@@ -1226,6 +1253,7 @@ class ProjectAutomationService:
             row,
             cls._run_timezone(db, row),
             _metadata(rule) if rule is not None else None,
+            viewer_user_id=viewer_user_id,
         )
 
     @staticmethod

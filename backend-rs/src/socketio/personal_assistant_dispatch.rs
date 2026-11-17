@@ -30,7 +30,11 @@ pub(super) fn normalize(value: &Value) -> Value {
 const DISPATCH_PATH: &str = "$.human_assistant_dispatch";
 
 fn enabled() -> bool {
-    crate::config::env_or_dotenv("HUMAN_ASSIGNMENT_RECEIPTS_ENABLED").is_some_and(|value| {
+    flag_enabled("HUMAN_ASSIGNMENT_RECEIPTS_ENABLED")
+}
+
+fn flag_enabled(name: &str) -> bool {
+    crate::config::env_or_dotenv(name).is_some_and(|value| {
         matches!(
             value.trim().to_ascii_lowercase().as_str(),
             "true" | "1" | "yes" | "on"
@@ -161,15 +165,13 @@ async fn refresh_issue_on(
         ) && event.metadata.target_id.as_deref() == Some(owner_id.as_str())
             && event
                 .metadata
-                .workflow_step
-                .as_deref()
-                .is_none_or(str::is_empty)
-            && event
-                .metadata
                 .human_assistant_dispatch
                 .as_ref()
                 .is_some_and(|dispatch| {
-                    valid_assignment(
+                    super::human_automation::stage_matches(
+                        event.metadata.workflow_step.as_deref(),
+                        dispatch,
+                    ) && valid_assignment(
                         dispatch,
                         &issue,
                         owner,
@@ -203,7 +205,10 @@ async fn refresh_issue_on(
     };
     if let Some(reason) = reason {
         revoke_on(tx, &issue, owner, &mut dispatch, reason, &mut effects).await?;
-    } else if may_create {
+    } else if may_create
+        && (super::human_automation::context(&dispatch).is_none()
+            || flag_enabled("HUMAN_AUTOMATION_RECEIPTS_ENABLED"))
+    {
         let (device, role) = resolution.endpoint.expect("authorized endpoint");
         admit_on(
             tx,
@@ -248,6 +253,8 @@ fn valid_assignment(
     version: Option<i64>,
 ) -> bool {
     dispatch["assignmentId"] == assignment
+        && super::human_automation::context(dispatch)
+            .is_none_or(|context| context["assignment_id"] == assignment)
         && dispatch["issueId"] == issue.id
         && dispatch["projectId"] == issue.cloud_project_id
         && dispatch["ownerUserId"].as_i64() == Some(owner)
@@ -298,21 +305,21 @@ pub(crate) async fn require_current_on(
         ) && event.metadata.target_id.as_deref() == Some(owner_id.as_str())
             && event
                 .metadata
-                .workflow_step
-                .as_deref()
-                .is_none_or(str::is_empty)
-            && event
-                .metadata
                 .human_assistant_dispatch
                 .as_ref()
                 .is_some_and(|dispatch| {
-                    valid_assignment(
+                    super::human_automation::stage_matches(
+                        event.metadata.workflow_step.as_deref(),
                         dispatch,
-                        issue,
-                        owner,
-                        &event.comment.id,
-                        event.metadata.assignment_version,
-                    ) && dispatch["assignmentId"] == context["assignment_id"]
+                    ) && super::human_automation::identity_matches(dispatch, &context)
+                        && valid_assignment(
+                            dispatch,
+                            issue,
+                            owner,
+                            &event.comment.id,
+                            event.metadata.assignment_version,
+                        )
+                        && dispatch["assignmentId"] == context["assignment_id"]
                         && dispatch["assignmentVersion"] == context["assignment_version"]
                         && dispatch["executionId"].as_str() == Some(execution_id.as_str())
                         && !terminal_dispatch(dispatch)
@@ -506,6 +513,13 @@ async fn admit_on(
     let id = if let Some((id,)) = existing {
         id
     } else {
+        let mut context = json!({"human_assistant_dispatch":dispatch["dispatchId"],
+            "assignment_id":assignment.id,"assignment_version":dispatch["assignmentVersion"],
+            "owner_user_id":role.user_id,"assigned_by_user_id":assignment.created_by_user_id,
+            "stand_in_id":role.id,"publish_policy":"summary_and_evidence_only"});
+        if let Some(automation) = super::human_automation::context(dispatch) {
+            context["human_automation"] = automation.clone();
+        }
         let input = queue::Admission {
             owner: role.user_id,
             assigner: role.user_id,
@@ -513,16 +527,16 @@ async fn admit_on(
             team_id: 0,
             environment: "local".into(),
             device_id: device.name.clone(),
-            context: json!({"human_assistant_dispatch":dispatch["dispatchId"],
-                "assignment_id":assignment.id,"assignment_version":dispatch["assignmentVersion"],
-                "owner_user_id":role.user_id,"assigned_by_user_id":assignment.created_by_user_id,
-                "stand_in_id":role.id,"publish_policy":"summary_and_evidence_only"}),
+            context,
             runtime_selection: json!({"executor_kind":"human_assistant"}),
             config: json!({}),
             requires_approval: false,
             waiting_runtime: true,
         };
-        let execution = queue::enqueue_intent_on(tx, issue, None, &scope, &input).await?;
+        let automation_run_id = super::human_automation::context(dispatch)
+            .and_then(|context| context["automation_run_id"].as_str());
+        let execution =
+            queue::enqueue_intent_on(tx, issue, automation_run_id, &scope, &input).await?;
         tx.execute(
             "UPDATE loop_item_executions SET max_retries=0,runtime_task_id='',execution_note=? WHERE id=? AND status='waiting_runtime'",
             ("Waiting for the owner's authorized default assistant", execution.id),
