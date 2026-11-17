@@ -160,7 +160,8 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
       const beforeScroll = JSON.parse(
         await control.command(
           'getElementMetrics',
-          `${projectScroll}, ${sidebar('collaboration-project-tree')} [data-testid^="collaboration-workspace-project-"]`
+          `${projectScroll}, ${sidebar('collaboration-project-tree')} [data-testid^="collaboration-workspace-project-"]`,
+          { value: 'includeText' }
         )
       )
       const viewport = beforeScroll.find(row => row.testId === 'collaboration-projects-scroll')

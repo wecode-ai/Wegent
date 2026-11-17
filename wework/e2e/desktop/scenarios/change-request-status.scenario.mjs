@@ -188,13 +188,17 @@ if (args.includes('--help')) {
   if (process.platform === 'win32') {
     // Rust CreateProcess resolves native executables, not the legacy shell's .cmd shim.
     const executable = join(binPath, 'gh.exe')
-    await runChecked('rustc', [
-      fileURLToPath(new URL('../fixtures/node-cli-protocol.rs', import.meta.url)),
-      '--edition',
-      '2021',
-      '-o',
-      executable,
-    ])
+    const prepared = process.env.WEWORK_E2E_NODE_CLI_PROTOCOL_BIN
+    if (prepared) await copyFile(prepared, executable)
+    else {
+      await runChecked('rustc', [
+        fileURLToPath(new URL('../fixtures/node-cli-protocol.rs', import.meta.url)),
+        '--edition',
+        '2021',
+        '-o',
+        executable,
+      ])
+    }
     await copyFile(executable, join(binPath, 'glab.exe'))
   }
   process.env.PATH = `${binPath}${delimiter}${process.env.PATH ?? ''}`

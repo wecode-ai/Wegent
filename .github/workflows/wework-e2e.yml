@@ -549,6 +549,15 @@ jobs:
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Prepare native external Git CLI protocol fixture
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:GITHUB_WORKSPACE "wework/electron/release/WeWork-win32-x64/resources/e2e-client"
+          $binary = Join-Path $directory "node-cli-protocol.exe"
+          rustc wework/e2e/desktop/fixtures/node-cli-protocol.rs --edition 2021 -o $binary
+          if ($LASTEXITCODE -ne 0) { throw "Git CLI protocol fixture compilation failed" }
+          if (-not (Test-Path $binary -PathType Leaf)) { throw "Missing Git CLI protocol fixture" }
+
       - name: Verify Windows process deadline and log retention
         timeout-minutes: 1
         shell: pwsh
@@ -865,6 +874,7 @@ jobs:
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/WeWork.exe
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/yaml.cjs
+          WEWORK_E2E_NODE_CLI_PROTOCOL_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/node-cli-protocol.exe
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
@@ -878,6 +888,7 @@ jobs:
             $env:WEWORK_E2E_EXECUTOR_BIN,
             $env:WEWORK_E2E_BACKEND_RS_BIN,
             $env:WEWORK_E2E_CODEX_BIN,
+            $env:WEWORK_E2E_NODE_CLI_PROTOCOL_BIN,
             (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/wework-core-plugins.tar.gz"),
             (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/wework-app-static.tar.gz"),
             (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins.tar.gz")
