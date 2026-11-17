@@ -156,7 +156,7 @@ test('restores original plugin recipes without overriding provided-logo dark rul
     if (declaration.value.includes('--wework-plugin-logo-bg')) {
       const parent = declaration.parent
       expect(parent?.type).toBe('rule')
-      if (parent?.type === 'rule') logoRules.push(parent.selector)
+      if (parent?.type === 'rule') logoRules.push(parent.selector.replace(/\r\n/g, '\n'))
     }
   })
   expect(logoRules).toEqual([

@@ -158,7 +158,7 @@ describe('bundled plugin resources', () => {
       'artifacts',
     ]) {
       const skill = readFileSync(resolve(plugin, 'skills', name, 'SKILL.md'), 'utf8')
-      expect(skill).toMatch(/^---\nname: /)
+      expect(skill).toMatch(/^---\r?\nname: /)
       expect(skill).toContain('description:')
     }
     expect(readFileSync(resolve(plugin, 'skills/browser/SKILL.md'), 'utf8')).toContain(
