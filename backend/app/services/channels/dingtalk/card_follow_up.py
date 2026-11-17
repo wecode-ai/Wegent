@@ -430,7 +430,7 @@ class DingTalkCardCallbackHandler(CallbackHandler):
                         return await self._continue_stand_in(db, user, binding, context)
                     if binding.runtime_task:
                         raise ValueError(
-                            "Wework 任务私聊已改为分身模式，请先发送 /standin。"
+                            "Wework 任务私聊已改为助理模式，请先发送 /standin。"
                         )
                 if binding.runtime_task:
                     return await self._continue_runtime(db, user, binding, context)
@@ -512,7 +512,7 @@ class DingTalkCardCallbackHandler(CallbackHandler):
         if task is None:
             raise ValueError("原任务已不可用或无权访问")
         if context.conversation_type == "private" and task.client_origin == "wework":
-            raise ValueError("Wework 任务私聊已改为分身模式，请先发送 /standin。")
+            raise ValueError("Wework 任务私聊已改为助理模式，请先发送 /standin。")
         check_task_status(db, task)
         await self._load_images(context)
         task, joined = join_card_task(db, binding, user.id)

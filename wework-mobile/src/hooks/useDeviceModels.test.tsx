@@ -4,7 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { executionFields, continuationSelection } from '@/domain/modelSelection'
 import type { RuntimeApi } from '@/services/runtimeApi'
-import type { DeviceInfo, RunnerModel, UnifiedModel } from '@/types/runtime'
+import type {
+  DeviceInfo,
+  ModelSelectionConfig,
+  RunnerModel,
+  RuntimeTaskAddress,
+  UnifiedModel,
+} from '@/types/runtime'
 import { useDeviceModels } from './useDeviceModels'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -227,5 +233,234 @@ describe('device-owned model catalogs', () => {
     await act(() => renderer.update(<Harness owner={2} />))
     expect(state.selectedModel?.type).toBe('runtime')
     expect(state.selectedModelOptions.reasoning).toBe('low')
+  })
+
+  it('restores the task GPT identity and every saved option before and after loading a different device default', async () => {
+    const selection: ModelSelectionConfig = {
+      modelName: native.model_id,
+      modelType: 'runtime',
+      options: {
+        runnerModelProvider: 'openai',
+        reasoning: 'xhigh',
+        speed: 'fast',
+        custom: 'retained',
+      },
+    }
+    const pending = deferred<{ models: RunnerModel[] }>()
+    const api = {
+      listNativeModels: vi.fn().mockReturnValue(pending.promise),
+    } as unknown as RuntimeApi
+    const address = {
+      deviceId: 'app-record-11',
+      taskId: 'gpt-task',
+      runtimeHandle: { modelSelection: selection },
+    }
+    function Harness() {
+      state = useDeviceModels(api, device(11), [cloud], null, undefined, {
+        address,
+        autoLoad: true,
+      })
+      return null
+    }
+    await act(() => {
+      renderer = create(<Harness />)
+    })
+    expect(state.selectedModel?.name).toBe(native.model_id)
+    expect(state.modelsLoading).toBe(true)
+    expect(state.modelSelection).toEqual(selection)
+    expect(state.selectedModelOptions).toEqual(selection.options)
+    await act(() =>
+      pending.resolve({
+        models: [
+          { ...native, provider: 'other', is_default: true },
+          { ...native, is_default: false },
+        ],
+      })
+    )
+    expect(state.selectedModel?.runtime?.provider).toBe('openai')
+    expect(state.modelSelection).toEqual(selection)
+    expect(state.selectedModelOptions).toEqual(selection.options)
+  })
+
+  it('isolates overrides for two conversations and the new-conversation default on one device', async () => {
+    const selections: Record<string, ModelSelectionConfig> = {
+      a: { modelName: native.model_id, modelType: 'runtime', options: { reasoning: 'low' } },
+      b: { modelName: cloud.name, modelType: cloud.type, options: { reasoning: 'high' } },
+    }
+    const api = {
+      listNativeModels: vi.fn().mockResolvedValue({ models: [native] }),
+    } as unknown as RuntimeApi
+    function Harness({ task = 'a' }: { task?: string }) {
+      const address: RuntimeTaskAddress | null = task
+        ? {
+            deviceId: 'app-record-11',
+            taskId: task,
+            runtimeHandle: { modelSelection: selections[task] },
+          }
+        : null
+      state = useDeviceModels(api, device(11), [cloud], null, undefined, { address })
+      return null
+    }
+    await act(() => {
+      renderer = create(<Harness />)
+    })
+    await act(() => state.loadModels())
+    await act(() => state.selectModel(cloud, { reasoning: 'xhigh' }))
+    await act(() => renderer.update(<Harness task="b" />))
+    expect(state.selectedModel?.name).toBe(cloud.name)
+    expect(state.selectedModelOptions.reasoning).toBe('high')
+    await act(() => renderer.update(<Harness task="" />))
+    expect(state.selectedModel?.name).toBe(native.model_id)
+    expect(state.selectedModelOptions.reasoning).toBe('medium')
+    await act(() => renderer.update(<Harness />))
+    expect(state.selectedModel?.name).toBe(cloud.name)
+    expect(state.selectedModelOptions.reasoning).toBe('xhigh')
+  })
+
+  it('retains an unavailable task model on discovery failure and supports editing its options', async () => {
+    const selection: ModelSelectionConfig = {
+      modelName: 'removed-gpt',
+      modelType: 'runtime',
+      options: { codexProviderId: 'my-provider', reasoning: 'ultra', speed: 'fast' },
+    }
+    const api = {
+      listNativeModels: vi.fn().mockRejectedValue(new Error('offline')),
+    } as unknown as RuntimeApi
+    function Harness() {
+      state = useDeviceModels(api, device(11), [cloud], null, undefined, {
+        address: {
+          deviceId: 'app-record-11',
+          taskId: 'task',
+          runtimeHandle: { modelSelection: selection },
+        },
+      })
+      return null
+    }
+    await act(() => {
+      renderer = create(<Harness />)
+    })
+    await act(() => state.loadModels())
+    expect(state.modelsError).toBe('offline')
+    expect(state.selectedModel?.name).toBe('removed-gpt')
+    expect(state.modelSelection).toEqual(selection)
+    await act(() =>
+      state.selectModel(state.selectedModel!, { ...state.selectedModelOptions, reasoning: 'high' })
+    )
+    expect(state.modelSelection).toEqual({
+      ...selection,
+      options: { ...selection.options, reasoning: 'high' },
+    })
+  })
+
+  it('does not invent a task model when metadata is missing and accepts an explicit catalog selection', async () => {
+    const api = { listNativeModels: vi.fn() } as unknown as RuntimeApi
+    function Harness() {
+      state = useDeviceModels(api, device(11), [cloud], null, undefined, {
+        address: { deviceId: 'app-record-11', taskId: 'unknown' },
+      })
+      return null
+    }
+    await act(() => {
+      renderer = create(<Harness />)
+    })
+    expect(state.selectedModel).toBeNull()
+    expect(state.modelSelection).toBeNull()
+    await act(() => state.selectModel(cloud))
+    expect(state.selectedModel).toBe(cloud)
+    expect(state.modelSelection?.modelName).toBe(cloud.name)
+  })
+
+  it('uses the PC automatic catalog model for a loaded task without a saved selection', async () => {
+    const api = { listNativeModels: vi.fn() } as unknown as RuntimeApi
+    function Harness() {
+      state = useDeviceModels(api, device(11), [cloud], null, undefined, {
+        address: {
+          deviceId: 'app-record-11',
+          taskId: 'legacy',
+          runtimeHandle: {
+            modelSelection: { modelName: 'stale-model', modelType: 'runtime', options: {} },
+          },
+        },
+        task: {
+          taskId: 'legacy',
+          title: 'Legacy task',
+          runtime: 'codex',
+          workspacePath: '/repo',
+          modelSelection: null,
+        },
+      })
+      return null
+    }
+    await act(() => {
+      renderer = create(<Harness />)
+    })
+    expect(state.selectedModel).toBe(cloud)
+    expect(state.modelSelection).toEqual(
+      continuationSelection(executionFields(cloud, state.selectedModelOptions))
+    )
+  })
+
+  it('takes the loaded task model and options over an outdated address snapshot', async () => {
+    const selection: ModelSelectionConfig = {
+      modelName: 'saved-gpt',
+      modelType: 'runtime',
+      options: { runnerModelProvider: 'openai', reasoning: 'high' },
+    }
+    const api = { listNativeModels: vi.fn() } as unknown as RuntimeApi
+    function Harness() {
+      state = useDeviceModels(api, device(11), [cloud], null, undefined, {
+        address: {
+          deviceId: 'app-record-11',
+          taskId: 'task',
+          runtimeHandle: { modelSelection: { ...selection, modelName: 'outdated' } },
+        },
+        task: {
+          taskId: 'task',
+          title: 'Task',
+          runtime: 'codex',
+          workspacePath: '/repo',
+          modelSelection: selection,
+        },
+      })
+      return null
+    }
+    await act(() => {
+      renderer = create(<Harness />)
+    })
+    expect(state.selectedModel?.name).toBe('saved-gpt')
+    expect(state.selectedModelOptions.reasoning).toBe('high')
+    expect(state.modelSelection).toEqual(selection)
+  })
+
+  it('matches a saved cloud model by namespace and owner instead of taking a same-name entry', async () => {
+    const selection: ModelSelectionConfig = {
+      modelName: cloud.name,
+      modelType: 'user',
+      options: { weworkCloudModelNamespace: 'team', weworkCloudModelResourceUserId: '7' },
+    }
+    const api = { listNativeModels: vi.fn() } as unknown as RuntimeApi
+    const owned = { ...cloud, type: 'user' as const, namespace: 'team', resourceUserId: 7 }
+    function Harness() {
+      state = useDeviceModels(
+        api,
+        device(11),
+        [{ ...owned, namespace: 'default' }, { ...owned, resourceUserId: 8 }, owned],
+        null,
+        undefined,
+        {
+          address: {
+            deviceId: 'app-record-11',
+            taskId: 'task',
+            runtimeHandle: { modelSelection: selection },
+          },
+        }
+      )
+      return null
+    }
+    await act(() => {
+      renderer = create(<Harness />)
+    })
+    expect(state.selectedModel).toBe(owned)
+    expect(state.modelSelection).toEqual(selection)
   })
 })

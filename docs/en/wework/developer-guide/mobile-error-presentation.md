@@ -11,8 +11,14 @@ screen-specific error style.
 ## Platform behavior
 
 - Background connection, discovery and list-read failures appear only as a retry badge on the
-  sidebar avatar. Do not show alerts or repeat the failure on other screens. Tapping retries reads,
-  keeps the badge during recovery and removes it on success. Settings remain accessible.
+  sidebar avatar. Do not show alerts or repeat the failure on other screens. Tapping opens a native
+  menu distinguishing cloud connection, cloud device/model lists, each device's work list, individual
+  transcripts and older pages. Each entry retries only its own operation and clears only its own
+  failure. Duplicate taps coalesce; different sources and settings remain usable concurrently.
+- Cloud connection state gates remote visibility and initial discovery. Phone reads, streaming and
+  executor lifetime remain independent. Reconnection never refreshes lists or phone history.
+  Pull-to-refresh reads the selected work list; device discovery has a separate action. Account
+  changes discard old remote results while retaining phone-owned state.
 - After initial loading, list snapshots update through pull-to-refresh, retry, explicit device
   selection or an accepted user operation. Foreground transitions, socket reconnection, task events
   and token renewal do not refresh lists. Active conversation streaming remains independent.

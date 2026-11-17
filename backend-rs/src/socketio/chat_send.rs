@@ -1388,7 +1388,8 @@ pub async fn handle(
                     user_id,
                     setup.user_subtask_id,
                     attachment_ids,
-                    &setup.existing_subtasks,
+                    setup.task_id,
+                    state.task_store.table_templates().subtasks,
                 )
                  .await
                 .map_err(|error| {

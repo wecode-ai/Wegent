@@ -125,6 +125,102 @@ async fn initial_goal_waits_for_required_discovery_before_activation() {
 }
 
 #[tokio::test]
+async fn event_goal_waits_for_required_discovery_before_injection_and_activation() {
+    let script = DISCOVERY_SERVER
+        .replace(
+            "*'\"method\":\"thread/start\"'*)",
+            "*'\"method\":\"thread/start\"'*|*'\"method\":\"thread/resume\"'*)",
+        )
+        .replace(
+            "    *) printf",
+            r#"    *'"method":"thread/unsubscribe"'*)
+      printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id" ;;
+    *'"method":"thread/goal/get"'*)
+      printf '{"id":%s,"result":{"goal":{"status":"blocked","objective":"Process the project event","tokenBudget":20000}}}\n' "$id" ;;
+    *'"method":"thread/read"'*)
+      printf '{"id":%s,"result":{"thread":{"path":"%s/native-home/sessions/event.jsonl"}}}\n' "$id" "$(dirname "$0")" ;;
+    *) printf"#,
+        );
+    for status in ["connected", "failed"] {
+        let fixture = Fixture::with_script(&script.replace(
+            "\"runtimeStatus\":\"connected\"",
+            &format!("\"runtimeStatus\":\"{status}\""),
+        ));
+        let sessions = fixture._directory.path().join("native-home/sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        fs::write(
+            sessions.join("event.jsonl"),
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"new-thread\"}}\n",
+        )
+        .unwrap();
+        let phases = Arc::new(StdMutex::new(Vec::new()));
+        let captured = Arc::clone(&phases);
+        let input = json!("Process the connected project event");
+        let event_guard = Arc::new(Mutex::new(()));
+        let admission = EventGoalAdmission::new(
+            "new-thread".into(),
+            json!({"status":"blocked","objective":"Process the project event","tokenBudget":20000}),
+            "project-event".into(),
+            input.clone(),
+            None,
+            Arc::clone(&event_guard).lock_owned().await,
+            Box::new(move |phase| {
+                captured.lock().unwrap().push(phase.to_owned());
+                Ok(())
+            }),
+        );
+        let mut request = project_request();
+        request.prompt = input;
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            fixture.client.run_turn_with_cancel(
+                request,
+                CodexAppServerTurnOptions {
+                    event_goal: Some(admission),
+                    resume_thread_id: Some("new-thread".into()),
+                    ..CodexAppServerTurnOptions::default()
+                },
+            ),
+        )
+        .await
+        .unwrap();
+        fixture.client.restart().await;
+        assert!(event_guard.try_lock().is_ok());
+        let requests = recorded_requests(&fixture);
+        let position = |method| requests.iter().position(|r| r["method"] == method);
+        let discovery = position("mcpServerStatus/list").unwrap();
+        assert!(position("thread/resume").unwrap() < discovery);
+        assert_eq!(requests[discovery]["params"]["threadId"], "new-thread");
+        assert_eq!(requests[discovery]["params"]["serverName"], "wework_space");
+        assert_eq!(requests[discovery]["params"]["detail"], "toolsAndAuthOnly");
+        assert!(position("turn/start").is_none());
+        if status == "failed" {
+            assert_eq!(
+                result.unwrap_err(),
+                "required project-space capability failed to connect (failed)"
+            );
+            assert!(position("thread/inject_items").is_none());
+            assert!(position("thread/goal/set").is_none());
+            assert!(phases.lock().unwrap().is_empty());
+        } else {
+            assert!(result.is_ok(), "Event Goal activation failed: {result:?}");
+            let injection = position("thread/inject_items").unwrap();
+            let activation = position("thread/goal/set").unwrap();
+            assert!(discovery < injection && injection < activation);
+            assert_eq!(
+                *phases.lock().unwrap(),
+                [
+                    "injection_requested",
+                    "injected",
+                    "activation_requested",
+                    "activated"
+                ]
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn unbound_tasks_start_while_optional_servers_are_unavailable() {
     let script = DISCOVERY_SERVER
         .replace("if [ \"$discovered\" -eq 0 ]; then", "if false; then")

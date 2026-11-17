@@ -12,6 +12,8 @@ export interface ConnectionDescriptor {
   displayName: string
   uses: string[]
   collectionModes: ['poll']
+  /** Staged providers acknowledge only committedCheckpoint while draining pages. */
+  collectionPagination?: 'durable' | 'staged'
   resourceKinds: string[]
   resourceLabels: Record<string, string>
   /** Public discovery parameters encoded in listResources.query as a JSON object. */
@@ -130,11 +132,23 @@ export interface ConnectionEvent {
   [key: string]: unknown
 }
 
-export type ConnectionCheckpoint = Record<string, unknown>
+export type ConnectionCheckpoint = Record<string, unknown> & {
+  /** Explicit provider-owned initial activation; other checkpoint fields stay opaque. */
+  activationBoundary?: { partition: string; sequence: number }
+}
 export interface ConnectionPage {
   events: ConnectionEvent[]
   nextCheckpoint: ConnectionCheckpoint
   hasMore: boolean
+  /** Complete current projection; omitted when this page has no projection update. */
+  resourceStates?: Array<{
+    kind: string
+    provider: string
+    topicId: string
+    observedAt: string
+    data: Record<string, unknown>
+    errorCode?: string
+  }>
 }
 
 export interface ConnectionAvailability {
@@ -144,6 +158,8 @@ export interface ConnectionAvailability {
 }
 
 export interface ConnectionContext {
+  /** New consumers require a current boundary rather than recovery replay. */
+  initializationMode?: 'fresh'
   providerId: string
   signal: AbortSignal
   dependencies: ReadonlyArray<ConnectionDependencyResolution>
@@ -223,7 +239,12 @@ export interface ConnectionProvider {
   }>
   collect(
     context: ConnectionContext,
-    input: { source: ConnectionSource; checkpoint: ConnectionCheckpoint }
+    input: {
+      source: ConnectionSource
+      checkpoint: ConnectionCheckpoint
+      committedCheckpoint?: ConnectionCheckpoint
+      force?: boolean
+    }
   ): Promise<ConnectionPage>
 }
 

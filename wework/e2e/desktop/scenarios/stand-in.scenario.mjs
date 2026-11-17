@@ -34,7 +34,7 @@ import {
 } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `分身交互-${process.pid}`
+const PROJECT = `助理交互-${process.pid}`
 const MARKER = `STAND_IN_ASSIGNED_${process.pid}`
 const AGENT_PROMPT = `STAND_IN_AGENT_INSTRUCTIONS_${process.pid}`
 // The ordinary desktop fixture authenticates /api/users/me as this account.
@@ -360,7 +360,7 @@ export async function createDesktopScenario({
         {
           project_id: project.id,
           agent: {
-            name: '分身专用助手',
+            name: '助理专用助手',
             runtime: 'codex',
             system_prompt: AGENT_PROMPT,
             execution_policy: { mode: 'fixed', environment_id: saved.executionDeviceId },
@@ -583,7 +583,7 @@ export async function createDesktopScenario({
               projectStore: 'local',
               settings: {
                 id,
-                name: `${id} 分身`,
+                name: `${id} 助理`,
                 tags: [id],
                 agentId: agent.id,
                 enabled: true,
@@ -772,7 +772,7 @@ export async function createDesktopScenario({
         'todos.create',
         {
           project_id: project.id,
-          todo: { title: '仅文档分身接手', tags: ['docs'], assignee_user_id: USER_ID },
+          todo: { title: '仅文档助理接手', tags: ['docs'], assignee_user_id: USER_ID },
         },
         uiTimeoutMs
       )
@@ -800,7 +800,7 @@ export async function createDesktopScenario({
       await control.command('click', `${CONTENT} [data-testid="stand-in-open"]`)
       await control.command('waitFor', '[data-testid="stand-in-project-select"]')
       await control.command('select', '[data-testid="stand-in-project-select"]', { value: '__new' })
-      await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '项目专用分身' })
+      await control.command('fill', '[data-testid="stand-in-role-name"]', { value: '项目专用助理' })
       await control.command('fill', '[data-testid="stand-in-prompt"]', {
         value: '仅为此项目处理分配给我的任务',
       })
@@ -812,7 +812,7 @@ export async function createDesktopScenario({
         { userId: USER_ID },
         uiTimeoutMs
       )
-      const newRole = created.roles.find(row => row.name === '项目专用分身')
+      const newRole = created.roles.find(row => row.name === '项目专用助理')
       assert.ok(newRole, 'A project-created stand-in must belong to the personal document')
       assert.equal(created.userId, USER_ID)
       assert.equal(

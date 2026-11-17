@@ -1360,6 +1360,7 @@ describe('Wework collaboration workspace API', () => {
           }
         }
       const editor = detail().props.children(vi.fn())
+      expect(editor.props.existingTaskSource?.port.bindTask).toBeTypeOf('function')
       await act(async () => {
         editor.props.onOpenTaskConversation?.(toWeworkIssueTaskBinding(binding))
       })
