@@ -101,3 +101,59 @@ async fn interrupted_application_recovers_from_the_marker_and_original_requests(
     assert_eq!(plans[1]["targeted"], false);
     assert_eq!(plans[1]["recoveryPending"], true);
 }
+
+async fn overlapping_target_only_apply(cancel_before_completion: bool) {
+    let fixture = Arc::new(Fixture::new(Plan::HeldApplication, true).await);
+    let mut journal = load_journal(&fixture.path).unwrap();
+    journal["pending"] = json!([]);
+    persist(&fixture.path, &journal).unwrap();
+    let full = tokio::spawn({
+        let fixture = fixture.clone();
+        async move { fixture.sync(json!({"full":true})).await }
+    });
+    tokio::time::timeout(Duration::from_secs(3), fixture.installer.entered.notified())
+        .await
+        .unwrap();
+    let targeted = tokio::spawn({
+        let fixture = fixture.clone();
+        async move {
+            let _foreground = scanning::ForegroundOperation::begin(
+                fixture.controller.local_sync_foreground.clone(),
+                &fixture.path,
+            );
+            fixture.sync(json!({"installedPluginId":8})).await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(3), fixture.installer.entered.notified())
+        .await
+        .unwrap();
+    let mut targeted = Some(targeted);
+    if cancel_before_completion {
+        let task = targeted.take().unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+    fixture.installer.release.notify_one();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(3), full)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()["localCompleted"],
+        true
+    );
+    if let Some(task) = targeted {
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+    let journal = load_journal(&fixture.path).unwrap();
+    assert_eq!(journal["reconcilePending"], true);
+    assert!(journal["verifiedDigest"].is_null());
+    assert!(journal["revision"].is_null());
+}
+
+#[tokio::test]
+async fn full_completion_keeps_recovery_for_an_overlapping_target_only_apply() {
+    overlapping_target_only_apply(false).await;
+    overlapping_target_only_apply(true).await;
+}
