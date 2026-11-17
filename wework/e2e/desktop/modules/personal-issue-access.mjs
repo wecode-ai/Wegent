@@ -228,7 +228,6 @@ export function createPersonalIssueAccessRegression({
         'The source delivery leaked into a target Issue'
       )
     }
-    await additionalTools?.verifyPersisted()
   }
 
   return {
@@ -370,6 +369,7 @@ export function createPersonalIssueAccessRegression({
       )
       assert.equal(toolRunVerified, true, 'The model completed without exercising real MCP tools')
       await assertPersistedResults()
+      await additionalTools?.verifyPersisted()
       await control.command('click', `${CONTENT} [data-testid="ai-chat-modal-close"]`)
       console.log('[e2e] Personal task same/cross project permissions and source bindings verified')
       active = false
