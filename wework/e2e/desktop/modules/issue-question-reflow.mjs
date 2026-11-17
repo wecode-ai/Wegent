@@ -19,7 +19,10 @@ export async function verifyIssueQuestionReflow(
   async function saveDescription(value) {
     await control.command('scrollIntoViewAsUser', scope('issue-description-edit'))
     await control.command('click', scope('issue-description-edit'))
-    await control.command('fill', description, { value })
+    await control.command('waitFor', `${description}[contenteditable="true"]`, { visible: true })
+    await control.command('fill', description, { value: '' })
+    await control.command('pasteText', description, { value })
+    await control.command('waitFor', description, { text: value.trimEnd().split('\n').at(-1) })
     await control.command('clickWhenEnabled', scope('cloud-todo-save'))
     await control.command('waitFor', scope('issue-save-status'), { text: '已保存' })
   }
