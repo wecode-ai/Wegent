@@ -20,6 +20,10 @@ use crate::state::AppState;
 
 use super::project_chat_events::{AgentFailureRequest, AgentStartRequest};
 
+#[path = "project_chat_authorship.rs"]
+mod authorship;
+pub(crate) use authorship::{message_view_with_actor, shared_message_payload};
+
 /// One `project_chat_messages` row used by the view.
 #[derive(Clone, Debug, brz_mysql::FromMysqlRow)]
 pub(crate) struct MessageRow {
@@ -91,6 +95,7 @@ pub(super) const MESSAGE_COLUMNS: &str = "id, message_id, client_message_id, pro
 /// `subscribe`'s message query (`after_sequence` order, limit, task filter).
 pub(crate) async fn load_messages(
     state: &AppState,
+    viewer_user_id: i64,
     project_id: &str,
     task_id: Option<&str>,
     after_sequence: i64,
@@ -137,7 +142,7 @@ pub(crate) async fn load_messages(
     if after_sequence <= 0 {
         rows.reverse();
     }
-    Ok(rows.iter().map(message_view).collect())
+    authorship::message_views(state, viewer_user_id, &rows).await
 }
 
 /// One message by primary key (`db.refresh`).
@@ -565,12 +570,55 @@ pub(crate) async fn update_message(
 
 /// `ProjectChatMessageView`.
 pub(crate) fn message_view(row: &MessageRow) -> Value {
-    let runtime_address = if row.runtime_device_id.is_empty() || row.runtime_task_id.is_empty() {
-        Value::Null
+    let metadata = row.metadata();
+    let historical = metadata
+        .get("history_import")
+        .is_some_and(|value| !value.is_null())
+        || metadata
+            .get("imported_from")
+            .is_some_and(|value| !value.is_null());
+    let verified_publication = metadata
+        .get("assistant_publication")
+        .and_then(|value| value.get("verified"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    let published_by = metadata
+        .get("assistant_publication")
+        .and_then(|value| value.get("published_by"))
+        .and_then(Value::as_str);
+    let source = if historical {
+        "human"
+    } else if verified_publication {
+        "ai"
     } else {
-        json!({"deviceId": row.runtime_device_id, "taskId": row.runtime_task_id})
+        match row.sender_type.as_str() {
+            "user" => "human",
+            "agent" => "ai",
+            _ => "system",
+        }
     };
     json!({
+        "actorUserId": if source == "human" { optional_text(&row.sender_id) } else { Value::Null },
+        "actorDisplayName": if source == "human" { optional_text(&row.sender_name) } else { Value::Null },
+        "generationSource": source,
+        "publicationSource": if published_by == Some("ai") {
+            "ai"
+        } else if verified_publication {
+            "human"
+        } else {
+            source
+        },
+        "confirmationState": if historical {
+            "unknown"
+        } else if published_by == Some("ai") {
+            "not_required"
+        } else if verified_publication {
+            "authorized"
+        } else if source == "ai" {
+            "pending"
+        } else {
+            "not_required"
+        },
         "sequenceNumber": row.id,
         "messageId": row.message_id,
         "clientMessageId": optional_text(&row.client_message_id),
@@ -588,7 +636,9 @@ pub(crate) fn message_view(row: &MessageRow) -> Value {
         "replyToMessageId": optional_text(&row.reply_to_message_id),
         "rootMessageId": optional_text(&row.thread_root_message_id),
         "agentId": optional_text(&row.agent_id),
-        "runtimeAddress": runtime_address,
+        "runtimeAddress": Value::Null,
+        "traceRef": Value::Null,
+        "traceState": "history-unavailable",
         "status": row.status,
         "createdAt": utc_isoformat(row.created_at),
         "updatedAt": utc_isoformat(row.updated_at),

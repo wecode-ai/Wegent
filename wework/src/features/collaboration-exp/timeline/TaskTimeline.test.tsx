@@ -157,6 +157,7 @@ function fixture() {
     experienceMessageFixture({
       messageId: 'execution-1',
       sequenceNumber: 2,
+      type: 'agent_status',
       sender: { type: 'agent', id: 'private-agent', name: 'Private assistant name' },
       content: 'Private prompt and execution arguments',
       metadata: {
@@ -241,6 +242,60 @@ it('keeps exact attachment sources and marks an unattested file without guessing
     name: 'spec',
     sourceNodeId: 'message-1',
   })
+})
+
+it('opens only an authorized participation source from the historical source index', async () => {
+  const props = fixture()
+  const participation = {
+    id: 'participation-1',
+    projectId: props.data.project.id,
+    issueId: props.data.issue.id,
+    ownerUserId: 7,
+    ownerDisplayName: 'jiangyang7',
+    roleId: 'review',
+    endpointRef: 'runtime:7:review',
+    conversationId: 'stand-in-chat-7-role-review',
+    source: { kind: 'binding', id: 'binding-1' },
+    workroomRef: { kind: 'endpoint', id: 'runtime:7:review' },
+    traceRef: 'trace-1',
+    historyState: 'unverified' as const,
+    auditSource: 'recorded',
+  }
+  const readAssistantParticipation = vi.fn().mockResolvedValue({
+    participation,
+    runtimeAddress: { deviceId: 'device-1', taskId: 'task-1' },
+  })
+  props.api.issues = {
+    listAssistantParticipations: vi.fn().mockResolvedValue([participation]),
+    readAssistantParticipation,
+  } as unknown as SharedWorkspaceApi['issues']
+  const onExecution = vi.fn()
+  const view = render(
+    <TaskTimeline
+      {...props}
+      active
+      revision={0}
+      onDiscuss={vi.fn()}
+      onAttachment={vi.fn()}
+      onExecution={onExecution}
+      onRetry={vi.fn()}
+    />
+  )
+  await waitFor(() =>
+    expect(
+      view.getByTestId('collaboration-exp-open-assistant-participation-participation-1')
+    ).toBeVisible()
+  )
+  fireEvent.click(
+    view.getByTestId('collaboration-exp-open-assistant-participation-participation-1')
+  )
+  await waitFor(() =>
+    expect(readAssistantParticipation).toHaveBeenCalledExactlyOnceWith(
+      props.data.issue.id,
+      participation.id
+    )
+  )
+  expect(onExecution).toHaveBeenCalledWith({ deviceId: 'device-1', taskId: 'task-1' })
 })
 
 it('filters shared conclusions and retains filter state when a status refresh arrives', async () => {

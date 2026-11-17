@@ -283,7 +283,10 @@ pub(super) async fn enqueue_root(
             "Project chat comment execution queued"
         );
     }
-    Ok((vec![messages::message_view(&row)], new_response))
+    Ok((
+        vec![messages::message_view_with_actor(state, user_id, &row).await?],
+        new_response,
+    ))
 }
 
 async fn load_comment_attachments(

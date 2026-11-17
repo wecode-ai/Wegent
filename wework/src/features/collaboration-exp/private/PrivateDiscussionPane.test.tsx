@@ -13,11 +13,26 @@ const mocks = vi.hoisted(() => ({
   apiBaseUrl: 'https://cloud.example/api',
   historyAvailable: true,
   runtimeSend: vi.fn(),
+  runtimeApiSend: vi.fn(),
+  runtimeApiInterruptSend: vi.fn(),
+  runtimeApiCancel: vi.fn(),
+  runtimeApiTranscript: vi.fn(),
   panel: vi.fn(),
 }))
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('@/features/workbench/useWorkbench', () => ({
-  useWorkbench: () => ({ state: { user: { id: mocks.userId } }, openRuntimeTask: vi.fn() }),
+  useWorkbench: () => ({
+    state: { user: { id: mocks.userId } },
+    services: {
+      runtimeWorkApi: {
+        sendRuntimeMessage: mocks.runtimeApiSend,
+        interruptAndSendRuntimeMessage: mocks.runtimeApiInterruptSend,
+        cancelRuntimeTask: mocks.runtimeApiCancel,
+        getRuntimeTranscript: mocks.runtimeApiTranscript,
+      },
+    },
+    openRuntimeTask: vi.fn(),
+  }),
 }))
 vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
   useCloudConnection: () => ({ isConnected: true, apiBaseUrl: mocks.apiBaseUrl }),
@@ -28,6 +43,12 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     composerHeader?: ReactNode
     readOnly?: boolean
     active?: boolean
+    assistantSend?(input: {
+      message: string
+      clientUserMessageId: string
+      interruptWhenBusy?: boolean
+      runtimeOptions?: { modelId?: string }
+    }): Promise<{ sent: boolean; error?: string | null }>
     onHistorySourceAvailabilityChange?(value: boolean): void
   }) => {
     mocks.panel(props)
@@ -99,10 +120,50 @@ beforeEach(() => {
   mocks.userId = 7
   mocks.apiBaseUrl = 'https://cloud.example/api'
   mocks.historyAvailable = true
+  mocks.runtimeApiSend.mockResolvedValue({ accepted: true, taskId: 'task-1' })
+  mocks.runtimeApiInterruptSend.mockResolvedValue({ accepted: true, taskId: 'task-1' })
 })
 afterEach(cleanup)
 
 describe('private discussion pane', () => {
+  it('sends the bound Issue discussion through the shared assistant interaction contract', async () => {
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+    await expect(
+      panelProps.assistantSend({
+        message: 'Continue with evidence',
+        clientUserMessageId: 'durable-request',
+        runtimeOptions: { modelId: 'model-1' },
+      })
+    ).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiSend).toHaveBeenCalledExactlyOnceWith({
+      address: props.conversation.address,
+      message: 'Continue with evidence',
+      clientUserMessageId: 'durable-request',
+      modelId: 'model-1',
+      conversationContext: 'private_discussion',
+      queueIfBusy: true,
+    })
+  })
+
+  it('forwards interrupt intent to the Runtime interrupt-and-send operation', async () => {
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+    await expect(
+      panelProps.assistantSend({
+        message: 'Replace the current direction',
+        clientUserMessageId: 'interrupt-request',
+        interruptWhenBusy: true,
+      })
+    ).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiInterruptSend).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Replace the current direction' })
+    )
+    expect(mocks.runtimeApiSend).not.toHaveBeenCalled()
+  })
+
   it('uses task context and the original source history without a second embedded pane heading', () => {
     const onClose = vi.fn()
     const { props } = fixture({
@@ -191,6 +252,8 @@ describe('private discussion pane', () => {
     await waitFor(() =>
       expect(create).toHaveBeenCalledExactlyOnceWith(issue().id, 'Only my confirmed text', {
         clientMessageId: expect.any(String),
+        projectId: project().id,
+        assistantSource: props.conversation.address,
       })
     )
     await waitFor(() => expect(screen.getByTestId('native-private-draft')).toBeInTheDocument())
@@ -375,6 +438,8 @@ describe('private discussion pane', () => {
     await waitFor(() =>
       expect(create).toHaveBeenCalledWith('EXP-1', 'Confirmed edited conclusion', {
         clientMessageId: expect.any(String),
+        projectId: project().id,
+        assistantSource: props.conversation.address,
       })
     )
     expect(create).toHaveBeenCalledTimes(1)

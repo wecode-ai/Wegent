@@ -112,6 +112,11 @@ export interface ExperienceAttachmentReference {
 }
 
 export interface ExperienceTimelineNode {
+  generationSource?: ProjectChatMessage['generationSource']
+  publicationSource?: ProjectChatMessage['publicationSource']
+  confirmationState?: ProjectChatMessage['confirmationState']
+  traceRef?: string | null
+  traceState?: ProjectChatMessage['traceState']
   id: string
   clientMessageId?: string | null
   sequenceNumber: number | null

@@ -2,6 +2,7 @@
 
 import hashlib
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -32,6 +33,25 @@ def stand_in_reply_recipient(db: Session, message_id: str) -> dict | None:
         "role_id": identity["role_id"],
         "name": row.sender_name,
     }
+
+
+def _dispatch_endpoint_belongs_to(
+    metadata: dict, *, user_id: int, role_id: str
+) -> bool:
+    endpoint = metadata.get("assistant_endpoint_ref")
+    if not isinstance(endpoint, str):
+        return False
+    parts = endpoint.split(":")
+    if len(parts) < 3 or parts[-1] != role_id:
+        return False
+    owner = metadata.get("assistant_owner_user_id")
+    if owner is not None and owner != user_id:
+        return False
+    try:
+        endpoint_owner = int(parts[1])
+    except ValueError:
+        return False
+    return endpoint_owner == user_id
 
 
 @trace_sync("stand_in.public_issue_reply", tracer_name="backend.project_chat")
@@ -97,6 +117,66 @@ def publish_stand_in_reply(
             )
         return project_chat_service.to_view(existing, db=db)
     message_id = str(uuid.uuid4())
+    metadata = dict(item.metadata_json or {})
+    policy = metadata.get("assistant_autonomy_policy")
+    owner_matches = _dispatch_endpoint_belongs_to(
+        metadata, user_id=user_id, role_id=identity.role_id
+    )
+    can_transition = item.status not in {"completed", "in_review"}
+    auto_publish = (
+        metadata.get("assistant_dispatch_role") == "member"
+        and owner_matches
+        and metadata.get("awaiting_public_summary") is True
+        and metadata.get("publish_policy") == "summary_only"
+        and metadata.get("risk_level") == "low"
+        and identity.publish_policy == "summary_only"
+        and identity.status == "completed"
+        and bool(body.strip())
+        and isinstance(policy, dict)
+        and policy.get("automatic") is True
+        and policy.get("ask_before_act") is False
+        and policy.get("risk_ceiling") == "low"
+    )
+    dispatch_review = (
+        metadata.get("assistant_dispatch_role") == "member"
+        and owner_matches
+        and metadata.get("awaiting_public_summary") is True
+        and metadata.get("publish_policy") == "summary_only"
+        and identity.status == "completed"
+        and not auto_publish
+        and can_transition
+    )
+    message_metadata = {
+        "execution_dispatch": "comment_only",
+        "member_assistant_result": {
+            "status": identity.status,
+            "summary": body,
+            "evidence_refs": identity.evidence_refs,
+            "publish_policy": identity.publish_policy,
+            "next_action": identity.next_action,
+        },
+        "stand_in": {
+            "user_id": user_id,
+            "role_id": identity.role_id,
+            "message_id": identity.message_id,
+        },
+    }
+    if auto_publish:
+        message_metadata["assistant_publication"] = {
+            "verified": True,
+            "published_by": "ai",
+            "policy": "automatic_low_risk",
+        }
+        metadata["awaiting_public_summary"] = False
+        metadata["assistant_publication_message_id"] = message_id
+        metadata["assistant_result_message_id"] = message_id
+        if can_transition:
+            item.status = "completed"
+            item.completed_at = datetime.now(UTC).replace(tzinfo=None)
+    elif dispatch_review:
+        metadata["awaiting_public_summary"] = False
+        metadata["assistant_result_message_id"] = message_id
+        item.status = "in_review"
     row = ProjectChatMessage(
         message_id=message_id,
         client_message_id=client,
@@ -107,19 +187,12 @@ def publish_stand_in_reply(
         sender_name=identity.role_name,
         message_type="text",
         content=body,
-        metadata_json={
-            "execution_dispatch": "comment_only",
-            "stand_in": {
-                "user_id": user_id,
-                "role_id": identity.role_id,
-                "message_id": identity.message_id,
-            },
-        },
+        metadata_json=message_metadata,
         status="completed",
         thread_root_message_id=message_id,
     )
     db.add(row)
-    item.metadata_json = advance_content_revision(item.metadata_json)
+    item.metadata_json = advance_content_revision(metadata)
     item.version += 1
     project_chat_service._queue_loop_item_change(db, item)
     project_chat_service._commit(db)

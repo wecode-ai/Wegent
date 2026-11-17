@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export * from "./automation";
+export * from "./assistant-interaction";
 export * from "./agent-form";
 export * from "./board";
 export * from "./CollaborationApp";

@@ -16,12 +16,15 @@ import {
 } from '../../utils/issue-dispatch-test-support'
 import {
   authHeaders,
+  configureHeldStreamResponse,
   getScenarioModelBodies,
   getScenarioRequestHeaders,
   getToolScenarioState,
   modelRequestText,
   modelToolNames,
   PROVIDER_NATIVE_API_URL,
+  releaseHeldStreamResponse,
+  waitForHeldStreamResponse,
 } from '../../utils/provider-native-test-support'
 
 const suiteSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -383,15 +386,24 @@ test.describe('Collaboration group Executor coordination', () => {
         responseContent: `Manager evaluated ${synthesisEvidence} and moved the Issue to review.`,
       },
     ])
-    // Keep both worker responses active while verifying concurrent dispatch (maximum 10s).
     const clearCollectorScenario = await configureIssueDispatchModelScenario(
       request,
       collectorTask,
-      [{ responseContent: collectorEvidence, doneDelayMs: 10_000 }]
+      [{ responseContent: collectorEvidence }]
     )
     const clearReviewerScenario = await configureIssueDispatchModelScenario(request, reviewerTask, [
-      { responseContent: reviewerEvidence, doneDelayMs: 10_000 },
+      { responseContent: reviewerEvidence },
     ])
+    const clearCollectorGate = await configureHeldStreamResponse(
+      request,
+      collectorTask,
+      collectorEvidence
+    )
+    const clearReviewerGate = await configureHeldStreamResponse(
+      request,
+      reviewerTask,
+      reviewerEvidence
+    )
     const clearSynthesisScenario = await configureIssueDispatchModelScenario(
       request,
       synthesisTask,
@@ -422,14 +434,23 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
       await captureEvidence(page, testInfo, '01-group-assigned')
 
-      const collectorCard = page
+      const memberExecutionCard = (agentName: string) =>
+        page
+          .locator('[data-testid^="cloud-task-activity-card-"]')
+          .filter({ hasText: agentName })
+          .filter({
+            has: page.locator('[data-testid^="cloud-task-activity-execution-badge-"]'),
+          })
+      const collectorCard = memberExecutionCard(`Coordinate Collector ${suffix}`)
+      const reviewerCard = memberExecutionCard(`Coordinate Reviewer ${suffix}`)
+      const collectorAssignment = page
         .locator('[data-testid^="cloud-task-activity-card-"]')
         .filter({ hasText: collectorTask })
-      const reviewerCard = page
-        .locator('[data-testid^="cloud-task-activity-card-"]')
-        .filter({ hasText: reviewerTask })
+      await expect(collectorAssignment).toBeVisible({ timeout: 60_000 })
       await expect(collectorCard).toBeVisible({ timeout: 60_000 })
       await expect(reviewerCard).toBeVisible({ timeout: 60_000 })
+      await waitForHeldStreamResponse(request, collectorTask)
+      await waitForHeldStreamResponse(request, reviewerTask)
       await expect(
         collectorCard.locator('[data-testid^="cloud-task-activity-execution-badge-"]')
       ).toHaveAttribute('data-status', 'running')
@@ -437,6 +458,8 @@ test.describe('Collaboration group Executor coordination', () => {
         reviewerCard.locator('[data-testid^="cloud-task-activity-execution-badge-"]')
       ).toHaveAttribute('data-status', 'running')
       await captureEvidence(page, testInfo, '02-first-round-members-running-in-parallel')
+      await releaseHeldStreamResponse(request, collectorTask)
+      await releaseHeldStreamResponse(request, reviewerTask)
 
       const executions = await waitForCollaborationExecutions(
         request,
@@ -534,6 +557,8 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByText(finalComment, { exact: false }).first()).toBeVisible()
       await captureEvidence(page, testInfo, '03-manager-reviewed-two-rounds')
     } finally {
+      await clearReviewerGate()
+      await clearCollectorGate()
       await clearSynthesisScenario()
       await clearReviewerScenario()
       await clearCollectorScenario()

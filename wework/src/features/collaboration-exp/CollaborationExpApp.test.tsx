@@ -252,6 +252,7 @@ function createApi() {
       })),
     },
     taskBindings: { list: vi.fn(async () => bindings) },
+    comments: { list: vi.fn(async () => []), create: vi.fn() },
     activity: {
       subscribe: vi.fn(async () => ({
         snapshot: { currentUserId: '7', messages },

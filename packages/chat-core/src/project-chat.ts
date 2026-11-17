@@ -20,6 +20,13 @@ export interface ProjectChatMention {
 }
 
 export interface ProjectChatMessage {
+  actorUserId?: string | null
+  actorDisplayName?: string | null
+  generationSource?: 'human' | 'ai' | 'system'
+  publicationSource?: 'human' | 'ai' | 'system'
+  confirmationState?: 'pending' | 'not_required' | 'authorized' | 'unknown'
+  traceRef?: string | null
+  traceState?: 'available' | 'restricted' | 'history-unavailable'
   sequenceNumber: number
   messageId: string
   clientMessageId?: string | null
