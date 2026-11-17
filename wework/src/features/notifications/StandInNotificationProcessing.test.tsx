@@ -183,11 +183,11 @@ describe('notification inline handling', () => {
       const rendered = render(
         <StandInNotificationProcessing notification={assignment} {...props} />
       )
-      fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
-      await waitFor(() =>
-        expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
-          'notifications.stand_in_running'
-        )
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
+      })
+      expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+        'notifications.stand_in_running'
       )
       const completed = mergeStandInNotifications(
         [assignment],
@@ -216,6 +216,45 @@ describe('notification inline handling', () => {
       expect(screen.getByTestId('notification-stand-in-start-assignment')).toBeEnabled()
     }
   )
+
+  it('keeps delegation pending until the task read resolves after delayed delivery', async () => {
+    vi.useFakeTimers()
+    try {
+      let completeRead!: (value: { success: true; task: typeof runtimeItem.task }) => void
+      readTask.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            completeRead = resolve
+          })
+      )
+      render(
+        <StandInNotificationProcessing
+          notification={assignment}
+          rowProps={rowProps}
+          services={services}
+          userId={1}
+          onChanged={onChanged}
+        />
+      )
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('notification-stand-in-start-assignment'))
+      })
+      expect(readTask).toHaveBeenCalledExactlyOnceWith('device', 'task')
+      await act(async () => {
+        vi.advanceTimersByTime(1000)
+      })
+      expect(screen.getByTestId('notification-stand-in-start-assignment')).toBeDisabled()
+      expect(screen.queryByTestId('notification-stand-in-status-assignment')).toBeNull()
+      await act(async () => {
+        completeRead({ success: true, task: runtimeItem.task })
+      })
+      expect(screen.getByTestId('notification-stand-in-status-assignment')).toHaveTextContent(
+        'notifications.stand_in_running'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
   it('retains the retry snapshot until the failed source version changes', async () => {
     readTask.mockResolvedValue({
