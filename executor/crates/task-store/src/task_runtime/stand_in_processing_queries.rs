@@ -51,6 +51,64 @@ pub(super) fn claimed_event_ids(
 }
 
 impl LocalTaskStore {
+    /// Drain one batch of an explicit retry request, preserving original intent IDs.
+    pub fn retry_failed_stand_in_routing(&self, user: i64) -> Result<usize, TaskRuntimeError> {
+        let mut guard = self.connection()?;
+        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let state_id = format!("stand-in-processing:{user}");
+        let Some(mut state) =
+            get_item_from(&connection, &state_id, super::stand_in_processing::STATE)?
+                .map(|row| row.metadata)
+        else {
+            return Ok(0);
+        };
+        let request = state["routingRetry"].clone();
+        let (Some(request_id), Some(before)) = (request["id"].as_str(), request["before"].as_str())
+        else {
+            return Ok(0);
+        };
+        let retried = connection.execute(
+            "WITH held AS MATERIALIZED (
+               SELECT DISTINCT event.value FROM loop_items AS action,
+                 json_each(action.metadata,'$.arguments.eventIds') AS event
+               WHERE action.resource_type='stand_in_action'
+                 AND json_extract(action.metadata,'$.userId')=?1
+                 AND json_extract(action.metadata,'$.status') IN ('pending','sending')
+                 AND json_extract(action.metadata,'$.kind') != 'run_arrangement'
+                 AND event.type='text'
+             ), latest AS (
+               SELECT action.id,action.updated_at,json_extract(action.metadata,'$.retryRequestId') AS retried_request,
+                 row_number() OVER (
+                 PARTITION BY event.value ORDER BY action.created_at DESC,action.id DESC
+               ) AS position
+               FROM loop_items AS action, json_each(action.metadata,'$.arguments.eventIds') AS event
+               JOIN loop_items AS intake ON intake.id=event.value AND intake.resource_type='stand_in_event'
+               WHERE action.resource_type='stand_in_action'
+                 AND json_extract(action.metadata,'$.userId')=?1
+                 AND json_extract(action.metadata,'$.status')='failed'
+                 AND json_extract(action.metadata,'$.kind') IN ('create_work','continue_work','wait_for_work')
+                 AND json_extract(intake.metadata,'$.userId')=?1
+                 AND json_extract(intake.metadata,'$.status')='pending'
+                 AND event.value NOT IN (SELECT value FROM held)
+             )
+             UPDATE loop_items SET metadata=json_set(metadata,'$.status','pending','$.resolution','explicit_retry','$.retryRequestId',?3),updated_at=?2
+             WHERE id IN (SELECT DISTINCT id FROM latest WHERE position=1
+               AND retried_request IS NOT ?3 AND julianday(updated_at)<=julianday(?4)
+               ORDER BY id LIMIT 100)",
+            params![user, now(), request_id, before],
+        )?;
+        if retried < 100 {
+            state["routingRetry"] = Value::Null;
+            super::stand_in_processing::write(
+                &connection,
+                super::stand_in_processing::STATE,
+                &state,
+            )?;
+        }
+        connection.commit()?;
+        Ok(retried)
+    }
+
     pub fn stand_in_assessment_recovery_actions(
         &self,
         user: i64,
@@ -121,6 +179,67 @@ impl LocalTaskStore {
 mod tests {
     use super::super::stand_in_processing::write;
     use super::*;
+
+    #[test]
+    fn explicit_retry_batches_use_latest_intents_once_and_preserve_owner_and_kind() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        {
+            let mut guard = store.connection().unwrap();
+            let tx = guard.transaction().unwrap();
+            for index in 0..101 {
+                write(
+                    &tx,
+                    EVENT,
+                    &json!({"id":format!("event-{index}"),"userId":7,"status":"pending"}),
+                )
+                .unwrap();
+                write(&tx, ACTION, &json!({"id":format!("failure-{index}"),"userId":7,"status":"failed","kind":"create_work","arguments":{"eventIds":[format!("event-{index}")]}})).unwrap();
+            }
+            for (id, user, kind) in [
+                ("duplicate", 7, "create_work"),
+                ("foreign", 8, "create_work"),
+                ("assessment", 7, "assess"),
+                ("arrangement", 7, "run_arrangement"),
+            ] {
+                write(&tx, ACTION, &json!({"id":id,"userId":user,"status":"failed","kind":kind,"arguments":{"eventIds":["event-0"]}})).unwrap();
+            }
+            tx.execute(
+                "UPDATE loop_items SET created_at=?1 WHERE id='duplicate'",
+                [(Utc::now() - chrono::Duration::days(1)).to_rfc3339()],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 0);
+        let request =
+            json!({"id":"retry-1","before":(Utc::now()+chrono::Duration::seconds(1)).to_rfc3339()});
+        store
+            .save_stand_in_processing_state(7, &json!({"routingRetry":request}))
+            .unwrap();
+        assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 100);
+        assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 1);
+        assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 0);
+        let pending = store.pending_stand_in_actions(7).unwrap();
+        assert_eq!(pending.len(), 101);
+        assert!(pending
+            .iter()
+            .all(|action| action["id"].as_str().unwrap().starts_with("failure-")));
+        assert!(store.pending_stand_in_actions(8).unwrap().is_empty());
+        let mut failed = pending
+            .iter()
+            .find(|action| action["id"] == "failure-0")
+            .unwrap()
+            .clone();
+        failed["status"] = json!("failed");
+        store.save_stand_in_action(7, &failed).unwrap();
+        store
+            .save_stand_in_processing_state(7, &json!({"routingRetry":request}))
+            .unwrap();
+        assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 0, "The same owner request must not repeat a failure or fall through to an older duplicate");
+        store.save_stand_in_processing_state(7, &json!({"routingRetry":{"id":"retry-2","before":(Utc::now()+chrono::Duration::seconds(1)).to_rfc3339()}})).unwrap();
+        assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 1);
+    }
 
     #[test]
     fn scheduler_reads_skip_unselected_history_and_enforce_owner_boundaries() {

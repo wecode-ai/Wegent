@@ -113,6 +113,8 @@ impl RuntimeWorkRpcHandler {
                     .stand_in_processing_state(user)
                     .map_err(settings_error)?;
                 state["wakeVersion"] = json!(uuid::Uuid::new_v4().to_string());
+                state["routingRetry"] =
+                    json!({"id":state["wakeVersion"],"before":chrono::Utc::now().to_rfc3339()});
                 state["force"] = json!(true);
                 state["error"] = Value::Null;
                 state["routerSnapshot"] = Value::Null;
@@ -165,6 +167,9 @@ impl RuntimeWorkRpcHandler {
                 &[("user_id", user.to_string()), ("error", error.to_string())],
             ),
         }
+        store
+            .retry_failed_stand_in_routing(user)
+            .map_err(settings_error)?;
         self.execute_coordinator_actions(store, user, settings)
             .await?;
         let assessment_pending = store

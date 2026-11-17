@@ -234,12 +234,21 @@ export function createDesktopScenario({
           HISTORY_COUNT,
           'Polling must not generate another failed intent'
         )
-        const first = await rpc(control, 'runtime.stand_in.processing.status', { userId: USER })
-        await until(
-          () => rpc(control, 'runtime.stand_in.processing.status', { userId: USER }),
-          state => state.lastCheckAt !== first.lastCheckAt,
-          'Observe another completed scheduler pass'
-        )
+        // Observe two normal five-second polling intervals, including idle passes
+        // that legitimately skip commit and do not advance lastCheckAt.
+        const observationEnds = Date.now() + 10_000
+        do {
+          assert.equal(
+            database
+              .prepare(
+                "SELECT count(*) AS count FROM loop_items WHERE resource_type='stand_in_action' AND json_extract(metadata,'$.status')='failed'"
+              )
+              .get().count,
+            HISTORY_COUNT,
+            'Background polling must not replan failed events'
+          )
+          await new Promise(resolve => setTimeout(resolve, 500))
+        } while (Date.now() < observationEnds)
         assert.equal(
           database
             .prepare(
