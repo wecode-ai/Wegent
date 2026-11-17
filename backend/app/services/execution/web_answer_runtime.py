@@ -61,7 +61,7 @@ def _has_native_knowledge(db: Any, task: Any, operation: WebAnswerOperation) -> 
     )
     from app.services.context import context_service
 
-    ids = {
+    ids: set[int | None] = {
         int(ref.knowledge_base_id)
         for ref in build_inherited_selected_knowledge_refs(db, task, operation.actor_id)
         if ref.provider == "wegent"
@@ -178,7 +178,7 @@ async def _execute(kwargs: dict) -> None:
 
     answer = kwargs["assistant_subtask"]
     try:
-        await trigger_ai_response_unified(**kwargs)
+        await trigger_ai_response_unified(**kwargs, enable_answer_evidence=True)
     except Exception as exc:
         if getattr(exc, "_frontend_error_emitted", False):
             return

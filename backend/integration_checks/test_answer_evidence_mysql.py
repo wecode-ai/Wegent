@@ -113,6 +113,32 @@ def result(kb_id, doc_id):
     }
 
 
+@pytest.mark.parametrize("generation", [None, "a" * 32])
+@pytest.mark.parametrize("untrusted_payload", [False, True])
+def test_api_completion_never_creates_citations_or_evidence_metadata(
+    database, generation, untrusted_payload
+):
+    engine, _ = database
+    answer_id, _, _ = seed(engine)
+    with Session(engine) as db:
+        db.get(Subtask, answer_id).answer_generation_id = generation
+        db.commit()
+    payload = {"value": "API answer"}
+    if untrusted_payload:
+        payload["_answer_evidence"] = []
+
+    saved = storage.db_handler._update_subtask_sync(
+        answer_id, "COMPLETED", result=payload, generation_id=generation
+    )
+
+    assert saved is not AnswerSaveResult.UNCONFIRMED
+    with Session(engine) as db:
+        answer = db.get(Subtask, answer_id)
+        assert answer.status == SubtaskStatus.COMPLETED
+        assert answer.result == {"value": "API answer"}
+        assert db.scalars(select(KnowledgeCitation)).all() == []
+
+
 @pytest.mark.asyncio
 async def test_committed_snapshot_http_authorization_and_refresh(database, monkeypatch):
     engine, _ = database

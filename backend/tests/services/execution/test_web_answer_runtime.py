@@ -214,6 +214,19 @@ async def test_accepted_turn_runs_existing_dispatcher_as_background_work(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_web_runtime_explicitly_enables_evidence_for_start_and_retry(monkeypatch):
+    trigger = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.chat.trigger.unified.trigger_ai_response_unified", trigger
+    )
+    kwargs = {"assistant_subtask": SimpleNamespace(id=12)}
+
+    await runtime._execute(kwargs)
+
+    assert trigger.await_args.kwargs["enable_answer_evidence"] is True
+
+
+@pytest.mark.asyncio
 async def test_stale_cancel_never_sends_a_runtime_signal(monkeypatch):
     monkeypatch.setattr(runtime, "_prepare", lambda *a: {"generation_id": "a" * 32})
     monkeypatch.setattr(

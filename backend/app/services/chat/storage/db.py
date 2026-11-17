@@ -314,6 +314,7 @@ class DatabaseHandler:
                 original_result = result
                 if result is not None:
                     from app.services.knowledge.answer_evidence import (
+                        TrustedEvidence,
                         bind_answer_evidence,
                         public_result,
                     )
@@ -321,9 +322,7 @@ class DatabaseHandler:
                     result = (
                         bind_answer_evidence(db, subtask, result)
                         if status == "COMPLETED"
-                        and (
-                            "_answer_evidence" in result or subtask.answer_generation_id
-                        )
+                        and isinstance(result.get("_answer_evidence"), TrustedEvidence)
                         else public_result(result)
                     )
 

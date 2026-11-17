@@ -105,7 +105,7 @@ jobs:
           mkdir -p ../.ci-artifacts/backend-tests
           git rev-parse HEAD > ../.ci-artifacts/backend-tests/model-input.sha.txt
           command=(uv run pytest -c ../chat_shell/pyproject.toml \
-            ../chat_shell/tests/evidence/test_model_input.py ../chat_shell/tests/test_guard_composition.py \
+            ../chat_shell/tests/evidence ../chat_shell/tests/test_session.py ../chat_shell/tests/test_guard_composition.py \
             -n 0 --junitxml=../.ci-artifacts/backend-tests/model-input-results.xml)
           printf '%q ' "${command[@]}" > ../.ci-artifacts/backend-tests/model-input-command.txt
           printf '\n' >> ../.ci-artifacts/backend-tests/model-input-command.txt

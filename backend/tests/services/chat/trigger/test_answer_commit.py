@@ -8,6 +8,59 @@ from app.services.chat.storage import db as chat_db
 from app.services.chat.trigger import lifecycle
 
 
+@pytest.mark.parametrize("generation", [None, "a" * 32])
+def test_api_save_does_not_bind_evidence_from_identity_or_untrusted_payload(
+    monkeypatch, generation
+):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from app.models.subtask import SubtaskStatus
+
+    answer = SimpleNamespace(
+        id=12,
+        task_id=7,
+        status=SubtaskStatus.RUNNING,
+        answer_generation_id=generation,
+        result={},
+        executor_name="",
+    )
+    task = SimpleNamespace(id=7, kind="Task", is_active=1, json={})
+    db = MagicMock()
+
+    @contextmanager
+    def session():
+        yield db
+
+    monkeypatch.setattr(chat_db, "_db_session", session)
+    for method in ("get_basic_by_id", "get_basic_by_id_for_update"):
+        monkeypatch.setattr(
+            chat_db.task_stores.subtask_store, method, lambda *a, **k: answer
+        )
+    monkeypatch.setattr(
+        chat_db.task_stores.task_store, "get_by_id_for_update", lambda *a, **k: task
+    )
+    saved = MagicMock(return_value=True)
+    monkeypatch.setattr(
+        chat_db.task_stores.subtask_store, "update_fields_if_attempt", saved
+    )
+    handler = chat_db.DatabaseHandler()
+    monkeypatch.setattr(
+        handler, "_update_task_status_in_session", lambda *a, **k: object()
+    )
+    result = {"value": "API answer", "_answer_evidence": []}
+
+    handler._update_subtask_sync(
+        12, "COMPLETED", result=result, generation_id=generation
+    )
+
+    assert result == {"value": "API answer"}
+    assert saved.call_args.kwargs["result"] == {"value": "API answer"}
+    db.begin_nested.assert_not_called()
+    db.add.assert_not_called()
+
+
 def test_completed_attempt_explicitly_rejects_a_duplicate_terminal(monkeypatch):
     from contextlib import contextmanager
     from types import SimpleNamespace

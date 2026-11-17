@@ -1298,6 +1298,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                             user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
                             auth_token=auth_token,  # Pass original JWT token from WebSocket session
                             previous_bot_id=previous_bot_id,  # Pipeline mode: previous stage's bot_id for session management
+                            enable_answer_evidence=task.client_origin == "frontend",
                         )
                     except Exception as e:
                         logger.exception(
@@ -1774,6 +1775,8 @@ class ChatNamespace(socketio.AsyncNamespace):
         try:
             await trigger_ai_response_unified(
                 namespace=self,
+                enable_answer_evidence=dispatch_args_or_error["task"].client_origin
+                == "frontend",
                 **dispatch_args_or_error,
             )
         except Exception as e:

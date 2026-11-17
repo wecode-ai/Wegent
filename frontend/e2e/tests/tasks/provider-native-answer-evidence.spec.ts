@@ -16,6 +16,172 @@ import {
 } from '../../utils/provider-native-test-support'
 
 // Only model services are simulated: native storage, indexing, MCP and HTTP are real.
+test('API native RAG does not issue evidence and stays unchanged when opened on Web', async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(180000)
+  const login = await createApiClient(request).login(ADMIN_USER.username, ADMIN_USER.password)
+  const token = login.data!.access_token
+  const headers = createBackendRequestHeaders(token)
+  const name = `e2e-api-evidence-off-${Date.now()}`
+  const prompt = `${name} search the original project date`
+  const answer = `API-ANSWER-${name}`
+  const text = `API-ORIGINAL-${name}: the project date is November 10.`
+  const retrieval = await createExternalImportRetrieval(request)
+  const cleanup: string[] = []
+  const create = async (path: string, data: unknown) => {
+    const response = await request.post(`${API}${path}`, { headers, data })
+    expect(response.ok(), await response.text()).toBeTruthy()
+    return response.json()
+  }
+  let taskId: number | undefined
+  try {
+    await create('/api/v1/namespaces/default/models', {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Model',
+      metadata: { name, namespace: 'default' },
+      spec: {
+        modelConfig: {
+          env: {
+            model: 'openai',
+            model_id: 'mock-evidence-off',
+            api_key: 'mock-key',
+            base_url: `${MOCK}/v1`,
+          },
+        },
+      },
+    })
+    cleanup.push(`/api/v1/namespaces/default/models/${name}`)
+    const bot = await create('/api/bots', {
+      name,
+      shell_name: 'Chat',
+      namespace: 'default',
+      is_active: true,
+      agent_config: { bind_model: name, bind_model_type: 'user' },
+      system_prompt: 'Search the native knowledge base and answer the question.',
+    })
+    cleanup.push(`/api/v1/namespaces/default/bots/${name}`)
+    const team = await create('/api/teams', {
+      name,
+      namespace: 'default',
+      is_active: true,
+      bind_mode: ['chat'],
+      bots: [{ bot_id: bot.id, bot_prompt: '', role: 'worker' }],
+    })
+    cleanup.push(`/api/v1/namespaces/default/teams/${name}`)
+    const kb = await create('/api/knowledge-bases', {
+      name,
+      namespace: 'default',
+      kb_type: 'classic',
+      summary_enabled: false,
+      retrieval_config: retrieval.config,
+      rag_config_mode: 'auto',
+    })
+    cleanup.push(`/api/knowledge-bases/${kb.id}`)
+    const doc = await create('/api/knowledge/documents', {
+      knowledge_base_id: kb.id,
+      source_type: 'text',
+      name: `${name}.txt`,
+      content: text,
+    })
+    cleanup.push(`/api/knowledge-documents/${doc.id}`)
+    await expect
+      .poll(
+        async () => {
+          const response = await request.get(`${API}/api/knowledge-documents/${doc.id}`, {
+            headers,
+          })
+          expect(response.ok(), await response.text()).toBeTruthy()
+          return (await response.json()).index_status
+        },
+        { timeout: 120000 }
+      )
+      .toBe('success')
+    const scenario = await request.post(`${MOCK}/tool-scenarios`, {
+      data: {
+        matchText: prompt,
+        steps: [
+          {
+            toolCalls: [
+              {
+                toolName: 'wegent_kb_search_knowledge_base',
+                arguments: { knowledge_base_id: kb.id, query: 'project date' },
+              },
+            ],
+          },
+          { responseContent: answer },
+        ],
+      },
+    })
+    expect(scenario.ok(), await scenario.text()).toBeTruthy()
+    const response = await create('/api/v1/responses', {
+      model: `default#${name}`,
+      input: prompt,
+      stream: false,
+      background: true,
+      tools: [
+        { type: 'wegent_chat_bot' },
+        { type: 'knowledge_base', knowledge_base_names: [`default#${name}`] },
+      ],
+      // Public fields cannot activate a server-owned execution capability.
+      enable_answer_evidence: true,
+      client_origin: 'frontend',
+      metadata: { enable_answer_evidence: true },
+    })
+    expect(response.id).toMatch(/^resp_\d+$/)
+    taskId = Number(response.id.slice('resp_'.length))
+    await waitForTaskTerminal(token, taskId)
+    const completed = await request.get(`${API}/api/v1/responses/${response.id}`, { headers })
+    expect(completed.ok(), await completed.text()).toBeTruthy()
+    const completedBody = JSON.stringify(await completed.json())
+    expect(completedBody).toContain(answer)
+    for (const field of ['_answer_evidence', 'answer_citations', 'answer_evidence_errors']) {
+      expect(completedBody).not.toContain(field)
+    }
+    const bodies = JSON.stringify(await getScenarioModelBodies(request, prompt))
+    expect(bodies).toContain(text)
+    for (const forbidden of ['evidence_id', 'evidence_instruction', '[[evidence:']) {
+      expect(bodies).not.toContain(forbidden)
+    }
+    const checkSavedAnswer = async () => {
+      const detail = await request.get(`${API}/api/tasks/${taskId}`, { headers })
+      expect(detail.ok(), await detail.text()).toBeTruthy()
+      const subtasks = (await detail.json()).subtasks as Array<{
+        role: string
+        result: Record<string, unknown>
+      }>
+      const saved = subtasks.filter(row => row.role === 'ASSISTANT').at(-1)!.result
+      expect(saved.value).toBe(answer)
+      for (const field of [
+        '_answer_evidence',
+        'answer_generation_id',
+        'answer_citations',
+        'answer_evidence_errors',
+      ]) {
+        expect(saved).not.toHaveProperty(field)
+      }
+    }
+    await checkSavedAnswer()
+    await page.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
+    await page.goto(`/chat?taskId=${taskId}&teamId=${team.id}`)
+    await expect(page.getByText(answer, { exact: true }).first()).toBeVisible()
+    await expect(page.locator('[data-testid^="answer-citation-"]')).toHaveCount(0)
+    await page.reload()
+    await expect(page.getByText(answer, { exact: true }).first()).toBeVisible()
+    await expect(page.locator('[data-testid^="answer-citation-"]')).toHaveCount(0)
+    await checkSavedAnswer()
+  } finally {
+    await clearToolScenario(request, prompt)
+    if (taskId) await request.delete(`${API}/api/tasks/${taskId}`, { headers })
+    for (const path of cleanup.reverse()) {
+      const response = await request.delete(`${API}${path}`, { headers })
+      expect(response.ok(), await response.text()).toBeTruthy()
+    }
+    await retrieval.cleanup(request)
+  }
+})
+
 test('native RAG answer keeps its committed snapshot across refresh and opens current original', async ({
   page,
   request,

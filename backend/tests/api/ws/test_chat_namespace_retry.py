@@ -120,6 +120,7 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
 
     task = SimpleNamespace(
         id=100,
+        client_origin="frontend",
         json={
             "metadata": {
                 "labels": {
@@ -192,7 +193,9 @@ async def test_chat_retry_closes_session_before_triggering_sse_dispatch():
     namespace.get_session = AsyncMock(return_value={"user_id": 1})
     namespace._check_token_expiry = AsyncMock(return_value=False)
 
-    task = SimpleNamespace(id=100, json={"metadata": {"labels": {}}})
+    task = SimpleNamespace(
+        id=100, client_origin="frontend", json={"metadata": {"labels": {}}}
+    )
     failed_ai_subtask = SimpleNamespace(
         id=42,
         team_id=10,
@@ -253,7 +256,7 @@ async def test_chat_retry_persists_failed_state_when_dispatch_raises():
     db = _RetryDbMock(user=SimpleNamespace(id=1))
     assistant_subtask = SimpleNamespace(id=42, answer_generation_id="a" * 32)
     dispatch_args = {
-        "task": SimpleNamespace(id=100),
+        "task": SimpleNamespace(id=100, client_origin="frontend"),
         "assistant_subtask": assistant_subtask,
     }
     dispatch_error = RuntimeError("video attachment preprocessing failed")
@@ -305,6 +308,7 @@ async def test_chat_retry_rejects_a_code_wiki_task_before_resetting_it() -> None
 
     task = SimpleNamespace(
         id=100,
+        client_origin="frontend",
         json={"metadata": {"labels": {"source": "code_wiki"}}},
     )
     failed_ai_subtask = SimpleNamespace(
@@ -355,7 +359,9 @@ async def test_chat_retry_restores_persisted_video_generation_params():
     namespace.get_session = AsyncMock(return_value={"user_id": 1})
     namespace._check_token_expiry = AsyncMock(return_value=False)
 
-    task = SimpleNamespace(id=100, json={"metadata": {"labels": {}}})
+    task = SimpleNamespace(
+        id=100, client_origin="frontend", json={"metadata": {"labels": {}}}
+    )
     failed_ai_subtask = SimpleNamespace(
         id=42,
         team_id=10,
@@ -433,6 +439,7 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
 
     task = SimpleNamespace(
         id=100,
+        client_origin="frontend",
         json={
             "metadata": {
                 "labels": {
@@ -513,7 +520,9 @@ async def test_chat_retry_rejects_running_subtask_without_dispatching():
     namespace.get_session = AsyncMock(return_value={"user_id": 1})
     namespace._check_token_expiry = AsyncMock(return_value=False)
 
-    task = SimpleNamespace(id=100, json={"metadata": {"labels": {}}})
+    task = SimpleNamespace(
+        id=100, client_origin="frontend", json={"metadata": {"labels": {}}}
+    )
     running_ai_subtask = SimpleNamespace(
         id=42,
         team_id=10,
