@@ -8,7 +8,7 @@ mod state;
 
 use crate::{http_compat::FastApiError, state::AppState};
 use brz_http_server::{HttpResponse, StatusCode};
-use brz_mysql::{MysqlError, MysqlResult};
+use brz_mysql::{MysqlError, MysqlIsolationLevel, MysqlResult, MysqlTransactionOptions};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -82,32 +82,51 @@ async fn exchange(
                 .header("cache-control", "no-store")
                 .expect("static header"));
         }
-        let lease = crate::plugins_installed::write_coordination::PluginWriteLease::acquire(
-            app.redis.as_ref(),
-            principal.user_id,
-        )
-        .await
-        .map_err(safe_error)?;
+        let targets = app
+            .mysql
+            .with_transaction(async |tx| state::write_targets(tx, &principal, &body.data).await)
+            .await
+            .map_err(safe_error)?;
+        let lease =
+            crate::plugins_installed::write_coordination::PluginWriteLease::acquire_installed(
+                &app.mysql,
+                app.redis.as_ref(),
+                principal.user_id,
+                Some(&targets),
+            )
+            .await
+            .map_err(safe_error)?;
         let mut timed_out = false;
         let outcome = async {
             lease.ensure_policy(&app.mysql).await?;
             tokio::time::timeout_at(
                 lease.deadline,
-                app.mysql.with_transaction(async |tx| {
-                    crate::plugin_account_auth::connections::coordinate_owner(
-                        tx,
-                        &lease,
-                        principal.user_id,
-                    )
-                    .await
-                    .map_err(credentials::failure)?;
-                    let revision = lease.read_revision(tx).await?;
-                    let mut result =
-                        state::exchange(tx, &principal, &body.operation, &body.data).await?;
-                    lease.commit_revision(tx, revision).await?;
-                    result["success"] = json!(true);
-                    Ok(result)
-                }),
+                app.mysql.with_transaction_options(
+                    MysqlTransactionOptions::default()
+                        .with_isolation_level(MysqlIsolationLevel::ReadCommitted),
+                    async |tx| {
+                        crate::plugin_account_auth::connections::coordinate_owner(
+                            tx,
+                            &lease,
+                            principal.user_id,
+                        )
+                        .await
+                        .map_err(credentials::failure)?;
+                        let policy = lease.read_revision(tx).await?;
+                        let current_targets =
+                            state::write_targets(tx, &principal, &body.data).await?;
+                        if current_targets != targets {
+                            return Err(fail("plugin_auth_revision_conflict"));
+                        }
+                        let revision = lease.read_plugin_revisions(tx).await?;
+                        let mut result =
+                            state::exchange(tx, &principal, &body.operation, &body.data).await?;
+                        lease.commit_plugin_revisions(tx, revision).await?;
+                        lease.validate_policy_revision(tx, policy).await?;
+                        result["success"] = json!(true);
+                        Ok(result)
+                    },
+                ),
             )
             .await
             .unwrap_or_else(|_| {
@@ -121,7 +140,11 @@ async fn exchange(
         if !timed_out && matches!(&outcome, Ok(_) | Err(MysqlError::InvalidQuery { .. })) {
             lease.release().await;
         }
-        outcome.map_err(safe_error)?
+        let value = outcome.map_err(safe_error)?;
+        if super::notifications::changes_credentials(&action) {
+            super::notifications::publish(app, principal.user_id, &targets).await;
+        }
+        value
     };
     Ok(HttpResponse::new(value)
         .header("cache-control", "no-store")

@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { holdPluginCoordinationFault } from './plugin-write-lease.mjs'
-import { until } from './plugin-regression-fixture.mjs'
+import {
+  holdInstalledPluginRow,
+  holdPluginWriteLease,
+  holdPluginCoordinationFault,
+} from './plugin-write-lease.mjs'
+import {
+  publishIndependentPluginReleases,
+  verifyIndependentPluginMutations,
+} from './plugin-write-coordination.mjs'
+import { pluginApi, until } from './plugin-regression-fixture.mjs'
 
 // Exercise the desktop IPC, real Executor broker and account adapter. Only the
 // synthetic credential provider is gated; backend responses are never replaced.
@@ -100,11 +108,16 @@ export async function verifyPluginAuthCoordination({
     await rowLock.release()
   }
 
+  const holdFault = mode =>
+    mode === 'lease'
+      ? holdPluginWriteLease(cloud, installedId)
+      : holdPluginCoordinationFault(cloud, mode)
+
   for (const [mode, code] of [
     ['lease', 'plugin_write_busy'],
     ['redis-unavailable', 'plugin_write_unavailable'],
   ]) {
-    let fault = await holdPluginCoordinationFault(cloud, mode)
+    let fault = await holdFault(mode)
     try {
       const before = await snapshot()
       await login(code)
@@ -113,7 +126,7 @@ export async function verifyPluginAuthCoordination({
       await fault.release()
     }
     await login()
-    fault = await holdPluginCoordinationFault(cloud, mode)
+    fault = await holdFault(mode)
     try {
       const before = await snapshot()
       await assert.rejects(() => auth('logout'), new RegExp(code))
@@ -125,6 +138,46 @@ export async function verifyPluginAuthCoordination({
     await assertRevoked()
     evidence.push({ case: `${mode}-rejects-auth-and-logout-with-explicit-recovery` })
   }
+
+  const independent = await publishIndependentPluginReleases(cloud, 'auth-e2e-independent')
+  await login()
+  const other = await pluginApi(
+    cloud,
+    `/plugins/marketplace/${independent.latest.pluginId}/install`,
+    'POST'
+  )
+  const otherId = Number(other.plugin.metadata.labels.id)
+  const otherLease = await holdPluginWriteLease(cloud, otherId)
+  try {
+    await logout()
+    await assertRevoked()
+    await login()
+    evidence.push({ case: 'authentication-ignores-other-installed-plugin-lease', installedId })
+  } finally {
+    await otherLease.release()
+  }
+  const backgroundRow = await holdInstalledPluginRow(cloud, installedId)
+  let pausedMarker
+  try {
+    await signalAutomaticRetry()
+    await backgroundRow.waitFor('blocked')
+    pausedMarker = await readFile(reconcileMarker, 'utf8')
+    await verifyIndependentPluginMutations(cloud, independent, evidence)
+    assert.equal(
+      await readFile(reconcileMarker, 'utf8'),
+      pausedMarker,
+      'Background authentication finished before its real database fence was released'
+    )
+    evidence.push({ case: 'background-authentication-does-not-block-other-plugin', installedId })
+  } finally {
+    await backgroundRow.release()
+  }
+  await until(
+    () => readFile(reconcileMarker, 'utf8'),
+    value => value.length > pausedMarker.length,
+    'Background authentication did not recover after its row was released'
+  )
+  await logout()
 
   const gate = join(homePath, 'account-auth-export-held')
   const inflight = join(homePath, 'account-auth-export-inflight')
