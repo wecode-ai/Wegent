@@ -146,6 +146,7 @@ test('the service launcher removes inherited model and service credentials befor
           SystemRoot: process.env.SystemRoot,
           TEMP: process.env.TEMP,
           TMPDIR: process.env.TMPDIR,
+          ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
           BACKEND_INTERNAL_TOKEN: 'synthetic-service',
           OPENAI_API_KEY: 'synthetic-model',
           WEGENT_AUTH_TOKEN: 'synthetic-account',
