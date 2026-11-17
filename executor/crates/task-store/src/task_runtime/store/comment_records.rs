@@ -402,7 +402,7 @@ mod stand_in_reply_tests {
 
     #[test]
     fn agent_runtime_owner_is_independent_from_its_trigger_actor() {
-        for owner in [0, 7] {
+        for owner in [Some(0), Some(7), None] {
             let directory = tempfile::tempdir().unwrap();
             let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
             let project = store
@@ -449,7 +449,7 @@ mod stand_in_reply_tests {
             assert_eq!(reply.actor_user_id.as_deref(), Some("8"));
             assert_eq!(
                 reply.runtime_owner_user_id.as_deref(),
-                Some(owner.to_string().as_str())
+                owner.map(|id| id.to_string()).as_deref()
             );
         }
     }

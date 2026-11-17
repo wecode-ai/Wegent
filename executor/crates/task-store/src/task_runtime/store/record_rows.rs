@@ -329,9 +329,11 @@ pub(super) fn enrich_comment_actor(
                 "SELECT created_by_user_id FROM loop_items
                  WHERE id=?1 AND cloud_project_id=?2 AND resource_type='chat_agent'",
                 params![comment.sender_id, comment.project_id],
-                |row| row.get::<_, i64>(0).map(|id| id.to_string()),
+                |row| row.get::<_, Option<i64>>(0),
             )
-            .optional()?;
+            .optional()?
+            .flatten()
+            .map(|id| id.to_string());
     }
     let trigger = comment
         .trigger_message_id
@@ -366,9 +368,6 @@ pub(super) fn enrich_comment_actor(
         .transpose()?
         .flatten();
     if let Some((id, name)) = &trigger {
-        if comment.runtime_owner_user_id.is_none() {
-            comment.runtime_owner_user_id = Some(id.clone());
-        }
         let actor_matches_trigger = match comment.actor_user_id.as_deref() {
             None => true,
             Some(actor) => actor == id,
