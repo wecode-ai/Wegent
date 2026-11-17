@@ -192,7 +192,10 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
       assert.equal(tools.length, 1, 'The model must receive the real Code Mode exec declaration')
       assert.equal(tools[0].type, native ? 'custom' : 'function')
       if (!native) assert.equal(tools[0].parameters.properties.input.type, 'string')
-      const callId = `responses-exec-${round}`
+      // A resumed or retried turn can repeat the same model request. Keep each
+      // native tool call distinct so Codex does not discard the retry as a
+      // duplicate call id from the previous attempt.
+      const callId = `responses-exec-${requests.length}-${round}`
       const result = accountCommandResult(body.input, callId)
       let events
       if (result?.sessionId) {
