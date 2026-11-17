@@ -36,12 +36,16 @@ export function IssueCommentChildAction({
     const operation = progress.current ?? { requestId: crypto.randomUUID() }
     progress.current = operation
     try {
-      operation.child ??= await assignment.createChild({
-        body,
-        target,
-        sourceMessageId: messageId,
-        requestId: operation.requestId,
-      })
+      if (!operation.child) {
+        const child = await assignment.createChild({
+          body,
+          target,
+          sourceMessageId: messageId,
+          requestId: operation.requestId,
+        })
+        if (child === false) return
+        operation.child = child
+      }
       setCreated(true)
       const child = operation.child
       const reference = `[$#${child.sequence_number} ${child.title.replaceAll('[', '').replaceAll(']', '')}](wework-issue://${encodeURIComponent(child.cloud_project_id)}/${encodeURIComponent(child.id)})`

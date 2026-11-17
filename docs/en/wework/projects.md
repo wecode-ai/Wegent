@@ -169,6 +169,10 @@ Open **Milestones** in the project. The Issue-detail selector only associates ex
 
 ## Members, discussion assignment and archival
 
+In a native cloud project Issue, open **Participants → +**, search by name or email, select multiple people across searches, then click **Add**. Results outside the project explain that access is limited to this Issue and require confirmation. Canceling creates no invitations. The assignee picker uses the same search and confirmation flow and saves after confirmation. GitHub/GitLab and other external Issues retain their source provider membership and access policies.
+
+An outside participant manages only the invited Issue: reading, commenting, editing, inviting people and assigning to people. This grants no project membership, access to the project or other Issues, project administration, or project execution resources. The Issue link opens its details directly. Removing a participant revokes access unless they remain the current assignee; past assignments grant no continuing access. Multi-selection adds participants individually; errors remain visible and successful additions are retained.
+
 | Feature                            | Steps                                                                                                                       | Conditions and result                                                                                              |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Add project member                 | Project settings → Project members → Add member → search username/email → choose role → click result                        | Clicking adds immediately; no extra Save button; requires management permission                                    |
@@ -698,4 +702,3 @@ Use **Create child Issue** beside any existing visible comment, including commen
 Project maintainers can choose **Project settings → AI configuration → Agents → Delete** and confirm removal. Existing tasks, execution history and shared source resources remain intact. Replace or remove all leader, member and stage references in collaboration groups first. System-managed current-device Agents cannot be deleted. Removing a collaboration group also requires confirmation; Cancel leaves it unchanged.
 
 Use **Project settings → AI configuration → Execution environments** to maintain AI devices, repositories and setup steps. Explicit preparation shows **Project directory ready** on completion. Version conflicts preserve your draft. **Load latest configuration** replaces the draft with server values; **Keep draft and refresh version** retains your input without submitting it. Review it before clicking **Save configuration**, which replaces the latest environment configuration. A failed read can be retried without repeating a write.
-

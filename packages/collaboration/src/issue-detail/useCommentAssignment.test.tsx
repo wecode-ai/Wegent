@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useCommentAssignment } from './useCommentAssignment'
 import type { CommentIssueActions } from './issueCommentActions'
+import type { CommentAssignment } from './useCommentAssignment'
 
 const mention = (id: number) => `[$@User ${id}](wework-member://${id})`
 const options = [
@@ -19,10 +20,16 @@ describe('comment assignment', () => {
   let draft: string
   let enabled: boolean
   let actions: CommentIssueActions | undefined
-  const assign = vi.fn<(id: string) => Promise<void>>()
+  let createChild: CommentAssignment['createChild']
+  const assign = vi.fn<(id: string) => Promise<void | boolean>>()
   const send = vi.fn<() => Promise<boolean>>()
   function Harness() {
-    transfer = useCommentAssignment(draft, enabled ? { options, assign } : undefined, send, actions)
+    transfer = useCommentAssignment(
+      draft,
+      enabled ? { options, assign, createChild } : undefined,
+      send,
+      actions
+    )
     return null
   }
   function render(value: string) {
@@ -34,6 +41,7 @@ describe('comment assignment', () => {
     root = createRoot(document.createElement('div'))
     enabled = true
     actions = undefined
+    createChild = undefined
     assign.mockReset().mockResolvedValue(undefined)
     send.mockReset().mockResolvedValue(true)
   })
@@ -153,6 +161,39 @@ describe('comment assignment', () => {
     expect(transfer.error).toBeNull()
   })
 
+  it('preserves a cancelled invitation and retries without duplicating its saved comment', async () => {
+    assign.mockResolvedValueOnce(false).mockResolvedValueOnce(undefined)
+    render(mention(1))
+    act(() => transfer.acceptSuggestion())
+    await act(() => transfer.submit(draft))
+    expect(transfer.target).toBe('1')
+    expect(transfer.error).toBeNull()
+    await act(() => transfer.submit(draft))
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(assign).toHaveBeenCalledTimes(2)
+    expect(transfer.target).toBe('')
+  })
+
+  it('uses a newly selected child target after cancelling invitation without reposting', async () => {
+    const create = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce({ id: 'child' })
+    createChild = create
+    render('Create a child')
+    act(() => {
+      transfer.setMode('child')
+      transfer.setTarget('1')
+    })
+    await act(() => transfer.submit(draft))
+    expect(transfer.childTargetLocked).toBe(false)
+    act(() => transfer.setTarget('2'))
+    await act(() => transfer.submit(''))
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(create).toHaveBeenNthCalledWith(2, {
+      ...create.mock.calls[0][0],
+      target: '2',
+    })
+    expect(transfer.pendingChild).toBeNull()
+  })
+
   it('prevents duplicate submissions', async () => {
     render('')
     act(() => transfer.setTarget('1'))
@@ -205,6 +246,29 @@ describe('comment assignment', () => {
       expect(move).toHaveBeenCalledTimes(cancel ? 1 : 2)
     }
   )
+
+  it('keeps a cancelled assignee move pending without reposting its comment', async () => {
+    const move = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(undefined)
+    actions = {
+      moves: [],
+      boardName: 'People',
+      currentColumns: [],
+      closed: false,
+      canToggle: true,
+      move,
+      toggle: vi.fn(),
+    }
+    render('Transfer this')
+    act(() => transfer.setMove('outside'))
+    await act(() => transfer.submit(draft))
+    expect(transfer.moveTarget).toBe('outside')
+    expect(transfer.commentCommitted).toBe(true)
+    await act(() => transfer.submit(draft))
+    expect(move).toHaveBeenCalledTimes(2)
+    expect(send).toHaveBeenCalledOnce()
+    expect(transfer.moveTarget).toBe('')
+    expect(transfer.commentCommitted).toBe(false)
+  })
 
   it('keeps the saved comment when cancelling assignment but retaining the pending move', async () => {
     const move = vi.fn().mockResolvedValue(undefined)
