@@ -332,12 +332,12 @@ fn read_comment_rows(
 
 #[cfg(test)]
 mod stand_in_reply_tests {
+    use super::super::runner_routing_tests::setup;
     use super::*;
 
     #[test]
     fn comment_pages_reject_unbounded_or_invalid_ranges() {
-        let (_directory, store, project, _agent, issue, _catalog) =
-            crate::task_runtime::runner_routing_tests::setup();
+        let (_directory, store, project, _agent, issue, _catalog) = setup();
         for limit in [0, 501, usize::MAX] {
             assert!(store
                 .list_comment_page(&project.id, &issue.id, 0, limit, false)
@@ -350,8 +350,7 @@ mod stand_in_reply_tests {
 
     #[test]
     fn comment_pages_preserve_live_execution_activity_enrichment_and_authors() {
-        let (_directory, store, project, agent, issue, _catalog) =
-            crate::task_runtime::runner_routing_tests::setup();
+        let (_directory, store, project, agent, issue, _catalog) = setup();
         let execution = store
             .enqueue_execution(&project.id, &issue.id, &agent.id, json!({}), None)
             .unwrap();
@@ -386,8 +385,7 @@ mod stand_in_reply_tests {
 
     #[test]
     fn comment_page_flags_use_visible_sequences_and_exclude_deleted_or_foreign_rows() {
-        let (_directory, store, project, _agent, issue, _catalog) =
-            crate::task_runtime::runner_routing_tests::setup();
+        let (_directory, store, project, _agent, issue, _catalog) = setup();
         let mut comments = Vec::new();
         for index in 0..5 {
             comments.push(
