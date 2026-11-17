@@ -106,6 +106,8 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 任务首次加载或加载失败时，在桌面侧栏的 **任务** 标题下方查看状态；失败后可点击 **重试**。优先级视图中的提示位于列表上方，详见[左侧栏任务管理](./tasks.md#sidebar-task-management)。
 
+输入框上方的 Issue 摘要出现任务数读取失败时，使用摘要中的重试入口，见[将对话加入项目空间看板](./tasks.md#task-board-association)。
+
 ### 直接定位具体功能点
 
 | 功能关键词                                                                          | 具体操作说明                                                        |
@@ -170,7 +172,7 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 集成 → 浏览器       | 下载目录、浏览器数据与缓存                                                            | `/settings/browser`                     |
 | 编码 → 执行环境     | Node.js 等执行环境配置，见[设置与数据](./settings.md)                                 | `/settings/execution-environments`      |
 | 编码 → 编码工具     | OpenCode、Claude Code、Kimi Code；实验性功能                                          | `/settings/harnesses`                   |
-| 编码 → Hooks        | 配置工具与异步生命周期钩子；见[设置说明](./settings.md#hooks-controls) | `/settings/hooks` |
+| 编码 → Hooks        | 配置工具与异步生命周期钩子；见[设置说明](./settings.md#hooks-controls)                | `/settings/hooks`                       |
 | 编码 → 代码托管     | GitHub / GitLab 等连接；开发者模式的 Git 插件入口，见[Git 连接](./git-connections.md) | `/settings/git-hosting`                 |
 | 编码 → 工作树       | Worktree 位置、保留与清理；开发者模式的 Git 插件入口                                  | `/settings/worktrees`                   |
 | 已归档 → 已归档任务 | 搜索、恢复、删除归档对话                                                              | `/settings/archived-conversations`      |

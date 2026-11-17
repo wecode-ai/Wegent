@@ -53,6 +53,53 @@ const pickerProjects: CloudProject[] = [
 ]
 
 describe('WorkItemComposerGuide', () => {
+  test.each([false, true])(
+    'shows binding failures and retries while preserving prior data: %s',
+    async hasPriorData => {
+      const user = userEvent.setup()
+      const bindings = [
+        { device_id: 'device', task_id: 'first' },
+        { device_id: 'device', task_id: 'second' },
+      ]
+      const listTaskBindings = vi.fn()
+      if (hasPriorData) listTaskBindings.mockResolvedValueOnce(bindings)
+      listTaskBindings.mockRejectedValueOnce(new Error('Bindings unavailable'))
+      let completeRetry!: (value: typeof bindings) => void
+      listTaskBindings.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            completeRetry = resolve
+          })
+      )
+      const api = { listTaskBindings } as unknown as ProjectSpaceApi
+      const item = { id: 'WORK-1', title: 'Current Issue' } as CloudLoopItem
+      const { rerender } = render(<WorkItemComposerGuide api={api} item={item} />)
+      if (hasPriorData) {
+        await waitFor(() =>
+          expect(screen.getByTestId('work-item-guide-summary-details')).toHaveTextContent(
+            '2 个任务'
+          )
+        )
+        rerender(<WorkItemComposerGuide api={api} item={item} refreshKey="refresh" />)
+      }
+      const retry = await screen.findByTestId('work-item-guide-retry-task-count')
+      expect(retry).toHaveTextContent('任务数加载失败，重试')
+      expect(retry).toBeEnabled()
+      expect(screen.getByTestId('project-space-context-pill').title).not.toContain('任务 …')
+      if (hasPriorData)
+        expect(screen.getByTestId('work-item-guide-summary-details')).toHaveTextContent('2 个任务')
+      await user.click(retry)
+      expect(retry).toBeDisabled()
+      await waitFor(() => expect(listTaskBindings).toHaveBeenCalledTimes(hasPriorData ? 3 : 2))
+      completeRetry([])
+      await waitFor(() =>
+        expect(screen.queryByTestId('work-item-guide-retry-task-count')).not.toBeInTheDocument()
+      )
+      expect(screen.queryByTestId('work-item-guide-summary-details')).not.toBeInTheDocument()
+      expect(listTaskBindings).toHaveBeenLastCalledWith(item.id)
+    }
+  )
+
   test('does not show binding counts from another source with the same Issue ID', async () => {
     const bindings = [
       { device_id: 'device', task_id: 'first' },

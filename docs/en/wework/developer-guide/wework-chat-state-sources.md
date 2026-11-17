@@ -634,7 +634,7 @@ Project and Issue bindings carry their owning task; late association results can
 
 Sending does not query project or Issue details, load referenced transcripts, or wait for list refreshes. Project context carries only the selected project_store, space_id, and item_id. When details matter, the model first checks the current binding through wework_space.get_current_context and reads the required Issue, comments, or attachments. Explicit IDs apply when there is no default binding. Source tools read current authoritative data; previews and old bodies are not current evidence. Unavailable or denied reads must be reported without bypassing access controls.
 
-The composer's Issue guide reads the owning conversation's binding state, updated by source change events. Sending, execution changes, and recreated objects must not trigger another full context read. The guide owns only its task-binding count query, with results isolated by API and Issue identity.
+The composer's Issue guide reads the owning conversation's binding state, updated by source change events. Sending, execution changes, and recreated objects must not trigger another full context read. The guide owns only its task-binding count query, with results isolated by API and Issue identity. A failed count read shows an explicit error and retry action; a failed refresh preserves the same source's last successful count without presenting failure as loading or an empty result.
 
 ```mermaid
 sequenceDiagram

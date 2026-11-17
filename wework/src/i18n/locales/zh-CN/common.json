@@ -4157,6 +4157,7 @@
     "work_item_status_completed": "已完成",
     "work_item_execution_open_failed": "打开任务执行失败",
     "loading_task_count": "任务 …",
+    "task_count_load_failed_retry": "任务数加载失败，重试",
     "tasks_unit": "个任务",
     "no_participants": "暂无参与者",
     "view_details": "查看详情",

@@ -4162,6 +4162,7 @@
     "work_item_status_completed": "Completed",
     "work_item_execution_open_failed": "Failed to open task execution",
     "loading_task_count": "Tasks …",
+    "task_count_load_failed_retry": "Task count failed. Retry",
     "tasks_unit": "tasks",
     "no_participants": "No participants",
     "view_details": "View details",

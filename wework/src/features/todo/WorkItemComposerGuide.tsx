@@ -55,10 +55,14 @@ function WorkItemComposerGuideContent({
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
+  const [bindingRetry, setBindingRetry] = useState(0)
   const [bindingResult, setBindingResult] = useState<{
     api: ProjectSpaceApi
     itemId: string
-    bindings: TaskBinding[]
+    bindings: TaskBinding[] | null
+    failed: boolean
+    refreshKey: unknown
+    retry: number
   } | null>(null)
   const itemId = item?.id
   const canChangeProject = Boolean(onSelectProject)
@@ -70,23 +74,46 @@ function WorkItemComposerGuideContent({
     let active = true
     void api.listTaskBindings(itemId).then(
       bindings => {
-        if (active) setBindingResult({ api, itemId, bindings })
+        if (active)
+          setBindingResult({
+            api,
+            itemId,
+            bindings,
+            failed: false,
+            refreshKey,
+            retry: bindingRetry,
+          })
       },
       () => {
-        if (active) setBindingResult(null)
+        if (active)
+          setBindingResult(previous => ({
+            api,
+            itemId,
+            bindings:
+              previous && previous.api === api && previous.itemId === itemId
+                ? previous.bindings
+                : null,
+            failed: true,
+            refreshKey,
+            retry: bindingRetry,
+          }))
       }
     )
     return () => {
       active = false
     }
-  }, [api, itemId, refreshKey])
+  }, [api, itemId, refreshKey, bindingRetry])
 
   const resolvedItem = item ?? null
-  const taskBindings = !item
-    ? []
-    : bindingResult && bindingResult.api === api && bindingResult.itemId === itemId
-      ? bindingResult.bindings
+  const ownedBindings =
+    bindingResult && bindingResult.api === api && bindingResult.itemId === itemId
+      ? bindingResult
       : null
+  const taskBindings = !item ? [] : (ownedBindings?.bindings ?? null)
+  const bindingsPending =
+    !ownedBindings ||
+    ownedBindings.refreshKey !== refreshKey ||
+    ownedBindings.retry !== bindingRetry
   const taskCount = taskBindings?.length ?? null
   const otherTaskCount =
     taskBindings == null
@@ -98,9 +125,9 @@ function WorkItemComposerGuideContent({
         )
 
   const taskSummary =
-    taskCount == null
+    taskCount == null && api && !ownedBindings?.failed
       ? t('workbench.loading_task_count', '任务同步中')
-      : taskCount > 1
+      : taskCount != null && taskCount > 1
         ? `${taskCount} 个任务${otherTaskCount ? `，还有 ${otherTaskCount} 个` : ''}`
         : null
 
@@ -171,6 +198,17 @@ function WorkItemComposerGuideContent({
               </span>
             ) : null}
           </button>
+          {ownedBindings?.failed ? (
+            <button
+              type="button"
+              data-testid="work-item-guide-retry-task-count"
+              disabled={bindingsPending}
+              onClick={() => setBindingRetry(current => current + 1)}
+              className="shrink-0 rounded px-1 text-xs text-text-muted hover:bg-background/70 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30 disabled:cursor-wait"
+            >
+              {t('workbench.task_count_load_failed_retry', '任务数加载失败，重试')}
+            </button>
+          ) : null}
           {onOpen ? (
             <button
               type="button"
