@@ -389,6 +389,42 @@ test('retains a failed native search and records real X11 properties before clea
   }
 })
 
+test.each([
+  ['native-decision-button-count:0', 0],
+  ['native-decision-button-count:2', 2],
+  ['native-decision-button-count:unknown', null],
+])('records Windows button discovery coverage: %s', async (countLine, buttonCount) => {
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  const original = Object.assign(new Error('Native decision terminated'), {
+    stdout: [
+      'native-decision:dialog-matched',
+      'native-decision:button-search-started',
+      'native-decision-timing:dialog-matched:9000',
+      'native-decision-timing:button-search-started:9001',
+      'native-decision-timing:private-value:10000',
+      'native-decision-timing:started:not-a-time',
+      countLine,
+      'private-child-output',
+    ].join('\n'),
+  })
+  native.execute.mockRejectedValue(original)
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    await expect(
+      withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => null)
+    ).rejects.toBe(original)
+    const evidence = JSON.parse(log.mock.calls[0][1])
+    expect(evidence).toMatchObject({
+      stages: ['dialog-matched', 'button-search-started'],
+      stageElapsedMs: { 'dialog-matched': 9000, 'button-search-started': 9001 },
+      buttonCount,
+    })
+    expect(log.mock.calls.flat().join(' ')).not.toContain('private')
+  } finally {
+    log.mockRestore()
+  }
+})
+
 test('retains Windows native failure stages and the unchanged deadline without exposing child output', async () => {
   Object.defineProperty(process, 'platform', { value: 'win32' })
   const original = Object.assign(new Error('Native decision terminated'), {
@@ -438,6 +474,8 @@ test('retains Windows native failure stages and the unchanged deadline without e
           'search-completed',
           'title-unmatched',
         ],
+        stageElapsedMs: {},
+        buttonCount: null,
       })
     )
     expect(log.mock.calls.flat().join(' ')).not.toContain('private')

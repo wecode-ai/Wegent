@@ -75,8 +75,12 @@ end run`,
   if (process.platform === 'win32') {
     const script = `
 $decisionStages = [System.Collections.Generic.HashSet[string]]::new()
+$decisionClock = [System.Diagnostics.Stopwatch]::StartNew()
 function Write-DecisionStage([string]$decisionStage) {
-  if ($decisionStages.Add($decisionStage)) { Write-Output "native-decision:$decisionStage" }
+  if ($decisionStages.Add($decisionStage)) {
+    Write-Output "native-decision:$decisionStage"
+    Write-Output ("native-decision-timing:{0}:{1}" -f $decisionStage, $decisionClock.ElapsedMilliseconds)
+  }
 }
 Write-DecisionStage 'started'
 Add-Type -AssemblyName UIAutomationClient
@@ -119,14 +123,26 @@ while ([DateTime]::UtcNow -lt $deadline) {
   if ($decisions.Count -eq 1) {
     $window = $decisions[0]
     Write-DecisionStage 'dialog-matched'
+    Write-DecisionStage 'button-search-started'
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+    Write-DecisionStage 'button-search-completed'
+    Write-Output ("native-decision-button-count:{0}" -f $buttons.Count)
     foreach ($button in $buttons) {
-      if ($button.Current.Name -in @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
+      Write-DecisionStage 'button-present'
+      Write-DecisionStage 'button-name-read-started'
+      $buttonName = $button.Current.Name
+      Write-DecisionStage 'button-name-read'
+      if ($buttonName -in @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
         Write-DecisionStage 'button-matched'
+        Write-DecisionStage 'invoke-pattern-read-started'
         $pattern = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        Write-DecisionStage 'invoke-pattern-read'
+        Write-DecisionStage 'invoke-started'
         $pattern.Invoke()
+        Write-DecisionStage 'invoke-completed'
         exit 0
       }
+      Write-DecisionStage 'button-name-unmatched'
     }
   }
   Start-Sleep -Milliseconds 100
@@ -157,7 +173,17 @@ throw 'The isolated app did not display its native Core plugin decision'
         'title-unmatched',
         'dialog-matched',
         'dialog-ambiguous',
+        'button-search-started',
+        'button-search-completed',
+        'button-present',
+        'button-name-read-started',
+        'button-name-read',
+        'button-name-unmatched',
         'button-matched',
+        'invoke-pattern-read-started',
+        'invoke-pattern-read',
+        'invoke-started',
+        'invoke-completed',
       ])
       if (!signal.aborted)
         console.error(
@@ -168,11 +194,7 @@ throw 'The isolated app did not display its native Core plugin decision'
             code: typeof error.code === 'number' ? error.code : null,
             killed: error.killed === true,
             signal: error.signal ?? null,
-            stages: String(error.stdout ?? '')
-              .split(/\r?\n/)
-              .filter(line => line.startsWith('native-decision:'))
-              .map(line => line.slice('native-decision:'.length))
-              .filter(stage => stages.has(stage)),
+            ...windowsDecisionEvidence(error.stdout, stages),
           })
         )
       throw error
@@ -202,6 +224,27 @@ throw 'The isolated app did not display its native Core plugin decision'
     ['key', '--clearmodifiers', ...(allow ? ['Tab', 'Return'] : ['Escape'])],
     { encoding: 'utf8', timeout: inputTimeout }
   )
+}
+
+function windowsDecisionEvidence(output, allowedStages) {
+  const lines = String(output ?? '').split(/\r?\n/)
+  const stageElapsedMs = {}
+  let buttonCount = null
+  for (const line of lines) {
+    const timing = /^native-decision-timing:([a-z-]+):(\d+)$/.exec(line)
+    if (timing && allowedStages.has(timing[1]) && Number.isSafeInteger(Number(timing[2])))
+      stageElapsedMs[timing[1]] = Number(timing[2])
+    const count = /^native-decision-button-count:(\d+)$/.exec(line)
+    if (count && Number.isSafeInteger(Number(count[1]))) buttonCount = Number(count[1])
+  }
+  return {
+    stages: lines
+      .filter(line => line.startsWith('native-decision:'))
+      .map(line => line.slice('native-decision:'.length))
+      .filter(stage => allowedStages.has(stage)),
+    stageElapsedMs,
+    buttonCount,
+  }
 }
 
 async function recordNativeDecisionDiagnostics(pid, window, allow, directory, options) {
