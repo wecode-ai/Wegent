@@ -16,6 +16,24 @@ struct Query {
 }
 
 static CACHED_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn reserve_cached_bytes(size: usize) -> bool {
+    let mut current = CACHED_BYTES.load(Ordering::SeqCst);
+    loop {
+        let Some(next) = current
+            .checked_add(size)
+            .filter(|next| *next <= 64 * 1024 * 1024)
+        else {
+            return false;
+        };
+        match CACHED_BYTES.compare_exchange_weak(current, next, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            Ok(_) => return true,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 impl Drop for Query {
     fn drop(&mut self) {
         CACHED_BYTES.fetch_sub(self.bytes, Ordering::SeqCst);
@@ -570,14 +588,7 @@ pub(super) async fn search(
                     + serde_json::to_string(&guard)
                         .map_err(|error| error.to_string())?
                         .len();
-                if CACHED_BYTES
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
-                        current
-                            .checked_add(size)
-                            .filter(|next| *next <= 64 * 1024 * 1024)
-                    })
-                    .is_err()
-                {
+                if !reserve_cached_bytes(size) {
                     state.expires = 0;
                     state.items.clear();
                     state.guards.clear();
