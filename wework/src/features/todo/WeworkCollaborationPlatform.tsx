@@ -1180,8 +1180,8 @@ export function WeworkSharedProject({
           )
         }}
         onOpenRuntimeTask={onOpenRuntimeTask}
-        prepareTask={address =>
-          prepareIssueRuntimeTask({
+        prepareTask={async address => {
+          const rollback = await prepareIssueRuntimeTask({
             port: runtimePort,
             project,
             address,
@@ -1196,8 +1196,6 @@ export function WeworkSharedProject({
                 }
               : (taskComposer.humanTaskBinding ?? null),
           })
-        }
-        onTaskCreated={async (address, localProject, deviceWorkspaceId) => {
           const statusError = await updateIssueWhenPersonalTaskStarts(
             scopedApi.issues,
             taskComposer.issue.id,
@@ -1209,6 +1207,9 @@ export function WeworkSharedProject({
           )
           if (statusError !== null)
             notify(statusError || t('task_board_status_update_failed'), 'error')
+          return rollback
+        }}
+        onTaskCreated={async (address, localProject, deviceWorkspaceId) => {
           if (localProject) {
             saveProjectSpaceCodeWorkspacePreference(
               userId,

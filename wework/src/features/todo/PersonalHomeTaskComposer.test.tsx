@@ -502,7 +502,7 @@ it('preserves a manual title change when retrying an unchanged saved request', a
   expect(api.issues.update).not.toHaveBeenCalled()
 })
 
-it('does not mark the Issue started when its bound Runtime request is rejected', async () => {
+it('retains the saved Issue and unbinds when Runtime rejects a prepared request', async () => {
   const { createProjectRuntimeTask, api, draft, address, port } = setup()
   createProjectRuntimeTask.mockImplementationOnce(async (_message, options) => {
     const rollback = await options.prepareRuntimeTask(address)
@@ -513,7 +513,29 @@ it('does not mark the Issue started when its bound Runtime request is rejected',
   await waitFor(() => expect(draft.onPendingChange).toHaveBeenLastCalledWith(false))
   expect(port.bindTask).toHaveBeenCalledOnce()
   expect(port.unbindTask).toHaveBeenCalledOnce()
-  expect(api.issues.update).not.toHaveBeenCalled()
+  expect(api.issues.update).toHaveBeenCalledExactlyOnceWith(
+    'issue',
+    expect.objectContaining({ status: 'in_progress', version: 1 })
+  )
   expect(draft.onTaskCreated).not.toHaveBeenCalled()
   expect(draft.onResetDraft).not.toHaveBeenCalled()
+})
+
+it('awaits the starting status write before the model can mutate the Issue', async () => {
+  const { api, draft, issue, order } = setup()
+  let finishStatusUpdate!: () => void
+  api.issues.update.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finishStatusUpdate = () => resolve({ ...issue, status: 'in_progress', version: 2 })
+      })
+  )
+  fireEvent.click(screen.getByTestId('submit'))
+  await waitFor(() => expect(api.issues.update).toHaveBeenCalledOnce())
+  expect(order).toEqual(['bind'])
+  expect(draft.onTaskCreated).not.toHaveBeenCalled()
+  await act(async () => finishStatusUpdate())
+  await waitFor(() => expect(draft.onTaskCreated).toHaveBeenCalledOnce())
+  expect(order).toEqual(['bind', 'run'])
+  expect(api.issues.update).toHaveBeenCalledOnce()
 })
