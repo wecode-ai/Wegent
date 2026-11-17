@@ -561,20 +561,18 @@ fn dispatch(
         Some("runtime_peer_closed") => {
             if let (Some(sid), Some(namespace)) =
                 (message["sid"].as_str(), message["namespace"].as_str())
-            {
-                if let Some(retain_ms) = message["retain_ms"]
+                && let Some(retain_ms) = message["retain_ms"]
                     .as_u64()
                     .filter(|value| *value > 0 && *value <= 600_000)
-                {
-                    close_peer(
-                        waiters,
-                        closed,
-                        closed_routes,
-                        sid,
-                        namespace,
-                        Duration::from_millis(retain_ms),
-                    );
-                }
+            {
+                close_peer(
+                    waiters,
+                    closed,
+                    closed_routes,
+                    sid,
+                    namespace,
+                    Duration::from_millis(retain_ms),
+                );
             }
             return;
         }
