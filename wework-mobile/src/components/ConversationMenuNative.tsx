@@ -8,20 +8,26 @@ import {
 } from '@expo/ui/jetpack-compose'
 import { testID } from '@expo/ui/jetpack-compose/modifiers'
 import { Fragment, useState } from 'react'
-import { Pressable } from 'react-native'
+import { Pressable, View } from 'react-native'
 import { useTheme } from 'react-native-paper'
 import type { ConversationMenuNativeProps } from './ConversationMenuNative.types'
 
 export function ConversationMenuNative(props: ConversationMenuNativeProps) {
   const theme = useTheme()
   const [expanded, setExpanded] = useState(false)
+  const row = props.trigger === 'longPress'
+  const open = () => {
+    if (!props.disabled) setExpanded(true)
+  }
   return (
     <Host
       colorScheme={props.colorScheme}
       ignoreSafeAreaKeyboardInsets
-      matchContents
-      style={{ width: props.width, height: 44 }}
-      modifiers={[testID('conversation-menu')]}
+      matchContents={row ? { vertical: true } : true}
+      style={
+        row ? { width: '100%', minHeight: 48 } : { width: props.width, height: props.height ?? 44 }
+      }
+      modifiers={[testID(props.testID ?? 'conversation-menu')]}
     >
       <DropdownMenu
         expanded={expanded}
@@ -29,17 +35,27 @@ export function ConversationMenuNative(props: ConversationMenuNativeProps) {
         properties={{ clippingEnabled: false }}
       >
         <DropdownMenu.Trigger>
-          <RNHostView matchContents>
-            <Pressable
-              accessibilityLabel="更多"
-              accessibilityRole="button"
-              accessibilityState={{ disabled: props.disabled, expanded }}
-              disabled={props.disabled}
-              onPress={() => setExpanded(true)}
-              testID="more-actions"
-            >
-              {props.children}
-            </Pressable>
+          <RNHostView matchContents={row ? { vertical: true } : true}>
+            {typeof props.children === 'function' ? (
+              <View style={{ width: '100%' }} testID={props.triggerTestID ?? 'more-actions'}>
+                {props.children({
+                  disabled: props.disabled,
+                  onLongPress: row ? open : undefined,
+                })}
+              </View>
+            ) : (
+              <Pressable
+                accessibilityLabel={props.accessibilityLabel ?? '更多'}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: props.disabled, expanded }}
+                disabled={props.disabled}
+                onPress={row ? undefined : open}
+                onLongPress={row ? open : undefined}
+                testID={props.triggerTestID ?? 'more-actions'}
+              >
+                {props.children}
+              </Pressable>
+            )}
           </RNHostView>
         </DropdownMenu.Trigger>
         <DropdownMenu.Items>
@@ -53,6 +69,7 @@ export function ConversationMenuNative(props: ConversationMenuNativeProps) {
                 enabled={!action.disabled}
                 modifiers={[testID(action.id)]}
                 onClick={() => {
+                  if (props.disabled || action.disabled) return
                   setExpanded(false)
                   props.onSelect(action.id)
                 }}

@@ -12,6 +12,17 @@ function response() {
 afterEach(() => vi.useRealTimers())
 
 describe('WindowCommandQueue', () => {
+  test('retains the current registration for each window independently', () => {
+    const queue = new WindowCommandQueue()
+    queue.register('main-old', 'main')
+    queue.register('workspace-new', 'workspace')
+    expect(queue.windowClients).toEqual({ main: 'main-old', workspace: 'workspace-new' })
+    queue.register('main-new', 'main')
+    queue.register('workspace-newer', 'workspace')
+    expect(queue.windowClients).toEqual({ main: 'main-new', workspace: 'workspace-newer' })
+    queue.close()
+    expect(queue.windowClients).toEqual({})
+  })
   test('keeps queued commands isolated between main and detached windows', () => {
     const queue = new WindowCommandQueue()
     queue.register('main-1', 'main')

@@ -10,7 +10,7 @@ use crate::runtime_work::remote_control_is_enabled;
 
 use super::runtime_rpc::Route;
 
-const PERSONAL_TASK_METHODS: [&str; 10] = [
+const PERSONAL_TASK_METHODS: [&str; 22] = [
     "runtime.tasks.create",
     "runtime.tasks.list",
     "runtime.tasks.search",
@@ -21,6 +21,18 @@ const PERSONAL_TASK_METHODS: [&str; 10] = [
     "runtime.tasks.cancel",
     "runtime.tasks.goal.get",
     "runtime.tasks.goal.set",
+    "runtime.worktrees.capabilities",
+    "runtime.worktrees.preflight",
+    "runtime.projects.upsert_local",
+    "runtime.workspaces.rename",
+    "runtime.workspaces.remove",
+    "runtime.sidebar.projects.pin",
+    "runtime.sidebar.tasks.pin",
+    "runtime.tasks.rename",
+    "runtime.tasks.archive",
+    "runtime.archived_conversations.list",
+    "runtime.archived_conversations.unarchive",
+    "runtime.archived_conversations.delete",
 ];
 const PROJECT_READ_METHODS: [&str; 2] = [
     "runtime.tasks.transcript",
@@ -68,6 +80,7 @@ mod tests {
         Route {
             logical_device_id: "app-record-72".into(),
             runtime_device_id: "app-record-72".into(),
+            app_device_id: Some("shared-host".into()),
             device_type: DeviceType::App,
             socket_id: "current-socket".into(),
             online: json!({"runtime_features": {"remoteTaskAccess": access}})
@@ -116,6 +129,9 @@ mod tests {
             "runtime.terminal.start",
             "runtime.tasks.rollback",
             "runtime.automations.create",
+            "runtime.worktrees.settings.update",
+            "runtime.worktrees.prepare",
+            "runtime.worktrees.delete",
         ] {
             assert!(authorize(&target, method, false).is_none());
         }
@@ -131,8 +147,15 @@ mod tests {
             );
             assert!(authorize(&target, method, false).is_none());
         }
+        for method in PERSONAL_TASK_METHODS {
+            if !PROJECT_READ_METHODS.contains(&method) {
+                assert!(authorize(&target, method, true).is_none(), "{method}");
+            }
+        }
         assert!(authorize(&target, "runtime.tasks.send", true).is_none());
         assert!(authorize(&target, "runtime.tasks.guidance", true).is_none());
+        assert!(authorize(&target, "runtime.worktrees.capabilities", true).is_none());
+        assert!(authorize(&target, "runtime.worktrees.preflight", true).is_none());
     }
 
     #[test]

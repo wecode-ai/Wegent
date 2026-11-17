@@ -1,0 +1,8 @@
+{
+  "order": 38500,
+  "ci": {
+    "core": { "order": 40500, "shard": 3, "position": 11500 }
+  },
+  "scenario": "./scenarios/coordination-history.scenario.mjs",
+  "scenarioOnly": true
+}

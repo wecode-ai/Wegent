@@ -100,17 +100,21 @@ test('opens collapsed template customization before reading its role catalog', a
   let open = false
   const command = vi.fn(async (action: string, selector: string) => {
     if (action === 'getElementCount') return open ? 0 : 1
-    if (action === 'click' && selector.endsWith('[data-testid="template-customize-main"]')) {
+    if (
+      action === 'clickWhenEnabled' &&
+      selector.endsWith('[data-testid="template-customize-main"]')
+    ) {
       open = true
     }
-    if (action === 'waitFor' && !open) throw new Error('Template customization is still closed')
+    if (action === 'waitFor' && selector.includes('template-role-') && !open)
+      throw new Error('Template customization is still closed')
     if (action === 'getAttribute') return 'human:1'
   })
 
   await expect(fillTemplateRoleBindings({ command }, 3)).resolves.toBeUndefined()
   expect(open).toBe(true)
   expect(command).toHaveBeenCalledWith(
-    'click',
+    'clickWhenEnabled',
     '[data-workspace-tab-content][aria-hidden="false"] [data-testid="template-customize-main"]'
   )
   expect(command).toHaveBeenCalledWith('select', role(0), { value: 'human:1' })

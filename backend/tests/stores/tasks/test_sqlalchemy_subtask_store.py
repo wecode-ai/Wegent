@@ -4,6 +4,7 @@
 
 from datetime import datetime, timedelta
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
@@ -128,6 +129,169 @@ def test_list_by_task_ordered_excludes_subtasks(test_db: Session) -> None:
     )
 
     assert [subtask.id for subtask in subtasks] == [61, 63]
+
+
+def test_list_by_task_ordered_can_load_only_recent_rows(test_db: Session) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(7, owner_id=10))
+    test_db.add_all(
+        [
+            _subtask(subtask_id=71, task_id=7, user_id=10, message_id=1),
+            _subtask(subtask_id=72, task_id=7, user_id=10, message_id=2),
+            _subtask(subtask_id=73, task_id=7, user_id=10, message_id=3),
+        ]
+    )
+    test_db.commit()
+
+    subtasks = store.list_by_task_ordered(
+        test_db,
+        task_id=7,
+        owner_user_id=10,
+        recent_limit=2,
+    )
+
+    assert [subtask.id for subtask in subtasks] == [72, 73]
+    assert [subtask.message_id for subtask in subtasks] == [2, 3]
+    assert (
+        store.list_by_task_ordered(test_db, task_id=7, owner_user_id=10, recent_limit=0)
+        == []
+    )
+
+
+def test_list_by_task_ordered_recent_limit_uses_id_tie_breaker(
+    test_db: Session,
+) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(8, owner_id=10))
+    first_message = _subtask(subtask_id=81, task_id=8, user_id=10, message_id=1)
+    second_message = _subtask(subtask_id=82, task_id=8, user_id=10, message_id=1)
+    second_message.created_at = first_message.created_at
+    test_db.add_all(
+        [
+            first_message,
+            second_message,
+            _subtask(subtask_id=83, task_id=8, user_id=10, message_id=2),
+        ]
+    )
+    test_db.commit()
+
+    subtasks = store.list_by_task_ordered(
+        test_db,
+        task_id=8,
+        owner_user_id=10,
+        recent_limit=2,
+    )
+
+    assert [subtask.id for subtask in subtasks] == [82, 83]
+
+
+@pytest.mark.parametrize(
+    ("recent_limit", "expected_ids"), [(None, [71, 72, 73]), (2, [72, 73])]
+)
+def test_history_message_bound_applies_before_loading_payloads(
+    test_db: Session, monkeypatch, recent_limit, expected_ids
+) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(7, owner_id=10))
+    test_db.add_all(
+        [
+            _subtask(subtask_id=70 + i, task_id=7, user_id=10, message_id=i)
+            for i in range(1, 8)
+        ]
+    )
+    test_db.flush()
+    load_ordered = store._load_ordered
+    loaded_ids = []
+
+    def record_load(db, subtask_ids):
+        loaded_ids.append(list(subtask_ids))
+        return load_ordered(db, subtask_ids)
+
+    monkeypatch.setattr(store, "_load_ordered", record_load)
+
+    result = store.list_by_task_ordered(
+        test_db,
+        task_id=7,
+        owner_user_id=10,
+        before_message_id=4,
+        recent_limit=recent_limit,
+    )
+
+    assert [row.id for row in result] == expected_ids
+    assert loaded_ids == [expected_ids]
+    assert (
+        store.list_by_task_ordered(
+            test_db, task_id=7, before_message_id=0, recent_limit=2
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("order_by", "expected_ids"),
+    [("id", [82, 83]), ("message_id", [83, 81]), ("created_at", [81, 82])],
+)
+def test_bounded_history_respects_requested_order(
+    test_db: Session, order_by: str, expected_ids: list[int]
+) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(8, owner_id=10))
+    rows = [
+        _subtask(subtask_id=81, task_id=8, user_id=10, message_id=3),
+        _subtask(subtask_id=82, task_id=8, user_id=10, message_id=1),
+        _subtask(subtask_id=83, task_id=8, user_id=10, message_id=2),
+    ]
+    for row, seconds in zip(rows, [2, 3, 1]):
+        row.created_at = datetime(2026, 1, 1) + timedelta(seconds=seconds)
+    test_db.add_all(rows)
+    test_db.flush()
+
+    result = store.list_by_task_ordered(
+        test_db, task_id=8, owner_user_id=10, recent_limit=2, order_by=order_by
+    )
+
+    assert [row.id for row in result] == expected_ids
+    full_result = store.list_by_task_ordered(
+        test_db, task_id=8, owner_user_id=10, order_by=order_by
+    )
+    assert result == full_result[-2:]
+
+
+def test_bounded_history_filters_before_applying_window(test_db: Session) -> None:
+    store = SqlAlchemySubtaskStore()
+    test_db.add(_task(8, owner_id=10))
+    test_db.add_all(
+        [
+            _subtask(subtask_id=80 + i, task_id=8, user_id=10, message_id=i)
+            for i in range(1, 8)
+        ]
+    )
+    test_db.flush()
+    for subtask_id in [82, 83, 84, 85, 87]:
+        test_db.get(Subtask, subtask_id).role = SubtaskRole.ASSISTANT
+    test_db.get(Subtask, 85).status = SubtaskStatus.FAILED
+    test_db.get(Subtask, 87).status = SubtaskStatus.DELETE
+    test_db.flush()
+
+    result = store.list_by_task_ordered(
+        test_db,
+        task_id=8,
+        owner_user_id=10,
+        message_ids=[2, 3, 4, 5, 6, 7],
+        exclude_subtask_ids=[84],
+        exclude_deleted=True,
+        statuses=(SubtaskStatus.COMPLETED,),
+        roles=(SubtaskRole.ASSISTANT,),
+        recent_limit=2,
+    )
+
+    assert [row.message_id for row in result] == [2, 3]
+    assert store.list_by_task_ordered(test_db, task_id=8, statuses=[]) == []
+    assert store.list_by_task_ordered(test_db, task_id=8, roles=[]) == []
+    assert (
+        store.list_by_task_ordered(test_db, task_id=8, owner_user_id=11, recent_limit=2)
+        == []
+    )
 
 
 def test_get_basic_by_id_returns_subtask(test_db: Session) -> None:

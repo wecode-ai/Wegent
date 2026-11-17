@@ -79,13 +79,15 @@ export function ProjectChatComposerSurface({
     <div
       data-testid="project-chat-composer"
       data-presentation={presentation}
-      className={
+      className={cn(
+        styles.surface,
+        'min-w-0',
         presentation === 'configuration'
           ? 'relative w-full rounded-xl border border-border/70 bg-background'
           : presentation === 'document'
             ? 'relative w-full rounded-2xl border border-border/60 bg-background shadow-sm keyboard:focus-within:border-focus/70 transition-colors'
             : 'relative w-full'
-      }
+      )}
     >
       {workBar}
       {embeddedInForm ? (

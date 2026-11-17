@@ -35,7 +35,7 @@ def test_refresh_requires_coordination_before_reading_credentials(
     operations = PluginOAuthOperations(PluginAuthExecutionService(connections))
     db = Mock(spec=Session)
 
-    def unavailable(*_args):
+    def unavailable(*_args, **_scope):
         raise PluginAccountAuthError("plugin_auth_backend_unavailable", 503)
 
     monkeypatch.setattr(connections, "_coordinate_owner", unavailable)

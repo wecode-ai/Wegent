@@ -9,6 +9,7 @@ import {
 } from '@/components/topnav/TitlebarActionsPortal'
 import { AppearanceProvider } from '@/features/appearance'
 import { AuthContext } from '@/features/auth/useAuth'
+import { createPersonalHomeTaskDraftStore } from '@/features/todo/personalHomeTaskDrafts'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import {
   applyRuntimeConversationAction,
@@ -1093,6 +1094,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
     subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
     baseProps.projectChat.inputByScope = {}
+    baseProps.projectChat.personalHomeTaskDraftStore = createPersonalHomeTaskDraftStore()
     baseProps.projectChat.setInputForScope.mockReset()
     baseProps.projectChat.setInputForScope.mockImplementation((scope: string, value: string) => {
       if (value) baseProps.projectChat.inputByScope[scope] = value
@@ -1129,6 +1131,7 @@ describe('DesktopWorkbenchLayout', () => {
     onOpenPlugins: vi.fn(),
     projectChat: {
       inputByScope: {} as Record<string, string>,
+      personalHomeTaskDraftStore: createPersonalHomeTaskDraftStore(),
       setInputForScope: vi.fn(),
       models: [],
       skills: [],

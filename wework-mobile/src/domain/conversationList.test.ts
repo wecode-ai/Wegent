@@ -21,13 +21,22 @@ function workspace(
 
 function presentation(workspaces: RuntimeDeviceWorkspace[], chats: RuntimeDeviceWorkspace[] = []) {
   const work: RuntimeWorkListResponse = {
-    projects: [{ project: { key: 'wegent', name: 'Wegent' }, deviceWorkspaces: workspaces }],
+    projects: workspaces.map(workspace => ({
+      project: { key: workspace.workspacePath, name: 'Wegent', stateDeviceId: workspace.deviceId },
+      deviceWorkspaces: [workspace],
+    })),
     chats,
     totalTasks: [...workspaces, ...chats].reduce((total, item) => total + item.tasks.length, 0),
   }
   return buildConversationList(
     flattenConversations(work),
-    workspaces.map(workspace => ({ projectName: 'Wegent', workspace }))
+    work.projects.flatMap(projectWork =>
+      projectWork.deviceWorkspaces.map(workspace => ({
+        projectName: projectWork.project.name,
+        projectWork,
+        workspace,
+      }))
+    )
   )
 }
 
@@ -134,4 +143,53 @@ describe('buildConversationList', () => {
     expect(result.projects).toHaveLength(1)
     expect(source.tasks[0]!.taskId).toBe('first')
   })
+})
+
+it('presents a multi-root project once and orders pinned projects before ordinary ones', () => {
+  const first = workspace('computer', '/first', 'one')
+  const second = workspace('computer', '/second', 'two')
+  const ordinary = {
+    project: { key: 'ordinary', name: 'Ordinary', stateDeviceId: 'computer' },
+    deviceWorkspaces: [workspace('computer', '/ordinary', 'three')],
+  }
+  const pinned = {
+    project: { key: 'multi-root', name: 'Pinned', stateDeviceId: 'computer', pinned: true },
+    deviceWorkspaces: [first, second],
+  }
+  const work = { projects: [ordinary, pinned], chats: [], totalTasks: 3 }
+  const result = buildConversationList(
+    flattenConversations(work),
+    work.projects.flatMap(projectWork =>
+      projectWork.deviceWorkspaces.map(workspace => ({
+        projectWork,
+        projectName: projectWork.project.name,
+        workspace,
+      }))
+    )
+  )
+  expect(result.projects.map(group => group.name)).toEqual(['Ordinary'])
+  expect(result.pinnedProjects.map(group => group.name)).toEqual(['Pinned'])
+  expect(result.pinnedProjects[0]!.conversations.map(item => item.address.taskId)).toEqual([
+    'one',
+    'two',
+  ])
+  expect(result.pinnedProjects[0]!.projectWork).toBe(pinned)
+})
+
+it('keeps two projects sharing a directory and name distinct by project identity', () => {
+  const projects = ['first', 'second'].map(key => ({
+    project: { key, name: 'Same name', stateDeviceId: 'computer' },
+    deviceWorkspaces: [workspace('computer', '/shared', key)],
+  }))
+  const result = buildConversationList(
+    flattenConversations({ projects, chats: [], totalTasks: 2 }),
+    projects.map(projectWork => ({
+      projectName: projectWork.project.name,
+      projectWork,
+      workspace: projectWork.deviceWorkspaces[0]!,
+    }))
+  )
+  expect(
+    result.projects.map(group => group.conversations.map(item => item.address.taskId))
+  ).toEqual([['first'], ['second']])
 })

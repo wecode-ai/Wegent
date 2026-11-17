@@ -22,6 +22,18 @@ APP_REMOTE_TASK_METHODS = frozenset(
         "runtime.tasks.cancel",
         "runtime.tasks.goal.get",
         "runtime.tasks.goal.set",
+        "runtime.worktrees.capabilities",
+        "runtime.worktrees.preflight",
+        "runtime.projects.upsert_local",
+        "runtime.workspaces.rename",
+        "runtime.workspaces.remove",
+        "runtime.sidebar.projects.pin",
+        "runtime.sidebar.tasks.pin",
+        "runtime.tasks.rename",
+        "runtime.tasks.archive",
+        "runtime.archived_conversations.list",
+        "runtime.archived_conversations.unarchive",
+        "runtime.archived_conversations.delete",
     }
 )
 

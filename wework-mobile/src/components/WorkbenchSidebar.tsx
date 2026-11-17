@@ -3,6 +3,9 @@ import { ActivityIndicator, Image, Modal, Pressable, StyleSheet, View } from 're
 import { Text, useTheme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { ConversationMenuNative } from './ConversationMenuNative'
+import type { RuntimeFailureAction } from '@/hooks/useRuntimeFailures'
+
 import { LiquidGlassButton } from './LiquidGlass'
 
 interface WorkbenchSidebarProps {
@@ -10,9 +13,8 @@ interface WorkbenchSidebarProps {
   userLabel: string
   onDismiss: () => void
   onSettings: () => void
-  connectionError: string | null
-  reconnecting: boolean
-  onRetryConnection: () => Promise<void>
+  failures: RuntimeFailureAction[]
+  onRetryFailure: (failure: RuntimeFailureAction) => Promise<void>
 }
 
 export function WorkbenchSidebar({
@@ -20,9 +22,8 @@ export function WorkbenchSidebar({
   userLabel,
   onDismiss,
   onSettings,
-  connectionError,
-  reconnecting,
-  onRetryConnection,
+  failures,
+  onRetryFailure,
 }: WorkbenchSidebarProps) {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
@@ -89,43 +90,71 @@ export function WorkbenchSidebar({
           </Pressable>
           <View style={styles.spacer} />
           <View style={styles.account}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={connectionError ? '连接未完成，轻点重试' : '账户设置'}
-              accessibilityState={{ disabled: reconnecting, busy: reconnecting }}
-              disabled={reconnecting}
-              onPress={() => {
-                if (connectionError) void onRetryConnection()
-                else {
+            {failures.length ? (
+              <ConversationMenuNative
+                actions={failures.map(failure => ({
+                  id: failure.id,
+                  title: failure.label,
+                  icon: 'arrow.clockwise',
+                  disabled: failure.retrying,
+                  section: 'settings',
+                }))}
+                colorScheme={theme.dark ? 'dark' : 'light'}
+                disabled={false}
+                onSelect={id => {
+                  const failure = failures.find(item => item.id === id)
+                  if (failure) void onRetryFailure(failure)
+                }}
+                title="选择重试项目"
+                width={48}
+                height={48}
+                testID="workbench-sidebar-retry-menu"
+                triggerTestID="workbench-sidebar-avatar"
+                accessibilityLabel="查看连接与读取状态，选择重试项目"
+              >
+                <View style={styles.avatarTouchArea}>
+                  <View style={[styles.avatar, { backgroundColor: theme.colors.surfaceVariant }]}>
+                    <Text style={styles.initial}>
+                      {userLabel.trim().slice(0, 1).toLocaleUpperCase() || 'W'}
+                    </Text>
+                  </View>
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.connectionBadge,
+                      {
+                        backgroundColor: theme.colors.error,
+                        borderColor: theme.colors.background,
+                      },
+                    ]}
+                    testID="workbench-sidebar-connection-badge"
+                  >
+                    {failures.some(failure => failure.retrying) ? (
+                      <ActivityIndicator size={12} color={theme.colors.onError} />
+                    ) : (
+                      <Ionicons name="alert" size={12} color={theme.colors.onError} />
+                    )}
+                  </View>
+                </View>
+              </ConversationMenuNative>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="账户设置"
+                onPress={() => {
                   onDismiss()
                   onSettings()
-                }
-              }}
-              style={styles.avatarTouchArea}
-              testID="workbench-sidebar-avatar"
-            >
-              <View style={[styles.avatar, { backgroundColor: theme.colors.surfaceVariant }]}>
-                <Text style={styles.initial}>
-                  {userLabel.trim().slice(0, 1).toLocaleUpperCase() || 'W'}
-                </Text>
-              </View>
-              {connectionError ? (
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.connectionBadge,
-                    { backgroundColor: theme.colors.error, borderColor: theme.colors.background },
-                  ]}
-                  testID="workbench-sidebar-connection-badge"
-                >
-                  {reconnecting ? (
-                    <ActivityIndicator size={12} color={theme.colors.onError} />
-                  ) : (
-                    <Ionicons name="alert" size={12} color={theme.colors.onError} />
-                  )}
+                }}
+                style={styles.avatarTouchArea}
+                testID="workbench-sidebar-avatar"
+              >
+                <View style={[styles.avatar, { backgroundColor: theme.colors.surfaceVariant }]}>
+                  <Text style={styles.initial}>
+                    {userLabel.trim().slice(0, 1).toLocaleUpperCase() || 'W'}
+                  </Text>
                 </View>
-              ) : null}
-            </Pressable>
+              </Pressable>
+            )}
             <Pressable
               accessibilityLabel="设置"
               accessibilityRole="button"

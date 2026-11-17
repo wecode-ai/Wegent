@@ -1049,6 +1049,10 @@ impl AppIpcServer {
             .map_err(|error| format!("failed to bind app IPC Unix socket: {error}"))?;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
             .map_err(|error| format!("failed to secure app IPC Unix socket: {error}"))?;
+        write_executor_log_line(&format_executor_log(
+            "app IPC local endpoint listening",
+            &[("transport", "unix".to_owned())],
+        ));
         let (owner_closed_tx, mut owner_closed_rx) = mpsc::channel::<()>(1);
         loop {
             let (stream, _) = tokio::select! {
@@ -1092,6 +1096,10 @@ impl AppIpcServer {
         }
         let mut first_instance = true;
         let mut pipe = create_named_pipe_server(endpoint, first_instance)?;
+        write_executor_log_line(&format_executor_log(
+            "app IPC local endpoint listening",
+            &[("transport", "named-pipe".to_owned())],
+        ));
         let (owner_closed_tx, mut owner_closed_rx) = mpsc::channel::<()>(1);
         loop {
             tokio::select! {

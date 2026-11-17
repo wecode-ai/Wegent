@@ -48,6 +48,38 @@ from integration_checks.plugin_auth_fixtures import (
     race,
     sessions,
 )
+from integration_checks.plugin_install_identity_mysql import (
+    test_http_reinstall_uses_existing_identity_with_real_mysql_and_redis,
+)
+
+
+def test_real_plugin_leases_use_180_seconds_and_allow_parallel_plugins(context):
+    """Keep different installations live together without an account mutex."""
+    second_name = f"parallel-lease-{uuid.uuid4().hex}"
+    with context.sessions.begin() as db:
+        other = Kind(
+            user_id=context.user_id,
+            kind="InstalledPlugin",
+            namespace="default",
+            name=second_name,
+            json={"spec": {"revision": 0}},
+            is_active=True,
+        )
+        db.add(other)
+        db.flush()
+        second_id = other.id
+    client = coordination._redis_client()
+    first_key = lock_key(context)
+    second_key = lock_key(context, second_name)
+    with context.sessions() as first, context.sessions() as second:
+        acquire_plugin_write_lock(
+            first, context.user_id, installed_id=context.plugin_id
+        )
+        acquire_plugin_write_lock(second, context.user_id, installed_id=second_id)
+        leases = client.pipeline().pttl(first_key).pttl(second_key).execute()
+        assert all(150_000 <= ttl <= 180_000 for ttl in leases), leases
+        assert not client.exists(f"wegent:plugin-write:{context.user_id}")
+    assert not client.exists(first_key) and not client.exists(second_key)
 
 
 @pytest.mark.parametrize("same_slug", [False, True])
@@ -153,8 +185,8 @@ def test_catalog_republish_does_not_block_first_publish_in_preceding_gap(session
             ).delete(synchronize_session=False)
 
 
-def lock_key(context: Context) -> str:
-    return f"wegent:plugin-write:{context.user_id}"
+def lock_key(context: Context, name: str = "mysql-auth-fixture") -> str:
+    return f"wegent:plugin-write:{context.user_id}:{name}"
 
 
 def lifecycle(context: Context, db: Session, action: str) -> dict:
@@ -180,7 +212,9 @@ def run_ordered(
         with context.sessions() as db:
             establish_snapshot(db, context)
             attempted.set()
-            acquire_plugin_write_lock(db, context.user_id)
+            acquire_plugin_write_lock(
+                db, context.user_id, installed_id=context.plugin_id
+            )
             acquired.set()
             try:
                 result = waiting(db)
@@ -191,7 +225,9 @@ def run_ordered(
                 return error.code
 
     with context.sessions() as holder, ThreadPoolExecutor(max_workers=1) as pool:
-        acquire_plugin_write_lock(holder, context.user_id)
+        acquire_plugin_write_lock(
+            holder, context.user_id, installed_id=context.plugin_id
+        )
         with coordination._redis_client().monitor() as monitor:
             pending = pool.submit(worker)
             try:
@@ -264,23 +300,23 @@ def test_same_user_contention_is_retryable_after_the_holder_rolls_back(context):
     client = coordination._redis_client()
     with context.sessions() as holder:
         automation.configure(holder, context.user_id, False)
-        token = client.get(lock_key(context))
+        token = client.get(lock_key(context, "@account-policy"))
         with context.sessions() as blocked:
             with pytest.raises(PluginWriteError) as failure:
                 automation.configure(blocked, context.user_id, True)
             assert failure.value.code == "plugin_write_busy"
             assert failure.value.status_code == 503
-            assert client.get(lock_key(context)) == token
+            assert client.get(lock_key(context, "@account-policy")) == token
             blocked.rollback()
         holder.rollback()
 
-    assert not client.exists(lock_key(context))
+    assert not client.exists(lock_key(context, "@account-policy"))
     with context.sessions.begin() as retry:
         assert automation.configure(retry, context.user_id, True) == {"enabled": True}
     with context.sessions() as db:
         policies = automation._policy(db, context.user_id).all()
         assert len(policies) == 1 and policies[0].json["spec"]["enabled"] is True
-    assert not client.exists(lock_key(context))
+    assert not client.exists(lock_key(context, "@account-policy"))
 
 
 def test_another_user_enrolls_while_the_same_account_identity_is_uncommitted(
@@ -518,10 +554,14 @@ def test_expired_first_upload_rolls_back_its_install_and_binary_after_successor_
             )
         old_id = int(old_install.metadata["labels"]["id"])
         assert stale.query(SkillBinary).filter_by(kind_id=old_id).count() == 1
-        lease = stale.info["plugin_write_leases"][context.user_id]
+        lease = stale.info["plugin_write_leases"][
+            (context.user_id, service._safe_kind_name("concurrent-upload"))
+        ]
         # A process can pause immediately after its last successful Redis check.
         lease.check = lambda: None
-        assert client.pexpire(lock_key(context), 100)
+        assert client.pexpire(
+            lock_key(context, service._safe_kind_name("concurrent-upload")), 100
+        )
 
         with context.sessions() as successor:
             recovered = service.upload_plugin(
@@ -560,7 +600,9 @@ def test_expired_first_upload_rolls_back_its_install_and_binary_after_successor_
             .all()
         )
         assert len(binaries) == 1 and binaries[0].kind_id == recovered_id
-    assert not client.exists(lock_key(context))
+    assert not client.exists(
+        lock_key(context, service._safe_kind_name("concurrent-upload"))
+    )
 
 
 def test_stale_automation_cannot_insert_an_intent_after_logout_commits(
@@ -574,7 +616,7 @@ def test_stale_automation_cannot_insert_an_intent_after_logout_commits(
 
     def logout_before_intent_insert(db: Session, user_id: int, spec: dict):
         # The real automation has already read the enabled local-auth policy.
-        lease = db.info["plugin_write_leases"][context.user_id]
+        lease = db.info["plugin_write_leases"][(context.user_id, "mysql-auth-fixture")]
         lease.check = lambda: None
         assert client.pexpire(lock_key(context), 100)
         with context.sessions.begin() as successor:
@@ -621,3 +663,219 @@ def test_stale_automation_cannot_insert_an_intent_after_logout_commits(
             installed_ids=[context.plugin_id],
         ) == {"migrations": []}
     assert not client.exists(lock_key(context))
+
+
+def test_stale_ack_merge_preserves_newer_dispatch_counters_on_real_mysql(context):
+    from app.services.device.plugin_sync_protocol import (
+        advance_plugin_snapshot_watermark,
+        lock_plugin_sync_state,
+        plugin_snapshot_watermark,
+        register_plugin_snapshot_intent,
+    )
+
+    with context.sessions() as db:
+        lock_plugin_sync_state(db, context.user_id)
+        db.commit()
+    with context.sessions() as acknowledgement:
+        state = lock_plugin_sync_state(acknowledgement, context.user_id, merge=True)
+        advance_plugin_snapshot_watermark(
+            state,
+            "device.with.dot",
+            generation=2,
+            complete=True,
+            installed_plugin_ids=[context.plugin_id],
+        )
+        register_plugin_snapshot_intent(
+            context.sessions,
+            user_id=context.user_id,
+            device_id="device.with.dot",
+            payload={
+                "plugins": [{"installed_plugin_id": context.plugin_id}],
+                "plugin_sync": {"generation": 9, "complete": True},
+            },
+        )
+        acknowledgement.commit()
+    with context.sessions() as db:
+        state = lock_plugin_sync_state(db, context.user_id)
+        assert state.json["spec"]["generation"] == 9
+        assert (
+            plugin_snapshot_watermark(state, "device.with.dot", context.plugin_id) == 9
+        )
+
+
+def test_snapshot_survives_more_than_eight_committed_metadata_changes(context):
+    from app.services.device.plugin_sync_protocol import (
+        load_versioned_plugin_payload,
+        lock_plugin_sync_state,
+    )
+
+    with context.sessions() as db:
+        lock_plugin_sync_state(db, context.user_id)
+        db.commit()
+    reads = []
+
+    def load(db):
+        installed = db.get(Kind, context.plugin_id)
+        marker = installed.json["spec"].get("contentionMarker", 0)
+        reads.append(marker)
+        if len(reads) <= 9:
+            with context.sessions() as writer:
+                row = writer.get(Kind, context.plugin_id)
+                document = deepcopy(row.json)
+                document["spec"]["contentionMarker"] = len(reads)
+                row.json = document
+                state = lock_plugin_sync_state(writer, context.user_id, merge=True)
+                state.json = deepcopy(state.json)
+                writer.commit()
+        return {
+            "plugins": [{"installed_plugin_id": context.plugin_id, "marker": marker}]
+        }
+
+    snapshot = load_versioned_plugin_payload(
+        context.sessions, user_id=context.user_id, load_payload=load, complete=False
+    )
+    assert reads == list(range(10))
+    assert snapshot["plugins"][0]["marker"] == 9
+    with context.sessions() as db:
+        state = lock_plugin_sync_state(db, context.user_id)
+        assert snapshot["plugin_sync"]["generation"] == state.json["spec"]["generation"]
+
+
+def test_parallel_ack_metadata_commits_need_no_global_revision_retry(context):
+    from app.services.device.plugin_sync_protocol import (
+        advance_plugin_snapshot_watermark,
+        lock_plugin_sync_state,
+    )
+
+    with context.sessions() as db:
+        lock_plugin_sync_state(db, context.user_id)
+        db.commit()
+    read = threading.Barrier(4)
+
+    def acknowledge(index):
+        with context.sessions() as db:
+            state = lock_plugin_sync_state(db, context.user_id, merge=True)
+            advance_plugin_snapshot_watermark(
+                state,
+                f"peer-{index}",
+                generation=index + 1,
+                complete=False,
+                installed_plugin_ids=[context.plugin_id],
+            )
+            read.wait(timeout=10)
+            db.commit()
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        pending = [pool.submit(acknowledge, index) for index in range(4)]
+        for future in pending:
+            future.result(timeout=15)
+    with context.sessions() as db:
+        state = lock_plugin_sync_state(db, context.user_id)
+        assert state.json["spec"]["generation"] == 4
+        for index in range(4):
+            assert (
+                state.json["spec"]["devices"][f"peer-{index}"]["plugins"][
+                    str(context.plugin_id)
+                ]
+                == index + 1
+            )
+
+
+def test_compactor_skips_unresolved_parents_before_its_mysql_batch_limit(context):
+    from scripts.compact_plugin_auth_migrations import compact_batch
+
+    with context.sessions() as db:
+        rows = []
+        for parent in ([], context.plugin_id, context.plugin_id):
+            row = Kind(
+                user_id=context.user_id,
+                kind="ConnectorMigration",
+                namespace="plugin-auth",
+                name=uuid.uuid4().hex,
+                is_active=False,
+                json={
+                    "spec": {
+                        "automatic": True,
+                        "source_identity": "compactor-fixture",
+                        "connector_slug": "test",
+                        "device_id": context.device_id,
+                        "expires_at": 1,
+                        "installed_plugin_id": parent,
+                    }
+                },
+            )
+            db.add(row)
+            rows.append(row)
+        db.commit()
+        ids = [row.id for row in rows]
+        assert compact_batch(db, context.user_id, 1) == 1
+        db.commit()
+        assert set(id for id, in db.query(Kind.id).filter(Kind.id.in_(ids))) == {
+            ids[0],
+            ids[2],
+        }
+
+
+def test_real_mysql_rejects_ack_device_writes_after_a_newer_dispatch(context):
+    from app.models.plugin_marketplace import PluginDeviceInstallation
+    from app.services.device.plugin_sync_protocol import (
+        advance_plugin_snapshot_watermark,
+        lock_plugin_sync_state,
+        register_plugin_snapshot_intent,
+    )
+    from app.services.plugin_sync_revision import remember_ack_watermark
+
+    PluginDeviceInstallation.__table__.create(
+        context.sessions.kw["bind"], checkfirst=True
+    )
+    with context.sessions() as db:
+        lock_plugin_sync_state(db, context.user_id)
+        db.add(
+            PluginDeviceInstallation(
+                user_id=context.user_id,
+                installed_kind_id=context.plugin_id,
+                device_id="ack-fence",
+                state="failed",
+                attempt_count=2,
+            )
+        )
+        db.commit()
+    with context.sessions() as acknowledgement:
+        state = lock_plugin_sync_state(acknowledgement, context.user_id, merge=True)
+        remember_ack_watermark(
+            acknowledgement, state, "ack-fence", context.plugin_id, 7
+        )
+        row = (
+            acknowledgement.query(PluginDeviceInstallation)
+            .filter_by(user_id=context.user_id, device_id="ack-fence")
+            .one()
+        )
+        row.attempt_count = 3
+        register_plugin_snapshot_intent(
+            context.sessions,
+            user_id=context.user_id,
+            device_id="ack-fence",
+            payload={
+                "plugins": [{"installed_plugin_id": context.plugin_id}],
+                "plugin_sync": {"generation": 8, "complete": False},
+            },
+        )
+        advance_plugin_snapshot_watermark(
+            state,
+            "ack-fence",
+            generation=7,
+            complete=False,
+            installed_plugin_ids=[context.plugin_id],
+        )
+        with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
+            acknowledgement.commit()
+        acknowledgement.rollback()
+    with context.sessions() as db:
+        row = (
+            db.query(PluginDeviceInstallation)
+            .filter_by(user_id=context.user_id, device_id="ack-fence")
+            .one()
+        )
+        assert row.attempt_count == 2
+        db.delete(row)
+        db.commit()
