@@ -3,7 +3,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
 
 const launcher = resolve(import.meta.dirname, '../e2e/desktop/run-with-openbox.sh')
@@ -51,6 +51,11 @@ fi
 
 function runFixture(openbox, xprop, display = '#!/bin/sh\nexit 0\n') {
   const directory = mkdtempSync(join(tmpdir(), 'wegent-openbox-readiness-'))
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => process.platform !== 'win32' || key.toLowerCase() !== 'path'
+    )
+  )
   try {
     writeFileSync(join(directory, 'openbox'), openbox, { mode: 0o755 })
     writeFileSync(join(directory, 'xprop-window-manager'), xprop, { mode: 0o755 })
@@ -84,8 +89,8 @@ shift
       ],
       {
         env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH}`,
+          ...environment,
+          PATH: `${directory}${delimiter}${process.env.PATH}`,
           DISPLAY: ':1234',
           OPENBOX_TEST_DIR: directory,
         },
@@ -94,7 +99,7 @@ shift
         windowsHide: true,
       }
     )
-    expect(result.error).toBeUndefined()
+    expect(result.error, result.stderr).toBeUndefined()
     const displayQueries = join(directory, 'display-queries')
     return {
       ...result,
@@ -199,7 +204,9 @@ fs.writeFileSync(directory + '/pid', String(process.pid))
 // Display probes have finished; window-manager probes must not rewrite this counter.
 if (Number(fs.readFileSync(directory + '/display-queries', 'utf8')) < 3) process.exit(1)
 fs.writeFileSync(directory + '/registered', '')
-setInterval(() => {}, 1000)
+setInterval(() => {
+  if (!fs.existsSync(directory)) process.exit(0)
+}, 50)
 `,
       xprop,
       delayedXDisplay
