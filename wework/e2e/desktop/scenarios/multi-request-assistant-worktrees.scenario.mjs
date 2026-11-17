@@ -3,6 +3,11 @@ import { execFileSync } from 'node:child_process'
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createAsyncRequestModel } from '../modules/async-request-model.mjs'
+import {
+  cleanupAssistantRequestFixture,
+  restorePersonalStandInProfile,
+  waitForAssistantRequestGrant,
+} from '../modules/async-assistant-request-fixture.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { readProjectChatMessages } from '../modules/project-chat-snapshot.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -23,6 +28,7 @@ export function createDesktopScenario(options) {
     )
   })
   let cloud, environment, user, project, issue, source, a, b, otherToken
+  let authorization, verificationError
   const git = args => {
     const env = { ...process.env }
     for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE'])
@@ -91,7 +97,7 @@ export function createDesktopScenario(options) {
     },
     handleHttp: model.handleHttp,
     async verify(control) {
-      await environment.waitForConnectedAppDevice()
+      const appDevice = await environment.waitForConnectedAppDevice()
       const rpc = (method, values) => requestExecutor(control, method, values, uiTimeoutMs)
       source = await mkdtemp(join(workspacePath, 'async-source-'))
       git(['init', '-b', 'main'])
@@ -116,7 +122,7 @@ export function createDesktopScenario(options) {
       let restoreExperience = false
       try {
         await rpc('runtime.settings.update', { maxConcurrentStandInTasks: 2 })
-        await rpc('runtime.stand_in.personal.save', {
+        const saved = await rpc('runtime.stand_in.personal.save', {
           userId: user.id,
           settings: {
             ...original,
@@ -142,6 +148,16 @@ export function createDesktopScenario(options) {
               },
             },
             roles: [],
+          },
+        })
+        authorization = { savedVersion: saved.version, declaration: null }
+        await waitForAssistantRequestGrant({
+          environment,
+          deviceName: appDevice.device_id,
+          saved,
+          until,
+          observe: declaration => {
+            authorization.declaration = declaration
           },
         })
         issue = await request(`/v1/cloud-projects/${project.id}/loop-items`, {
@@ -343,29 +359,43 @@ export function createDesktopScenario(options) {
             'Private paths, source data and tool contents must remain in child workrooms'
           )
         assert.equal((await list()).requests.length, 2)
+      } catch (error) {
+        verificationError = error
+        throw error
       } finally {
-        model.cleanup()
-        if (a)
-          await request(path(), {
-            action: 'cancel',
-            requestId: a.requestId,
-            idempotencyKey: `${MARKER}-cleanup-A`,
-          })
-        if (b)
-          await request(path(), {
-            action: 'cancel',
-            requestId: b.requestId,
-            idempotencyKey: `${MARKER}-cleanup-B`,
-          })
-        await rpc('runtime.stand_in.personal.save', { userId: user.id, settings: original })
-        await rpc('runtime.settings.update', limits)
-        if (restoreExperience) {
-          await control.command('navigate', 'body', { value: '/settings' })
-          const toggle = '[data-testid="general-collaboration-experience-toggle"]'
-          await control.command('waitFor', toggle)
-          await control.command('clickWhenEnabled', toggle)
-          await control.command('waitFor', `${toggle}[aria-checked="false"]`)
-        }
+        await cleanupAssistantRequestFixture(
+          [
+            () => model.cleanup(),
+            async () => {
+              if (a)
+                await request(path(), {
+                  action: 'cancel',
+                  requestId: a.requestId,
+                  idempotencyKey: `${MARKER}-cleanup-A`,
+                })
+            },
+            async () => {
+              if (b)
+                await request(path(), {
+                  action: 'cancel',
+                  requestId: b.requestId,
+                  idempotencyKey: `${MARKER}-cleanup-B`,
+                })
+            },
+            () => restorePersonalStandInProfile(rpc, user.id, original),
+            () => rpc('runtime.settings.update', limits),
+            async () => {
+              if (restoreExperience) {
+                await control.command('navigate', 'body', { value: '/settings' })
+                const toggle = '[data-testid="general-collaboration-experience-toggle"]'
+                await control.command('waitFor', toggle)
+                await control.command('clickWhenEnabled', toggle)
+                await control.command('waitFor', `${toggle}[aria-checked="false"]`)
+              }
+            },
+          ],
+          verificationError
+        )
       }
     },
     diagnostics() {
@@ -375,6 +405,8 @@ export function createDesktopScenario(options) {
         source,
         requestA: a?.requestId,
         requestB: b?.requestId,
+        authorization,
+        verificationError: verificationError ? String(verificationError.stack) : null,
         ...model.state,
       }
     },
