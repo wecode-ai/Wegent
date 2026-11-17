@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, type ReactNode } from 'react'
-import { ArrowLeft, X } from 'lucide-react'
+import { useEffect, useRef, type ReactNode } from "react";
+import { ArrowLeft, X } from "lucide-react";
+import { useEscapeKey } from "../markdown/useEscapeKey";
 
 export function TemplateDialog({
   title,
@@ -14,26 +15,34 @@ export function TemplateDialog({
   busy = false,
   embedded = false,
 }: {
-  title: string
-  description?: string
-  closeLabel: string
-  children: ReactNode
-  footer?: ReactNode
-  onClose(): void
-  busy?: boolean
-  embedded?: boolean
+  title: string;
+  description?: string;
+  closeLabel: string;
+  children: ReactNode;
+  footer?: ReactNode;
+  onClose(): void;
+  busy?: boolean;
+  embedded?: boolean;
 }) {
-  const ref = useRef<HTMLDialogElement>(null)
+  const ref = useRef<HTMLDialogElement>(null);
+  useEscapeKey(
+    () => {
+      if (!busy) onClose();
+    },
+    true,
+    ref,
+  );
   useEffect(() => {
-    if (embedded) return
-    const previous = document.activeElement
-    const dialog = ref.current!
-    dialog.showModal()
+    if (embedded) return;
+    const previous = document.activeElement;
+    const dialog = ref.current!;
+    dialog.showModal();
     return () => {
-      dialog.close()
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
-    }
-  }, [embedded])
+      dialog.close();
+      if (previous instanceof HTMLElement && previous.isConnected)
+        previous.focus();
+    };
+  }, [embedded]);
   const content = (
     <>
       <header>
@@ -49,13 +58,17 @@ export function TemplateDialog({
           disabled={busy}
           onClick={onClose}
         >
-          {embedded ? <ArrowLeft aria-hidden="true" /> : <X aria-hidden="true" />}
+          {embedded ? (
+            <ArrowLeft aria-hidden="true" />
+          ) : (
+            <X aria-hidden="true" />
+          )}
         </button>
       </header>
       <div className="collaboration-template-dialog-body">{children}</div>
       {footer && <footer>{footer}</footer>}
     </>
-  )
+  );
   return embedded ? (
     <section
       aria-label={title}
@@ -70,13 +83,13 @@ export function TemplateDialog({
       className="collaboration-template-dialog"
       aria-label={title}
       data-testid="collaboration-template-dialog"
-      onCancel={event => {
-        event.preventDefault()
-        event.stopPropagation()
-        if (!busy) onClose()
+      onCancel={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!busy) onClose();
       }}
     >
       {content}
     </dialog>
-  )
+  );
 }

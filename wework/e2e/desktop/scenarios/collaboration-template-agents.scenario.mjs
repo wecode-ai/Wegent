@@ -539,7 +539,10 @@ export function createDesktopScenario({
       )
       await control.command('click', selector('project-agent-delete-cancel'))
       await control.command('click', selector('collaboration-project-settings-groups'))
-      await control.command('click', selector(`collaboration-group-remove-${reducedGroup.id}`))
+      await control.command(
+        'clickWhenEnabled',
+        selector(`collaboration-group-remove-${reducedGroup.id}`)
+      )
       await control.command('waitFor', selector('collaboration-group-delete-dialog'))
       await control.command('click', selector('collaboration-group-delete-cancel'))
       assert.equal(

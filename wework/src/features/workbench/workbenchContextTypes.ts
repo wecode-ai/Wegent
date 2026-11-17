@@ -1,4 +1,5 @@
 import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
+import type { PersonalHomeTaskDraftStore } from '../todo/personalHomeTaskDrafts'
 import type { ModelSelectorCloseReason } from '@wegent/collaboration/controls/model-selector-types'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import type { ModelSelectionDiagnostics } from './modelSelectionDiagnostics'
@@ -78,6 +79,10 @@ import type { WorkbenchServices } from './workbenchServices'
 
 export type ProjectMutationOptions = {
   refreshWorkLists?: boolean
+}
+
+export interface WorkbenchSelectionOptions {
+  navigate?: boolean
 }
 
 export type ArchiveRuntimeTaskOptions = {
@@ -221,6 +226,7 @@ export interface WorkbenchContextValue {
     scopeKey: string
     inputByScope: Readonly<Record<string, string>>
     goalDraftActiveByScope: Readonly<Record<string, boolean>>
+    personalHomeTaskDraftStore: PersonalHomeTaskDraftStore
     setGoalDraftActiveForScope: (scopeKey: string, active: boolean) => void
     models: UnifiedModel[]
     skills: UnifiedSkill[]
@@ -298,9 +304,13 @@ export interface WorkbenchContextValue {
   setWorkbenchError: (error: string | null) => void
   projectWorktreeBranch: string | null
   setProjectWorktreeBranch: (branchName: string | null) => void
-  selectProject: (projectId: number | null) => void
-  selectProjectWorkspace: (projectId: number, deviceWorkspaceId: number | null) => void
-  selectStandaloneDevice: (deviceId: string | null) => void
+  selectProject: (projectId: number | null, options?: WorkbenchSelectionOptions) => void
+  selectProjectWorkspace: (
+    projectId: number,
+    deviceWorkspaceId: number | null,
+    options?: WorkbenchSelectionOptions
+  ) => void
+  selectStandaloneDevice: (deviceId: string | null, options?: WorkbenchSelectionOptions) => void
   openStandaloneWorkspace: (
     deviceId: string,
     workspacePath: string,

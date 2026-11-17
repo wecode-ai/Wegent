@@ -2,7 +2,13 @@ const MAX_FADE_PX = 16
 const OVERFLOW_TOLERANCE_PX = 1
 
 /** Keep the mask tied to current geometry, including when a draft is cleared. */
-export function observeComposerScrollFade(viewport: HTMLElement, content: HTMLElement): () => void {
+export function observeComposerScrollFade(
+  viewport: HTMLElement,
+  content: HTMLElement,
+  onViewportResize?: () => void
+): () => void {
+  let width = viewport.clientWidth
+  let height = viewport.clientHeight
   const update = () => {
     const maximum = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
     const overflowing = viewport.clientHeight > 0 && maximum > OVERFLOW_TOLERANCE_PX
@@ -15,7 +21,13 @@ export function observeComposerScrollFade(viewport: HTMLElement, content: HTMLEl
     )
     viewport.toggleAttribute('data-composer-scroll-overflow', overflowing)
   }
-  const observer = new ResizeObserver(update)
+  const observer = new ResizeObserver(() => {
+    const resized = width !== viewport.clientWidth || height !== viewport.clientHeight
+    width = viewport.clientWidth
+    height = viewport.clientHeight
+    update()
+    if (resized) onViewportResize?.()
+  })
   observer.observe(viewport)
   observer.observe(content)
   viewport.addEventListener('scroll', update, { passive: true })

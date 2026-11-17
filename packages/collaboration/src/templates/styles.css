@@ -363,7 +363,7 @@
   background: rgb(var(--color-bg-hover));
 }
 .collaboration-runtime-device:has(input:disabled) {
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   cursor: default;
 }
 .collaboration-runtime-device > input[type='checkbox'] {
@@ -379,7 +379,7 @@
   width: 16px;
   height: 16px;
   flex: none;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
 }
 .collaboration-runtime-device-name {
   min-width: 0;

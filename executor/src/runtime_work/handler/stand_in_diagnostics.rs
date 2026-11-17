@@ -1,6 +1,38 @@
 //! Assignment decisions contain identities and state, never Issue content or credentials.
 use super::*;
 
+pub(super) struct CoordinationStage {
+    user: i64,
+    name: &'static str,
+    started: std::time::Instant,
+}
+
+impl CoordinationStage {
+    pub(super) fn start(user: i64, name: &'static str) -> Self {
+        Self {
+            user,
+            name,
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for CoordinationStage {
+    fn drop(&mut self) {
+        let elapsed = self.started.elapsed().as_millis();
+        if elapsed >= 250 {
+            log_executor_event(
+                "stand-in coordination stage",
+                &[
+                    ("user_id", self.user.to_string()),
+                    ("stage", self.name.to_owned()),
+                    ("elapsed_ms", elapsed.to_string()),
+                ],
+            );
+        }
+    }
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn log_stand_in_decision(
         &self,
