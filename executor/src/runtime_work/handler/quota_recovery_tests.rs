@@ -570,6 +570,8 @@ done
                 .contains_key("waiting"));
             assert!(!home.path().join("unexpected-turn").exists());
 
+            // The previous cancelled request must not consume the next scenario's marker.
+            handler.codex_app_server.restart().await;
             fs::remove_file(home.path().join("account-requested")).unwrap();
             fs::write(home.path().join("hold-account"), "").unwrap();
             let replacement_turn = queued_wait("replacement", 0);
