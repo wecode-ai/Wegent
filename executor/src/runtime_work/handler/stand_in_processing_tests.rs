@@ -581,7 +581,7 @@ async fn manual_checks_wait_for_busy_processing_and_revalidate_paused_identity()
 }
 
 impl RuntimeWorkRpcHandler {
-    async fn coordination_snapshot_for_test(
+    pub(super) async fn coordination_snapshot_for_test(
         &self,
         store: &LocalTaskStore,
         user: i64,
