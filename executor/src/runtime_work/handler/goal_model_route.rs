@@ -9,7 +9,7 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
         thread_id: &str,
         payload: &Value,
-    ) -> Result<bool, AppIpcError> {
+    ) -> Result<(), AppIpcError> {
         // A live turn already owns its route and model selection.
         if payload
             .get("status")
@@ -19,7 +19,7 @@ impl RuntimeWorkRpcHandler {
             || self.is_active_local_task(&link.local_task_id)
             || self.native_task_holds_capacity(&link.local_task_id)
         {
-            return Ok(false);
+            return Ok(());
         }
         let mut request = runtime_model_request(link, payload)?;
         if payload.get("modelConfig").is_none() {
@@ -52,7 +52,7 @@ impl RuntimeWorkRpcHandler {
             // Goal lifecycle, rather than the mutation response, owns this lease.
             route.goal_model_route = registration;
         }
-        Ok(true)
+        Ok(())
     }
 
     pub(super) fn release_goal_model_routes(&self, local_task_id: &str) {

@@ -404,15 +404,19 @@ impl RuntimeWorkRpcHandler {
         };
         let checked = tokio::select! {
             biased;
-            _ = cancelled => {
-                self.finish_local_task_execution(&turn.local_task_id, execution);
-                self.store.update_task(&turn.local_task_id, |link| settle_native_execution(link, "cancelled"));
-                self.finish_quota_command(&turn).await;
-                return;
-            }
-            checked = self.check_quota_turn(&turn, &wait) => checked,
+            _ = cancelled => None,
+            checked = self.check_quota_turn(&turn, &wait) => Some(checked),
         };
         let _send = gate.lock().await;
+        let Some(checked) = checked else {
+            if self.finish_local_task_execution(&turn.local_task_id, execution) {
+                self.store.update_task(&turn.local_task_id, |link| {
+                    settle_native_execution(link, "cancelled")
+                });
+                self.finish_quota_command(&turn).await;
+            }
+            return;
+        };
         if !self.is_local_task_execution_accepting_notifications(&turn.local_task_id, execution) {
             self.finish_local_task_execution(&turn.local_task_id, execution);
             self.finish_quota_command(&turn).await;

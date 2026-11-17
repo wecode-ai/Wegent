@@ -54,6 +54,8 @@ export function createDesktopScenario(options) {
         return true
       }
       const id = `${MARKER}-${current}`
+      const completed = responseCompleted(id)
+      completed.response.usage = { input_tokens: 10, output_tokens: 5, total_tokens: 15 }
       response.writeHead(200, { 'content-type': 'text/event-stream' })
       response.end(
         createSse([
@@ -64,7 +66,7 @@ export function createDesktopScenario(options) {
                 selectTool(body, 'update_goal', { status: 'complete' })
               )
             : [assistantMessage(RECOVERED)]),
-          responseCompleted(id),
+          completed,
         ])
       )
       return true
@@ -132,7 +134,7 @@ export function createDesktopScenario(options) {
         assert.equal(after.status, 'complete')
         for (const key of ['threadId', 'objective', 'createdAt', 'tokenBudget'])
           assert.equal(after[key], before[key], `Resume replaced Goal ${key}`)
-        assert.ok(after.tokensUsed >= before.tokensUsed)
+        assert.ok(after.tokensUsed > before.tokensUsed, 'Resumed model usage must be recorded')
         assert.equal(requests, 3, 'Resume must reach the model and complete its real tool call')
       } finally {
         if (address) await rpc('runtime.tasks.goal.clear', { address })

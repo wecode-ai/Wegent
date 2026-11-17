@@ -96,6 +96,7 @@ pub(in crate::runtime_work::handler) fn install_native_history(
   }
   $method = $request.method.Replace('/', '_')
   if ($method -eq 'thread_list' -and $request.params.cursor -eq 'page-2') { $method = 'thread_list_page2' }
+  while (Test-Path (Join-Path $PSScriptRoot ($method + '.hold'))) { Start-Sleep -Milliseconds 10 }
   $errorFile = Join-Path $PSScriptRoot ($method + '.error-once.json')
   if (Test-Path $errorFile) {
     $failure = ConvertFrom-Json ([IO.File]::ReadAllText($errorFile))
