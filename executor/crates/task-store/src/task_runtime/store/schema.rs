@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
     if schema_is_current(connection)? {
+        stand_in_history_index::ensure_schema(connection)?;
         ensure_default_work_item_project(connection)?;
         return Ok(());
     }
@@ -291,6 +292,7 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
          END;",
     )?;
     stand_in_telemetry::migrate(connection)?;
+    stand_in_history_index::ensure_schema(connection)?;
     ensure_default_work_item_project(connection)?;
     local_execution_activity::repair_missing_execution_activity(connection)?;
     connection.execute(
@@ -324,7 +326,16 @@ pub(super) fn schema_is_current(connection: &Connection) -> Result<bool, rusqlit
 pub(super) fn ensure_default_work_item_project(
     connection: &Connection,
 ) -> Result<(), TaskRuntimeError> {
-    let default_board_exists = connection.query_row(
+    if !default_work_item_project_is_current(connection)? {
+        repair_default_work_item_project(connection)?;
+    }
+    Ok(())
+}
+
+pub(super) fn default_work_item_project_is_current(
+    connection: &Connection,
+) -> Result<bool, rusqlite::Error> {
+    connection.query_row(
         "SELECT EXISTS(
             SELECT 1 FROM loop_items
             WHERE id = ?1 AND resource_type = 'project'
@@ -335,8 +346,11 @@ pub(super) fn ensure_default_work_item_project(
          )",
         params![DEFAULT_WORK_ITEM_PROJECT_ID, DEFAULT_WORK_ITEM_PROJECT_KEY],
         |row| row.get::<_, bool>(0),
-    )?;
-    if !default_board_exists {
+    )
+}
+
+fn repair_default_work_item_project(connection: &Connection) -> Result<(), TaskRuntimeError> {
+    {
         let timestamp = now();
         let metadata = local_project_metadata(TaskProviderKind::Local, json!({}));
         let metadata = json!({
