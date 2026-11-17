@@ -10,6 +10,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   MODEL_REQUEST_TIMEOUT_MS,
   MODEL_SERVICE_CONNECTION_ENDPOINT,
+  MODEL_SERVICE_CONNECTION_ERROR,
   MODEL_SERVICE_CONNECTION_PROMPT,
   MODEL_PROXY_RESTART_FOLLOW_UP_COMPLETION_TEXT,
   MODEL_PROXY_RESTART_FOLLOW_UP_PROMPT,
@@ -408,7 +409,7 @@ async function verifyModelServiceConnectionError({ composerSelector, control }) 
     timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
   })
   await control.command('waitFor', descriptionSelector, {
-    text: MODEL_SERVICE_CONNECTION_ENDPOINT,
+    text: '连接错误',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const description = await control.command('getText', descriptionSelector)
@@ -421,14 +422,33 @@ async function verifyModelServiceConnectionError({ composerSelector, control }) 
     'The model-service failure did not provide an actionable network or VPN recovery step'
   )
   assert.equal(
-    await control.command(
-      'getAttribute',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-details-toggle"]`,
-      { value: 'aria-expanded' }
-    ),
-    'false',
-    'The model-service endpoint was only visible after expanding error details'
+    description.includes(MODEL_SERVICE_CONNECTION_ENDPOINT),
+    false,
+    'The model-service endpoint leaked into the connection recovery guidance'
   )
+  const detailsToggleSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-details-toggle"]`
+  const detailsSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-details"]`
+  assert.equal(
+    await control.command('getAttribute', detailsToggleSelector, { value: 'aria-expanded' }),
+    'false',
+    'The model-service error details were expanded by default'
+  )
+  const collapsedSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(collapsedSnapshot.testIds.includes('assistant-error-details'), false)
+  await control.command('click', detailsToggleSelector)
+  await control.command('waitFor', detailsSelector, {
+    text: MODEL_SERVICE_CONNECTION_ERROR,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(await control.command('getText', detailsSelector), MODEL_SERVICE_CONNECTION_ERROR)
+  await control.command('click', detailsToggleSelector)
+  await control.command('waitFor', `${detailsToggleSelector}[aria-expanded="false"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const recollapsedSnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.equal(recollapsedSnapshot.testIds.includes('assistant-error-details'), false)
 }
 
 async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control }) {
