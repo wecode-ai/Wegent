@@ -66,13 +66,23 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("tasks.sqlite");
         let facts = LocalTaskStore::open(&path).unwrap();
-        facts.configure_stand_in_telemetry(7, true, None).unwrap();
+        let started_at = chrono::Utc::now().timestamp_millis() - 10_000;
+        facts
+            .configure_stand_in_telemetry(7, true, Some(started_at - 10_000))
+            .unwrap();
         let store = RuntimeWorkStore::new(root.path().join("runtime.json"));
         store.set_telemetry_path(path);
         let flush = store.telemetry.flush.lock().unwrap();
         let mut task = RuntimeTaskLink::new_pending("task".into(), "".into(), "".into());
         task.runtime_handle = serde_json::json!({"origin":{"initiatedBy":"stand_in_identity","userId":7},"lastTurnId":"turn"});
         task.running = true;
+        let mut obsolete = task.clone();
+        obsolete.local_task_id = "obsolete".into();
+        store.upsert_task(obsolete);
+        store.update_task("obsolete", |task| {
+            task.running = false;
+            task.status = "done".into();
+        });
         store.upsert_task(task);
         store.update_task("task", |task| {
             task.running = false;
@@ -83,12 +93,16 @@ mod tests {
             .as_array()
             .unwrap()
             .is_empty());
-        let started_at = chrono::Utc::now().timestamp_millis() - 10_000;
         {
             let mut pending = store.telemetry.pending.lock().unwrap();
-            pending[0].1.occurred_at = started_at;
-            pending[1].1.occurred_at = started_at + 4_000;
+            pending[0].1.occurred_at = started_at - 2_000;
+            pending[1].1.occurred_at = started_at - 1_000;
+            pending[2].1.occurred_at = started_at;
+            pending[3].1.occurred_at = started_at + 4_000;
         }
+        facts
+            .configure_stand_in_telemetry(7, true, Some(started_at))
+            .unwrap();
         drop(flush);
         store.flush_stand_in();
         let events = facts.list_stand_in_telemetry(7).unwrap();

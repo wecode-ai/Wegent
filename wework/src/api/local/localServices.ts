@@ -3826,6 +3826,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     ]
       .filter(Boolean)
       .join('\n\n')
+    await ensureStatus()
     const payload = await createLocalRuntimeTaskPayload(
       {
         runtime: agent.runtime,

@@ -122,10 +122,27 @@ describe('createLocalAppServices', () => {
   })
 
   test.each([
-    { prepared: true, source: undefined },
-    { prepared: false, source: 'native' },
-    { prepared: false, source: undefined },
-  ])('snapshots local assignment runtimes with %j', async ({ prepared, source }) => {
+    { prepared: true, source: undefined, pendingModel: false },
+    { prepared: false, source: 'native', pendingModel: false },
+    { prepared: false, source: undefined, pendingModel: false },
+    { prepared: true, source: undefined, pendingModel: true },
+  ])('snapshots local assignment runtimes with %j', async ({ prepared, source, pendingModel }) => {
+    const assignmentModelName = pendingModel ? 'local-model:assignment-pending' : 'gpt-5.6-sol'
+    if (pendingModel) {
+      saveLocalModelConfig({
+        id: 'assignment-pending',
+        displayName: 'Assignment pending',
+        modelId: 'upstream-model',
+        baseUrl: 'https://models.example.com/v1',
+        apiKey: 'fixture-key',
+        catalogEntry: createDefaultLocalModelCatalogEntry({
+          id: 'assignment-pending',
+          displayName: 'Assignment pending',
+          toolProfile: 'custom',
+        }),
+        catalogReady: false,
+      })
+    }
     const group = {
       id: 'group-1',
       workspace_id: 'local',
@@ -220,7 +237,7 @@ describe('createLocalAppServices', () => {
       name,
       display_name: name,
       runtime: 'codex',
-      model: 'gpt-5.6-sol',
+      model: assignmentModelName,
       model_type: 'runtime',
       model_namespace: 'default',
       allowed_models: prepared ? allowedModels : allowedModels?.slice(0, 1),
@@ -242,7 +259,7 @@ describe('createLocalAppServices', () => {
               model: {
                 runtime: 'codex',
                 provider: 'openai',
-                model_id: 'gpt-5.6-sol',
+                model_id: assignmentModelName,
                 ...(source ? { source } : {}),
               },
             },
@@ -252,6 +269,8 @@ describe('createLocalAppServices', () => {
     })
     const updates: Array<Record<string, unknown>> = []
     const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'runtime.codex.catalog.custom.write') return {}
+      if (method === 'runtime.codex.app_server.restart') return { restarted: true }
       if (method === 'projects.list') return [project]
       if (method === 'todos.get') return task
       if (method === 'runtime.runner.catalog') {
@@ -261,8 +280,8 @@ describe('createLocalAppServices', () => {
             {
               runtime: 'codex',
               provider: 'openai',
-              model_id: 'gpt-5.6-sol',
-              local_model_id: 'gpt-5.6-sol',
+              model_id: assignmentModelName,
+              local_model_id: assignmentModelName,
               account_label: 'Local account',
             },
           ],
@@ -272,7 +291,7 @@ describe('createLocalAppServices', () => {
         return params?.project_id === 'project-1'
           ? [
               agent('worker', 'Worker', 'worker-mcp', 'project-1', [
-                { name: 'gpt-5.6-sol', type: 'runtime', namespace: 'default' },
+                { name: assignmentModelName, type: 'runtime', namespace: 'default' },
                 { name: 'gpt-5.6-luna', type: 'runtime', namespace: 'default' },
               ]),
             ]
@@ -346,13 +365,20 @@ describe('createLocalAppServices', () => {
       },
     })
     expect(listCloudModels).not.toHaveBeenCalled()
+    if (pendingModel) {
+      expect(findLocalModelConfigByModelName(assignmentModelName)?.catalogReady).toBe(true)
+      const methods = request.mock.calls.map(([method]) => method)
+      expect(methods.indexOf('runtime.codex.catalog.custom.write')).toBeLessThan(
+        methods.indexOf('todos.update')
+      )
+    }
     if (!prepared) {
       expect(updates[0]).toMatchObject({
         execution_payload: {
           standaloneChatWorkspace: true,
           runnerRouting: {
             environment_id: 'local-device',
-            model: { ...(source ? { source } : {}), model_id: 'gpt-5.6-sol' },
+            model: { ...(source ? { source } : {}), model_id: assignmentModelName },
           },
         },
       })
@@ -416,9 +442,11 @@ describe('createLocalAppServices', () => {
       },
       modelRuntimeProfiles: [
         {
-          modelId: 'gpt-5.6-sol',
+          modelId: assignmentModelName,
           runtimePayload: {
-            executionRequest: { model_config: { model_id: 'gpt-5.6-sol' } },
+            executionRequest: {
+              model_config: { model_id: pendingModel ? 'upstream-model' : assignmentModelName },
+            },
           },
         },
         ...(prepared
