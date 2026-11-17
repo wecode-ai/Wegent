@@ -34,7 +34,9 @@ async fn default_work_item_binding_uses_the_handler_store_path() {
         events.try_recv(),
         Err(broadcast::error::TryRecvError::Empty)
     ));
-    let task = handler.get_task(&json!({"taskId":"runtime-task-1"})).unwrap();
+    let task = handler
+        .get_task(&json!({"taskId":"runtime-task-1"}))
+        .unwrap();
     assert_eq!(task["task"]["taskId"], "runtime-task-1");
     let inventory = handler
         .list_tasks_with_project_index(
