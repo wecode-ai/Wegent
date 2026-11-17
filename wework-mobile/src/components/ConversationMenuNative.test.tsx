@@ -7,9 +7,14 @@ import type { ConversationMenuNativeProps } from './ConversationMenuNative.types
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-vi.mock('react-native', () => ({ Pressable: 'Pressable' }))
+vi.mock('react-native', () => ({ Pressable: 'Pressable', View: 'View' }))
 vi.mock('react-native-paper', () => ({ useTheme: () => ({ colors: { error: 'red' } }) }))
 vi.mock('@expo/ui/swift-ui', () => ({
+  ContextMenu: Object.assign(
+    ({ children, ...props }: { children: React.ReactNode }) =>
+      React.createElement('SwiftUIContextMenu', props, children),
+    { Trigger: 'ContextTrigger', Items: 'ContextItems' }
+  ),
   Button: 'SwiftUIButton',
   Section: 'SwiftUISection',
   Host: 'SwiftUIHost',
@@ -153,5 +158,46 @@ describe('native conversation menus', () => {
     await act(() => items[0]!.props.onClick())
     expect(renderer.root.findByType('ComposeMenu' as never).props.expanded).toBe(false)
     expect(options.onSelect).toHaveBeenCalledWith('conversation-archive')
+  })
+  it('uses native long-press context presentation across the full iOS row', async () => {
+    const options = props()
+    await act(() => {
+      renderer = create(
+        <IOSMenu {...options} trigger="longPress" width={undefined}>
+          {input => React.createElement('ConversationRow', input)}
+        </IOSMenu>
+      )
+    })
+    expect(renderer.root.findAllByType('SwiftUIMenu' as never)).toHaveLength(0)
+    expect(renderer.root.findByType('SwiftUIContextMenu' as never)).toBeDefined()
+    expect(renderer.root.findByType('SwiftUIHost' as never).props.style).toEqual({
+      width: '100%',
+      minHeight: 48,
+    })
+    expect(renderer.root.findByType('ConversationRow' as never).props.onLongPress).toBeUndefined()
+    await act(() => renderer.root.findAllByType('SwiftUIButton' as never)[0]!.props.onPress())
+    expect(options.onSelect).toHaveBeenCalledExactlyOnceWith('conversation-archive')
+  })
+
+  it('opens the Android native popup only on a row hold while keeping its tap independent', async () => {
+    const options = props()
+    const navigate = vi.fn()
+    await act(() => {
+      renderer = create(
+        <AndroidMenu {...options} trigger="longPress" width={undefined}>
+          {input => React.createElement('ConversationRow', { ...input, onPress: navigate })}
+        </AndroidMenu>
+      )
+    })
+    const row = () => renderer.root.findByType('ConversationRow' as never)
+    const menu = () => renderer.root.findByType('ComposeMenu' as never)
+    await act(() => row().props.onPress())
+    expect(navigate).toHaveBeenCalledOnce()
+    expect(menu().props.expanded).toBe(false)
+    await act(() => row().props.onLongPress())
+    expect(menu().props.expanded).toBe(true)
+    expect(options.onSelect).not.toHaveBeenCalled()
+    await act(() => menu().props.onDismissRequest())
+    expect(menu().props.expanded).toBe(false)
   })
 })

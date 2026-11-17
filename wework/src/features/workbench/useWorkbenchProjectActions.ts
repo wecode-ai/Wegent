@@ -822,7 +822,15 @@ export function useWorkbenchProjectActions({
 
   const listEnvironmentBranches = useCallback(
     (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) => {
-      return listProjectBranches(executorClient.commands, project, workspaceTarget)
+      return listProjectBranches(
+        {
+          executeCommand: (deviceId, data) =>
+            executorClient.commands.executeCommand(deviceId, data),
+          preflightWorktree: data => executorClient.runtime.preflightWorktree(data),
+        },
+        project,
+        workspaceTarget
+      )
     },
     [executorClient]
   )

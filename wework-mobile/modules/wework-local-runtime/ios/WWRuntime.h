@@ -3,7 +3,16 @@
 #include <stddef.h>
 
 struct ww_process;
+struct ww_transport_diagnostics {
+    unsigned long long accept_calls, accept_failures;
+    unsigned long long listeners_restored, listener_failures;
+    int listener_host_error;
+    int accept_host_error, accepting_pid;
+    int input_bytes, output_bytes;
+};
+struct ww_transport_diagnostics ww_runtime_transport_diagnostics(struct ww_process *process);
 int ww_runtime_available(void);
+void ww_runtime_set_diagnostics_enabled(int enabled);
 int ww_runtime_prepare(const char *archive, const char *root);
 int ww_runtime_start(const char *data, const char *device, struct ww_process **out);
 int ww_runtime_input(struct ww_process *process);

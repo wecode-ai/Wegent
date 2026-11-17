@@ -38,11 +38,8 @@ export interface DeviceInfo {
   device_type: 'local' | 'app' | 'cloud' | 'remote'
   bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null
-  runtime_features?: {
-    schemaVersion: number
-    remoteTaskAccess?: { version: number; enabled: boolean; taskCreation?: boolean } | null
-    [feature: string]: unknown
-  } | null
+  runtime_features?:
+    import('../../../packages/chat-core/src/execution-project').RuntimeFeatureSet | null
 }
 
 export interface DeviceListResponse {
@@ -75,12 +72,14 @@ export interface RuntimeTaskArchiveResponse {
   accepted: boolean
   taskId: string
   workspacePath?: string | null
+  cleanupError?: string | null
   error?: string | null
 }
 
 export interface RuntimeTaskSummary {
   taskId: string
   runtimeHandle?: Record<string, unknown> | null
+  modelSelection?: ModelSelectionConfig | null
   optimistic?: boolean
   threadId?: string | null
   title: string
@@ -111,16 +110,13 @@ export interface RuntimeDeviceWorkspace {
   label?: string | null
   workspaceSource?: string | null
   remoteHostId?: string | null
+  repoRootFingerprint?: string | null
   mapped?: boolean
   tasks: RuntimeTaskSummary[]
 }
 
-export interface RuntimeProjectRef {
-  id?: number
-  key: string
-  name: string
-  stateDeviceId?: string | null
-}
+export type RuntimeProjectRef =
+  import('../../../packages/chat-core/src/runtime-task-api-types').RuntimeProjectRef
 
 export interface RuntimeProjectWork {
   project: RuntimeProjectRef
@@ -136,6 +132,7 @@ export interface RuntimeWorkListResponse {
 
 export interface RuntimeTranscriptMessage {
   id: string
+  runtimeItemId?: string
   role: 'user' | 'assistant' | 'system' | 'tool' | string
   content: string
   attachments?: Attachment[]
@@ -290,17 +287,7 @@ export interface RuntimeWorkspaceOpenResponse {
   error?: string | null
 }
 
-export interface RuntimeWorktreePreflightResponse {
-  success: boolean
-  deviceId: string
-  supported: boolean
-  sourcePath: string
-  sourceExists: boolean
-  sourceDirectory: boolean
-  gitRepository: boolean
-  writable: boolean
-  gitRef?: string | null
-}
+export type { RuntimeWorktreePreflightResponse } from '../../../packages/chat-core/src/worktree-types'
 
 export interface ConversationItem {
   address: RuntimeTaskAddress
@@ -308,6 +295,8 @@ export interface ConversationItem {
   title: string
   deviceName: string
   projectName: string | null
+  projectKey?: string
+  projectStateDeviceId?: string
   updatedAt: number
   running: boolean
   pinned?: boolean
@@ -317,6 +306,7 @@ export interface ConversationItem {
 export interface ChatMessage {
   pendingDelivery?: boolean
   id: string
+  runtimeItemId?: string
   taskId?: string
   subtaskId?: string
   turnId?: string

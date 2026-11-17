@@ -1,7 +1,11 @@
+import type { ConversationMenuActions } from './ConversationMenu'
+import { ConversationListRow } from './ConversationListRow'
+import { ProjectMenu, type ProjectMenuActions } from './ProjectMenu'
+import type { RuntimeFailureAction } from '@/hooks/useRuntimeFailures'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useIsFocused } from '@react-navigation/native'
 import type { GlassColorScheme } from 'expo-glass-effect'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   BackHandler,
   FlatList,
@@ -17,7 +21,7 @@ import { KeyboardAvoidingView, useKeyboardState } from 'react-native-keyboard-co
 import { ActivityIndicator, Portal, Text, useTheme, type MD3Theme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
-import { buildConversationList } from '@/domain/conversationList'
+import { buildConversationList, type ConversationProjectGroup } from '@/domain/conversationList'
 import { DRAWER_HEADER_HEIGHT, drawerBottomOffset, drawerTopPadding } from '@/domain/drawerLayout'
 import {
   mobileCreatableDevices,
@@ -28,32 +32,50 @@ import type {
   ConversationItem,
   DeviceInfo,
   RuntimeDeviceWorkspace,
+  RuntimeProjectWork,
   RuntimeTaskAddress,
 } from '@/types/runtime'
 import { LiquidGlassButton, LiquidGlassSurface } from './LiquidGlass'
 import { WorkbenchSidebar } from './WorkbenchSidebar'
+import {
+  beginMobileDiagnostic,
+  diagnosticsEnabled,
+  recordMobileDiagnostic,
+  subscribeDiagnostics,
+} from '@/services/mobileDiagnostics'
+import { isPhoneLocalDeviceId } from '@/services/localRuntime'
 
 interface ConversationListScreenProps {
   userLabel?: string
-  connectionError?: string | null
+  failures: RuntimeFailureAction[]
+  onRetryFailure: (failure: RuntimeFailureAction) => Promise<void>
   showDeviceFilters?: boolean
   conversations: ConversationItem[]
   devices: DeviceInfo[]
-  workspaces: Array<{ projectName: string; workspace: RuntimeDeviceWorkspace }>
+  workspaces: Array<{
+    projectName: string
+    projectWork?: RuntimeProjectWork
+    workspace: RuntimeDeviceWorkspace
+  }>
   currentAddress: RuntimeTaskAddress | null
   selectedDeviceId: string | null
   allDevicesSelected: boolean
   search: string
   loading: boolean
+  snapshotReady?: boolean
   refreshing: boolean
   onSearch: (value: string) => void
   onRefresh: () => Promise<void>
+  onRefreshDevices?: () => Promise<unknown>
   onSelectDevice: (deviceId: string) => void
   onSelectAllDevices: () => void
   onSelectConversation: (item: ConversationItem) => void
   onNewConversation: (workspace?: RuntimeDeviceWorkspace) => void
   onNewProject: () => void
   onSettings: () => void
+  onArchives?: () => void
+  projectActions?: ProjectMenuActions
+  conversationActions?: (item: ConversationItem) => ConversationMenuActions
 }
 
 type DrawerItem =
@@ -71,6 +93,7 @@ type DrawerItem =
       detail: string | null
       workspace: RuntimeDeviceWorkspace | undefined
       expanded: boolean
+      projectWork?: RuntimeProjectWork
     }
   | { key: string; type: 'conversation'; conversation: ConversationItem }
   | { key: 'empty'; type: 'empty' }
@@ -85,10 +108,30 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
   const focused = useIsFocused()
+  const recording = useSyncExternalStore(subscribeDiagnostics, diagnosticsEnabled)
   const keyboardVisible = useKeyboardState(state => state.isVisible)
   const styles = useMemo(() => createStyles(theme.colors), [theme.colors])
   const glassColorScheme: GlassColorScheme = theme.dark ? 'dark' : 'light'
   const [actionsVisible, setActionsVisible] = useState(false)
+  const [openSwipeKey, setOpenSwipeKey] = useState<string | null>(null)
+  useEffect(() => {
+    setOpenSwipeKey(null)
+  }, [props.selectedDeviceId, props.allDevicesSelected, props.search, focused])
+  const [refreshingDevices, setRefreshingDevices] = useState(false)
+  const deviceRefreshPending = useRef(false)
+  const refreshDevices = async () => {
+    if (!props.onRefreshDevices || deviceRefreshPending.current) return
+    deviceRefreshPending.current = true
+    setRefreshingDevices(true)
+    try {
+      await props.onRefreshDevices()
+    } catch {
+      // Discovery records its own source-specific avatar retry.
+    } finally {
+      deviceRefreshPending.current = false
+      setRefreshingDevices(false)
+    }
+  }
   const [sidebarVisible, setSidebarVisible] = useState(false)
   const [searchVisible, setSearchVisible] = useState(Boolean(props.search))
   const [showAllDevices, setShowAllDevices] = useState(false)
@@ -129,6 +172,43 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
       .toLocaleLowerCase()
       .includes(query)
   })
+  useEffect(() => {
+    if (!recording || !focused) return
+    const diagnostic = beginMobileDiagnostic(
+      'conversation-list',
+      props.selectedDeviceId
+        ? isPhoneLocalDeviceId(props.selectedDeviceId)
+          ? 'phone'
+          : 'cloud'
+        : undefined
+    )
+    const counts = {
+      loading: Number(props.loading),
+      snapshotReady: Number(Boolean(props.snapshotReady)),
+      conversations: filteredConversations.length,
+      failures: props.failures.length,
+      devices: onlineDevices.length,
+    }
+    diagnostic.step(
+      props.loading
+        ? 'waiting-for-list'
+        : props.snapshotReady
+          ? 'list-content-committed'
+          : 'waiting-for-work-snapshot',
+      counts
+    )
+    if (!props.loading && props.snapshotReady) diagnostic.complete(counts)
+    return () => diagnostic.cancel()
+  }, [
+    recording,
+    focused,
+    props.loading,
+    props.snapshotReady,
+    props.selectedDeviceId,
+    filteredConversations.length,
+    props.failures.length,
+    onlineDevices.length,
+  ])
   const visibleWorkspaces = props.workspaces.filter(
     ({ projectName, workspace }) =>
       workspace.available &&
@@ -177,27 +257,31 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
         }))
       )
     }
-    if (projectsExpanded) {
-      for (const group of groups.projects) {
-        const expanded = !collapsedProjects.has(group.key)
-        items.push({
-          key: group.key,
-          type: 'project',
-          name: group.name,
-          detail: group.detail,
-          workspace: group.workspace,
-          expanded,
-        })
-        if (!expanded) continue
-        for (const conversation of group.conversations) {
-          items.push({
+    const appendProject = (group: ConversationProjectGroup, target: DrawerItem[]) => {
+      const expanded = !collapsedProjects.has(group.key)
+      target.push({
+        key: group.key,
+        type: 'project',
+        name: group.name,
+        detail: group.detail,
+        workspace: group.workspace,
+        projectWork: group.projectWork,
+        expanded,
+      })
+      if (expanded)
+        for (const conversation of group.conversations)
+          target.push({
             key: `conversation:${conversation.address.deviceId}:${conversation.address.taskId}`,
             type: 'conversation',
             conversation,
           })
-        }
-      }
     }
+    if (pinnedExpanded) {
+      const pinnedProjects: DrawerItem[] = []
+      for (const group of groups.pinnedProjects) appendProject(group, pinnedProjects)
+      items.splice(1 + groups.pinned.length, 0, ...pinnedProjects)
+    }
+    if (projectsExpanded) for (const group of groups.projects) appendProject(group, items)
 
     items.push({
       key: 'tasks-title',
@@ -403,9 +487,8 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
       </View>
 
       <WorkbenchSidebar
-        connectionError={props.connectionError ?? null}
-        reconnecting={props.refreshing}
-        onRetryConnection={props.onRefresh}
+        failures={props.failures}
+        onRetryFailure={props.onRetryFailure}
         onDismiss={() => setSidebarVisible(false)}
         onSettings={props.onSettings}
         userLabel={props.userLabel ?? ''}
@@ -448,6 +531,17 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
                   showAddBadge
                   testID="drawer-new-project"
                 />
+                {props.onArchives ? (
+                  <DrawerAction
+                    icon="archive-outline"
+                    label="已归档会话"
+                    onPress={() => {
+                      setActionsVisible(false)
+                      props.onArchives?.()
+                    }}
+                    testID="drawer-archives"
+                  />
+                ) : null}
                 <DrawerAction
                   icon="settings-outline"
                   label="设置"
@@ -457,6 +551,17 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
                   }}
                   testID="drawer-settings"
                 />
+                {props.showDeviceFilters !== false && props.onRefreshDevices && (
+                  <DrawerAction
+                    icon="refresh-outline"
+                    label={refreshingDevices ? '正在刷新设备列表' : '刷新设备列表'}
+                    disabled={refreshingDevices}
+                    onPress={() => {
+                      void refreshDevices()
+                    }}
+                    testID="drawer-refresh-devices"
+                  />
+                )}
                 {props.showDeviceFilters !== false && (
                   <DrawerAction
                     icon={showAllDevices ? 'eye-off-outline' : 'eye-outline'}
@@ -476,6 +581,17 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
 
       <FlatList
         contentContainerStyle={styles.list}
+        onLayout={
+          recording
+            ? event =>
+                recordMobileDiagnostic('[MobileStartup] Conversation list layout', {
+                  width: event.nativeEvent.layout.width,
+                  height: event.nativeEvent.layout.height,
+                  loading: props.loading,
+                  snapshotReady: Boolean(props.snapshotReady),
+                })
+            : undefined
+        }
         data={props.loading ? [] : drawerItems}
         ListHeaderComponent={props.showDeviceFilters === false ? null : deviceStrip}
         ListEmptyComponent={props.loading ? <ActivityIndicator style={styles.loader} /> : null}
@@ -536,6 +652,13 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
                     <Text numberOfLines={1} style={styles.projectName} variant="titleMedium">
                       {item.name}
                     </Text>
+                    {item.projectWork?.project.pinned ? (
+                      <Ionicons
+                        name="pin-outline"
+                        size={16}
+                        color={theme.colors.onSurfaceVariant}
+                      />
+                    ) : null}
                     {item.detail ? (
                       <Text numberOfLines={1} style={styles.projectDetail}>
                         {item.detail}
@@ -543,6 +666,9 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
                     ) : null}
                   </View>
                 </Pressable>
+                {item.projectWork && props.projectActions ? (
+                  <ProjectMenu project={item.projectWork} actions={props.projectActions} />
+                ) : null}
                 <Pressable
                   accessibilityLabel={`在 ${item.name} 中新建聊天`}
                   accessibilityRole="button"
@@ -564,31 +690,25 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
             )
           }
           if (item.type === 'conversation') {
-            const selected =
-              props.currentAddress?.deviceId === item.conversation.address.deviceId &&
-              props.currentAddress.taskId === item.conversation.address.taskId
+            const conversation = item.conversation
+            const key = JSON.stringify([conversation.address.deviceId, conversation.address.taskId])
             return (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                onPress={() => props.onSelectConversation(item.conversation)}
-                style={({ pressed }) => [
-                  styles.textRow,
-                  item.conversation.projectName && styles.projectTextRow,
-                  selected && styles.rowSelected,
-                  pressed && styles.rowPressed,
-                ]}
-                testID={`conversation-${item.conversation.address.taskId}`}
-              >
-                <View style={styles.textRowContent}>
-                  <Text numberOfLines={1} style={styles.rowTitle} variant="titleMedium">
-                    {item.conversation.title}
-                  </Text>
-                  {item.conversation.running ? (
-                    <ActivityIndicator color={theme.colors.onSurfaceVariant} size={22} />
-                  ) : null}
-                </View>
-              </Pressable>
+              <ConversationListRow
+                conversation={conversation}
+                selected={
+                  props.currentAddress?.deviceId === conversation.address.deviceId &&
+                  props.currentAddress.taskId === conversation.address.taskId
+                }
+                actions={props.conversationActions?.(conversation)}
+                open={openSwipeKey === key}
+                onOpen={() => setOpenSwipeKey(key)}
+                onClose={() => setOpenSwipeKey(current => (current === key ? null : current))}
+                onSwipeStart={() => {
+                  Keyboard.dismiss()
+                  setOpenSwipeKey(current => (current === key ? current : null))
+                }}
+                onSelect={props.onSelectConversation}
+              />
             )
           }
           return (
@@ -602,6 +722,7 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
             </View>
           )
         }}
+        onScrollBeginDrag={() => setOpenSwipeKey(null)}
         showsVerticalScrollIndicator={false}
         testID="conversation-list"
       />
@@ -783,16 +904,6 @@ function createStyles(colors: MD3Theme['colors']) {
       marginLeft: 8,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    textRow: { minHeight: 48, marginHorizontal: 20, borderRadius: 12, overflow: 'hidden' },
-    projectTextRow: { marginLeft: 52 },
-    textRowContent: {
-      minHeight: 48,
-      width: '100%',
-      paddingHorizontal: 4,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
     },
     rowSelected: { backgroundColor: colors.surfaceVariant },
     rowPressed: { backgroundColor: colors.surfaceVariant },
