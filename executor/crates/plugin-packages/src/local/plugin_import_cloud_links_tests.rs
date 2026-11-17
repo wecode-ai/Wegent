@@ -1,6 +1,98 @@
 use super::*;
 use tempfile::TempDir;
 
+#[test]
+fn cloud_links_accept_the_absent_marketplace_returned_by_personal_listing() {
+    let home = TempDir::new().unwrap();
+    let root = home
+        .path()
+        .join("capabilities/bundled-marketplaces/wework-personal");
+    let listed = list_personal_plugins_at(&root).unwrap();
+    assert!(listed.plugins.is_empty());
+    let links = read_plugin_cloud_links(ReadPluginCloudLinksRequest {
+        marketplace_path: listed.marketplace_path,
+    })
+    .unwrap();
+    assert!(links.is_empty());
+    assert!(!root.exists(), "A read must not initialize the marketplace");
+}
+
+#[test]
+fn cloud_links_do_not_depend_on_a_catalog_file_or_discard_detached_registry_data() {
+    let home = TempDir::new().unwrap();
+    let root = home
+        .path()
+        .join("capabilities/bundled-marketplaces/wework-personal");
+    write_plugin_cloud_links(
+        &root,
+        vec![LocalPluginCloudLink {
+            local_plugin_name: "linked-plugin".into(),
+            cloud_plugin_id: 41,
+            cloud_release_id: Some(53),
+        }],
+    )
+    .unwrap();
+    for suffix in [
+        "",
+        ".agents/plugins/marketplace.json",
+        ".claude-plugin/marketplace.json",
+    ] {
+        let links = read_plugin_cloud_links(ReadPluginCloudLinksRequest {
+            marketplace_path: root.join(suffix).display().to_string(),
+        })
+        .unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].cloud_plugin_id, 41);
+    }
+    assert!(!root.exists());
+    let registry = plugin_cloud_link_registry_path(&root);
+    fs::write(&registry, b"broken-json").unwrap();
+    assert!(read_plugin_cloud_links(ReadPluginCloudLinksRequest {
+        marketplace_path: root.display().to_string(),
+    })
+    .unwrap_err()
+    .contains("Invalid plugin cloud link registry"));
+    assert_eq!(fs::read(registry).unwrap(), b"broken-json");
+}
+
+#[test]
+fn cloud_links_reject_a_file_used_as_the_marketplace_root() {
+    let home = TempDir::new().unwrap();
+    let root = home.path().join("marketplace");
+    fs::write(&root, b"preserved").unwrap();
+    assert!(read_plugin_cloud_links(ReadPluginCloudLinksRequest {
+        marketplace_path: root.display().to_string(),
+    })
+    .is_err());
+    assert_eq!(fs::read(root).unwrap(), b"preserved");
+}
+
+#[test]
+fn cloud_links_reject_an_empty_marketplace_identity() {
+    assert!(read_plugin_cloud_links(ReadPluginCloudLinksRequest {
+        marketplace_path: String::new(),
+    })
+    .unwrap_err()
+    .contains("path is empty"));
+}
+
+#[cfg(unix)]
+#[test]
+fn cloud_links_reject_a_symbolic_marketplace_root_without_changing_its_target() {
+    let target = marketplace_fixture();
+    let home = TempDir::new().unwrap();
+    let link = home.path().join("linked-marketplace");
+    std::os::unix::fs::symlink(target.path(), &link).unwrap();
+    let registry = plugin_cloud_link_registry_path(target.path());
+    let before = fs::read(&registry).unwrap();
+    assert!(read_plugin_cloud_links(ReadPluginCloudLinksRequest {
+        marketplace_path: link.display().to_string(),
+    })
+    .unwrap_err()
+    .contains("symbolic link"));
+    assert_eq!(fs::read(registry).unwrap(), before);
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Mutation {
     Link,

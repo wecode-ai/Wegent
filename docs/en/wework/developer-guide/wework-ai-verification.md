@@ -193,6 +193,8 @@ When cumulative snapshots regress, reuse a source identity, or omit required fie
 
 Windows native-decision diagnostics distinguish UI Automation assembly loading, enumeration start/completion, owned-window presence, and title matching. Each fixed stage is emitted once without window text. The host records an action-only event before calling the native confirmation API, separately from the final decision; this event does not prove the OS displayed a window. Existing PID/title/button constraints, the 10-second search, and the 12-second process deadline remain unchanged. Diagnostics cannot convert failure into success.
 
+Personal plugin listing and cloud-link reads share marketplace-root resolution. A marketplace that has not been created requires no directory or catalog write; only an absent link registry means an empty list. Independently retained link metadata is still read, while corrupt JSON, permission errors, non-directory roots, and symbolic links remain failures without clearing or overwriting data.
+
 Prediction JSON parse failures retain byte length, JSON error category, and line/column positions; completion events identify the source and prediction threads. Neither response bodies nor raw parser messages are recorded, and invalid JSON never becomes a successful empty suggestion.
 
 MCP App catalog failures retain task/thread identities, source-read status, whether restoration ran, and elapsed time since source lookup, without tool arguments or credentials. Windows native plugin decisions retain fixed UI Automation stages, exit signal, and termination state without arbitrary child output. These diagnostics support investigation and do not certify a fix or official runtime compatibility.

@@ -75,8 +75,8 @@ use marketplace::{
     prepare_personal_marketplace_root, prepare_personal_package_artifact_root,
     regular_plugin_manifest, reject_symlink, remove_personal_package_artifact,
     resolve_existing_marketplace_root, resolve_managed_personal_plugin,
-    validate_personal_package_cleanup_token, validate_personal_plugin_name, validate_plugin_name,
-    validated_personal_marketplace_path,
+    resolve_optional_personal_marketplace_root, validate_personal_package_cleanup_token,
+    validate_personal_plugin_name, validate_plugin_name, validated_personal_marketplace_path,
 };
 mod registry;
 use registry::{
@@ -442,10 +442,8 @@ pub fn rollback_plugin_import(request: PluginImportMutationRequest) -> Result<()
 pub fn read_plugin_cloud_links(
     request: ReadPluginCloudLinksRequest,
 ) -> Result<Vec<LocalPluginCloudLink>, String> {
-    let resolved = Path::new(&request.marketplace_path)
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
-    read_plugin_cloud_links_strict(&marketplace_root_from_path(&resolved))
+    let root = resolve_optional_personal_marketplace_root(Path::new(&request.marketplace_path))?;
+    read_plugin_cloud_links_strict(&root)
 }
 
 pub(crate) fn personal_plugin_has_cloud_link(

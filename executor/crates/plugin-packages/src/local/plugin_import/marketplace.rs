@@ -88,6 +88,32 @@ pub(super) fn resolve_existing_marketplace_root(path: &Path) -> Result<PathBuf, 
         .map_err(|error| format!("Failed to resolve local marketplace: {error}"))
 }
 
+pub(super) fn resolve_optional_personal_marketplace_root(path: &Path) -> Result<PathBuf, String> {
+    if path.as_os_str().is_empty() {
+        return Err("Personal marketplace path is empty".to_owned());
+    }
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .map_err(|error| format!("Failed to resolve personal marketplace path: {error}"))?
+            .join(path)
+    };
+    reject_symlink(&path, "personal marketplace path")?;
+    let root = marketplace_root_from_path(&path);
+    reject_symlink(&root, "personal marketplace")?;
+    match fs::metadata(&root) {
+        Ok(metadata) if !metadata.is_dir() => {
+            Err("Personal marketplace path must be a directory".to_owned())
+        }
+        Ok(_) => root
+            .canonicalize()
+            .map_err(|error| format!("Failed to resolve personal marketplace: {error}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(root),
+        Err(error) => Err(format!("Failed to inspect personal marketplace: {error}")),
+    }
+}
+
 pub(super) fn resolve_managed_personal_plugin(
     marketplace_root: &Path,
     plugin_name: &str,
@@ -432,14 +458,7 @@ pub(super) fn prepare_personal_marketplace_manifest_paths(
 pub(super) fn list_personal_plugins_at(
     path: &Path,
 ) -> Result<PersonalMarketplaceListResult, String> {
-    let root = marketplace_root_from_path(path);
-    if root.exists() {
-        reject_symlink(&root, "personal marketplace")?;
-        if !root.is_dir() {
-            return Err("Personal marketplace path must be a directory".to_owned());
-        }
-    }
-    let root = root.canonicalize().unwrap_or(root);
+    let root = resolve_optional_personal_marketplace_root(path)?;
     let mut by_name = BTreeMap::<String, PersonalMarketplacePluginSummary>::new();
     let manifest_path = root.join(".agents/plugins/marketplace.json");
     if manifest_path.exists() {
