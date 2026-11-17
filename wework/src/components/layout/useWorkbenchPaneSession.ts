@@ -1109,6 +1109,7 @@ export function useWorkbenchPaneSession({
     ): Promise<RuntimeMessageSendResult> => {
       if (!currentRuntimeTask) return { accepted: false, queued: false }
       const operation = beginRuntimeConversationOperation(currentRuntimeTask)
+      let pendingAdmission = false
       try {
         const appendedLocalMessage =
           options.appendLocalMessage !== false &&
@@ -1121,6 +1122,13 @@ export function useWorkbenchPaneSession({
             type: 'user_added',
             message: createRuntimeQueuedUserMessage(message),
           })
+        }
+        pendingAdmission = options.appendLocalMessage !== false && !appendedLocalMessage
+        if (pendingAdmission) {
+          setQueuedMessages(messages => [
+            ...messages.filter(item => item.id !== message.id),
+            { ...message, status: 'sending' },
+          ])
         }
         const result = await sendRuntimeQueuedMessage(
           currentRuntimeTask,
@@ -1144,6 +1152,8 @@ export function useWorkbenchPaneSession({
         }
         return result
       } finally {
+        if (pendingAdmission)
+          setQueuedMessages(messages => messages.filter(item => item.id !== message.id))
         operation.dispose()
       }
     },
@@ -1152,6 +1162,7 @@ export function useWorkbenchPaneSession({
       lifecycleStore,
       sendRuntimePaneMessage,
       setError,
+      setQueuedMessages,
       answeredRequestUserInputIds,
     ]
   )
@@ -1719,7 +1730,7 @@ export function useWorkbenchPaneSession({
           )
         if (answerIsUserMessage) {
           const answerMessage: RuntimePaneQueuedMessage = {
-            id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
+            id: `queued-runtime-pane-${crypto.randomUUID()}`,
             content: message,
             status: 'queued',
             createdAt: new Date().toISOString(),
@@ -1758,7 +1769,6 @@ export function useWorkbenchPaneSession({
       currentRuntimeTask,
       getRuntimeModelFields,
       lifecycleStore,
-      queuedMessages.length,
       sendQueuedMessageAsGuidance,
       sendRuntimePaneMessage,
       setAnsweredRequestUserInputIds,
@@ -1818,37 +1828,52 @@ export function useWorkbenchPaneSession({
             return false
           }
 
+          const goalContext = appendConversationMentionContext(
+            submittedInput,
+            options.additionalContext
+          )
           // Errors belong to the previous action; a new goal submission starts fresh.
           setError(null)
           if (currentRuntimeTask) {
             const draftGoal = createPendingRuntimeGoal(submittedInput)
             const initialGoal = runtimeGoalCreateInput(draftGoal)
             const baseMessage: RuntimePaneQueuedMessage = {
-              id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
+              id: `queued-runtime-pane-${crypto.randomUUID()}`,
               content: submittedInput,
               status: 'queued',
               createdAt: new Date().toISOString(),
               attachments: persistAttachmentReferences(currentAttachments),
               runtimeGoalRequest: true,
-              additionalContext: options.additionalContext,
+              additionalContext: goalContext,
               cloudProjectId: options.cloudProjectId,
               origin: options.origin,
               ...getRuntimeModelFields(),
             }
 
             resetAttachments()
+            clearSubmittedInput()
             if (paneIsBusy && options.guideWhenBusy) {
+              setQueuedMessages(messages => [...messages, { ...baseMessage, status: 'sending' }])
               const response = await setRuntimeGoal({
                 address: currentRuntimeTask,
                 objective: submittedInput,
                 status: 'active',
-              })
+              }).catch((cause: unknown) => ({
+                accepted: false,
+                error: cause instanceof Error ? cause.message : String(cause),
+                goal: null,
+              }))
+              setQueuedMessages(messages =>
+                messages.filter(message => message.id !== baseMessage.id)
+              )
               if (!response.accepted) {
-                currentAttachments.forEach(addExistingAttachment)
+                restoreSubmittedInput(inputScopeKey, submittedInput)
+                currentAttachments.forEach(attachment =>
+                  addExistingAttachmentForScope(inputScopeKey, attachment)
+                )
                 setError(response.error || i18n.t('workbench.goal_set_failed'))
                 return false
               }
-              clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, response.goal)
               setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, baseMessage])
@@ -1861,7 +1886,6 @@ export function useWorkbenchPaneSession({
               initialGoal,
             }
             if (paneIsBusy) {
-              clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, queuedMessage])
@@ -1879,13 +1903,18 @@ export function useWorkbenchPaneSession({
               retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
             }
             if (result.accepted) {
-              clearSubmittedInput()
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
               clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
             } else {
-              currentAttachments.forEach(addExistingAttachment)
-              setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
+              restoreSubmittedInput(inputScopeKey, submittedInput)
+              currentAttachments.forEach(attachment =>
+                addExistingAttachmentForScope(inputScopeKey, attachment)
+              )
+              setErrorForScope(
+                inputScopeKey,
+                sendError ?? i18n.t('workbench.project_chat_send_failed')
+              )
             }
             return result.accepted
           }
@@ -1903,7 +1932,7 @@ export function useWorkbenchPaneSession({
           const sent = await sendCurrentInput(submittedInput, {
             optimisticUserMessage: optimisticMessage,
             initialGoal,
-            additionalContext: options.additionalContext,
+            additionalContext: goalContext,
             cloudProjectId: options.cloudProjectId,
             origin: options.origin,
             initialSupervisor: options.initialSupervisor,
@@ -2019,19 +2048,10 @@ export function useWorkbenchPaneSession({
           return true
         }
 
-        let resolvedAdditionalContext: RuntimeAdditionalContext | undefined
-        try {
-          resolvedAdditionalContext = await appendConversationMentionContext(
-            effectiveSubmittedInput,
-            options.additionalContext,
-            loadRuntimeTranscriptForPane
-          )
-        } catch (cause) {
-          if (!isTranscriptScopeCurrent()) return false
-          console.warn('[Wework composer] failed to load referenced conversation', cause)
-          setError(i18n.t('workbench.mention_conversation_load_failed'))
-          return false
-        }
+        const resolvedAdditionalContext = appendConversationMentionContext(
+          effectiveSubmittedInput,
+          options.additionalContext
+        )
         // Do not keep an earlier action error visible once the user sends a new message.
         setError(null)
         const visibleSubmittedInput =
@@ -2145,79 +2165,14 @@ export function useWorkbenchPaneSession({
           return Boolean(sent)
         }
 
-        if (hasCodeComments) {
-          resetAttachments()
-          const queuedMessage: RuntimePaneQueuedMessage = {
-            id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
-            content: appendCodeCommentContexts(visibleSubmittedInput, codeCommentContexts),
-            displayContent: visibleSubmittedInput,
-            codeComments: codeCommentContexts,
-            status: 'queued',
-            createdAt: new Date().toISOString(),
-            attachments: persistAttachmentReferences(currentAttachments),
-            additionalContext: resolvedAdditionalContext,
-            cloudProjectId: options.cloudProjectId,
-            origin: options.origin,
-            ...getRuntimeModelFields(),
-          }
-
-          if (paneIsBusy) {
-            if (options.interruptWhenBusy) {
-              const sent = await interruptAndSendQueuedMessage(queuedMessage)
-              if (!sent) {
-                currentAttachments.forEach(addExistingAttachment)
-              } else {
-                clearSubmittedInput()
-                clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
-              }
-              return sent
-            }
-            setQueuedMessages(messages => [...messages, queuedMessage])
-            clearSubmittedInput()
-            clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
-            if (options.guideWhenBusy) {
-              await sendQueuedMessageAsGuidance(queuedMessage, true)
-            }
-            return true
-          }
-
-          let sendError: string | null = null
-          const lifecycleBeforeSend = currentRuntimeTask
-            ? lifecycleStore.getTask(currentRuntimeTask)
-            : null
-          const result = await sendRuntimeMessage(queuedMessage, {
-            onError: nextError => {
-              sendError = nextError
-            },
-          })
-          if (result.queued) {
-            retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
-          }
-          if (result.accepted) {
-            clearSubmittedInput()
-            clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
-          } else if (isRuntimeTaskBusyError(sendError)) {
-            const lifecycleAfterSend = currentRuntimeTask
-              ? lifecycleStore.getTask(currentRuntimeTask)
-              : null
-            if (runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
-              queuedMessageBusyBlocks.delete(queuedMessage.id)
-            } else {
-              queuedMessageBusyBlocks.set(queuedMessage.id, lifecycleBeforeSend)
-            }
-            setQueuedMessages(messages => [...messages, queuedMessage])
-            clearSubmittedInput()
-            clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
-          } else {
-            currentAttachments.forEach(addExistingAttachment)
-            setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
-          }
-          return result.accepted || isRuntimeTaskBusyError(sendError)
-        }
-
         const queuedMessage: RuntimePaneQueuedMessage = {
-          id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
-          content: submittedInput,
+          id: `queued-runtime-pane-${crypto.randomUUID()}`,
+          content: hasCodeComments
+            ? appendCodeCommentContexts(visibleSubmittedInput, codeCommentContexts)
+            : submittedInput,
+          ...(hasCodeComments
+            ? { displayContent: visibleSubmittedInput, codeComments: codeCommentContexts }
+            : {}),
           status: 'queued',
           createdAt: new Date().toISOString(),
           attachments: persistAttachmentReferences(currentAttachments),
@@ -2228,18 +2183,22 @@ export function useWorkbenchPaneSession({
         }
 
         resetAttachments()
+        clearSubmittedInput()
         if (paneIsBusy) {
           if (options.interruptWhenBusy) {
             const sent = await interruptAndSendQueuedMessage(queuedMessage)
             if (!sent) {
-              currentAttachments.forEach(addExistingAttachment)
+              restoreSubmittedInput(inputScopeKey, submittedInput)
+              currentAttachments.forEach(attachment =>
+                addExistingAttachmentForScope(inputScopeKey, attachment)
+              )
             } else {
-              clearSubmittedInput()
+              clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
             }
             return sent
           }
           setQueuedMessages(messages => [...messages, queuedMessage])
-          clearSubmittedInput()
+          clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           if (options.guideWhenBusy) {
             await sendQueuedMessageAsGuidance(queuedMessage, true)
           }
@@ -2259,7 +2218,6 @@ export function useWorkbenchPaneSession({
           retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
         }
         if (result.accepted) {
-          clearSubmittedInput()
           clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
         } else if (isRuntimeTaskBusyError(sendError)) {
           const lifecycleAfterSend = currentRuntimeTask
@@ -2271,15 +2229,17 @@ export function useWorkbenchPaneSession({
             queuedMessageBusyBlocks.set(queuedMessage.id, lifecycleBeforeSend)
           }
           setQueuedMessages(messages => [...messages, queuedMessage])
-          clearSubmittedInput()
+          clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
         } else {
-          currentAttachments.forEach(addExistingAttachment)
-          setError(sendError ?? i18n.t('workbench.project_chat_send_failed'))
+          restoreSubmittedInput(inputScopeKey, submittedInput)
+          currentAttachments.forEach(attachment =>
+            addExistingAttachmentForScope(inputScopeKey, attachment)
+          )
+          setErrorForScope(inputScopeKey, sendError ?? i18n.t('workbench.project_chat_send_failed'))
         }
         return result.accepted || isRuntimeTaskBusyError(sendError)
       },
       [
-        addExistingAttachment,
         appendLocalUserMessage,
         attachmentState.attachments,
         clearCodeCommentsAfterCommit,
@@ -2295,12 +2255,9 @@ export function useWorkbenchPaneSession({
         getInputRevisionForScope,
         inputScopeKey,
         interruptAndSendQueuedMessage,
-        isTranscriptScopeCurrent,
         lifecycleStore,
-        loadRuntimeTranscriptForPane,
         pendingGoalState,
         addExistingAttachmentForScope,
-        queuedMessages.length,
         queuedMessageBusyBlocks,
         readCurrentPaneBusy,
         retainRuntimeQueuedMessage,

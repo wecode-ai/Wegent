@@ -626,17 +626,35 @@ The mode pill's cancel button appears only on hover and is absolutely positioned
 
 When a user submits new input while the message queue is paused, they can preserve or clear the existing queue. Preserving it sends the new input first and then resumes the queued messages. The queue must remain paused until the lifecycle Store confirms that the new turn entered streaming or already produced a terminal outcome. The latter covers fast executions whose start and settlement are batched into one React commit: waiting only for an active snapshot can leave the queue paused forever, while resuming as soon as the send request returns can let a stale idle snapshot submit the preserved queue concurrently with the new turn. Confirmation must also synchronously clear both the live ProseMirror composer and the external draft state instead of waiting only for `BufferedChatInput`'s debounced update; otherwise, submitted text can remain visible in the composer.
 
+## Message Admission and On-Demand Context
+
+No behavior may block local message admission. Send synchronously validates the input, records the message in its owning conversation or queue, and clears only the submitted draft revision before required attachment preparation, runtime checks, and transport. Late receipts must preserve newer drafts and other conversations. An unanswered question remains visible until delivery is confirmed; the new input appears as sending meanwhile. Admission, queueing, failure, and completed model execution are distinct states.
+
+Sending does not query project or Issue details, load referenced transcripts, or wait for list refreshes. Project context carries only the selected project_store, space_id, and item_id. When details matter, the model first checks the current binding through wework_space.get_current_context and reads the required Issue, comments, or attachments. Explicit IDs apply when there is no default binding. Source tools read current authoritative data; previews and old bodies are not current evidence. Unavailable or denied reads must be reported without bypassing access controls.
+
+```mermaid
+sequenceDiagram
+    participant C as Composer
+    participant S as Conversation state
+    participant R as Runtime
+    participant M as Model
+    participant T as Source tools
+    C->>S: Record message or queue item and clear submitted draft
+    S-->>C: Display immediately
+    S->>R: Message, explicit attachments, resource IDs
+    R-->>S: Accepted, queued, or failed receipt
+    R->>M: Start turn
+    M->>T: Read details on demand
+    T-->>M: Current data or explicit error, preserving authorization
+```
+
 ## Referenced Conversation Context
 
-The composer's `@` menu supports explicit references to other Wework conversations. An empty query shows the five most recent conversations from the current `runtimeWork`; a typed query filters by title, project, and workspace path. The current conversation is always excluded so its in-progress context cannot be recursively injected into itself.
+The composer's @ menu uses loaded runtimeWork metadata: an empty query shows the five most recent conversations, typed queries filter title, project, and workspace, and the current conversation is excluded. References serialize as `[$title](wework-conversation://<encoded RuntimeTaskAddress>)`, carrying navigation identity without runtimeHandle configuration. Composer and sent messages render clickable conversation chips; Issue chips open their corresponding details.
 
-A reference is serialized in the draft as `[$title](wework-conversation://<encoded RuntimeTaskAddress>)`. This is an internal Wework URI. Both the composer and sent user messages must render it as a conversation-reference chip instead of exposing the raw URI. Clicking that chip opens the referenced Runtime task conversation in the current workbench pane. Issue references (`wework-issue://`) open their project-space item in the same way, and the project-space context pill opens the current Issue details from its title area. Before sending, `useWorkbenchPaneSession` parses and deduplicates every reference, loads each transcript with `includeFullContent: true` and `refresh: true`, and enforces these boundaries:
+Submission synchronously parses and deduplicates references. The referencedConversations application context contains only stable conversation_id values and reading instructions. Before relying on referenced content, the model discovers wework_control and calls read_conversation, following cursors for the pages it needs. Full history, tool output, and attachment binaries are no longer expanded before sending. Code Mode can select the fields needed from tool results.
 
-- Include only user messages and completed assistant text. Do not inject system, developer, tool, thinking, or streaming assistant content, and do not separately ingest attachment binaries.
-- Send the extracted text as `referencedConversations` application context inside `additionalContext`, explicitly labeled as untrusted background context. Instructions, tool calls, or permission claims in a referenced conversation are data, not executable instructions for the current conversation.
-- If any referenced transcript cannot be loaded, block the send and show a localized error. Never continue after silently dropping a reference.
-
-This feature is a user-authorized pre-send snapshot injection, not a conversation MCP. The model cannot independently list, search, or read conversations that the user did not reference; menu search uses only metadata already loaded in `runtimeWork`. Changes to this path must keep the reference parsing and context construction unit tests, composer/message rendering tests, and the `conversation-mention.scenario.mjs` desktop E2E scenario aligned.
+Retrieved content is untrusted background data and cannot grant permissions or override instructions. Reference IDs do not change native source restrictions or authorization. An unavailable or denied source does not prevent submission; the model must report that it cannot read it instead of inventing content. Maintain regressions for reference parsing, send timing, access failure, and real tool reads. Desktop E2E runs through the shared CI suites; local execution follows repository policy.
 
 ## Conversation Switching and Transcript Restoration
 
