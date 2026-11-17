@@ -18,6 +18,7 @@ export async function verifyCustomModelOutputBudget(control) {
     for await (const chunk of request) body += chunk
     requests.push({ path: request.url, body: JSON.parse(body) })
     if (request.headers.authorization !== 'Bearer model-test-key') {
+      assert.equal(requests.length, 1, 'Only the deliberately invalid key may be rejected')
       response.writeHead(401, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify({ error: { message: 'Invalid model test key' } }))
       return
@@ -80,7 +81,7 @@ async function verifyOutputBudgetAndConnection(control, baseUrl) {
   await control.command('waitFor', '[data-testid="provider-editor-test-result"][role="alert"]')
   await control.command('click', '[data-testid="provider-editor-test-error-details"]')
   await control.command('waitFor', '[data-testid="provider-editor-test-result"][open]', {
-    text: 'HTTP 401: Invalid model test key',
+    text: '连接失败',
   })
   await control.command('fill', '[data-testid="provider-api-key"]', { value: 'model-test-key' })
   await control.command('clickWhenEnabled', '[data-testid="provider-editor-test"]')
