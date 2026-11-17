@@ -2223,6 +2223,22 @@ describe('createHybridWorkbenchServices', () => {
     )
   })
 
+  it('normalizes typed offline command errors and preserves other failures', async () => {
+    const services = createServices()
+    const offline = Object.assign(new Error('Device internal-id is offline'), {
+      code: 'device_offline',
+    })
+    mocks.cloudRuntimeIpcRequest.mockRejectedValueOnce(offline)
+    await expect(
+      services.deviceApi.executeCommand('remote', { command_key: 'git_status' })
+    ).rejects.toMatchObject({ message: 'executor-offline:remote', cause: offline })
+    const denied = Object.assign(new Error('Denied'), { code: 'permission_denied' })
+    mocks.cloudRuntimeIpcRequest.mockRejectedValueOnce(denied)
+    await expect(
+      services.deviceApi.executeCommand('remote', { command_key: 'git_status' })
+    ).rejects.toBe(denied)
+  })
+
   it('routes extension commands through the Backend command API', async () => {
     mocks.cloudServices.deviceApi.executeCommand.mockResolvedValueOnce({
       success: true,
@@ -2240,6 +2256,48 @@ describe('createHybridWorkbenchServices', () => {
       command_key: 'extension_command',
     })
     expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+  })
+
+  it('uses current remote reachability independently of local IPC and rejects a removed device', async () => {
+    const remote = {
+      id: 2,
+      device_id: 'remote-owner',
+      name: 'Remote workspace',
+      status: 'offline' as const,
+      is_default: false,
+      device_type: 'remote' as const,
+      bind_shell: 'claudecode',
+    }
+    mocks.cloudListDevices.mockResolvedValue([remote])
+    const services = createServices()
+    await services.executorClient!.commands.listDevices()
+    await expect(
+      services.executorClient!.commands.executeCommand(remote.device_id, {
+        command_key: 'git_branch',
+      })
+    ).rejects.toThrow('executor-offline:remote-owner')
+    mocks.cloudListDevices.mockResolvedValue([{ ...remote, status: 'online' }])
+    await services.cloudBackgroundApi!.listDevices!()
+    mocks.localListDevices.mockRejectedValueOnce(new Error('Local IPC unavailable'))
+    mocks.cloudRuntimeIpcRequest.mockResolvedValueOnce({
+      success: true,
+      stdout: 'main',
+      stderr: '',
+      exit_code: 0,
+    })
+    await expect(
+      services.executorClient!.commands.executeCommand(remote.device_id, {
+        command_key: 'git_branch',
+      })
+    ).resolves.toMatchObject({ success: true })
+    mocks.localListDevices.mockReset().mockResolvedValue([])
+    mocks.cloudListDevices.mockResolvedValue([])
+    await services.cloudBackgroundApi!.listDevices!()
+    await expect(
+      services.executorClient!.commands.executeCommand(remote.device_id, {
+        command_key: 'git_branch',
+      })
+    ).rejects.toThrow('executor-not-found:remote-owner')
   })
 
   it('resolves an uncached cloud executor before running workspace commands', async () => {

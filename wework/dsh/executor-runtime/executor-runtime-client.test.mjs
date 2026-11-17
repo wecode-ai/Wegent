@@ -339,6 +339,35 @@ test('an abort signal never cancels a mutating request', async () => {
   }
 })
 
+test('connection capability reads propagate cancellation to the native socket', async () => {
+  const methods = [
+    'runtime.connections.mcp',
+    'runtime.connections.cli',
+    'runtime.connections.git.read',
+  ]
+  const fixture = await executorFixture({ rendererMethods: methods, holdConnectionReads: true })
+  const client = new ExecutorRuntimeClient({
+    transport: new LocalEndpointTransport({ endpoint: fixture.endpoint, token: fixture.token }),
+  })
+  try {
+    await client.start()
+    for (const [index, method] of methods.entries()) {
+      const controller = new AbortController()
+      const id = `collection-${index}`
+      const pending = client.request(method, {}, undefined, id, { signal: controller.signal })
+      const rejected = assert.rejects(pending, { code: 'request_cancelled' })
+      await waitFor(() => fixture.heldRequestIds().includes(id))
+      controller.abort()
+      await rejected
+      await waitFor(() => fixture.cancelledIds().includes(id))
+      assert.equal(client.pending.has(id), false)
+    }
+  } finally {
+    await client.stop()
+    await fixture.stop()
+  }
+})
+
 async function executorFixture(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-executor-runtime-'))
   const endpoint =
@@ -424,6 +453,7 @@ async function executorFixture(options = {}) {
           requestIds.push(message.id)
           if (
             (options.holdHistoryReads && message.method.startsWith('runtime.tasks.transcript')) ||
+            (options.holdConnectionReads && message.method.startsWith('runtime.connections.')) ||
             (options.holdSends && message.method === 'runtime.tasks.send')
           ) {
             heldRequests.set(message.id, socket)

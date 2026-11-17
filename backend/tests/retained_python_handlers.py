@@ -29,7 +29,7 @@ _COMPONENTS = {
         "GET",
         "/api/internal/chat/history/{session_id}",
         "HistoryResponse",
-    )
+    ),
 }
 
 

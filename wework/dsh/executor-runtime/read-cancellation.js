@@ -1,3 +1,8 @@
 export function isCancellableRuntimeRead(method) {
-  return method === 'runtime.tasks.transcript'
+  return [
+    'runtime.tasks.transcript',
+    'runtime.connections.git.read',
+    'runtime.connections.mcp',
+    'runtime.connections.cli',
+  ].includes(method)
 }

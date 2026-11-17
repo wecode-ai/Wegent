@@ -3170,6 +3170,7 @@ mod tests {
 
     fn task_link(id: &str) -> RuntimeTaskLink {
         RuntimeTaskLink {
+            snapshot_revision: None,
             local_task_id: id.to_owned(),
             thread_id: None,
             workspace_path: format!("/tmp/{id}"),

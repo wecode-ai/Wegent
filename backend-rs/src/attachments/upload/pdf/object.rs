@@ -412,8 +412,9 @@ pub(crate) struct Document {
 }
 
 impl Document {
-    pub(crate) fn load(bytes: &[u8]) -> Result<Self, String> {
-        let xref = xref::read(bytes)?;
+    pub(crate) fn load(file: &[u8]) -> Result<Self, String> {
+        let (bytes, xref) = xref::read(file)?;
+        let header_relative = bytes.len() != file.len();
         if xref.trailer.contains_key("/Encrypt") {
             return Err("encrypted".to_owned());
         }
@@ -427,7 +428,8 @@ impl Document {
         let mut objects = HashMap::with_capacity(xref.entries.len());
         for (&number, entry) in &xref.entries {
             if let xref::Entry::InFile(offset) = entry {
-                let object = xref::parse_indirect(bytes, *offset, &offsets)
+                let expected_number = header_relative.then_some(number);
+                let object = xref::parse_indirect(bytes, *offset, &offsets, expected_number)
                     .map_err(|error| format!("object {number} at {offset}: {error}"))?;
                 objects.insert(number, object);
             }

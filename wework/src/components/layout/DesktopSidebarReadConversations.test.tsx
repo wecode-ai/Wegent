@@ -124,6 +124,136 @@ describe('DesktopSidebar read conversation collapse', () => {
     })
   })
 
+  test.each(['project', 'task'] as const)(
+    'keeps project spaces collapsed when switching tasks in a pinned %s',
+    async pinned => {
+      const work = runtimeWork()
+      work.projects[0].project.pinned = pinned === 'project'
+      const workspace = work.projects[0].deviceWorkspaces![0]
+      workspace.tasks = [
+        task('first', { pinned: pinned === 'task' }),
+        task('second', { pinned: pinned === 'task' }),
+      ]
+      const onOpenRuntimeTask = vi.fn()
+      const view = renderSidebar({ runtimeWork: work, onOpenRuntimeTask })
+      const toggle = screen.getByTestId('projects-section-toggle')
+      if (pinned === 'project') {
+        await userEvent.click(
+          within(screen.getByTestId('project-row-7')).getByTestId('project-item-button')
+        )
+      }
+      await userEvent.click(toggle)
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+      for (const taskId of ['first', 'second']) {
+        const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+        scrollIntoView.mockClear()
+        await userEvent.click(screen.getByTestId(rowId(taskId)))
+        expect(onOpenRuntimeTask).toHaveBeenLastCalledWith({
+          deviceId: 'local-device',
+          taskId,
+          workspacePath: '/repo',
+        })
+        view.rerenderProps({ currentRuntimeTask: onOpenRuntimeTask.mock.lastCall![0] })
+
+        expect(toggle).toHaveAttribute('aria-expanded', 'false')
+        expect(screen.getByTestId('sidebar-pinned-section')).toContainElement(
+          screen.getByTestId(rowId(taskId))
+        )
+        expect(screen.queryByTestId('project-row-8')).not.toBeInTheDocument()
+        expect(scrollIntoView.mock.contexts).toContain(screen.getByTestId(rowId(taskId)))
+      }
+
+      view.unmount()
+      renderSidebar({ runtimeWork: work, currentRuntimeTask: onOpenRuntimeTask.mock.lastCall![0] })
+      expect(screen.getByTestId('projects-section-toggle')).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      )
+    }
+  )
+
+  test('reveals a selected regular project task and preserves a subsequent manual collapse', async () => {
+    const view = renderSidebar()
+    const toggle = screen.getByTestId('projects-section-toggle')
+    await userEvent.click(toggle)
+
+    view.rerenderProps({
+      currentRuntimeTask: { deviceId: 'local-device', taskId: 'project-read' },
+    })
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('project-local-tasks-panel-8')).toContainElement(
+      screen.getByTestId(rowId('project-read'))
+    )
+
+    await userEvent.click(toggle)
+    view.rerenderProps({ runtimeWork: runtimeWork() })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  test.each([
+    { group: 'regular project', taskId: 'project-read', expanded: true, projectIds: [8] },
+    { group: 'pinned project', taskId: 'project-unread', expanded: false, projectIds: [7] },
+    { group: 'pinned task', taskId: 'pinned-read', expanded: false, projectIds: [] },
+  ])(
+    'restores the new account preferences before revealing its selected $group task',
+    ({ taskId, expanded, projectIds }) => {
+      const storedPreferences = {
+        projectsExpanded: 'false',
+        chatsExpanded: 'false',
+        priorityShowPinned: 'true',
+        showOfflineDeviceItems: 'false',
+        expandedProjectIds: '[]',
+      }
+      const storageKey = (key: string, userId: number) => `wework.desktop.sidebar.${key}.${userId}`
+      for (const [key, value] of Object.entries(storedPreferences)) {
+        localStorage.setItem(storageKey(key, 2), value)
+      }
+      const view = renderSidebar({ currentRuntimeTask: { deviceId: 'local-device', taskId } })
+      const previousPreferences = Object.keys(storedPreferences).map(key => ({
+        key: storageKey(key, 1),
+        value: localStorage.getItem(storageKey(key, 1)),
+      }))
+      const setItem = vi.spyOn(Storage.prototype, 'setItem')
+      try {
+        view.rerenderProps({
+          user: { id: 2, user_name: 'bob', email: 'bob@example.com' },
+        })
+
+        expect(screen.getByTestId('projects-section-toggle')).toHaveAttribute(
+          'aria-expanded',
+          String(expanded)
+        )
+        expect(screen.getByTestId(rowId(taskId))).toBeInTheDocument()
+        const expectedPreferences = {
+          ...storedPreferences,
+          projectsExpanded: String(expanded),
+          expandedProjectIds: JSON.stringify(projectIds),
+        }
+        for (const [key, value] of Object.entries(expectedPreferences)) {
+          expect(localStorage.getItem(storageKey(key, 2))).toBe(value)
+        }
+        for (const { key, value } of previousPreferences) {
+          expect(localStorage.getItem(key)).toBe(value)
+        }
+        const sidebarWrites = setItem.mock.calls.filter(([key]) =>
+          key.startsWith('wework.desktop.sidebar.')
+        )
+        const expectedWrites = Object.entries(expectedPreferences).map(([key, value]) => [
+          storageKey(key, 2),
+          value,
+        ])
+        expect(sidebarWrites).toEqual(expect.arrayContaining(expectedWrites))
+        for (const write of sidebarWrites) {
+          expect(expectedWrites).toContainEqual(write)
+        }
+      } finally {
+        setItem.mockRestore()
+      }
+    }
+  )
+
   test('does not preserve a different device conversation with the same task ID', async () => {
     const work = runtimeWork()
     work.chats.push({

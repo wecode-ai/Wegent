@@ -532,7 +532,7 @@ impl RuntimeWorkRpcHandler {
         let source = json!({
             "source": "supervisor",
             "channel_type": "task_supervisor",
-            "channel_label": "分身监督",
+            "channel_label": "助理监督",
         });
         let created_at = now_ms();
         if self.is_active_local_task(local_task_id) {

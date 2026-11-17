@@ -27,6 +27,8 @@ pub(super) struct RuntimeCommand {
     pub(super) native: Option<(u64, String, String)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) owner_resolution: Option<Value>,
+    #[serde(default)]
+    pub(super) resource_event_keys: Vec<String>,
 }
 
 pub(super) type CommandJournal = std::collections::BTreeMap<String, RuntimeCommand>;
@@ -46,6 +48,16 @@ pub(super) fn key(task: &str, command: &str) -> String {
 }
 
 impl RuntimeCommand {
+    pub(super) fn require_confirmed_delivery(&self) -> Result<(), AppIpcError> {
+        if self.is_owner_abandoned() {
+            return Err(AppIpcError::new("command_abandoned", "The owner abandoned this unconfirmed command. Its outcome remains unknown and the original command cannot be replayed."));
+        }
+        if self.state == CommandState::RecoveryRequired {
+            return Err(AppIpcError::new("command_recovery_required", "The command was accepted before the Runtime stopped, but native execution cannot be confirmed. Review the original task before retrying; it will not be resent automatically."));
+        }
+        Ok(())
+    }
+
     pub(super) fn from_turn(
         turn: &SpawnTurnRequest,
         state: CommandState,
@@ -81,6 +93,29 @@ impl RuntimeCommand {
             ));
         }
         let fingerprint = format!("{:x}", Sha256::digest(input.to_string().as_bytes()));
+        let resource_event_keys = match turn.request.extra.get("resource_event_keys") {
+            None => Vec::new(),
+            Some(value) => {
+                let keys = value
+                    .as_array()
+                    .filter(|keys| keys.len() <= 1000)
+                    .ok_or_else(|| {
+                        AppIpcError::new("bad_request", "Invalid resource event identities")
+                    })?;
+                keys.iter()
+                    .map(|key| {
+                        key.as_str()
+                            .filter(|key| {
+                                key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
+                            })
+                            .map(str::to_owned)
+                            .ok_or_else(|| {
+                                AppIpcError::new("bad_request", "Invalid resource event identity")
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+        };
         Ok(Some(Self {
             id,
             fingerprint,
@@ -89,6 +124,7 @@ impl RuntimeCommand {
             turn: turn.clone(),
             native: None,
             owner_resolution: None,
+            resource_event_keys,
         }))
     }
 
@@ -325,16 +361,49 @@ impl RuntimeWorkRpcHandler {
             .command_journal
             .lock()
             .expect("command journal lock should not be poisoned");
-        let Some(existing) = commands.get(&incoming.key()) else {
-            return Ok(None);
+        let existing = if let Some(existing) = commands.get(&incoming.key()) {
+            existing.validate_replay(&incoming)?;
+            existing
+        } else {
+            self.validate_resource_event_keys(&turn.local_task_id, &incoming.resource_event_keys)?;
+            let same_owner = |command: &&RuntimeCommand| {
+                command.turn.local_task_id == turn.local_task_id
+                    && command.turn.request.extra.get("user_id")
+                        == turn.request.extra.get("user_id")
+            };
+            let owned: Vec<_> = commands.values().filter(same_owner).collect();
+            if incoming.resource_event_keys.is_empty()
+                || !incoming.resource_event_keys.iter().all(|key| {
+                    owned
+                        .iter()
+                        .any(|command| command.resource_event_keys.contains(key))
+                })
+            {
+                return Ok(None);
+            }
+            let relevant: Vec<_> = owned
+                .into_iter()
+                .filter(|command| {
+                    incoming
+                        .resource_event_keys
+                        .iter()
+                        .any(|key| command.resource_event_keys.contains(key))
+                })
+                .collect();
+            for command in &relevant {
+                command.require_confirmed_delivery()?;
+            }
+            let mut receipt = relevant[0].receipt();
+            receipt["resourceEventCommands"] = json!(relevant
+                .iter()
+                .map(|command| command.receipt())
+                .collect::<Vec<_>>());
+            receipt["requiresUserReview"] = json!(relevant
+                .iter()
+                .any(|command| command.receipt()["requiresUserReview"] == true));
+            return Ok(Some(receipt));
         };
-        existing.validate_replay(&incoming)?;
-        if existing.is_owner_abandoned() {
-            return Err(AppIpcError::new("command_abandoned", "The owner abandoned this unconfirmed command. Its outcome remains unknown and the original command cannot be replayed."));
-        }
-        if existing.state == CommandState::RecoveryRequired {
-            return Err(AppIpcError::new("command_recovery_required", "The command was accepted before the Runtime stopped, but native execution cannot be confirmed. Review the original task before retrying; it will not be resent automatically."));
-        }
+        existing.require_confirmed_delivery()?;
         Ok(Some(existing.receipt()))
     }
 

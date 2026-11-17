@@ -21,9 +21,9 @@ from redis import Redis
 _output_lock = threading.Lock()
 
 
-def emit(event: str) -> None:
+def emit(event: str, **details: str | int) -> None:
     with _output_lock:
-        print(json.dumps({"event": event}), flush=True)
+        print(json.dumps({"event": event, **details}), flush=True)
 
 
 def main() -> None:
@@ -98,14 +98,20 @@ def main() -> None:
                             with observer.cursor() as cursor:
                                 while not released.is_set():
                                     cursor.execute(
-                                        "SELECT COUNT(*) FROM performance_schema.data_lock_waits AS waits "
+                                        "SELECT waits.REQUESTING_ENGINE_LOCK_ID, waits.BLOCKING_ENGINE_LOCK_ID "
+                                        "FROM performance_schema.data_lock_waits AS waits "
                                         "JOIN performance_schema.threads AS threads "
                                         "ON waits.BLOCKING_THREAD_ID=threads.THREAD_ID "
                                         "WHERE threads.PROCESSLIST_ID=%s",
                                         (db.thread_id(),),
                                     )
-                                    if cursor.fetchone()[0]:
-                                        emit("blocked")
+                                    wait = cursor.fetchone()
+                                    if wait:
+                                        emit(
+                                            "blocked",
+                                            requestingLockId=wait[0],
+                                            blockingLockId=wait[1],
+                                        )
                                         return
                                     released.wait(0.01)
 

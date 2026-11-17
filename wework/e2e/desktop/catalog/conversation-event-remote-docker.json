@@ -1,0 +1,32 @@
+{
+  "order": 146210,
+  "scenario": "./scenarios/conversation-event-remote-docker.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "cloud": { "order": 43510, "shard": 4, "position": 8100 } },
+  "paths": [
+    "executor/src/runtime_work/connection_service.rs",
+    "executor/src/runtime_work/codex_rollout_page.rs",
+    "executor/src/local/backend/connection_service.rs",
+    "executor/src/runtime_work/handler/control/connection_events/**",
+    "executor/src/runtime_work/handler/control/connection_events.rs",
+    "backend-rs/src/runtime_observations/**",
+    "backend-rs/src/background_jobs/runtime_observations*",
+    "backend-rs/src/background_jobs/runtime_observations/**",
+    "docker/device/Dockerfile",
+    ".github/scripts/prepare-event-remote-device.mjs",
+    "wework/e2e/desktop/fixtures/event-remote-device/Dockerfile",
+    "wework/scripts/package-connection-runtime.mjs",
+    "wework/dsh/connection-host/**",
+    "wework/src/api/executorAccess*",
+    "wework/src/api/hybrid/hybridServices*",
+    "wework/src/lib/workbench-device*",
+    "wework/src/features/workbench/useWorkbenchDeviceReconnect*",
+    "wework/src/components/layout/useWorkbenchPaneEnvironment*",
+    "wework/src/components/layout/useWorkbenchPaneSession*",
+    "wework/src/components/layout/EnvironmentSummaryOverview*",
+    "wework/src/components/chat/composer/GoalStatusBar*",
+    "wework/e2e/desktop/modules/conversation-event-docker.mjs",
+    "wework/e2e/desktop/modules/conversation-event-model.mjs",
+    "wework/e2e/desktop/scenarios/conversation-event-remote-docker.scenario.mjs"
+  ]
+}

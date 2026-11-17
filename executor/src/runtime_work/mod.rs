@@ -18,6 +18,8 @@ mod connection_cli;
 mod connection_dependencies;
 pub(crate) mod connection_host;
 mod connection_mcp;
+mod connection_reader;
+pub(crate) mod connection_service;
 mod connectors;
 mod conversation_sessions;
 pub(crate) mod dingtalk;
@@ -50,6 +52,7 @@ pub(crate) mod transcript_work;
 mod util;
 pub(crate) use util::external_work_kind;
 pub(crate) use util::stand_in_requires_confirmation;
+pub(crate) use util::{normalize_runtime_goal_timestamps, prompt_text};
 mod worktrees;
 
 pub use codex_global_state::run_project_state_query;
@@ -65,6 +68,7 @@ pub(crate) fn runtime_features() -> serde_json::Value {
     serde_json::json!({
         "schemaVersion": 4,
         "pluginSync": { "protocolVersion": 2 },
+        "connectionEvents": { "protocolVersion": wegent_protocol::connection_events::PROTOCOL_VERSION },
         "runtimeTaskCreate": {
             "schemaVersions": [1, 2],
             "features": {
