@@ -210,15 +210,15 @@ mod tests {
             ("foreign", 8, "pending"),
         ] {
             write(
-                &*store.connection().unwrap(),
+                &store.connection().unwrap(),
                 EVENT,
                 &json!({"id":id,"userId":user,"status":status}),
             )
             .unwrap();
         }
-        write(&*store.connection().unwrap(), ACTION, &json!({"id":"live","userId":7,"status":"sending","kind":"continue_work","arguments":{"eventIds":["busy"]}})).unwrap();
+        write(&store.connection().unwrap(), ACTION, &json!({"id":"live","userId":7,"status":"sending","kind":"continue_work","arguments":{"eventIds":["busy"]}})).unwrap();
         for blocked in ["busy", "done", "foreign"] {
-            write(&*store.connection().unwrap(), ACTION, &json!({"id":format!("blocked-{blocked}"),"userId":7,"status":"failed","kind":"create_work","arguments":{"eventIds":["free",blocked]}})).unwrap();
+            write(&store.connection().unwrap(), ACTION, &json!({"id":format!("blocked-{blocked}"),"userId":7,"status":"failed","kind":"create_work","arguments":{"eventIds":["free",blocked]}})).unwrap();
         }
         store.save_stand_in_processing_state(7, &json!({"routingRetry":{"id":"request","before":(Utc::now()+chrono::Duration::seconds(1)).to_rfc3339()}})).unwrap();
         assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 0);
@@ -352,7 +352,7 @@ mod tests {
             ("arrangement", "sending", 7, "run_arrangement"),
             ("foreign", "failed", 8, "continue_work"),
         ] {
-            write(&*store.connection().unwrap(), ACTION,
+            write(&store.connection().unwrap(), ACTION,
                 &json!({"id":id,"userId":user,"kind":kind,"status":status,"arguments":{"eventIds":[id]}})).unwrap();
         }
         assert_eq!(
