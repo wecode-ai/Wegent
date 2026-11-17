@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { onboardingArrangementIds } from '../e2e/desktop/scenarios/stand-in-profile-with-review.scenario.mjs'
 import { loadDesktopCheckpointCatalog } from '../e2e/desktop/checkpoint-catalog.mjs'
+import { bindDesktopOwner } from '../e2e/desktop/modules/desktop-owner-fixture.mjs'
+
+bindDesktopOwner({ id: 37, user_name: 'onboarding-owner' })
 
 test('onboarding and original processing dependencies remain in the existing CI profile group', () => {
   const catalog = loadDesktopCheckpointCatalog()
@@ -15,9 +18,9 @@ test('onboarding and original processing dependencies remain in the existing CI 
 })
 
 const memoryReview = () => ({
-  id: 'stand-in-memory-review-9001',
+  id: 'stand-in-memory-review-37',
   taskRequest: {
-    standInOwner: { userId: 9001, roleId: '@primary' },
+    standInOwner: { userId: 37, roleId: '@primary' },
     standInCalendar: { template: 'memory_review' },
   },
   conversationMode: 'independent',
@@ -30,7 +33,7 @@ test('onboarding assertions retain every arrangement except the exact native mem
   assert.deepEqual(onboardingArrangementIds([...baseline, memoryReview()]), [
     'existing-arrangement',
   ])
-  for (const id of ['weekly-review-9001', 'stand-in-memory-review-9002', 'unexpected']) {
+  for (const id of ['weekly-review-37', 'stand-in-memory-review-38', 'unexpected']) {
     assert.notDeepEqual(onboardingArrangementIds([...baseline, { id }]), ['existing-arrangement'])
   }
 })
@@ -39,7 +42,7 @@ test('a duplicate or mismatched memory default cannot be hidden from onboarding 
   assert.throws(() => onboardingArrangementIds([memoryReview(), memoryReview()]))
   for (const mutate of [
     item => {
-      item.taskRequest.standInOwner.userId = 9002
+      item.taskRequest.standInOwner.userId = 38
     },
     item => {
       item.taskRequest.standInOwner.roleId = 'other'
