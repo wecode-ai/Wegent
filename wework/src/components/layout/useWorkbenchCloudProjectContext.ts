@@ -427,6 +427,9 @@ export function useWorkbenchCloudProjectContext({
   const associationTaskKey = contextRuntimeTask ? runtimeTaskKey(contextRuntimeTask) : null
   const taskBoardAssociation =
     taskBoardAssociationState?.taskKey === associationTaskKey ? taskBoardAssociationState : null
+  if (taskBoardAssociationState && taskBoardAssociationState.taskKey !== associationTaskKey) {
+    setTaskBoardAssociation(null)
+  }
   const [cloudMentionState, setCloudMentionState] = useState<{
     todoId: string
     candidates: ComposerCloudMentionCandidate[]
@@ -539,7 +542,6 @@ export function useWorkbenchCloudProjectContext({
       contextLookupTaskKeyRef.current = null
       queueMicrotask(() => {
         if (!active) return
-        setTaskBoardAssociation(null)
         setBoundContext(null)
         setBoundRuntimeTaskAddress(null)
         setDeliveryItem(null)
@@ -552,7 +554,6 @@ export function useWorkbenchCloudProjectContext({
     const contextTaskKey = `${contextRuntimeTask.deviceId}:${contextRuntimeTask.taskId}`
     if (contextLookupTaskKeyRef.current !== contextTaskKey) {
       contextLookupTaskKeyRef.current = contextTaskKey
-      setTaskBoardAssociation(null)
       setBoundContext(null)
       setBoundRuntimeTaskAddress(null)
       setDeliveryItem(null)

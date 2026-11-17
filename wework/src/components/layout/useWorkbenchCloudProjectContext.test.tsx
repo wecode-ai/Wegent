@@ -68,6 +68,8 @@ describe('useWorkbenchCloudProjectContext', () => {
       origin: undefined,
       cloudProjectId: undefined,
     })
+    rerender({ taskId: 'retained-task' })
+    expect(result.current.taskBoardAssociation).toBeNull()
   })
 
   test('retains the same task binding across hidden tabs and failed refreshes', async () => {
