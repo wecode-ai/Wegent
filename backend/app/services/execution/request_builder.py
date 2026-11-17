@@ -562,6 +562,7 @@ class TaskRequestBuilder:
             fork_sessions=fork_sessions,
             executor_deleted=getattr(subtask, "executor_deleted_at", False),
             new_session=new_session,
+            is_subscription=is_subscription,
         )
 
         execution_request = ExecutionRequest(
@@ -706,6 +707,7 @@ class TaskRequestBuilder:
         fork_sessions: list[dict[str, Any]],
         executor_deleted: bool,
         new_session: bool,
+        is_subscription: bool = False,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         needs_bindings = (
             not new_session
@@ -717,11 +719,26 @@ class TaskRequestBuilder:
         )
         persisted = []
         if executor_deleted or needs_bindings:
-            persisted = self._extract_persisted_sessions(
-                subtask_store.list_assistant_by_task(
-                    self.db, task_id=task.id, owner_user_id=user.id
+            if (
+                is_subscription
+                or getattr(task, "is_active", None) == TaskResource.STATE_SUBSCRIPTION
+            ):
+                persisted = self._merge_inherited_sessions(
+                    subtask_store.list_recent_executor_sessions_by_task(
+                        self.db,
+                        task_id=task.id,
+                        owner_user_id=user.id,
+                        bot_ids=[
+                            config["id"] for config in bot_configs if config.get("id")
+                        ],
+                    )
                 )
-            )
+            else:
+                persisted = self._extract_persisted_sessions(
+                    subtask_store.list_assistant_by_task(
+                        self.db, task_id=task.id, owner_user_id=user.id
+                    )
+                )
         inherited = self._merge_inherited_sessions(
             fork_sessions, persisted if executor_deleted else []
         )

@@ -5,6 +5,7 @@
 pub mod codex;
 pub mod command;
 pub mod host;
+pub mod lifecycle;
 pub mod matcher;
 pub mod model;
 pub mod pre_execute;

@@ -290,7 +290,7 @@ fn write_private_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
     })
 }
 
-fn hook_user(request: &ExecutionRequest) -> HookUser {
+pub(super) fn hook_user(request: &ExecutionRequest) -> HookUser {
     let nested_user = request.extra.get("user").and_then(Value::as_object);
     let id = request
         .extra
@@ -1540,12 +1540,21 @@ impl RuntimeWorkRpcHandler {
             let mapper_request = request.clone();
             let hook_turn = Arc::new(Mutex::new(None::<ActiveCodexTurn>));
             let mapper_hook_turn = Arc::clone(&hook_turn);
+            let lifecycle = Arc::new(Mutex::new(None::<crate::hooks::lifecycle::LifecycleHooks>));
+            let mapper_lifecycle = Arc::clone(&lifecycle);
             let mapper_handle = tokio::spawn(async move {
                 while let Some(message) = notification_rx.recv().await {
                     let active_turn = mapper_hook_turn
                         .lock()
                         .expect("hook turn context lock should not be poisoned")
                         .clone();
+                    if let Some(turn) = active_turn.as_ref() {
+                        if let Some(hooks) =
+                            mapper_lifecycle.lock().expect("lifecycle lock").as_mut()
+                        {
+                            hooks.observe_codex(&turn.thread_id, &message);
+                        }
+                    }
                     mapper_handler
                         .observe_execution_codex_notification(
                             &mapper_local_task_id,
@@ -1577,6 +1586,7 @@ impl RuntimeWorkRpcHandler {
                 Arc::new(Mutex::new(initial_turn_presentation(&request)));
             let active_turn_request = request.clone();
             let callback_hook_turn = Arc::clone(&hook_turn);
+            let callback_lifecycle = Arc::clone(&lifecycle);
             let callback_turn_presentation = Arc::clone(&pending_turn_presentation);
             let active_turn_restore_startup = restore_startup.clone();
             let active_turn_started: CodexActiveTurnCallback =
@@ -1606,6 +1616,10 @@ impl RuntimeWorkRpcHandler {
                             thread_id: thread_id.clone(),
                             turn_id: turn_id.clone(),
                         });
+                    if let Some(hooks) = callback_lifecycle.lock().expect("lifecycle lock").as_mut()
+                    {
+                        hooks.started(&thread_id, &turn_id);
+                    }
                     active_turn_handler.record_active_codex_turn(
                         &active_turn_local_task_id,
                         active_turn_execution_id,
@@ -1686,6 +1700,8 @@ impl RuntimeWorkRpcHandler {
                 handler
                     .validate_project_coordinator_request(&request)
                     .await?;
+                *lifecycle.lock().expect("lifecycle lock") =
+                    handler.begin_lifecycle_hooks(&request, &turn_local_task_id, "Codex");
                 crate::agents::runtime_capabilities::prepare_codex_runtime(&request).await?;
                 handler
                     .codex_app_server
@@ -1740,6 +1756,15 @@ impl RuntimeWorkRpcHandler {
             }
 
             let _ = mapper_handle.await;
+            if let Some(hooks) = lifecycle.lock().expect("lifecycle lock").as_mut() {
+                let status = match &result {
+                    Ok(turn) => super::hooks::lifecycle_status(&turn.outcome),
+                    Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED => "interrupted",
+                    Err(_) if runtime_was_stopped => "interrupted",
+                    Err(_) => "failed",
+                };
+                hooks.finish(status);
+            }
             if let Some(recovery) = result
                 .as_mut()
                 .ok()
