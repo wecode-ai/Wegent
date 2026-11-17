@@ -2,7 +2,11 @@
 import assert from 'node:assert/strict'
 import { afterEach, expect, test, vi } from 'vitest'
 import { createProjectOnlyNavigationRegression } from '../e2e/desktop/modules/project-only-navigation.mjs'
-import { verifyCollaborationMemberSettings } from '../e2e/desktop/modules/collaboration-member-settings.mjs'
+import {
+  selectProjectCreateMembers,
+  verifyCollaborationMemberSettings,
+} from '../e2e/desktop/modules/collaboration-member-settings.mjs'
+import { projectCreateLabels } from '../../packages/collaboration/src/project-create/labels'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
 
 // These unit tests drive the actual navigation callers; other board regressions
@@ -112,6 +116,46 @@ function backendFixture() {
 }
 
 afterEach(() => vi.unstubAllGlobals())
+
+test.each([0, 1])(
+  'member creation follows the current search feedback and rejects a duplicate creator, count=%s',
+  async creatorCount => {
+    const members = [
+      { id: 8, user_name: 'alice' },
+      { id: 9, user_name: 'bob' },
+    ]
+    const command = vi.fn(async (action, selector, input) => {
+      if (
+        action === 'waitFor' &&
+        selector === '[data-testid="collaboration-project-create-collaborator-menu"] p'
+      ) {
+        expect(input).toEqual({
+          text: projectCreateLabels['zh-CN'].noMatchingCollaborators,
+          visible: true,
+          stableMs: 250,
+        })
+      }
+      if (action === 'getElementCount') return String(creatorCount)
+      return ''
+    })
+
+    const selection = selectProjectCreateMembers({ command }, { members, owner })
+    if (creatorCount) {
+      await expect(selection).rejects.toThrow(
+        'Searching for the creator must not offer a duplicate project membership'
+      )
+      return
+    }
+    await selection
+    for (const member of members) {
+      expect(command).toHaveBeenCalledWith(
+        'waitFor',
+        `[data-testid="collaboration-project-create-selected-member-${member.id}"]`,
+        { text: member.user_name }
+      )
+    }
+  }
+)
 
 test.each([false, true])(
   'project-only shared-core navigation uses actual controls, compact=%s',

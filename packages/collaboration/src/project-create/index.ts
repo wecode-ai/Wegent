@@ -1,5 +1,9 @@
 export { ProjectCreateDialog } from "./ProjectCreateDialog";
 export {
+  appendCollaborationGroupResponsibility,
+  IncompleteCollaborationGroupGenerationError,
+  missingGeneratedCollaborationGroupSections,
+  type GeneratedCollaborationGroupMissingSection,
   changeCollaborationGroupLeader,
   normalizeCollaborationGroupDraftForPersistence,
 } from "./collaborationGroupDraft";

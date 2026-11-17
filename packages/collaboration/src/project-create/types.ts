@@ -92,10 +92,10 @@ export type ProjectCreateCollaborationGroupGenerationEvent =
       leader: boolean;
     }
   | {
-      type: "participant_delta";
+      type: "participant_responsibility";
       kind: "human" | "agent";
       id: string;
-      delta: string;
+      text: string;
     }
   | {
       type: "principle";
@@ -149,6 +149,7 @@ export interface DingTalkAITableLink {
 
 export interface ProjectCreateModalProps {
   title: string;
+  closeLabel: string;
   children: ReactNode;
   onClose(): void;
 }
@@ -165,6 +166,13 @@ export interface ProjectCreateLabels {
   title: string;
   name: string;
   namePlaceholder: string;
+  nameTooLong: string;
+  discardProjectTitle: string;
+  discardProjectDescription: string;
+  discardGroupTitle: string;
+  discardGroupDescription: string;
+  keepEditing: string;
+  discardDraft: string;
   location: string;
   locationImmutable: string;
   localLocation: string;
@@ -174,11 +182,7 @@ export interface ProjectCreateLabels {
   visibility: string;
   privateVisibility: string;
   privateVisibilityDescription: string;
-  publicAccessRole: string;
-  viewerRole: string;
-  developerRole: string;
-  viewerRoleDescription: string;
-  developerRoleDescription: string;
+  publicReadOnlyDescription: string;
   defaultIssueSecurity: string;
   openIssueSecurity: string;
   relatedIssueSecurity: string;
@@ -189,6 +193,7 @@ export interface ProjectCreateLabels {
   publicVisibilityNotice: string;
   taskProvider: string;
   advancedSettings: string;
+  advancedSettingsSummary: string;
   builtInProvider: string;
   builtInLocalDescription: string;
   builtInCloudDescription: string;
@@ -221,12 +226,18 @@ export interface ProjectCreateLabels {
   availableAgents: string;
   unavailableSelectedAgent: string;
   availableGroups: string;
-  noAvailableCollaborators: string;
   membersUnavailable: string;
   retry: string;
   retrySetup: string;
   projectCreatedSetupPending: string;
   confirmedMembers: string;
+  noAvailablePeople: string;
+  searchPeopleHint: string;
+  noAvailableAgents: string;
+  noAvailableGroups: string;
+  noMatchingCollaborators: string;
+  collaboratorsOptionalHint: string;
+  close: string;
   groupRecommendationTitle: string;
   groupRecommendationDescription: string;
   keepDirectCollaboration: string;
@@ -258,9 +269,15 @@ export interface ProjectCreateLabels {
   memberAttachment: string;
   standingInGroup: string;
   generateResponsibilities: string;
+  loadingGenerationModels: string;
+  noGenerationModels: string;
+  reloadGenerationModels: string;
   preparingGenerationModel: string;
   generatingResponsibilities: string;
   generationElapsed: string;
+  generationCompleted: string;
+  generationIncomplete: string;
+  partialGenerationPreview: string;
   waitingForAssignment: string;
   automaticAssignmentHint: string;
   formingGroup: string;
@@ -269,6 +286,7 @@ export interface ProjectCreateLabels {
   generatingWorkflow: string;
   groupSettingsHint: string;
   cancel: string;
+  backToProject: string;
   create: string;
   creating: string;
   unavailableLocation: string;

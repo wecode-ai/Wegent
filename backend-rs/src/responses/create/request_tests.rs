@@ -186,7 +186,7 @@ async fn chat_preserves_configured_skills_with_legacy_shell_metadata() {
         let fixture =
             MysqlRows::start_results(move |sql| skill_fixture(sql, automatic, preload)).await;
         let state = crate::app_test_support::app(fixture.mysql.clone());
-        let request = build_chat_execution_request(&state, &input, &[], None, None, None)
+        let request = build_chat_execution_request(&state, &input, false, &[], None, None, None)
             .await
             .unwrap_or_else(|error| {
                 panic!(
@@ -249,7 +249,7 @@ async fn web_chat_dispatches_coordinate_workers_and_keeps_pipeline_on_its_curren
         );
         let mut input = chat_input(&team, &leader);
         input.bot_ids = &[2, 3, 4];
-        let request = build_chat_execution_request(&state, &input, &[], None, None, None)
+        let request = build_chat_execution_request(&state, &input, false, &[], None, None, None)
             .await
             .unwrap_or_else(|error| {
                 panic!("mode={mode}: {error:?}; queries: {:?}", fixture.queries())
@@ -505,10 +505,17 @@ async fn first_git_chat_dispatch_uses_written_workspace_while_replica_is_missing
     })
     .await;
     let state = crate::app_test_support::app(fixture.mysql.clone());
-    let first =
-        build_chat_execution_request(&state, &input, &[], None, None, Some(&repository.to_json()))
-            .await
-            .expect("first turn uses the repository written with the task");
+    let first = build_chat_execution_request(
+        &state,
+        &input,
+        false,
+        &[],
+        None,
+        None,
+        Some(&repository.to_json()),
+    )
+    .await
+    .expect("first turn uses the repository written with the task");
     assert!(
         !fixture
             .queries()
@@ -521,7 +528,7 @@ async fn first_git_chat_dispatch_uses_written_workspace_while_replica_is_missing
     input.assistant_subtask_id = 7;
     input.user_subtask_id = 6;
     input.message_id = 4;
-    let followup = build_chat_execution_request(&state, &input, &[], None, None, None)
+    let followup = build_chat_execution_request(&state, &input, false, &[], None, None, None)
         .await
         .expect("follow-up reads the persisted repository");
     assert!(
@@ -553,9 +560,10 @@ async fn a_new_git_chat_without_a_repository_url_fails_before_dispatch() {
     let fixture = MysqlRows::start_results(|sql| skill_fixture(sql, false, false)).await;
     let state = crate::app_test_support::app(fixture.mysql.clone());
     let repository = json!({"gitRepo": "team/demo", "gitUrl": " "});
-    let error = build_chat_execution_request(&state, &input, &[], None, None, Some(&repository))
-        .await
-        .expect_err("missing Git URL must fail");
+    let error =
+        build_chat_execution_request(&state, &input, false, &[], None, None, Some(&repository))
+            .await
+            .expect_err("missing Git URL must fail");
     assert_eq!(error.status(), brz_http_server::StatusCode::BAD_REQUEST);
     assert_eq!(
         error.detail_message(),

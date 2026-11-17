@@ -232,7 +232,7 @@ import {
   shouldPrepareWorkItemTask,
   workItemComposerReference,
   workItemAssociationUpdate,
-  updateIssueWhenPersonalTaskStarts,
+  prepareIssueStartStatus,
   workItemTaskInput,
 } from './workItemTaskInput'
 import {
@@ -3935,23 +3935,25 @@ export function CloudTodoWorkspace({
       }
       const project = projectSpaceRef(selectedItemProject)
       publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'bound' })
+      let rollbackStatus: (() => Promise<void>) | undefined
       if (selectedItemProject.location === 'cloud') {
-        const statusError = await updateIssueWhenPersonalTaskStarts(
-          cloudWorkspaceApi!.issues,
-          latest.id,
-          {
-            projectStore: 'backend',
-            dispatchRoundId: dispatch?.roundId ?? latest.human_task_binding?.dispatchRoundId,
-          }
-        )
-        if (statusError !== null) setBoardError(statusError || cloudWorkspaceMessages.saveFailed)
+        const status = await prepareIssueStartStatus(cloudWorkspaceApi!.issues, latest.id, {
+          projectStore: 'backend',
+          dispatchRoundId: dispatch?.roundId ?? latest.human_task_binding?.dispatchRoundId,
+        })
+        rollbackStatus = status.rollback
+        if (status.error !== null) setBoardError(status.error || cloudWorkspaceMessages.saveFailed)
       }
       await associateSelectedItemWithProject(localProject)
       setBoardRefreshNonce(value => value + 1)
       return async () => {
-        await runtimeBindingApi.unbindTask(latest.id, address)
-        publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'unbound' })
-        setBoardRefreshNonce(value => value + 1)
+        try {
+          await rollbackStatus?.()
+        } finally {
+          await runtimeBindingApi.unbindTask(latest.id, address)
+          publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'unbound' })
+          setBoardRefreshNonce(value => value + 1)
+        }
       }
     } catch (cause) {
       setBoardError(cause instanceof Error ? cause.message : '关联任务与 Issue 失败，请重试')
@@ -5784,8 +5786,8 @@ export function CloudTodoWorkspace({
             allowDingTalkAITable
             labels={projectCreateLabels[i18n.language.startsWith('zh') ? 'zh-CN' : 'en']}
             host={{
-              renderModal: ({ title, children, onClose }) => (
-                <Modal title={title} width="wide" onClose={onClose}>
+              renderModal: ({ title, children, onClose, closeLabel }) => (
+                <Modal title={title} width="wide" onClose={onClose} closeLabel={closeLabel}>
                   {children}
                 </Modal>
               ),

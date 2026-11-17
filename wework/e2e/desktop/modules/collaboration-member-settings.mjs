@@ -13,7 +13,7 @@ export async function selectProjectCreateMembers(control, { members, owner }) {
   await control.command(
     'waitFor',
     '[data-testid="collaboration-project-create-collaborator-menu"] p',
-    { text: '暂无其他可添加项', visible: true, stableMs: 250 }
+    { text: '没有匹配项，请换个关键词或切换类别。', visible: true, stableMs: 250 }
   )
   assert.equal(
     Number(

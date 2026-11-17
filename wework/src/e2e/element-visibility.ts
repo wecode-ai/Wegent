@@ -8,13 +8,15 @@ interface VisibleRectangle {
 }
 
 /** Geometry alone cannot prove visibility inside nested scrollports or overlays. */
-export function readElementVisibility(element: HTMLElement): {
+export function readElementVisibility(
+  element: HTMLElement,
+  rect: VisibleRectangle = element.getBoundingClientRect()
+): {
   visibleIntersection: VisibleRectangle | null
   hitTestVisible: boolean
 } {
   const view = element.ownerDocument.defaultView
   if (!view) return { visibleIntersection: null, hitTestVisible: false }
-  const rect = element.getBoundingClientRect()
   let left = Math.max(0, rect.left)
   let top = Math.max(0, rect.top)
   let right = Math.min(view.innerWidth, rect.right)
@@ -61,4 +63,23 @@ export function readElementVisibility(element: HTMLElement): {
       return hit === element || (hit != null && element.contains(hit))
     })
   return { visibleIntersection, hitTestVisible }
+}
+
+/** Inspect only the caret owned by the requested editor, without moving it. */
+export function readSelectionVisibility(element: HTMLElement) {
+  const selection = element.ownerDocument.getSelection()
+  if (!selection?.focusNode || !element.contains(selection.focusNode)) return null
+  const range = element.ownerDocument.createRange()
+  range.setStart(selection.focusNode, selection.focusOffset)
+  range.collapse(true)
+  const bounds = range.getBoundingClientRect()
+  const rect = {
+    left: bounds.left,
+    top: bounds.top,
+    right: bounds.left + Math.max(1, bounds.width),
+    bottom: bounds.bottom,
+    width: Math.max(1, bounds.width),
+    height: bounds.height,
+  }
+  return { ...rect, ...readElementVisibility(element, rect) }
 }

@@ -92,6 +92,16 @@ pnpm --filter wework test src/features/todo/CloudTodoWorkspace.test.tsx src/feat
 
 对 `25250db76` 的补充评审获得另一条稳定复现：协作平台入口未选额外成员，只选智能体与当前设备时，项目成员名单接口失败仍阻断资源配置，项目创建一次但智能体未绑定。平台现在与普通入口一致，仅在选择了当前用户之外的成员时调用成员配置器；保留配置器完整名单回读及错误契约。新用例验证智能体与设备均正常配置、成员 API 不被调用且创建弹窗关闭；原模板用例补强为成员 API 不可用仍可完成无成员模板创建。相关平台 7 项与原成员配置器 11 项测试全部通过，真实所选成员的失败、持久化校验与同项目重试断言保持。最终 CI 仍以包含此修复的新 head 为准。
 
+## 2026-11-17 再次主线整合
+
+`efd030cab` 的全部 CI 已通过：59 项成功、16 项按规则跳过，三个实际桌面检查点均 PASS；随后主线更新使 PR 再次产生冲突。本轮合入 `976cdf938`，保留主线拆分后的创建表单、模板配置、草稿保护和键盘交互，将成员持久化、同项目失败重试、独立目录错误及失效智能体取消迁入共享结构。主线原 `ProjectCreateDialog.test.tsx` 保持原样，本项成员用例移入 `ProjectCreateDialog.members.test.tsx`，保留双方断言。
+
+生成模型目录沿用主线按需加载 hook，并按项目位置、当前用户及分组隔离请求。新增两项测试先稳定复现切换后保留旧目录、未读取新目录，以及旧请求覆盖新目录的问题；修复后通过，保留同作用域模型选项和按需加载行为。
+
+共享桌面场景同时保留主线创建窗口与私有项目验证、本项两人成员选择与服务端 Developer/direct_role 回读。窗口交互验证会关闭并重开草稿，因此在成员选择之前执行。成员选择脚本仍等待旧的空结果文案；新的协议单元测试稳定复现两项失败，实际请求文本为“暂无其他可添加项”，当前组件契约为“没有匹配项，请换个关键词或切换类别。”。现只同步该等待文案，保留原选择器、250ms 稳定窗口、当前用户去重和成员持久化断言；完整导航协议 6 项通过。
+
+本地验证：共享创建与模板 32 文件、237 项，完整平台 196 项，普通入口与资源工厂 73 项，双语文档契约 8 项全部通过。共享构建、Wework typecheck、完整 lint（0 错误、4 项既有警告）、按目标文件原风格的格式检查及差异检查通过。未执行本地 E2E 或 ai:verify，未放宽断言或等待时限；包含本轮整合的新 head 必须取得自身的全部 CI 结果后再交 QA。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

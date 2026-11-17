@@ -1,6 +1,7 @@
 //! Routing plans and their business intents commit in the existing stand-in transaction.
 use super::stand_in_inbox::stand_in_record_key;
-use super::stand_in_processing::{rows, write, ACTION, EVENT, STATE};
+use super::stand_in_processing::{write, ACTION, EVENT, STATE};
+use super::stand_in_processing_queries::{claimed_event_ids, query_values};
 use super::*;
 use sha2::{Digest, Sha256};
 
@@ -10,21 +11,17 @@ impl LocalTaskStore {
     pub fn split_stand_in_connection_intake(&self, user: i64) -> Result<(), TaskRuntimeError> {
         let mut guard = self.connection()?;
         let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let claimed = rows(&connection, ACTION, user)?
-            .into_iter()
-            .filter(|action| matches!(action["status"].as_str(), Some("pending" | "sending")))
-            .flat_map(|action| {
-                action["arguments"]["eventIds"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-            })
-            .collect::<Vec<_>>();
-        for mut event in rows(&connection, EVENT, user)? {
-            if event["kind"] != "connection"
-                || event["roleScoped"] == true
-                || claimed.contains(&event["id"])
-            {
+        let claimed = claimed_event_ids(&connection, user)?;
+        let legacy = query_values(
+            &connection,
+            "SELECT metadata FROM loop_items WHERE resource_type=?1
+             AND json_extract(metadata,'$.userId')=?2
+             AND json_extract(metadata,'$.kind')='connection'
+             AND json_extract(metadata,'$.roleScoped') IS NOT 1 ORDER BY created_at,id",
+            params![EVENT, user],
+        )?;
+        for mut event in legacy {
+            if event["id"].as_str().is_some_and(|id| claimed.contains(id)) {
                 continue;
             }
             let roles = event["roleIds"].as_array().cloned().unwrap_or_default();
@@ -129,20 +126,11 @@ impl LocalTaskStore {
                 }
             }
         }
-        for action in rows(&connection, ACTION, user)? {
-            if matches!(action["status"].as_str(), Some("pending" | "sending"))
-                && action["arguments"]["eventIds"]
-                    .as_array()
-                    .is_some_and(|ids| {
-                        ids.iter()
-                            .filter_map(Value::as_str)
-                            .any(|id| event_ids.contains(id))
-                    })
-            {
-                return Err(TaskRuntimeError::Invalid(
-                    "Routing events have already been claimed".into(),
-                ));
-            }
+        let claimed = claimed_event_ids(&connection, user)?;
+        if event_ids.iter().any(|id| claimed.contains(*id)) {
+            return Err(TaskRuntimeError::Invalid(
+                "Routing events have already been claimed".into(),
+            ));
         }
         for id in &event_ids {
             let event = get_item_from(&connection, id, EVENT)?

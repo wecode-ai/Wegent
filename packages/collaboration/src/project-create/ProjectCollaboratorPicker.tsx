@@ -111,11 +111,35 @@ export function ProjectCollaboratorPicker({
   )
   const availableAgents = agents.filter(agent => matches(agent.name))
   const availableGroups = groups.filter(group => matches(group.name, group.description))
-  const empty = <p>{labels.noAvailableCollaborators}</p>
+  const peopleSearchStatus =
+    !open || activeTab !== 'members' || error
+      ? ''
+      : loading || directoryLoading
+        ? labels.searchingPeople
+        : !query.trim()
+          ? ''
+          : users.length
+            ? `${labels.availablePeople}: ${users.length}`
+            : labels.noMatchingCollaborators
+  const empty = (message: string) => (
+    <div className="collaboration-project-create-collaborator-empty">
+      <p>{query.trim() ? labels.noMatchingCollaborators : message}</p>
+      <p>
+        {activeTab === 'members' && !query.trim() && searchUsers
+          ? labels.searchPeopleHint
+          : labels.collaboratorsOptionalHint}
+      </p>
+    </div>
+  )
+  const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null)
+  const modalContainer = trigger?.closest<HTMLElement>(
+    '[role="dialog"][aria-modal="true"], dialog[open]'
+  )
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
       <Popover.Trigger asChild>
         <button
+          ref={setTrigger}
           type="button"
           className="collaboration-project-create-collaborator-trigger"
           data-testid="collaboration-project-create-add-collaborator"
@@ -125,15 +149,20 @@ export function ProjectCollaboratorPicker({
           <span>{labels.addCollaborator}</span>
         </button>
       </Popover.Trigger>
-      <Popover.Portal>
+      <Popover.Portal container={modalContainer}>
         <Popover.Content
           {...theme}
           side="bottom"
           align="start"
           sideOffset={6}
+          collisionBoundary={trigger?.closest('.collaboration-project-create-body')}
           collisionPadding={8}
           className={`${theme.className ?? ''} collaboration-project-create-collaborator-menu`}
           data-testid="collaboration-project-create-collaborator-menu"
+          aria-label={labels.addCollaborator}
+          onCloseAutoFocus={event => {
+            if (trigger?.closest('[hidden], [inert]')) event.preventDefault()
+          }}
         >
           <div className="collaboration-project-collaborator-picker">
             <label className="collaboration-project-collaborator-search">
@@ -146,6 +175,15 @@ export function ProjectCollaboratorPicker({
                 onChange={event => setQuery(event.target.value)}
               />
             </label>
+            <p
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              className="sr-only"
+              data-testid="collaboration-project-create-people-search-status"
+            >
+              {peopleSearchStatus}
+            </p>
             <CollaborationParticipantsTabs
               ariaLabel={labels.collaborators}
               initialTab="members"
@@ -157,8 +195,13 @@ export function ProjectCollaboratorPicker({
               groupsLabel={labels.availableGroups}
               membersContent={
                 <>
-                  {(loading || directoryLoading) && <p role="status">{labels.searchingPeople}</p>}
-                  {error && <p role="alert">{error}</p>}
+                  {(loading || directoryLoading) && (
+                    <p aria-hidden="true">{labels.searchingPeople}</p>
+                  )}
+                  {error && <p role="alert">{directoryError || labels.peopleSearchFailed}</p>}
+                  {!directoryError && error && error !== labels.peopleSearchFailed && (
+                    <p>{error}</p>
+                  )}
                   {error && (directoryError ? onRetryDirectory : searchUsers) ? (
                     <button
                       type="button"
@@ -185,7 +228,11 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!users.length && !loading && !directoryLoading && !error && empty}
+                  {!users.length &&
+                    !loading &&
+                    !directoryLoading &&
+                    !error &&
+                    empty(labels.noAvailablePeople)}
                 </>
               }
               agentsContent={
@@ -213,7 +260,7 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!availableAgents.length && !agentsError && empty}
+                  {!availableAgents.length && !agentsError && empty(labels.noAvailableAgents)}
                 </>
               }
               groupsContent={
@@ -242,7 +289,7 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!availableGroups.length && !groupsError && empty}
+                  {!availableGroups.length && !groupsError && empty(labels.noAvailableGroups)}
                   {groupAction}
                 </>
               }

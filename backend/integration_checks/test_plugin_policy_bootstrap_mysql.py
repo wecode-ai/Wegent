@@ -41,13 +41,13 @@ def add_policy(db, user_id, *, payload, active=True):
 
 def assert_unlocked(context):
     assert not coordination._redis_client().exists(
-        f"wegent:plugin-write:{context.user_id}"
+        f"wegent:plugin-write:{context.user_id}:@account-policy"
     )
 
 
 def test_first_policy_remains_committed_after_outer_business_rollback(context):
     with context.sessions() as db:
-        acquire_plugin_write_lock(db, context.user_id)
+        acquire_plugin_write_lock(db, context.user_id, name="@account-policy")
         expected = policies.read_policy_revision(db, context.user_id)
         db.add(
             Kind(
@@ -72,10 +72,10 @@ def test_first_policy_remains_committed_after_outer_business_rollback(context):
             == 0
         )
     with context.sessions.begin() as db:
-        acquire_plugin_write_lock(db, context.user_id)
+        acquire_plugin_write_lock(db, context.user_id, name="@account-policy")
     assert_unlocked(context)
     with context.sessions() as db:
-        assert policy_query(db, context.user_id).one().json["spec"]["revision"] == 1
+        assert policy_query(db, context.user_id).one().json["spec"]["revision"] == 0
 
 
 def test_initialization_sql_failure_rolls_back_and_releases_the_lease(
@@ -91,13 +91,13 @@ def test_initialization_sql_failure_rolls_back_and_releases_the_lease(
         patch.setattr(policies, "_initialize_default", fail_after_insert)
         with context.sessions() as db:
             with pytest.raises(PluginWriteError, match="plugin_write_unavailable"):
-                acquire_plugin_write_lock(db, context.user_id)
+                acquire_plugin_write_lock(db, context.user_id, name="@account-policy")
             db.rollback()
     assert_unlocked(context)
     with context.sessions() as db:
         assert policy_query(db, context.user_id).count() == 0
     with context.sessions.begin() as db:
-        acquire_plugin_write_lock(db, context.user_id)
+        acquire_plugin_write_lock(db, context.user_id, name="@account-policy")
     assert_unlocked(context)
     with context.sessions() as db:
         assert policy_query(db, context.user_id).count() == 1
@@ -111,14 +111,14 @@ def test_first_coordinated_write_preserves_an_inactive_disabled_policy(context):
     with context.sessions.begin() as db:
         row_id = add_policy(db, context.user_id, payload=payload, active=False)
     with context.sessions.begin() as db:
-        acquire_plugin_write_lock(db, context.user_id)
+        acquire_plugin_write_lock(db, context.user_id, name="@account-policy")
         expected = policies.read_policy_revision(db, context.user_id)
         assert expected.row_id == row_id and expected.revision == 7
     with context.sessions() as db:
         row = policy_query(db, context.user_id).one()
         assert row.id == row_id and row.is_active is True
         assert row.json == {
-            "spec": {"enabled": False, "revision": 8},
+            "spec": {"enabled": False, "revision": 7},
             "metadata": {"keep": True},
         }
     assert_unlocked(context)
@@ -135,7 +135,7 @@ def test_duplicate_policies_are_rejected_without_selecting_a_preference(context)
             )
     with context.sessions() as db:
         with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
-            acquire_plugin_write_lock(db, context.user_id)
+            acquire_plugin_write_lock(db, context.user_id, name="@account-policy")
         db.rollback()
     with context.sessions() as db:
         rows = policy_query(db, context.user_id).order_by(Kind.id).all()
@@ -154,7 +154,7 @@ def test_invalid_policy_revision_rejects_write_and_releases_lease(context, revis
         add_policy(db, context.user_id, payload=payload, active=False)
     with context.sessions() as db:
         with pytest.raises(PluginWriteError, match="plugin_write_conflict"):
-            acquire_plugin_write_lock(db, context.user_id)
+            acquire_plugin_write_lock(db, context.user_id, name="@account-policy")
         db.rollback()
     with context.sessions() as db:
         row = policy_query(db, context.user_id).one()
@@ -164,7 +164,7 @@ def test_invalid_policy_revision_rejects_write_and_releases_lease(context, revis
 
 def test_stale_parent_cas_cannot_restore_a_disabled_preference(context):
     with context.sessions.begin() as db:
-        acquire_plugin_write_lock(db, context.user_id)
+        acquire_plugin_write_lock(db, context.user_id, name="@account-policy")
         stale = replace(policies.read_policy_revision(db, context.user_id))
         configure_auth_policy(db, context.user_id, False)
     with context.sessions() as db:
@@ -174,5 +174,5 @@ def test_stale_parent_cas_cannot_restore_a_disabled_preference(context):
     with context.sessions() as db:
         assert policy_query(db, context.user_id).one().json["spec"] == {
             "enabled": False,
-            "revision": 2,
+            "revision": 1,
         }

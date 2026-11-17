@@ -50,16 +50,16 @@ const generatedEvents = [
     leader: true,
   },
   {
-    type: 'participant_delta',
+    type: 'participant_responsibility',
     kind: 'agent',
     id: 'device-agent',
-    delta: '协调任务并',
+    text: '协调任务并',
   },
   {
-    type: 'participant_delta',
+    type: 'participant_responsibility',
     kind: 'agent',
     id: 'device-agent',
-    delta: '完成核心开发',
+    text: '完成核心开发',
   },
   {
     type: 'participant_started',
@@ -68,10 +68,10 @@ const generatedEvents = [
     leader: false,
   },
   {
-    type: 'participant_delta',
+    type: 'participant_responsibility',
     kind: 'human',
     id: '7',
-    delta: '确认目标并验收',
+    text: '确认目标并验收',
   },
   {
     type: 'participant_started',
@@ -80,10 +80,10 @@ const generatedEvents = [
     leader: false,
   },
   {
-    type: 'participant_delta',
+    type: 'participant_responsibility',
     kind: 'agent',
     id: 'design-agent',
-    delta: '负责交互设计',
+    text: '负责交互设计',
   },
   { type: 'principle', text: '负责人拆解任务并参与实现' },
   { type: 'principle', text: '成员及时反馈进展和阻塞' },
@@ -165,10 +165,10 @@ describe('collaborationGroupDraftGeneration', () => {
     expect(onProgress).toHaveBeenCalledTimes(1)
     expect(onProgress).toHaveBeenLastCalledWith('generating')
     expect(onEvent).toHaveBeenCalledWith({
-      type: 'participant_delta',
+      type: 'participant_responsibility',
       kind: 'agent',
       id: 'device-agent',
-      delta: '协调任务并',
+      text: '协调任务并',
     })
     expect(onEvent).toHaveBeenCalledWith({
       type: 'principle',
@@ -223,3 +223,120 @@ describe('collaborationGroupDraftGeneration', () => {
     })
   })
 })
+
+const responsibilityCases = [
+  ['Confirm acceptance criteria', 'Resolve blockers'],
+  ['确认验收条件', '处理阻塞问题'],
+]
+
+function responsibilityResponse(items: string[]) {
+  return JSON.stringify({
+    events: [
+      { type: 'group', name: ' Group ' },
+      { type: 'participant_started', kind: 'agent', id: ' device-agent ', leader: true },
+      { type: 'participant_started', kind: 'human', id: ' 7 ', leader: false },
+      ...items.map(text => ({
+        type: 'participant_responsibility',
+        kind: 'human',
+        id: ' 7 ',
+        text,
+      })),
+      { type: 'principle', text: 'Assign work and review evidence' },
+      { type: 'stage', id: ' review ', name: ' Review ' },
+    ],
+  })
+}
+
+it.each(responsibilityCases)(
+  'separates complete items %s / %s without relying on punctuation or spaces',
+  (first, second) => {
+    const draft = parseCollaborationGroupDraft(responsibilityResponse([first, second]), input)
+    expect(draft.name).toBe('Group')
+    expect(draft.members.find(member => member.id === '7')?.responsibility).toBe(
+      [first, second].join('\n')
+    )
+    expect(draft.stages[0]).toMatchObject({ id: 'review', name: 'Review' })
+  }
+)
+
+it.each([true, false])(
+  'keeps streamed preview and final independent items consistent (streamed=%s)',
+  async streamed => {
+    const items = [
+      ' Confirm acceptance criteria ',
+      '\tResolve blockers\u00a0',
+      '反馈实际结果\n保留验证证据',
+    ]
+    const normalized = items.map(text => text.trim())
+    const onEvent = vi.fn()
+    const content = responsibilityResponse(items)
+    const generateText = vi.fn(async options => {
+      if (streamed) {
+        for (let index = 0; index < content.length; index += 7)
+          options.onDelta?.(content.slice(index, index + 7))
+        expect(
+          onEvent.mock.calls
+            .map(([event]) => event)
+            .filter(event => event.type === 'participant_responsibility')
+            .map(event => event.text)
+        ).toEqual(normalized)
+      }
+      return content
+    })
+    const draft = await generateCollaborationGroupDraft({
+      input,
+      textGenerationApi: { generateText },
+      onEvent,
+    })
+    const responsibilities = onEvent.mock.calls
+      .map(([event]) => event)
+      .filter(event => event.type === 'participant_responsibility')
+      .map(event => event.text)
+    expect(responsibilities).toEqual(normalized)
+    expect(draft.members.find(member => member.id === '7')?.responsibility).toBe(
+      responsibilities.join('\n')
+    )
+    const request = generateText.mock.calls[0]![0]
+    expect(request.prompt).toContain('每个事件表达一个完整、独立、可执行的职责条目')
+    expect(request.prompt).not.toContain('participant_delta')
+    const schema = JSON.stringify(request.outputSchema)
+    expect(schema).toContain('participant_responsibility')
+    expect(schema).not.toContain('participant_delta')
+  }
+)
+
+it.each(['', ' \n\t ', null, 42])('rejects an empty or invalid responsibility item %j', text => {
+  const response = JSON.stringify({
+    events: [{ type: 'participant_responsibility', kind: 'human', id: '7', text }],
+  })
+  expect(() => parseCollaborationGroupDraft(response, input)).toThrow('缺少职责条目')
+})
+
+it.each([
+  { omitted: ['principle'], missingSections: ['principles'] },
+  { omitted: ['stage'], missingSections: ['stages'] },
+  { omitted: ['principle', 'stage'], missingSections: ['principles', 'stages'] },
+])(
+  'rejects final generation missing $missingSections while preserving streamed responsibilities',
+  async ({ omitted, missingSections }) => {
+    const content = generationResponse(
+      generatedEvents.filter(event => !omitted.includes(event.type))
+    )
+    const onEvent = vi.fn()
+    const generateText = vi.fn(async options => {
+      options.onDelta?.(content)
+      return content
+    })
+    await expect(
+      generateCollaborationGroupDraft({ input, textGenerationApi: { generateText }, onEvent })
+    ).rejects.toMatchObject({
+      name: 'IncompleteCollaborationGroupGenerationError',
+      missingSections,
+    })
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'participant_responsibility', kind: 'human', id: '7' })
+    )
+    expect(generateText).toHaveBeenCalledTimes(1)
+    expect(() => parseCollaborationGroupDraft(content, input)).not.toThrow()
+  }
+)

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type SetStateAction } from "react";
 
 import type { CollaborationExecutionEnvironment } from "../types";
 import { ProjectCreateMembersError } from "./configureProjectMembers";
@@ -69,6 +69,43 @@ export function projectCreateErrorMessage(
   );
 }
 
+export function projectCreateNameErrorMessage(
+  cause: unknown,
+  labels: ProjectCreateLabels,
+  count: number,
+): string | null {
+  if (!cause || typeof cause !== "object") return null;
+  const error = cause as { status?: unknown; detail?: unknown };
+  if (error.status !== 422 || !error.detail || typeof error.detail !== "object")
+    return null;
+  const errors = (error.detail as { errors?: unknown }).errors;
+  if (!Array.isArray(errors)) return null;
+  for (const item of errors) {
+    if (!item || typeof item !== "object" || !Array.isArray(item.loc)) continue;
+    if (
+      item.loc.length !== 2 ||
+      item.loc[0] !== "body" ||
+      item.loc[1] !== "name"
+    )
+      continue;
+    const max =
+      item.ctx && typeof item.ctx === "object"
+        ? item.ctx.max_length
+        : undefined;
+    if (
+      item.type === "string_too_long" &&
+      Number.isSafeInteger(max) &&
+      max > 0
+    ) {
+      return labels.nameTooLong
+        .replace("{max}", String(max))
+        .replace("{count}", String(count));
+    }
+    if (typeof item.msg === "string" && item.msg.trim()) return item.msg;
+  }
+  return null;
+}
+
 /** Keep template submission and its default device selection on the same readiness boundary. */
 export function useProjectCreateController({
   targets,
@@ -94,7 +131,6 @@ export function useProjectCreateController({
   const [taskProvider, setTaskProvider] =
     useState<ProjectCreateProvider>("local");
   const [visibility, setVisibility] = useState<ProjectVisibility>("private");
-  const [publicAccessRole, setPublicAccessRole] = useState<"Viewer">("Viewer");
   const [defaultIssueSecurity, setDefaultIssueSecurity] = useState<
     "open" | "related"
   >("open");
@@ -148,6 +184,61 @@ export function useProjectCreateController({
   const [memberSetupFailed, setMemberSetupFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [repositoryError, setRepositoryError] = useState<string | null>(null);
+  const [serverNameError, setServerNameError] = useState<{
+    name: string;
+    location: ProjectCreateLocation;
+    message: string;
+  } | null>(null);
+  const nameLength = Array.from(name.trim()).length;
+  const nameMaxLength = location === "cloud" ? 100 : 255;
+  const currentServerNameError =
+    serverNameError?.name === name.trim() &&
+    serverNameError.location === location
+      ? serverNameError.message
+      : null;
+  const nameError =
+    nameLength > nameMaxLength
+      ? labels.nameTooLong
+          .replace("{max}", String(nameMaxLength))
+          .replace("{count}", String(nameLength))
+      : currentServerNameError;
+  const submitErrorField = currentServerNameError
+    ? ("name" as const)
+    : repositoryError
+      ? ("repository" as const)
+      : null;
+  const defaultEnvironmentIds = new Set(
+    defaultExecutionEnvironmentDeviceIds(
+      resourceSetup?.executionEnvironments ?? [],
+    ),
+  );
+  const selectedEnvironmentIds =
+    selectedEnvironmentDeviceIds === null
+      ? null
+      : new Set(selectedEnvironmentDeviceIds);
+  const environmentSelectionChanged =
+    selectedEnvironmentIds !== null &&
+    (selectedEnvironmentIds.size !== defaultEnvironmentIds.size ||
+      [...selectedEnvironmentIds].some((id) => !defaultEnvironmentIds.has(id)));
+  const hasDraft =
+    !createdProject &&
+    Boolean(
+      name.trim() ||
+      description.trim() ||
+      location !== initialLocation ||
+      taskProvider !== "local" ||
+      visibility !== "private" ||
+      defaultIssueSecurity !== "open" ||
+      repositoryAddress ||
+      token ||
+      aitableUrl ||
+      memberUserIds.length ||
+      agentResourceIds.length ||
+      templateDocument ||
+      collaborationGroupDrafts.length ||
+      environmentSelectionChanged,
+    );
   const repositoryProvider =
     taskProvider === "github" || taskProvider === "gitlab";
   const isAITableProvider = taskProvider === "dingtalk_aitable";
@@ -162,6 +253,8 @@ export function useProjectCreateController({
     Boolean(
       createdProject ||
       (name.trim() &&
+        !nameError &&
+        !repositoryError &&
         !templatePending &&
         (!repositoryProvider || repositoryAddress.trim()) &&
         (!isAITableProvider || aitableLink) &&
@@ -180,6 +273,8 @@ export function useProjectCreateController({
     setSaving(true);
     setError(null);
     setMemberFailures([]);
+    setRepositoryError(null);
+    setServerNameError(null);
     try {
       const pending = pendingMemberSetup.current;
       const setup =
@@ -244,7 +339,7 @@ export function useProjectCreateController({
             ? {
                 visibility,
                 ...(visibility === "public"
-                  ? { publicAccess: { role: publicAccessRole } }
+                  ? { publicAccess: { role: "Viewer" } }
                   : {}),
                 ...(!isAITableProvider ? { defaultIssueSecurity } : {}),
               }
@@ -302,7 +397,24 @@ export function useProjectCreateController({
       onCreated(project, projectLocation);
     } catch (cause) {
       host?.track?.("failed");
-      setError(projectCreateErrorMessage(cause, labels, host));
+      const fieldError = projectCreateNameErrorMessage(
+        cause,
+        labels,
+        nameLength,
+      );
+      if (cause instanceof RepositoryProviderError) {
+        setRepositoryError(projectCreateErrorMessage(cause, labels, host));
+        setError(null);
+      } else if (fieldError) {
+        setServerNameError({
+          name: name.trim(),
+          location,
+          message: fieldError,
+        });
+        setError(null);
+      } else {
+        setError(projectCreateErrorMessage(cause, labels, host));
+      }
     } finally {
       submissionInFlight.current = false;
       setSaving(false);
@@ -312,13 +424,18 @@ export function useProjectCreateController({
   return {
     state: {
       name,
+      nameError,
+      nameMaxLength,
+      nameLength,
+      submitErrorField,
+      hasDraft,
       description,
       location,
       taskProvider,
       visibility,
-      publicAccessRole,
       defaultIssueSecurity,
       repositoryAddress,
+      repositoryError,
       token,
       aitableUrl,
       aitableLink,
@@ -340,14 +457,25 @@ export function useProjectCreateController({
     },
     commands: {
       setTemplateDocument,
-      setName,
+      setName: (value: SetStateAction<string>) => {
+        setName(value);
+        setServerNameError(null);
+      },
       setDescription,
-      setLocation,
-      setTaskProvider,
+      setLocation: (value: SetStateAction<ProjectCreateLocation>) => {
+        setLocation(value);
+        setServerNameError(null);
+      },
+      setTaskProvider: (value: SetStateAction<ProjectCreateProvider>) => {
+        setTaskProvider(value);
+        setRepositoryError(null);
+      },
       setVisibility,
-      setPublicAccessRole,
       setDefaultIssueSecurity,
-      setRepositoryAddress,
+      setRepositoryAddress: (value: SetStateAction<string>) => {
+        setRepositoryAddress(value);
+        setRepositoryError(null);
+      },
       setToken,
       setAitableUrl,
       setMemberUserIds,

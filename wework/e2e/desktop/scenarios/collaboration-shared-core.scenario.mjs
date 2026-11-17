@@ -19,6 +19,11 @@ import {
   verifyCollaborationMemberSettings,
 } from '../modules/collaboration-member-settings.mjs'
 import {
+  handleProjectCreateGroupModel,
+  verifyPrivateProjectCreation,
+  verifyProjectCreateDialogUi,
+} from '../modules/project-create-dialog-regression.mjs'
+import {
   selectProjectBoardGrouping,
   verifyPersonalBoardGrouping,
 } from '../modules/collaboration-board-personal-view.mjs'
@@ -269,6 +274,7 @@ export function createDesktopScenario({
     requiresCloudEnvironment: true,
     async handleHttp(request, response, url) {
       return (
+        (await handleProjectCreateGroupModel(request, response, url)) ||
         (await handlePersonalHomeModel(request, response, url)) ||
         boardReplyModel.handleHttp(request, response, url)
       )
@@ -501,6 +507,7 @@ export function createDesktopScenario({
         await control.command('fill', scoped('[data-testid="collaboration-project-name-input"]'), {
           value: projectName,
         })
+        await verifyProjectCreateDialogUi(control, scoped)
         await selectProjectCreateMembers(control, { members: selectedMembers, owner })
         await control.command(
           'click',
@@ -545,6 +552,7 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
         await capture(control, 'collaboration-shared-core-03-project-created.png')
+        await verifyPrivateProjectCreation({ control, scoped, request, workspace, project })
         await verifyCollaborationMemberSettings(control, {
           scoped,
           owner,
