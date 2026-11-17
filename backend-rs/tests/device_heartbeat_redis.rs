@@ -195,8 +195,13 @@ async fn declaration_object(mysql: &MysqlService, device_id: &str) -> Value {
 
 async fn seed_closed_personal_assignment(mysql: &MysqlService) {
     mysql.execute(
-        "INSERT INTO loop_items (id,resource_type,cloud_project_id,status,assignee_user_id,metadata,version) \
-         VALUES ('heartbeat-personal-issue','task','heartbeat-project','cancelled',?,JSON_OBJECT(),1)",
+        "INSERT INTO loop_items (id,resource_type,description,created_by_user_id,status,created_at,updated_at) \
+         VALUES ('heartbeat-project','project','Heartbeat receipt project',?,'active',NOW(),NOW())",
+        (USER_ID,),
+    ).await.unwrap();
+    mysql.execute(
+        "INSERT INTO loop_items (id,resource_type,cloud_project_id,description,status,assignee_user_id,metadata,version,created_at,updated_at) \
+         VALUES ('heartbeat-personal-issue','task','heartbeat-project','Heartbeat receipt issue','cancelled',?,JSON_OBJECT(),1,NOW(),NOW())",
         (USER_ID,),
     ).await.unwrap();
     let dispatch = json!({"dispatchId":"heartbeat-personal-dispatch","projectId":"heartbeat-project",
@@ -206,8 +211,8 @@ async fn seed_closed_personal_assignment(mysql: &MysqlService) {
     let metadata = json!({"event_type":"assignment","action":"assign","target_type":"human",
         "target_id":USER_ID.to_string(),"assignment_version":1,"human_assistant_dispatch":dispatch});
     mysql.execute(
-        "INSERT INTO loop_items (id,resource_type,loop_item_id,created_by_user_id,metadata,version) \
-         VALUES ('heartbeat-personal-assignment','comment','heartbeat-personal-issue',?,?,1)",
+        "INSERT INTO loop_items (id,resource_type,cloud_project_id,loop_item_id,description,created_by_user_id,metadata,version,created_at,updated_at) \
+         VALUES ('heartbeat-personal-assignment','comment','heartbeat-project','heartbeat-personal-issue','Heartbeat receipt assignment',?,?,1,NOW(),NOW())",
         (USER_ID, brz_mysql::Json(metadata)),
     ).await.unwrap();
 }
