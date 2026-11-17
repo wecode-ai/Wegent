@@ -408,7 +408,7 @@ all tags; switching projects or views resets it. Filtering does not change share
 
 An empty editable Issue shows “Add a description with background, goals, or requirements…”; click the description area to start writing. Read-only Issues show “No description yet”. Hints are never saved as description content.
 
-Issue details show status, assignee, milestone (when supported), date range, tags, and participants below the title. Add or remove tags and participants directly; read-only Issues display existing values with editing disabled. Choose **Show more properties** in the same area to view priority and assignment details, then **Show fewer properties** to collapse them. Tags and participants remain visible. The top-right **Actions** menu provides archival when permitted.
+Issue details show status, assignee, milestone (when supported), date range, tags, and participants below the title. Add or remove tags and participants directly; read-only Issues display existing values with editing disabled. Choose **Show more properties** in the same area to view the parent, priority, and assignment details. Select **Parent issue** to search for a parent; choose **No parent issue** to remove the association. Choose **Show fewer properties** to collapse these controls and remove them from the Tab sequence. Tags and participants remain visible. The top-right **Actions** menu provides archival when permitted. Narrow windows prioritize the detail dialog; closing it restores project navigation.
 
 Tags, status, priority, assignee, parent, date range, and milestone save immediately
 for existing Issues. Press Enter or leave the title field to save a title change.

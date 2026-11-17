@@ -28,12 +28,12 @@ export function IssueCommentActionPicker({
   clearLabel: string
   onChange(value: string): void
 }) {
-  const selected = options.find(option => option.value === value)
+  const selected = options.find((option) => option.value === value)
   return (
     <span className={`task-detail-comment-action-chip${value ? ' is-selected' : ''}`}>
       <IssueDetailSearchableSelect
         testId={testId}
-        accessibleLabel={label}
+        accessibleLabel={value ? label : placeholder}
         value={value}
         onChange={onChange}
         disabled={disabled}
