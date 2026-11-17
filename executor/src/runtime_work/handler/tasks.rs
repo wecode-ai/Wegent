@@ -1544,7 +1544,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let local_task_id = self.canonical_local_task_id(&requested_task_id);
         let gate = self.task_send_gate(&local_task_id);
-        let _guard = gate.lock().await;
+        let guard = gate.lock().await;
         let check_provider_turn = self.local_task_link(&local_task_id).map_or_else(
             || !bool_field(&payload, "ephemeral").unwrap_or(false),
             |link| !runtime_task_uses_ephemeral_codex_thread(&link),
@@ -1558,52 +1558,55 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let had_active_local_execution = self.is_active_local_task(&local_task_id);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
-        if had_active_local_execution {
+        if let Some(execution_id) = self.active_local_execution_id(&local_task_id) {
             self.request_active_turn_stop(&local_task_id);
-        }
-        if !had_active_local_execution {
-            if let Some(thread_id) = thread_id.as_deref() {
-                if self
-                    .settle_local_execution_from_terminal_codex_turn(
-                        &local_task_id,
-                        thread_id,
-                        "interrupt_and_send_provider_terminal",
-                        PROVIDER_STATE_RECONCILIATION_TIMEOUT,
-                    )
-                    .await
-                {
-                    return self.send_message_after_local_checks(payload).await;
-                }
-            }
-        }
-        let local_stop = self.abort_active_turn(&local_task_id);
-        let provider_stop = async {
-            match (had_active_local_execution, thread_id.as_deref()) {
-                (false, Some(thread_id)) => tokio::time::timeout(
+            // The stopped worker may need this gate to release its preparation.
+            drop(guard);
+            let stopped = self
+                .abort_local_task_execution_with_timeout(
+                    &local_task_id,
+                    execution_id,
                     Duration::from_secs(10),
-                    self.interrupt_provider_active_turn(thread_id),
+                )
+                .await;
+            let _guard = gate.lock().await;
+            if !stopped {
+                self.force_settle_owned_local_task_execution(
+                    &local_task_id,
+                    execution_id,
+                    thread_id,
+                    "cancelled",
+                    "interrupt_and_send_timeout",
+                );
+            }
+            // Ordinary admission rechecks a newer owner under the reacquired gate.
+            return self.send_message_after_local_checks(payload).await;
+        }
+        if let Some(thread_id) = thread_id.as_deref() {
+            if self
+                .settle_local_execution_from_terminal_codex_turn(
+                    &local_task_id,
+                    thread_id,
+                    "interrupt_and_send_provider_terminal",
+                    PROVIDER_STATE_RECONCILIATION_TIMEOUT,
                 )
                 .await
-                .unwrap_or(false),
-                _ => true,
+            {
+                return self.send_message_after_local_checks(payload).await;
             }
-        };
-        let (local_stopped, provider_stopped) = tokio::join!(local_stop, provider_stop);
-        if !local_stopped {
-            self.force_settle_local_task_execution(
-                &local_task_id,
-                thread_id,
-                "cancelled",
-                "interrupt_and_send_timeout",
-            );
-        }
-        if !provider_stopped {
-            log_executor_event(
-                "runtime work provider interrupt cleanup pending",
-                &[("local_task_id", local_task_id.clone())],
-            );
+            let provider_stopped = tokio::time::timeout(
+                Duration::from_secs(10),
+                self.interrupt_provider_active_turn(thread_id),
+            )
+            .await
+            .unwrap_or(false);
+            if !provider_stopped {
+                log_executor_event(
+                    "runtime work provider interrupt cleanup pending",
+                    &[("local_task_id", local_task_id.clone())],
+                );
+            }
         }
         self.send_message_after_local_checks(payload).await
     }

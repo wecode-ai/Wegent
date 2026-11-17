@@ -333,6 +333,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_goal_missing_session(&link));
         };
 
+        let projection = self.begin_goal_status_read(&link.local_task_id);
         match self
             .call_codex_thread_method("thread/goal/get", json!({"threadId": thread_id}))
             .await
@@ -343,10 +344,17 @@ impl RuntimeWorkRpcHandler {
                     .cloned()
                     .map(normalize_runtime_goal_timestamps)
                     .unwrap_or(Value::Null);
-                self.hydrate_runtime_task_goal_status(
-                    &link.local_task_id,
-                    string_field(&goal, "status"),
-                );
+                if !projection.apply_if_current(|| {
+                    self.hydrate_runtime_task_goal_status(
+                        &link.local_task_id,
+                        string_field(&goal, "status"),
+                    );
+                }) {
+                    log_executor_event(
+                        "runtime work Goal snapshot projection skipped",
+                        &[("local_task_id", link.local_task_id.clone())],
+                    );
+                }
                 let mut response = task_action_success(&link);
                 response["goal"] = goal;
                 Ok(response)
@@ -359,6 +367,7 @@ impl RuntimeWorkRpcHandler {
         let link = self.task_link_from_payload(&payload, false).await?;
         let gate = self.task_send_gate(&format!("goal-status:{}", link.local_task_id));
         let _guard = gate.lock().await;
+        let _mutation = self.begin_goal_status_mutation(&link.local_task_id);
         let link = self
             .store
             .get_task(&link.local_task_id)
@@ -454,6 +463,7 @@ impl RuntimeWorkRpcHandler {
         let link = self.task_link_from_payload(&payload, false).await?;
         let gate = self.task_send_gate(&format!("goal-status:{}", link.local_task_id));
         let _guard = gate.lock().await;
+        let _mutation = self.begin_goal_status_mutation(&link.local_task_id);
         if is_claude_runtime(&link.runtime) {
             let cleared = self.clear_claude_goal(&link);
             self.sync_runtime_task_goal_status(&link.local_task_id, None);

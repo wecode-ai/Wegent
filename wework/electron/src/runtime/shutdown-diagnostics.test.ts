@@ -1,9 +1,14 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { recordReleaseDiagnostic } from './release-diagnostics.js'
 import { traceShutdownStep } from './shutdown-diagnostics.js'
+
+vi.mock('node:fs', async importOriginal => ({
+  ...(await importOriginal<typeof import('node:fs')>()),
+  writeSync: vi.fn(),
+}))
 
 describe('shutdown diagnostics', () => {
   let root: string
@@ -14,6 +19,7 @@ describe('shutdown diagnostics', () => {
       .map(line => JSON.parse(line.slice(line.indexOf('{'))))
 
   beforeEach(() => {
+    vi.mocked(writeSync).mockReset()
     root = mkdtempSync(join(tmpdir(), 'wework-shutdown-'))
     vi.stubEnv('WEWORK_RELEASE_ROOT', root)
     vi.stubEnv('WEWORK_E2E_CONTROL_URL', 'http://localhost:1')
@@ -61,10 +67,9 @@ describe('shutdown diagnostics', () => {
 
   it('keeps redacted shutdown evidence for ordinary desktop E2E sessions', async () => {
     vi.stubEnv('WEWORK_RELEASE_ROOT', '')
-    const output = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     await expect(traceShutdownStep('desktop-runtime', () => 42)).resolves.toBe(42)
     recordReleaseDiagnostic('application-quit', { token: 'sensitive-value' }, true)
-    const messages = output.mock.calls.map(([message]) => String(message))
+    const messages = vi.mocked(writeSync).mock.calls.map(([, message]) => String(message))
     expect(messages).toHaveLength(3)
     expect(messages[0]).toContain('"status":"started"')
     expect(messages[1]).toContain('"status":"completed"')
@@ -74,6 +79,16 @@ describe('shutdown diagnostics', () => {
     circular.self = circular
     expect(() => recordReleaseDiagnostic('startup-step', circular, true)).not.toThrow()
     expect(() => records()).toThrow()
+  })
+
+  it('keeps cleanup running if synchronous E2E output is unavailable', async () => {
+    vi.stubEnv('WEWORK_RELEASE_ROOT', '')
+    vi.mocked(writeSync).mockImplementationOnce(() => {
+      throw new Error('closed output')
+    })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await expect(traceShutdownStep('service', () => 42)).resolves.toBe(42)
+    expect(error).toHaveBeenCalled()
   })
 
   it('does not create diagnostic files outside an E2E session', async () => {

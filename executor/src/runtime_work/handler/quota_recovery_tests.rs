@@ -686,3 +686,131 @@ fn replaced_quota_check_cannot_settle_or_remove_the_current_execution() {
           }
         });
 }
+
+#[test]
+fn interrupting_a_pending_quota_read_admits_the_replacement_without_stop_timeout() {
+    let _lock = crate::test_env::lock();
+    let home = tempfile::tempdir().unwrap();
+    let _homes: Vec<_> = [
+        "WEGENT_EXECUTOR_HOME",
+        "WEGENT_CODEX_HOME",
+        "CODEX_HOME",
+        "WEGENT_WORKBENCH_HOME",
+    ]
+    .into_iter()
+    .map(|key| ScalarEnv::set(key, home.path().to_str().unwrap()))
+    .collect();
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+        let (mut handler, root) = super::super::tests::isolated_runtime_work_handler("quota-interrupt-send");
+        super::super::tests::install_native_history(&mut handler, &root, vec![], None);
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let mut link = RuntimeTaskLink::new_pending("waiting".into(), workspace.to_string_lossy().into(), "Wait".into());
+        link.thread_id = Some("thread".into());
+        handler.store.upsert_task(link);
+        fs::write(root.join("account_read.defer"), "").unwrap();
+        let turn = queued_wait("waiting", 0);
+        handler.reserve_turn_preparation(&turn);
+        let worker = handler.clone();
+        let running = tokio::spawn(async move { worker.start_quota_turn(turn).await });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !fs::read_to_string(root.join("requests.jsonl")).unwrap_or_default().contains("\"method\":\"account/read\"") {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        {
+            let mut scheduler = handler.turn_scheduler.lock().unwrap();
+            scheduler.settings.max_concurrent_tasks = 1;
+            scheduler.active_task_ids.insert("another-task".into(), RuntimeTaskKind::Personal);
+        }
+        let sent = tokio::time::timeout(Duration::from_secs(2), handler.interrupt_and_send(json!({
+            "taskId":"waiting", "message":"replacement", "executionRequest": ExecutionRequest {
+                task_id: "waiting".into(),
+                prompt: json!("replacement"),
+                model_config: json!({"model_id":"original-model"}),
+                project_workspace_path: Some(workspace.to_string_lossy().into()),
+                bot: json!([{"shell_type":"Codex"}]),
+                ..Default::default()
+            }
+        }))).await.expect("Interrupt must not hold the send gate needed by quota cancellation").unwrap();
+        assert_eq!(sent["accepted"], true, "{sent}");
+        assert_eq!(sent["status"], "queued", "{sent}");
+        tokio::time::timeout(Duration::from_secs(2), running).await.unwrap().unwrap();
+        assert!(!handler.is_active_local_task("waiting"));
+        let scheduler = handler.turn_scheduler.lock().unwrap();
+        let replacement = scheduler.queued_turns.iter().find(|turn| turn.local_task_id == "waiting").unwrap();
+        assert_eq!(replacement.request.prompt, json!("replacement"));
+        assert!(!replacement.request.extra.contains_key(MARKER));
+        drop(scheduler);
+        handler.codex_app_server.restart().await;
+        let _ = fs::remove_dir_all(root);
+    });
+}
+
+#[test]
+fn interrupt_stop_cannot_cancel_a_replacement_execution() {
+    let _lock = crate::test_env::lock();
+    let home = tempfile::tempdir().unwrap();
+    let _homes: Vec<_> = [
+        "WEGENT_EXECUTOR_HOME",
+        "WEGENT_CODEX_HOME",
+        "CODEX_HOME",
+        "WEGENT_WORKBENCH_HOME",
+    ]
+    .into_iter()
+    .map(|key| ScalarEnv::set(key, home.path().to_str().unwrap()))
+    .collect();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let (handler, root) =
+                super::super::tests::isolated_runtime_work_handler("interrupt-new-owner");
+            handler.store.upsert_task(RuntimeTaskLink::new_pending(
+                "task".into(),
+                root.to_string_lossy().into(),
+                "Wait".into(),
+            ));
+            let (cancel, cancelled) = oneshot::channel();
+            let (_old_stopped, stopped) = oneshot::channel();
+            handler.start_local_task_execution("task".into(), cancel, stopped);
+            let worker = handler.clone();
+            let interrupt = tokio::spawn(async move {
+                worker
+                    .interrupt_and_send(json!({"taskId":"task","message":"replacement"}))
+                    .await
+            });
+            tokio::time::timeout(Duration::from_secs(2), cancelled)
+                .await
+                .unwrap()
+                .unwrap();
+            let gate = handler.task_send_gate("task");
+            let guard = tokio::time::timeout(Duration::from_secs(2), gate.lock())
+                .await
+                .expect("Interrupt must release admission while waiting for the old execution");
+            let (cancel, mut cancelled) = oneshot::channel();
+            let (_new_stopped, stopped) = oneshot::channel();
+            let execution = handler.start_local_task_execution("task".into(), cancel, stopped);
+            let state = handler.local_task_link("task").unwrap().execution_state;
+            drop(guard);
+            let result = tokio::time::timeout(Duration::from_secs(2), interrupt)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(result["success"], false, "{result}");
+            assert_eq!(result["error"], "runtime task is already running");
+            assert!(handler.is_current_local_task_execution("task", execution));
+            assert!(matches!(
+                cancelled.try_recv(),
+                Err(oneshot::error::TryRecvError::Empty)
+            ));
+            assert_eq!(
+                handler.local_task_link("task").unwrap().execution_state,
+                state
+            );
+            handler.finish_local_task_execution("task", execution);
+            let _ = fs::remove_dir_all(root);
+        });
+}

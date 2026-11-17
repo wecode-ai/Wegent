@@ -398,3 +398,107 @@ fn timed_out_goal_activation_retains_its_route_until_native_state_confirms_stop(
         let _ = fs::remove_dir_all(root);
     });
 }
+
+#[test]
+fn goal_reads_cannot_release_a_newer_activation_or_deadlock_conditional_mutations() {
+    run_goal_test(async {
+        let (mut handler, root, mut request) = setup("goal-read-activation-order");
+        let thread = "22222222-2222-4222-8222-222222222222";
+        request.model_config = json!({"model_id":"goal-route-model",
+            "base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"});
+        handler.store.update_task("task-1", |link| {
+            link.thread_id = Some(thread.into());
+            link.goal_status = Some("blocked".into());
+            store_runtime_execution_request(&mut link.runtime_handle, &request);
+        });
+        handler.retain_runtime_model_config("task-1", &request.model_config);
+        block_goal_admission(&handler);
+        install_native_history(&mut handler, &root, vec![], None);
+        fs::write(root.join("thread_goal_get.defer"), "").unwrap();
+        fs::write(
+            root.join("thread_goal_set.json"),
+            json!({"goal":{"status":"active"}}).to_string(),
+        )
+        .unwrap();
+        let reader = handler.clone();
+        let reading =
+            tokio::spawn(async move { reader.get_task_goal(json!({"taskId":"task-1"})).await });
+        let deferred = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(request) = fs::read_to_string(root.join("requests.jsonl"))
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .find(|request| request["method"] == "thread/goal/get")
+                {
+                    break request;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let writer = handler.clone();
+        let activating = tokio::spawn(async move {
+            writer
+                .set_task_goal(json!({"taskId":"task-1","status":"active"}))
+                .await
+        });
+        let activated = tokio::time::timeout(Duration::from_secs(5), activating)
+            .await
+            .expect("A pending read must not block Goal activation")
+            .unwrap()
+            .unwrap();
+        assert_eq!(activated["goal"]["status"], "active");
+        fs::write(root.join("test_fence.json"), "{}").unwrap();
+        fs::write(
+            root.join("test_fence.notifications.jsonl"),
+            json!({
+                "id":deferred["id"],"result":{"goal":{"status":"blocked"}}
+            })
+            .to_string()
+                + "\n",
+        )
+        .unwrap();
+        handler
+            .call_codex_thread_method("test/fence", json!({"threadId":thread}))
+            .await
+            .unwrap();
+        assert_eq!(reading.await.unwrap().unwrap()["goal"]["status"], "blocked");
+        assert_eq!(
+            handler
+                .local_task_link("task-1")
+                .unwrap()
+                .goal_status
+                .as_deref(),
+            Some("active")
+        );
+        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+            .goal_model_route
+            .is_some());
+        fs::remove_file(root.join("thread_goal_get.defer")).unwrap();
+        fs::write(
+            root.join("thread_goal_get.json"),
+            json!({"goal":{"status":"active"}}).to_string(),
+        )
+        .unwrap();
+        fs::write(
+            root.join("thread_goal_set.json"),
+            json!({"goal":{"status":"paused"}}).to_string(),
+        )
+        .unwrap();
+        let paused = tokio::time::timeout(
+            Duration::from_secs(5),
+            handler.set_task_goal(json!({
+                "taskId":"task-1","status":"paused","eventGoalExpected":{"status":"active"}
+            })),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(paused["accepted"], true);
+        assert_eq!(paused["goal"]["status"], "paused");
+        handler.codex_app_server.restart().await;
+        let _ = fs::remove_dir_all(root);
+    });
+}

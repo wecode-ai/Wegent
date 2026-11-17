@@ -17,7 +17,11 @@ import {
   assertCodexPhaseTransition,
   type PhaseRegressionStep,
 } from '../../utils/codex-phase-regression'
-import { forEachTaskFixtureBatch, settleMentionTasks } from '../../utils/mention-task-fixtures'
+import {
+  cleanupFixtureStages,
+  forEachTaskFixtureBatch,
+  settleMentionTasks,
+} from '../../utils/mention-task-fixtures'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -117,19 +121,23 @@ test.describe('Agent conversation regression', () => {
   })
 
   test.afterEach(async ({ request }) => {
-    await cleanupStreamRules(request)
-    await cleanupToolScenarios(request)
-    await clearMockModelRequests(request)
-    await cleanupCreatedTasks(request)
-    await cleanupCreatedProjects(request)
-    await cleanupCreatedGitAccounts(request)
+    await cleanupFixtureStages([
+      () => cleanupStreamRules(request),
+      () => cleanupToolScenarios(request),
+      () => clearMockModelRequests(request),
+      () => cleanupCreatedTasks(request),
+      () => cleanupCreatedProjects(request),
+      () => cleanupCreatedGitAccounts(request),
+    ])
   })
 
   test.afterAll(async ({ request }) => {
-    await cleanupCreatedTasks(request)
-    await cleanupCreatedProjects(request)
-    await cleanupCreatedGitAccounts(request)
-    await cleanupTestResources(request)
+    await cleanupFixtureStages([
+      () => cleanupCreatedTasks(request),
+      () => cleanupCreatedProjects(request),
+      () => cleanupCreatedGitAccounts(request),
+      () => cleanupTestResources(request),
+    ])
   })
 
   test('normal mode Chat Shell supports dialogue and follow-up', async ({ page, request }) => {

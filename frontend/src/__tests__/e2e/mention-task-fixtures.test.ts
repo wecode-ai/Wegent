@@ -1,4 +1,5 @@
 import {
+  cleanupFixtureStages,
   forEachTaskFixtureBatch,
   settleMentionTasks,
 } from '../../../e2e/utils/mention-task-fixtures'
@@ -78,6 +79,28 @@ describe('mention task fixtures', () => {
     expect(Date.now()).toBe(1250)
   })
 
+  it('drains in-flight deletions before exposing a batch failure', async () => {
+    const failure = new Error('Delete failed')
+    const finish: Array<() => void> = []
+    const clean = jest.fn((id: number) =>
+      id === 0 ? Promise.reject(failure) : new Promise<void>(resolve => finish.push(resolve))
+    )
+    let reported: unknown
+    const result = forEachTaskFixtureBatch(
+      Array.from({ length: 9 }, (_, id) => id),
+      clean
+    ).catch(error => {
+      reported = error
+    })
+    await jest.advanceTimersByTimeAsync(0)
+    expect(reported).toBeUndefined()
+    expect(clean).toHaveBeenCalledTimes(8)
+    finish.forEach(resolve => resolve())
+    await result
+    expect(reported).toBe(failure)
+    expect(clean).toHaveBeenCalledTimes(8)
+  })
+
   it('preserves cleanup failures and does not start the next batch', async () => {
     const clean = jest.fn().mockRejectedValue(new Error('Cleanup failed'))
     await expect(
@@ -88,6 +111,33 @@ describe('mention task fixtures', () => {
     ).rejects.toThrow('Cleanup failed')
     expect(clean).toHaveBeenCalledTimes(8)
     expect(jest.getTimerCount()).toBe(0)
+  })
+
+  it('attempts every independent cleanup and preserves all stage failures', async () => {
+    const failures = [new Error('Task deletion failed'), new Error('Account cleanup failed')]
+    const order: string[] = []
+    let reported: unknown
+    await cleanupFixtureStages([
+      async () => {
+        order.push('tasks')
+        throw failures[0]
+      },
+      async () => {
+        order.push('projects')
+      },
+      async () => {
+        order.push('accounts')
+        throw failures[1]
+      },
+      async () => {
+        order.push('resources')
+      },
+    ]).catch(error => {
+      reported = error
+    })
+    expect(order).toEqual(['tasks', 'projects', 'accounts', 'resources'])
+    expect(reported).toBeInstanceOf(AggregateError)
+    expect((reported as AggregateError).errors).toEqual(failures)
   })
 
   it('surfaces fixture execution failures without retrying or touching timestamps', async () => {

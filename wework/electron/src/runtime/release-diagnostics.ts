@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, writeSync } from 'node:fs'
 import { redactLog, RotatingLog } from './rotating-log.js'
 import { startStartupWatchdog } from './startup-watchdog.js'
 
@@ -31,7 +31,16 @@ export function recordReleaseDiagnostic(
     ...details,
   })
   if (!root) {
-    console.info(`[${event}] ${redactLog(message)}`)
+    const line = `[${event}] ${redactLog(message)}`
+    if (synchronous) {
+      try {
+        writeSync(1, `${line}\n`)
+      } catch (error) {
+        reportDiagnosticError(error)
+      }
+    } else {
+      console.info(line)
+    }
     return
   }
   const path = join(root, 'activation-diagnostics.log')

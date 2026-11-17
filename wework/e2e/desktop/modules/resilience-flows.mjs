@@ -439,7 +439,18 @@ async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control 
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await selectE2EModel(control, anthropicModel.optionIds, anthropicModel.labels)
+  // The new-chat default can still be reconciling. Choose this protocol explicitly
+  // instead of accepting a transient default label as fixture configuration.
+  await control.command(
+    'clickWhenEnabled',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
+  )
+  await selectE2EModel(
+    control,
+    anthropicModel.optionIds,
+    anthropicModel.labels,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
   await sendPromptUntilScenarioRequest(
     control,
     composerSelector,

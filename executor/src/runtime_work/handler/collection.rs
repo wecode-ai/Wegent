@@ -303,7 +303,9 @@ impl RuntimeWorkRpcHandler {
     ) {
         // Delayed native notifications are projections, not authority to
         // permanently cancel a wait established by a newer Goal mutation.
-        self.update_runtime_task_goal_status(local_task_id, goal_status, true);
+        self.with_goal_status_change(local_task_id, || {
+            self.update_runtime_task_goal_status(local_task_id, goal_status, true);
+        });
         self.schedule_connection_goal_reconciliation(local_task_id);
     }
 
@@ -313,7 +315,9 @@ impl RuntimeWorkRpcHandler {
         goal_status: Option<String>,
     ) {
         self.cancel_connection_goal_waits(local_task_id, goal_status.as_deref());
-        self.update_runtime_task_goal_status(local_task_id, goal_status, true);
+        self.with_goal_status_change(local_task_id, || {
+            self.update_runtime_task_goal_status(local_task_id, goal_status, true);
+        });
     }
 
     pub(super) fn hydrate_runtime_task_goal_status(
