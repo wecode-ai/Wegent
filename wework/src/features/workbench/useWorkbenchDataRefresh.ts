@@ -15,7 +15,8 @@ import type {
   User,
 } from '@/types/api'
 import { isRemoteTaskDevice } from '@/lib/device-capabilities'
-import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
+import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
+import { getRuntimeProjectSyncTarget } from '@/lib/runtime-project-identity'
 import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/types/workbench'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
@@ -738,6 +739,13 @@ export function useWorkbenchDataRefresh({
             workspacePath: normalizeRuntimeWorkspacePath(workspace.workspacePath),
           }
         : undefined
+      const removedProject = runtimeWorkRef.current?.projects.find(
+        project => runtimeProjectUiId(project.project) === projectId
+      )
+      const context = {
+        devices: devicesRef.current,
+        target: removedProject ? getRuntimeProjectSyncTarget(removedProject) : undefined,
+      }
       cloudBackgroundRequestRef.current?.controller.abort()
       cloudBackgroundRequestRef.current = null
       workListRefreshRevisionRef.current += 1
@@ -745,7 +753,8 @@ export function useWorkbenchDataRefresh({
         localRuntimeWorkRef.current = removeRuntimeProject(
           localRuntimeWorkRef.current,
           projectId,
-          normalizedWorkspace
+          normalizedWorkspace,
+          context
         )
       }
       cachedRemoteRuntimeWorkRef.current = {
@@ -755,7 +764,8 @@ export function useWorkbenchDataRefresh({
           removeRuntimeProject(
             cachedRemoteRuntimeWorkRef.current.runtimeWork,
             projectId,
-            normalizedWorkspace
+            normalizedWorkspace,
+            context
           ),
           devicesRef.current
         ),
@@ -764,7 +774,8 @@ export function useWorkbenchDataRefresh({
         removeRuntimeProjectFromCloudState(
           cloudRuntimeStateRef.current,
           projectId,
-          normalizedWorkspace
+          normalizedWorkspace,
+          context
         )
       )
     },

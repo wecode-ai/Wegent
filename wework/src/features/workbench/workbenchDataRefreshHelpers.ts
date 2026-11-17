@@ -9,7 +9,18 @@ import type {
 } from '@/types/api'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { isRemoteTaskDevice } from '@/lib/device-capabilities'
-import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  getRuntimeProjectSyncTarget,
+  isRuntimeDirectoryProject,
+  runtimeProjectSyncTargetKey,
+  runtimeWorkspaceLocationKey,
+  type RuntimeProjectSyncTarget,
+} from '@/lib/runtime-project-identity'
+import {
+  AmbiguousExecutorIdentityError,
+  createWorkbenchDeviceResolver,
+} from '@/lib/workbench-device'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
   clearCloudRuntimeSync,
@@ -30,6 +41,11 @@ export interface CloudBackgroundRefreshOptions {
   trigger?: 'bootstrap' | 'manual-refresh' | 'device-event'
   refreshDevices?: boolean
   isCancelled?: () => boolean
+}
+
+export interface RuntimeProjectRemovalContext {
+  devices?: DeviceInfo[]
+  target?: RuntimeProjectSyncTarget
 }
 
 export function queueWorkRefreshAfterInventory(
@@ -158,13 +174,14 @@ export function removeRuntimeTasksFromCloudState(
 export function removeRuntimeProjectFromCloudState(
   state: CloudRuntimeState,
   projectId: number,
-  workspace?: { deviceId: string; workspacePath: string }
+  workspace?: { deviceId: string; workspacePath: string },
+  context: RuntimeProjectRemovalContext = {}
 ): CloudRuntimeState {
   const removeFromSnapshot = (snapshot: CloudRuntimeState['current']) =>
     snapshot
       ? {
           ...snapshot,
-          runtimeWork: removeRuntimeProject(snapshot.runtimeWork, projectId, workspace),
+          runtimeWork: removeRuntimeProject(snapshot.runtimeWork, projectId, workspace, context),
         }
       : null
   return {
@@ -185,34 +202,46 @@ export function mergeRuntimeTaskAddresses(
   return [...addresses.values()]
 }
 
+function matchesRemovalIdentity(candidateKey: () => string, removedKey: string | null): boolean {
+  if (removedKey == null) return false
+  try {
+    return candidateKey() === removedKey
+  } catch (error) {
+    // An ambiguous cached address cannot prove that this projection was removed.
+    if (error instanceof AmbiguousExecutorIdentityError) return false
+    throw error
+  }
+}
+
 export function removeRuntimeProject(
   runtimeWork: RuntimeWorkListResponse,
   projectId: number,
-  workspace?: { deviceId: string; workspacePath: string }
+  workspace?: { deviceId: string; workspacePath: string },
+  context: RuntimeProjectRemovalContext = {}
 ): RuntimeWorkListResponse {
-  const normalizedDeviceId = workspace?.deviceId.trim()
-  const normalizedWorkspacePath = workspace
-    ? normalizeRuntimeWorkspacePath(workspace.workspacePath)
-    : null
+  const devices = createWorkbenchDeviceResolver(context.devices ?? [])
+  const removedProject = runtimeWork.projects.find(
+    project => runtimeProjectUiId(project.project) === projectId
+  )
+  const target = context.target ?? (removedProject && getRuntimeProjectSyncTarget(removedProject))
+  const targetKey = target ? runtimeProjectSyncTargetKey(target, devices) : null
+  const workspaceKey = workspace ? runtimeWorkspaceLocationKey(workspace, devices) : null
   const matchesRemovedWorkspace = (candidate: RuntimeDeviceWorkspace) =>
-    Boolean(
-      normalizedDeviceId &&
-      normalizedWorkspacePath &&
-      candidate.deviceId.trim() === normalizedDeviceId &&
-      normalizeRuntimeWorkspacePath(candidate.workspacePath) === normalizedWorkspacePath
-    )
+    matchesRemovalIdentity(() => runtimeWorkspaceLocationKey(candidate, devices), workspaceKey)
   const projects = runtimeWork.projects.filter(project => {
     if (runtimeProjectUiId(project.project) === projectId) return false
-    if (!normalizedWorkspacePath) return true
-    return !project.deviceWorkspaces.some(
-      candidate =>
-        normalizeRuntimeWorkspacePath(candidate.workspacePath) === normalizedWorkspacePath
+    if (
+      matchesRemovalIdentity(
+        () => runtimeProjectSyncTargetKey(getRuntimeProjectSyncTarget(project), devices),
+        targetKey
+      )
+    )
+      return false
+    return (
+      !isRuntimeDirectoryProject(project) || !project.deviceWorkspaces.some(matchesRemovedWorkspace)
     )
   })
-  const chats =
-    normalizedDeviceId && normalizedWorkspacePath
-      ? runtimeWork.chats.filter(chat => !matchesRemovedWorkspace(chat))
-      : runtimeWork.chats
+  const chats = runtimeWork.chats.filter(chat => !matchesRemovedWorkspace(chat))
   const totalTasks =
     projects.reduce(
       (projectTotal, project) =>
