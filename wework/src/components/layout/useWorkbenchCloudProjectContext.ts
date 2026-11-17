@@ -30,6 +30,7 @@ import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTab
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { reportE2EDiagnostic } from '@/e2e/error-capture'
 import type {
   RuntimeAdditionalContext,
   RuntimeProjectSpaceRef,
@@ -624,16 +625,18 @@ export function useWorkbenchCloudProjectContext({
               t('workbench.cloud_project_bind_failed', '关联项目空间失败')
             )
           }
-          logRuntimeTaskCreateStage('project-space-context-failed', {
+          reportE2EDiagnostic('project-space-task-context-failed', {
             taskId: contextRuntimeTask.taskId,
             deviceId: contextRuntimeTask.deviceId,
             error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
             elapsedMs: Math.round(performance.now() - lookupStartedAt),
             causes:
               error instanceof AggregateError
-                ? error.errors.map(cause =>
-                    cause instanceof Error ? cause.message : String(cause)
-                  )
+                ? error.errors.map(cause => ({
+                    message: cause instanceof Error ? cause.message : String(cause),
+                    stack: cause instanceof Error ? cause.stack : undefined,
+                  }))
                 : undefined,
           })
           console.warn('[Wework] Failed to resolve project-space context for task', {

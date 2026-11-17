@@ -9,6 +9,7 @@ import { ApiError } from '@/api/http'
 import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeProjectSpaceRef, RuntimeTaskAddress } from '@/types/api'
+import { reportE2EDiagnostic } from '@/e2e/error-capture'
 
 export type ProjectSpaceApi = NonNullable<WorkbenchServices['deliveryApi']>
 export interface ProjectSpaceTaskContextApi {
@@ -272,11 +273,35 @@ export function projectSupportsRobotAutomation(project: CloudProject): boolean {
   return ['local', 'github', 'gitlab'].includes(project.task_provider)
 }
 
+let contextLookupSequence = 0
+
+function contextLookupDiagnostics(
+  task: RuntimeTaskAddress,
+  sourceCount: number,
+  timeoutMs: number
+) {
+  const lookupId = ++contextLookupSequence
+  const startedAt = performance.now()
+  return (phase: string, details: Record<string, unknown> = {}) =>
+    reportE2EDiagnostic('project-space-task-context-lookup', {
+      lookupId,
+      deviceId: task.deviceId,
+      taskId: task.taskId,
+      sourceCount,
+      timeoutMs,
+      elapsedMs: Math.round(performance.now() - startedAt),
+      phase,
+      ...details,
+    })
+}
+
 export async function findProjectSpaceContextSourceForTask<TApi extends ProjectSpaceTaskContextApi>(
   apis: TApi[],
   task: RuntimeTaskAddress,
   timeoutMs = 5_000
 ): Promise<ProjectSpaceTaskContextSource<TApi>> {
+  const diagnose = contextLookupDiagnostics(task, apis.length, timeoutMs)
+  diagnose('started')
   type TaskContextSource = ProjectSpaceTaskContextSource<TApi>
   const results: Array<PromiseSettledResult<TaskContextSource> | undefined> = new Array(apis.length)
   let resolveUserContext: ((source: TaskContextSource) => void) | undefined
@@ -288,10 +313,20 @@ export async function findProjectSpaceContextSourceForTask<TApi extends ProjectS
       context => {
         const source = { api, context }
         results[index] = { status: 'fulfilled', value: source }
+        diagnose('source-fulfilled', {
+          sourceIndex: index,
+          projectId: context.project.id,
+          projectStore: context.project.project_store,
+        })
         if (!isDefaultWorkItemProject(context.project)) resolveUserContext?.(source)
       },
       reason => {
         results[index] = { status: 'rejected', reason }
+        diagnose('source-rejected', {
+          sourceIndex: index,
+          error: reason instanceof Error ? reason.message : String(reason),
+          stack: reason instanceof Error ? reason.stack : undefined,
+        })
       }
     )
   )
@@ -303,6 +338,9 @@ export async function findProjectSpaceContextSourceForTask<TApi extends ProjectS
       timeoutId = setTimeout(resolve, timeoutMs)
     }).then(() => ({ kind: 'timeout' as const })),
   ])
+  diagnose(outcome.kind, {
+    pendingSources: apis.flatMap((_, index) => (results[index] === undefined ? [index] : [])),
+  })
   if (timeoutId !== undefined) clearTimeout(timeoutId)
   if (outcome.kind === 'user-context') return outcome.context
   const settledResults = results.filter(result => result !== undefined)

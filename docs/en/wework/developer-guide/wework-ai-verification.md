@@ -119,6 +119,8 @@ Analyze measured variation before establishing a baseline: distinguish startup, 
 
 ### Counting semantics and fault diagnosis
 
+Project-space task context lookups emit `project-space-task-context-lookup` with a lookup identity, source indices, outcomes, sources still pending at the deadline, and late results. `project-space-task-context-failed` retains handled failure messages and stacks, including individual aggregate causes; existing warnings remain separate records. These diagnostics distinguish lookup deadlines, source failures, and late delivery using identities and diagnostic fields without request bodies.
+
 `observations` retains wall-clock sample times and renderer elapsed time; `captures` retains each renderer's start/end times. Totals alone cannot establish request frequency. Commands are counted once at started, not twice for started/result acknowledgements.
 
 Subtree removals use the region containing `MutationRecord.target`; detached nodes cannot establish their former membership through current `contains` checks. Each operation window retains the latest 32 removals with test identifiers, at most 16 identifiers per entry and elapsed time. The shared journal saves new entries at command boundaries without retaining DOM text or node references.

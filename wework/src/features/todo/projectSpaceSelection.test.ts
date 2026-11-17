@@ -5,10 +5,12 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ApiError } from '@/api/http'
 import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
 import type { RuntimeTaskAddress } from '@/types/api'
+import * as errorCapture from '@/e2e/error-capture'
 import {
   canEditProjectSpaceIssue,
   findProjectSpaceContextForTask,
   findProjectSpaceContextForTaskInStores,
+  findProjectSpaceContextSourceForTask,
   forgetProjectSpaceTaskBinding,
   loadProjectSpaceOptions,
   projectSpaceRef,
@@ -37,6 +39,65 @@ function project(id: string, name: string, projectStore: 'local' | 'backend'): C
     updated_at: '2026-08-04T00:00:00Z',
   }
 }
+
+describe('task context lookup diagnostics', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  test('retains the pending source and its late result after the lookup deadline', async () => {
+    vi.useFakeTimers()
+    const diagnostic = vi
+      .spyOn(errorCapture, 'reportE2EDiagnostic')
+      .mockImplementation(() => undefined)
+    const context = { project: project('late-local', 'Local board', 'local'), loop_item: null }
+    let release!: (value: typeof context) => void
+    const api = {
+      findCloudContextForTask: () => new Promise<typeof context>(resolve => (release = resolve)),
+    }
+    const task = { deviceId: 'context-device', taskId: 'context-task' }
+    const lookup = findProjectSpaceContextSourceForTask([api], task)
+    const rejected = expect(lookup).rejects.toThrow('Task is not linked to a project space')
+    await vi.advanceTimersByTimeAsync(5_000)
+    await rejected
+    release(context)
+    await vi.advanceTimersByTimeAsync(0)
+    const events = diagnostic.mock.calls
+      .filter(([type]) => type === 'project-space-task-context-lookup')
+      .map(([, details]) => details)
+    expect(events.map(event => event.phase)).toEqual(['started', 'timeout', 'source-fulfilled'])
+    expect(new Set(events.map(event => event.lookupId)).size).toBe(1)
+    expect(events[1]).toMatchObject({ ...task, pendingSources: [0], timeoutMs: 5_000 })
+    expect(events[2]).toMatchObject({
+      sourceIndex: 0,
+      projectId: 'late-local',
+      projectStore: 'local',
+    })
+  })
+
+  test('retains the original failed source without replacing the lookup error', async () => {
+    const diagnostic = vi
+      .spyOn(errorCapture, 'reportE2EDiagnostic')
+      .mockImplementation(() => undefined)
+    const cause = new Error('native context lookup rejected')
+    const task = { deviceId: 'context-device', taskId: 'context-task' }
+    const api = { findCloudContextForTask: vi.fn().mockRejectedValue(cause) }
+    const error = await findProjectSpaceContextSourceForTask([api], task).catch(error => error)
+    expect(error).toBeInstanceOf(AggregateError)
+    expect(error.errors).toEqual([cause])
+    const failure = diagnostic.mock.calls.find(
+      ([type, details]) =>
+        type === 'project-space-task-context-lookup' && details.phase === 'source-rejected'
+    )?.[1]
+    expect(failure).toMatchObject({
+      ...task,
+      sourceIndex: 0,
+      error: cause.message,
+      stack: cause.stack,
+    })
+  })
+})
 
 describe('projectSpaceSelection', () => {
   test('fails closed for cloud Issues and trusts only the explicit local marker', () => {

@@ -29,6 +29,66 @@ import {
 } from './workbenchCloudProjectContextTestFixtures'
 
 describe('useWorkbenchCloudProjectContext', () => {
+  test('retains handled context lookup causes in the durable E2E diagnostic journal', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const log = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const localCause = new Error('local context request failed')
+    const backendCause = new Error('backend context request failed')
+    const services = {
+      projectSpaceApis: {
+        local: {
+          listCloudProjects: vi.fn().mockResolvedValue({ items: [] }),
+          findCloudContextForTask: vi.fn().mockRejectedValue(localCause),
+        },
+      },
+      workspaceRuntimePort: cloudRuntimePort({
+        findCloudContextForTask: vi.fn().mockRejectedValue(backendCause),
+      }),
+    } as unknown as WorkbenchServices
+    const { result, unmount } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: { deviceId: 'failure-device', taskId: 'failure-task' },
+        defaultProjectSpace: null,
+        paneKey: 'context-failure',
+        runtimeTaskTitle: null,
+        services,
+      })
+    )
+    try {
+      await waitFor(() =>
+        expect(
+          log.mock.calls.some(
+            ([prefix, value]) =>
+              prefix === '[wework-e2e-diagnostic]' &&
+              JSON.parse(String(value)).type === 'project-space-task-context-failed'
+          )
+        ).toBe(true)
+      )
+      const report = log.mock.calls
+        .filter(([prefix]) => prefix === '[wework-e2e-diagnostic]')
+        .map(([, value]) => JSON.parse(String(value)))
+        .find(report => report.type === 'project-space-task-context-failed')
+      expect(report).toMatchObject({
+        details: {
+          error: 'Task is not linked to a project space',
+          deviceId: 'failure-device',
+          taskId: 'failure-task',
+          causes: [
+            { message: localCause.message, stack: localCause.stack },
+            { message: backendCause.message, stack: backendCause.stack },
+          ],
+        },
+      })
+      expect(result.current.boundCloudProject).toBeNull()
+      expect(result.current.boundCloudItem).toBeNull()
+    } finally {
+      unmount()
+      log.mockRestore()
+      vi.unstubAllEnvs()
+    }
+  })
+
   test('context discovery waits for optimistic task creation to finish', async () => {
     const task = { deviceId: 'creation-context-device', taskId: 'pending-context' }
     let accept!: () => void

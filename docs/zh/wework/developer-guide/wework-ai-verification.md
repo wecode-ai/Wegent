@@ -119,6 +119,8 @@ async function verifyLocalOperation(control, operationAndWaitForResult) {
 
 ### 计数口径与故障定位
 
+项目空间任务上下文查询通过 `project-space-task-context-lookup` 记录查询标识、数据源索引、起止结果、截止时仍未完成的来源及迟到结果。`project-space-task-context-failed` 保留已捕获失败的原因与堆栈，包括聚合异常的各个原因；原有警告仍独立保留。这些记录用于区分查询期限、源失败和迟到返回，只包含标识和诊断字段，不保存请求正文。
+
 `observations` 保留采样墙钟时间和当前 renderer 的累计运行时间，`captures` 保留各 renderer 的起止时间，避免仅凭累计请求量判断频率。控制命令在 started 阶段计数一次，不将 started／result 两次回执算成两个操作。
 
 子树移除按 `MutationRecord.target` 所属区域计数；移除后的节点已脱离 DOM，不能用当前 `contains` 判断其原始归属。每个操作窗口保留最近 32 条带测试标识的移除来源，每条至多 16 个标识及相对时间；共享日志按命令保存新增来源，不记录 DOM 文本或保留节点引用。
