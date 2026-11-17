@@ -38,6 +38,54 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
+test('records configuration and selection identities even when catalog size and readiness stay equal', async () => {
+  const api = { listModels: vi.fn().mockResolvedValue({ data: models }) }
+  const hook = renderHook(
+    ({ selectionConfig }) =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        scopeKey: scopeA,
+        selectionConfig,
+        persistSelection: false,
+        fallbackWhenConfiguredModelUnavailable: false,
+      }),
+    { initialProps: { selectionConfig: taskA } }
+  )
+  await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+  vi.mocked(logModelLoading).mockClear()
+
+  hook.rerender({ selectionConfig: taskB })
+
+  await waitFor(() =>
+    expect(logModelLoading).toHaveBeenCalledWith(
+      expect.any(String),
+      'workbench.selection',
+      expect.objectContaining({
+        scopeFingerprint: modelSelectionScopeFingerprint(scopeA),
+        configuredModelFingerprint: fingerprint(taskB),
+        effectiveModelFingerprint: fingerprint(taskB),
+        selectedModelFingerprint: fingerprint(taskB),
+        modelCount: 2,
+        catalogReady: true,
+        isSelectionReady: true,
+      })
+    )
+  )
+  const events = vi
+    .mocked(logModelLoading)
+    .mock.calls.filter(([, stage]) => stage === 'workbench.selection')
+    .map(([, , details]) => details)
+  expect(
+    events.every(details =>
+      Object.values(details ?? {}).every(
+        value => typeof value === 'number' || typeof value === 'boolean'
+      )
+    )
+  ).toBe(true)
+  hook.unmount()
+})
+
 test('identifies each task restoration after remount without changing saved model choices', async () => {
   const api = { listModels: vi.fn().mockResolvedValue({ data: models }) }
   const mount = () =>

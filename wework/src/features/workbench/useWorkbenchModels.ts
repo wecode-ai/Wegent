@@ -300,8 +300,13 @@ export function useWorkbenchModels({
       isSelectionReady,
       selectedModelAvailable,
       modelCount: models.length,
+      scopeFingerprint: modelSelectionDiagnostics.scopeFingerprint,
+      configuredModelFingerprint: modelSelectionDiagnostics.configured?.fingerprint ?? 0,
+      effectiveModelFingerprint: modelSelectionDiagnostics.effective?.fingerprint ?? 0,
+      selectedModelFingerprint: modelSelectionDiagnostics.selected?.fingerprint ?? 0,
+      catalogReady: modelSelectionDiagnostics.catalogReady,
     })
-  }, [traceId, isSelectionReady, selectedModelAvailable, models.length])
+  }, [traceId, isSelectionReady, selectedModelAvailable, models.length, modelSelectionDiagnostics])
 
   const invalidateSelectionQueries = useCallback((targetScopeKey: string) => {
     selectionRevisionByScopeRef.current[targetScopeKey] =
