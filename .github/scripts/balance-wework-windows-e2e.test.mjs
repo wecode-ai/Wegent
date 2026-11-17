@@ -47,6 +47,19 @@ const checkpoints = matrix =>
 const measuredLoad = shard =>
   shard.segments.split(',').reduce((total, segment) => total + (checkpointSeconds(segment) ?? 0), 0)
 
+function processDeadlineSeconds() {
+  const wrapper = readFileSync(
+    new URL('./run-windows-standard-user-process.ps1', import.meta.url),
+    'utf8'
+  )
+  const deadline =
+    Number(
+      wrapper.match(/\$remainingSeconds = (\d+) \* 60 - \$deadlineClock.Elapsed.TotalSeconds/)?.[1]
+    ) * 60
+  assert.ok(Number.isFinite(deadline) && deadline > 0)
+  return deadline
+}
+
 test('an unmeasured checkpoint stays put without pinning unrelated measured work', () => {
   const matrix = {
     include: [
@@ -85,6 +98,38 @@ test('retains measured work when evacuation would increase the known peak', () =
     }),
     matrix
   )
+})
+
+test('rebalances displaced work without adding foreign work to an unmeasured runner', () => {
+  const matrix = {
+    include: [
+      { id: 'core-1', segments: 'application-menu' },
+      { id: 'core-2', segments: 'background-terminals' },
+      {
+        id: 'core-3',
+        segments:
+          'coordination-history,send-key-preference,cloud-context-resilience,browser-toolbar-actions,project-ai-settings',
+      },
+    ],
+  }
+  const seconds = {
+    'application-menu': 10,
+    'background-terminals': 10,
+    'send-key-preference': 15,
+    'cloud-context-resilience': 5,
+    'browser-toolbar-actions': 5,
+    'project-ai-settings': 5,
+  }
+  const balanced = balanceWindowsMatrix(matrix, seconds)
+  const load = shard =>
+    shard.segments
+      .split(',')
+      .reduce((total, segment) => total + (checkpointSeconds(segment, seconds) ?? 0), 0)
+  assert.equal(Math.max(...balanced.include.map(load)), 20)
+  assert.deepEqual(segments(balanced).sort(), segments(matrix).sort())
+  const retained = balanced.include.find(shard => shard.id === 'core-3').segments.split(',')
+  assert.ok(retained.includes('coordination-history'))
+  assert.ok(retained.every(segment => matrix.include[2].segments.split(',').includes(segment)))
 })
 
 test('the measured fixture contains every real measured checkpoint exactly once', () => {
@@ -342,11 +387,9 @@ test('balancing never multiplies expensive conditional preparation from the orig
   assert.ok(Math.max(...completeBalancedLoads) <= Math.max(...completeOriginalLoads))
   const testStep = steps.find(step => step.name === 'Run Windows Wework desktop Core shard E2E')
   assert.ok(testStep?.['timeout-minutes'] > 0)
-  assert.ok(Math.max(...completeBalancedLoads) < testStep['timeout-minutes'] * 60)
-  assert.ok(
-    Math.max(...completeBalancedLoads) + evidence.runnerOverheadSeconds <
-      testStep['timeout-minutes'] * 60
-  )
+  const budget = processDeadlineSeconds()
+  assert.ok(budget < testStep['timeout-minutes'] * 60)
+  assert.ok(Math.max(...completeBalancedLoads) + evidence.runnerOverheadSeconds < budget)
 })
 
 test('timing evidence contains positive successful samples with source run links', () => {
@@ -396,16 +439,7 @@ function assertDeadlineReplay(replay) {
         /name: Run Windows Wework desktop Core shard E2E[\s\S]*?timeout-minutes: (\d+)/
       )?.[1]
     ) * 60
-  const processWrapper = readFileSync(
-    new URL('./run-windows-standard-user-process.ps1', import.meta.url),
-    'utf8'
-  )
-  const budget =
-    Number(
-      processWrapper.match(
-        /\$remainingSeconds = (\d+) \* 60 - \$deadlineClock.Elapsed.TotalSeconds/
-      )?.[1]
-    ) * 60
+  const budget = processDeadlineSeconds()
   assert.ok(budget > 0 && budget < stepBudget)
   const observed = { ...replay.unobservedSeconds, ...replay.seconds }
   assert.deepEqual(

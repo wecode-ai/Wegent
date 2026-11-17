@@ -52,38 +52,42 @@ function leastLoaded(shards) {
 function balanceMeasuredWork(shards, ordinary, unmeasured, checkpoints) {
   const origins = new Map(checkpoints.map(checkpoint => [checkpoint.segment, checkpoint.origin]))
   const durations = new Map(checkpoints.map(checkpoint => [checkpoint.segment, checkpoint.seconds]))
-  const retained = []
+  const placements = []
   for (const task of preparationTasks(checkpoints)) {
     const source = shards.find(
       shard =>
         unmeasured.has(shard.id) &&
         task.segments.every(segment => origins.get(segment) === shard.id)
     )
-    if (source) {
-      assignTask(source, task)
-      retained.push({ source, task })
-    } else {
-      assignTask(leastLoaded(ordinary), task)
-    }
+    const target = source ?? leastLoaded(ordinary)
+    assignTask(target, task)
+    placements.push({ source: target, origin: source, task })
   }
-  const active = [...new Set([...ordinary, ...retained.map(entry => entry.source)])]
+  const active = [...new Set([...ordinary, ...placements.map(entry => entry.source)])]
   const knownLoad = shard =>
     shard.segments.reduce((total, segment) => total + (durations.get(segment) ?? 0), 0)
-  retained.sort((a, b) => b.source.seconds - a.source.seconds || b.task.seconds - a.task.seconds)
-  for (const { source, task } of retained) {
-    const target = leastLoaded(ordinary)
-    const knownCost = task.segments.reduce((total, segment) => total + durations.get(segment), 0)
-    // Unknown costs are not estimated. Only move original measured work away,
-    // without raising either known checkpoint or preparation-inclusive peaks.
-    if (
-      target.seconds + task.seconds > Math.max(...active.map(shard => shard.seconds)) ||
-      knownLoad(target) + knownCost > Math.max(...active.map(knownLoad))
-    )
-      continue
-    source.segments = source.segments.filter(segment => !task.segments.includes(segment))
-    source.seconds -= task.seconds
-    assignTask(target, task)
-  }
+  let moved
+  do {
+    moved = false
+    for (const placement of placements) {
+      const { source, origin, task } = placement
+      const target = leastLoaded(origin ? [...ordinary, origin] : ordinary)
+      const knownCost = task.segments.reduce((total, segment) => total + durations.get(segment), 0)
+      // Every move lowers the affected peak and preserves the known global peak.
+      // Unknown runners may only recover their own original measured work.
+      if (
+        target === source ||
+        target.seconds + task.seconds >= source.seconds ||
+        knownLoad(target) + knownCost > Math.max(...active.map(knownLoad))
+      )
+        continue
+      source.segments = source.segments.filter(segment => !task.segments.includes(segment))
+      source.seconds -= task.seconds
+      assignTask(target, task)
+      placement.source = target
+      moved = true
+    }
+  } while (moved)
 }
 
 export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
