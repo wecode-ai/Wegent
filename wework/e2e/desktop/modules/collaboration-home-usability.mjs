@@ -403,17 +403,16 @@ async function verifyProjectDialogKeyboard(control, home, timeoutMs) {
   await control.command('fill', name, { value: projectDraft })
   await control.command('click', '[data-testid="project-create-choose-template"]')
   await control.command('click', '[data-testid="template-details-product-lifecycle"]')
-  await control.command('waitFor', '[data-testid="template-detail-cancel"]', { visible: true })
+  const preview = `${dialog} [data-testid="template-inline-detail"]`
+  await control.command('waitFor', preview, { visible: true })
   await control.command('nativePress', ':focus', { key: 'Escape' })
   await until(
-    async () =>
-      JSON.parse(
-        await control.command('getElementMetrics', '[data-testid="template-detail-cancel"]')
-      ),
+    async () => JSON.parse(await control.command('getElementMetrics', preview)),
     metrics => metrics.length === 0,
     'Escape must close only the template preview',
     timeoutMs
   )
+  await control.command('waitFor', `${dialog} [data-testid="template-search"]`, { visible: true })
   assert.equal(await control.command('getValue', name), projectDraft)
   await control.command('nativePress', ':focus', { key: 'Escape' })
   await until(
