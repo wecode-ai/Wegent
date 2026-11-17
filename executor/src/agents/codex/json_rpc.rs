@@ -23,13 +23,15 @@ use super::{
     is_codex_approval_request_method, is_mcp_tool_call_approval_request, json_rpc_request_id,
     mcp_tool_call_request_user_input_response, message_params,
     receive_mcp_server_elicitation_response, request_user_input_result, response_id,
-    response_result, CodexNotificationSender, CodexRequestUserInputReceiver, CodexRunState,
+    response_result, CodexNotificationSender, CodexRequestUserInputReceiver, CodexRpcOrigin,
+    CodexRunState,
 };
 
 pub(super) struct JsonRpcConnection {
     stdin: FrameWriter<ChildStdin>,
     stdout: CodexStdout,
     next_id: u64,
+    origin: CodexRpcOrigin,
     deferred_messages: VecDeque<Value>,
     runtime_notifications: Option<super::CodexNotificationHub>,
     isolated: Option<IsolatedInput>,
@@ -71,11 +73,17 @@ fn notify_active_turn(
 }
 
 impl JsonRpcConnection {
-    pub(super) fn new(stdin: ChildStdin, stdout: CodexStdout, next_id: u64) -> Self {
+    pub(super) fn new(
+        stdin: ChildStdin,
+        stdout: CodexStdout,
+        next_id: u64,
+        origin: CodexRpcOrigin,
+    ) -> Self {
         Self {
             stdin: FrameWriter::new(stdin),
             stdout,
             next_id,
+            origin,
             deferred_messages: VecDeque::new(),
             runtime_notifications: None,
             isolated: None,
@@ -139,7 +147,7 @@ impl JsonRpcConnection {
         loop {
             let message = self.read_message().await?;
             if response_id(&message) == Some(request_id) {
-                return response_result(message, method);
+                return response_result(message, method, self.origin);
             }
             if let Some(outcome) = state.handle_message(&message) {
                 return Err(format!(
@@ -158,7 +166,7 @@ impl JsonRpcConnection {
         loop {
             let message = self.read_message().await?;
             if response_id(&message) == Some(request_id) {
-                return response_result(message, method);
+                return response_result(message, method, self.origin);
             }
             if message.get("method").and_then(Value::as_str) == Some("error") {
                 return Err(codex_error_message(message_params(&message)));
@@ -237,7 +245,7 @@ impl JsonRpcConnection {
                 self.read_message().await?
             };
             if response_id(&message) == Some(turn_request_id) {
-                let response = response_result(message, turn_request_method)?;
+                let response = response_result(message, turn_request_method, self.origin)?;
                 notify_active_turn(
                     &active_turn_started,
                     &mut active_turn_id,
@@ -449,7 +457,7 @@ impl JsonRpcConnection {
         loop {
             let message = self.read_message().await?;
             if response_id(&message) == Some(request_id) {
-                response_result(message, "turn/interrupt")?;
+                response_result(message, "turn/interrupt", self.origin)?;
                 continue;
             }
             if message["method"] == "turn/completed"
@@ -610,7 +618,7 @@ impl JsonRpcConnection {
                 .as_mut()
                 .and_then(|input| input.pending.remove(&id))
             {
-                let _ = reply.send(response_result(message, &method));
+                let _ = reply.send(response_result(message, &method, self.origin));
                 return None;
             }
         }

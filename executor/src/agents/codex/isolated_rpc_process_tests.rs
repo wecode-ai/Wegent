@@ -1,6 +1,6 @@
 use super::super::{
     child::CodexAppServerChild, debug_stdout::CodexStdout, json_rpc::JsonRpcConnection,
-    CodexAppServerClient, CodexRunState,
+    CodexAppServerClient, CodexRpcOrigin, CodexRunState,
 };
 use super::*;
 
@@ -49,6 +49,7 @@ done
         child.stdin.take().unwrap(),
         CodexStdout::new(child.stdout.take().unwrap(), None),
         1,
+        CodexRpcOrigin::Dedicated(None),
     )
     .with_isolated_owner(owner, requests);
     if ready {

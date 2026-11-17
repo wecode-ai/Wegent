@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::super::CodexRpcOrigin;
 use super::*;
 use crate::runner::ExecutionOutcome;
 use wegent_subprocess::frame_writer::FrameWriter;
@@ -468,6 +469,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         child.stdin.take().unwrap(),
         CodexStdout::new(child.stdout.take().unwrap(), None),
         2,
+        CodexRpcOrigin::Dedicated(None),
     );
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let (recovery_tx, mut recovery_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -589,6 +591,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         child.stdin.take().unwrap(),
         CodexStdout::new(child.stdout.take().unwrap(), None),
         2,
+        CodexRpcOrigin::Dedicated(None),
     );
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state();
@@ -668,6 +671,7 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
         child.stdin.take().unwrap(),
         CodexStdout::new(child.stdout.take().unwrap(), None),
         2,
+        CodexRpcOrigin::Dedicated(None),
     );
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state();

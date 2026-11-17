@@ -219,6 +219,7 @@ async fn isolated_process_native_ingress_does_not_depend_on_a_request_observer()
         child.stdin.take().unwrap(),
         CodexStdout::new(child.stdout.take().unwrap(), None),
         1,
+        CodexRpcOrigin::Dedicated(Some(hub.process_generation)),
     )
     .with_runtime_notifications(Some(hub.clone()));
     let start = rpc.read_message().await.unwrap();

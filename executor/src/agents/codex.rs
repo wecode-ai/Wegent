@@ -133,7 +133,7 @@ mod auth_mode;
 #[path = "codex/diagnostics.rs"]
 mod diagnostics;
 mod rpc_response;
-use rpc_response::response_result;
+use rpc_response::{response_result, CodexRpcOrigin};
 #[path = "codex/home.rs"]
 mod home;
 mod memory_review;
@@ -1891,7 +1891,12 @@ async fn start_persistent_codex_app_server(
             .stdout
             .take()
             .ok_or_else(|| "codex app-server stdout was not captured".to_owned())?;
-        let mut rpc = JsonRpcConnection::new(stdin, CodexStdout::new(stdout, None), next_id);
+        let mut rpc = JsonRpcConnection::new(
+            stdin,
+            CodexStdout::new(stdout, None),
+            next_id,
+            CodexRpcOrigin::Shared(None),
+        );
         with_rpc_timeout(
             "initialize",
             timeout_seconds,
@@ -2073,7 +2078,11 @@ async fn read_persistent_codex_app_server_stdout(
         if is_json_rpc_response(&message) {
             if let Some(request_id) = response_id(&message) {
                 if let Some(request) = pending.lock().await.remove(&request_id) {
-                    let result = response_result(message, &request.method);
+                    let result = response_result(
+                        message,
+                        &request.method,
+                        CodexRpcOrigin::Shared(Some(notifications.process_generation)),
+                    );
                     if let (Some(context), Ok(response)) = (&request.native_request, &result) {
                         notifications.update_native_activity(|activity| {
                             activity.observe_response(context, response)
@@ -2893,8 +2902,17 @@ async fn run_codex_app_server_turn_with_runtime(
             stdout,
             Some((&prepared.request.task_id, &prepared.request.subtask_id)),
         );
-        let mut rpc = JsonRpcConnection::new(stdin, stdout, 1)
-            .with_runtime_notifications(runtime_notifications.clone());
+        let mut rpc = JsonRpcConnection::new(
+            stdin,
+            stdout,
+            1,
+            CodexRpcOrigin::Dedicated(
+                runtime_notifications
+                    .as_ref()
+                    .map(|hub| hub.process_generation),
+            ),
+        )
+        .with_runtime_notifications(runtime_notifications.clone());
         if let Some((owner, requests)) = owner_endpoint.take() {
             rpc = rpc.with_isolated_owner(owner, requests);
         }

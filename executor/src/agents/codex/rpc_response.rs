@@ -6,8 +6,18 @@ use serde_json::{json, Value};
 
 use super::diagnostics::raw_log_preview;
 
-pub(super) fn response_result(message: Value, method: &str) -> Result<Value, String> {
-    if let Some(fields) = error_fields(&message, method) {
+#[derive(Clone, Copy)]
+pub(super) enum CodexRpcOrigin {
+    Shared(Option<u64>),
+    Dedicated(Option<u64>),
+}
+
+pub(super) fn response_result(
+    message: Value,
+    method: &str,
+    origin: CodexRpcOrigin,
+) -> Result<Value, String> {
+    if let Some(fields) = error_fields(&message, method, origin) {
         crate::logging::log_executor_event("codex JSON-RPC request failed", &fields);
     }
     if let Some(error) = message.get("error") {
@@ -20,8 +30,16 @@ pub(super) fn response_result(message: Value, method: &str) -> Result<Value, Str
     Ok(message.get("result").cloned().unwrap_or_else(|| json!({})))
 }
 
-fn error_fields(message: &Value, method: &str) -> Option<[(&'static str, String); 3]> {
+fn error_fields(
+    message: &Value,
+    method: &str,
+    origin: CodexRpcOrigin,
+) -> Option<[(&'static str, String); 5]> {
     let error = message.get("error")?;
+    let (scope, generation) = match origin {
+        CodexRpcOrigin::Shared(generation) => ("shared", generation),
+        CodexRpcOrigin::Dedicated(generation) => ("dedicated", generation),
+    };
     Some([
         ("method", method.to_owned()),
         (
@@ -33,6 +51,11 @@ fn error_fields(message: &Value, method: &str) -> Option<[(&'static str, String)
                 .unwrap_or_default(),
         ),
         ("rpc_error", raw_log_preview(error)),
+        ("process_scope", scope.to_owned()),
+        (
+            "process_generation",
+            generation.map_or_else(|| "unknown".to_owned(), |value| value.to_string()),
+        ),
     ])
 }
 
@@ -55,7 +78,8 @@ mod tests {
                 }
             }
         });
-        let fields = error_fields(&response, "config/batchWrite").unwrap();
+        let origin = CodexRpcOrigin::Shared(Some(7));
+        let fields = error_fields(&response, "config/batchWrite", origin).unwrap();
         assert_eq!(fields[0], ("method", "config/batchWrite".to_owned()));
         assert_eq!(fields[1], ("request_id", "42".to_owned()));
         let recorded: Value = serde_json::from_str(&fields[2].1).unwrap();
@@ -66,7 +90,7 @@ mod tests {
         );
         assert!(!fields[2].1.contains("private-"));
         assert_eq!(
-            response_result(response, "config/batchWrite").unwrap_err(),
+            response_result(response, "config/batchWrite", origin).unwrap_err(),
             "Configuration changed"
         );
     }
@@ -74,13 +98,14 @@ mod tests {
     #[test]
     fn preserves_success_and_bounds_failed_response_diagnostics() {
         let response = json!({"id": 43, "result": {"status": "ok"}});
-        assert!(error_fields(&response, "config/read").is_none());
+        let origin = CodexRpcOrigin::Dedicated(Some(8));
+        assert!(error_fields(&response, "config/read", origin).is_none());
         assert_eq!(
-            response_result(response, "config/read").unwrap(),
+            response_result(response, "config/read", origin).unwrap(),
             json!({"status": "ok"})
         );
         let response = json!({"id": 44, "error": {"message": "诊断".repeat(4000)}});
-        let fields = error_fields(&response, "config/batchWrite").unwrap();
+        let fields = error_fields(&response, "config/batchWrite", origin).unwrap();
         assert!(fields[2].1.chars().count() <= 1201);
     }
 
@@ -90,9 +115,32 @@ mod tests {
             "id": 45,
             "error": {"code": -32603, "data": {"apiKey": "private-key"}}
         });
-        let error = response_result(response, "config/batchWrite").unwrap_err();
+        let error = response_result(
+            response,
+            "config/batchWrite",
+            CodexRpcOrigin::Dedicated(None),
+        )
+        .unwrap_err();
         let recorded: Value = serde_json::from_str(&error).unwrap();
         assert_eq!(recorded["code"], -32603);
         assert_eq!(recorded["data"]["apiKey"], "[redacted]");
+    }
+
+    #[test]
+    fn equal_request_ids_remain_distinguishable_across_native_processes() {
+        let response = json!({"id": 206, "error": {"code": -32600, "message": "thread not found"}});
+        let fields = |origin| error_fields(&response, "mcpServerStatus/list", origin).unwrap();
+        let shared = fields(CodexRpcOrigin::Shared(Some(2)));
+        let dedicated = fields(CodexRpcOrigin::Dedicated(Some(3)));
+        assert_eq!(&shared[..3], &dedicated[..3]);
+        assert_eq!(shared[3], ("process_scope", "shared".to_owned()));
+        assert_eq!(shared[4], ("process_generation", "2".to_owned()));
+        assert_eq!(dedicated[3], ("process_scope", "dedicated".to_owned()));
+        assert_eq!(dedicated[4], ("process_generation", "3".to_owned()));
+        assert_ne!(shared, fields(CodexRpcOrigin::Shared(Some(4))));
+        assert_eq!(
+            fields(CodexRpcOrigin::Shared(None))[4],
+            ("process_generation", "unknown".to_owned())
+        );
     }
 }
