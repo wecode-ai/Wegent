@@ -42,7 +42,7 @@ export async function flushProcessOutput() {
           )
         )
         const written = finished(output.writer, { cleanup: true })
-        await Promise.all([
+        const completion = await Promise.allSettled([
           written,
           sources.then(results => {
             output.writer.end()
@@ -55,6 +55,9 @@ export async function flushProcessOutput() {
             }
           }),
         ])
+        for (const result of completion) {
+          if (result.status === 'rejected') throw result.reason
+        }
       } finally {
         outputs.delete(destination)
       }

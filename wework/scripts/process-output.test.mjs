@@ -56,12 +56,14 @@ function message(worker, type) {
   })
 }
 
-test('serves control requests while log I/O is held, applies backpressure and drains bytes', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'wework-slow-log-'))
-  const destination = join(directory, 'process.log')
-  const gate = new Int32Array(new SharedArrayBuffer(4))
-  const worker = new Worker(
-    `
+test.each([false, true])(
+  'serves control requests and drains held log I/O (source failure: %s)',
+  async failSource => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-slow-log-'))
+    const destination = join(directory, 'process.log')
+    const gate = new Int32Array(new SharedArrayBuffer(4))
+    const worker = new Worker(
+      `
     const fs = require('node:fs')
     const { syncBuiltinESMExports } = require('node:module')
     const { parentPort, workerData } = require('node:worker_threads')
@@ -96,47 +98,69 @@ test('serves control requests while log I/O is held, applies backpressure and dr
         if (command === 'ping') {
           parentPort.postMessage({type: 'pong', held: Atomics.load(gate, 0) === 0,
             paused: source.isPaused()})
+        } else if (command === 'fail-source') {
+          let settled = false
+          const messages = error => [error.message, ...(error.errors || []).flatMap(messages)]
+          capture.flushProcessOutput().then(
+            () => { settled = true; parentPort.postMessage({type: 'complete', errors: []}) },
+            error => {
+              settled = true
+              parentPort.postMessage({type: 'complete', errors: messages(error)})
+            },
+          )
+          source.destroy(new Error('source failed'))
+          setImmediate(() => parentPort.postMessage({type: 'failed-source', settled}))
         } else {
           await capture.flushProcessOutput()
           parentPort.postMessage({type: 'complete'})
           parentPort.close()
         }
       })
-      source.end(Buffer.alloc(128 * 1024, 120))
+      if (workerData.failSource) source.write(Buffer.alloc(128 * 1024, 120))
+      else source.end(Buffer.alloc(128 * 1024, 120))
     })().catch(error => { throw error })
     `,
-    {
-      eval: true,
-      workerData: {
-        gate: gate.buffer,
-        destination,
-        moduleUrl: new URL('../e2e/desktop/process-output.mjs', import.meta.url).href,
-      },
+      {
+        eval: true,
+        workerData: {
+          gate: gate.buffer,
+          failSource,
+          destination,
+          moduleUrl: new URL('../e2e/desktop/process-output.mjs', import.meta.url).href,
+        },
+      }
+    )
+    const release = () => {
+      Atomics.store(gate, 0, 1)
+      Atomics.notify(gate, 0)
     }
-  )
-  const release = () => {
-    Atomics.store(gate, 0, 1)
-    Atomics.notify(gate, 0)
-  }
-  // Bound a broken synchronous implementation without requiring a slow host to meet a deadline.
-  const watchdog = setTimeout(release, 3000)
-  try {
-    await message(worker, 'held')
-    const response = message(worker, 'pong')
-    worker.postMessage('ping')
-    assert.deepEqual(await response, { type: 'pong', held: true, paused: true })
-    const complete = message(worker, 'complete')
-    release()
-    worker.postMessage('finish')
-    await complete
-    assert.deepEqual(await readFile(destination), Buffer.alloc(128 * 1024, 120))
-  } finally {
-    clearTimeout(watchdog)
-    release()
-    await worker.terminate()
-    await rm(directory, { recursive: true, force: true })
-  }
-}, 10_000)
+    // Bound a broken synchronous implementation without requiring a slow host to meet a deadline.
+    const watchdog = setTimeout(release, 3000)
+    try {
+      await message(worker, 'held')
+      const response = message(worker, 'pong')
+      worker.postMessage('ping')
+      assert.deepEqual(await response, { type: 'pong', held: true, paused: true })
+      const complete = message(worker, 'complete')
+      if (failSource) {
+        const failed = message(worker, 'failed-source')
+        worker.postMessage('fail-source')
+        assert.deepEqual(await failed, { type: 'failed-source', settled: false })
+      }
+      release()
+      if (!failSource) worker.postMessage('finish')
+      const result = await complete
+      if (failSource) assert.ok(result.errors.includes('source failed'))
+      assert.deepEqual(await readFile(destination), Buffer.alloc(128 * 1024, 120))
+    } finally {
+      clearTimeout(watchdog)
+      release()
+      await worker.terminate()
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  10_000
+)
 
 test('drains other logs before rejecting a failed destination', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-log-error-'))
