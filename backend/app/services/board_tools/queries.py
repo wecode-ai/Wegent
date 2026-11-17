@@ -101,6 +101,25 @@ def assignee(item: dict[str, Any]) -> dict[str, str] | None:
     return {"type": "group", "id": str(group["id"])} if group.get("id") else None
 
 
+def _source_timestamp(value: str) -> datetime:
+    stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return stamp.replace(tzinfo=stamp.tzinfo or timezone.utc).astimezone(timezone.utc)
+
+
+def _sort_value(item: dict[str, Any], field: str) -> str | tuple[bool, datetime | None]:
+    value = item.get(field)
+    if field not in {"created_at", "updated_at", "due_at"}:
+        return str(value or "").casefold()
+    if value is None:
+        return False, None
+    try:
+        if not isinstance(value, str):
+            raise ValueError("Timestamp must be a string")
+        return True, _source_timestamp(value)
+    except (OverflowError, TypeError, ValueError) as error:
+        raise failure("unsupported_sort", "Invalid source timestamp") from error
+
+
 def matches(item: dict[str, Any], values: dict[str, Any], parents: set[str]) -> bool:
     text = " ".join(
         str(item.get(key) or "") for key in ("id", "title", "description", "tags")
@@ -141,8 +160,7 @@ def matches(item: dict[str, Any], values: dict[str, Any], parents: set[str]) -> 
         value = item.get(field)
         if not value:
             return False
-        stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        stamp = stamp.replace(tzinfo=stamp.tzinfo or timezone.utc)
+        stamp = _source_timestamp(str(value))
         interval = values[field]
         for bound, predicate in (
             ("from", lambda a, b: a < b),
@@ -384,7 +402,7 @@ def search(db: Session, token: MCPAuthInfo, values: dict[str, Any]) -> dict[str,
     items = sorted(state["items"], key=lambda item: digest(item["target"]))
     for sort in reversed(state["filters"].get("sort", [])):
         items.sort(
-            key=lambda item: str(item.get(sort["field"]) or "").casefold(),
+            key=lambda item: _sort_value(item, sort["field"]),
             reverse=sort["direction"] == "desc",
         )
     limit = values.get("limit", 50)
@@ -421,7 +439,7 @@ def search(db: Session, token: MCPAuthInfo, values: dict[str, Any]) -> dict[str,
 def aggregate(
     db: Session, token: MCPAuthInfo, values: dict[str, Any]
 ) -> dict[str, Any]:
-    if bool(values.get("query_id")) == bool(values.get("search")):
+    if ("query_id" in values) == ("search" in values):
         raise failure("invalid_request", "Provide query_id or search, exclusively")
     page = search(
         db,

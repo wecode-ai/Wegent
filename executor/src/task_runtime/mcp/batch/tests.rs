@@ -1,5 +1,11 @@
 use super::*;
 
+#[path = "history_regressions.rs"]
+mod history_regressions;
+
+#[path = "query_regressions.rs"]
+mod query_regressions;
+
 #[test]
 fn shared_contract_rejects_nested_ambiguity() {
     let tools = tools();

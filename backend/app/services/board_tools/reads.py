@@ -79,6 +79,7 @@ def comments(db: Session, token: MCPAuthInfo, entry: dict[str, Any]) -> dict[str
     )
     mode = entry["mode"]
     after = 0
+    history_from_start = mode == "oldest"
     binding = digest([access.identity(db, token), target])
     if mode == "after":
         try:
@@ -90,6 +91,9 @@ def comments(db: Session, token: MCPAuthInfo, entry: dict[str, Any]) -> dict[str
             after = int(cursor["after"])
             if after < 0:
                 raise ValueError("Invalid sequence")
+            history_from_start = cursor["history_from_start"]
+            if not isinstance(history_from_start, bool):
+                raise ValueError("Invalid history coverage")
         except (ValueError, KeyError, TypeError) as error:
             raise failure("cursor_expired", "Invalid comment cursor") from error
     elif entry.get("cursor"):
@@ -125,6 +129,7 @@ def comments(db: Session, token: MCPAuthInfo, entry: dict[str, Any]) -> dict[str
                 {
                     "target": binding,
                     "after": rows[-1].id,
+                    "history_from_start": history_from_start,
                     "expires_at": time.time() + 600,
                 }
             ).encode()
@@ -135,6 +140,6 @@ def comments(db: Session, token: MCPAuthInfo, entry: dict[str, Any]) -> dict[str
         ],
         "has_earlier": has_earlier,
         "has_later": has_later,
-        "history_complete": mode != "latest" and not has_later,
+        "history_complete": history_from_start and not has_later,
         "next_cursor": next_cursor,
     }

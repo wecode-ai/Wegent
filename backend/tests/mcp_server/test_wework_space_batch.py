@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.mcp_server.auth import MCPAuthInfo
 from app.mcp_server.tools import wework_space
 from app.mcp_server.tools.wework_space_batch import dispatch
 from app.models.delivery import LoopItem, LoopNode
@@ -46,6 +48,125 @@ def add_items(db: Session, project, user: User, count: int) -> list[LoopItem]:
     db.add_all(items)
     db.commit()
     return items
+
+
+def source_time_query(
+    board: tuple,
+    db: Session,
+    user: User,
+    field: str,
+    values: list[tuple[str, object]],
+    direction: str,
+) -> tuple[MCPAuthInfo, str]:
+    project, token, space = board
+    items = add_items(db, project, user, len(values))
+    for item, (title, _) in zip(items, values):
+        item.title = title
+    db.commit()
+    initial = dispatch(
+        "search_board_items",
+        token,
+        {
+            "scope": {"kind": "projects", "spaces": [space]},
+            "sort": [
+                {"field": field, "direction": direction},
+                {"field": "title", "direction": "asc"},
+            ],
+        },
+    )
+    row = db.get(LoopNode, initial["query_id"])
+    snapshot = copy.deepcopy(row.metadata_json)
+    timestamps = dict(values)
+    # Persist provider timestamp serializations without SQLite DateTime losing offsets.
+    for item in snapshot["items"]:
+        item[field] = timestamps[item["title"]]
+    row.metadata_json = snapshot
+    db.commit()
+    return token, row.id
+
+
+@pytest.mark.parametrize("field", ["created_at", "updated_at", "due_at"])
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_query_sorts_temporal_instants_with_stable_secondary_order_across_pages(
+    board, test_db, test_user, field, direction
+):
+    token, query_id = source_time_query(
+        board,
+        test_db,
+        test_user,
+        field,
+        [
+            ("early", "2026-01-01T08:00:00+08:00"),
+            ("tie-b", "2026-01-01T02:00:00+01:00"),
+            ("tie-a", "2026-01-01T01:00:00Z"),
+            ("fraction", "2026-01-01T01:00:00.050"),
+            ("later", "2026-01-01T00:30:00-01:00"),
+            ("space-naive", "2026-01-01 01:00:00.100"),
+            ("date-only", "2026-01-01"),
+        ],
+        direction,
+    )
+    page = dispatch("search_board_items", token, {"query_id": query_id, "limit": 2})
+    titles = []
+    while True:
+        titles.extend(item["title"] for item in page["items"])
+        assert page["coverage"]["complete"] is True
+        assert page["matched_total"] == 7
+        if not page["next_cursor"]:
+            break
+        page = dispatch(
+            "search_board_items", token, {"cursor": page["next_cursor"], "limit": 2}
+        )
+    assert titles == (
+        ["date-only", "early", "tie-a", "tie-b", "fraction", "space-naive", "later"]
+        if direction == "asc"
+        else [
+            "later",
+            "space-naive",
+            "fraction",
+            "tie-a",
+            "tie-b",
+            "date-only",
+            "early",
+        ]
+    )
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_query_temporal_sort_preserves_missing_due_date_position(
+    board, test_db, test_user, direction
+):
+    token, query_id = source_time_query(
+        board,
+        test_db,
+        test_user,
+        "due_at",
+        [
+            ("missing", None),
+            ("early", "2026-01-01T08:00:00+08:00"),
+            ("later", "2026-01-01T01:00:00Z"),
+        ],
+        direction,
+    )
+    result = dispatch("search_board_items", token, {"query_id": query_id})
+    assert [item["title"] for item in result["items"]] == (
+        ["missing", "early", "later"]
+        if direction == "asc"
+        else ["later", "early", "missing"]
+    )
+
+
+@pytest.mark.parametrize("field", ["created_at", "updated_at", "due_at"])
+@pytest.mark.parametrize("stamp", ["not-a-timestamp", "", 123])
+def test_query_temporal_sort_rejects_invalid_source_values(
+    board, test_db, test_user, field, stamp
+):
+    token, query_id = source_time_query(
+        board, test_db, test_user, field, [("invalid", stamp)], "asc"
+    )
+    with pytest.raises(HTTPException) as invalid:
+        dispatch("search_board_items", token, {"query_id": query_id})
+    assert invalid.value.detail["code"] == "unsupported_sort"
 
 
 def test_shared_schema_rejects_invalid_batch_before_writing():
@@ -248,6 +369,84 @@ def test_batch_comment_deduplicates_and_reads_history_from_oldest(
     last = read("after", first["next_cursor"])
     assert last["comments"][-1]["body"] == "Evidence 3"
     assert last["history_complete"] is True
+
+
+@pytest.mark.parametrize("initial_mode", ["latest", "oldest"])
+def test_comment_continuations_preserve_the_original_history_coverage(
+    board, test_db, test_user, initial_mode
+):
+    project, token, space = board
+    item = add_items(test_db, project, test_user, 1)[0]
+    target = {"space": space, "item_id": item.id}
+
+    def append(operation_key, indexes):
+        written = dispatch(
+            "batch_add_board_item_comments",
+            token,
+            {
+                "operation_key": operation_key,
+                "items": [
+                    {
+                        "request_id": str(index),
+                        "target": target,
+                        "body": f"Evidence {index}",
+                    }
+                    for index in indexes
+                ],
+            },
+        )
+        assert written["counts"]["succeeded"] == len(indexes)
+
+    def read(mode, cursor=None):
+        result = dispatch(
+            "batch_list_board_item_comments",
+            token,
+            {
+                "items": [
+                    {
+                        "request_id": "history",
+                        "target": target,
+                        "mode": mode,
+                        "limit": 2,
+                        **({"cursor": cursor} if cursor else {}),
+                    }
+                ]
+            },
+        )["results"][0]
+        assert result["state"] == "succeeded"
+        return result["result"]
+
+    append("initial-history", range(4))
+    page = read(initial_mode)
+    assert page["comments"][0]["body"] == (
+        "Evidence 2" if initial_mode == "latest" else "Evidence 0"
+    )
+    assert page["history_complete"] is False
+    append("new-history", range(4, 7))
+    while True:
+        page = read("after", page["next_cursor"])
+        assert page["history_complete"] == (
+            initial_mode == "oldest" and not page["has_later"]
+        )
+        if not page["has_later"]:
+            break
+    assert page["comments"][-1]["body"] == "Evidence 6"
+    empty = read("after", page["next_cursor"])
+    assert empty["comments"] == []
+    assert empty["history_complete"] == (initial_mode == "oldest")
+
+
+def test_aggregate_accepts_an_empty_search_as_the_accessible_scope(
+    board, test_db, test_user
+):
+    project, token, space = board
+    add_items(test_db, project, test_user, 3)
+    result = dispatch(
+        "aggregate_board_items", token, {"search": {}, "group_by": ["space"]}
+    )
+    assert result["coverage"]["complete"] is True
+    assert result["matched_total"] == 3
+    assert result["buckets"] == [{"group": {"space": space}, "count": 3}]
 
 
 def test_executor_cannot_hide_cross_issue_writes_in_nested_targets(

@@ -228,6 +228,65 @@ fn normalize(mut item: Value, space: &Value) -> Value {
     item
 }
 
+fn source_timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>, chrono::ParseError> {
+    if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(value) {
+        return Ok(timestamp.with_timezone(&chrono::Utc));
+    }
+    for format in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f"] {
+        if let Ok(timestamp) = chrono::NaiveDateTime::parse_from_str(value, format) {
+            return Ok(timestamp.and_utc());
+        }
+    }
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map(|date| date.and_time(chrono::NaiveTime::MIN).and_utc())
+}
+
+fn sort_items(mut items: Vec<Value>, sorts: &Value) -> Result<Vec<Value>, String> {
+    items.sort_by_key(|item| hash(&item["target"]));
+    for sort in sorts.as_array().into_iter().flatten().rev() {
+        let field = sort["field"].as_str().ok_or("Invalid sort")?;
+        let direction = |order: std::cmp::Ordering| {
+            if sort["direction"] == "desc" {
+                order.reverse()
+            } else {
+                order
+            }
+        };
+        if matches!(field, "created_at" | "updated_at" | "due_at") {
+            let mut keyed = items
+                .into_iter()
+                .map(|item| {
+                    let timestamp = if item[field].is_null() {
+                        None
+                    } else {
+                        let value = item[field]
+                            .as_str()
+                            .ok_or("unsupported_sort: invalid source timestamp")?;
+                        Some(
+                            source_timestamp(value)
+                                .map_err(|_| "unsupported_sort: invalid source timestamp")?,
+                        )
+                    };
+                    Ok((timestamp, item))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            keyed.sort_by(|left, right| direction(left.0.cmp(&right.0)));
+            items = keyed.into_iter().map(|(_, item)| item).collect();
+        } else {
+            items.sort_by(|left, right| {
+                direction(
+                    left[field]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .cmp(&right[field].as_str().unwrap_or_default().to_lowercase()),
+                )
+            });
+        }
+    }
+    Ok(items)
+}
+
 fn matches(item: &Value, filters: &Value, parents: &HashSet<String>) -> Result<bool, String> {
     let text = format!(
         "{} {} {} {}",
@@ -300,12 +359,7 @@ fn matches(item: &Value, filters: &Value, parents: &HashSet<String>) -> Result<b
             let Some(timestamp) = item[field].as_str() else {
                 return Ok(false);
             };
-            let timestamp = chrono::DateTime::parse_from_rfc3339(timestamp)
-                .map(|value| value.with_timezone(&chrono::Utc))
-                .or_else(|_| {
-                    chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S%.f")
-                        .map(|value| value.and_utc())
-                })
+            let timestamp = source_timestamp(timestamp)
                 .map_err(|_| "unsupported_filter: invalid source timestamp")?;
             if let Some(from) = range["from"].as_str() {
                 if timestamp
@@ -490,11 +544,13 @@ pub(super) async fn search(
             )
             .await?
         };
+        let mut seen = HashSet::new();
         let spaces = discovery["items"]
             .as_array()
             .ok_or("Invalid discovery")?
             .iter()
             .map(|item| item["space"].clone())
+            .filter(|space| seen.insert(hash(space)))
             .collect::<Vec<_>>();
         let key = uuid::Uuid::new_v4().to_string();
         let query = Query {
@@ -633,23 +689,7 @@ pub(super) async fn search(
         result["items"] = json!([]);
         return Ok(result);
     }
-    let mut items = state.items.clone();
-    items.sort_by_key(|item| hash(&item["target"]));
-    for sort in state.filters["sort"].as_array().into_iter().flatten().rev() {
-        let field = sort["field"].as_str().ok_or("Invalid sort")?;
-        items.sort_by(|left, right| {
-            let order = left[field]
-                .as_str()
-                .unwrap_or_default()
-                .to_lowercase()
-                .cmp(&right[field].as_str().unwrap_or_default().to_lowercase());
-            if sort["direction"] == "desc" {
-                order.reverse()
-            } else {
-                order
-            }
-        });
-    }
+    let items = sort_items(state.items.clone(), &state.filters["sort"])?;
     let limit = values["limit"].as_u64().unwrap_or(50) as usize;
     let mut page = items
         .iter()

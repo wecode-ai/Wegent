@@ -106,4 +106,22 @@ export async function verifyCollaborationBatchTools({ request, project }) {
   })
   assert.equal(remainder.results[0].result.comments.at(-1).body, 'Batch history evidence 2')
   assert.equal(remainder.results[0].result.history_complete, true)
+  const latest = await call('batch_list_board_item_comments', {
+    items: [{ request_id: 'latest', target: created.results[0].target, mode: 'latest', limit: 1 }],
+  })
+  assert.equal(latest.results[0].result.comments[0].body, 'Batch history evidence 2')
+  assert.equal(latest.results[0].result.history_complete, false)
+  const afterLatest = await call('batch_list_board_item_comments', {
+    items: [
+      {
+        request_id: 'after-latest',
+        target: created.results[0].target,
+        mode: 'after',
+        cursor: latest.results[0].result.next_cursor,
+        limit: 1,
+      },
+    ],
+  })
+  assert.deepEqual(afterLatest.results[0].result.comments, [])
+  assert.equal(afterLatest.results[0].result.history_complete, false)
 }

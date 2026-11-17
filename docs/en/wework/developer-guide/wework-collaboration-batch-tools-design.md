@@ -129,6 +129,8 @@ Describe source capability separately from current caller authority: supporting 
 
 Projection supports `summary`, `detail`, or an allowed field set. Summaries include complete references, title, status, assignee, version, update time, and an available open link. Declare supported sort fields and use the complete reference as a deterministic final tie-breaker.
 
+Collect each complete space reference once; pagination and aggregation count distinct items. Sort time fields by actual instants with consistent timezone interpretation, rather than date strings.
+
 ### 5.2 Query snapshots
 
 Initial search builds a short-lived, read-only query snapshot: discovered target projects, matching Issue projections, and ordering. It returns a `query_id` reused by pages and aggregation so maintenance during review does not continually move results between pages.
@@ -189,6 +191,7 @@ type CommentRead = {
 
 - `oldest` starts with the earliest visible activity. `latest` returns the newest page, ordered chronologically within the page. `after` requires the existing cursor for that Issue.
 - Return `has_earlier`, `has_later`, `next_cursor`, and `history_complete`. No newer activity does not mean the entire history was read.
+- Cursors retain whether reading started at the oldest activity. Continuing from `latest` with `after` cannot claim full history; only an uninterrupted scan from `oldest` through the final page returns `history_complete: true`.
 - Bind cursors to target and direction; do not reuse another Issue's sequence. Preserve source activity IDs, authors, and timestamps without rewriting historical identity.
 - Explicitly adapt the existing recent-200 behavior; wrapping the old call in an array does not implement full-history reading.
 - If details succeed and comments fail, preserve the successful details and report incomplete evidence.

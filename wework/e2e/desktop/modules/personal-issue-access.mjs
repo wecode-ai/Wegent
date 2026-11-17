@@ -41,7 +41,11 @@ async function waitForValue(load, predicate, message, timeoutMs) {
 }
 
 // Only model responses are synthetic; all tools, identities and records are real.
-export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponseTimeoutMs }) {
+export function createPersonalIssueAccessRegression({
+  uiTimeoutMs,
+  modelResponseTimeoutMs,
+  additionalTools,
+}) {
   let cloud
   let sourceProject
   let sourceIssue
@@ -121,6 +125,7 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
       })
     }
     steps.push({ name: 'get_current_context', args: () => ({}), verify: assertContext })
+    steps.push(...(additionalTools?.steps ?? []))
   }
 
   async function nextToolEvents(body) {
@@ -128,7 +133,8 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
     const callId = () => `personal-access-${stepIndex}`
     if (step && requestContainsToolOutput(body, callId())) {
       const result = readMcpToolOutput(body, callId())
-      if (step.denied)
+      if (step.verifyRaw) await step.verifyRaw(result)
+      else if (step.denied)
         assert.match(
           result,
           step.deniedStatus === 404
@@ -138,8 +144,9 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
         )
       else {
         const value = JSON.parse(result)
-        step.verify?.(value)
+        await step.verify?.(value)
       }
+      await step.after?.()
       console.log(
         `[e2e] Personal Issue MCP ${step.name}: ${step.denied ? 'permission denied' : 'succeeded'}`
       )
@@ -221,6 +228,7 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
         'The source delivery leaked into a target Issue'
       )
     }
+    await additionalTools?.verifyPersisted()
   }
 
   return {
@@ -280,6 +288,7 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
           token: creatorToken,
         })
       }
+      await additionalTools?.prepare({ request, targets, owner })
       addSteps()
     },
 
@@ -309,6 +318,7 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
     },
 
     async verify(control) {
+      await additionalTools?.prepareLocal(control)
       active = true
       const me = await request('/api/users/me')
       const assigned = await request(`/api/v1/loop-items/${sourceIssue.id}/assignments`, {
@@ -328,17 +338,10 @@ export function createPersonalIssueAccessRegression({ uiTimeoutMs, modelResponse
       await control.command('openWeworkScheme', 'body', {
         value: `wework://boards/${sourceProject.id}/issues/${sourceIssue.id}`,
       })
-      await control.command(
-        'waitFor',
-        `${CONTENT} [data-testid="cloud-todo-create-task"]`,
-        {
-          visible: true,
-        }
-      )
-      await control.command(
-        'clickWhenEnabled',
-        `${CONTENT} [data-testid="cloud-todo-create-task"]`
-      )
+      await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-create-task"]`, {
+        visible: true,
+      })
+      await control.command('clickWhenEnabled', `${CONTENT} [data-testid="cloud-todo-create-task"]`)
       const composer = `${PANEL} [data-testid="chat-message-input"]`
       await control.command('waitFor', composer, { visible: true })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, PANEL)

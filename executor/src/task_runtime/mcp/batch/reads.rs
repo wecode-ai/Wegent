@@ -229,7 +229,7 @@ fn comments(
     }
     let mode = entry["mode"].as_str().ok_or("Missing comment mode")?;
     let binding = hash(&json!([owner(runtime, context), entry["target"]]));
-    let after = if mode == "after" {
+    let (after, history_from_start) = if mode == "after" {
         let value = STANDARD
             .decode(
                 entry["cursor"]
@@ -244,15 +244,19 @@ fn comments(
         if value["expires_at"].as_i64().unwrap_or(0) < Local::now().timestamp() {
             return Err("Comment cursor expired".into());
         }
-        value["after"]
+        let after = value["after"]
             .as_i64()
             .filter(|value| *value >= 0)
-            .ok_or("Invalid comment cursor")?
+            .ok_or("Invalid comment cursor")?;
+        let history_from_start = value["history_from_start"]
+            .as_bool()
+            .ok_or("Invalid comment history coverage")?;
+        (after, history_from_start)
     } else {
         if entry.get("cursor").is_some() {
             return Err("Cursor requires after mode".into());
         }
-        0
+        (0, mode == "oldest")
     };
     let comments = runtime
         .list_comments(project, item, 0)
@@ -275,9 +279,9 @@ fn comments(
         .collect::<Vec<_>>();
     let has_later = mode != "latest" && eligible.len() > limit;
     let cursor = page.last().map(|comment| {
-        STANDARD.encode(json!({"binding":binding,"after":comment.sequence_number,"expires_at":Local::now().timestamp()+600}).to_string())
+        STANDARD.encode(json!({"binding":binding,"after":comment.sequence_number,"history_from_start":history_from_start,"expires_at":Local::now().timestamp()+600}).to_string())
     });
     Ok(
-        json!({"comments":page.iter().map(|comment|json!({"id":comment.message_id,"body":comment.content,"author":comment.sender_name,"web_url":null,"created_at":comment.created_at,"updated_at":comment.updated_at,"sequence_number":comment.sequence_number})).collect::<Vec<_>>(),"has_earlier":start>0||after>0,"has_later":has_later,"history_complete":mode!="latest"&&!has_later,"next_cursor":cursor}),
+        json!({"comments":page.iter().map(|comment|json!({"id":comment.message_id,"body":comment.content,"author":comment.sender_name,"web_url":null,"created_at":comment.created_at,"updated_at":comment.updated_at,"sequence_number":comment.sequence_number})).collect::<Vec<_>>(),"has_earlier":start>0||after>0,"has_later":has_later,"history_complete":history_from_start&&!has_later,"next_cursor":cursor}),
     )
 }
