@@ -471,6 +471,47 @@ export async function createDesktopScenario(options) {
         6
       )
       await options.captureScreenshot(control, 'template-recovery-six-agents-once.png', CONTENT)
+
+      // Explicit repetition starts one new logical import without resetting its predecessor.
+      const repeatInput = helpers.projectTemplateImportRequest({
+        ...completedAgentImport.intent,
+        previousImportId: completedAgentImport.id,
+      })
+      const [repeatFirst, repeatSecond] = await Promise.all([
+        request(importsPath(), 'POST', repeatInput),
+        request(importsPath(), 'POST', repeatInput),
+      ])
+      assert.equal(repeatFirst.id, repeatSecond.id)
+      assert.notEqual(repeatFirst.id, completedAgentImport.id)
+      assert.equal(repeatFirst.status, 'pending')
+      assert.equal(repeatFirst.intent.previousImportId, completedAgentImport.id)
+      assert.deepEqual(repeatFirst.steps, repeatInput.steps)
+      assert.ok(repeatFirst.steps.every(step => !step.resourceId))
+      const unchangedPrevious = await request(`${importsPath()}/${completedAgentImport.id}`)
+      assert.equal(unchangedPrevious.status, 'completed')
+      assert.deepEqual(unchangedPrevious.steps, completedAgentImport.steps)
+
+      const pendingPredecessorResponse = await fetch(`${cloud.backendUrl}${importsPath()}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${cloud.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(
+          helpers.projectTemplateImportRequest({
+            ...repeatFirst.intent,
+            previousImportId: repeatFirst.id,
+          })
+        ),
+        signal: AbortSignal.timeout(10_000),
+      })
+      const pendingPredecessorBody = await pendingPredecessorResponse.text()
+      assert.equal(pendingPredecessorResponse.status, 409, pendingPredecessorBody)
+      assert.match(pendingPredecessorBody, /previous template import is incomplete/)
+      const repeatState = await request(`${importsPath()}/${repeatFirst.id}`)
+      assert.equal(repeatState.status, 'pending')
+      assert.deepEqual(repeatState.intent, repeatInput.intent)
+      assert.deepEqual(repeatState.steps, repeatInput.steps)
     },
     async cleanup() {
       try {

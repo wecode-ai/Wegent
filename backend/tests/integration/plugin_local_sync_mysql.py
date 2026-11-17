@@ -1,4 +1,4 @@
-"""Verify recovery using only existing Kind tables and an unchanged migration head."""
+"""Verify Kind marker recovery across supported schema upgrades."""
 
 import os
 import uuid
@@ -86,9 +86,13 @@ def verify(engine, url):
         Kind.__table__.create(engine)
         create_legacy_share_links(engine)
         command.stamp(config, "f3a7c9e1b2d4")
-        tables = set(inspect(engine).get_table_names())
+        legacy_tables = set(inspect(engine).get_table_names())
         command.upgrade(config, "head")
-        assert set(inspect(engine).get_table_names()) == tables
+        tables = set(inspect(engine).get_table_names())
+        assert tables == legacy_tables | {
+            "template_import_operations",
+            "template_import_receipts",
+        }
         assert "plugin_local_sync_operations" not in tables
         assert "plugin_sync_outbox" not in tables
         verify_ordering(engine)
@@ -117,7 +121,7 @@ def verify(engine, url):
             assert db.query(Kind).filter_by(namespace="plugin-local-sync").count() == 0
         assert set(inspect(engine).get_table_names()) == tables
     print(
-        "MySQL: unchanged schema/head, existing account marker recovery and identity isolation passed"
+        "MySQL: receipt-only schema upgrade, existing account marker recovery and identity isolation passed"
     )
 
 

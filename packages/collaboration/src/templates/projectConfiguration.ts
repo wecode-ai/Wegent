@@ -224,7 +224,29 @@ export async function applyProjectTemplate(
       },
       partialMessage
     )
-    await configureTemplateProject(api, projectId, document, groups, locale)
+    await configureTemplateProject(
+      {
+        ...api,
+        projects: {
+          ...api.projects,
+          update: async (...args) => {
+            recovery.mutationStarted = true
+            return api.projects.update(...args)
+          },
+        },
+        automations: api.automations && {
+          ...api.automations,
+          create: async (...args) => {
+            recovery.mutationStarted = true
+            return api.automations!.create(...args)
+          },
+        },
+      },
+      projectId,
+      document,
+      groups,
+      locale
+    )
     return groups
   } catch (cause) {
     throw await reconcileProjectTemplateFailure(cause, recovery)

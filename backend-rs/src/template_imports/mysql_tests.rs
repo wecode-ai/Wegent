@@ -201,7 +201,7 @@ async fn verify_atomic_receipt(state: &AppState, writer: &MysqlService) -> Resul
     let (ready, started) = tokio::sync::oneshot::channel();
     let (release, released) = tokio::sync::oneshot::channel();
     let mutation = writer.with_transaction(async |tx| {
-        let _: Operation = tx.fetch_one("SELECT id,project_id,protocol_version,intent_sha256,intent_encrypted,manifest FROM template_import_operations WHERE id=? FOR UPDATE",(id,)).await?;
+        let _: Operation = tx.fetch_one(format!("SELECT {OPERATION_COLUMNS} FROM template_import_operations WHERE id=? FOR UPDATE"),(id,)).await?;
         tx.execute("INSERT INTO kinds (id,user_id,name,kind,namespace,is_active,json) VALUES (3101,8,'Atomic group','CollaborationGroup','projects/1001',true,JSON_OBJECT())",()).await?;
         tx.execute("INSERT INTO template_import_receipts VALUES (?,'group:delivery','group',REPEAT('c',64),'3101',UTC_TIMESTAMP(6))",(id,)).await?;
         ready.send(()).unwrap();
@@ -217,13 +217,7 @@ async fn verify_atomic_receipt(state: &AppState, writer: &MysqlService) -> Resul
         struct Count {
             count: i64,
         }
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            loop {
-                let waiting:Count=writer.fetch_one("SELECT COUNT(*) AS count FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID=w.REQUESTING_ENGINE_LOCK_ID WHERE l.OBJECT_SCHEMA=DATABASE() AND l.OBJECT_NAME='template_import_operations'",()).await.unwrap();
-                if waiting.count > 0 { break; }
-                tokio::task::yield_now().await;
-            }
-        }).await.expect("the second client must wait on the operation row's actual database lock");
+        wait_for_operation_lock(writer).await;
         let visible: Count = writer
             .fetch_one("SELECT COUNT(*) AS count FROM kinds WHERE id=3101", ())
             .await
@@ -249,7 +243,7 @@ async fn verify_atomic_receipt(state: &AppState, writer: &MysqlService) -> Resul
         .unwrap();
     let rollback_id = rollback["id"].as_str().unwrap();
     let failed = writer.with_transaction(async |tx| {
-        let _:Operation=tx.fetch_one("SELECT id,project_id,protocol_version,intent_sha256,intent_encrypted,manifest FROM template_import_operations WHERE id=? FOR UPDATE",(rollback_id,)).await?;
+        let _:Operation=tx.fetch_one(format!("SELECT {OPERATION_COLUMNS} FROM template_import_operations WHERE id=? FOR UPDATE"),(rollback_id,)).await?;
         tx.execute("INSERT INTO kinds (id,user_id,name,kind,namespace,is_active,json) VALUES (3201,8,'Rollback group','CollaborationGroup','projects/1001',true,JSON_OBJECT())",()).await?;
         tx.execute("INSERT INTO template_import_receipts VALUES (?,'group:delivery','group',REPEAT('d',64),'3201',UTC_TIMESTAMP(6))",(rollback_id,)).await?;
         tx.execute("SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rollback fixture'",()).await?;
@@ -271,6 +265,104 @@ async fn verify_atomic_receipt(state: &AppState, writer: &MysqlService) -> Resul
     Ok(())
 }
 
+async fn wait_for_operation_lock(writer: &MysqlService) {
+    #[derive(FromMysqlRow)]
+    struct Count {
+        count: i64,
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let waiting:Count=writer.fetch_one("SELECT COUNT(*) AS count FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID=w.REQUESTING_ENGINE_LOCK_ID WHERE l.OBJECT_SCHEMA=DATABASE() AND l.OBJECT_NAME='template_import_operations'",()).await.unwrap();
+            if waiting.count > 0 { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("the second client must wait on the operation row's actual database lock");
+}
+
+async fn verify_unconfigured_encryption_writes_nothing(
+    state: &AppState,
+    writer: &MysqlService,
+) -> Result<()> {
+    for key in [None, Some("invalid-key".to_string())] {
+        let result = begin_with_cipher(
+            state,
+            actor(8),
+            "1001",
+            input("Unconfigured encryption"),
+            IntentCipher::from_material(key, Some("v".repeat(16))),
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+    #[derive(FromMysqlRow)]
+    struct Count {
+        count: i64,
+    }
+    let operations: Count = writer
+        .fetch_one(
+            "SELECT COUNT(*) AS count FROM template_import_operations",
+            (),
+        )
+        .await?;
+    let receipts: Count = writer
+        .fetch_one("SELECT COUNT(*) AS count FROM template_import_receipts", ())
+        .await?;
+    assert_eq!((operations.count, receipts.count), (0, 0));
+    Ok(())
+}
+
+async fn verify_revocation_while_waiting_rolls_back_begin(
+    state: &AppState,
+    writer: &MysqlService,
+    original: &str,
+) -> Result<()> {
+    let body = repeat("Revoked while waiting", original);
+    let checksum = digest(&body.intent, &body.steps).unwrap();
+    let (ready, started) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let lock = writer.with_transaction(async |tx| {
+        let _:Operation=tx.fetch_one(format!("SELECT {OPERATION_COLUMNS} FROM template_import_operations WHERE id=? FOR UPDATE"),(original,)).await?;
+        ready.send(()).unwrap();
+        released.await.unwrap();
+        Ok(())
+    });
+    let begin = async {
+        started.await.unwrap();
+        begin_import(state, actor(8), "1001", body).await
+    };
+    let revoke = async {
+        wait_for_operation_lock(writer).await;
+        writer.execute("UPDATE resource_members SET status='rejected' WHERE resource_type='Workspace' AND entity_id='8'",()).await.unwrap();
+        release.send(()).unwrap();
+    };
+    let (locked, denied, ()) = tokio::join!(lock, begin, revoke);
+    locked?;
+    assert_eq!(denied.unwrap_err().status(), StatusCode::NOT_FOUND);
+    #[derive(FromMysqlRow)]
+    struct Count {
+        count: i64,
+    }
+    let successor:Count=writer.fetch_one("SELECT COUNT(*) AS count FROM template_import_operations WHERE actor_user_id=8 AND project_id='1001' AND intent_sha256=?",(checksum,)).await?;
+    assert_eq!(
+        successor.count, 0,
+        "post-lock authorization denial must roll back the newly inserted operation"
+    );
+    let original: Count = writer
+        .fetch_one(
+            "SELECT COUNT(*) AS count FROM template_import_operations WHERE id=?",
+            (original,),
+        )
+        .await?;
+    assert_eq!(
+        original.count, 1,
+        "denial must preserve previous operation receipts"
+    );
+    Ok(())
+}
+
 async fn verify(mysql: &MysqlService) -> Result<()> {
     crate::migrations::upgrade(mysql).await?;
     seed(mysql).await?;
@@ -287,6 +379,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     ))
     .await?;
     let state = crate::app_test_support::app(writer.clone());
+    verify_unconfigured_encryption_writes_nothing(&state, &writer).await?;
     let (first, second) = tokio::join!(
         begin_import(&state, actor(8), "1001", input("Group")),
         begin_import(&state, actor(8), "001001", input("Group"))
@@ -315,7 +408,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     }
     let stored: Encrypted = mysql
         .fetch_one(
-            "SELECT intent_encrypted FROM template_import_operations WHERE id=?",
+            "SELECT CONVERT(intent_encrypted USING utf8mb4) COLLATE utf8mb4_unicode_ci AS intent_encrypted FROM template_import_operations WHERE id=?",
             (id,),
         )
         .await?;
@@ -378,7 +471,22 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     );
     verify_atomic_receipt(&state, &writer).await?;
     verify_explicit_repeat(&state, id).await?;
-    mysql.execute("UPDATE resource_members SET status='rejected' WHERE resource_type='Workspace' AND entity_id='8'",()).await?;
+    let pending = begin_import(
+        &state,
+        actor(8),
+        "1001",
+        input("Pending authority predecessor"),
+    )
+    .await
+    .unwrap();
+    verify_revocation_while_waiting_rolls_back_begin(
+        &state,
+        &writer,
+        pending["id"].as_str().unwrap(),
+    )
+    .await?;
+    writer.execute("UPDATE resource_members SET status='approved' WHERE resource_type='Workspace' AND entity_id='8'",()).await?;
+    verify_revocation_while_waiting_rolls_back_begin(&state, &writer, id).await?;
     assert_eq!(
         import_status(&state, actor(8), "1001", id)
             .await

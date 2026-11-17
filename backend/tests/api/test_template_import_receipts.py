@@ -184,6 +184,28 @@ def test_receipt_survives_post_commit_response_failure(
     assert str(replay.json()["id"]) == resource_id
 
 
+def _resource_state(
+    client: TestClient, db: Session, url: str, headers: dict[str, str], kind: str
+) -> dict[str, Any] | set[str]:
+    if kind == "board":
+        project = (
+            db.query(CloudProject)
+            .filter_by(id=int(url.rsplit("/", 1)[1]))
+            .populate_existing()
+            .one()
+        )
+        return {
+            "version": project.version,
+            "tags": project.tags,
+            "board_views": (project.metadata_json or {}).get("board_views"),
+        }
+    response = client.get(url, headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    rows = body["items"] if isinstance(body, dict) else body
+    return {str(row["id"]) for row in rows}
+
+
 @pytest.mark.parametrize(
     "import_request", ["agent", "group", "automation", "board"], indirect=True
 )
@@ -193,7 +215,8 @@ def test_resource_and_receipt_roll_back_together(
     monkeypatch: pytest.MonkeyPatch,
     import_request,
 ) -> None:
-    method, url, headers, payload, _kind = import_request
+    method, url, headers, payload, kind = import_request
+    baseline = _resource_state(test_client, test_db, url, headers, kind)
     original = TemplateImportWrite.record
 
     def fail_before_commit(self, resource_id):
@@ -203,6 +226,7 @@ def test_resource_and_receipt_roll_back_together(
     monkeypatch.setattr(TemplateImportWrite, "record", fail_before_commit)
     failed = test_client.request(method, url, headers=headers, json=payload)
     assert failed.status_code == 500, failed.text
+    assert _resource_state(test_client, test_db, url, headers, kind) == baseline
     assert (
         test_db.query(TemplateImportReceipt)
         .filter_by(
@@ -214,6 +238,12 @@ def test_resource_and_receipt_roll_back_together(
     monkeypatch.setattr(TemplateImportWrite, "record", original)
     created = test_client.request(method, url, headers=headers, json=payload)
     assert created.status_code in {200, 201}, created.text
+    expected = (
+        {**baseline, "version": baseline["version"] + 1, "tags": payload["tags"]}
+        if kind == "board"
+        else baseline | {str(created.json()["id"])}
+    )
+    assert _resource_state(test_client, test_db, url, headers, kind) == expected
     assert (
         test_db.query(TemplateImportReceipt)
         .filter_by(

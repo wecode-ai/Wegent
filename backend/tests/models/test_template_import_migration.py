@@ -12,9 +12,13 @@ import sqlalchemy as sa
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from app.models.kind import Kind
 
 
-def test_template_import_migration_upgrades_and_downgrades() -> None:
+@pytest.mark.parametrize("legacy_marker", [False, True])
+def test_template_import_migration_upgrades_and_downgrades(
+    legacy_marker: bool,
+) -> None:
     path = (
         Path(__file__).parents[2]
         / "alembic/versions/20261117_b7e8f9a0c1d2_template_import_receipts.py"
@@ -29,13 +33,28 @@ def test_template_import_migration_upgrades_and_downgrades() -> None:
     try:
         with engine.begin() as connection:
             connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+            if legacy_marker:
+                Kind.__table__.create(connection)
+                connection.execute(
+                    Kind.__table__.insert(),
+                    {
+                        "id": 17,
+                        "user_id": 7,
+                        "kind": "PluginSyncState",
+                        "namespace": "plugin-sync",
+                        "name": "account",
+                        "json": {"spec": {"generation": 1}},
+                    },
+                )
+            legacy_tables = set(sa.inspect(connection).get_table_names())
             migration.op = Operations(MigrationContext.configure(connection))
             migration.upgrade()
             inspector = sa.inspect(connection)
-            assert inspector.get_table_names() == [
+            expected_tables = legacy_tables | {
                 "template_import_operations",
                 "template_import_receipts",
-            ]
+            }
+            assert set(inspector.get_table_names()) == expected_tables
             constraint = inspector.get_unique_constraints("template_import_operations")
             assert constraint[0]["column_names"] == [
                 "actor_user_id",
@@ -88,8 +107,12 @@ def test_template_import_migration_upgrades_and_downgrades() -> None:
                 connection.scalar(sa.select(sa.func.count()).select_from(receipts)) == 0
             )
             migration.downgrade()
-            assert sa.inspect(connection).get_table_names() == []
+            assert set(sa.inspect(connection).get_table_names()) == legacy_tables
             migration.upgrade()
-            assert len(sa.inspect(connection).get_table_names()) == 2
+            assert set(sa.inspect(connection).get_table_names()) == expected_tables
+            if legacy_marker:
+                marker = connection.execute(sa.select(Kind.__table__)).mappings().one()
+                assert marker["id"] == 17 and marker["user_id"] == 7
+                assert marker["json"] == {"spec": {"generation": 1}}
     finally:
         engine.dispose()

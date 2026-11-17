@@ -209,6 +209,55 @@ describe('template execution defaults', () => {
 })
 
 describe('template failure reconciliation', () => {
+  it('blocks a local board-only import after its update commits but the response is lost', async () => {
+    const { api, document, project } = fixture()
+    document.spec.resources.collaboration.groups = []
+    delete document.spec.resources.collaboration.project.taskAssignment
+    const cause = new TypeError('Failed to fetch')
+    vi.mocked(api.projects.update).mockImplementationOnce(async (_id, input) => {
+      project.version++
+      project.tags = input.tags!
+      project.board_views = input.boardViews!
+      throw cause
+    })
+
+    const failure = await applyProjectTemplate(
+      api,
+      project.id,
+      document,
+      [],
+      'zh-CN',
+      'Partial'
+    ).catch(error => error as TemplateApplyRecoveryError)
+    expect(project.board_views!.views).toHaveLength(2)
+    expect(failure).toMatchObject({ cause, outcome: 'unknown', retryBlocked: true })
+    expect(failure.message).not.toContain('模板尚未开始创建')
+    expect(await failure.recheck()).toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    expect(api.projects.update).toHaveBeenCalledOnce()
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(api.agents.create).not.toHaveBeenCalled()
+    expect(api.automations!.create).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    new TypeError('Failed to fetch'),
+    Object.assign(new Error('Internal server error'), { status: 500 }),
+  ])('keeps local board preflight failures retryable before its first write: %s', async cause => {
+    const { api, document, project } = fixture()
+    document.spec.resources.collaboration.groups = []
+    delete document.spec.resources.collaboration.project.taskAssignment
+    vi.mocked(api.projects.get).mockRejectedValue(cause)
+
+    await expect(
+      applyProjectTemplate(api, project.id, document, [], 'zh-CN', 'Partial')
+    ).rejects.toMatchObject({ cause, outcome: 'unchanged', retryBlocked: false })
+    expect(project.board_views!.views).toHaveLength(1)
+    expect(api.projects.update).not.toHaveBeenCalled()
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(api.agents.create).not.toHaveBeenCalled()
+    expect(api.automations!.create).not.toHaveBeenCalled()
+  })
+
   it.each([400, 401, 403, 409, 422])(
     'retains HTTP %i and refreshes unchanged groups without creating Agents',
     async status => {
