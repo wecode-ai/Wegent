@@ -13,8 +13,7 @@ use crate::http_compat::FastApiError;
 /// `ResponseCreateInput.attachment_ids`'s Pydantic limit.
 const MAX_ATTACHMENT_IDS: usize = 100;
 
-/// The create request fields the flow reads. `attachment_ids` and the wegent
-/// options are added with the slices that consume them.
+/// The create request fields consumed by the Responses flow.
 #[derive(Debug, Deserialize)]
 pub struct ResponseCreateInput {
     pub model: String,
@@ -61,14 +60,23 @@ fn attachment_ids<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<V
                 .or_else(|| {
                     number
                         .as_f64()
-                        .filter(|value| value.fract() == 0.0)
+                        .filter(|value| {
+                            number.is_f64()
+                                && value.fract() == 0.0
+                                && *value >= 1.0
+                                && *value < 9_223_372_036_854_775_808.0
+                        })
                         .map(|value| value as i64)
                 })
                 .ok_or_else(|| Error::custom("attachment_ids entries must be integers"))?,
             serde_json::Value::String(text) => text
                 .trim()
+                .split_once('.')
+                .filter(|(_, fraction)| !fraction.is_empty() && fraction.bytes().all(|b| b == b'0'))
+                .map_or(text.trim(), |(integer, _)| integer)
                 .parse::<i64>()
                 .map_err(|_| Error::custom("attachment_ids entries must be integers"))?,
+            serde_json::Value::Bool(value) => i64::from(value),
             _ => return Err(Error::custom("attachment_ids entries must be integers")),
         };
         if id < 1 {
@@ -588,10 +596,10 @@ mod tests {
     fn parses_and_validates_attachment_ids() {
         let body: ResponseCreateInput = serde_json::from_value(json!({
             "model": "m",
-            "attachment_ids": [31, " 12 ", 12.0],
+            "attachment_ids": [31, " 12 ", 12.0, "12.00", true, i64::MAX],
         }))
         .expect("parse");
-        assert_eq!(body.attachment_ids, vec![31, 12, 12]);
+        assert_eq!(body.attachment_ids, vec![31, 12, 12, 12, 1, i64::MAX]);
 
         for empty in [
             json!({"model": "m"}),
@@ -606,6 +614,11 @@ mod tests {
             json!({"model": "m", "attachment_ids": [0]}),
             json!({"model": "m", "attachment_ids": [1, "2.5"]}),
             json!({"model": "m", "attachment_ids": [1, null]}),
+            json!({"model": "m", "attachment_ids": [false]}),
+            json!({"model": "m", "attachment_ids": [1.5]}),
+            json!({"model": "m", "attachment_ids": [9_223_372_036_854_775_808_u64]}),
+            json!({"model": "m", "attachment_ids": [9_223_372_036_854_775_808.0]}),
+            json!({"model": "m", "attachment_ids": [1e30]}),
             json!({"model": "m", "attachment_ids": (1..=101).collect::<Vec<_>>()}),
         ] {
             assert!(

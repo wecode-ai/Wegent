@@ -373,7 +373,8 @@ async fn resolve_create_scope(
             user_id,
             setup.user_subtask_id,
             input.attachment_ids.clone(),
-            &setup.existing_subtasks,
+            setup.task_id,
+            state.task_store.table_templates().subtasks,
         )
         .await
         .map_err(dependency)?;
