@@ -31,6 +31,7 @@ from shared.models import (
         ("http", True),
         ("http-wrong-token", False),
         ("http-unconfigured", False),
+        ("http-existing-token-alias", True),
     ],
 )
 async def test_chat_entry_controls_native_tool_output_and_model_input(
@@ -127,6 +128,7 @@ async def test_chat_entry_controls_native_tool_output_and_model_input(
         monkeypatch.setattr(
             module.settings, "INTERNAL_SERVICE_TOKEN", "test-service-token"
         )
+        monkeypatch.setattr(module.settings, "REMOTE_STORAGE_TOKEN", "")
         wire = OpenAIRequestConverter.from_execution_request(request)
         # An unauthenticated API caller cannot activate the internal capability.
         wire["metadata"]["enable_answer_evidence"] = True
@@ -136,6 +138,11 @@ async def test_chat_entry_controls_native_tool_output_and_model_input(
         if mode == "http-unconfigured":
             monkeypatch.setattr(module.settings, "INTERNAL_SERVICE_TOKEN", "")
             headers = {"Authorization": "Bearer test-service-token"}
+        if mode == "http-existing-token-alias":
+            monkeypatch.setattr(module.settings, "INTERNAL_SERVICE_TOKEN", "")
+            monkeypatch.setattr(
+                module.settings, "REMOTE_STORAGE_TOKEN", "test-service-token"
+            )
         app = FastAPI()
         app.include_router(router)
         async with AsyncClient(

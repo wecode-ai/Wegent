@@ -597,7 +597,7 @@ async def create_response(request: OpenAIResponsesRequest, req: Request):
 
     from chat_shell.core.config import settings
 
-    token = settings.INTERNAL_SERVICE_TOKEN.strip()
+    token = settings.backend_internal_token.strip()
     enable_evidence = bool(
         (request.metadata or {}).get("enable_answer_evidence") is True
         and token
