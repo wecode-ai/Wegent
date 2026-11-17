@@ -595,7 +595,8 @@ fn quota_wait_revalidates_the_model_binding_without_switching_models() {
 }
 
 #[test]
-fn cancelled_quota_check_cannot_settle_or_remove_a_replacement_execution() {
+fn replaced_quota_check_cannot_settle_or_remove_the_current_execution() {
+    use std::future::Future;
     let _lock = crate::test_env::lock();
     let home = tempfile::tempdir().unwrap();
     let _homes: Vec<_> = [
@@ -612,6 +613,7 @@ fn cancelled_quota_check_cannot_settle_or_remove_a_replacement_execution() {
         .build()
         .unwrap()
         .block_on(async {
+          for provider_finished in [false, true] {
             let (mut handler, root) =
                 super::super::tests::isolated_runtime_work_handler("quota-replaced-check");
             super::super::tests::install_native_history(&mut handler, &root, vec![], None);
@@ -622,25 +624,40 @@ fn cancelled_quota_check_cannot_settle_or_remove_a_replacement_execution() {
             fs::write(root.join("account_read.hold"), "").unwrap();
             fs::write(
                 root.join("account_read.json"),
-                json!({"account":{"type":"chatgpt","email":"original@example.com"}}).to_string(),
+                json!({"account":{"type":"chatgpt","email":"changed@example.com"}}).to_string(),
             )
             .unwrap();
             let turn = queued_wait("waiting", 0);
+            let client = handler.codex_app_server.for_request(&turn.request).unwrap();
             handler.reserve_turn_preparation(&turn);
-            let worker = handler.clone();
-            let running = tokio::spawn(async move { worker.start_quota_turn(turn).await });
-            tokio::time::timeout(Duration::from_secs(5), async {
+            let mut running = std::pin::pin!(handler.start_quota_turn(turn));
+            let requested = async {
                 while !fs::read_to_string(root.join("requests.jsonl"))
                     .unwrap_or_default()
                     .contains("\"method\":\"account/read\"")
                 {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
-            })
-            .await
-            .unwrap();
+            };
+            tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::select! {
+                    _ = &mut running => panic!("Quota check completed before the held account response"),
+                    _ = requested => {},
+                }
+            }).await.unwrap();
             let gate = handler.task_send_gate("waiting");
             let replacement = gate.lock().await;
+            if provider_finished {
+                fs::write(root.join("test_fence.json"), "{}").unwrap();
+                fs::remove_file(root.join("account_read.hold")).unwrap();
+                // The serial native fixture answers this only after delivering account/read.
+                client.request("test/fence", Value::Null).await.unwrap();
+                // Consume that result and park specifically on the held send gate.
+                std::future::poll_fn(|cx| {
+                    assert!(running.as_mut().poll(cx).is_pending());
+                    std::task::Poll::Ready(())
+                }).await;
+            }
             let (cancel, _cancelled) = oneshot::channel();
             let (_stopped, stopped) = oneshot::channel();
             let execution = handler.start_local_task_execution("waiting".into(), cancel, stopped);
@@ -648,7 +665,6 @@ fn cancelled_quota_check_cannot_settle_or_remove_a_replacement_execution() {
             drop(replacement);
             tokio::time::timeout(Duration::from_secs(5), running)
                 .await
-                .unwrap()
                 .unwrap();
             assert!(handler.is_current_local_task_execution("waiting", execution));
             assert_eq!(
@@ -660,10 +676,13 @@ fn cancelled_quota_check_cannot_settle_or_remove_a_replacement_execution() {
                 .lock()
                 .unwrap()
                 .contains_key("waiting"));
-            fs::remove_file(root.join("account_read.hold")).unwrap();
+            if !provider_finished {
+                fs::remove_file(root.join("account_read.hold")).unwrap();
+            }
             handler.finish_local_task_execution("waiting", execution);
             handler.preparing_turns.lock().unwrap().remove("waiting");
             handler.codex_app_server.restart().await;
             let _ = fs::remove_dir_all(root);
+          }
         });
 }

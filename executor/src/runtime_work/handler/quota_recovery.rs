@@ -393,15 +393,15 @@ impl RuntimeWorkRpcHandler {
             self.finish_quota_command(&turn).await;
             return;
         };
-        // The active execution owns cancellation while provider reads are pending.
-        // Holding the send gate here would prevent cancel_task from delivering it.
-        drop(send);
         let Some(mut wait) = wait(&turn) else {
             self.finish_local_task_execution(&turn.local_task_id, execution);
             self.end_quota_turn(&turn, "Invalid saved quota recovery record")
                 .await;
             return;
         };
+        // The active execution owns cancellation while provider reads are pending.
+        // Holding the send gate here would prevent cancel_task from delivering it.
+        drop(send);
         let checked = tokio::select! {
             biased;
             _ = cancelled => None,
@@ -418,8 +418,9 @@ impl RuntimeWorkRpcHandler {
             return;
         };
         if !self.is_local_task_execution_accepting_notifications(&turn.local_task_id, execution) {
-            self.finish_local_task_execution(&turn.local_task_id, execution);
-            self.finish_quota_command(&turn).await;
+            if self.finish_local_task_execution(&turn.local_task_id, execution) {
+                self.finish_quota_command(&turn).await;
+            }
             return;
         }
         match checked {
@@ -457,8 +458,9 @@ impl RuntimeWorkRpcHandler {
         let task = turn.local_task_id.clone();
         if !self.is_local_task_execution_accepting_notifications(&task, execution) {
             drop(operation);
-            self.finish_local_task_execution(&task, execution);
-            self.finish_quota_command(&turn).await;
+            if self.finish_local_task_execution(&task, execution) {
+                self.finish_quota_command(&turn).await;
+            }
             return;
         }
         if let Err(error) = self.park_quota_turn_locked(turn.clone(), None).await {
