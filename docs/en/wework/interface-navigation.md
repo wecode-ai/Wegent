@@ -202,3 +202,5 @@ Images, Markdown and file links in Issue activity open attachment previews with 
 Default execution devices and device grants from new Issues are described in [Collaboration device settings](./devices.md#collaboration-device-defaults): **Collaboration → Collaboration management → Execution devices → Personal default environment**. **Collaboration → New Issue → Runtime (optional) → Personal default environment → Save personal default device** explicitly saves personal preferences. For a selected project, **Project device access (applies immediately) → Choose or add a device** manages project grants. See [Independent Issues](./projects.md#independent-issues) for participant selection, the persistent action bar and unsaved-change protection.
 
 Link an existing task: **Collaboration → Issue details → Linked tasks → Link existing task**. See [Projects and Issues](./projects.md).
+
+Create a child from a comment: **Collaboration → Issue details → top-level comment action row → Create child Issue beside Reply**. Thread replies retain their own action. See [Create child Issues from comments](./projects.md#comment-child-issues) for availability and steps.
