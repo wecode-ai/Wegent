@@ -1,5 +1,4 @@
 import { updateRuntimeWorkProject, type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
-import { mergeDeviceLists } from '@/lib/workbench-device'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch } from 'react'
@@ -33,6 +32,7 @@ import {
   selectVisibleDevices,
   startCloudRuntimeSync,
   timedWorkbenchBootstrapRequest,
+  updateCloudRuntimeDevices,
 } from './workbenchCloudStatus'
 import { isRuntimeProjectSelectionRemoved, type WorkbenchAction } from './workbenchReducer'
 import {
@@ -390,9 +390,12 @@ export function useWorkbenchDataRefresh({
           cloudBackgroundApiRef.current === backgroundApi &&
           devicesResult?.status === 'fulfilled'
         ) {
+          updateCloudRuntimeState(
+            updateCloudRuntimeDevices(cloudRuntimeStateRef.current, revision, devicesResult.value)
+          )
           const devices = resolveDeviceListWithCache(
             cacheScope,
-            mergeDeviceLists(localDeviceSnapshot(baseDevices), devicesResult.value),
+            selectVisibleDevices(localDeviceSnapshot(baseDevices), cloudRuntimeStateRef.current),
             { useCacheFallback: false }
           )
           dispatch({
