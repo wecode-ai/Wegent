@@ -105,6 +105,7 @@ from app.services.loop_items.access import (
     item_security,
     related_item_filter,
     require_active_issue_user,
+    require_assignable_issue_user,
     require_item_access,
     visible_item_filter,
 )
@@ -2202,8 +2203,8 @@ class LoopItemService:
             and assignment is not None
             and assignment.metadata.get("trigger") == "default"
         )
-        human = require_active_issue_user(db, target_user_id)
         project = db.get(CloudProject, str(item.cloud_project_id))
+        human = require_assignable_issue_user(db, project, target_user_id)
         if not notify:
             return
         from app.services.collaboration_human_assignments import (
@@ -2384,7 +2385,7 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "User assignee id must be numeric",
                 ) from exc
-            require_active_issue_user(db, target_user_id)
+            require_assignable_issue_user(db, project, target_user_id)
             from app.services.issue_assignments import issue_assignment_service
 
             _, assignment_created = issue_assignment_service.record(

@@ -2297,11 +2297,16 @@ export function TodoEditor(props: TodoEditorProps) {
           },
         ]
       : []),
-    ...projectMembers.map((member) => ({
-      value: `user:${member.user_id}` as IssueAssigneeTarget,
-      label: member.user_name,
-      group: t("todo.members", "成员"),
-    })),
+    ...projectMembers
+      .filter(
+        (member) =>
+          member.can_be_assignee !== false && member.role !== "Viewer",
+      )
+      .map((member) => ({
+        value: `user:${member.user_id}` as IssueAssigneeTarget,
+        label: member.user_name,
+        group: t("todo.members", "成员"),
+      })),
     ...outsidePeople
       .filter(
         (user) => !projectMembers.some((member) => member.user_id === user.id),

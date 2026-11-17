@@ -164,3 +164,20 @@ def require_item_access(
             role=BaseRole.Developer,
             sources=({"kind": "issue_invitation", "issue_id": item.id},),
         )
+
+
+def require_assignable_issue_user(
+    db: Session, project: CloudProject, user_id: int
+) -> User:
+    """Allow outside invitees while preserving explicit read-only project roles."""
+    user = require_active_issue_user(db, user_id)
+    from app.services.collaboration_permissions import collaboration_permission_service
+
+    decision = collaboration_permission_service.check(db, user_id, "read", project.id)
+    if decision.role is not None and not has_permission(
+        decision.role, BaseRole.Developer
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Project Viewers cannot be assignees"
+        )
+    return user

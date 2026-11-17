@@ -42,7 +42,7 @@ def make_issue(db: Session, project: CloudProject, owner: User) -> LoopItem:
 
 
 @pytest.mark.parametrize("invitation", ["participant", "assignee"])
-def test_current_invitation_is_issue_scoped_and_revocable(
+def test_cp14_current_invitation_is_issue_scoped_and_revocable(
     test_db: Session,
     test_user: User,
     delivery_project: CloudProject,
@@ -109,7 +109,7 @@ def test_inactive_recipient_cannot_be_invited(
     assert loop_item_service.list_collaborators(test_db, item.id, test_user.id) == []
 
 
-def test_invitee_can_manage_people_but_not_project_execution(
+def test_cp14_invitee_can_manage_people_but_not_project_execution(
     test_db: Session,
     test_user: User,
     delivery_project: CloudProject,
