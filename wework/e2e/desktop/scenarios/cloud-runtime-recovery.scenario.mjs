@@ -18,6 +18,7 @@ import {
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { waitForTranscriptState } from '../modules/transcript-restoration.mjs'
 import { createRuntimeNotificationReconnect } from '../modules/runtime-notification-reconnect.mjs'
+import { createRuntimeImQuestions } from '../modules/runtime-im-questions.mjs'
 
 const PROMPT = 'WEWORK_E2E_CLOUD_STREAM_RECOVERY'
 const PARTIAL = 'CLOUD_STREAM_PARTIAL'
@@ -35,6 +36,7 @@ export async function assertSingleRecoveredCloudAnswer(control) {
 export function createDesktopScenario(options) {
   const existing = createCloudModelRecovery(options)
   const notifications = createRuntimeNotificationReconnect(options)
+  const questions = createRuntimeImQuestions(options)
   const appEnvironment = { ...existing.appEnvironment }
   let cloud
   let proxy
@@ -56,6 +58,7 @@ export function createDesktopScenario(options) {
       existing.setCloudEnvironment(value)
     },
     async handleHttp(request, response, url) {
+      if (await questions.handleHttp(request, response, url)) return true
       if (await notifications.handleHttp(request, response, url)) return true
       if (!active) return existing.handleHttp?.(request, response, url) ?? false
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
@@ -87,6 +90,8 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       await existing.verify(control)
+      // The base recovery restarts Backend and waits for the App device only.
+      await cloud.waitForDevice(CLOUD_DEVICE_ID, cloud.remoteExecutorLogPath)
       active = true
       const request = (path, body) =>
         fetchJson(`${cloud.backendUrl}${path}`, {
@@ -175,12 +180,14 @@ export function createDesktopScenario(options) {
         active = false
       }
       await notifications.verify(cloud, control)
+      await questions.verify(cloud, control)
     },
     async cleanup() {
       const errors = []
       for (const cleanup of [
         () => finishModel?.(),
         () => notifications.cleanup(),
+        () => questions.cleanup(),
         () => proxy?.stop(),
         () => existing.cleanup?.(),
       ]) {

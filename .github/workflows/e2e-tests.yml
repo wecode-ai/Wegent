@@ -966,27 +966,6 @@ jobs:
           node ./node_modules/tsx/dist/cli.mjs e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
 
-      - name: Start Knowledge Doc Converter
-        env:
-          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:{0}', github.workspace) || '' }}
-          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
-          BACKEND_BASE_URL: http://localhost:8000
-          BACKEND_INTERNAL_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
-          CELERY_BROKER_URL: redis://redis:6379/0
-          CELERY_RESULT_BACKEND: redis://redis:6379/1
-          REDIS_URL: redis://redis:6379/0
-          MINERU_API_BASE_URL: http://localhost:9999/mineru
-          MINERU_POLL_INTERVAL_SECONDS: "1"
-          KNOWLEDGE_CONVERSION_QUEUE: knowledge_conversion
-          LOG_FILE_ENABLED: "false"
-        run: |
-          nohup uv run --project knowledge_doc_converter --no-sync celery \
-            -A knowledge_doc_converter.celery_app worker \
-            --queues=knowledge_conversion \
-            --concurrency=1 \
-            --loglevel=INFO > knowledge_doc_converter/ci.log 2>&1 &
-          echo $! > knowledge_doc_converter/ci.pid
-
       - name: Wait for services
         run: |
           wait_for_url() {
@@ -1127,8 +1106,7 @@ jobs:
           uv run --no-sync python tests/e2e/terminal_handoff_gateway.py \
             2>&1 | tee "$E2E_REPORT_DIR/terminal-handoff.log"
 
-      # Terminal handoff fault tests revoke default Redis commands. Start
-      # consumers after those tests restore ACLs so their broker stays healthy.
+      # Redis ACL fault injection must finish before shared Celery consumers start.
       - name: Start parallel Backend index worker
         working-directory: ./backend
         env:
@@ -1164,6 +1142,27 @@ jobs:
           done
           cat index-worker.log
           exit 1
+
+      - name: Start Knowledge Doc Converter
+        env:
+          PYTHONPATH: ${{ matrix.shardIndex == 4 && format('{0}/backend/tests/e2e/event_probe:{0}', github.workspace) || '' }}
+          WEGENT_E2E_EVENT_PROBE_DIR: ${{ matrix.shardIndex == 4 && format('{0}/.ci-artifacts/knowledge-event-probe', github.workspace) || '' }}
+          BACKEND_BASE_URL: http://localhost:8000
+          BACKEND_INTERNAL_TOKEN: ${{ env.INTERNAL_SERVICE_TOKEN }}
+          CELERY_BROKER_URL: redis://redis:6379/0
+          CELERY_RESULT_BACKEND: redis://redis:6379/1
+          REDIS_URL: redis://redis:6379/0
+          MINERU_API_BASE_URL: http://localhost:9999/mineru
+          MINERU_POLL_INTERVAL_SECONDS: "1"
+          KNOWLEDGE_CONVERSION_QUEUE: knowledge_conversion
+          LOG_FILE_ENABLED: "false"
+        run: |
+          nohup uv run --project knowledge_doc_converter --no-sync celery \
+            -A knowledge_doc_converter.celery_app worker \
+            --queues=knowledge_conversion \
+            --concurrency=1 \
+            --loglevel=INFO > knowledge_doc_converter/ci.log 2>&1 &
+          echo $! > knowledge_doc_converter/ci.pid
 
       - name: Upload subscription callback gateway E2E report
         if: always() && matrix.shardIndex == 1

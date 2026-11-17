@@ -19,6 +19,7 @@ pub mod users_default_teams;
 pub mod users_features;
 pub mod users_me;
 pub mod users_me_available_channels;
+mod users_me_bootstrap;
 pub mod users_me_proxy_config;
 pub mod users_me_update;
 pub mod users_me_wegent_runtime;

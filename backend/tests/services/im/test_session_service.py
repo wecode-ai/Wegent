@@ -5,6 +5,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -325,3 +326,66 @@ async def test_address_refresh_preserves_a_concurrent_task_mapping(
     current = await original_get_session(session.session_key)
     assert current.chat_task_id == 42
     assert current.display_name == "Updated"
+
+
+@pytest.mark.asyncio
+async def test_shared_im_connections_are_enabled_without_selecting_a_target(
+    fake_im_session_cache,
+    test_user: User,
+) -> None:
+    initial = await im_session_service.get_global_notification_settings(test_user.id)
+    assert initial.enabled is True
+    assert initial.session_key is None
+    disabled = await im_session_service.update_global_notification(
+        None,
+        user_id=test_user.id,
+        enabled=False,
+    )
+    assert disabled.enabled is False
+    assert (
+        await im_session_service.get_global_notification_settings(test_user.id)
+    ).enabled is False
+    enabled = await im_session_service.update_global_notification(
+        None,
+        user_id=test_user.id,
+        enabled=True,
+    )
+    assert enabled.enabled is True
+    assert enabled.session_key is None
+
+
+@pytest.mark.asyncio
+async def test_shared_im_switch_does_not_depend_on_a_stale_legacy_target(
+    fake_im_session_cache,
+    test_user: User,
+) -> None:
+    await fake_im_session_cache.set(
+        f"channel:user_global_notification:{test_user.id}",
+        {"enabled": False, "session_key": "expired-session"},
+    )
+    enabled = await im_session_service.update_global_notification(
+        None,
+        user_id=test_user.id,
+        enabled=True,
+    )
+    assert enabled.enabled is True
+    assert enabled.session_key is None
+
+
+@pytest.mark.asyncio
+async def test_notification_read_failure_never_enables_delivery_or_overwrites_target(
+    fake_im_session_cache, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = f"channel:user_global_notification:{test_user.id}"
+    stored = {"enabled": False, "session_key": "retained-session"}
+    await fake_im_session_cache.set(key, stored)
+    monkeypatch.setattr(
+        fake_im_session_cache,
+        "get_or_raise",
+        AsyncMock(side_effect=ConnectionError("Redis unavailable")),
+    )
+    with pytest.raises(ConnectionError):
+        await im_session_service.get_global_notification_settings(test_user.id)
+    with pytest.raises(ConnectionError):
+        await im_session_service.disable_global_notification(test_user.id)
+    assert await fake_im_session_cache.get(key) == stored

@@ -663,7 +663,18 @@ async fn mcp_elicitation_rejects_late_answers_and_answers_from_previous_turn() {
         .unwrap();
     assert_eq!(accepted["success"], true);
     assert_eq!(receiver.recv().await.unwrap(), answer);
-    let generic = json!({"requestId": 42, "interactionScope": "turn-1", "answers": {"question": {"answers": ["yes"]}}});
+    let generic = json!({"requestId": 42, "interactionScope": "turn-1", "answers": {"choice": {"answers": ["yes"]}}});
+    let unregistered = handler
+        .send_request_user_input_response("task-1", generic.clone())
+        .await
+        .unwrap();
+    assert_eq!(unregistered["code"], "stale_request_user_input");
+    assert!(receiver.try_recv().is_err());
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &ordinary_request(json!(42), "turn-1"),
+    );
     let accepted = handler
         .send_request_user_input_response("task-1", generic.clone())
         .await

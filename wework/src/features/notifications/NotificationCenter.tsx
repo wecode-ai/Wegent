@@ -5,7 +5,6 @@ import { NotificationFeedRow, type NotificationFeedRowProps } from './Notificati
 import { formatNotificationTime } from './notificationTime'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
-import { NotificationImTarget } from './NotificationImTarget'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
@@ -277,8 +276,6 @@ function ConnectedNotificationCenter({
   const [preferences, setPreferences] = useState<WeworkNotificationPreferences>(() =>
     readCachedNotificationPreferences(accountKey)
   )
-  const [taskImSessionKey, setTaskImSessionKey] = useState<string | null>(null)
-  const [imTargetOpen, setImTargetOpen] = useState(false)
   const [inboxes, setInboxes] = useState<Record<WeworkNotificationCategory, WeworkInbox | null>>({
     collaboration: null,
     general: null,
@@ -317,16 +314,13 @@ function ConnectedNotificationCenter({
 
     const next = await api.getPreferences()
     let taskIm: boolean | null | undefined
-    let taskImSession: string | null | undefined
     try {
       const imSettings = await runtimeApi.getImNotificationSettings()
       taskIm = imSettings.global.enabled
-      taskImSession = imSettings.global.sessionKey ?? null
     } catch (cause) {
       console.error('[Wework] Failed to load task IM notification settings', cause)
     }
     if (id !== preferenceRequestId.current) return
-    if (taskImSession !== undefined) setTaskImSessionKey(taskImSession)
     setPreferences(current => {
       const merged = {
         ...mergeNotificationPreferences({ ...next, stand_in: next.stand_in ?? current.stand_in }),
@@ -589,20 +583,14 @@ function ConnectedNotificationCenter({
     void mutate(async () => {
       preferenceRequestId.current++
       if (preferenceCategory === 'tasks' && channel === 'im') {
-        if (!runtimeApi) throw new Error(t('notifications.im_target_required'))
-        if (!taskImSessionKey && enabled) {
-          setImTargetOpen(true)
-          return
-        }
+        if (!runtimeApi) throw new Error(t('notifications.im_requires_cloud'))
         const settings = await runtimeApi.updateGlobalImNotification({
           enabled,
-          sessionKey: taskImSessionKey,
         })
         const next = {
           ...preferences,
           tasks: { ...preferences.tasks, im: settings.global.enabled },
         }
-        setTaskImSessionKey(settings.global.sessionKey ?? null)
         setPreferences(next)
         cacheNotificationPreferences(accountKey, next)
         return
@@ -821,16 +809,6 @@ function ConnectedNotificationCenter({
                 onChange={updatePreference}
                 t={t}
               />
-              {runtimeApi && (
-                <button
-                  type="button"
-                  data-testid="wework-notifications-im-target"
-                  className="mx-5 mb-3 min-h-11 text-sm text-text-secondary hover:text-text-primary md:min-h-7"
-                  onClick={() => setImTargetOpen(true)}
-                >
-                  {t('notifications.im_target')}
-                </button>
-              )}
             </>
           ) : !category ? (
             <div data-testid="wework-notifications-categories">
@@ -989,27 +967,6 @@ function ConnectedNotificationCenter({
             </div>
           )}
         </AnchorPopover>
-      )}
-      {imTargetOpen && (
-        <NotificationImTarget
-          services={taskSource?.services}
-          selected={taskImSessionKey}
-          onClose={() => setImTargetOpen(false)}
-          onSave={async sessionKey => {
-            if (!runtimeApi) throw new Error(t('notifications.im_target_required'))
-            const settings = await runtimeApi.updateGlobalImNotification({
-              enabled: true,
-              sessionKey,
-            })
-            const next = {
-              ...preferences,
-              tasks: { ...preferences.tasks, im: settings.global.enabled },
-            }
-            setTaskImSessionKey(settings.global.sessionKey ?? null)
-            setPreferences(next)
-            cacheNotificationPreferences(accountKey, next)
-          }}
-        />
       )}
     </>
   )

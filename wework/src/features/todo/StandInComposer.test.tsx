@@ -56,6 +56,7 @@ function Fixture({
   initialModelOptions,
   services,
   showPrompt = true,
+  showDevice = true,
 }: {
   save: ReturnType<typeof vi.fn>
   initial?: WorkspaceStandInSettings['workspace']
@@ -63,6 +64,7 @@ function Fixture({
   initialModelOptions?: WorkspaceStandInSettings['modelOptions']
   services?: WorkbenchServices
   showPrompt?: boolean
+  showDevice?: boolean
 }) {
   const [draft, setDraft] = useState<WorkspaceStandInSettings>({
     enabled: false,
@@ -84,7 +86,7 @@ function Fixture({
         onValidityChange={setValid}
         disabled={false}
         submitDisabled={false}
-        deviceControl={<button data-testid="stand-in-device">Mac</button>}
+        deviceControl={showDevice ? <button data-testid="stand-in-device">Mac</button> : null}
         runtimeWork={work}
         services={services}
         devices={[{ id: 1, device_id: 'mac', name: 'Mac', status: 'online' }]}
@@ -97,6 +99,33 @@ function Fixture({
 }
 
 describe('Stand-in configuration composer', () => {
+  it('shows and retries model catalog failures beside configuration fields without losing selection', async () => {
+    const selected = { runtime: 'codex' as const, provider: 'local', model_id: 'saved-model' }
+    const catalog = vi
+      .fn(async () => ({ models: [selected] }))
+      .mockRejectedValueOnce(new Error('Catalog unavailable'))
+    const services = {
+      standInApi: { catalog },
+      modelApi: { listModels: vi.fn(async () => ({ data: [] })) },
+    } as unknown as WorkbenchServices
+    const save = vi.fn(async () => true)
+    render(<Fixture save={save} services={services} initialModel={selected} showPrompt={false} />)
+    await screen.findByRole('alert')
+    expect(screen.queryByTestId('stand-in-prompt')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('stand-in-models-retry'))
+    await waitFor(() => expect(catalog).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    await userEvent.click(screen.getByTestId('stand-in-save'))
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ model: selected }))
+  })
+
+  it('omits the device row when its parent already owns device selection', () => {
+    render(<Fixture save={vi.fn()} showPrompt={false} showDevice={false} />)
+    const bar = screen.getByTestId('stand-in-workspace-bar')
+    expect(within(bar).queryByText('设备', { exact: true })).not.toBeInTheDocument()
+    expect(within(bar).getByTestId('project-work-button')).toBeInTheDocument()
+  })
+
   beforeEach(async () => {
     await installDshUiTestContributions(
       {
