@@ -19,6 +19,7 @@ test.each([
         if (action === 'snapshot') return JSON.stringify({ testIds: [] })
         if (action === 'waitFor' || action === 'ensureLocalModelCatalogReady') return ''
         if (action === 'getText') return selectedLabel
+        if (action === 'getElementMetrics') return '[]'
         if (action === 'getAttribute' && options?.value === 'data-model-provider-id') {
           return MODEL_PROVIDER_ID
         }
@@ -34,6 +35,7 @@ test.each([
       'ensureLocalModelCatalogReady',
       'getText',
       'getAttribute',
+      'getElementMetrics',
     ])
   }
 )
@@ -51,6 +53,7 @@ test('waits for startup reconciliation before reading even an already selected l
       return ''
     }
     if (action === 'getText') return DEFAULT_MODEL_LABEL
+    if (action === 'getElementMetrics') return '[]'
     if (action === 'getAttribute') return MODEL_PROVIDER_ID
     throw new Error(`Unexpected model picker action: ${action}`)
   })
@@ -72,6 +75,7 @@ test('waits for startup reconciliation before reading even an already selected l
     'ensureLocalModelCatalogReady',
     'getText',
     'getAttribute',
+    'getElementMetrics',
   ])
 })
 
@@ -100,6 +104,7 @@ test('does not reconcile the local catalog for a selected model without a local 
     if (action === 'snapshot') return JSON.stringify({ testIds: [] })
     if (action === 'waitFor' || action === 'getAttribute') return ''
     if (action === 'getText') return 'Cloud model'
+    if (action === 'getElementMetrics') return '[]'
     throw new Error(`Unexpected local catalog action: ${action}`)
   })
 
@@ -110,5 +115,6 @@ test('does not reconcile the local catalog for a selected model without a local 
     'waitFor',
     'getText',
     'getAttribute',
+    'getElementMetrics',
   ])
 })
