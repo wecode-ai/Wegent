@@ -345,41 +345,73 @@ test('shows a navigation error for an invalid Markdown path and recovers on retr
   expect(await screen.findByTestId('assistant-markdown-link')).toBeEnabled()
 })
 
-test('retains unsaved Markdown when opening a directory link cannot save the document', async () => {
+test.each(['folder:///repo/subdir', './linked.md'])(
+  'retains unsaved Markdown when opening %s cannot save the document',
+  async link => {
+    const document = {
+      ...initial,
+      path: '/repo/report.md',
+      name: 'report.md',
+      content: `[Linked resource](${link})`,
+    }
+    const api = {
+      listWorkspaceEntries: vi.fn(async () => ({ path: target.path, entries: [] })),
+      readWorkspaceTextFile: vi.fn().mockResolvedValue(document),
+      writeWorkspaceTextFile: vi.fn().mockRejectedValue(new Error('Save unavailable')),
+    }
+    const onOpenFileTab = vi.fn()
+    render(
+      <FileWorkspacePanel
+        onOpenFileTab={onOpenFileTab}
+        target={target}
+        workspaceFileApi={api}
+        openFileRequest={{ path: document.path, id: 1 }}
+      />
+    )
+    await screen.findByTestId('assistant-markdown-link')
+    fireEvent.click(screen.getByTestId('workspace-file-markdown-mode-button'))
+    await waitFor(() => expect(getWorkspaceCodeText()).toContain(document.content))
+    const updated = `${document.content}\n\nUnsaved Markdown`
+    await edit(updated)
+    fireEvent.click(screen.getByTestId('workspace-file-markdown-mode-button'))
+    fireEvent.click(await screen.findByTestId('assistant-markdown-link'))
+    expect(await screen.findByTestId('workspace-file-save-error')).toHaveTextContent(
+      'Save unavailable'
+    )
+    expect(onOpenFileTab).not.toHaveBeenCalled()
+    expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent('Unsaved Markdown')
+    expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(document.path)
+    expect(api.writeWorkspaceTextFile).toHaveBeenCalledWith(
+      target.deviceId,
+      document.path,
+      updated,
+      document.revision
+    )
+  }
+)
+
+test('opens linked files in their own tabs while retaining the Markdown document', async () => {
   const document = {
     ...initial,
-    path: '/repo/report.md',
+    path: '/repo/reports/report.md',
     name: 'report.md',
-    content: '[Directory](folder:///repo/subdir)',
+    content: '[Linked image](./截图.png)',
   }
   const api = {
     listWorkspaceEntries: vi.fn(async () => ({ path: target.path, entries: [] })),
     readWorkspaceTextFile: vi.fn().mockResolvedValue(document),
-    writeWorkspaceTextFile: vi.fn().mockRejectedValue(new Error('Save unavailable')),
   }
+  const onOpenFileTab = vi.fn()
   render(
     <FileWorkspacePanel
       target={target}
       workspaceFileApi={api}
       openFileRequest={{ path: document.path, id: 1 }}
+      onOpenFileTab={onOpenFileTab}
     />
   )
-  await screen.findByTestId('assistant-markdown-link')
-  fireEvent.click(screen.getByTestId('workspace-file-markdown-mode-button'))
-  await waitFor(() => expect(getWorkspaceCodeText()).toContain(document.content))
-  const updated = `${document.content}\n\nUnsaved Markdown`
-  await edit(updated)
-  fireEvent.click(screen.getByTestId('workspace-file-markdown-mode-button'))
   fireEvent.click(await screen.findByTestId('assistant-markdown-link'))
-  expect(await screen.findByTestId('workspace-file-save-error')).toHaveTextContent(
-    'Save unavailable'
-  )
-  expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent('Unsaved Markdown')
-  expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(document.path)
-  expect(api.writeWorkspaceTextFile).toHaveBeenCalledWith(
-    target.deviceId,
-    document.path,
-    updated,
-    document.revision
-  )
+  expect(onOpenFileTab).toHaveBeenCalledWith(target, '/repo/reports/截图.png')
+  expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent('Linked image')
+  expect(api.readWorkspaceTextFile).toHaveBeenCalledTimes(1)
 })

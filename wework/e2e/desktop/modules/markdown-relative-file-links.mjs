@@ -28,16 +28,19 @@ export async function verifyMarkdownRelativeFileLinks({ control, workspacePath }
   const panel = `[data-testid="workspace-file-panel"][data-workspace-device-id="${CLOUD_DEVICE_ID}"]`
   const preview = `${panel} [data-testid="workspace-markdown-preview"]`
   const links = `${preview} [data-testid="assistant-markdown-link"]`
+  let documentOpened = false
   const openDocument = async () => {
+    if (documentOpened) {
+      await control.command('clickElementWithText', '[data-testid^="right-workspace-file-tab-"]', {
+        text: documentName,
+      })
+      await control.command('waitFor', preview, { text: 'Relative image links' })
+      return
+    }
     const toggle = `${panel} [data-testid="workspace-file-toggle-tree-button"]`
     if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true') {
       await control.command('clickWhenEnabled', toggle)
     }
-    const workspaceRoot = workspacePath.replaceAll('\\', '/')
-    await control.command(
-      'clickWhenEnabled',
-      `${panel} [data-testid="workspace-file-breadcrumb-${workspaceRoot}"]`
-    )
     await control.command('fill', `${panel} [data-testid="workspace-file-search-input"]`, {
       value: '',
     })
@@ -48,9 +51,13 @@ export async function verifyMarkdownRelativeFileLinks({ control, workspacePath }
     for (const name of ['markdown-link-fixture', 'reports', documentName]) {
       const entry = `button[data-type="item"][aria-label="${name}"]`
       await control.command('waitFor', entry, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
-      await control.command('clickWhenEnabled', entry)
+      const expanded = await control.command('getAttribute', entry, { value: 'aria-expanded' })
+      if (name === documentName || expanded !== 'true') {
+        await control.command('clickWhenEnabled', entry)
+      }
     }
     await control.command('waitFor', preview, { text: 'Relative image links' })
+    documentOpened = true
   }
   const assertImage = async expectedPath => {
     await control.command('waitFor', `${panel} [data-testid="workspace-file-path"]`, {
@@ -68,7 +75,7 @@ export async function verifyMarkdownRelativeFileLinks({ control, workspacePath }
         visible: false,
       }
     )
-    const imageSelector = `${panel} [data-testid="workspace-binary-file-preview"] img`
+    const imageSelector = `${panel} [data-testid="workspace-binary-file-preview"] .image-stage img`
     await control.command('waitFor', imageSelector)
     await until(
       async () => JSON.parse(await control.command('getImageLoadState', imageSelector)),

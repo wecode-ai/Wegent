@@ -573,7 +573,16 @@ export function FileWorkspacePanel({
 
   const openMarkdownFile = useWorkspaceMarkdownFileNavigation({
     documentPath: preview?.path,
-    onOpenFile: openFilePath,
+    onOpenFile: (path, options) => {
+      if (
+        stableTarget &&
+        onOpenFileTab &&
+        options?.lineStart === undefined &&
+        !options?.isDirectory
+      ) {
+        navigateWithDirtyGuard(() => onOpenFileTab(stableTarget, path))
+      } else openFilePath(path, options)
+    },
     navigateWithDirtyGuard,
     onError: () => setPreviewError(t('workbench.workspace_file_preview_failed', '读取文件失败')),
   })
