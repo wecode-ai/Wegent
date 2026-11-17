@@ -204,9 +204,7 @@ describe('immediate Issue properties', () => {
       fireEvent.change(title, { target: { value } })
       if (enter) fireEvent.keyDown(title, { key: 'Enter' })
       else fireEvent.blur(title)
-      expect(await screen.findByTestId('issue-title-error')).toHaveTextContent(
-        '请输入事项标题'
-      )
+      expect(await screen.findByTestId('issue-title-error')).toHaveTextContent('请输入事项标题')
       expect(title).toHaveAttribute('aria-invalid', 'true')
       expect(title).toHaveAccessibleDescription('请输入事项标题')
       expect(title).toHaveValue(value)
