@@ -189,6 +189,8 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 
 ## 桌面 E2E 启动前准备
 
+本地目录就绪使用共享 `ensureLocalModelCatalogReady` 控制命令，不以当前模型按钮的 `data-model-provider-id` 判定。该属性只描述当前本地 Codex provider；有效云端选择可以不带该属性，同时本地模型目录已经可用。目录去重、目标选项和协议行为仍分别断言，不因启动来源的先后替换有效模型选择。
+
 模型替身中的协议无关文本回复必须复用 `writeLocalAssistantMessage`，按当前请求的 Responses、Chat Completions 或 Anthropic 协议发送完整结束事件。不要通过重置用户模型选择来迁就固定协议的替身，也不要将替身返回错误 SSE 格式造成的断流归因于官方 runtime。
 
 模型目录覆盖等会被 Codex 缓存的配置必须在场景的 `prepareApp` 中写入，先于应用和共享 app-server 启动。`human-interactions` 在此阶段声明 `request_user_input_async`；不要等到 `verify` 才改配置或删除磁盘缓存，已经运行的进程可能仍使用旧目录。
