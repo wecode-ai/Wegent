@@ -208,7 +208,7 @@ it('keeps lifecycle controls in management and only exposes details in the role 
   render(
     <StandInOverviewPage
       {...props}
-      headerActions={<button data-testid="instance-stop-fixture">停止分身</button>}
+      headerActions={<button data-testid="instance-stop-fixture">停止助理</button>}
     />
   )
   await openRoles()

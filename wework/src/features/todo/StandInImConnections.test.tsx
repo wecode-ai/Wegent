@@ -33,7 +33,7 @@ function fixture() {
 it('connects IM to the selected role and device immediately', async () => {
   const f = fixture()
   render(
-    <StandInImConnections name="评审分身" services={f.services} deviceId="mac" roleId="reviewer" />
+    <StandInImConnections name="评审助理" services={f.services} deviceId="mac" roleId="reviewer" />
   )
   await openTelegram()
   fireEvent.click(await screen.findByTestId('stand-in-im-submit'))
@@ -45,7 +45,7 @@ it('connects IM to the selected role and device immediately', async () => {
 
 it('connects the primary identity without a task address or model override', async () => {
   const f = fixture()
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   fireEvent.click(await screen.findByTestId('stand-in-im-submit'))
   await waitFor(() =>
@@ -56,7 +56,7 @@ it('connects the primary identity without a task address or model override', asy
 it('keeps the session available for manual retry after a failed connection', async () => {
   const f = fixture()
   f.bindStandIn.mockRejectedValueOnce(new Error('offline'))
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   fireEvent.click(await screen.findByTestId('stand-in-im-submit'))
   await screen.findByRole('alert')
@@ -75,9 +75,9 @@ it('ignores a late list response after changing identities', async () => {
         finish = resolve
       })
   )
-  const view = render(<StandInImConnections name="评审分身" services={f.services} deviceId="old" />)
+  const view = render(<StandInImConnections name="评审助理" services={f.services} deviceId="old" />)
   view.rerender(
-    <StandInImConnections name="评审分身" services={f.services} deviceId="new" roleId="reviewer" />
+    <StandInImConnections name="评审助理" services={f.services} deviceId="new" roleId="reviewer" />
   )
   await openTelegram()
   await screen.findByTestId('stand-in-im-connect-session')
@@ -94,7 +94,7 @@ it('ignores a late list response after changing identities', async () => {
 it('offers refresh when listing fails and does not show a task picker', async () => {
   const f = fixture()
   f.listPrivateSessions.mockRejectedValueOnce(new Error('network'))
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await screen.findByTestId('stand-in-im-discovery-error')
   fireEvent.click(screen.getByTestId('stand-in-im-discovery-retry'))
   await openTelegram()
@@ -104,7 +104,7 @@ it('offers refresh when listing fails and does not show a task picker', async ()
 
 it('retains loaded conversations on refresh failure without claiming the list is empty', async () => {
   const f = fixture()
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   await screen.findByTestId('stand-in-im-connect-session')
   f.listPrivateSessions.mockRejectedValueOnce(new Error('network'))
@@ -123,12 +123,12 @@ it('does not retain a pending save when switching identities', async () => {
         finish = resolve
       })
   )
-  const view = render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  const view = render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   fireEvent.click(await screen.findByTestId('stand-in-im-submit'))
   view.rerender(
     <StandInImConnections
-      name="评审分身"
+      name="评审助理"
       services={f.services}
       deviceId="other"
       roleId="reviewer"
@@ -165,7 +165,7 @@ it('recognizes a saved record route as the same selected local executor', async 
   ] as import('@/types/api').DeviceInfo[]
   render(
     <StandInImConnections
-      name="评审分身"
+      name="评审助理"
       services={f.services}
       deviceId="electron-mac"
       devices={devices}
@@ -189,10 +189,10 @@ it('labels the chat-mode action as connecting to the stand-in', async () => {
       },
     ],
   })
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   const button = await screen.findByTestId('stand-in-im-submit')
-  expect(button).toHaveTextContent('连接「评审分身」')
+  expect(button).toHaveTextContent('连接「评审助理」')
   expect(button).toBeEnabled()
   fireEvent.click(button)
   await waitFor(() => expect(button).toHaveTextContent('完成'))
@@ -200,13 +200,13 @@ it('labels the chat-mode action as connecting to the stand-in', async () => {
 
 it('opens from channel controls without exposing sessions or mode instructions in the popover', async () => {
   const f = fixture()
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   expect(await screen.findByTestId('stand-in-im-channel-telegram')).toBeVisible()
   expect(screen.queryByTestId('stand-in-im-connect-session')).not.toBeInTheDocument()
   expect(screen.queryByText(/发送 \/chat/)).not.toBeInTheDocument()
   await openTelegram()
   expect(await screen.findByRole('dialog', { name: '设置 Telegram' })).toBeVisible()
-  expect(screen.getByText('在 Telegram 私聊中与「评审分身」对话。')).toBeVisible()
+  expect(screen.getByText('在 Telegram 私聊中与「评审助理」对话。')).toBeVisible()
   expect(f.bindStandIn).not.toHaveBeenCalled()
 })
 
@@ -219,7 +219,7 @@ it('filters sessions by channel and requires a choice when multiple private chat
       { session_key: 'other', channel_type: 'dingtalk', display_name: 'DingTalk user' },
     ],
   })
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   await screen.findByTestId('stand-in-im-connect-one')
   expect(screen.queryByText('DingTalk user')).not.toBeInTheDocument()
@@ -235,7 +235,7 @@ it('filters sessions by channel and requires a choice when multiple private chat
 it('explains registration only for the selected empty channel', async () => {
   const f = fixture()
   f.listPrivateSessions.mockResolvedValue({ items: [] })
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   expect(await screen.findByTestId('stand-in-im-empty')).toHaveTextContent('发送 /bind')
   expect(screen.getByTestId('stand-in-im-refresh')).toBeEnabled()
@@ -248,7 +248,7 @@ it('restores keyboard focus to the exact channel trigger on Escape', async () =>
   const onOpenChange = vi.fn()
   render(
     <StandInImConnections
-      name="评审分身"
+      name="评审助理"
       services={f.services}
       deviceId="mac"
       onOpenChange={onOpenChange}
@@ -265,7 +265,7 @@ it('restores keyboard focus to the exact channel trigger on Escape', async () =>
 })
 
 it('keeps channel entry visible without cloud sign-in and explains the next action in its dialog', async () => {
-  render(<StandInImConnections name="评审分身" services={{} as WorkbenchServices} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={{} as WorkbenchServices} deviceId="mac" />)
   await openTelegram()
   expect(screen.getByText(/点击左侧“连接云端”登录/)).toBeVisible()
   expect(screen.queryByTestId('stand-in-im-submit')).not.toBeInTheDocument()
@@ -274,7 +274,7 @@ it('keeps channel entry visible without cloud sign-in and explains the next acti
 it('does not carry a Telegram save failure into another channel', async () => {
   const f = fixture()
   f.bindStandIn.mockRejectedValueOnce(new Error('offline'))
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   fireEvent.click(await screen.findByTestId('stand-in-im-submit'))
   await screen.findByRole('alert')
@@ -289,7 +289,7 @@ it('does not carry a Telegram save failure into another channel', async () => {
 it('keeps keyboard focus inside the dialog after its last disclosure control', async () => {
   const f = fixture()
   const user = (await import('@testing-library/user-event')).default.setup()
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   await screen.findByTestId('stand-in-im-submit')
   await user.click(screen.getByTestId('stand-in-im-mode-help'))
@@ -302,7 +302,7 @@ it('keeps keyboard focus inside the dialog after its last disclosure control', a
 
 it('shows existing connections and keeps unavailable channels in the add menu', async () => {
   const f = fixture()
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   expect(await screen.findByTestId('stand-in-im-channel-telegram')).toBeVisible()
   expect(screen.queryByTestId('stand-in-im-channel-dingtalk')).not.toBeInTheDocument()
   fireEvent.click(screen.getByTestId('stand-in-im-add-channels'))
@@ -313,7 +313,7 @@ it('shows existing connections and keeps unavailable channels in the add menu', 
 it('shows discovery errors beside the channels and retries without presenting an empty catalog', async () => {
   const f = fixture()
   f.listPrivateSessions.mockRejectedValueOnce(new Error('offline'))
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   expect(screen.getByTestId('stand-in-im-discovery-loading')).toBeVisible()
   expect(screen.queryByTestId('stand-in-im-add-channels')).not.toBeInTheDocument()
   expect(await screen.findByTestId('stand-in-im-discovery-error')).toBeVisible()
@@ -325,7 +325,7 @@ it('shows discovery errors beside the channels and retries without presenting an
 
 it('preserves registered channels and exposes retry when a refresh fails', async () => {
   const f = fixture()
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   f.listPrivateSessions.mockRejectedValueOnce(new Error('offline'))
   fireEvent.click(screen.getByTestId('stand-in-im-refresh'))
@@ -338,7 +338,7 @@ it('preserves registered channels and exposes retry when a refresh fails', async
 
 it('restores focus to the more trigger after adding an unavailable channel', async () => {
   const user = (await import('@testing-library/user-event')).default.setup()
-  render(<StandInImConnections name="评审分身" services={{} as WorkbenchServices} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={{} as WorkbenchServices} deviceId="mac" />)
   const trigger = screen.getByTestId('stand-in-im-add-channels')
   await user.click(trigger)
   await user.click(screen.getByTestId('stand-in-im-channel-telegram'))
@@ -350,7 +350,7 @@ it('restores focus to the more trigger after adding an unavailable channel', asy
 it('focuses the newly available channel after registering a conversation from the add menu', async () => {
   const f = fixture()
   f.listPrivateSessions.mockResolvedValueOnce({ items: [] })
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   await screen.findByTestId('stand-in-im-empty')
   fireEvent.click(screen.getByTestId('stand-in-im-refresh'))
@@ -362,7 +362,7 @@ it('focuses the newly available channel after registering a conversation from th
 it('restores focus to the current more trigger after refreshing an empty catalog', async () => {
   const f = fixture()
   f.listPrivateSessions.mockResolvedValue({ items: [] })
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   await screen.findByTestId('stand-in-im-empty')
   const previous = screen.getByTestId('stand-in-im-add-channels')
@@ -376,7 +376,7 @@ it('restores focus to the current more trigger after refreshing an empty catalog
 it('returns focus to discovery retry if refreshing an empty catalog fails', async () => {
   const f = fixture()
   f.listPrivateSessions.mockResolvedValue({ items: [] })
-  render(<StandInImConnections name="评审分身" services={f.services} deviceId="mac" />)
+  render(<StandInImConnections name="评审助理" services={f.services} deviceId="mac" />)
   await openTelegram()
   await screen.findByTestId('stand-in-im-empty')
   f.listPrivateSessions.mockRejectedValueOnce(new Error('offline'))

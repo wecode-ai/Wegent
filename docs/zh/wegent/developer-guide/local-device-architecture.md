@@ -200,7 +200,7 @@ ephemeral 临时线程的连续续聊依赖其在共享 Codex app-server 中保�
 
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
-同一对话可在回合之间切换模型和 provider。Wework 为每次续聊传递所选模型及其 provider 配置，Codex app-server 在 `thread/resume` 时应用新的 `modelProvider`。executor 为每个经 Wework router 运行的 task 分配一个稳定的本地模型代理地址，并在每轮开始时原子更新该 task 的上游配置。代理在 thread 创建后绑定根 thread ID，只接受该 thread 及其子 thread 的请求；executor 当前轮传入的上游和模型是实际路由的唯一权威来源。普通对话和分身使用同一套 Codex 路由，不因入口不同而复制历史或创建新的会话。
+同一对话可在回合之间切换模型和 provider。Wework 为每次续聊传递所选模型及其 provider 配置，Codex app-server 在 `thread/resume` 时应用新的 `modelProvider`。executor 为每个经 Wework router 运行的 task 分配一个稳定的本地模型代理地址，并在每轮开始时原子更新该 task 的上游配置。代理在 thread 创建后绑定根 thread ID，只接受该 thread 及其子 thread 的请求；executor 当前轮传入的上游和模型是实际路由的唯一权威来源。普通对话和助理使用同一套 Codex 路由，不因入口不同而复制历史或创建新的会话。
 
 推理和远程压缩条目可能包含只对原 provider 有效的 `encrypted_content`。runtime work 在续聊前比较任务摘要中的旧 `modelSelection` 与本次选择，包括 `runnerModelProvider`/`codexProviderId`；发生模型、模型类型或 provider 切换时，会将切换标记传入 executor。目标请求第一次经过 Wework router 时，代理会移除旧 provider 专属的加密推理/压缩条目以及 `previous_response_id`，并在请求成功后消费该标记。若模型字符串不变但 provider 变化，executor 会在恢复线程上注入 developer `<model_switch>` 边界，使 executor 重启后仍能区分边界前后的密文。该清理也覆盖切换后先发生 compaction、请求中暂时没有 `<model_switch>` 标记的情况，避免把旧密文发送给 OpenAI Responses、Chat Completions 或 Anthropic Messages 上游。
 
