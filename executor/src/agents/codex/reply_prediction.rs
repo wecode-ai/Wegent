@@ -39,8 +39,19 @@ fn prediction_parent_resume_params(
     if let Some(launch) = launch {
         let mut params = Map::new();
         append_thread_launch_params(&mut params, launch);
-        // MCP endpoints and authorization are task-scoped, not restored by native history.
-        config.extend(mcp_reload::mcp_thread_configuration(&Value::Object(params)));
+        // Runtime transport and MCP authorization are not restored by native history.
+        // Keep the parent's model, reasoning, instructions and tool definitions.
+        config.extend(
+            params
+                .get("config")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+                .filter(|(key, _)| {
+                    key.starts_with("mcp_servers.") || key.starts_with("model_providers.")
+                })
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
     }
     json!({"threadId": thread_id, "excludeTurns": true, "config": config})
 }
@@ -156,7 +167,9 @@ impl CodexAppServerClient {
             {
                 return Ok(None);
             }
-            state.thread_generations.contains_key(source_thread_id)
+            state
+                .thread_context_configurations
+                .contains_key(source_thread_id)
         };
         // Cold resume can immediately continue a persisted Goal. Read eligibility
         // without loading the runtime, before acquiring its native writer.
@@ -178,6 +191,11 @@ impl CodexAppServerClient {
         ) || cancellation.try_recv() != Err(oneshot::error::TryRecvError::Empty)
         {
             return Ok(None);
+        }
+        if !retained {
+            if let Some(launch) = launch_config {
+                bind_local_proxy_thread(launch, source_thread_id)?;
+            }
         }
         let result = self
             .fork_prediction_parent(
@@ -327,7 +345,10 @@ mod tests {
                 ("model_reasoning_effort".into(), json!("high")),
             ]),
             model_provider: Some("new-provider".into()),
-            config_overrides: vec!["mcp_servers.business.enabled=true".into()],
+            config_overrides: vec![
+                "mcp_servers.business.enabled=true".into(),
+                "model_providers.new-provider={base_url=\"http://localhost/official-route\",requires_openai_auth=true}".into(),
+            ],
             ..Default::default()
         };
         let params =
@@ -337,6 +358,14 @@ mod tests {
             "http://localhost/mcp"
         );
         assert_eq!(params["config"]["mcp_servers.business.enabled"], true);
+        assert_eq!(
+            params["config"]["model_providers.new-provider"]["base_url"],
+            "http://localhost/official-route"
+        );
+        assert_eq!(
+            params["config"]["model_providers.new-provider"]["requires_openai_auth"],
+            true
+        );
         assert!(params.get("modelProvider").is_none());
         assert!(params["config"].get("model_reasoning_effort").is_none());
     }
@@ -643,6 +672,13 @@ done
         fixture.client.subscribe_notifications().await.unwrap();
         fixture.client.mark_thread_active("source").await;
         fixture.client.mark_thread_idle("source", true).await;
+        fixture
+            .client
+            .state
+            .lock()
+            .await
+            .thread_context_configurations
+            .insert("source".to_owned(), Map::new());
         let (_cancel, receiver) = oneshot::channel();
         fixture.predict(None, receiver).await.unwrap();
         let calls = fixture.calls();
@@ -654,6 +690,59 @@ done
         assert!(!calls.iter().any(|call| {
             call["method"] == "thread/unsubscribe" && call["params"]["threadId"] == "source"
         }));
+        fixture.stop().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prediction_restores_provider_after_restart_despite_retained_generation() {
+        let fixture = Fixture::new("complete");
+        fixture.client.subscribe_notifications().await.unwrap();
+        fixture.client.mark_thread_active("source").await;
+        fixture.client.mark_thread_idle("source", true).await;
+        fixture
+            .client
+            .state
+            .lock()
+            .await
+            .thread_context_configurations
+            .insert("source".to_owned(), Map::new());
+        fixture.client.restart().await;
+        {
+            let state = fixture.client.state.lock().await;
+            assert!(state.thread_generations.contains_key("source"));
+            assert!(!state.thread_context_configurations.contains_key("source"));
+        }
+        let launch = CodexLaunchConfig {
+            config_overrides: vec!["model_providers.official={requires_openai_auth=true}".into()],
+            ..Default::default()
+        };
+        let (_cancel, receiver) = oneshot::channel();
+        let result = fixture
+            .client
+            .predict_reply_with_launch_config(
+                "source",
+                Some("latest"),
+                &ExecutionRequest::default(),
+                receiver,
+                Some(&launch),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result, json!({"suggestion": "请继续"}));
+        let calls = fixture.calls();
+        let resume = calls
+            .iter()
+            .find(|call| call["method"] == "thread/resume")
+            .unwrap();
+        assert_eq!(
+            resume["params"]["config"]["model_providers.official"]["requires_openai_auth"],
+            true
+        );
+        assert!(calls
+            .iter()
+            .any(|call| call["method"] == "thread/unsubscribe"
+                && call["params"]["threadId"] == "source"));
         fixture.stop().await;
     }
 
