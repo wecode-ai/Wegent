@@ -11,6 +11,7 @@ from urllib.parse import quote
 import httpx
 
 from app.services.project_event_polling import EventPollingError, PolledInput
+from shared.telemetry.decorators import trace_async
 
 _QUERY = """
 query QualitySnapshot($owner: String!, $name: String!, $number: Int!, $after: String) {
@@ -34,6 +35,7 @@ query QualitySnapshot($owner: String!, $name: String!, $number: Int!, $after: St
 """
 
 
+@trace_async(span_name="collaboration.quality_snapshot.collect")
 async def collect_quality_snapshot(
     client: httpx.AsyncClient,
     *,
@@ -160,6 +162,7 @@ async def collect_quality_snapshot(
     return _quality_input(number, repository_payload, snapshot)
 
 
+@trace_async(span_name="collaboration.quality_snapshot.observe")
 async def observe_quality_snapshot(
     client: httpx.AsyncClient,
     *,
