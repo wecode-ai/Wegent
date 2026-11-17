@@ -8,6 +8,7 @@ use super::tasks::{
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
+#[path = "tests/test_paths.rs"]
 mod test_paths;
 
 #[path = "tests/im_callback_routing.rs"]
