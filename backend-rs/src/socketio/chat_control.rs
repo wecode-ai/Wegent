@@ -79,8 +79,9 @@ pub(crate) async fn cancel(
         .get("shell_type")
         .and_then(Value::as_str)
         .unwrap_or("Chat");
-    if device_id.is_none() && shell_type == "Chat" {
-        if let Some(reply) = super::python_answer::operation(
+    if device_id.is_none()
+        && shell_type == "Chat"
+        && let Some(reply) = super::python_answer::operation(
             state,
             &json!({
                 "action": "cancel", "task_id": info.task_id,
@@ -89,9 +90,8 @@ pub(crate) async fn cancel(
         )
         .await
         .map_err(|_| internal_error())?
-        {
-            return Ok(Reply::payload(reply));
-        }
+    {
+        return Ok(Reply::payload(reply));
     }
     if device_id.is_none()
         && shell_type != "Chat"
