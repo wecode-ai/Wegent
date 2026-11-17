@@ -413,8 +413,9 @@ impl RuntimeWorkRpcHandler {
         };
         let _send = gate.lock().await;
         if !self.is_local_task_execution_accepting_notifications(&turn.local_task_id, execution) {
-            self.finish_local_task_execution(&turn.local_task_id, execution);
-            self.finish_quota_command(&turn).await;
+            if self.finish_local_task_execution(&turn.local_task_id, execution) {
+                self.finish_quota_command(&turn).await;
+            }
             return;
         }
         match checked {
@@ -452,8 +453,9 @@ impl RuntimeWorkRpcHandler {
         let task = turn.local_task_id.clone();
         if !self.is_local_task_execution_accepting_notifications(&task, execution) {
             drop(operation);
-            self.finish_local_task_execution(&task, execution);
-            self.finish_quota_command(&turn).await;
+            if self.finish_local_task_execution(&task, execution) {
+                self.finish_quota_command(&turn).await;
+            }
             return;
         }
         if let Err(error) = self.park_quota_turn_locked(turn.clone(), None).await {

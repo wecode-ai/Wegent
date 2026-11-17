@@ -570,62 +570,71 @@ done
                 .contains_key("waiting"));
             assert!(!home.path().join("unexpected-turn").exists());
 
-            // The previous cancelled request must not consume the next scenario's marker.
-            handler.codex_app_server.restart().await;
-            fs::remove_file(home.path().join("account-requested")).unwrap();
-            fs::write(home.path().join("hold-account"), "").unwrap();
-            let replacement_turn = queued_wait("replacement", 0);
-            let mut link = RuntimeTaskLink::new_pending(
-                "replacement".into(),
-                "/work".into(),
-                "Replacement".into(),
-            );
-            link.thread_id = Some("thread".into());
-            handler.store.upsert_task(link);
-            handler.reserve_turn_preparation(&replacement_turn);
-            let recovering = {
-                let handler = handler.clone();
-                let turn = replacement_turn.clone();
-                tokio::spawn(async move { handler.start_quota_turn(turn).await })
-            };
-            tokio::time::timeout(Duration::from_secs(2), async {
-                while !home.path().join("account-requested").exists() {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+            for query_completed in [false, true] {
+                // A cancelled request must not consume the next scenario's marker.
+                handler.codex_app_server.restart().await;
+                fs::remove_file(home.path().join("account-requested")).unwrap();
+                fs::write(home.path().join("hold-account"), "").unwrap();
+                let replacement_turn = queued_wait("replacement", 0);
+                let mut link = RuntimeTaskLink::new_pending(
+                    "replacement".into(),
+                    "/work".into(),
+                    "Replacement".into(),
+                );
+                link.thread_id = Some("thread".into());
+                handler.store.upsert_task(link);
+                handler.reserve_turn_preparation(&replacement_turn);
+                let recovering = handler.start_quota_turn(replacement_turn.clone());
+                tokio::pin!(recovering);
+                tokio::select! {
+                    _ = &mut recovering => panic!("Recovery finished before the held provider query"),
+                    requested = tokio::time::timeout(Duration::from_secs(2), async {
+                        while !home.path().join("account-requested").exists() {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                    }) => requested.unwrap(),
                 }
-            })
-            .await
-            .unwrap();
-            let gate = handler.task_send_gate("replacement");
-            let send = gate.lock().await;
-            handler.reserve_turn_preparation(&replacement_turn);
-            let (cancel, _cancelled) = oneshot::channel();
-            let (_stopped, stopped) = oneshot::channel();
-            let execution =
-                handler.start_local_task_execution("replacement".into(), cancel, stopped);
-            let expected = handler.store.get_task("replacement").unwrap();
-            drop(send);
-            tokio::time::timeout(Duration::from_secs(2), recovering)
-                .await
-                .expect("Replaced quota recovery must stop without waiting for the provider")
-                .unwrap();
-            assert!(handler.is_current_local_task_execution("replacement", execution));
-            assert!(handler
-                .preparing_turns
-                .lock()
-                .unwrap()
-                .contains_key("replacement"));
-            assert_eq!(
-                serde_json::to_value(handler.store.get_task("replacement").unwrap()).unwrap(),
-                serde_json::to_value(expected).unwrap(),
-                "Old recovery must preserve the replacement's task state and preparation"
-            );
-            handler.finish_local_task_execution("replacement", execution);
-            handler
-                .preparing_turns
-                .lock()
-                .unwrap()
-                .remove("replacement");
-            fs::remove_file(home.path().join("hold-account")).unwrap();
+                let gate = handler.task_send_gate("replacement");
+                let send = gate.lock().await;
+                if query_completed {
+                    fs::remove_file(home.path().join("hold-account")).unwrap();
+                    let client = handler.codex_app_server.for_request(&replacement_turn.request).unwrap();
+                    // The fixture answers requests in order. This round trip flushes account/read.
+                    client.request("account/read", json!({"refreshToken": false})).await.unwrap();
+                    // The saved account differs, so the check returns and waits on the held send gate.
+                    assert!(futures_util::poll!(recovering.as_mut()).is_pending());
+                }
+                handler.reserve_turn_preparation(&replacement_turn);
+                let (cancel, _cancelled) = oneshot::channel();
+                let (_stopped, stopped) = oneshot::channel();
+                let execution =
+                    handler.start_local_task_execution("replacement".into(), cancel, stopped);
+                let expected = handler.store.get_task("replacement").unwrap();
+                drop(send);
+                tokio::time::timeout(Duration::from_secs(2), recovering)
+                    .await
+                    .expect("Replaced quota recovery must stop without waiting for the provider");
+                assert!(handler.is_current_local_task_execution("replacement", execution));
+                assert!(handler
+                    .preparing_turns
+                    .lock()
+                    .unwrap()
+                    .contains_key("replacement"));
+                assert_eq!(
+                    serde_json::to_value(handler.store.get_task("replacement").unwrap()).unwrap(),
+                    serde_json::to_value(expected).unwrap(),
+                    "Old recovery must preserve the replacement's task state and preparation (query_completed={query_completed})"
+                );
+                handler.finish_local_task_execution("replacement", execution);
+                handler
+                    .preparing_turns
+                    .lock()
+                    .unwrap()
+                    .remove("replacement");
+                if !query_completed {
+                    fs::remove_file(home.path().join("hold-account")).unwrap();
+                }
+            }
             handler.codex_app_server.restart().await;
             fs::remove_dir_all(root).unwrap();
         });
