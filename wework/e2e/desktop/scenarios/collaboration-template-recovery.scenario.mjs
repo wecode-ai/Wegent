@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createServer, request as httpRequest } from 'node:http'
 import { registerHooks } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import { createDesktopScenario as createTemplateScenario } from './collaboration-templates.scenario.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
@@ -13,6 +14,13 @@ async function loadTemplateHelpers() {
   const hook = registerHooks({
     resolve(specifier, context, nextResolve) {
       const packageImport = context.parentURL?.startsWith(source.href)
+      // Prebuilt Core shards reuse the bundled parser and do not install workspace packages.
+      if (packageImport && specifier === 'yaml' && process.env.WEWORK_E2E_YAML_PARSER) {
+        return nextResolve(pathToFileURL(process.env.WEWORK_E2E_YAML_PARSER).href, context)
+      }
+      if (packageImport && specifier === '@wegent/chat-core/model-execution') {
+        return nextResolve(new URL('../../chat-core/src/model-execution.ts', source).href, context)
+      }
       const relativeImport = specifier.startsWith('./') || specifier.startsWith('../')
       return nextResolve(
         packageImport && relativeImport && !specifier.endsWith('.ts')

@@ -1,7 +1,44 @@
 //! Protocol storage tests run against the existing isolated MySQL CI service.
 use super::*;
 use anyhow::Result;
-use brz_mysql::{Mysql, MysqlService};
+use brz_mysql::MysqlService;
+use tracing::instrument::WithSubscriber;
+
+/// Keep storage failures visible without exposing import bodies or credentials.
+struct StorageDiagnostics;
+
+struct StorageFields(String);
+
+impl tracing::field::Visit for StorageFields {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        use std::fmt::Write;
+        let _ = write!(self.0, " {}={value:?}", field.name());
+    }
+}
+
+impl tracing::Subscriber for StorageDiagnostics {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        metadata
+            .target()
+            .starts_with("wegent_backend_rs::template_imports")
+            && *metadata.level() <= tracing::Level::WARN
+    }
+
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut fields = StorageFields(String::new());
+        event.record(&mut fields);
+        eprintln!("template import storage diagnostic:{}", fields.0);
+    }
+}
 
 fn actor(id: i32) -> SessionUser {
     let now = chrono::Utc::now().naive_utc();
@@ -183,8 +220,11 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
         begin_import(&state, actor(8), "1001", input("Group")),
         begin_import(&state, actor(8), "001001", input("Group"))
     );
-    let first = first.unwrap();
-    assert_eq!(first, second.unwrap());
+    let first = first.expect("first concurrent client begin must succeed");
+    assert_eq!(
+        first,
+        second.expect("second concurrent client begin must succeed")
+    );
     let id = first["id"].as_str().unwrap();
     assert_eq!(first["status"], "pending");
     #[derive(FromMysqlRow)]
@@ -295,7 +335,10 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
 #[tokio::test]
 #[ignore = "requires disposable loopback MySQL and test encryption key/IV; CI invokes this suite"]
 async fn current_authority_and_actor_private_cross_client_receipts() -> Result<()> {
-    crate::migrations::mysql_tests::isolated(verify).await
+    let _inactive = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+    crate::migrations::mysql_tests::isolated(verify)
+        .with_subscriber(StorageDiagnostics)
+        .await
 }
 
 #[tokio::test]
