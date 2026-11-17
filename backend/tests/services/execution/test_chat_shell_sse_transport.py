@@ -498,9 +498,13 @@ async def test_terminal_cleanup_preserves_completion(
 
 
 @pytest.mark.asyncio
-async def test_completion_evidence_uses_captured_dispatch_user_not_payload_user():
+async def test_completion_evidence_uses_captured_dispatch_user_not_payload_user(
+    monkeypatch,
+):
+    from app.core.config import settings
     from app.services.knowledge.answer_evidence import TrustedEvidence
 
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-service-token")
     payload = {
         "type": "response.completed",
         "response": {
@@ -517,6 +521,7 @@ async def test_completion_evidence_uses_captured_dispatch_user_not_payload_user(
         )
     ) as (dispatcher, request, target, _client, _session):
         request.user_id = 12
+        request.enable_answer_evidence = True
         await dispatcher._dispatch_sse(request, target, emitter)
     done = next(
         call.args[0]
@@ -537,7 +542,12 @@ async def test_inprocess_completion_evidence_uses_captured_dispatch_user():
 
     emitter = AsyncMock()
     transport = ChatShellBridgeTransport(
-        emitter, ResponsesAPIEventParser(), 7, 12, user_id=3
+        emitter,
+        ResponsesAPIEventParser(),
+        7,
+        12,
+        user_id=3,
+        enable_answer_evidence=True,
     )
     await transport.send(
         "response.completed",

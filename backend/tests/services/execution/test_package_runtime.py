@@ -159,7 +159,8 @@ def test_embedded_engine_reuses_chat_shell_sse(runtime, monkeypatch):
 
     received = []
 
-    async def stream(request, request_id):
+    async def stream(request, request_id, *, enable_answer_evidence=False):
+        assert enable_answer_evidence is False
         received.append((request.metadata, request_id))
         yield ServerSentEvent(
             event="response.completed", data='{"type":"response.completed"}'
