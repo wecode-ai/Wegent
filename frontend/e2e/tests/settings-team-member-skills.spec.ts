@@ -162,7 +162,9 @@ const test = base.extend<{ memberSkills: MemberSkills }>({
       }
       for (const bot of createdBots) {
         expect((await api.delete('/api/bots/' + bot.id + '?force=true')).status).toBe(200)
-        await deleteDedicatedBotModel(api, bot.name, bot.namespace)
+        // Group Model deletion requires Maintainer; the test user remains Developer.
+        const modelOwner = bot.namespace === 'default' ? api : admin
+        await deleteDedicatedBotModel(modelOwner, bot.name, bot.namespace)
       }
       if (skillId !== undefined) {
         for (const group of groups) {

@@ -63,8 +63,29 @@ it('reports failed Model cleanup instead of proceeding as though it succeeded', 
 })
 
 it('accepts a Model already removed between lookup and deletion', async () => {
-  const { api, remove } = client('engineering')
+  const { api, get, remove } = client('engineering')
+  get
+    .mockResolvedValueOnce({
+      status: 200,
+      data: {
+        metadata: { name: 'member-model', namespace: 'engineering' },
+        spec: { isCustomConfig: true },
+      },
+    })
+    .mockResolvedValue({ status: 404, data: null })
   remove.mockResolvedValue({ status: 404, data: { detail: 'Not found' } })
   await expect(deleteDedicatedBotModel(api, 'member', 'engineering')).resolves.toBeUndefined()
+  expect(remove).toHaveBeenCalledTimes(1)
+  expect(get).toHaveBeenCalledTimes(2)
+})
+
+it('rejects a permission-hidden deletion when the Model remains readable', async () => {
+  const { api, get, remove } = client('engineering')
+  remove.mockResolvedValue({
+    status: 404,
+    data: { detail: "Model 'member-model' not found or permission denied" },
+  })
+  await expect(deleteDedicatedBotModel(api, 'member', 'engineering')).rejects.toThrow()
+  expect(get).toHaveBeenCalledTimes(2)
   expect(remove).toHaveBeenCalledTimes(1)
 })

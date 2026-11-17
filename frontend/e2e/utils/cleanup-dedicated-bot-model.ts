@@ -22,4 +22,9 @@ export async function deleteDedicatedBotModel(
   expect(model.data?.spec.isCustomConfig).toBe(true)
   const removed = await api.delete(path)
   expect([200, 404], JSON.stringify(removed.data)).toContain(removed.status)
+  if (removed.status === 404) {
+    // A permission denial also returns 404; verify concurrent deletion actually removed it.
+    const remaining = await api.get(path)
+    expect(remaining.status, JSON.stringify(remaining.data)).toBe(404)
+  }
 }
