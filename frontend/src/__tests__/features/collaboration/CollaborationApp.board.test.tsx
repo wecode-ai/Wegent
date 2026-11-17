@@ -383,6 +383,61 @@ describe('CollaborationApp shared project board', () => {
     expect({ ...localStorage }).toEqual(preferences)
   })
 
+  it.each(['move', 'runner'] as const)(
+    'keeps migration and %s operation errors visible while retrying migration',
+    async failure => {
+      const legacyProject = project('tag')
+      const savedProject = { ...project(), version: 2 }
+      let finishRetry!: (value: CollaborationProject) => void
+      const retry = new Promise<CollaborationProject>(resolve => {
+        finishRetry = resolve
+      })
+      const current = { ...issue(), status: 'inbox', assignee_agent_id: 'agent-1' }
+      const updateProject = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('Migration save failed'))
+        .mockReturnValueOnce(retry)
+      const operationError =
+        failure === 'runner'
+          ? Object.assign(new Error('No execution environment is authorized for this selection'), {
+              errorCode: 'RUNNER_ENVIRONMENT_UNAVAILABLE',
+            })
+          : new Error('Card move failed')
+      const updateIssue = jest.fn().mockRejectedValue(operationError)
+      const { api, host } = personalBoardFixture(legacyProject)
+      api.projects.update = updateProject
+      api.issues.update = updateIssue
+      jest.mocked(api.issues.getBoardSnapshot!).mockResolvedValue({
+        items: [current],
+        members: [],
+        agents: [],
+        taskBindings: [],
+      })
+      render(<CollaborationApp api={api} host={host} locale="zh-CN" pollIntervalMs={0} />)
+
+      const migrationMessage = '基础看板设置保存失败，仍可继续查看看板。'
+      await screen.findByText(migrationMessage)
+      const card = screen.getByTestId('collaboration-issue-issue-1')
+      await dragCardTo(card, screen.getByTestId('cloud-todo-column-dropzone-in_progress'))
+      const operationMessage =
+        failure === 'runner' ? '请到项目设置 → 执行环境添加或授权设备' : 'Card move failed'
+      expect(await screen.findByText(operationMessage, { exact: false })).toBeVisible()
+      expect(screen.getByText(migrationMessage)).toBeVisible()
+      expect(screen.getAllByRole('alert')).toHaveLength(2)
+
+      fireEvent.click(screen.getByTestId('board-base-migration-retry'))
+      await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(2))
+      expect(screen.queryByText(migrationMessage)).not.toBeInTheDocument()
+      expect(screen.getByText(operationMessage, { exact: false })).toBeVisible()
+      await act(async () => finishRetry(savedProject))
+      expect(screen.queryByTestId('board-base-migration-retry')).not.toBeInTheDocument()
+      expect(screen.getByText(operationMessage, { exact: false })).toBeVisible()
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      expect(updateIssue).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('cloud-todo-column-inbox')).toContainElement(card)
+    }
+  )
+
   it('shows an actionable runner denial and leaves the card in its persisted lane', async () => {
     const current = {
       ...issue(),

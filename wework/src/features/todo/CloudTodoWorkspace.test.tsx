@@ -3545,6 +3545,71 @@ describe('CloudTodoWorkspace', () => {
     expect((await screen.findAllByText('Updated TODO')).length).toBeGreaterThan(0)
   })
 
+  it.each(['move', 'runner'] as const)(
+    'keeps migration and %s operation errors visible while retrying migration',
+    async failure => {
+      const legacyProject = {
+        ...project,
+        board_config: { group_by: 'tag' as const },
+      }
+      const workbenchServices = services()
+      const deliveryApi = workbenchServices.deliveryApi!
+      vi.mocked(deliveryApi.listCloudProjects).mockResolvedValue({ items: [legacyProject] })
+      vi.spyOn(workbenchServices.sharedWorkspaceApi!.projects, 'get').mockResolvedValue(
+        legacyProject
+      )
+      const savedProject = {
+        ...legacyProject,
+        board_config: { group_by: 'status' as const },
+        version: 2,
+      }
+      let finishRetry!: (value: typeof savedProject) => void
+      const retry = new Promise<typeof savedProject>(resolve => {
+        finishRetry = resolve
+      })
+      vi.mocked(deliveryApi.updateCloudProject)
+        .mockRejectedValueOnce(new Error('Migration save failed'))
+        .mockReturnValueOnce(retry)
+      const operationMessage =
+        failure === 'runner' ? '请到项目设置 → 执行环境添加或授权设备' : 'Card move failed'
+      vi.mocked(deliveryApi.updateLoopItem).mockRejectedValueOnce(
+        Object.assign(new Error(operationMessage), {
+          errorCode: failure === 'runner' ? 'RUNNER_ENVIRONMENT_UNAVAILABLE' : undefined,
+        })
+      )
+      render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+          embedded
+          activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
+        />
+      )
+
+      const migrationMessage = '基础看板设置保存失败，仍可继续查看看板。'
+      await screen.findByText(migrationMessage)
+      await screen.findByTestId(`cloud-todo-card-${item.id}`)
+      fireEvent.click(screen.getByTestId('mock-dnd-drag-to-pending'))
+      expect(await screen.findByText(operationMessage, { exact: false })).toBeVisible()
+      expect(screen.getByText(migrationMessage)).toBeVisible()
+      expect(screen.getAllByRole('alert')).toHaveLength(2)
+
+      fireEvent.click(screen.getByTestId('board-base-migration-retry'))
+      await waitFor(() => expect(deliveryApi.updateCloudProject).toHaveBeenCalledTimes(2))
+      expect(screen.queryByText(migrationMessage)).not.toBeInTheDocument()
+      expect(screen.getByText(operationMessage, { exact: false })).toBeVisible()
+      await act(async () => finishRetry(savedProject))
+      expect(screen.queryByTestId('board-base-migration-retry')).not.toBeInTheDocument()
+      expect(screen.getByText(operationMessage, { exact: false })).toBeVisible()
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      expect(deliveryApi.updateLoopItem).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('cloud-todo-column-in_progress')).toContainElement(
+        screen.getByTestId(`cloud-todo-card-${item.id}`)
+      )
+    }
+  )
+
   it('waits for the first cloud snapshot before migrating a legacy base board', async () => {
     const legacyProject = {
       ...project,

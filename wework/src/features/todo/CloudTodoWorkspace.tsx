@@ -2737,8 +2737,8 @@ export function CloudTodoWorkspace({
   useEffect(() => {
     if (
       !usesSharedCloudBoard ||
-      !selectedProject ||
-      cloudWorkspace.state.project?.id !== String(selectedProject.id)
+      !selectedProjectKey ||
+      cloudWorkspace.state.project?.id !== selectedProjectId
     ) {
       return
     }
@@ -2754,7 +2754,8 @@ export function CloudTodoWorkspace({
   }, [
     cloudWorkspace.state.boardLoadRevision,
     cloudWorkspace.state.project?.id,
-    selectedProject,
+    selectedProjectId,
+    selectedProjectKey,
     usesSharedCloudBoard,
   ])
   useEffect(() => {
@@ -5289,10 +5290,6 @@ export function CloudTodoWorkspace({
                             retry={baseBoardMigration.retry}
                             translate={boardTranslate}
                           />
-                        ) : boardError ? (
-                          <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
-                            {boardError}
-                          </p>
                         ) : null
                       }
                       rootLabel={isMyTasksBoard ? '任务' : isAITableProject ? '父任务' : 'Issue'}
