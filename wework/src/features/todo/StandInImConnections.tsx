@@ -1,5 +1,6 @@
 import { Check, MessageSquare } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { ActionMenu } from '@/components/common/ActionMenu'
 import { Button } from '@/components/ui/button'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -40,6 +41,8 @@ export function StandInImConnections({
   const [state, setState] = useState(newState)
   const [channel, setChannel] = useState<string | null>(null)
   const trigger = useRef<HTMLButtonElement | null>(null)
+  const section = useRef<HTMLElement | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [reload, setReload] = useState(0)
   if (
     state.owner.api !== api ||
@@ -48,6 +51,7 @@ export function StandInImConnections({
   ) {
     setState(newState())
     setChannel(null)
+    setMenuOpen(false)
   }
   const { owner, sessions, loading, saving, error } = state
   useEffect(() => {
@@ -74,9 +78,9 @@ export function StandInImConnections({
     }
   }, [api, owner, reload])
   useEffect(() => {
-    onOpenChange?.(channel !== null)
+    onOpenChange?.(menuOpen || channel !== null)
     return () => onOpenChange?.(false)
-  }, [channel, onOpenChange])
+  }, [channel, menuOpen, onOpenChange])
 
   const connected = (session: IMPrivateSession) =>
     session.mode === 'stand_in' &&
@@ -111,14 +115,42 @@ export function StandInImConnections({
     setState(current => ({ ...current, loading: true, error: null }))
     setReload(value => value + 1)
   }
-  const channels = [...new Set<string>([...CHANNELS, ...sessions.map(row => row.channel_type)])]
+  const channels = [...new Set(sessions.map(row => row.channel_type))]
+  const availableToAdd = CHANNELS.filter(type => !channels.includes(type))
   const label = (type: string) =>
     CHANNELS.includes(type as (typeof CHANNELS)[number])
       ? t(`standIn.im.channels.${type}`)
       : (sessions.find(row => row.channel_type === type)?.channel_label ?? type)
   const device = devices.find(row => sameDevice(row.device_id))
   return (
-    <section aria-label={t('standIn.im.title')} data-testid="stand-in-im-channels">
+    <section ref={section} aria-label={t('standIn.im.title')} data-testid="stand-in-im-channels">
+      {loading && (
+        <p
+          role="status"
+          data-testid="stand-in-im-discovery-loading"
+          className="text-sm text-text-secondary"
+        >
+          {t('standIn.im.loading')}
+        </p>
+      )}
+      {error === 'load' && (
+        <div
+          role="alert"
+          data-testid="stand-in-im-discovery-error"
+          className="flex flex-wrap items-center gap-2 text-sm"
+        >
+          <span className="text-error">{t('standIn.im.load_failed')}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="min-h-11 md:min-h-9"
+            data-testid="stand-in-im-discovery-retry"
+            onClick={refresh}
+          >
+            {t('standIn.im.refresh')}
+          </Button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         {channels.map(type => {
           const isConnected = sessions.some(row => row.channel_type === type && connected(row))
@@ -145,6 +177,30 @@ export function StandInImConnections({
             </Button>
           )
         })}
+        {!loading && error !== 'load' && (availableToAdd.length > 0 || menuOpen) && (
+          <ActionMenu
+            ariaLabel={t('standIn.im.add_channels')}
+            testId="stand-in-im-add-channels"
+            placement="bottom-end"
+            triggerClassName="flex min-h-11 min-w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-9 md:min-w-9"
+            onOpenChange={setMenuOpen}
+            items={availableToAdd.map(type => ({
+              label: t('standIn.im.add_channel', { channel: label(type) }),
+              icon: MessageSquare,
+              testId: `stand-in-im-channel-${type}`,
+              onSelect: () => {
+                trigger.current =
+                  section.current?.querySelector<HTMLButtonElement>(
+                    '[data-testid="stand-in-im-add-channels"]'
+                  ) ?? null
+                setState(current =>
+                  current.error === 'save' ? { ...current, error: null } : current
+                )
+                setChannel(type)
+              },
+            }))}
+          />
+        )}
       </div>
       {channel !== null && (
         <StandInImConnectionDialog
@@ -165,7 +221,21 @@ export function StandInImConnections({
             // Release the popover's inert state before restoring its trigger focus.
             onOpenChange?.(false)
             setChannel(null)
-            window.requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }))
+            window.requestAnimationFrame(() => {
+              const availableTrigger = Array.from(
+                section.current?.querySelectorAll('button') ?? []
+              ).find(button => button.dataset.testid === `stand-in-im-channel-${channel}`)
+              const focusTarget =
+                availableTrigger ??
+                section.current?.querySelector<HTMLButtonElement>(
+                  '[data-testid="stand-in-im-add-channels"]'
+                ) ??
+                section.current?.querySelector<HTMLButtonElement>(
+                  '[data-testid="stand-in-im-discovery-retry"]'
+                ) ??
+                (trigger.current?.isConnected ? trigger.current : null)
+              focusTarget?.focus({ preventScroll: true })
+            })
           }}
         />
       )}

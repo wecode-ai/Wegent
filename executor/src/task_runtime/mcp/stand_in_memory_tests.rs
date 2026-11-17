@@ -181,6 +181,7 @@ async fn memory_review_tools_allow_evidence_but_reject_actions_even_when_called_
         "create_task",
         "continue_task",
         "schedule_task",
+        "update_schedule",
         "cancel_schedule",
         "connect_source",
         "reply",

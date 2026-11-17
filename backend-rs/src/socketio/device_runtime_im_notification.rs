@@ -172,7 +172,7 @@ async fn send_and_save_reply(
     Ok(true)
 }
 
-fn reply_reference(result: &Value) -> Option<String> {
+pub(super) fn reply_reference(result: &Value) -> Option<String> {
     ["processQueryKey", "messageId", "message_id", "id"]
         .into_iter()
         .find_map(|key| {
