@@ -4,6 +4,10 @@ import mermaid from 'mermaid'
 import { MarkdownDiagramPreview } from '@wegent/collaboration/markdown/MarkdownDiagramPreview'
 import { browserMarkdownServices, MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 
+// Prepare Mermaid's lazy parser dependencies during test-module loading. Vitest
+// transforms them on demand; viewport assertions still render a fresh real artifact.
+await mermaid.parse('graph LR\nTEST_SETUP --> PARSER_READY')
+
 const originalGetBBox = SVGElement.prototype.getBBox
 
 beforeAll(() => {

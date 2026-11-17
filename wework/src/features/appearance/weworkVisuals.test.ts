@@ -151,19 +151,19 @@ test('restores original plugin recipes without overriding provided-logo dark rul
   expect(values).not.toHaveProperty('--color-bg-base')
   expect(values).not.toHaveProperty('--font-ui')
   const styles = postcss.parse(readSource('styles/globals.css'))
-  const logoRules: string[] = []
+  const logoRules: string[][] = []
   styles.walkDecls(declaration => {
     if (declaration.value.includes('--wework-plugin-logo-bg')) {
       const parent = declaration.parent
       expect(parent?.type).toBe('rule')
-      if (parent?.type === 'rule') logoRules.push(parent.selector)
+      if (parent?.type === 'rule') logoRules.push(parent.selectors)
     }
   })
   expect(logoRules).toEqual([
-    '.plugin-management-logo',
-    '.plugin-market-card-logo,\n.plugin-installed-strip-logo',
-    '.plugin-detail-header-logo,\n.plugin-detail-prompt-logo',
-    '.plugin-market-reveal-logo',
+    ['.plugin-management-logo'],
+    ['.plugin-market-card-logo', '.plugin-installed-strip-logo'],
+    ['.plugin-detail-header-logo', '.plugin-detail-prompt-logo'],
+    ['.plugin-market-reveal-logo'],
   ])
 })
 
