@@ -44,7 +44,13 @@ export function useRuntimeLifecycleEvents({
 }: RuntimeLifecycleEventsOptions) {
   useEffect(
     () =>
-      stream.subscribeLifecycle((address, event) => {
+      stream.subscribeLifecycle((scope, event) => {
+        if (event.name === 'executor.runtime_replaced') {
+          lifecycle.executorReplaced(scope)
+          return
+        }
+        if (!scope.taskId) return
+        const address = { ...scope, taskId: scope.taskId }
         if (event.name === 'runtime.work.changed') {
           const data = event.payload.data as Record<string, unknown> | undefined
           const cleanup = data?.archiveCleanup as
@@ -63,7 +69,6 @@ export function useRuntimeLifecycleEvents({
         const task = (data?.task ?? event.payload.task) as
           | { executionState?: RuntimeExecutionState }
           | undefined
-        if (event.name === 'executor.runtime_replaced') lifecycle.executorReplaced(address)
         if (task?.executionState && lifecycle.executionReceived(address, task.executionState)) {
           publishTaskLifecycle()
         }

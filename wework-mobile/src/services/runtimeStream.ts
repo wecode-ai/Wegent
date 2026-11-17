@@ -41,7 +41,10 @@ const REQUEST_TIMEOUT_MS = 75_000
 export const TRANSCRIPT_PAGE_SIZE = 5
 
 type Listener = (event: RuntimeStreamEvent) => void
-type LifecycleListener = (address: RuntimeTaskAddress, event: RuntimeStreamEvent) => void
+type LifecycleListener = (
+  address: { deviceId: string; taskId?: string },
+  event: RuntimeStreamEvent
+) => void
 
 export interface CloudConnectionSnapshot {
   connected: boolean
@@ -347,11 +350,12 @@ export class RuntimeStream {
       }
     }
     if (name === 'executor.event_lagged' || name === 'executor.runtime_replaced') {
-      if (this.scope && (!deviceId || deviceId === this.scope.deviceId)) {
-        this.listener?.({ name, payload })
-        this.lifecycleListener?.(this.scope, { name, payload })
-        this.reconnectListener?.()
-      }
+      const affectedDeviceId = deviceId ?? this.scope?.deviceId
+      const affectsScope = this.scope && affectedDeviceId === this.scope.deviceId
+      if (affectsScope) this.listener?.({ name, payload })
+      if (affectedDeviceId)
+        this.lifecycleListener?.({ deviceId: affectedDeviceId }, { name, payload })
+      if (affectsScope) this.reconnectListener?.()
       return
     }
     if (!taskId) return

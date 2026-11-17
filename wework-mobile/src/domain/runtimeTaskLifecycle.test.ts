@@ -159,3 +159,27 @@ it('uses native execution revisions across completion, stale events, and executo
   })
   expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(false)
 })
+
+it('retires every cached task of a replaced device without affecting another device', () => {
+  const lifecycle = new RuntimeTaskLifecycleProjection()
+  const active = { deviceId: 'device', taskId: 'active' }
+  const background = { deviceId: 'device', taskId: 'background' }
+  const other = { deviceId: 'other', taskId: 'background' }
+  const old = {
+    revision: '20',
+    epoch: 'old',
+    phase: 'running' as const,
+    turnId: 'turn',
+    latestTurnId: 'turn',
+    outcome: null,
+  }
+  for (const address of [active, background, other]) lifecycle.executionReceived(address, old)
+  lifecycle.executorReplaced({ deviceId: 'device' })
+  const current = { ...old, epoch: 'new', revision: '1', phase: 'idle' as const }
+  expect(lifecycle.executionReceived(active, current)).toBe(true)
+  expect(lifecycle.executionReceived(background, current)).toBe(true)
+  expect(lifecycle.executionReceived(background, { ...old, revision: '100' })).toBe(false)
+  expect(lifecycle.executionReceived(other, current)).toBe(false)
+  expect(lifecycle.snapshot().get(runtimeTaskKey(background))).toBe(false)
+  expect(lifecycle.snapshot().get(runtimeTaskKey(other))).toBe(true)
+})

@@ -100,6 +100,32 @@ describe('RuntimeStream', () => {
     expect(io).toHaveBeenCalledOnce()
   })
 
+  it('routes device invalidations without a task and repairs only the selected device', async () => {
+    const stream = await createStream(config)
+    const lifecycle = vi.fn()
+    stream.subscribeLifecycle(lifecycle, vi.fn())
+    const send = (event: string, deviceId: string) =>
+      handlers.get('runtime:event')!({ event, payload: { deviceId } })
+    send('executor.runtime_replaced', 'background-device')
+    expect(lifecycle).toHaveBeenLastCalledWith(
+      { deviceId: 'background-device' },
+      expect.objectContaining({ name: 'executor.runtime_replaced' })
+    )
+    const listener = vi.fn()
+    const repair = vi.fn()
+    await stream.subscribe({ deviceId: 'selected-device', taskId: 'task' }, listener, repair)
+    send('executor.event_lagged', 'background-device')
+    expect(listener).not.toHaveBeenCalled()
+    expect(repair).not.toHaveBeenCalled()
+    send('executor.event_lagged', 'selected-device')
+    expect(listener).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ name: 'executor.event_lagged' })
+    )
+    expect(repair).toHaveBeenCalledOnce()
+    send('executor.runtime_replaced', 'mobile-local:phone:account')
+    expect(lifecycle).toHaveBeenCalledTimes(3)
+  })
+
   it('keeps phone RPC and events isolated from the remote socket', async () => {
     const deviceId = 'mobile-local:phone:account'
     let nativeEvent: (event: Record<string, unknown>) => void = () => {}

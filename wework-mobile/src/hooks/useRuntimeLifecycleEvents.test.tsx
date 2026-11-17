@@ -54,6 +54,16 @@ it('uses native task revisions and repairs settled turns without waiting for ano
   native('12', 'running')
   expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(false)
   expect(publishTaskLifecycle).toHaveBeenCalledTimes(2)
+  listener({ deviceId: address.deviceId }, { name: 'executor.runtime_replaced', payload: {} })
+  listener(address, {
+    name: 'runtime.task.updated',
+    payload: {
+      data: {
+        task: { executionState: { revision: '1', phase: 'running', epoch: 'new-executor' } },
+      },
+    },
+  })
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(true)
   listener(address, { name: 'runtime.turn.updated', payload: { data: { status: 'settled' } } })
   expect(reloadTranscript).toHaveBeenCalledExactlyOnceWith(address)
   expect(commitDeviceWork).not.toHaveBeenCalled()

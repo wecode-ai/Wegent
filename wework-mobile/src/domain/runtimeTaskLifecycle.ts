@@ -48,7 +48,10 @@ export interface RuntimeTranscriptObservation {
 }
 
 export class RuntimeTaskLifecycleProjection {
-  private readonly executionByTask = new Map<string, RuntimeExecutionState>()
+  private readonly executionByTask = new Map<
+    string,
+    { deviceId: string; state: RuntimeExecutionState }
+  >()
   private readonly retiredEpochsByTask = new Map<string, Set<string>>()
   private readonly runningByTask = new Map<string, boolean>()
   private readonly revisionByTask = new Map<string, number>()
@@ -61,23 +64,25 @@ export class RuntimeTaskLifecycleProjection {
   executionReceived(address: RuntimeTaskAddress, state: RuntimeExecutionState): boolean {
     const key = runtimeTaskKey(address)
     if (state.epoch && this.retiredEpochsByTask.get(key)?.has(state.epoch)) return false
-    if (!isNewerRuntimeExecutionState(this.executionByTask.get(key), state)) return false
-    this.executionByTask.set(key, state)
+    if (!isNewerRuntimeExecutionState(this.executionByTask.get(key)?.state, state)) return false
+    this.executionByTask.set(key, { deviceId: address.deviceId, state })
     this.runningByTask.set(key, isRuntimeExecutionRunning(state))
     this.advanceRevision(key)
     return true
   }
 
-  executorReplaced(address: RuntimeTaskAddress): void {
-    const key = runtimeTaskKey(address)
-    const epoch = this.executionByTask.get(key)?.epoch
-    if (epoch) {
-      const retired = this.retiredEpochsByTask.get(key) ?? new Set<string>()
-      retired.add(epoch)
-      this.retiredEpochsByTask.set(key, retired)
+  executorReplaced(address: Pick<RuntimeTaskAddress, 'deviceId'>): void {
+    for (const [key, execution] of this.executionByTask) {
+      if (execution.deviceId !== address.deviceId) continue
+      const epoch = execution.state.epoch
+      if (epoch) {
+        const retired = this.retiredEpochsByTask.get(key) ?? new Set<string>()
+        retired.add(epoch)
+        this.retiredEpochsByTask.set(key, retired)
+      }
+      this.executionByTask.delete(key)
+      this.advanceRevision(key)
     }
-    this.executionByTask.delete(key)
-    this.advanceRevision(key)
   }
 
   executorStarted(address: RuntimeTaskAddress): boolean {
