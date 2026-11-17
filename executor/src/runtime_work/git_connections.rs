@@ -13,15 +13,9 @@ mod status;
 
 pub(crate) const PACKAGE: &str = "@wegent/dsh-connection-git/";
 
-fn git_cli_command(platform: &str, mut environment: HashMap<String, String>) -> Command {
+fn git_cli_command(platform: &str, environment: HashMap<String, String>) -> Command {
     let name = if platform == "github" { "gh" } else { "glab" };
-    let path = crate::process_environment::normalized_process_path(
-        environment
-            .get("PATH")
-            .map(String::as_str)
-            .unwrap_or_default(),
-    );
-    environment.insert("PATH".into(), path);
+    let environment = wegent_subprocess::environment::merge_process_environment(environment);
     let executable = crate::local::git_commands::resolve_cli_executable(name, &environment)
         .unwrap_or_else(|| name.into());
     let (program, prefix) = crate::process::spawn_program_parts(&executable.to_string_lossy());
@@ -739,38 +733,47 @@ mod tests {
             .unwrap();
             std::fs::set_permissions(shim, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
-        let mut environment: HashMap<String, String> = std::env::vars().collect();
+        let environment: HashMap<String, String> = std::env::vars()
+            .filter(|(key, _)| !key.eq_ignore_ascii_case("PATH"))
+            .collect();
         let paths = std::iter::once(root.path().to_owned())
             .chain(std::env::split_paths(
                 &std::env::var_os("PATH").unwrap_or_default(),
             ))
             .collect::<Vec<_>>();
-        environment.insert(
-            "PATH".into(),
-            std::env::join_paths(paths)
-                .unwrap()
-                .to_string_lossy()
-                .into(),
-        );
+        let path = std::env::join_paths(paths)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         let arguments = [
             "api",
             "repos/owner/repo/issues?state=open&per_page=10",
             "quoted \"value\"",
+            "line one\nline two",
         ];
-        let output = git_cli_command("github", environment)
-            .args(arguments)
-            .output()
-            .await
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(
-            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-            json!(arguments)
-        );
+        let path_keys = if cfg!(windows) {
+            vec!["PATH", "Path"]
+        } else {
+            vec!["PATH"]
+        };
+        for key in path_keys {
+            let mut environment = environment.clone();
+            environment.insert(key.into(), path.clone());
+            let output = git_cli_command("github", environment)
+                .args(arguments)
+                .output()
+                .await
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+                json!(arguments)
+            );
+        }
     }
 
     #[test]
