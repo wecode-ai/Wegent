@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { linkedChangeRequestTarget } from '@/api/changeRequests'
 import type { DeviceCommandApi } from '@/api/environment'
-import type { DeviceCommandResponse } from '@/types/api'
+import type { DeviceCommandResponse, DeviceInfo } from '@/types/api'
 import { connectionObserverReply } from '@/test/connection-observer'
 import { ChangeRequestMonitor } from './changeRequestMonitor'
 
@@ -16,6 +16,12 @@ describe('visible PR status lifecycle', () => {
       .fn<DeviceCommandApi['executeCommand']>()
       .mockImplementation(async (_device, request) => connectionObserverReply(request))
     const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(null, [
+      {
+        device_id: 'device',
+        runtime_features: { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } },
+      },
+    ] as DeviceInfo[])
     const stop = monitor.register(target)
     try {
       await monitor.refresh()
@@ -54,6 +60,12 @@ describe('visible PR status lifecycle', () => {
           : connectionObserverReply(request)
       )
     const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(null, [
+      {
+        device_id: 'device',
+        runtime_features: { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } },
+      },
+    ] as DeviceInfo[])
     const stop = monitor.register(target)
     try {
       await monitor.refresh()
@@ -91,6 +103,12 @@ describe('visible PR status lifecycle', () => {
           : connectionObserverReply(request)
       )
     const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(null, [
+      {
+        device_id: 'device',
+        runtime_features: { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } },
+      },
+    ] as DeviceInfo[])
     const stop = monitor.register(target)
     const running = monitor.refresh()
     try {

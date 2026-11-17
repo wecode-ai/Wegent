@@ -67,6 +67,7 @@ export function GoalStatusBar({
     goal.status === 'active' || resumable || (goal.status === 'blocked' && waitingForEvent)
   const showStatus =
     goal.status === 'paused' ||
+    goal.status === 'blocked' ||
     waitingForEvent ||
     !canToggle ||
     continuing ||

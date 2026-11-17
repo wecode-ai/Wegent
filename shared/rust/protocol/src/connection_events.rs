@@ -2,6 +2,8 @@
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+pub const PROTOCOL_VERSION: u32 = 1;
+
 pub fn canonical_json(value: &Value) -> String {
     match value {
         Value::Object(fields) => {

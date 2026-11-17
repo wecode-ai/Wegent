@@ -184,6 +184,7 @@ CONNECTION_OBSERVATION_COMMAND_METHODS = {
         for operation in ("start", "renew", "refresh", "stop")
     },
     "connection_observation_refresh": "runtime.connections.observations.refresh",
+    "connection_subscription_cancel": "runtime.connections.subscriptions.cancel",
 }
 
 
@@ -200,7 +201,10 @@ async def _execute_connection_observation_command(
         runtime_rpc_service,
     )
 
-    if command_key == "connection_observation_refresh":
+    if command_key in {
+        "connection_observation_refresh",
+        "connection_subscription_cancel",
+    }:
         if len(args) != 2 or any(not value.strip() for value in args):
             raise DeviceCommandError("A conversation and subscription are required")
         payload = {"taskId": args[0], "subscriptionKey": args[1]}

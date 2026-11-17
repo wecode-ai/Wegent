@@ -2924,4 +2924,57 @@ describe('ChatInput', () => {
     expect(window.getSelection()?.anchorNode).toBe(trailingText)
     expect(window.getSelection()?.anchorOffset).toBe(trailingText?.textContent?.length)
   })
+  test.each(['ordinary', 'goal'])(
+    'keeps cancellation feedback after the last native %s watch disappears',
+    async mode => {
+      const onResume = vi.fn()
+      const collectedAt = Date.now()
+      function Harness() {
+        const [subscriptions, setSubscriptions] = useState<unknown>([
+          {
+            subscription_key: 'watch',
+            source: { name: 'PR' },
+            status: 'armed',
+            last_collected_at: collectedAt,
+            waiting_goal: mode === 'goal',
+          },
+        ])
+        return (
+          <ChatInput
+            value=""
+            onChange={vi.fn()}
+            onSubmit={vi.fn()}
+            disabled={false}
+            variant="desktop"
+            eventSubscriptions={subscriptions}
+            eventSubscriptionScope="task"
+            onCancelEventSubscription={async () => {
+              setSubscriptions([])
+            }}
+            goal={
+              mode === 'goal'
+                ? {
+                    threadId: 'thread',
+                    objective: 'Wait',
+                    status: 'blocked',
+                    tokenBudget: 500,
+                    tokensUsed: 12,
+                    timeUsedSeconds: 0,
+                    createdAt: 1780000000000,
+                    updatedAt: 1780000000000,
+                  }
+                : undefined
+            }
+            onResumeGoal={onResume}
+          />
+        )
+      }
+      render(<Harness />)
+      await userEvent.click(screen.getByTestId('cancel-connection-event-subscription'))
+      expect(await screen.findByTestId('connection-event-cancel-feedback')).toBeInTheDocument()
+      expect(screen.queryByTestId('connection-event-status')).not.toBeInTheDocument()
+      expect(onResume).not.toHaveBeenCalled()
+      if (mode === 'goal') expect(screen.getByTestId('resume-goal-button')).toBeInTheDocument()
+    }
+  )
 })

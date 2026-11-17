@@ -1050,6 +1050,7 @@ impl AppIpcServer {
             "device_route_id": device_route_id,
             "capabilities": APP_IPC_CAPABILITIES,
             "renderer_methods": APP_IPC_RENDERER_METHODS,
+            "runtime_features": crate::runtime_work::runtime_features(),
             "transports": [
                 "stdio-ndjson",
                 "local-endpoint-ndjson",
@@ -1641,7 +1642,10 @@ impl AppIpcServer {
             return Ok(json!({"success":true,"exit_code":0,"stdout":result,"stderr":""}));
         }
 
-        if command_key == "connection_observation_refresh" {
+        if matches!(
+            command_key,
+            "connection_observation_refresh" | "connection_subscription_cancel"
+        ) {
             let args = string_list(params.get("args"))?;
             if args.len() != 2 {
                 return Err(AppIpcError::new(
@@ -1653,7 +1657,16 @@ impl AppIpcServer {
                 .runtime_work_handler
                 .as_ref()
                 .ok_or_else(|| AppIpcError::new("runtime_unavailable", "Runtime is unavailable"))?;
-            let result = handler.handle_runtime_rpc(json!({"method":"runtime.connections.observations.refresh","payload":{"taskId":args[0],"subscriptionKey":args[1]}})).await?;
+            let method = if command_key == "connection_subscription_cancel" {
+                "runtime.connections.subscriptions.cancel"
+            } else {
+                "runtime.connections.observations.refresh"
+            };
+            let result = handler
+                .handle_runtime_rpc(
+                    json!({"method":method,"payload":{"taskId":args[0],"subscriptionKey":args[1]}}),
+                )
+                .await?;
             return Ok(json!({"success":true,"exit_code":0,"stdout":result,"stderr":""}));
         }
 

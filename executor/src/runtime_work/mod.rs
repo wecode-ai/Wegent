@@ -68,6 +68,7 @@ pub(crate) fn runtime_features() -> serde_json::Value {
     serde_json::json!({
         "schemaVersion": 4,
         "pluginSync": { "protocolVersion": 2 },
+        "connectionEvents": { "protocolVersion": wegent_protocol::connection_events::PROTOCOL_VERSION },
         "runtimeTaskCreate": {
             "schemaVersions": [1, 2],
             "features": {

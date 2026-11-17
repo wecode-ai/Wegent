@@ -613,6 +613,7 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
     device_type: 'local' as const,
     runtime_instance_id: status.runtimeInstanceId ?? null,
     capabilities: ['runtime-work', 'device-commands'],
+    ...(status.runtimeFeatures ? { runtime_features: status.runtimeFeatures } : {}),
     slot_used: 0,
     slot_max: 5,
     executor_version:
@@ -3592,7 +3593,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
               { deviceId: device.device_id }
             )
             device.runtime_features = {
-              schemaVersion: 1,
+              ...(device.runtime_features ?? { schemaVersion: 1 }),
               worktrees: capabilities.runtimeWorktrees,
             }
           } catch (error) {

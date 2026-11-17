@@ -127,6 +127,9 @@ impl RuntimeWorkRpcHandler {
                     move || async move { self.sync_cloud_connection_subscription(payload).await },
                 )
             }
+            "runtime.connections.subscriptions.cancel" => boxed_rpc(move || async move {
+                self.cancel_connection_subscription_from_ui(payload).await
+            }),
             "runtime.connections.observations.refresh" => {
                 boxed_rpc(move || async move { self.refresh_connection_observation(payload).await })
             }

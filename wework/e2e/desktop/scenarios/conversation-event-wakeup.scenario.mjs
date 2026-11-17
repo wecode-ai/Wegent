@@ -48,6 +48,7 @@ export function createDesktopScenario(options) {
   let active = false
   let phase = 'ordinary'
   let modelRequests = 0
+  let cancellationEvidence = null
   let questionOutput
   let sequence = 0
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
@@ -140,7 +141,7 @@ export function createDesktopScenario(options) {
       active = true
       let originalAddress
       try {
-        for (const story of ['ordinary', 'goal', 'human', 'pause']) {
+        for (const story of ['ordinary', 'goal', 'human', 'cancel', 'pause']) {
           phase = story
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
             value: `${MARKER}_${phase} ${phase === 'ordinary' ? '' : '请创建持续目标，'}请订阅文档变化并在变化后继续。`,
@@ -249,6 +250,85 @@ export function createDesktopScenario(options) {
             })
             await captureScreenshot(control, 'conversation-event-goal-restored.png')
           }
+          if (phase === 'cancel') {
+            await control.command('click', '[data-testid="cancel-connection-event-subscription"]')
+            await waitForValue(
+              getTask,
+              result =>
+                !result.task.runtimeHandle?.connectionEventSubscriptions?.some(
+                  item => item.subscription_key === `${MARKER}_${phase}`
+                ),
+              'Native cancellation must remove the exact subscription',
+              uiTimeoutMs
+            )
+            await control.command('waitFor', '[data-testid="connection-event-status"]', {
+              visible: false,
+            })
+            await captureScreenshot(control, 'conversation-event-cancelled.png')
+            const goalBefore = await rpc(control, 'runtime.tasks.goal.get', { address })
+            assert.equal(
+              goalBefore.goal.status,
+              'blocked',
+              'Cancelling a watch must not resume or pause its Goal'
+            )
+            await restartDesktopApp()
+            await control.command(
+              'waitFor',
+              `[data-testid="runtime-local-task-row-${address.taskId}"]`,
+              { timeoutMs: workbenchReadyTimeoutMs }
+            )
+            await control.command(
+              'click',
+              `[data-testid="runtime-local-task-row-${address.taskId}"]`
+            )
+            await control.command(
+              'waitFor',
+              `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+              { text: `${MARKER}_${phase}_WAITING`, timeoutMs: modelResponseTimeoutMs }
+            )
+            await control.command('waitFor', '[data-testid="connection-event-status"]', {
+              visible: false,
+            })
+            await control.command('waitFor', '[data-testid="goal-status-bar"]', {
+              text: '受阻',
+            })
+            assert.ok(
+              !(await getTask()).task.runtimeHandle?.connectionEventSubscriptions?.some(
+                item => item.subscription_key === `${MARKER}_${phase}`
+              ),
+              'A cancelled watch must remain cancelled after a real desktop restart'
+            )
+            await captureScreenshot(control, 'conversation-event-cancelled-after-restart.png')
+            events.push(event(`${phase}-event`, `${MARKER}_${phase}_EVENT_RECEIVED`))
+            await saveEvents()
+            // Verify a full collection interval after the event that used to match.
+            const deadline = Date.now() + 17000
+            while (Date.now() < deadline) {
+              assert.equal(
+                modelRequests,
+                requestsBefore,
+                'A cancelled watch must never wake the model'
+              )
+              await new Promise(resolve => setTimeout(resolve, 100))
+            }
+            const goalAfter = await rpc(control, 'runtime.tasks.goal.get', { address })
+            assert.equal(goalAfter.goal.status, goalBefore.goal.status)
+            assert.equal(goalAfter.goal.createdAt, goalBefore.goal.createdAt)
+            assert.equal((await getTask()).task.threadId, before.task.threadId)
+            cancellationEvidence = {
+              taskId: address.taskId,
+              threadId: before.task.threadId,
+              modelRequestsBefore: requestsBefore,
+              modelRequestsAfter: modelRequests,
+              goalStatusBefore: goalBefore.goal.status,
+              goalStatusAfter: goalAfter.goal.status,
+              goalCreatedAtBefore: goalBefore.goal.createdAt,
+              goalCreatedAtAfter: goalAfter.goal.createdAt,
+              cancelledAfterRestart: true,
+            }
+            await rpc(control, 'runtime.tasks.goal.clear', { address })
+            continue
+          }
           if (phase === 'pause') {
             await control.command('click', '[data-testid="pause-goal-button"]')
             await control.command('waitFor', '[data-testid="connection-event-status"]', {
@@ -331,7 +411,12 @@ export function createDesktopScenario(options) {
         await writeFile(
           join(resultDir, 'conversation-event-evidence.json'),
           JSON.stringify(
-            { modelRequests, phases: [...completed], taskId: originalAddress.taskId },
+            {
+              modelRequests,
+              phases: [...completed],
+              taskId: originalAddress.taskId,
+              cancellationEvidence,
+            },
             null,
             2
           )

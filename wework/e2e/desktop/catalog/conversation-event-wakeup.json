@@ -13,6 +13,7 @@
     "executor/src/runtime_work/handler/queries.rs",
     "executor/src/runtime_work/handler/stand_in_ingress.rs",
     "wework/src/lib/runtime-connection-events.ts",
+    "wework/src/api/connectionEventSubscriptions*",
     "wework/src/components/chat/ChatInput*",
     "wework/src/components/chat/RequestUserInputComposer*",
     "wework/src/components/chat/composer/ConversationEventContext*",

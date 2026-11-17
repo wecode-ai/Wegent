@@ -8,6 +8,10 @@ type Props = Omit<ComponentProps<typeof GoalStatusBar>, 'goal' | 'eventWaitState
   goal?: ComponentProps<typeof GoalStatusBar>['goal'] | null
   goalDraftActive?: boolean
   subscriptions?: unknown
+  eventSubscriptionScope?: string
+  onCancelEventSubscription?: (key: string) => Promise<void>
+  eventCancellationUnavailable?: boolean
+  eventCancellationUnsupported?: boolean
   interactionStatus?: ComponentProps<typeof ConnectionEventStatus>['interactionStatus']
   children?: ReactNode
 }
@@ -17,6 +21,10 @@ export function ConversationEventContext({
   goal,
   goalDraftActive,
   subscriptions,
+  eventSubscriptionScope,
+  onCancelEventSubscription,
+  eventCancellationUnavailable,
+  eventCancellationUnsupported,
   interactionStatus,
   children,
   ...goalProps
@@ -32,7 +40,14 @@ export function ConversationEventContext({
         />
       )}
       {children}
-      <ConnectionEventStatus subscriptions={subscriptions} interactionStatus={interactionStatus} />
+      <ConnectionEventStatus
+        key={eventSubscriptionScope}
+        subscriptions={subscriptions}
+        interactionStatus={interactionStatus}
+        onCancel={onCancelEventSubscription}
+        unavailable={eventCancellationUnavailable}
+        unsupported={eventCancellationUnsupported}
+      />
     </>
   )
 }

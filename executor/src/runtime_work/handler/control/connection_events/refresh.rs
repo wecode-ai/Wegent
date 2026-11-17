@@ -6,32 +6,16 @@ impl RuntimeWorkRpcHandler {
         &self,
         input: Value,
     ) -> Result<Value, AppIpcError> {
-        let task = input["taskId"]
-            .as_str()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| invalid("Conversation is required"))?;
-        let key = input["subscriptionKey"]
-            .as_str()
-            .filter(|value| !value.is_empty() && value.len() <= 256)
-            .ok_or_else(|| invalid("Subscription is required"))?;
+        let (context, key) = self.connection_subscription_ui_context(&input)?;
+        let task = context.task_id.as_str();
         let link = self
             .store
             .get_task(task)
-            .filter(|link| link.status != "archived" && !self.archived_link_is_deleted(link))
             .ok_or_else(|| invalid("Conversation not found"))?;
-        let mut request = runtime_event_request_from_link(&link);
-        crate::runtime_work::api_context::inject_current_session(
-            &mut request,
-            &self.device_id,
-            task,
-        );
-        let context = ControlContext::from_request(&request)
-            .ok_or_else(|| invalid("Conversation no longer permits personal control"))?;
-        self.validate_control_context(&context)?;
         self.authorize_control_target(&context, &link).await?;
         let gate = self.task_send_gate(&format!("connection-events:{task}"));
         let _guard = gate.lock().await;
-        let id = self.subscription_id(task, key);
+        let id = self.subscription_id(task, &key);
         let mut record =
             workbench_control::journal::transact(&self.event_subscription_path(), |state| {
                 state["operations"]
@@ -72,6 +56,48 @@ impl RuntimeWorkRpcHandler {
         }
         self.save_event_subscription(&id, &record)?;
         Ok(json!({"subscription":public_subscription(&record)}))
+    }
+
+    fn connection_subscription_ui_context(
+        &self,
+        input: &Value,
+    ) -> Result<(ControlContext, String), AppIpcError> {
+        let task = input["taskId"]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| invalid("Conversation is required"))?;
+        let key = input["subscriptionKey"]
+            .as_str()
+            .filter(|value| !value.is_empty() && value.len() <= 256)
+            .ok_or_else(|| invalid("Subscription is required"))?;
+        let link = self
+            .store
+            .get_task(task)
+            .filter(|link| link.status != "archived" && !self.archived_link_is_deleted(link))
+            .ok_or_else(|| invalid("Conversation not found"))?;
+        let mut request = runtime_event_request_from_link(&link);
+        crate::runtime_work::api_context::inject_current_session(
+            &mut request,
+            &self.device_id,
+            task,
+        );
+        let context = ControlContext::from_request(&request)
+            .ok_or_else(|| invalid("Conversation no longer permits personal control"))?;
+        self.validate_control_context(&context)?;
+        Ok((context, key.to_owned()))
+    }
+
+    pub(in crate::runtime_work::handler) async fn cancel_connection_subscription_from_ui(
+        &self,
+        input: Value,
+    ) -> Result<Value, AppIpcError> {
+        let (context, key) = self.connection_subscription_ui_context(&input)?;
+        self.control_connection_events(
+            &context,
+            "cancel_connection_event_subscription",
+            json!({"subscription_key":key}),
+        )
+        .await
     }
 
     pub(super) async fn submit_cloud_observation_refresh(

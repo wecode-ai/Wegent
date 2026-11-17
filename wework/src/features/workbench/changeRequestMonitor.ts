@@ -1,3 +1,4 @@
+import { supportsConnectionEvents } from '@/lib/device-capabilities'
 import { useEffect, useSyncExternalStore } from 'react'
 import {
   loadTaskChangeRequests,
@@ -120,6 +121,7 @@ export class ChangeRequestMonitor {
   private visibilityListener: (() => void) | null = null
   private connectionObservations: ChangeRequestObservation[] = []
   private deviceAliases = new Map<string, string>()
+  private eventProtocols = new Map<string, boolean>()
   private readonly uiObservers: ChangeRequestUiObserver
 
   constructor(api: DeviceCommandApi) {
@@ -173,15 +175,22 @@ export class ChangeRequestMonitor {
     )
     if (nativeDevices.length === 1)
       aliases.set(LOCAL_WORKBENCH_DEVICE_ALIAS, nativeDevices[0].device_id)
+    const protocols = new Map(
+      devices.map(device => [device.device_id, supportsConnectionEvents(device)])
+    )
+    const protocolChanged =
+      JSON.stringify([...protocols]) !== JSON.stringify([...this.eventProtocols])
     const next = structuredClone(changeRequestObservations(work))
     if (
       JSON.stringify(next) === JSON.stringify(this.connectionObservations) &&
-      JSON.stringify([...aliases]) === JSON.stringify([...this.deviceAliases])
+      JSON.stringify([...aliases]) === JSON.stringify([...this.deviceAliases]) &&
+      !protocolChanged
     )
       return
     const previous = this.connectionObservations
     this.connectionObservations = next
     this.deviceAliases = aliases
+    this.eventProtocols = protocols
     this.synchronizeUiObservers()
     const changed = new Set<string>()
     for (const { target } of this.targets.values()) {
@@ -211,13 +220,14 @@ export class ChangeRequestMonitor {
     }
     this.revision += 1
     this.listeners.forEach(listener => listener())
-    if (changed.size) void this.refresh({ changed })
+    if (changed.size || protocolChanged) void this.refresh({ changed })
   }
 
   private observationFor(
     target: TaskChangeRequestTarget,
     observations = this.connectionObservations
   ): ChangeRequestObservation | undefined {
+    if (!this.supportsEventProtocol(target.deviceId)) return undefined
     const url = target.changeRequestUrl ?? this.getSnapshot(target)?.changeRequest?.url
     const candidates = observations.filter(
       watch =>
@@ -399,14 +409,26 @@ export class ChangeRequestMonitor {
     }
   }
 
+  private supportsEventProtocol(deviceId: string): boolean {
+    return (
+      this.eventProtocols.get(deviceId) ??
+      this.eventProtocols.get(this.deviceAliases.get(deviceId) ?? deviceId) ??
+      false
+    )
+  }
+
   private synchronizeUiObservers(): void {
     const visible = typeof document === 'undefined' || document.visibilityState === 'visible'
     this.uiObservers.synchronize(
       visible
         ? [...this.targets.values()]
-            .filter(({ target }) => !this.observationFor(target))
+            .filter(
+              ({ target }) =>
+                this.supportsEventProtocol(target.deviceId) && !this.observationFor(target)
+            )
             .map(({ target }) => this.observerTarget(target))
-        : []
+        : [],
+      deviceId => this.supportsEventProtocol(deviceId)
     )
   }
 
@@ -414,8 +436,11 @@ export class ChangeRequestMonitor {
     targets: TaskChangeRequestTarget[],
     force: boolean
   ): Promise<TaskChangeRequestSnapshot[]> {
-    const observed = targets.filter(target => this.observerTarget(target).changeRequestUrl)
-    const unknown = targets.filter(target => !this.observerTarget(target).changeRequestUrl)
+    const observed = targets.filter(
+      target =>
+        this.supportsEventProtocol(target.deviceId) && this.observerTarget(target).changeRequestUrl
+    )
+    const unobserved = targets.filter(target => !observed.includes(target))
     const grouped = new Map<string, TaskChangeRequestTarget[]>()
     for (const target of observed) {
       const resolved = this.observerTarget(target)
@@ -433,7 +458,7 @@ export class ChangeRequestMonitor {
       )
       results.push(...batch.flat())
     }
-    return [...results, ...(await loadTaskChangeRequests(this.api, unknown))]
+    return [...results, ...(await loadTaskChangeRequests(this.api, unobserved))]
   }
 
   async refresh(options: { shareInflight?: boolean; changed?: Set<string> } = {}): Promise<void> {
@@ -451,7 +476,9 @@ export class ChangeRequestMonitor {
         projected = true
       }
       const watch = this.observationFor(target)
-      const knownResource = Boolean(this.observerTarget(target).changeRequestUrl)
+      const knownResource =
+        this.supportsEventProtocol(target.deviceId) &&
+        Boolean(this.observerTarget(target).changeRequestUrl)
       if ((watch || knownResource) && !this.getSnapshot(target)) {
         this.snapshots.set(targetKey(target), {
           target,
@@ -573,6 +600,7 @@ export class ChangeRequestMonitor {
           (typeof document === 'undefined' || document.visibilityState === 'visible') &&
           [...this.targets.values()].some(
             ({ target }) =>
+              this.supportsEventProtocol(target.deviceId) &&
               this.observerTarget(target).changeRequestUrl &&
               !this.observationFor(target) &&
               !this.uiObservers.has(this.observerTarget(target))

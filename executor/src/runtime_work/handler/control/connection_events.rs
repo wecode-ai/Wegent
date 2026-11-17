@@ -30,7 +30,7 @@ fn event_user_message_presentation(record: &Value) -> Value {
     json!({"content":format!("{} · {}",
         record["source"]["name"].as_str().unwrap_or_default(),
         record["continuation"].as_str().unwrap_or_default()),
-        "source":{"source":"connection_event","providerId":record["source"]["providerId"]}})
+        "source":{"source":"connection_event","providerId":record["source"]["providerId"],"sourceName":record["source"]["name"]}})
 }
 
 fn public_subscription(record: &Value) -> Value {

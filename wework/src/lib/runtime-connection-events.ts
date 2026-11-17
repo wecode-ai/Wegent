@@ -2,6 +2,7 @@ export interface ConnectionEventSubscription {
   subscription_key: string
   source: {
     name: string
+    configurationSummary?: string
     providerId?: string
     profile?: string
     kind?: string

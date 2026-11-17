@@ -59,13 +59,17 @@ export class ChangeRequestUiObserver {
     this.api = api
   }
 
-  synchronize(targets: TaskChangeRequestTarget[]): void {
+  synchronize(
+    targets: TaskChangeRequestTarget[],
+    canRelease: (deviceId: string) => boolean = () => true
+  ): void {
     this.desired = new Set(targets.filter(selection).map(resourceKey))
     for (const [key, activation] of this.activations) {
       if (this.desired.has(key)) continue
       this.activations.delete(key)
       const [deviceId] = JSON.parse(key) as [string, string]
-      void this.stop(deviceId, activation)
+      // An older Runtime cannot release a new lease; its existing TTL expires it.
+      if (canRelease(deviceId)) void this.stop(deviceId, activation)
     }
   }
 

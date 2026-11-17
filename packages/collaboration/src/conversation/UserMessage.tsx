@@ -177,10 +177,20 @@ export function UserMessage({
     return (
       <div
         data-testid="connection-event-message"
-        className="flex min-w-0 items-start gap-2 text-sm text-text-secondary"
+        className="flex w-full min-w-0 items-start gap-2 text-sm text-text-secondary"
       >
         <Bell aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
-        <span className="min-w-0 break-words">{message.content}</span>
+        <span
+          className="min-w-0 truncate"
+          title={
+            typeof message.source.sourceName === 'string' ? message.source.sourceName : undefined
+          }
+        >
+          {t('connection_event_received')}
+          {typeof message.source.sourceName === 'string' && message.source.sourceName
+            ? ` · ${message.source.sourceName}`
+            : ''}
+        </span>
       </div>
     )
   }

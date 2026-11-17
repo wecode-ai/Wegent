@@ -120,3 +120,69 @@ fn desktop_refresh_reuses_collection_and_queues_cloud_refresh_without_model_work
         server.abort(); let _=server.await;
     });
 }
+
+#[test]
+fn desktop_cancellation_is_exact_durable_and_does_not_resume_goals_or_models() {
+    let _guard = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+        let root = tempfile::tempdir().unwrap();
+        let _env = EnvGuard::home(root.path().to_str().unwrap());
+        let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+        seed(&handler, "task");
+        seed(&handler, "other");
+        handler.store.update_task("task", |link| {
+            link.goal_status = Some("blocked".into());
+            link.goal_execution_status = Some("waitingForEvent".into());
+        });
+        let ipc = crate::local::app_ipc::AppIpcServer::new().with_runtime_work_handler(handler.clone());
+        for status in ["preparing", "armed", "pending", "resuming_goal", "error", "needs_attention"] {
+            let record = json!({"task_id":"task","device_id":"control-test-device","subscription_key":status,
+                "status":status,"source":{"name":"PR"},"waiting_goal":{"objective":"Notify when ready"}});
+            let id = handler.subscription_id("task", status);
+            handler.save_event_subscription(&id, &record).unwrap();
+            let response = ipc.dispatch("device.execute_command", json!({"command_key":"connection_subscription_cancel","args":["task",status]})).await.unwrap();
+            assert_eq!(response["stdout"]["subscription"]["status"], "cancelled");
+            assert_eq!(response["stdout"]["subscription"]["subscription_key"], status);
+            assert!(handler.store.get_task("task").unwrap().runtime_handle["connectionEventSubscriptions"].as_array().unwrap().iter().all(|item| item["subscription_key"] != status));
+            assert!(ipc.dispatch("device.execute_command", json!({"command_key":"connection_subscription_cancel","args":["other",status]})).await.is_err());
+            assert!(ipc.dispatch("device.execute_command", json!({"command_key":"connection_subscription_cancel","args":["task",status]})).await.is_ok());
+        }
+        let link = handler.store.get_task("task").unwrap();
+        assert_eq!(link.goal_status.as_deref(), Some("blocked"));
+        assert_eq!(link.goal_execution_status.as_deref(), Some("waitingForEvent"));
+        assert!(handler.command_journal.lock().unwrap().is_empty());
+        let restarted = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+        workbench_control::journal::transact(&restarted.event_subscription_path(), |state| {
+            assert!(state["operations"].as_object().unwrap().values().all(|record| record["status"] == "cancelled"));
+            Ok(())
+        }).unwrap();
+    });
+}
+
+#[test]
+fn desktop_cancellation_rejects_delegated_task_origins() {
+    let _guard = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _env = EnvGuard::home(root.path().to_str().unwrap());
+            let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+            seed(&handler, "task");
+            handler.store.update_task("task", |link| {
+                link.runtime_handle["executionRequest"]["origin"] =
+                    json!({"dispatchRole":"executor"});
+            });
+            let failure = handler
+                .cancel_connection_subscription_from_ui(
+                    json!({"taskId":"task","subscriptionKey":"watch"}),
+                )
+                .await
+                .unwrap_err();
+            assert!(failure
+                .message
+                .contains("no longer permits personal control"));
+        });
+}

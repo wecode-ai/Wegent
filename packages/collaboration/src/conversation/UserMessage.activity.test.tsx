@@ -54,12 +54,12 @@ function render(children: ReactNode, language = 'zh-CN') {
 
 it('renders connection delivery as an attributed note without human message actions', () => {
   const note = {
-    ...message({ source: 'connection_event' }),
+    ...message({ source: 'connection_event', sourceName: '发布文档' }),
     content: '发布文档 · 继续检查更新',
   }
   render(<UserMessage message={note} services={{ images }} editable onStartEdit={vi.fn()} />)
   expect(container.querySelector('[data-testid="connection-event-message"]')?.textContent).toBe(
-    note.content
+    '已收到连接事件，继续处理 · 发布文档'
   )
   expect(container.querySelector('button')).toBeNull()
   expect(container.querySelector('[data-testid="message-hover-region"]')).toBeNull()
@@ -189,4 +189,33 @@ it('preserves the native history origin through transcript projection while hidi
   expect(container.querySelectorAll('[data-testid="message-hover-region"]')).toHaveLength(1)
   expect(container.querySelector('[data-testid="user-message-content"]')).toBeNull()
   expect(projected.content).toBe(nativeSnapshot.content)
+})
+
+it.each(['zh-CN', 'en'])(
+  'event receipts keep model instructions out of conversation content in %s',
+  language => {
+    render(
+      <UserMessage
+        message={message({
+          source: 'connection_event',
+          sourceName: 'Release PR',
+        })}
+        services={{ images }}
+      />,
+      language
+    )
+    expect(
+      container.querySelector('[data-testid="connection-event-message"]')?.textContent
+    ).toContain('Release PR')
+    expect(container.textContent).not.toContain(content)
+    expect(container.textContent).toContain(
+      language === 'zh-CN' ? '已收到连接事件' : 'Connection event received'
+    )
+  }
+)
+
+it('historical event receipts without source metadata do not expose continuation prompts', () => {
+  render(<UserMessage message={message({ source: 'connection_event' })} services={{ images }} />)
+  expect(container.textContent).toContain('已收到连接事件')
+  expect(container.textContent).not.toContain(content)
 })

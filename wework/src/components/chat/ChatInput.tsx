@@ -240,6 +240,10 @@ export interface ChatInputProps {
   goalContinuing?: boolean
   goalExecutionStatus?: RuntimeGoalExecutionStatus | null
   eventSubscriptions?: unknown
+  eventSubscriptionScope?: string
+  onCancelEventSubscription?: (key: string) => Promise<void>
+  eventCancellationUnavailable?: boolean
+  eventCancellationUnsupported?: boolean
   interactionStatus?: RuntimeTaskInteractionStatus | null
   taskPlan?: RuntimePlanEventPayload | null
   goalDraftActive?: boolean
@@ -376,6 +380,10 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     goalContinuing = false,
     goalExecutionStatus = null,
     eventSubscriptions,
+    eventSubscriptionScope,
+    onCancelEventSubscription,
+    eventCancellationUnavailable,
+    eventCancellationUnsupported,
     interactionStatus,
     taskPlan,
     goalDraftActive = false,
@@ -792,12 +800,13 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             alwaysShowComposerToolbar={alwaysShowComposerToolbar}
             contextHeader={
               (contextHeader ||
+                onCancelEventSubscription ||
                 connectionEventSubscriptions(eventSubscriptions).length > 0 ||
                 (displayedGoal && !goalDraftActive)) && (
                 <div
                   data-testid="composer-context-rail"
                   className={[
-                    'mb-1 min-w-0 items-center text-sm text-text-secondary [&>*]:min-w-0 [&>*]:max-w-full',
+                    'mb-1 min-w-0 items-center text-sm text-text-secondary empty:hidden [&>*]:min-w-0 [&>*]:max-w-full',
                     contextHeader && displayedGoal && !goalDraftActive
                       ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
                       : 'flex flex-wrap',
@@ -810,6 +819,10 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
                     continuing={goalContinuing}
                     executionStatus={goalExecutionStatus}
                     subscriptions={eventSubscriptions}
+                    eventSubscriptionScope={eventSubscriptionScope}
+                    onCancelEventSubscription={onCancelEventSubscription}
+                    eventCancellationUnavailable={eventCancellationUnavailable}
+                    eventCancellationUnsupported={eventCancellationUnsupported}
                     interactionStatus={interactionStatus}
                     onEditGoal={onEditGoal}
                     onPauseGoal={onPauseGoal}
@@ -868,6 +881,10 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
           continuing={goalContinuing}
           executionStatus={goalExecutionStatus}
           subscriptions={eventSubscriptions}
+          eventSubscriptionScope={eventSubscriptionScope}
+          onCancelEventSubscription={onCancelEventSubscription}
+          eventCancellationUnavailable={eventCancellationUnavailable}
+          eventCancellationUnsupported={eventCancellationUnsupported}
           interactionStatus={interactionStatus}
           onEditGoal={onEditGoal}
           onPauseGoal={onPauseGoal}

@@ -172,3 +172,28 @@ async def test_commands_reach_the_owned_runtime_socket_without_model_configurati
     )
     assert result["stdout"] == {"observer": {"id": "observer"}}
     shell.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_subscription_cancellation_uses_owned_runtime_without_shell(dispatch):
+    rpc, shell = dispatch
+    await execute("connection_subscription_cancel", ["task", "subscription"])
+    rpc.assert_awaited_once_with(
+        user_id=7,
+        device_id="owned-device",
+        method="runtime.connections.subscriptions.cancel",
+        payload={"taskId": "task", "subscriptionKey": "subscription"},
+        timeout_seconds=60,
+    )
+    shell.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "args", [[], ["task"], ["", "watch"], ["task", ""], ["a", "b", "c"]]
+)
+async def test_cancellation_rejects_incomplete_identity(dispatch, args):
+    with pytest.raises(command_service.DeviceCommandError):
+        await execute("connection_subscription_cancel", args)
+    dispatch[0].assert_not_awaited()
+    dispatch[1].assert_not_awaited()
