@@ -851,7 +851,7 @@ jobs:
 
       - name: Verify E2E infrastructure contracts
         if: matrix.shard == 1
-        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/lib/packaged-component-assets.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs wework/scripts/subagent-request.test.mjs wework/scripts/lib/git-hosting-cli-fixture.test.mjs executor/examples/hooks/turn-diff-logger/logger.test.mjs
+        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/lib/packaged-component-assets.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/macos-status-item.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs wework/scripts/subagent-request.test.mjs wework/scripts/lib/git-hosting-cli-fixture.test.mjs executor/examples/hooks/turn-diff-logger/logger.test.mjs
 
       - name: Verify startup theme evidence
         if: matrix.shard == 1

@@ -109,7 +109,10 @@ def issue_permissions(
         edit_content=is_developer,
         comment=is_developer,
         assign=is_developer,
-        execute=is_developer,
+        execute=is_developer
+        and not any(
+            source.get("kind") == "issue_invitation" for source in access.sources
+        ),
     )
 
 

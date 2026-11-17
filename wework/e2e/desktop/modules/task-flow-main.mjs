@@ -11,6 +11,7 @@ import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 import { nativeCloudAuthorizationFixture } from './native-cloud-authorization-client.mjs'
+import { readInspectorEndpoint } from './inspect-before-start.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -84,6 +85,7 @@ import { DesktopPerformanceJournal } from '../performance-journal.mjs'
 import { verifyErrorCollection } from './error-collection.mjs'
 import { verifyUiRefreshCollection } from './ui-refresh-collection.mjs'
 import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
+import { prepareNativeKeychainPreferences } from './native-keychain-preferences.mjs'
 import { desktopApplicationDataDirectory, resolveUpgradeUserHome } from './upgrade-user-home.mjs'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
@@ -1172,6 +1174,7 @@ async function main() {
     mkdir(codexSqliteHome, { recursive: true }),
     mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  await prepareNativeKeychainPreferences(homePath)
   // Desktop scenarios own their viewport instead of inheriting first-launch defaults.
   // The host clamps these bounds to each runner's available display, as before.
   // Exercise consent explicitly; the product default already marks it as asked.
@@ -1603,23 +1606,13 @@ async function main() {
       Object.assign(appEnvironment, cleanEnvironment)
     }
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
-    const initialCloudBackend = appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL?.replace(/\/$/, '')
-    if (initialCloudBackend) appEnvironment.WEWORK_BACKEND_URL = `${initialCloudBackend}/api`
-    if (initialCloudBackend) {
-      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
-      nativeCloudLogin = nativeCloudAuthorizationFixture(
-        {
-          backendUrl: appEnvironment.WEWORK_BACKEND_URL.replace(/\/api\/?$/, '').replace(/\/$/, ''),
-          authToken: cloudEnvironment.authToken,
-        },
-        electronUserDataDirectory,
-        appBinary
-      )
-      await nativeCloudLogin.authorize()
-    }
+
     await desktopScenario?.prepareUserDataLaunch?.()
+    const usesNativeCloudInspector =
+      cloudEnvironment && (!desktopScenario || desktopScenario.requiresNativeCloudAuthorization)
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
+        ...(usesNativeCloudInspector ? ['--inspect=127.0.0.1:0'] : []),
         ...(process.platform === 'win32'
           ? ['--enable-logging=file', `--log-file=${join(resultDir, 'electron.log')}`]
           : []),
@@ -1638,6 +1631,8 @@ async function main() {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       })
+      const nativeInspector = usesNativeCloudInspector ? readInspectorEndpoint(child) : null
+      nativeInspector?.catch(() => undefined)
       const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
       // Observe early failure now; the await below still propagates it after log setup.
       scenarioStartup?.catch(() => undefined)
@@ -1679,10 +1674,14 @@ async function main() {
       }
       try {
         await scenarioStartup
+        if (nativeInspector) {
+          control.nativeInspectorPort = Number(new URL(await nativeInspector).port)
+        }
       } catch (error) {
         await stopDesktopAppProcess(child)
         throw error
       }
+      control.applicationProcessId = child.pid
       return child
     }
     app = await startDesktopAppProcess()
@@ -1782,6 +1781,15 @@ async function main() {
       /^https?:/,
       'The Electron desktop controller did not connect from its local renderer origin'
     )
+    if (usesNativeCloudInspector) {
+      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
+      nativeCloudLogin = nativeCloudAuthorizationFixture(
+        cloudEnvironment,
+        electronUserDataDirectory,
+        control
+      )
+      await nativeCloudLogin.authorize()
+    }
     if (DESKTOP_SEGMENT === 'core-task-flow') {
       await verifyErrorCollection(control, DEFAULT_STEP_TIMEOUT_MS)
       await verifyUiRefreshCollection(control)
