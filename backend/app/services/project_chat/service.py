@@ -1000,6 +1000,10 @@ class ProjectChatService:
             required_role=BaseRole.Developer,
         )
         self._validate_agent_mentions(db, project, request)
+        if request.task_id and any(
+            mention.type == "agent" for mention in request.mentions
+        ):
+            self._require_task_execution(db, user_id, project, request.task_id)
         assistant_source_binding = self._verified_assistant_source(
             db, user_id=user_id, request=request, source=assistant_source
         )
@@ -1245,6 +1249,7 @@ class ProjectChatService:
             task_id=request.task_id,
             required_role=BaseRole.Developer,
         )
+        self._require_task_execution(db, user_id, project, request.task_id)
         configured_agent = self._agent_row(
             db,
             project_id=request.project_id,
@@ -1699,6 +1704,9 @@ class ProjectChatService:
             execution_id = int(raw_execution_id)
         except (TypeError, ValueError):
             return None
+        from app.services.loop_items.locking import lock_existing_issue
+
+        lock_existing_issue(db, activity.task_id)
         return (
             db.query(LoopItemExecution)
             .filter(LoopItemExecution.id == execution_id)
@@ -1765,7 +1773,7 @@ class ProjectChatService:
         """Return the open streaming AI message for one runtime task."""
 
         candidate = (
-            db.query(ProjectChatMessage.id)
+            db.query(ProjectChatMessage.id, ProjectChatMessage.task_id)
             .filter(
                 ProjectChatMessage.runtime_device_id.in_(
                     device_ids or [runtime_device_id]
@@ -1785,6 +1793,11 @@ class ProjectChatService:
         )
         if candidate is None:
             return None
+        if candidate.task_id:
+            # Replies take Issue then message locks; runtime updates use the same order.
+            from app.services.loop_items.locking import lock_existing_issue
+
+            lock_existing_issue(db, candidate.task_id)
         # Lock only an existing primary key. A missing Runtime-index lookup
         # otherwise gap-locks unrelated members' first activity inserts.
         return (
@@ -2221,13 +2234,14 @@ class ProjectChatService:
         if not row.task_id:
             return
 
-        task = (
-            db.query(LoopItem)
-            .filter(LoopItem.id == row.task_id)
-            .populate_existing()
-            .with_for_update()
-            .one_or_none()
-        )
+        with db.no_autoflush:
+            task = (
+                db.query(LoopItem)
+                .filter(LoopItem.id == row.task_id)
+                .populate_existing()
+                .with_for_update()
+                .one_or_none()
+            )
         if task is None or not loop_datetime_value_is_unset(task.deleted_at):
             logger.warning(
                 "[ProjectChat] Task AI state update skipped because task was not found: "
@@ -2517,13 +2531,14 @@ class ProjectChatService:
         user_id: int,
         request: ProjectChatAgentFailure,
     ) -> ProjectChatMessageView:
-        self._require_scope(
+        project = self._require_scope(
             db,
             user_id=user_id,
             project_id=request.project_id,
             task_id=request.task_id,
             required_role=BaseRole.Developer,
         )
+        self._require_task_execution(db, user_id, project, request.task_id)
         row = (
             db.query(ProjectChatMessage)
             .filter(
@@ -2570,6 +2585,22 @@ class ProjectChatService:
         db.refresh(row)
         return self.to_view(row, db=db)
 
+    @staticmethod
+    def _require_task_execution(
+        db: Session, user_id: int, project: LoopItem, task_id: str | None
+    ) -> None:
+        if task_id is None or project.task_provider in {"github", "gitlab"}:
+            return
+        from app.services.cloud_projects.access import IssueAction
+        from app.services.loop_items.service import loop_item_service
+
+        task = loop_item_service._get_item_row(db, task_id, for_update=True)
+        if str(task.cloud_project_id) != str(project.id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+        loop_item_service._require_item_access(
+            db, task, user_id, action=IssueAction.EXECUTE
+        )
+
     def _require_scope(
         self,
         db: Session,
@@ -2579,7 +2610,22 @@ class ProjectChatService:
         task_id: str | None,
         required_role: BaseRole,
     ) -> LoopItem:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        task = None
+        try:
+            access = require_cloud_project_role(
+                db, project_id, user_id, BaseRole.Viewer
+            )
+        except HTTPException as cause:
+            if cause.status_code != status.HTTP_404_NOT_FOUND or task_id is None:
+                raise
+            from app.services.loop_items.service import loop_item_service
+
+            task = loop_item_service._get_item_row(
+                db, task_id, for_update=required_role != BaseRole.Viewer
+            )
+            if str(task.cloud_project_id) != str(project_id):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+            access = loop_item_service._require_item_access(db, task, user_id)
         project = access.project
         if task_id is None:
             if not has_permission(access.role, required_role):
@@ -2600,20 +2646,21 @@ class ProjectChatService:
                     status.HTTP_403_FORBIDDEN, "Insufficient permission"
                 )
             return project
-        task = (
-            db.query(LoopItem)
-            .filter(
+        if task is None:
+            from app.services.loop_items.service import loop_item_service
+
+            query = db.query(LoopItem).filter(
                 LoopItem.id == task_id,
                 LoopItem.cloud_project_id == project_id,
                 LoopItem.resource_type == "task",
                 loop_datetime_is_unset(LoopItem.deleted_at),
             )
-            .first()
-        )
-        if task is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
-        if not can_view_item(db, access, task, user_id):
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+            if required_role != BaseRole.Viewer:
+                query = query.with_for_update()
+            task = query.first()
+            if task is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+            access = loop_item_service._require_item_access(db, task, user_id)
         if not has_permission(access.role, required_role):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         return project

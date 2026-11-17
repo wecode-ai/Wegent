@@ -145,7 +145,19 @@ pub(crate) async fn require_issue_read_for_user(
         .map_err(internal)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
     // `issue_assignment_service.list`.
-    let access = require_cloud_project_role(state, &project.id, user_id).await?;
+    let access = match require_cloud_project_role(state, &project.id, user_id).await {
+        Ok(access) => access,
+        Err(error) => {
+            if error.status() == StatusCode::NOT_FOUND
+                && super::issue_invitation::permits_read(&state.mysql, item_id, user_id)
+                    .await
+                    .map_err(internal)?
+            {
+                return Ok(());
+            }
+            return Err(error);
+        }
+    };
     // `_require_issue_project` re-reads the item through the session's identity
     // map, so it issues no statement.
     if is_external_provider(&access.project) {

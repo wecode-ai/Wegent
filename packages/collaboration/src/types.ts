@@ -182,6 +182,7 @@ export interface CollaborationIssue {
   updated_at: string;
   completed_at: string | null;
   archived_at?: string | null;
+  invited_only?: boolean;
   can_view_detail?: boolean;
   can_edit?: boolean;
   security_level?: "open" | "related";

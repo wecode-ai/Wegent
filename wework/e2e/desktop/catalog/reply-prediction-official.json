@@ -1,0 +1,17 @@
+{
+  "order": 84500,
+  "scenario": "./scenarios/reply-prediction-official.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 123500,
+      "shard": 6,
+      "position": 7500
+    }
+  },
+  "paths": [
+    "executor/src/agents/codex/reply_prediction.rs",
+    "executor/src/agents/codex/provider_routing.rs",
+    "executor/crates/model-proxy/src/local_model_proxy/mod.rs"
+  ]
+}

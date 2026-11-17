@@ -29,7 +29,6 @@ from app.schemas.base_role import BaseRole
 from app.services.cloud_project_visibility import project_participant_ids
 from app.services.cloud_projects.access import (
     IssueAction,
-    require_cloud_project_role,
     require_issue_action,
 )
 from app.services.loop_item_history_actor import automation_history_actor
@@ -91,8 +90,10 @@ class IssueAssignmentService:
         issue_id: str,
         user_id: int,
     ) -> list[AssignmentEvent]:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         item = self._require_issue_project(db, project_id, issue_id)
+        from app.services.loop_items.access import require_item_access
+
+        access = require_item_access(db, item, user_id)
         if access.project.task_provider in {"github", "gitlab"}:
             from app.services.loop_items.external_provider import (
                 external_loop_item_provider,
@@ -278,15 +279,17 @@ class IssueAssignmentService:
         assignment_id: str,
         user_id: int,
     ) -> AssignmentEvent:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        self._lock_issue(db, issue_id)
         item = self._require_issue_project(db, project_id, issue_id)
+        from app.services.loop_items.service import loop_item_service
+
+        access = loop_item_service._require_item_access(db, item, user_id)
         require_issue_action(
             access,
             action=IssueAction.ASSIGN,
             issue_creator_user_id=item.created_by_user_id,
             user_id=user_id,
         )
-        self._lock_issue(db, issue_id)
         assignment = next(
             (
                 event
@@ -375,7 +378,11 @@ class IssueAssignmentService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Human member id must be numeric",
                 ) from exc
-            if user_id not in project_participant_ids(
+            if project.task_provider == "local":
+                from app.services.loop_items.access import require_active_issue_user
+
+                require_active_issue_user(db, user_id)
+            elif user_id not in project_participant_ids(
                 db, project, required_role=BaseRole.Developer
             ):
                 raise HTTPException(
@@ -456,7 +463,9 @@ class IssueAssignmentService:
         project = db.get(CloudProject, item.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
-        require_cloud_project_role(db, int(project.id), user_id, BaseRole.Viewer)
+        from app.services.loop_items.service import loop_item_service
+
+        loop_item_service._require_item_access(db, item, user_id)
         return project, item
 
     def project_legacy_assignment(self, db: Session, *, item: LoopItem) -> None:

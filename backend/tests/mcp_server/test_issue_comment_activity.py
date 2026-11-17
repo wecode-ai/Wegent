@@ -129,6 +129,7 @@ def test_native_comment_http_uses_activity_and_checks_project_scope(
     )
 
 
+@pytest.mark.parametrize("invited", [False, True])
 def test_native_publication_derives_ai_generation_from_the_owned_runtime_binding(
     test_client: TestClient,
     test_db: Session,
@@ -136,13 +137,27 @@ def test_native_publication_derives_ai_generation_from_the_owned_runtime_binding
     test_token: str,
     issue_context: tuple[CloudProject, LoopItem],
     monkeypatch: pytest.MonkeyPatch,
+    invited: bool,
 ) -> None:
     project, item = issue_context
+    publisher = test_user
+    if invited:
+        from app.services.loop_items.service import loop_item_service
+
+        publisher = User(
+            user_name=f"invited-publisher-{uuid4().hex}",
+            password_hash="unused",
+            is_active=True,
+        )
+        test_db.add(publisher)
+        test_db.commit()
+        loop_item_service.add_collaborator(test_db, item.id, publisher.id, test_user.id)
+        test_token = create_access_token(data={"sub": publisher.user_name})
     device = Kind(
         kind="Device",
         name=f"assistant-publication-{uuid4().hex}",
         namespace="default",
-        user_id=test_user.id,
+        user_id=publisher.id,
         is_active=True,
         json={"spec": {"deviceType": "local"}},
     )
@@ -152,10 +167,10 @@ def test_native_publication_derives_ai_generation_from_the_owned_runtime_binding
         LoopItemTaskBinding(
             cloud_project_id=project.id,
             loop_item_id=item.id,
-            task_user_id=test_user.id,
+            task_user_id=publisher.id,
             device_id=device.name,
             task_id="private-assistant-task",
-            linked_by_user_id=test_user.id,
+            linked_by_user_id=publisher.id,
         )
     )
     test_db.commit()

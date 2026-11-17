@@ -516,6 +516,7 @@ async fn initializes_nullable_and_sentinel_indexes_without_changing_assignment_e
             let stored = crate::json_contract_tests::serialized(stored).unwrap();
             assert_eq!(stored["items"].as_array().unwrap().iter().find(|row| row["id"] == "12").unwrap()["dispatch_receipt"], receipt);
             assert_automation_maintains_index(&test_mysql).await;
+            assert_explicit_issue_invitation_scope(&test_mysql).await;
             test_mysql
                 .execute("DROP TABLE loop_items", ())
                 .await
@@ -530,4 +531,116 @@ async fn initializes_nullable_and_sentinel_indexes_without_changing_assignment_e
         .unwrap();
     admin.close().await;
     result.unwrap();
+}
+
+async fn assert_explicit_issue_invitation_scope(mysql: &MysqlService) {
+    use super::super::issue_invitation::permits_read;
+    mysql
+        .execute(
+            "CREATE TABLE users (id INT PRIMARY KEY, is_active BOOLEAN NOT NULL)",
+            (),
+        )
+        .await
+        .unwrap();
+    mysql
+        .execute("INSERT INTO users VALUES (700,1),(701,1)", ())
+        .await
+        .unwrap();
+    mysql
+        .execute(
+            "CREATE TABLE kinds (id BIGINT PRIMARY KEY, kind VARCHAR(64), is_active BOOLEAN)",
+            (),
+        )
+        .await
+        .unwrap();
+    mysql.execute("CREATE TABLE resource_members (resource_id BIGINT, resource_type VARCHAR(64), entity_id VARCHAR(64), entity_type VARCHAR(64), status VARCHAR(64))", ()).await.unwrap();
+    mysql
+        .execute(
+            "INSERT INTO kinds VALUES (42,'CollaborationWorkspace',1)",
+            (),
+        )
+        .await
+        .unwrap();
+    mysql.execute("INSERT INTO resource_members VALUES (900123,'CloudProject','42','workspace','approved')", ()).await.unwrap();
+    mysql.execute("INSERT INTO loop_items (id,resource_type,title,description,content_type,size_bytes,local_project_id,metadata,source_task_snapshot,deleted_at,created_at,updated_at) VALUES ('900123','project','','','',0,0,JSON_OBJECT(),JSON_OBJECT(),'1970-01-01 00:00:01',NOW(),NOW())", ()).await.unwrap();
+    mysql.execute("UPDATE loop_items SET cloud_project_id='900123', assignee_user_id=700 WHERE id='issue-1'",()).await.unwrap();
+    mysql
+        .execute(
+            "UPDATE loop_items SET status='active' WHERE id='900123'",
+            (),
+        )
+        .await
+        .unwrap();
+    assert!(permits_read(mysql, "issue-1", 700).await.unwrap());
+    assert!(!permits_read(mysql, "issue-1", 701).await.unwrap());
+    assert!(!permits_read(mysql, "empty-issue", 700).await.unwrap());
+    mysql
+        .execute(
+            "UPDATE loop_items SET assignee_user_id=NULL WHERE id='issue-1'",
+            (),
+        )
+        .await
+        .unwrap();
+    assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
+    mysql.execute("INSERT INTO loop_items (id,resource_type,loop_item_id,user_id,title,description,content_type,size_bytes,local_project_id,metadata,source_task_snapshot,deleted_at,created_at,updated_at) VALUES ('invite-row','collaborator','issue-1',700,'','','',0,0,JSON_OBJECT(),JSON_OBJECT(),'1970-01-01 00:00:01',NOW(),NOW())",()).await.unwrap();
+    assert!(permits_read(mysql, "issue-1", 700).await.unwrap());
+    mysql
+        .execute("UPDATE users SET is_active=0 WHERE id=700", ())
+        .await
+        .unwrap();
+    assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
+    mysql
+        .execute("UPDATE users SET is_active=1 WHERE id=700", ())
+        .await
+        .unwrap();
+    mysql.execute("UPDATE loop_items SET metadata=JSON_OBJECT('task_provider','github') WHERE id='900123'",()).await.unwrap();
+    assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
+    mysql
+        .execute(
+            "UPDATE loop_items SET metadata=JSON_OBJECT() WHERE id='900123'",
+            (),
+        )
+        .await
+        .unwrap();
+    mysql
+        .execute("DELETE FROM loop_items WHERE id='invite-row'", ())
+        .await
+        .unwrap();
+    assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
+    mysql
+        .execute(
+            "UPDATE loop_items SET assignee_user_id=700 WHERE id='issue-1'",
+            (),
+        )
+        .await
+        .unwrap();
+    for (disable, restore) in [
+        (
+            "UPDATE loop_items SET status='archived' WHERE id='900123'",
+            "UPDATE loop_items SET status='active' WHERE id='900123'",
+        ),
+        (
+            "UPDATE kinds SET is_active=0 WHERE id=42",
+            "UPDATE kinds SET is_active=1 WHERE id=42",
+        ),
+        (
+            "DELETE FROM resource_members",
+            "INSERT INTO resource_members VALUES (900123,'CloudProject','42','workspace','approved')",
+        ),
+        (
+            "INSERT INTO resource_members VALUES (900123,'CloudProject','43','workspace','approved')",
+            "DELETE FROM resource_members WHERE entity_id='43'",
+        ),
+    ] {
+        mysql.execute(disable, ()).await.unwrap();
+        assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
+        mysql.execute(restore, ()).await.unwrap();
+        assert!(permits_read(mysql, "issue-1", 700).await.unwrap());
+    }
+    mysql
+        .execute("DROP TABLE resource_members", ())
+        .await
+        .unwrap();
+    mysql.execute("DROP TABLE kinds", ()).await.unwrap();
+    mysql.execute("DROP TABLE users", ()).await.unwrap();
 }

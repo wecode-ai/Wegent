@@ -554,11 +554,8 @@ async def update_loop_item(
     existing = loop_item_service.get(db, item_id, current_user.id)
     previous_status = existing.status
     previous_tags = set(existing.tags)
-    project = cloud_project_service.get(
-        db,
-        int(existing.cloud_project_id),
-        current_user.id,
-    )
+    access = loop_item_service._require_item_access(db, existing, current_user.id)
+    project = access.project
     selected_status_automation_id: str | None = None
     selected_tag_automation_id: str | None = None
     requested_status = (
@@ -741,7 +738,9 @@ async def update_loop_item(
         reason="user_update",
         actor_user_id=current_user.id,
     )
-    return _loop_item_response(db, item, current_user)
+    return LoopItemResponse.model_validate(
+        loop_item_service.response_values(db, item, current_user.id, access=access)
+    )
 
 
 @router.delete("/loop-items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -899,12 +898,7 @@ async def create_issue_assignment(
         issue_id=item_id,
         user_id=current_user.id,
     )
-    access = require_cloud_project_role(
-        db,
-        int(project.id),
-        current_user.id,
-        BaseRole.Viewer,
-    )
+    access = loop_item_service._require_item_access(db, item, current_user.id)
     require_issue_action(
         access,
         action=IssueAction.ASSIGN,
@@ -1007,7 +1001,9 @@ async def create_issue_assignment(
         except Exception:
             db.rollback()
             raise
-        issue_values = loop_item_service.response_values(db, item, current_user.id)
+        issue_values = loop_item_service.response_values(
+            db, item, current_user.id, access=access
+        )
         publish_loop_item_changed(
             db,
             item=item,
