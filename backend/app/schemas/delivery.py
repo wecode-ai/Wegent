@@ -522,6 +522,13 @@ class LoopItemTaskBind(BaseModel):
     human_assistant_dispatch_id: str | None = Field(
         default=None, alias="humanAssistantDispatchId", min_length=1, max_length=64
     )
+    assistant_request_id: str | None = Field(
+        default=None,
+        alias="assistantRequestId",
+        min_length=32,
+        max_length=32,
+        pattern=r"^[a-f0-9]{32}$",
+    )
     issue_assignment_id: str | None = Field(
         default=None,
         alias="issueAssignmentId",

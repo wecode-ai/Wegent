@@ -265,6 +265,26 @@ pub(crate) async fn require_current_on(
     issue: &store::Node,
     row: &Execution,
 ) -> anyhow::Result<()> {
+    if row.context()["assistant_request_id"].is_string() {
+        crate::async_assistant_requests::require_current_on(query, issue, row).await?;
+        let route = if row.runtime_device_id.is_empty() {
+            &row.execution_device_id
+        } else {
+            &row.runtime_device_id
+        };
+        anyhow::ensure!(
+            endpoint_permitted_on(
+                query,
+                row.executor_owner_user_id,
+                route,
+                &issue.cloud_project_id,
+                &issue.metadata.0["tags"]
+            )
+            .await?,
+            "Default assistant authorization revoked"
+        );
+        return Ok(());
+    }
     let owner = row.executor_owner_user_id;
     anyhow::ensure!(
         owner > 0
@@ -418,6 +438,18 @@ fn dependency_error(error: anyhow::Error) -> brz_mysql::MysqlError {
 struct EndpointResolution {
     endpoint: Option<(DeviceKindRow, schema::Role)>,
     reason: &'static str,
+}
+
+/// Reuse the exact personal consent resolution for explicit child requests.
+pub(crate) async fn request_endpoint_on(
+    tx: &mut impl MysqlTransaction,
+    issue: &store::Node,
+    owner: i64,
+) -> MysqlResult<Option<String>> {
+    Ok(endpoint_on(tx, issue, owner)
+        .await?
+        .endpoint
+        .map(|(device, _)| device.name))
 }
 
 async fn endpoint_on(

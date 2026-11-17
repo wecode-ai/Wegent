@@ -59,6 +59,32 @@ fn binding_key(metadata: &SubmittedInterfaceIdentity) -> String {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn rebind_submitted_interface_command(
+        &self,
+        payload: &mut Value,
+        source_command: &Value,
+    ) -> Result<(), AppIpcError> {
+        let Some(mut metadata) = payload["executionRequest"].get(BINDING_KEY).cloned() else {
+            return Ok(());
+        };
+        if metadata["commandId"] != *source_command {
+            return Err(binding_error("Submitted interface source command changed"));
+        }
+        let task = runtime_task_id(payload).unwrap_or_default();
+        let mut original = execution_request(payload)
+            .ok_or_else(|| binding_error("Missing submitted interface execution"))?;
+        // Resolve the exact original command's in-memory binding before creating
+        // an alias for the server-admitted command in this same task.
+        original
+            .extra
+            .insert("runtime_command_id".into(), metadata["commandId"].clone());
+        self.resolve_submitted_interface(&mut original, &task)?;
+        metadata["commandId"] = payload["commandId"].clone();
+        metadata["modelConfig"] = original.model_config.clone();
+        payload["executionRequest"]["model_config"] = original.model_config;
+        self.bind_submitted_interface("runtime.tasks.send", payload, Some(&metadata))
+    }
+
     pub(super) fn forget_submitted_interfaces(&self, task_id: &str) {
         self.submitted_model_bindings
             .lock()
@@ -204,6 +230,43 @@ mod tests {
             .bind_submitted_interface("runtime.tasks.create", &mut payload, Some(&binding))
             .unwrap();
         serde_json::from_value(payload["executionRequest"].clone()).unwrap()
+    }
+
+    #[test]
+    fn durable_assistant_command_preserves_only_its_original_submitted_interface() {
+        let handler = RuntimeWorkRpcHandler::new("target", "unused");
+        let request = bind(&handler);
+        let mut payload = json!({"taskId":"remote-task","commandId":"server-command",
+            "executionRequest":request});
+        redact_execution_profile_secrets(&mut payload);
+        assert!(!payload.to_string().contains("task-secret"));
+        handler
+            .rebind_submitted_interface_command(&mut payload, &json!("command-1"))
+            .unwrap();
+        let mut restored = execution_request(&payload).unwrap();
+        restored
+            .extra
+            .insert("runtime_command_id".into(), json!("server-command"));
+        assert!(handler
+            .resolve_submitted_interface(&mut restored, "remote-task")
+            .unwrap());
+        assert_eq!(restored.model_config["api_key"], "task-secret");
+        assert_eq!(restored.extra[BINDING_KEY]["commandId"], "server-command");
+        let restarted = RuntimeWorkRpcHandler::new("target", "unused");
+        assert_eq!(
+            restarted
+                .rebind_submitted_interface_command(&mut payload, &json!("server-command"))
+                .unwrap_err()
+                .code,
+            "RUNNER_MODEL_UNAVAILABLE"
+        );
+        assert_eq!(
+            handler
+                .rebind_submitted_interface_command(&mut payload, &json!("other-command"))
+                .unwrap_err()
+                .code,
+            "RUNNER_MODEL_BINDING_INVALID"
+        );
     }
 
     #[test]

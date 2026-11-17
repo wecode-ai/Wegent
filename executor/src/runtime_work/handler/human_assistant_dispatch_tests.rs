@@ -5,6 +5,9 @@ use std::sync::atomic::AtomicUsize;
 #[path = "human_assistant_owner_tests.rs"]
 mod owner_tests;
 
+#[path = "assistant_request_tests.rs"]
+mod assistant_request_tests;
+
 struct Fixture {
     _root: tempfile::TempDir,
     handler: RuntimeWorkRpcHandler,
@@ -15,6 +18,8 @@ struct Fixture {
     requests: Arc<Mutex<Vec<Value>>>,
     failures: Arc<Mutex<Vec<Value>>>,
     assignments: Arc<AtomicUsize>,
+    assistant_requests: Arc<Mutex<Value>>,
+    assistant_events: Arc<Mutex<Vec<Value>>>,
 }
 
 impl Drop for Fixture {
@@ -36,6 +41,12 @@ async fn fixture() -> Fixture {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let failures = Arc::new(Mutex::new(Vec::new()));
     let assignments = Arc::new(AtomicUsize::new(0));
+    let assistant_requests = Arc::new(Mutex::new(json!({"enabled":true,"requests":[]})));
+    let assistant_events = Arc::new(Mutex::new(Vec::new()));
+    let assistant_list = assistant_requests.clone();
+    let assistant_submit = assistant_requests.clone();
+    let assistant_update = assistant_requests.clone();
+    let assistant_event_log = assistant_events.clone();
     let current = issue.clone();
     let listed = items.clone();
     let linked = bindings.clone();
@@ -63,11 +74,50 @@ async fn fixture() -> Fixture {
             let rows = linked.lock().unwrap().clone();
             async move { Json(rows) }
         }).post(move |Json(body): Json<Value>| {
+            if body["assistantRequestId"].is_string() {
+                let execution = body["executionContext"]["origin"]["executionId"].clone();
+                let row = json!({"task_id":body["taskId"],"device_id":body["deviceId"],"task_user_id":7,
+                    "human_assignment_id":body["humanAssignmentId"],"stand_in_pending":body["standInPending"],
+                    "stand_in_conversation_id":body["standInConversationId"],"execution_id":execution});
+                let mut rows = linked_write.lock().unwrap();
+                let rows = rows.as_array_mut().unwrap();
+                rows.retain(|row| row["task_id"] != body["taskId"]);
+                rows.push(row);
+                accepted.lock().unwrap().push(body);
+                return std::future::ready(Json(json!({"id":"child-binding","execution_id":execution})));
+            }
             admitted_issue.lock().unwrap()["direct_human_assignment_receipt"]["state"] = json!("running");
             admitted_issue.lock().unwrap()["direct_human_assignment_receipt"]["runtimeTaskId"] = body["taskId"].clone();
             *linked_write.lock().unwrap() = json!([{"task_id":body["taskId"],"device_id":body["deviceId"],"task_user_id":7,"human_assignment_id":body["humanAssignmentId"],"stand_in_pending":body["standInPending"],"stand_in_conversation_id":body["standInConversationId"],"execution_id":"42"}]);
             accepted.lock().unwrap().push(body);
-            async { Json(json!({"id":"binding","execution_id":"42"})) }
+            std::future::ready(Json(json!({"id":"binding","execution_id":"42"})))
+        }))
+        .route("/api/v1/cloud-projects/project/loop-items/issue/assistant-requests", get(move || {
+            let page = assistant_list.lock().unwrap().clone();
+            async move { Json(page) }
+        }).post(move |Json(body): Json<Value>| {
+            let mut page = assistant_submit.lock().unwrap();
+            let request = page["requests"].as_array_mut().unwrap().iter_mut()
+                .find(|request| request["requestId"] == body["requestId"]).unwrap();
+            let execution = request["executionId"].clone();
+            let commands = request["commands"].as_array_mut().unwrap();
+            if !commands.iter().any(|command| command["clientUserMessageId"] == body["clientUserMessageId"]) {
+                commands.push(json!({"id":format!("native-{}",body["idempotencyKey"].as_str().unwrap()),
+                    "action":"followup","message":body["message"],"acknowledged":false,
+                    "executionId":execution,
+                    "clientUserMessageId":body["clientUserMessageId"]}));
+            }
+            std::future::ready(Json(request.clone()))
+        }))
+        .route("/api/v1/cloud-projects/project/loop-items/issue/assistant-requests/{request_id}/events", axum::routing::post(move |axum::extract::Path(request_id): axum::extract::Path<String>, Json(body): Json<Value>| {
+            assistant_event_log.lock().unwrap().push(body.clone());
+            let mut page = assistant_update.lock().unwrap();
+            let request = page["requests"].as_array_mut().unwrap().iter_mut()
+                .find(|request| request["requestId"] == request_id).unwrap();
+            for command in request["commands"].as_array_mut().into_iter().flatten() {
+                if command["id"] == body["commandId"] { command["acknowledged"] = json!(true); }
+            }
+            std::future::ready(Json(request.clone()))
         }))
         .route("/api/v1/loop-items/issue/assignments/assignment/receipt", axum::routing::post(|| async { Json(json!({})) }))
         .route("/api/v1/cloud-projects/project/executions/42/dispatch-failed", axum::routing::post(move |Json(body): Json<Value>| {
@@ -83,6 +133,7 @@ async fn fixture() -> Fixture {
     handler.turn_queue_path = Arc::new(root.path().join("turn-queue.json"));
     handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
     handler.worktrees = WorktreeManager::new(root.path().join("worktrees.json"));
+    handler.command_journal = Arc::new(Mutex::new(Default::default()));
     handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
         backend_url: url,
         auth_token: "test".into(),
@@ -103,6 +154,8 @@ async fn fixture() -> Fixture {
         requests,
         failures,
         assignments,
+        assistant_requests,
+        assistant_events,
     }
 }
 

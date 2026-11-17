@@ -446,7 +446,9 @@ export interface SharedWorkspaceAutomationExecutionCatalogApi {
 export interface WorkspaceProjectAgent extends CollaborationAgent {
   status?: string;
   systemPrompt?: string;
-  executionPolicy?: import("../agent-form/runnerRouting").AgentExecutionPolicy | null;
+  executionPolicy?:
+    | import("../agent-form/runnerRouting").AgentExecutionPolicy
+    | null;
   modelPolicy?: import("../agent-form/runnerRouting").AgentModelPolicy | null;
   [key: string]: unknown;
 }
@@ -1015,6 +1017,7 @@ export interface WorkspaceStandInSettings {
 }
 
 export interface SharedWorkspaceApi {
+  assistantRequests?: import("../assistant-requests/types").AssistantRequestsApi;
   milestones?: import("../milestones/types").MilestonesApi;
   standIn?: {
     run?(

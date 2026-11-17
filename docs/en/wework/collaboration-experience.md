@@ -49,6 +49,20 @@ To share a conclusion, select **Review suggested conclusion** above the current 
 
 The result appears in the original task timeline and remains readable in the existing Collaboration page. Private history, unsent input and attachments stay private. Publication rechecks current permissions and archive state. Permission changes, archiving or publication failures retain the preview and conclusion draft for a manual retry after recovery. Success returns to discussion; if the comment was accepted but the timeline refresh fails, the preview retains the error and the accepted body is not sent again. Returning to discussion or switching tasks cancels an outstanding publication permission check. Closing the pane never publishes its draft to another task.
 
+<a id="assistant-requests"></a>
+
+## Independent assistant requests
+
+Open **Collaboration exp → Tasks → a cloud task assigned to you**. When the server enables this capability, its timeline shows **Your assistant requests → New request**. Enter the goal and send it. The server publishes a receipt before scheduling an independent execution; acceptance does not mean the work is complete. The request list shows its queue position, execution status and available execution entry.
+
+Select **Continue** to supplement the same request, including after completion. **Replace request** cancels the original request and submits a new goal. **Cancel request** preserves existing branches and evidence while other parallel requests continue. Failed or cancelled requests offer **Retry**. Failed sends retain your input; resending the same action reuses its idempotency key to avoid duplicate acceptance. Your own receipt offers **Open execution**, which resolves the session through your private request record.
+
+After execution, expand **Worktree and merge evidence** to inspect the retained branch, target revision, candidate revision and conflicting files. When a candidate is ready, review its revisions and select **Confirm merge**. Execution follows the current signed-in owner's approval. A failed publication shows the current target revision and any unfinished checkout changes; address the cause, select **Recheck merge**, then review the refreshed candidate before confirming again. Rechecking does not start a model or create another request. Conflicts retain evidence for owner review and do not offer an enabled confirmation button.
+
+Only the current owner can see this list. Private request bodies and execution details are not copied to the shared timeline. Ordinary private discussion does not automatically create an independent request. Turning off independent requests retains existing history, continuation, cancellation, retry and merge confirmation controls while hiding new and replacement controls. Local projects do not show this entry.
+
+In deployment configuration, the server environment variable `ASYNC_ASSISTANT_REQUESTS_ENABLED` controls `collab.asyncAssistantRequests.v1` and defaults to off. Disabling it does not remove accepted conversations, worktrees or merge evidence.
+
 ## Notifications, deep links and retry
 
 When the preview is enabled and its tab is already open, project task notifications and `wework://boards/...` links reuse that tab, update the target project and task, and retain list filters. With the preview disabled or no experiment tab open, they continue to the existing Collaboration page. The original Collaboration entry always opens the original page.

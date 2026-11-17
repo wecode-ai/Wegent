@@ -4,6 +4,7 @@ import test from 'node:test'
 import { gzipSync, zstdCompressSync } from 'node:zlib'
 import { runInNewContext } from 'node:vm'
 import { createMcpElicitationModel } from '../e2e/desktop/modules/mcp-elicitation-model.mjs'
+import { createAsyncRequestModel } from '../e2e/desktop/modules/async-request-model.mjs'
 import { readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
 import {
   MCP_ELICITATION_ACCEPTED_MARKER,
@@ -14,6 +15,65 @@ import {
 } from '../e2e/desktop/modules/shared.mjs'
 import { createDesktopScenario } from '../e2e/desktop/scenarios/stand-in-list-confirmation.scenario.mjs'
 import { createDesktopScenario as createActionScenario } from '../e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs'
+
+test('async request model waits for the native write result before holding execution', async () => {
+  const observed = []
+  const model = createAsyncRequestModel('ASYNC_ORACLE', 'proof.txt', letter =>
+    observed.push(letter)
+  )
+  const input = [{ role: 'user', content: model.message('A') }]
+  const invoke = async (input, response) => {
+    const request = Readable.from([
+      Buffer.from(
+        JSON.stringify({
+          input,
+          tools: [
+            {
+              type: 'function',
+              name: 'functions__exec',
+              parameters: { type: 'object', properties: { input: { type: 'string' } } },
+            },
+          ],
+        })
+      ),
+    ])
+    request.headers = {}
+    request.method = 'POST'
+    assert.equal(
+      await model.handleHttp(request, response, new URL('http://model.test/responses')),
+      true
+    )
+  }
+  let output
+  const response = {
+    writeHead() {},
+    end(value) {
+      output = value
+    },
+    destroy() {},
+  }
+  await invoke(input, response)
+  assert.deepEqual(observed, ['A'], 'The receipt oracle runs before selecting the native write')
+  assert.deepEqual(model.state.patched, ['A'])
+  assert.match(output, /apply_patch/)
+  output = undefined
+  await invoke(
+    [
+      ...input,
+      {
+        type: 'function_call_output',
+        call_id: 'ASYNC_ORACLE-write-A',
+        output: 'Success. Updated proof.txt',
+      },
+    ],
+    response
+  )
+  assert.equal(output, undefined, 'Only the model continuation is held, after the real tool result')
+  assert.deepEqual(model.state.waiting, ['A'])
+  model.release('A')
+  assert.match(output, /finished A/)
+  model.cleanup()
+})
 
 for (const [encoding, compress] of [
   ['identity', value => value],

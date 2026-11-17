@@ -4,23 +4,20 @@
 
 import type { ProjectChatMessage } from '@wegent/chat-core'
 import type { CollaborationTranslate } from '../i18n'
+import { assistantMessageProvenance } from './assistantMessageProvenance'
 
 export function HumanAssistantResultProvenance({
   message,
   translate: t,
   onOpenExecution,
 }: {
-  message: ProjectChatMessage
+  message: Pick<ProjectChatMessage, 'messageId' | 'metadata' | 'sender'>
   translate: CollaborationTranslate
   onOpenExecution?: () => void
 }) {
-  const provenance = message.metadata.provenance as Record<string, unknown> | undefined
-  if (
-    message.metadata.activity_type !== 'human_assistant_result' ||
-    provenance?.origin !== 'ai_generated'
-  )
-    return null
-  const publisherId = provenance.publisher_user_id
+  const provenance = assistantMessageProvenance(message.metadata)
+  if (!provenance) return null
+  const publisherId = provenance.publisherUserId
   const publisher =
     String(publisherId) === String(message.sender.id)
       ? message.sender.name
@@ -36,12 +33,14 @@ export function HumanAssistantResultProvenance({
       data-testid={`human-assistant-provenance-${message.messageId}`}
     >
       <span>{t('human_assistant.ai_generated')}</span>
-      <span>{t('human_assistant.publisher', undefined, { name: publisher })}</span>
+      <span>
+        {t('human_assistant.publisher', undefined, { name: publisher })}
+      </span>
       <span>
         {t(
-          provenance.confirmation_status === 'confirmed'
+          provenance.confirmed
             ? 'human_assistant.confirmed'
-            : 'human_assistant.unconfirmed'
+            : 'human_assistant.unconfirmed',
         )}
       </span>
       {executionLabel ? (

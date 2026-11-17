@@ -893,6 +893,7 @@ export function createWeworkSharedWorkspaceApi<
 
   return {
     ...delivery,
+    assistantRequests: sharedHttpApi.assistantRequests,
     workspaces: sharedHttpApi.workspaces,
     resources: sharedHttpApi.resources,
     gitRepositories: sharedHttpApi.gitRepositories,

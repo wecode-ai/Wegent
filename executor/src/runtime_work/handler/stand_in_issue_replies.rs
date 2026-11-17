@@ -42,7 +42,9 @@ impl RuntimeWorkRpcHandler {
         request: &ExecutionRequest,
     ) -> Result<(), String> {
         let Some(origin) = request.extra.get("origin").filter(|origin| {
-            origin["publicConversation"] == true || origin["humanAssistantDispatchId"].is_string()
+            origin["publicConversation"] == true
+                || origin["humanAssistantDispatchId"].is_string()
+                || origin["assistantRequestId"].is_string()
         }) else {
             return Ok(());
         };
@@ -54,7 +56,9 @@ impl RuntimeWorkRpcHandler {
             .ok_or("Missing Issue conversation owner")?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(|error| error.to_string())?;
-        let settings = if origin["humanAssistantDispatchId"].is_string() {
+        let settings = if origin["humanAssistantDispatchId"].is_string()
+            || origin["assistantRequestId"].is_string()
+        {
             store
                 .declared_personal_stand_ins(&self.device_id)
                 .map_err(|error| error.to_string())?
@@ -106,8 +110,13 @@ impl RuntimeWorkRpcHandler {
                 .await
                 .map_err(|error| error.message)?;
         }
-        if origin["humanAssistantDispatchId"].is_string() {
+        if origin["humanAssistantDispatchId"].is_string()
+            || origin["assistantRequestId"].is_string()
+        {
             self.validate_human_assistant_grant(&settings, origin, &issue)?;
+            if origin["assistantRequestId"].is_string() {
+                return self.validate_current_assistant_request(origin).await;
+            }
             let dispatch = &issue["direct_human_assignment_receipt"];
             if dispatch["dispatchId"] != origin["humanAssistantDispatchId"]
                 || dispatch["executionId"] != origin["executionId"]
@@ -133,6 +142,7 @@ impl RuntimeWorkRpcHandler {
             link.runtime_handle["origin"]["type"] == "issue_dispatch"
                 && link.runtime_handle["origin"]["initiatedBy"] == "stand_in"
                 && !link.runtime_handle["origin"]["humanAssistantDispatchId"].is_string()
+                && !link.runtime_handle["origin"]["assistantRequestId"].is_string()
                 && !super::super::util::is_private_discussion(&runtime_event_request_from_link(
                     link,
                 ))

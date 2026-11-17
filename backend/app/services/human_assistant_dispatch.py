@@ -330,6 +330,12 @@ def _dispatch_view(
 def cancel_assignment_dispatch(
     db: Session, event: AssignmentEvent, reason: str = "superseded"
 ) -> None:
+    if event.member_type in {"human", "user"}:
+        from app.services.async_assistant_requests import cancel_assignment_requests
+
+        db.info.setdefault(_PENDING_CANCELLATIONS, set()).update(
+            cancel_assignment_requests(db, event, reason)
+        )
     dispatch = (event.comment.metadata_json or {}).get(DISPATCH_KEY)
     if not isinstance(dispatch, dict) or dispatch["dispatchState"] in TERMINAL | {
         "superseded"
@@ -368,7 +374,9 @@ def cancel_assignment_dispatch(
             db.info.setdefault(_PENDING_CANCELLATIONS, set()).add(cancelled.id)
 
 
-def execution_current(db: Session, execution: LoopItemExecution) -> bool:
+def execution_current(
+    db: Session, execution: LoopItemExecution, *, allow_terminal: bool = False
+) -> bool:
     """Check live assignment authority before admission and every Runtime update."""
     item = db.get(LoopItem, execution.loop_item_id)
     if (
@@ -394,14 +402,24 @@ def execution_current(db: Session, execution: LoopItemExecution) -> bool:
     ):
         return False
     dispatch = (event.comment.metadata_json or {}).get(DISPATCH_KEY)
-    if not isinstance(dispatch, dict) or dispatch.get("dispatchState") in TERMINAL | {
+    child_request = execution.runtime_origin_context.get("assistant_request_id")
+    if child_request:
+        from app.services.async_assistant_requests import current_request_attempt
+
+        if not current_request_attempt(
+            db, item, execution, dispatch, allow_terminal=allow_terminal
+        ):
+            return False
+    elif not isinstance(dispatch, dict) or dispatch.get("dispatchState") in TERMINAL | {
         "superseded",
         "cancelling",
     }:
         return False
-    if str(dispatch.get("executionId")) != str(execution.id) or dispatch.get(
-        "assignmentVersion"
-    ) != execution.runtime_origin_context.get("assignment_version"):
+    if not child_request and (
+        str(dispatch.get("executionId")) != str(execution.id)
+        or dispatch.get("assignmentVersion")
+        != execution.runtime_origin_context.get("assignment_version")
+    ):
         return False
     from app.models.user import User
     from app.services.cloud_projects.access import require_cloud_project_role
@@ -427,6 +445,10 @@ def claim_for_binding(
     db: Session, item: LoopItem, values: LoopItemTaskBind, user_id: int
 ) -> str | None:
     """Use existing task admission as the atomic personal-assistant claim."""
+    if values.assistant_request_id:
+        from app.services.async_assistant_requests import claim_request_for_binding
+
+        return claim_request_for_binding(db, item, values, user_id)
     if not values.human_assistant_dispatch_id:
         return None
     if not values.human_assignment_id or not values.assignment_id:
@@ -547,7 +569,9 @@ def publish_result(
     db: Session, execution: LoopItemExecution, content: str | None, terminal_status: str
 ):
     """Publish only the final summary with personal provenance, never tool events."""
-    if terminal_status == "cancelled" or not execution_current(db, execution):
+    if terminal_status == "cancelled" or not execution_current(
+        db, execution, allow_terminal=True
+    ):
         return None
     from app.models.project_chat_message import ProjectChatMessage
     from app.models.user import User

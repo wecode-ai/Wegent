@@ -124,8 +124,11 @@ async fn connection(mut stream: TcpStream, rows: Rows, queries: Arc<Mutex<Vec<St
                 let query = &statements[&id];
                 queries.lock().unwrap().push(query.clone());
                 let (columns, results) = rows(query);
-                if columns.is_empty() && query.starts_with("UPDATE ") {
-                    packet(&mut stream, 1, &[0, 1, 0, status, 0, 0, 0]).await;
+                if columns.is_empty()
+                    && (query.starts_with("UPDATE ") || query.starts_with("INSERT "))
+                {
+                    let inserted = if query.starts_with("INSERT ") { 17 } else { 0 };
+                    packet(&mut stream, 1, &[0, 1, inserted, status, 0, 0, 0]).await;
                 } else {
                     result(&mut stream, columns, results, status).await;
                 }

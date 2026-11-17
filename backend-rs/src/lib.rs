@@ -101,6 +101,7 @@ pub mod background_jobs;
 mod board_snapshot;
 mod bots;
 pub use wegent_celery as celery_broker;
+pub(crate) mod async_assistant_requests;
 mod chat_attachment_text;
 mod chat_guidance;
 mod chat_guidance_consume;

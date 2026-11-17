@@ -411,12 +411,25 @@ pub(super) async fn handle_runtime_event<T: MysqlTransaction>(
     {
         return Ok(None);
     }
+    // The Issue lock may have waited behind an accepted followup transaction.
+    let row = if activity::execution_origin_context(&row)
+        .get("assistant_request_id")
+        .is_some()
+    {
+        let Some(current) = reload_execution(transaction, row.id).await? else {
+            return Ok(None);
+        };
+        current
+    } else {
+        row
+    };
     let terminal = terminal_status(identity.event_name, identity.payload).filter(|_| {
         !super::human_assistant_execution::is_personal(&row)
-            || !super::human_assistant_execution::waiting_exit(
+            || (!super::human_assistant_execution::waiting_exit(
                 identity.event_name,
                 identity.payload,
-            )
+            ) && (row.status_or_empty() == "cancel_requested"
+                || !super::human_assistant_execution::deferred_terminal(&row, identity.payload)))
     });
     let seq = event_seq(identity.payload);
     // The socket projection calls `handle_runtime_event` with

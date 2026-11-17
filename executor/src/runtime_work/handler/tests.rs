@@ -126,6 +126,9 @@ mod message_presentation_tests;
 #[path = "project_preparation_tests.rs"]
 mod project_preparation_tests;
 
+#[path = "worktree_base_tests.rs"]
+mod worktree_base_tests;
+
 #[test]
 fn runtime_proxy_configuration_precedes_persisted_turn_recovery() {
     assert!(!should_resume_persisted_turns_before_rpc(

@@ -77,6 +77,12 @@ impl RuntimeWorkRpcHandler {
         link: &RuntimeTaskLink,
     ) -> Result<(), AppIpcError> {
         let origin = &link.runtime_handle["origin"];
+        if origin["assistantRequestId"].is_string() {
+            return self
+                .validate_current_assistant_request(origin)
+                .await
+                .map_err(|error| AppIpcError::new("permission_denied", error));
+        }
         if !origin["humanAssistantDispatchId"].is_string()
             || !super::super::util::is_private_discussion(request)
             || (link.status == "failed" && runtime_session_id_from_link(link).is_none())
@@ -151,6 +157,16 @@ impl RuntimeWorkRpcHandler {
         else {
             return;
         };
+        self.report_assistant_execution_failure(config, execution, error)
+            .await;
+    }
+
+    pub(super) async fn report_assistant_execution_failure(
+        &self,
+        config: &Value,
+        execution: &str,
+        error: &AppIpcError,
+    ) {
         let project = config["projectId"].as_str().unwrap_or_default();
         let path = format!("/v1/cloud-projects/{project}/executions/{execution}/dispatch-failed");
         let message = crate::agents::redact_diagnostic_text(&error.message);
@@ -202,6 +218,16 @@ impl RuntimeWorkRpcHandler {
                 }
             };
             for issue in items["items"].as_array().into_iter().flatten() {
+                if let Err(error) = self.recover_issue_assistant_requests(&config, issue).await {
+                    log_executor_event(
+                        "Assistant request discovery failed",
+                        &[
+                            ("issue_id", issue["id"].to_string()),
+                            ("code", error.code),
+                            ("error", error.message),
+                        ],
+                    );
+                }
                 // Recovery only consumes durable intents; enabling a role never backfills history.
                 if !issue["direct_human_assignment_receipt"].is_object()
                     || issue["cloud_project_id"] != project

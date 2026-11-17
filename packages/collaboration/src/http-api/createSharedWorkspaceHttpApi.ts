@@ -15,6 +15,8 @@ import {
 import { filterClaudeCodeDevices } from "@wegent/chat-core/device-capabilities";
 import type { DeviceInfo } from "@wegent/chat-core/execution-project";
 import { getClientRequestCache } from "@wegent/chat-core/request-cache";
+import { createAssistantRequestsHttpApi } from "../assistant-requests/httpApi";
+import type { AssistantRequestsApi } from "../assistant-requests/types";
 import type {
   SharedCollaborationResourcesApi,
   SharedCollaborationWorkspacesApi,
@@ -41,6 +43,7 @@ export interface SharedWorkspaceHttpTransport {
 }
 
 export interface SharedWorkspaceHttpApi {
+  assistantRequests: AssistantRequestsApi;
   workspaces: SharedCollaborationWorkspacesApi;
   resources: SharedCollaborationResourcesApi;
   gitRepositories: SharedWorkspaceGitRepositoriesApi;
@@ -245,6 +248,7 @@ export function createSharedWorkspaceHttpApi(
     cache.invalidate("/v1/resources");
   };
   return {
+    assistantRequests: createAssistantRequestsHttpApi(transport),
     workspaces: {
       async transferOwnership(workspaceId, input) {
         return mapCollaborationWorkspaceDto(

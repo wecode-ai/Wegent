@@ -3331,9 +3331,6 @@ class LoopItemExecutionService:
             runtime_event_is_private_discussion,
         )
 
-        if runtime_event_is_private_discussion(payload):
-            return None
-
         # Thread metadata, Goal and lifecycle notifications can retain the
         # previous request's turn identity while a continuation starts. Per-turn
         # response events establish the execution binding and renew its lease.
@@ -3351,6 +3348,11 @@ class LoopItemExecutionService:
         )
         if row is None:
             return None
+        personal = row.executor_type == "human_assistant"
+        if runtime_event_is_private_discussion(payload) and not personal:
+            return None
+        if personal and payload.get("executionId") != str(row.id):
+            return None
         if row.executor_type == "human_assistant":
             from app.services.human_assistant_dispatch import execution_current
 
@@ -3360,6 +3362,35 @@ class LoopItemExecutionService:
             if not execution_current(db, row) and row.status != STATUS_CANCEL_REQUESTED:
                 return None
         terminal = self._terminal_status(event_name, payload)
+        observed_state = OBSERVED_RUNNING
+        if personal:
+            from app.services.async_assistant_requests import terminal_is_current
+
+            data = payload.get("data")
+            data = data if isinstance(data, dict) else {}
+            response = data.get("response")
+            response = response if isinstance(response, dict) else data
+            waiting = (
+                event_name == "response.completed"
+                and response.get("silent_exit") is True
+                and response.get("silent_exit_reason") == "waiting_for_user_input"
+            )
+            deferred = (
+                terminal is not None
+                and row.status != STATUS_CANCEL_REQUESTED
+                and not terminal_is_current(row, payload)
+            )
+            if deferred:
+                terminal = None
+            elif waiting:
+                terminal = None
+                observed_state = "waiting_user"
+            elif event_name == "runtime.interaction.updated":
+                observed_state = (
+                    "waiting_user"
+                    if data.get("state") == "waiting_user"
+                    else OBSERVED_RUNNING
+                )
         raw_event_seq = payload.get("eventSeq", payload.get("event_seq"))
         if isinstance(raw_event_seq, bool):
             raw_event_seq = None
@@ -3500,7 +3531,7 @@ class LoopItemExecutionService:
             .update(
                 {
                     "status": next_status,
-                    "observed_state": OBSERVED_RUNNING,
+                    "observed_state": observed_state,
                     "sync_state": SYNC_IN_SYNC,
                     "error_message": "",
                     "termination_reason": "",

@@ -216,6 +216,20 @@ pub(super) fn remove_worktree_turns_after_restart(
 ) -> usize {
     let initial_count = turns.len();
     turns.retain(|turn| {
+        if worktrees.has_request_origin(turn.request.extra.get("origin"), &turn.local_task_id)
+            && turn
+                .request
+                .extra
+                .get("deferred_worktree_ref")
+                .and_then(Value::as_str)
+                .is_some_and(|revision| {
+                    matches!(revision.len(), 40 | 64)
+                        && revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+        {
+            // Admission rechecks live consent before a restored request can run tools.
+            return true;
+        }
         if turn.request.extra.contains_key(quota_recovery::MARKER)
             || turn
                 .request
@@ -909,38 +923,59 @@ impl RuntimeWorkRpcHandler {
         let worktrees = self.worktrees.clone();
         let worktree_id = turn.local_task_id.clone();
         let previous_root = source_path.clone();
-        let record =
-            tokio::task::spawn_blocking(move || match (planned_path, repo_root_fingerprint) {
-                (Some(planned_path), Some(repo_root_fingerprint)) => worktrees.prepare_planned(
+        let request_owner = crate::runtime_work::worktrees::RequestWorktreeOwner::from_origin(
+            turn.request.extra.get("origin"),
+            &turn.local_task_id,
+            &self.device_id,
+        )
+        .map_err(|error| AppIpcError::new("worktree_request_invalid", error))?;
+        let record = tokio::task::spawn_blocking(move || {
+            match (request_owner, planned_path, repo_root_fingerprint) {
+                (Some(owner), Some(path), Some(fingerprint)) => worktrees.prepare_planned_request(
+                    Path::new(&source_path),
+                    &worktree_id,
+                    git_ref
+                        .as_deref()
+                        .ok_or("worktree_request_invalid: Missing admitted base revision")?,
+                    &path,
+                    &fingerprint,
+                    &owner,
+                ),
+                (Some(_), _, _) => {
+                    Err("worktree_request_invalid: Missing admitted worktree plan".to_owned())
+                }
+                (None, Some(planned_path), Some(repo_root_fingerprint)) => worktrees
+                    .prepare_planned(
+                        Path::new(&source_path),
+                        &worktree_id,
+                        git_ref.as_deref(),
+                        false,
+                        &planned_path,
+                        &repo_root_fingerprint,
+                    ),
+                (None, Some(planned_path), None) => worktrees.prepare_at(
                     Path::new(&source_path),
                     &worktree_id,
                     git_ref.as_deref(),
                     false,
                     &planned_path,
-                    &repo_root_fingerprint,
                 ),
-                (Some(planned_path), None) => worktrees.prepare_at(
-                    Path::new(&source_path),
-                    &worktree_id,
-                    git_ref.as_deref(),
-                    false,
-                    &planned_path,
-                ),
-                (None, _) => worktrees.prepare(
+                (None, None, _) => worktrees.prepare(
                     Path::new(&source_path),
                     &worktree_id,
                     git_ref.as_deref(),
                     false,
                 ),
-            })
-            .await
-            .map_err(|error| {
-                AppIpcError::new(
-                    "worktree_prepare_failed",
-                    format!("Worktree preparation task failed: {error}"),
-                )
-            })?
-            .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
+            }
+        })
+        .await
+        .map_err(|error| {
+            AppIpcError::new(
+                "worktree_prepare_failed",
+                format!("Worktree preparation task failed: {error}"),
+            )
+        })?
+        .map_err(|error| AppIpcError::new(worktree_error_code(&error), error))?;
         turn.request.project_workspace_path = Some(record.path.clone());
         for root in &mut turn.request.runtime_workspace_roots {
             if crate::runtime_work::worktrees::same_path(root, &previous_root) {
@@ -1071,7 +1106,21 @@ impl RuntimeWorkRpcHandler {
         let worktrees = self.worktrees.clone();
         let cleanup_path = path.clone();
         let worktree_id = turn.local_task_id.clone();
+        let request_owner = crate::runtime_work::worktrees::RequestWorktreeOwner::from_origin(
+            turn.request.extra.get("origin"),
+            &turn.local_task_id,
+            &self.device_id,
+        );
         let result = tokio::task::spawn_blocking(move || {
+            match request_owner {
+                Ok(Some(owner)) => {
+                    return worktrees
+                        .preserve_request_worktree(&cleanup_path, &owner)
+                        .map(|_| ())
+                }
+                Err(error) => return Err(error),
+                Ok(None) => {}
+            }
             worktrees
                 .delete(&cleanup_path, false)
                 .map(|_| ())

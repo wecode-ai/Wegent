@@ -3,6 +3,7 @@ import { createDesktopScenario as createRecovery } from './stand-in-assignment-r
 import { createDesktopScenario as createAutomation } from './stand-in-automation-assignment.scenario.mjs'
 import { createDesktopScenario as createConversations } from './stand-in-issue-conversations.scenario.mjs'
 import { createDesktopScenario as createDelegation } from './stand-in-issue-delegation.scenario.mjs'
+import { createDesktopScenario as createAsyncRequests } from './multi-request-assistant-worktrees.scenario.mjs'
 
 export function createDesktopScenario(options) {
   const notifications = createNotifications(options)
@@ -10,15 +11,18 @@ export function createDesktopScenario(options) {
   const automation = createAutomation(options)
   const conversations = createConversations(options)
   const delegation = createDelegation(options)
+  const asyncRequests = createAsyncRequests(options)
   let active = conversations
   return {
     requiresCloudEnvironment: true,
+    backendEnv: asyncRequests.backendEnv,
     async prepareCloud(cloud) {
       await notifications.prepareCloud(cloud)
       await recovery.prepareCloud(cloud)
       await automation.prepareCloud(cloud)
       await conversations.prepareCloud(cloud)
       await delegation.prepareCloud(cloud)
+      await asyncRequests.prepareCloud(cloud)
     },
     setCloudEnvironment(environment) {
       notifications.setCloudEnvironment(environment)
@@ -26,6 +30,7 @@ export function createDesktopScenario(options) {
       automation.setCloudEnvironment(environment)
       conversations.setCloudEnvironment(environment)
       delegation.setCloudEnvironment(environment)
+      asyncRequests.setCloudEnvironment(environment)
     },
     handleHttp(...args) {
       return active.handleHttp(...args)
@@ -34,6 +39,8 @@ export function createDesktopScenario(options) {
       await conversations.verify(control)
       active = delegation
       await delegation.verify(control)
+      active = asyncRequests
+      await asyncRequests.verify(control)
       active = notifications
       await notifications.verify(control)
       const popover = '[data-testid="wework-notifications-popover"]'
@@ -57,9 +64,11 @@ export function createDesktopScenario(options) {
         automation: automation.diagnostics(),
         conversations: conversations.diagnostics(),
         delegation: delegation.diagnostics(),
+        asyncRequests: asyncRequests.diagnostics(),
       }
     },
     cleanup() {
+      asyncRequests.cleanup()
       return conversations.cleanup()
     },
   }

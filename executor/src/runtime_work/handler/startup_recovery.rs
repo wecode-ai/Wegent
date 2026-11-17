@@ -1,4 +1,4 @@
-//! Retry a failed native startup within its original logical conversation.
+//! Retry an interrupted native startup within its original logical conversation.
 use super::*;
 
 #[cfg(test)]
@@ -6,7 +6,7 @@ use super::*;
 mod tests;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) async fn recover_failed_session_start(
+    pub(super) async fn recover_session_start(
         &self,
         link: Option<&RuntimeTaskLink>,
         payload: Value,
@@ -15,7 +15,10 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Option<Value>, AppIpcError> {
         let Some(link) = link.filter(|link| {
             crate::runtime_work::conversation_sessions::is_identity_conversation(link)
-                && link.status == "failed"
+                && matches!(
+                    link.status.as_str(),
+                    "active" | "queued" | "failed" | "cancelled"
+                )
                 && runtime_session_id_from_link(link).is_none()
                 && !self.is_busy_local_task(&link.local_task_id)
                 && link.interaction_status.is_none()
@@ -39,11 +42,14 @@ impl RuntimeWorkRpcHandler {
             .map(Some)
     }
 
-    pub(super) fn preserve_failed_start_context(&self, link: &mut RuntimeTaskLink) {
+    pub(super) fn preserve_session_start_context(&self, link: &mut RuntimeTaskLink) {
         let Some(previous) = self
             .local_task_link(&link.local_task_id)
             .filter(|previous| {
-                previous.status == "failed" && runtime_session_id_from_link(previous).is_none()
+                matches!(
+                    previous.status.as_str(),
+                    "active" | "queued" | "failed" | "cancelled"
+                ) && runtime_session_id_from_link(previous).is_none()
             })
         else {
             return;

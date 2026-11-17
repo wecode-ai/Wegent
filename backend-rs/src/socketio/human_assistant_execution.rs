@@ -35,6 +35,11 @@ pub(super) fn observation_state(
     if event_name == "response.created" && event_matches(row, payload) {
         return "running";
     }
+    if matches!(event_name, "response.completed" | "response.failed")
+        && deferred_terminal(row, payload)
+    {
+        return "running";
+    }
     if waiting_exit(event_name, payload) {
         return "waiting_user";
     }
@@ -50,6 +55,15 @@ pub(super) fn observation_state(
     } else {
         "running"
     }
+}
+
+pub(super) fn deferred_terminal(row: &ExecutionRow, payload: &Value) -> bool {
+    let intent = row
+        .execution_payload
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .unwrap_or_default();
+    !crate::async_assistant_requests::terminal_is_current(&intent, row.id, payload)
 }
 
 /// Codex and Claude both end a deferred turn with this explicit silent outcome.
@@ -126,6 +140,16 @@ pub(super) async fn current(
         )
         .await?;
     let owner_id = owner.to_string();
+    let context = origin(row);
+    let child_request = context["assistant_request_id"].is_string();
+    if child_request
+        && !crate::async_assistant_requests::aggregate_current_on(
+            tx, &issue, row.id, owner, &context,
+        )
+        .await?
+    {
+        return Ok(None);
+    }
     let assignment = active_events(&comments).into_iter().find(|event| {
         matches!(
             event.metadata.target_type.as_deref(),
@@ -140,7 +164,15 @@ pub(super) async fn current(
                 .metadata
                 .human_assistant_dispatch
                 .as_ref()
-                .is_some_and(|dispatch| dispatch_matches(row, &event.comment.id, dispatch))
+                .is_some_and(|dispatch| {
+                    if child_request {
+                        context["assignment_id"] == event.comment.id
+                            && context["assignment_version"] == dispatch["assignmentVersion"]
+                            && context["human_assistant_dispatch"] == dispatch["dispatchId"]
+                    } else {
+                        dispatch_matches(row, &event.comment.id, dispatch)
+                    }
+                })
     });
     let Some(assignment) = assignment else {
         return Ok(None);
@@ -408,6 +440,32 @@ mod tests {
         assert_eq!(
             observation_state(&row, "runtime.interaction.updated", &waiting),
             "running"
+        );
+    }
+
+    #[test]
+    fn accepted_followup_supersedes_the_earlier_silent_waiting_exit() {
+        let mut row = execution();
+        row.execution_payload = Some(
+            json!({
+                "runtime_selection":{"executor_kind":"human_assistant"},
+                "origin_context":{"assistant_request_id":"request-1"},
+                "assistant_request":{"attemptCommandId":"assistant-start:41","commands":[
+                    {"id":"followup-1","action":"followup","executionId":"41","acknowledged":false}
+                ]}
+            })
+            .to_string(),
+        );
+        let mut payload = json!({"executionId":"41","assistantRequestCommandId":"assistant-start:41",
+            "data":{"silent_exit":true,"silent_exit_reason":"waiting_for_user_input"}});
+        assert_eq!(
+            observation_state(&row, "response.completed", &payload),
+            "running"
+        );
+        payload["assistantRequestCommandId"] = json!("followup-1");
+        assert_eq!(
+            observation_state(&row, "response.completed", &payload),
+            "waiting_user"
         );
     }
 

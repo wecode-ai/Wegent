@@ -320,6 +320,10 @@ Issue 关联的个人 Runtime 任务仅向任务所有者返回，变更请求�
 
 ## 实现与验证入口
 
+W-0070 的显式异步请求沿用默认助理的活动人员分配、项目与 Issue 执行权限及本人设备托管授权。接收事务在同一 Issue 行锁下保存执行账本、幂等键和不含正文的共享回执，提交后才通知 Runtime；补充、重试、取消继续使用同一请求及会话身份。请求正文、命令和 worktree 路径仅所属用户可读；共享证据只保留回执、结论、筛选后的相对冲突文件和下一动作。设备事件必须匹配当前 attempt、本人设备和活动任务绑定；旧 turn 不能结束后来已接收的补充，撤销分配会停止关联 child。合并确认单独要求本人 SessionUser 会话和匹配的候选版本，API key 和 task token 不能批准合并。此事务不改变 CP01–CP20，也不授予额外成员、设备或资源权限。Rust `async_assistant_requests` 契约测试与 `test_async_assistant_requests.py` 覆盖身份、幂等、隔离、取消、终态补充及旧 turn 完成边界；`test_human_assistant_dispatch.py` 保留原有默认助理权限断言。
+
+执行意图列通过 `c7d8e9f0a1b2` 扩为 MySQL LONGTEXT，避免补充命令与证据被旧 TEXT 容量截断；关闭特性或降级版本均保留宽列及已有数据，旧代码可继续读取。
+
 回复公开分身评论时，Socket.IO 仅从同一项目、同一 Issue 的已保存代理消息中恢复分身身份；调用方未显式提及其他接收人时，沿用该分身的用户和角色作为续聊目标。隐式目标与显式提及经过相同的成员及 Issue 读取校验，并在评论事务内写入唤醒事件；不从调用方元数据推测身份，也不覆盖显式接收人。`socketio::project_chat_events::reply` 定向测试保护身份来源及显式提及优先级，现有 `stand-in-assignment-notifications` E2E 验证子代理运行期间排队补充和无须再次 @ 的续聊。CP01–CP20 不变。
 
 Rust Socket.IO 的 Issue 评论在同一事务内写入评论、通知和分身唤醒事件。提及接收人继续通过项目成员及 Issue 读取权限校验；自提及不产生人类通知，但保留本人分身的持久唤醒。写入按 Issue、接收人、收件箱的顺序加锁，按接收人和评论内容生成与 Python 一致的去重键，事务失败时全部回滚。收件箱和事件均先执行幂等插入，再读取当前行，避免不同接收人首次建箱时争用缺失行的间隙锁。CP01–CP20 不变。CI 已注册的 `project_coordination::mysql_tests::issue_mention_wakeups_are_atomic_deduplicated_and_recipient_owned` 覆盖真实 MySQL 的不同接收人首次并发建箱、接收人隔离、并发序号、去重及回滚；`stand-in-assignment-notifications` 桌面 E2E 覆盖实际评论唤醒与公开回执。

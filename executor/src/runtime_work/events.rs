@@ -80,11 +80,22 @@ pub(super) fn apply_runtime_event_conversation_context(
     if let Some(payload) = payload.as_object_mut() {
         payload.remove("conversationContext");
         payload.remove("executionId");
+        payload.remove("assistantRequestCommandId");
     }
     if let Some(origin) = request.extra.get("origin") {
-        if origin["humanAssistantDispatchId"].is_string() {
+        if origin["humanAssistantDispatchId"].is_string()
+            || origin["assistantRequestId"].is_string()
+        {
             if let Some(execution) = origin["executionId"].as_str().filter(|id| !id.is_empty()) {
                 payload["executionId"] = json!(execution);
+            }
+        }
+        if origin["assistantRequestId"].is_string() {
+            if let Some(command) = origin["assistantRequestCommandId"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+            {
+                payload["assistantRequestCommandId"] = json!(command);
             }
         }
     }
@@ -2756,7 +2767,7 @@ mod tests {
 
     #[test]
     fn human_assistant_events_keep_the_execution_from_each_frozen_turn_request() {
-        let (event_tx, mut events) = broadcast::channel(8);
+        let (event_tx, mut events) = broadcast::channel(16);
         let mut first = ExecutionRequest::default();
         first.extra.insert(
             "origin".into(),
@@ -2767,7 +2778,12 @@ mod tests {
             "origin".into(),
             json!({"humanAssistantDispatchId":"new","executionId":"42"}),
         );
-        for request in [&second, &first] {
+        let mut child = first.clone();
+        child.extra.insert(
+            "origin".into(),
+            json!({"assistantRequestId":"child","executionId":"43","assistantRequestCommandId":"followup-43"}),
+        );
+        for request in [&second, &first, &child] {
             for event in [
                 "response.created",
                 "response.output_text.delta",
@@ -2781,9 +2797,14 @@ mod tests {
                     request,
                     json!({}),
                 );
+                let payload = events.try_recv().unwrap()["payload"].clone();
                 assert_eq!(
-                    events.try_recv().unwrap()["payload"]["executionId"],
+                    payload["executionId"],
                     request.extra["origin"]["executionId"]
+                );
+                assert_eq!(
+                    payload["assistantRequestCommandId"],
+                    request.extra["origin"]["assistantRequestCommandId"]
                 );
             }
         }

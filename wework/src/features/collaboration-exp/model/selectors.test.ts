@@ -549,6 +549,43 @@ describe('experience canonical timeline', () => {
     expect(JSON.stringify(hidden)).not.toContain('SECRET')
   })
 
+  it('provides an owner receipt entry without copying a private Runtime address into the timeline', () => {
+    const requestId = 'a'.repeat(32)
+    const receipt = message({
+      metadata: {
+        activity_type: 'assistant_request_receipt',
+        request_id: requestId,
+        provenance: { owner_user_id: 7 },
+        execution_entry: { requestId },
+      },
+    })
+    const input = timelineInput({ messages: [receipt] })
+    expect(selectTaskTimeline(input).nodes[0]).toMatchObject({
+      assistantRequestId: requestId,
+      executionAddress: null,
+    })
+    for (const projectValue of [
+      project({ current_user_id: 8 }),
+      project({ project_store: 'local' }),
+      project({ access_role: 'Viewer' }),
+    ]) {
+      expect(
+        selectTaskTimeline({ ...input, project: projectValue }).nodes[0].assistantRequestId
+      ).toBeUndefined()
+    }
+    const foreign = {
+      ...receipt,
+      metadata: { ...receipt.metadata, provenance: { owner_user_id: 8 } },
+    }
+    expect(
+      selectTaskTimeline({ ...input, messages: [foreign] }).nodes[0].assistantRequestId
+    ).toBeUndefined()
+    expect(
+      selectTaskTimeline({ ...input, issue: issue({ assignee_user_id: 8 }) }).nodes[0]
+        .assistantRequestId
+    ).toBeUndefined()
+  })
+
   it('binds a historical user node only through its exact related execution, never the newest conversation', () => {
     const run = message({
       messageId: 'run',

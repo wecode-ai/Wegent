@@ -124,6 +124,8 @@ mod active_text;
 mod active_transcript;
 mod archives;
 mod assignment_receipts;
+mod assistant_request_inputs;
+mod async_assistant_requests;
 mod async_questions;
 mod automatic_turns;
 mod automation_rpc;
@@ -573,6 +575,7 @@ pub struct RuntimeWorkRpcHandler {
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     runtime_model_configs: Arc<Mutex<HashMap<String, Value>>>,
+    assistant_request_inputs: Arc<Mutex<HashMap<String, Value>>>,
     creation_model_profiles: Arc<Mutex<Vec<Value>>>,
     submitted_model_bindings:
         Arc<Mutex<HashMap<String, submitted_model::SubmittedInterfaceBinding>>>,
@@ -958,6 +961,7 @@ impl RuntimeWorkRpcHandler {
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             supervisor_model_configs: Arc::new(Mutex::new(HashMap::new())),
             runtime_model_configs: Arc::new(Mutex::new(HashMap::new())),
+            assistant_request_inputs: Arc::new(Mutex::new(HashMap::new())),
             creation_model_profiles: Arc::new(Mutex::new(Vec::new())),
             submitted_model_bindings: Arc::new(Mutex::new(HashMap::new())),
             local_runner_models: Arc::new(Mutex::new(Vec::new())),
@@ -1218,6 +1222,9 @@ impl RuntimeWorkRpcHandler {
 
     fn forget_runtime_model_config(&self, local_task_id: &str) {
         self.forget_submitted_interfaces(local_task_id);
+        if let Ok(mut inputs) = self.assistant_request_inputs.lock() {
+            inputs.retain(|_, input| runtime_task_id(input).as_deref() != Some(local_task_id));
+        }
         self.runtime_model_configs
             .lock()
             .expect("runtime model config map lock should not be poisoned")

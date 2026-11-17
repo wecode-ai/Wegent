@@ -704,6 +704,12 @@ impl RuntimeWorkRpcHandler {
             && side_source.is_none()
             && request.workspace_source.as_deref() == Some("git_worktree")
         {
+            crate::runtime_work::worktrees::RequestWorktreeOwner::from_origin(
+                request.extra.get("origin"),
+                &local_task_id,
+                &self.device_id,
+            )
+            .map_err(|error| AppIpcError::new("worktree_request_invalid", error))?;
             let git_ref = payload
                 .get("execution")
                 .and_then(|execution| execution.get("workspace"))
@@ -743,11 +749,10 @@ impl RuntimeWorkRpcHandler {
                 "deferred_worktree_repo_root_fingerprint".to_owned(),
                 Value::String(plan.repo_root_fingerprint),
             );
-            if let Some(branch) = git_ref {
-                request
-                    .extra
-                    .insert("deferred_worktree_ref".to_owned(), Value::String(branch));
-            }
+            request.extra.insert(
+                "deferred_worktree_ref".to_owned(),
+                Value::String(plan.base_revision),
+            );
             plan.path.display().to_string()
         } else {
             source_workspace_path
@@ -852,7 +857,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(presentation) = user_message_presentation(&payload) {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
-        self.preserve_failed_start_context(&mut link);
+        self.preserve_session_start_context(&mut link);
         if is_codex_runtime(&runtime) {
             if let Some(supervisor) = payload
                 .get("initialSupervisor")
@@ -1080,6 +1085,13 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
+        if owner_input && request_user_input_response(&payload).is_none() {
+            if let Some(link) = self.local_task_link(&local_task_id).filter(|link| {
+                link.runtime_handle["origin"]["assistantRequestId"].is_string()
+            }) {
+                return self.submit_native_assistant_followup(payload, &link).await;
+            }
+        }
         self.send_message_with_activity_checks(payload, false, owner_input)
             .await
     }
@@ -1451,7 +1463,7 @@ impl RuntimeWorkRpcHandler {
             });
         if thread_id.is_none() && !retrying_preparation && !awaiting_identity_start {
             if let Some(result) = self
-                .recover_failed_session_start(
+                .recover_session_start(
                     existing_link.as_ref(),
                     payload.clone(),
                     request.clone(),
