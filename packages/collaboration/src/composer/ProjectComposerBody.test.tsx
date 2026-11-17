@@ -112,6 +112,28 @@ describe('shared PC composer body', () => {
   function button(id: string) {
     return container.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!
   }
+
+  it('exposes bounded readiness facts without copying draft content into diagnostics', async () => {
+    await mount({
+      value: 'private draft',
+      isModelSelectionReady: false,
+      attachments: [textAttachment],
+      uploadingCount: 1,
+      disabled: false,
+      submitDisabled: false,
+    })
+    expect(button('send').disabled).toBe(true)
+    const state = button('send').closest<HTMLElement>('[data-composer-readiness]')
+    expect(state?.dataset).toMatchObject({
+      composerModelReady: 'false',
+      composerHasText: 'true',
+      composerAttachmentCount: '1',
+      composerUploadingCount: '1',
+      composerDisabled: 'false',
+      composerSubmitDisabled: 'false',
+    })
+    expect(JSON.stringify(state?.dataset)).not.toContain('private draft')
+  })
   async function setValue(value: string) {
     await act(async () => input.current!.setValue(value))
   }

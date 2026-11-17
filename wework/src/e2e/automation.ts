@@ -1800,6 +1800,18 @@ async function waitForDesktopControlElement(
       ariaHidden: element.getAttribute('aria-hidden'),
       enabled: desktopControlElementEnabled(element),
       state: { ...element.dataset },
+      composerReadiness: (() => {
+        const state = element.closest<HTMLElement>('[data-composer-readiness]')?.dataset
+        if (!state) return null
+        return {
+          modelReady: state.composerModelReady,
+          hasText: state.composerHasText,
+          attachmentCount: state.composerAttachmentCount,
+          uploadingCount: state.composerUploadingCount,
+          disabled: state.composerDisabled,
+          submitDisabled: state.composerSubmitDisabled,
+        }
+      })(),
       rendered: desktopControlElementRendered(element),
       visible: desktopControlElementVisible(element),
       rect: element.getBoundingClientRect().toJSON(),
