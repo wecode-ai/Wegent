@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, type ComponentProps } from "react";
+import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -175,6 +176,104 @@ describe("Issue structure readiness", () => {
       control<HTMLTextAreaElement>("cloud-todo-detail-title").readOnly,
     ).toBe(true);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("keeps an outside-assignee confirmation pending until structural writes recover", async () => {
+    const { props, update } = fixture();
+    const assignedIssue = {
+      ...issue,
+      assignee_user_id: 42,
+      assignee_name: "Outside person",
+    };
+    const assign = vi
+      .mocked(props.port.issues.assign)
+      .mockResolvedValue({ ...assignedIssue, version: 2 });
+    const render = async (ready: boolean) =>
+      act(async () =>
+        root.render(
+          <SharedIssueDetailEditor
+            {...props}
+            item={assignedIssue}
+            allItems={[assignedIssue]}
+            structuralWritesEnabled={ready}
+          />,
+        ),
+      );
+    await render(true);
+    await act(async () =>
+      control<HTMLButtonElement>("cloud-todo-detail-assignee").click(),
+    );
+    await act(async () =>
+      control<HTMLButtonElement>(
+        "cloud-todo-detail-assignee-option-user:42",
+      ).click(),
+    );
+    expect(control("issue-outside-assignee-dialog")).toBeTruthy();
+    expect(assign).not.toHaveBeenCalled();
+
+    await render(false);
+    const confirm = control<HTMLButtonElement>(
+      "issue-outside-assignee-confirm",
+    );
+    expect(confirm.disabled).toBe(true);
+    await act(async () => confirm.click());
+    expect(control("issue-outside-assignee-dialog")).toBeTruthy();
+    expect(assign).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+
+    await render(true);
+    expect(control("issue-outside-assignee-dialog")).toBeTruthy();
+    expect(
+      control<HTMLButtonElement>("issue-outside-assignee-confirm").disabled,
+    ).toBe(false);
+    await act(async () =>
+      control<HTMLButtonElement>("issue-outside-assignee-confirm").click(),
+    );
+    expect(assign).toHaveBeenCalledExactlyOnceWith(project.id, issue.id, {
+      version: 1,
+      assigneeType: "user",
+      assigneeId: "42",
+      notifyAssignee: true,
+    });
+    expect(
+      document.querySelector('[data-testid="issue-outside-assignee-dialog"]'),
+    ).toBeNull();
+  });
+
+  it("rechecks readiness when an approved assignee continuation resumes", async () => {
+    const { props, update } = fixture();
+    const assignedIssue = {
+      ...issue,
+      assignee_user_id: 42,
+      assignee_name: "Outside person",
+    };
+    const assign = vi
+      .mocked(props.port.issues.assign)
+      .mockResolvedValue({ ...assignedIssue, version: 2 });
+    const editor = (ready: boolean) => (
+      <SharedIssueDetailEditor
+        {...props}
+        item={assignedIssue}
+        allItems={[assignedIssue]}
+        structuralWritesEnabled={ready}
+      />
+    );
+    await act(async () => root.render(editor(true)));
+    await act(async () =>
+      control<HTMLButtonElement>("cloud-todo-detail-assignee").click(),
+    );
+    await act(async () =>
+      control<HTMLButtonElement>(
+        "cloud-todo-detail-assignee-option-user:42",
+      ).click(),
+    );
+    await act(async () => {
+      control<HTMLButtonElement>("issue-outside-assignee-confirm").click();
+      flushSync(() => root.render(editor(false)));
+    });
+    expect(assign).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(props.onUpdated).not.toHaveBeenCalled();
   });
 
   it("keeps a create draft editable while submission waits for a current snapshot", async () => {

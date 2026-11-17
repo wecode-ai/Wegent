@@ -717,6 +717,10 @@ export function TodoEditor(props: TodoEditorProps) {
     !isCreate && props.canStartWork !== false && Boolean(props.onCreateTask);
   const editable = isCreate || editProps?.editable === true;
   const structuralWritesEnabled = props.structuralWritesEnabled !== false;
+  const structuralWritesEnabledRef = useRef(structuralWritesEnabled);
+  useLayoutEffect(() => {
+    structuralWritesEnabledRef.current = structuralWritesEnabled;
+  }, [structuralWritesEnabled]);
   const structureEditable = editable && structuralWritesEnabled;
   const workspacePanel = props.presentation === "workspace-panel";
   const readFirst = workspacePanel && props.readFirst === true && !isCreate;
@@ -839,7 +843,7 @@ export function TodoEditor(props: TodoEditorProps) {
     value: SetStateAction<IssueDetailDraftValue[K]>,
   ) {
     if (
-      !structuralWritesEnabled &&
+      !structuralWritesEnabledRef.current &&
       ["status", "tags", "parentId", "assigneeTarget"].includes(field)
     )
       return;
@@ -2642,6 +2646,7 @@ export function TodoEditor(props: TodoEditorProps) {
         failed: t("todo.save_failed", "保存失败"),
       }}
       testIdPrefix="issue-outside-assignee"
+      confirmDisabled={!structuralWritesEnabled}
       onClose={() => {
         outsideAssigneeConfirmationRef.current?.(false);
         outsideAssigneeConfirmationRef.current = null;
