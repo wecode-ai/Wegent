@@ -919,11 +919,7 @@ export function createDesktopScenario({
   uiTimeoutMs,
 }) {
   return {
-    // The design checkpoint exercises native key-down/key-up, with exclusive foreground ownership.
-    appEnvironment:
-      selectedCheckpoint() === 'browser-annotation-design'
-        ? { WEWORK_E2E_BACKGROUND_WINDOW: '0' }
-        : {},
+    appEnvironment: {},
     async handleHttp(request, response, url) {
       if (request.method !== 'GET') return false
       const fixtures = {

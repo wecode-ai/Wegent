@@ -3,19 +3,34 @@ import test from 'node:test'
 import { loadDesktopCheckpointCatalog } from '../e2e/desktop/checkpoint-catalog.mjs'
 import { createDesktopScenario } from '../e2e/desktop/scenarios/embedded-browser-annotation.scenario.mjs'
 
-test('native Original View key-down/key-up owns the foreground without background activation policy', () => {
+test('retained browser annotation core does not activate a retired foreground checkpoint', async () => {
   const argv = process.argv
   try {
-    process.argv = [...argv, '--segment', 'browser-annotation-design']
+    const catalog = loadDesktopCheckpointCatalog()
+    assert.deepEqual(catalog.DESKTOP_CHECKPOINT_GROUPS.get('browser-annotation'), [
+      'browser-annotation-core',
+    ])
+    assert.equal(
+      catalog.CHECKPOINT_SCENARIO_MODULES['browser-annotation-core'],
+      './scenarios/embedded-browser-annotation.scenario.mjs'
+    )
+    assert.equal(catalog.DESKTOP_CHECKPOINTS.includes('browser-annotation-design'), false)
+    assert.equal(
+      Object.hasOwn(catalog.CHECKPOINT_SCENARIO_MODULES, 'browser-annotation-design'),
+      false
+    )
+
+    process.argv = [...argv, '--segment', 'browser-annotation-core']
     const scenario = createDesktopScenario({})
     const environment = { WEWORK_E2E_BACKGROUND_WINDOW: '1', ...scenario.appEnvironment }
-    assert.equal(environment.WEWORK_E2E_BACKGROUND_WINDOW, '0')
-    assert.deepEqual(
-      loadDesktopCheckpointCatalog().CHECKPOINT_RESOURCES.get('browser-annotation-design'),
-      ['macos-inspector-foreground']
+    assert.equal(environment.WEWORK_E2E_BACKGROUND_WINDOW, '1')
+    assert.deepEqual(scenario.appEnvironment, {})
+
+    process.argv = [...argv, '--segment', 'browser-annotation-design']
+    await assert.rejects(
+      createDesktopScenario({}).verify({}),
+      /Unsupported browser annotation checkpoint: browser-annotation-design/
     )
-    process.argv = [...argv, '--segment', 'browser-annotation-core']
-    assert.deepEqual(createDesktopScenario({}).appEnvironment, {})
   } finally {
     process.argv = argv
   }
