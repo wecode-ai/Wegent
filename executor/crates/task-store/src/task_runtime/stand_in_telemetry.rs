@@ -5,6 +5,7 @@ const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const MAX_EVENTS: i64 = 10_000;
 
 pub struct StandInRunObservation<'a> {
+    pub occurred_at: i64,
     pub user: i64,
     pub task: &'a str,
     pub turn: &'a str,
@@ -220,6 +221,7 @@ impl LocalTaskStore {
         observation: StandInRunObservation<'_>,
     ) -> Result<(), TaskRuntimeError> {
         let StandInRunObservation {
+            occurred_at: at,
             user,
             task,
             turn,
@@ -233,7 +235,6 @@ impl LocalTaskStore {
         if !enabled(&tx, user)? {
             return Ok(());
         }
-        let at = Utc::now().timestamp_millis();
         let previous: Option<(String,String,i64,bool)> = tx.query_row(
             "SELECT run_id,phase,started_at,waiting FROM stand_in_telemetry_runs WHERE user_id=?1 AND task_id=?2",
             params![user,task], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
@@ -439,6 +440,7 @@ mod tests {
         store.configure_stand_in_telemetry(7, true, None).unwrap();
         store
             .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis(),
                 user: 7,
                 task: "private-task",
                 turn: "turn",
@@ -452,6 +454,7 @@ mod tests {
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         store
             .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis(),
                 user: 7,
                 task: "private-task",
                 turn: "turn",
@@ -484,6 +487,7 @@ mod tests {
         let observe = |turn, running, waiting, result| {
             store
                 .observe_stand_in_run(StandInRunObservation {
+                    occurred_at: Utc::now().timestamp_millis(),
                     user: 7,
                     task: "task",
                     turn,
@@ -534,6 +538,7 @@ mod tests {
         ] {
             store
                 .observe_stand_in_run(StandInRunObservation {
+                    occurred_at: Utc::now().timestamp_millis(),
                     user: 7,
                     task: "task",
                     turn: "turn",
@@ -649,6 +654,7 @@ mod retention_tests {
         let properties = origin_properties(&json!({"type":"stand_in_identity"}));
         store
             .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis(),
                 user: 7,
                 task: "task",
                 turn: "turn",
@@ -660,6 +666,7 @@ mod retention_tests {
             .unwrap();
         store
             .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis(),
                 user: 7,
                 task: "task",
                 turn: "turn",
@@ -680,6 +687,7 @@ mod retention_tests {
         }
         store
             .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis(),
                 user: 7,
                 task: "task",
                 turn: "turn",

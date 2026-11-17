@@ -83,11 +83,20 @@ mod tests {
             .as_array()
             .unwrap()
             .is_empty());
+        let started_at = chrono::Utc::now().timestamp_millis() - 10_000;
+        {
+            let mut pending = store.telemetry.pending.lock().unwrap();
+            pending[0].1.occurred_at = started_at;
+            pending[1].1.occurred_at = started_at + 4_000;
+        }
         drop(flush);
         store.flush_stand_in();
         let events = facts.list_stand_in_telemetry(7).unwrap();
         assert_eq!(events["items"].as_array().unwrap().len(), 2);
         assert_eq!(events["items"][0]["name"], "stand_in_execution_started");
         assert_eq!(events["items"][1]["name"], "stand_in_execution_completed");
+        assert_eq!(events["items"][0]["occurredAt"], started_at);
+        assert_eq!(events["items"][1]["occurredAt"], started_at + 4_000);
+        assert_eq!(events["items"][1]["properties"]["duration_ms"], 4_000);
     }
 }

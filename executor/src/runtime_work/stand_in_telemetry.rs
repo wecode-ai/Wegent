@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::path::Path;
 
 pub(super) struct Observation {
+    pub(super) occurred_at: i64,
     user: i64,
     task: String,
     turn: String,
@@ -42,6 +43,7 @@ pub(super) fn snapshot(link: &RuntimeTaskLink) -> Option<Observation> {
         Some("waitingForUserInput" | "awaitingUserReply")
     );
     Some(Observation {
+        occurred_at: chrono::Utc::now().timestamp_millis(),
         user,
         task: link.local_task_id.clone(),
         turn: turn.to_owned(),
@@ -55,6 +57,7 @@ pub(super) fn snapshot(link: &RuntimeTaskLink) -> Option<Observation> {
 pub(super) fn observe(path: &Path, observation: Observation) {
     let outcome = LocalTaskStore::open(path).and_then(|store| {
         store.observe_stand_in_run(StandInRunObservation {
+            occurred_at: observation.occurred_at,
             user: observation.user,
             task: &observation.task,
             turn: &observation.turn,
