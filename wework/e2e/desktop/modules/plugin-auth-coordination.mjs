@@ -11,6 +11,12 @@ import {
   verifyIndependentPluginMutations,
 } from './plugin-write-coordination.mjs'
 import { pluginApi, until } from './plugin-regression-fixture.mjs'
+import {
+  assertBackgroundPluginAuthPaused,
+  hasFreshPluginAuthSuccess,
+  isFreshPluginAuthRecovery,
+  readPluginAuthTarget,
+} from './plugin-auth-coordination-evidence.mjs'
 
 // Exercise the desktop IPC, real Executor broker and account adapter. Only the
 // synthetic credential provider is gated; backend responses are never replaced.
@@ -157,25 +163,44 @@ export async function verifyPluginAuthCoordination({
     await otherLease.release()
   }
   const backgroundRow = await holdInstalledPluginRow(cloud, installedId)
-  let pausedMarker
+  const executorLog = join(resultDir, 'executor.log')
+  let recoveryBefore
+  let recoveryOffset
   try {
+    const before = {
+      target: await readPluginAuthTarget(cloud, installedId),
+    }
+    await backgroundRow.assertHeld()
     await signalAutomaticRetry()
     await backgroundRow.waitFor('blocked')
-    pausedMarker = await readFile(reconcileMarker, 'utf8')
     await verifyIndependentPluginMutations(cloud, independent, evidence)
-    assert.equal(
-      await readFile(reconcileMarker, 'utf8'),
-      pausedMarker,
-      'Background authentication finished before its real database fence was released'
-    )
+    const after = { target: await readPluginAuthTarget(cloud, installedId) }
+    assertBackgroundPluginAuthPaused({
+      before,
+      after,
+      fence: await backgroundRow.assertHeld(),
+    })
+    recoveryBefore = after.target
+    recoveryOffset = (await readFile(executorLog, 'utf8')).length
+    await backgroundRow.assertHeld()
     evidence.push({ case: 'background-authentication-does-not-block-other-plugin', installedId })
   } finally {
     await backgroundRow.release()
   }
+  await signalAutomaticRetry()
   await until(
-    () => readFile(reconcileMarker, 'utf8'),
-    value => value.length > pausedMarker.length,
-    'Background authentication did not recover after its row was released'
+    async () => ({
+      before: recoveryBefore,
+      after: await readPluginAuthTarget(cloud, installedId),
+      freshTargetSuccess: hasFreshPluginAuthSuccess(
+        await readFile(executorLog, 'utf8'),
+        recoveryOffset,
+        installedId
+      ),
+      installedId,
+    }),
+    isFreshPluginAuthRecovery,
+    'Background authentication did not freshly enroll its target after the row was released'
   )
   await logout()
 
