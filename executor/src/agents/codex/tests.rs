@@ -84,6 +84,7 @@ async fn cloud_config_fallback_does_not_disrupt_other_active_threads() {
             None,
             None,
             false,
+            None,
         )
         .await
         .expect("fallback decision should not fail");

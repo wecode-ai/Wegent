@@ -193,6 +193,8 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 
 Session 的网络失败记录补充 `sinceSendHeadersMs`（首次发送请求头至失败或 HTTP 完成）和 `responseHeadersAfterSendMs`（首次发送至收到响应头），均使用宿主单调时钟。未观察到的阶段为 `null`，不能解释为零耗时；这些值不包含发送前的排队时间，也不是服务端处理耗时。时序按 Session 和请求 ID 隔离，完成后释放；默认 Session 覆盖错误回调时仍须向共享记录函数传入该 Session。只保存时间和既有安全字段，不采集请求头、正文或查询凭据。
 
+配置请求可能同时收到同一原生进程的 cloud-config 失败。每次 RPC 记录实际接收请求的 process generation；恢复在认证状态锁内核对该身份，只处理对应进程，或复用另一个请求已为同一进程完成的 Router 恢复。当前模式为 Router 本身不能授权重放；未知结果、无关 generation、显式官方订阅和独立 Home 均不复用该恢复。原有权限恢复与请求时限继续生效。子进程契约验证迟到失败复用既有恢复、只创建一次线程及上述拒绝边界，使用合成 Codex 协议服务，不证明真实官方 runtime 间歇缺陷已修复，真实 E2E 门禁仍保留。
+
 共享控制器允许 Runtime 请求重叠，结果可能乱序到达。性能 journal 按同一 capture 的单调耗时插入每份快照，保留操作边界，并重新计算相邻增量与移除注记；不按网络到达顺序判定计数回退。来源客户端和起始时间必须保持一致，排序后真正回退或缺失的计数仍使采集不完整；相同耗时时保留到达顺序，不能据此消除不确定性。
 
 累计快照发生计数回退、来源复用或字段缺失时，`performance.json.rejectedSnapshots` 保留拒收的操作边界、前后耗时及回退计数，帮助区分重置与乱序；报告继续标为不完整，拒收值不覆盖已确认指标。

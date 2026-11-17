@@ -583,6 +583,7 @@ mod tests {
                 Some("official-thread"),
                 None,
                 false,
+                None,
             )
             .await;
         assert_eq!(result, Ok(false));

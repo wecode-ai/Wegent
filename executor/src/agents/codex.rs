@@ -445,23 +445,8 @@ impl CodexAppServerClient {
                 });
             }
         }
-        let result = self.request_once(method, params.clone()).await;
-        if let Err(error) = &result {
-            if is_codex_cloud_config_error(error)
-                && self
-                    .degrade_auth_after_cloud_config_failure(
-                        method,
-                        error,
-                        params.get("threadId").and_then(Value::as_str),
-                        None,
-                        false,
-                    )
-                    .await?
-            {
-                return self.request_once(method, params).await;
-            }
-        }
-        result
+        self.request_with_cloud_config_recovery(method, params)
+            .await
     }
 
     async fn request_once(&self, method: &str, params: Value) -> Result<Value, String> {
@@ -517,6 +502,7 @@ impl CodexAppServerClient {
         thread_id: Option<&str>,
         launch_config: Option<&CodexLaunchConfig>,
         may_restart_active_thread: bool,
+        failed_process_generation: Option<u64>,
     ) -> Result<bool, String> {
         if self.home.is_some()
             || launch_config
@@ -527,6 +513,32 @@ impl CodexAppServerClient {
         let drain_deadline = Instant::now() + AUTH_DEGRADE_PENDING_DRAIN_TIMEOUT;
         loop {
             let mut state = self.state.lock().await;
+            let current_generation = state
+                .process
+                .as_ref()
+                .map(|process| process.notifications.process_generation);
+            if current_generation != failed_process_generation {
+                let recovered = failed_process_generation.is_some()
+                    && state.auth_mode == CodexAuthMode::WeworkRouter
+                    && state.cloud_config_degraded_generation == failed_process_generation;
+                if recovered {
+                    log_executor_event(
+                        "codex request joined cloud config recovery",
+                        &[
+                            ("method", method.to_owned()),
+                            (
+                                "failed_process_generation",
+                                format!("{failed_process_generation:?}"),
+                            ),
+                            (
+                                "current_process_generation",
+                                format!("{current_generation:?}"),
+                            ),
+                        ],
+                    );
+                }
+                return Ok(recovered);
+            }
             if state.auth_mode == CodexAuthMode::WeworkRouter {
                 return Ok(false);
             }
@@ -557,6 +569,10 @@ impl CodexAppServerClient {
                         ("pending_requests", pending_request_count.to_string()),
                     ],
                 );
+                state.cloud_config_degraded_generation = state
+                    .process
+                    .as_ref()
+                    .map(|process| process.notifications.process_generation);
                 state.auth_mode = CodexAuthMode::WeworkRouter;
                 stop_codex_app_server_process(
                     &mut state,
@@ -1557,6 +1573,7 @@ struct CodexAppServerSharedState {
     executor_shutdown_requested: bool,
     next_id: u64,
     auth_mode: CodexAuthMode,
+    cloud_config_degraded_generation: Option<u64>,
     active_threads: HashMap<String, usize>,
     preparing_turns: startup::SharedTurnPreparations,
     thread_activity_changed: Arc<tokio::sync::Notify>,
@@ -1620,6 +1637,7 @@ impl Default for CodexAppServerSharedState {
             executor_shutdown_requested: false,
             next_id: 1,
             auth_mode: CodexAuthMode::default(),
+            cloud_config_degraded_generation: None,
             active_threads: HashMap::new(),
             preparing_turns: startup::SharedTurnPreparations::default(),
             thread_activity_changed: Arc::new(tokio::sync::Notify::new()),
