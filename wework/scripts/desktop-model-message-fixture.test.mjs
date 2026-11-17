@@ -77,55 +77,73 @@ for (const [name, prompt, completion, scenario] of [
   }
 }
 
-for (const [path, protocol] of [
-  ['/responses', 'responses'],
-  ['/v1/responses', 'responses'],
-  ['/backend-api/codex/responses', 'responses'],
-  ['/chat/completions', 'chat'],
-  ['/v1/chat/completions', 'chat'],
-  ['/messages', 'anthropic'],
-  ['/v1/messages', 'anthropic'],
+for (const [scenario, prompt, completion] of [
+  [
+    'collaboration-worktree-policy',
+    'COLLABORATION_WORKTREE_POLICY',
+    'COLLABORATION_WORKTREE_POLICY_DONE',
+  ],
+  ['collaboration-issue-task-discovery', 'Issue task discovery', 'ISSUE_APP_RECORD_COMPLETE'],
+  [
+    'collaboration-issue-task-discovery',
+    'Personal home start work Issue',
+    'Personal home task complete',
+  ],
 ]) {
-  test(`custom scenario uses shared ${protocol} routing for ${path}`, async () => {
-    const { createDesktopScenario } =
-      await import('../e2e/desktop/scenarios/collaboration-worktree-policy.scenario.mjs')
-    const server = new DesktopE2EServer('/isolated-model-message-fixture')
-    server.url = 'http://127.0.0.1:1234'
-    server.setDesktopScenario(createDesktopScenario({}))
-    const message = { role: 'user', content: 'COLLABORATION_WORKTREE_POLICY' }
-    const request = Readable.from([
-      JSON.stringify(protocol === 'responses' ? { input: [message] } : { messages: [message] }),
-    ])
-    Object.assign(request, {
-      method: 'POST',
-      url: path,
-      headers: { authorization: `Bearer ${MODEL_API_KEY}` },
-    })
-    let output
-    await server.handle(request, {
-      setHeader() {},
-      once() {},
-      writeHead(status) {
-        assert.equal(status, 200)
-      },
-      end(value) {
-        output = value
-      },
-    })
-    assert.ok(output.includes('COLLABORATION_WORKTREE_POLICY_DONE'))
-    assert.ok(
-      output.includes(
-        protocol === 'responses'
-          ? 'response.completed'
-          : protocol === 'chat'
-            ? 'data: [DONE]'
-            : 'message_stop'
+  for (const [path, protocol] of [
+    ['/responses', 'responses'],
+    ['/v1/responses', 'responses'],
+    ['/backend-api/codex/responses', 'responses'],
+    ['/chat/completions', 'chat'],
+    ['/v1/chat/completions', 'chat'],
+    ['/messages', 'anthropic'],
+    ['/v1/messages', 'anthropic'],
+  ]) {
+    test(`${scenario}: ${prompt} uses shared ${protocol} routing for ${path}`, async () => {
+      const { createDesktopScenario } = await import(
+        `../e2e/desktop/scenarios/${scenario}.scenario.mjs`
       )
-    )
-    assert.equal(
-      server.modelRequests.length,
-      0,
-      'Custom requests must not enter the initial task fixture'
-    )
-  })
+      const server = new DesktopE2EServer('/isolated-model-message-fixture')
+      server.url = 'http://127.0.0.1:1234'
+      server.setDesktopScenario(createDesktopScenario({}))
+      const message = { role: 'user', content: prompt }
+      const request = Readable.from([
+        JSON.stringify({
+          model: 'synthetic-selected-model',
+          ...(protocol === 'responses' ? { input: [message] } : { messages: [message] }),
+        }),
+      ])
+      Object.assign(request, {
+        method: 'POST',
+        url: path,
+        headers: { authorization: `Bearer ${MODEL_API_KEY}` },
+      })
+      let output
+      await server.handle(request, {
+        setHeader() {},
+        once() {},
+        writeHead(status) {
+          assert.equal(status, 200)
+        },
+        end(value) {
+          output = value
+        },
+      })
+      assert.ok(output.includes(completion))
+      assert.ok(
+        output.includes(
+          protocol === 'responses'
+            ? 'response.completed'
+            : protocol === 'chat'
+              ? 'data: [DONE]'
+              : 'message_stop'
+        )
+      )
+      assert.equal(
+        server.modelRequests.length,
+        0,
+        'Custom requests must not enter the initial task fixture'
+      )
+    })
+  }
 }
