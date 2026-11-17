@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { issueCommentFormSelector } from './issue-comment-selectors.mjs'
 
 /** Exercise comment handoff against real project members, comments and assignment APIs. */
 export async function verifyCommentAssignment(
@@ -16,7 +17,7 @@ export async function verifyCommentAssignment(
   })
   const activity = scoped(`[data-testid="cloud-task-activity-${issue.id}"]`)
   await control.command('waitFor', activity)
-  const form = `${activity} [data-testid="task-comment-form"]`
+  const form = scoped(issueCommentFormSelector(issue.id))
   const editor = `${form} [data-testid="cloud-task-activity-composer"]`
   const selector = `${form} [data-testid="task-comment-form-assignee"]`
   const send = `${form} [data-testid="send-message-button"]`

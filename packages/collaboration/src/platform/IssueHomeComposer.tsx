@@ -395,6 +395,7 @@ export function IssueHomeComposer({
             onRemoveAttachment={removeFile}
             imageServices={images}
             labels={{
+              removeAttachment: translate("todo.remove_attachment"),
               pastedText: translate("todo.pasted_text_attachment"),
               addingText: translate("todo.adding_pasted_text_attachment"),
               showText: translate("todo.show_text_attachment"),

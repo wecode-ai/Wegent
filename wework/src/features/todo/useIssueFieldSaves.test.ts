@@ -18,6 +18,59 @@ function deferred<T>() {
 }
 
 describe('Issue field save queue', () => {
+  it('never retries an old failed value after a newer edit has been submitted', async () => {
+    const first = Promise.withResolvers<typeof initial>()
+    const latest = Promise.withResolvers<typeof initial>()
+    const old = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementation(async source => ({
+        ...source,
+        title: 'Old',
+        version: source.version + 1,
+      }))
+    const accept = vi.fn()
+    const { result } = renderHook(() => useIssueFieldSaves(initial, accept))
+    let earlier!: Promise<unknown>
+    let newer!: Promise<unknown>
+    act(() => {
+      earlier = result.current.save('title', old)
+      newer = result.current.save('title', () => latest.promise)
+    })
+    await act(async () => {
+      first.reject(new Error('Old write failed'))
+      await earlier
+    })
+    act(() => result.current.retry())
+    await act(async () => {
+      latest.resolve({ ...initial, title: 'Newest', version: 2 })
+      await newer
+    })
+    await waitFor(() => expect(result.current.pending).toBe(false))
+    expect(old).toHaveBeenCalledOnce()
+    expect(result.current.error).toBeNull()
+    expect(accept).toHaveBeenLastCalledWith({ ...initial, title: 'Newest', version: 2 })
+  })
+
+  it('discards only the cancelled field failure before retrying', async () => {
+    const title = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Title failed'))
+      .mockResolvedValue({ ...initial, title: 'Kept', version: 2 })
+    const description = vi.fn().mockRejectedValue(new Error('Description failed'))
+    const { result } = renderHook(() => useIssueFieldSaves(initial, vi.fn()))
+    await act(async () => {
+      await result.current.save('description', description)
+      await result.current.save('title', title)
+    })
+    act(() => result.current.discardFailure('description'))
+    act(() => result.current.retry())
+    await waitFor(() => expect(result.current.pending).toBe(false))
+    expect(result.current.error).toBeNull()
+    expect(title).toHaveBeenCalledTimes(2)
+    expect(description).toHaveBeenCalledOnce()
+  })
+
   it('serializes rapid edits using accepted versions even before the host refreshes', async () => {
     const accept = vi.fn()
     const first = deferred<typeof initial>()
@@ -34,6 +87,7 @@ describe('Issue field save queue', () => {
       two = result.current.save('status', later)
     })
     expect(result.current.pending).toBe(true)
+    expect(result.current.saved).toBe(false)
     expect(later).not.toHaveBeenCalled()
     await act(async () => {
       first.resolve({ ...initial, title: 'Changed', version: 2 })
@@ -47,6 +101,7 @@ describe('Issue field save queue', () => {
       version: 3,
     })
     expect(result.current.pending).toBe(false)
+    expect(result.current.saved).toBe(true)
   })
 
   it('reports a failed save to the current host callback only', async () => {
@@ -70,6 +125,7 @@ describe('Issue field save queue', () => {
     expect(original).not.toHaveBeenCalled()
     expect(latest).toHaveBeenCalledExactlyOnceWith(error)
     expect(result.current.error).toBe(error)
+    expect(result.current.saved).toBe(false)
   })
 
   it('retains failed operations for explicit retry without blocking unrelated fields', async () => {
