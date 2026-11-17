@@ -615,20 +615,12 @@ export function useWorkbenchCloudProjectContext({
           }
         })
         .catch(error => {
-          if (!active || contextLookupGenerationRef.current !== lookupGeneration) return
-          if (error instanceof ProjectSpaceTaskContextUnavailableError) {
-            setBoundCloudItem(null)
-            setBoundCloudProject(null)
-            setBoundRuntimeTaskAddress(null)
-            setDeliveryItem(null)
-            setContextAvailabilityError(
-              t('workbench.cloud_project_bind_failed', '关联项目空间失败')
-            )
-          }
           const pendingBinding = pendingBindingFor(contextRuntimeTask, paneKey)
           reportE2EDiagnostic('project-space-task-context-failed', {
             taskId: contextRuntimeTask.taskId,
             deviceId: contextRuntimeTask.deviceId,
+            active,
+            generationMatches: contextLookupGenerationRef.current === lookupGeneration,
             pendingBinding: pendingBinding
               ? {
                   projectId: pendingBinding.project.id,
@@ -649,6 +641,16 @@ export function useWorkbenchCloudProjectContext({
                   }))
                 : undefined,
           })
+          if (!active || contextLookupGenerationRef.current !== lookupGeneration) return
+          if (error instanceof ProjectSpaceTaskContextUnavailableError) {
+            setBoundCloudItem(null)
+            setBoundCloudProject(null)
+            setBoundRuntimeTaskAddress(null)
+            setDeliveryItem(null)
+            setContextAvailabilityError(
+              t('workbench.cloud_project_bind_failed', '关联项目空间失败')
+            )
+          }
           console.warn('[Wework] Failed to resolve project-space context for task', {
             task: contextRuntimeTask,
             error,

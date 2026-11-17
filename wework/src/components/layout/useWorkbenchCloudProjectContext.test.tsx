@@ -90,6 +90,57 @@ describe('useWorkbenchCloudProjectContext', () => {
     }
   })
 
+  test('journals a context failure after unmount without applying stale state', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const log = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    let rejectLookup!: (error: Error) => void
+    const held = new Promise<never>((_, reject) => {
+      rejectLookup = reject
+    })
+    const findCloudContextForTask = vi.fn(() => held)
+    const services = {
+      projectSpaceApis: {
+        local: {
+          listCloudProjects: vi.fn().mockResolvedValue({ items: [] }),
+          findCloudContextForTask,
+        },
+      },
+    } as unknown as WorkbenchServices
+    const { unmount } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: { deviceId: 'unmounted-device', taskId: 'unmounted-task' },
+        defaultProjectSpace: null,
+        paneKey: 'unmounted-context',
+        runtimeTaskTitle: null,
+        services,
+      })
+    )
+    try {
+      await waitFor(() => expect(findCloudContextForTask).toHaveBeenCalledOnce())
+      unmount()
+      await act(async () => rejectLookup(new Error('Lookup failed after unmount')))
+      await waitFor(() => {
+        const reports = log.mock.calls
+          .filter(([prefix]) => prefix === '[wework-e2e-diagnostic]')
+          .map(([, value]) => JSON.parse(String(value)))
+        expect(reports).toContainEqual(
+          expect.objectContaining({
+            type: 'project-space-task-context-failed',
+            details: expect.objectContaining({ taskId: 'unmounted-task', active: false }),
+          })
+        )
+      })
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      unmount()
+      log.mockRestore()
+      warn.mockRestore()
+      vi.unstubAllEnvs()
+    }
+  })
+
   test('context discovery waits for optimistic task creation to finish', async () => {
     const task = { deviceId: 'creation-context-device', taskId: 'pending-context' }
     let accept!: () => void
