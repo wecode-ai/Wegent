@@ -256,3 +256,37 @@ test('reports an unexpected Electron host pipe close exactly once', async () => 
   assert.equal(disconnects.length, 1)
   assert.equal(disconnects[0].code, 'host_disconnected')
 })
+
+test('rejects malformed host JSON without accepting a following response in the same chunk', async () => {
+  const input = new PassThrough()
+  const output = new PassThrough()
+  const disconnects = []
+  const client = new ElectronHostClient({
+    token: 'test-token',
+    input,
+    output,
+    onDisconnect: error => disconnects.push(error),
+  })
+  output.once('data', () => {
+    input.write(
+      `${JSON.stringify({ type: 'hello', ok: true, protocolVersion: 1, capabilities: ['window.getState'] })}\n`
+    )
+  })
+  await client.start()
+  output.once('data', chunk => {
+    const { id } = JSON.parse(chunk.toString())
+    input.write(
+      `invalid\n${JSON.stringify({ type: 'response', id, ok: true, result: 'unsafe' })}\n`
+    )
+  })
+  try {
+    await assert.rejects(client.invoke('window.getState'), { code: 'invalid_frame' })
+    assert.equal(disconnects.length, 1)
+    assert.equal(disconnects[0].code, 'invalid_frame')
+    assert.equal(input.listenerCount('data'), 0)
+  } finally {
+    client.stop()
+    input.destroy()
+    output.destroy()
+  }
+})

@@ -299,11 +299,12 @@ def test_logout_cannot_revoke_inactive_or_other_users_plugin(
         test_user,
         reconcile(lifecycle, test_db, test_user, installed)[0]["id"],
     )
+    test_db.commit()
     if foreign:
         installed.user_id = test_admin_user.id
     else:
         installed.is_active = False
-    test_db.flush()
+    test_db.commit()
 
     with pytest.raises(PluginAccountAuthError, match="plugin_auth_plugin_not_found"):
         call(lifecycle, test_db, test_user, installed, "logout")
