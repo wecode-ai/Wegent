@@ -106,6 +106,7 @@ export function IssueLinkedTasks({
   deviceNamesById,
   selectedTaskId,
   showCurrentTaskOnly,
+  linkedTaskAction,
   onCreateTask,
   createTaskRef,
   createTaskLabel,
@@ -123,6 +124,7 @@ export function IssueLinkedTasks({
   deviceNamesById?: Readonly<Record<string, string>>;
   selectedTaskId?: string | null;
   showCurrentTaskOnly?: boolean;
+  linkedTaskAction?: ReactNode;
   onCreateTask?: () => void;
   createTaskRef?: Ref<HTMLButtonElement>;
   createTaskLabel?: string;
@@ -160,17 +162,22 @@ export function IssueLinkedTasks({
       countTestId="cloud-todo-execution-task-count"
       translate={translate}
       actions={
-        onCreateTask ? (
-          <button
-            ref={createTaskRef}
-            type="button"
-            data-testid="cloud-todo-create-task"
-            onClick={() => onCreateTask()}
-            className="task-detail-workspace-ghost-action"
-          >
-            <Plus aria-hidden="true" className="h-3.5 w-3.5" />
-            {createTaskLabel ?? translate("todo.new_task", "新建任务")}
-          </button>
+        linkedTaskAction || onCreateTask ? (
+          <>
+            {linkedTaskAction}
+            {onCreateTask ? (
+              <button
+                ref={createTaskRef}
+                type="button"
+                data-testid="cloud-todo-create-task"
+                onClick={() => onCreateTask()}
+                className="task-detail-workspace-ghost-action"
+              >
+                <Plus aria-hidden="true" className="h-3.5 w-3.5" />
+                {createTaskLabel ?? translate("todo.new_task", "新建任务")}
+              </button>
+            ) : null}
+          </>
         ) : null
       }
     >
