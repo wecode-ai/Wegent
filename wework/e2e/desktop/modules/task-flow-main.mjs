@@ -5165,14 +5165,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
     await runTeardownStep('performance evidence', async () => {
-      const protocols = [
+      control.performance.recordExternalServiceProtocols([
         ...(desktopScenario?.externalServiceProtocols ?? []),
         ...(control.sitesProtocol?.requests.length ? ['sites'] : []),
-      ]
-      control.performance.metadata.externalServiceProtocols = [...new Set(protocols)]
-      control.performance.metadata.verificationType = protocols.length
-        ? 'protocol-integration'
-        : 'real-e2e'
+      ])
       if (app?.exitCode === null && app?.signalCode === null) {
         const reads = await Promise.allSettled([control.command('getRoute', 'body')])
         for (const read of reads)

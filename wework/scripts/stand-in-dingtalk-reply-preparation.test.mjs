@@ -3,8 +3,36 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import { createDingTalkReplyStory } from '../e2e/desktop/modules/stand-in-dingtalk-reply-story.mjs'
+import { createStandInDingTalkFixture } from '../e2e/desktop/modules/stand-in-dingtalk-fixture.mjs'
+import { DesktopPerformanceJournal } from '../e2e/desktop/performance-journal.mjs'
 
 afterEach(() => vi.unstubAllEnvs())
+
+test('the shared DingTalk CLI substitute declares its external protocol boundary', async () => {
+  const resultDir = await mkdtemp(join(tmpdir(), 'dingtalk-protocol-boundary-'))
+  try {
+    const prepared = join(resultDir, 'prepared-cli.exe')
+    await writeFile(prepared, 'precompiled protocol fixture')
+    vi.stubEnv('WEWORK_E2E_DWS_FIXTURE_BIN', prepared)
+    const performance = new DesktopPerformanceJournal({
+      verificationType: 'real-e2e',
+      externalServiceProtocols: [],
+    })
+    const context = {
+      appEnvironment: {},
+      codexHome: join(resultDir, 'codex'),
+      control: { performance },
+    }
+    await createStandInDingTalkFixture({ resultDir }).prepareApp(context)
+    expect(context.appEnvironment.DWS_BINARY_PATH).toBe(prepared)
+    expect(performance.report(false)).toMatchObject({
+      verificationType: 'protocol-integration',
+      externalServiceProtocols: ['dingtalk'],
+    })
+  } finally {
+    await rm(resultDir, { recursive: true, force: true })
+  }
+})
 
 test('reply story reuses the prepared binary without a compiler in the standard user PATH', async () => {
   const resultDir = await mkdtemp(join(tmpdir(), 'dingtalk-reply-'))

@@ -105,6 +105,21 @@ test('reports distinguish Sites protocol integration from real external compatib
   )
 })
 
+test('shared protocol fixtures remain declared when final scenario metadata is merged', () => {
+  const journal = new DesktopPerformanceJournal({ ...metadata })
+  journal.recordExternalServiceProtocols(['dingtalk'])
+  journal.recordExternalServiceProtocols(['git-hosting', 'dingtalk'])
+  journal.recordExternalServiceProtocols([])
+  const report = journal.report(true)
+  assert.equal(report.verificationType, 'protocol-integration')
+  assert.deepEqual(report.externalServiceProtocols, ['dingtalk', 'git-hosting'])
+  assert.match(renderPerformanceReport([report]), /external compatibility unverified/)
+  const real = new DesktopPerformanceJournal({ ...metadata })
+  real.recordExternalServiceProtocols([])
+  assert.equal(real.report(true).verificationType, 'real-e2e')
+  assert.deepEqual(real.report(true).externalServiceProtocols, [])
+})
+
 test('cumulative snapshots retain command boundaries without double counting', () => {
   const journal = new DesktopPerformanceJournal(metadata)
   journal.record('client', snapshot())

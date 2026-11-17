@@ -127,6 +127,12 @@ export class DesktopPerformanceJournal {
     this.rejectedSnapshots = []
   }
 
+  recordExternalServiceProtocols(protocols) {
+    const observed = new Set([...(this.metadata.externalServiceProtocols ?? []), ...protocols])
+    this.metadata.externalServiceProtocols = [...observed]
+    this.metadata.verificationType = observed.size ? 'protocol-integration' : 'real-e2e'
+  }
+
   record(clientId, snapshot, action = 'ready', phase = 'ready', commandId = null) {
     if (phase === 'started') this.commands.set(action, (this.commands.get(action) ?? 0) + 1)
     let previous = this.contexts.get(snapshot?.captureId)

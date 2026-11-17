@@ -8,7 +8,7 @@ Wework 支持启动隔离的开发验证会话，让 AI 在真实 Electron 应�
 
 ## 桌面 E2E 错误采集与断言
 
-桌面检查点统一使用真实 Backend、数据库和 MinIO；通过真实网络代理注入阻塞、断连及恢复，不生成假的 Backend 响应。模型服务可以使用协议替身。经明确授权，外部 Sites 和 GitHub/GitLab 协议（含 Git CLI 返回）也可以使用替身；Wework、Backend、插件发布/安装/激活和设备凭据同步仍为真实实现。相关检查点及报告标为“协议集成测试”，记录 `verificationType: protocol-integration`，并在 `externalServiceProtocols` 中列出 `sites` 或 `git-hosting`；不代表真实外部服务兼容性已验证，也不允许替换其他服务。需要 Nevis 重启能力的扩展场景必须配置真实隔离服务。
+桌面检查点统一使用真实 Backend、数据库和 MinIO；通过真实网络代理注入阻塞、断连及恢复，不生成假的 Backend 响应。模型服务可以使用协议替身。经明确授权，外部 Sites 和 GitHub/GitLab 协议（含 Git CLI 返回）也可以使用替身；贡献指南列明的钉钉外部协议测试同样遵循以下标记规则，不扩大允许替身的边界。Wework、Backend、插件发布/安装/激活和设备凭据同步仍为真实实现。相关检查点及报告标为“协议集成测试”，记录 `verificationType: protocol-integration`，并在 `externalServiceProtocols` 中列出 `sites`、`git-hosting` 或 `dingtalk`。共享钉钉 fixture 在准备时登记该协议，最终报告合并场景声明和实际使用的替身，不能覆盖已有登记。标记不代表真实外部服务兼容性已验证，也不允许替换其他服务。需要 Nevis 重启能力的扩展场景必须配置真实隔离服务。
 
 共享 runner 从真实 `/api/users/me` 绑定检查点的用户身份及派生会话 ID，不保留旧假后端的固定用户编号。默认已连接场景通过真实授权会话建立原生桌面凭据，界面与 Host 使用相同 Backend 地址；登录场景显式从未连接状态开始。网络失败记录目标 origin、路径、请求 ID 和资源类型，排除 URL 用户信息与查询参数。 显式信息级诊断也通过独立协议写入同一日志；原始 warning/error 不会被降级，诊断格式错误会记录为采集协议失败。
 
