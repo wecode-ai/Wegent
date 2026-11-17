@@ -33,12 +33,23 @@ export async function verifyMarkdownRelativeFileLinks({ control, workspacePath }
     if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) !== 'true') {
       await control.command('clickWhenEnabled', toggle)
     }
+    const workspaceRoot = workspacePath.replaceAll('\\', '/')
+    await control.command(
+      'clickWhenEnabled',
+      `${panel} [data-testid="workspace-file-breadcrumb-${workspaceRoot}"]`
+    )
     await control.command('fill', `${panel} [data-testid="workspace-file-search-input"]`, {
-      value: documentName,
+      value: '',
     })
-    const entry = `${panel} button[data-type="item"][aria-label="${documentName}"]`
-    await control.command('waitFor', entry, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
-    await control.command('clickWhenEnabled', entry)
+    await control.command(
+      'clickWhenEnabled',
+      `${panel} [data-testid="workspace-file-refresh-button"]`
+    )
+    for (const name of ['markdown-link-fixture', 'reports', documentName]) {
+      const entry = `button[data-type="item"][aria-label="${name}"]`
+      await control.command('waitFor', entry, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+      await control.command('clickWhenEnabled', entry)
+    }
     await control.command('waitFor', preview, { text: 'Relative image links' })
   }
   const assertImage = async expectedPath => {
