@@ -602,6 +602,33 @@ export function CollaborationApp({
     );
   };
 
+  if (selectedIssue?.invited_only) {
+    return (
+      <IssueDetail
+        api={api}
+        issue={selectedIssue}
+        allIssues={[selectedIssue]}
+        comments={comments}
+        assignments={assignments}
+        messages={messages}
+        translate={translate}
+        onClose={() => {
+          commands.clearSelectedIssue();
+          host.navigate({ ...host.location, projectId: null, issueId: null });
+        }}
+        onChange={commands.replaceIssue}
+        onRead={commands.confirmIssueRead}
+        onCommentsChange={(next) =>
+          commands.replaceComments(selectedIssue.id, next)
+        }
+        onConflict={async () => {
+          await commands.loadSelectedIssue(selectedIssue.id);
+        }}
+        onError={() => commands.reportError(messages.loadFailed)}
+      />
+    );
+  }
+
   if (loading) {
     return (
       <ProjectLoadingSkeleton

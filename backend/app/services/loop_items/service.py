@@ -63,7 +63,6 @@ from app.schemas.issue_workflow import (
     instantiate_workflow,
 )
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
-from app.services.cloud_project_visibility import project_participant_ids
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
@@ -105,6 +104,8 @@ from app.services.loop_items.access import (
     default_issue_security,
     item_security,
     related_item_filter,
+    require_active_issue_user,
+    require_item_access,
     visible_item_filter,
 )
 from app.services.loop_items.change_requests import update_change_request_source
@@ -260,9 +261,7 @@ class LoopItemService:
         *,
         read_context: LoopItemReadContext | None = None,
     ) -> dict[str, object]:
-        access = access or require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Viewer
-        )
+        access = access or require_item_access(db, item, user_id)
         context = read_context or LoopItemReadContext.load(db, [item], user_id, access)
         can_view_detail = item.id in context.visible_ids
         permissions = issue_permissions(
@@ -274,6 +273,9 @@ class LoopItemService:
             **item.__dict__,
             "created_at": database_datetime_as_utc(db, item.created_at),
             "updated_at": database_datetime_as_utc(db, item.updated_at),
+            "invited_only": any(
+                source.get("kind") == "issue_invitation" for source in access.sources
+            ),
             "can_view_detail": can_view_detail,
             "can_edit": permissions.edit_content,
             "security_level": item_security(item, access.project),
@@ -478,11 +480,18 @@ class LoopItemService:
         return parsed
 
     def _get_item_row(
-        self, db: Session, item_id: str, *, include_deleted: bool = False
+        self,
+        db: Session,
+        item_id: str,
+        *,
+        include_deleted: bool = False,
+        for_update: bool = False,
     ) -> LoopItem:
         query = db.query(LoopItem).filter(LoopItem.id == item_id)
         if not include_deleted:
             query = query.filter(loop_datetime_is_unset(LoopItem.deleted_at))
+        if for_update:
+            query = query.populate_existing().with_for_update()
         item = query.first()
         if item is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
@@ -496,9 +505,7 @@ class LoopItemService:
         *,
         action: IssueAction | None = None,
     ) -> CloudProjectAccess:
-        access = require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Viewer
-        )
+        access = require_item_access(db, item, user_id)
         can_view_detail, _ = self._item_permissions(db, access, item, user_id)
         if not can_view_detail:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
@@ -521,14 +528,9 @@ class LoopItemService:
         *,
         commit: bool = True,
     ) -> LoopItemCollaborator:
-        """Ensure one project member participates in a TODO."""
+        """Ensure one active user explicitly participates in this Issue only."""
 
-        require_cloud_project_role(
-            db,
-            item.cloud_project_id,
-            collaborator_user_id,
-            BaseRole.Viewer,
-        )
+        require_active_issue_user(db, collaborator_user_id)
         collaborator = (
             db.query(LoopItemCollaborator)
             .filter(
@@ -573,7 +575,7 @@ class LoopItemService:
     def add_collaborator(
         self, db: Session, item_id: str, collaborator_user_id: int, user_id: int
     ) -> dict[str, object]:
-        item = self.get(db, item_id, user_id)
+        item = self._get_item_row(db, item_id, for_update=True)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
         self.ensure_collaborator(db, item, collaborator_user_id, user_id, "manual")
         return next(
@@ -585,7 +587,7 @@ class LoopItemService:
     def remove_collaborator(
         self, db: Session, item_id: str, collaborator_user_id: int, user_id: int
     ) -> None:
-        item = self.get(db, item_id, user_id)
+        item = self._get_item_row(db, item_id, for_update=True)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
         collaborator = (
             db.query(LoopItemCollaborator)
@@ -1619,7 +1621,7 @@ class LoopItemService:
         emit_status_event: bool = True,
         automation_context: dict[str, Any] | None = None,
     ) -> LoopItem:
-        item = self.get(db, item_id, user_id)
+        item = self._get_item_row(db, item_id, for_update=True)
         position_order = None
         if values.position is not None:
             self._require_internal_task_project(
@@ -1655,6 +1657,18 @@ class LoopItemService:
             require_issue_action(
                 access,
                 action=action,
+                issue_creator_user_id=item.created_by_user_id,
+                user_id=user_id,
+            )
+        if (
+            {"execution_config", "workflow"} & values.model_fields_set
+            or values.assignee_agent_id
+            or values.assignee_team_id
+            or values.assignee_group_id
+        ):
+            require_issue_action(
+                access,
+                action=IssueAction.EXECUTE,
                 issue_creator_user_id=item.created_by_user_id,
                 user_id=user_id,
             )
@@ -2183,16 +2197,8 @@ class LoopItemService:
             and assignment is not None
             and assignment.metadata.get("trigger") == "default"
         )
-        project_id = int(item.cloud_project_id)
-        project = db.get(CloudProject, project_id)
-        if project is None or (
-            not is_implicit_creator_assignment
-            and target_user_id
-            not in project_participant_ids(
-                db, project, required_role=BaseRole.Developer
-            )
-        ):
-            raise HTTPException(422, "Assignee is not a member of this project")
+        human = require_active_issue_user(db, target_user_id)
+        project = db.get(CloudProject, str(item.cloud_project_id))
         if not notify:
             return
         from app.services.collaboration_human_assignments import (
@@ -2236,9 +2242,10 @@ class LoopItemService:
         queue.
         """
 
-        access = self._require_internal_task_project(db, project_id, user_id)
+        item = self._get_item_row(db, item_id, for_update=True)
+        access = self._require_item_access(db, item, user_id)
         project = access.project
-        item = self.get(db, item_id, user_id)
+        self._require_local_task_provider(project)
         if item.cloud_project_id != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         position_order = None
@@ -2257,6 +2264,13 @@ class LoopItemService:
             issue_creator_user_id=item.created_by_user_id,
             user_id=user_id,
         )
+        if values.assignee_type != "user":
+            require_issue_action(
+                access,
+                action=IssueAction.EXECUTE,
+                issue_creator_user_id=item.created_by_user_id,
+                user_id=user_id,
+            )
         previous_assignee_user_id = item.assignee_user_id
         automation_run_requested = bool((automation_context or {}).get("run_id"))
         metadata = dict(item.metadata_json or {})
@@ -2365,14 +2379,7 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "User assignee id must be numeric",
                 ) from exc
-            member_ids = project_participant_ids(
-                db, project, required_role=BaseRole.Developer
-            )
-            if target_user_id not in member_ids:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    "Assignee is not a member of this project",
-                )
+            require_active_issue_user(db, target_user_id)
             from app.services.issue_assignments import issue_assignment_service
 
             _, assignment_created = issue_assignment_service.record(

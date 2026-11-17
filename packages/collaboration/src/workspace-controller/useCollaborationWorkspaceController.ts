@@ -1315,7 +1315,7 @@ export function createCollaborationWorkspaceControllerCommands({
         ]);
         const [loadedAssignments, executions] = await Promise.all([
           api.assignments ? api.assignments.list(issueId) : Promise.resolve([]),
-          api.executions?.list
+          !issue.invited_only
             ? api.executions
                 .list(issue.cloud_project_id, { includeTerminal: true })
                 .then((items) =>

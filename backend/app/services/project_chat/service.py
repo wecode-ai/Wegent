@@ -46,6 +46,7 @@ from app.schemas.project_chat import (
 )
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
+    IssueAction,
     require_cloud_project_role,
 )
 from app.services.collaboration_permissions import (
@@ -997,6 +998,15 @@ class ProjectChatService:
             required_role=BaseRole.Developer,
         )
         self._validate_agent_mentions(db, project, request)
+        if request.task_id and any(
+            mention.type == "agent" for mention in request.mentions
+        ):
+            from app.services.loop_items.service import loop_item_service
+
+            item = loop_item_service.get(db, request.task_id, user_id)
+            loop_item_service._require_item_access(
+                db, item, user_id, action=IssueAction.EXECUTE
+            )
         existing = (
             db.query(ProjectChatMessage)
             .filter(
@@ -2509,7 +2519,21 @@ class ProjectChatService:
         task_id: str | None,
         required_role: BaseRole,
     ) -> LoopItem:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        try:
+            access = require_cloud_project_role(
+                db, project_id, user_id, BaseRole.Viewer
+            )
+        except HTTPException as cause:
+            if cause.status_code != status.HTTP_404_NOT_FOUND or task_id is None:
+                raise
+            from app.services.loop_items.service import loop_item_service
+
+            task = loop_item_service._get_item_row(
+                db, task_id, for_update=required_role != BaseRole.Viewer
+            )
+            if str(task.cloud_project_id) != str(project_id):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+            access = loop_item_service._require_item_access(db, task, user_id)
         project = access.project
         if task_id is None:
             if not has_permission(access.role, required_role):

@@ -509,6 +509,7 @@ async fn initializes_nullable_and_sentinel_indexes_without_changing_assignment_e
             );
             assert_rollback_and_recovery(&test_mysql).await;
             assert_automation_maintains_index(&test_mysql).await;
+            assert_explicit_issue_invitation_scope(&test_mysql).await;
             test_mysql
                 .execute("DROP TABLE loop_items", ())
                 .await
@@ -523,4 +524,58 @@ async fn initializes_nullable_and_sentinel_indexes_without_changing_assignment_e
         .unwrap();
     admin.close().await;
     result.unwrap();
+}
+
+async fn assert_explicit_issue_invitation_scope(mysql: &MysqlService) {
+    use super::super::issue_invitation::permits_read;
+    mysql
+        .execute(
+            "CREATE TABLE users (id INT PRIMARY KEY, is_active BOOLEAN NOT NULL)",
+            (),
+        )
+        .await
+        .unwrap();
+    mysql
+        .execute("INSERT INTO users VALUES (700,1),(701,1)", ())
+        .await
+        .unwrap();
+    mysql.execute("INSERT INTO loop_items (id,resource_type,title,description,content_type,size_bytes,local_project_id,metadata,source_task_snapshot,deleted_at,created_at,updated_at) VALUES ('invite-project','project','','','',0,0,JSON_OBJECT(),JSON_OBJECT(),'1970-01-01 00:00:01',NOW(),NOW())", ()).await.unwrap();
+    mysql.execute("UPDATE loop_items SET cloud_project_id='invite-project', assignee_user_id=700 WHERE id='issue-1'",()).await.unwrap();
+    assert!(permits_read(mysql, "issue-1", 700).await.unwrap());
+    assert!(!permits_read(mysql, "issue-1", 701).await.unwrap());
+    assert!(!permits_read(mysql, "empty-issue", 700).await.unwrap());
+    mysql
+        .execute(
+            "UPDATE loop_items SET assignee_user_id=NULL WHERE id='issue-1'",
+            (),
+        )
+        .await
+        .unwrap();
+    assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
+    mysql.execute("INSERT INTO loop_items (id,resource_type,loop_item_id,user_id,title,description,content_type,size_bytes,local_project_id,metadata,source_task_snapshot,deleted_at,created_at,updated_at) VALUES ('invite-row','collaborator','issue-1',700,'','','',0,0,JSON_OBJECT(),JSON_OBJECT(),'1970-01-01 00:00:01',NOW(),NOW())",()).await.unwrap();
+    assert!(permits_read(mysql, "issue-1", 700).await.unwrap());
+    mysql
+        .execute("UPDATE users SET is_active=0 WHERE id=700", ())
+        .await
+        .unwrap();
+    assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
+    mysql
+        .execute("UPDATE users SET is_active=1 WHERE id=700", ())
+        .await
+        .unwrap();
+    mysql.execute("UPDATE loop_items SET metadata=JSON_OBJECT('task_provider','github') WHERE id='invite-project'",()).await.unwrap();
+    assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
+    mysql
+        .execute(
+            "UPDATE loop_items SET metadata=JSON_OBJECT() WHERE id='invite-project'",
+            (),
+        )
+        .await
+        .unwrap();
+    mysql
+        .execute("DELETE FROM loop_items WHERE id='invite-row'", ())
+        .await
+        .unwrap();
+    assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
+    mysql.execute("DROP TABLE users", ()).await.unwrap();
 }

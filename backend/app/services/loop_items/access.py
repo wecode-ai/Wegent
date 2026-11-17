@@ -4,19 +4,25 @@
 
 """Issue-level visibility for projects that isolate unrelated work."""
 
+from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.models.cloud_project import LoopItemTaskBinding
+from app.models.cloud_project import CloudProject, LoopItemTaskBinding
 from app.models.delivery import (
     LoopItem,
     LoopItemCollaborator,
     ProjectChatAgent,
     loop_datetime_is_unset,
+    loop_datetime_value_is_unset,
 )
+from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
-from app.services.cloud_projects.access import CloudProjectAccess
+from app.services.cloud_projects.access import (
+    CloudProjectAccess,
+    require_cloud_project_role,
+)
 
 
 def default_issue_security(project: object) -> str:
@@ -87,8 +93,74 @@ def can_view_item(
     item: LoopItem,
     user_id: int,
 ) -> bool:
+    invitation = next(
+        (
+            source
+            for source in access.sources
+            if source.get("kind") == "issue_invitation"
+        ),
+        None,
+    )
+    if invitation is not None:
+        return invitation.get("issue_id") == item.id
     if has_permission(access.role, BaseRole.Maintainer):
         return True
     return item_security(item, access.project) == "open" or is_related_item(
         db, item.id, user_id
     )
+
+
+def require_active_issue_user(db: Session, user_id: int) -> User:
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Issue recipient must be an active user",
+        )
+    return user
+
+
+def explicitly_invited_item_filter(user_id: int) -> ColumnElement[bool]:
+    return or_(
+        LoopItem.assignee_user_id == user_id,
+        LoopItem.id.in_(
+            select(LoopItemCollaborator.loop_item_id).where(
+                LoopItemCollaborator.user_id == user_id
+            )
+        ),
+    )
+
+
+def require_item_access(
+    db: Session, item: LoopItem, user_id: int
+) -> CloudProjectAccess:
+    """Resolve current explicit Issue invitations without granting project access."""
+    try:
+        return require_cloud_project_role(
+            db, item.cloud_project_id, user_id, BaseRole.Viewer
+        )
+    except HTTPException as cause:
+        if cause.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+        if not loop_datetime_value_is_unset(item.deleted_at):
+            raise
+        project = db.get(CloudProject, str(item.cloud_project_id))
+        if (
+            project is None
+            or not loop_datetime_value_is_unset(project.deleted_at)
+            or project.task_provider != "local"
+        ):
+            raise
+        invited = (
+            db.query(LoopItem.id)
+            .filter(LoopItem.id == item.id, explicitly_invited_item_filter(user_id))
+            .first()
+        )
+        if invited is None:
+            raise
+        require_active_issue_user(db, user_id)
+        return CloudProjectAccess(
+            project=project,
+            role=BaseRole.Developer,
+            sources=({"kind": "issue_invitation", "issue_id": item.id},),
+        )

@@ -1,3 +1,5 @@
+import { useIssuePeopleSearch } from "./issue-detail/IssueDetailControls";
+import { ConfirmationDialog } from "./controls/ConfirmationDialog";
 import { useCommentChildIssue } from "./issue-detail/useCommentChildIssue";
 import { MilestonePicker } from "./milestones/MilestonePicker";
 import { IssueDeliveryContent } from "./issue-detail/IssueDeliveryContent";
@@ -1007,9 +1009,28 @@ export function TodoEditor(props: TodoEditorProps) {
       {t("todo.collaborators_unavailable", "此项目暂不支持编辑参与者")}
     </span>
   ) : null;
-  const [selectedCollaboratorId, setSelectedCollaboratorId] = useState<
-    number | null
-  >(null);
+  const [assigneeQuery, setAssigneeQuery] = useState("");
+  const assigneeSearch = useIssuePeopleSearch(
+    assigneeQuery,
+    editorPort.members.searchUsers,
+  );
+  const [outsideAssignee, setOutsideAssignee] = useState<{
+    id: number;
+    user_name: string;
+  } | null>(null);
+  const [selectedOutsideUsers, setSelectedOutsideUsers] = useState<
+    Array<{ id: number; user_name: string }>
+  >([]);
+  const outsideLabel = t(
+    item?.invited_only
+      ? "todo.issue_person_access"
+      : "todo.outside_issue_person",
+  );
+  const confirmPersonLabel = t(
+    item?.invited_only
+      ? "todo.confirm_issue_invitation"
+      : "todo.confirm_outside_issue_person",
+  );
   const [collaboratorBusy, setCollaboratorBusy] = useState(false);
   const [collaboratorError, setCollaboratorError] = useState<string | null>(
     null,
@@ -1389,6 +1410,10 @@ export function TodoEditor(props: TodoEditorProps) {
     void refreshTaskBindings();
     void refreshAttachments();
     applyResult(editorPort.collaborators.list(editItemId), setCollaborators);
+    if (item?.invited_only)
+      return () => {
+        active = false;
+      };
     applyResult(editorPort.members.list(editProjectId), setProjectMembers);
     applyResult(editorPort.agents.list(String(editProjectId)), (agents) =>
       setProjectAgents(agents.filter((agent) => agent.status !== "inactive")),
@@ -1408,6 +1433,7 @@ export function TodoEditor(props: TodoEditorProps) {
     editItemId,
     editProjectId,
     item?.assignee_agent_id,
+    item?.invited_only,
     project?.collaboration_groups,
     props.loadTeams,
     props.taskRefreshKey,
@@ -1869,23 +1895,19 @@ export function TodoEditor(props: TodoEditorProps) {
     setDescriptionExpanded(false);
   }
 
-  async function addCollaborator() {
-    if (
-      !canEditCollaborators ||
-      !editItemId ||
-      selectedCollaboratorId === null ||
-      collaboratorBusy
-    )
+  async function addCollaborator(ids: number[]) {
+    if (!canEditCollaborators || !editItemId || !ids.length || collaboratorBusy)
       return;
     setCollaboratorBusy(true);
     setCollaboratorError(null);
     try {
-      const collaborator = await editorPort.collaborators.add(
-        editItemId,
-        selectedCollaboratorId,
-      );
-      setCollaborators((current) => [...current, collaborator]);
-      setSelectedCollaboratorId(null);
+      for (const id of ids) {
+        const collaborator = await editorPort.collaborators.add(editItemId, id);
+        setCollaborators((current) => [
+          ...current.filter((entry) => entry.user_id !== id),
+          collaborator,
+        ]);
+      }
       setAddingCollaborator(false);
     } catch (cause) {
       setCollaboratorError(
@@ -1893,6 +1915,7 @@ export function TodoEditor(props: TodoEditorProps) {
           ? cause.message
           : t("todo.add_collaborator_failed", "添加参与者失败"),
       );
+      throw cause;
     } finally {
       setCollaboratorBusy(false);
     }
@@ -2221,10 +2244,27 @@ export function TodoEditor(props: TodoEditorProps) {
   // activity rail on the right. Edit mode with a project always gets this
   // layout so the task detail shape matches the design even before chat
   // connectivity is available.
+  const outsidePeople = [
+    ...new Map(
+      [
+        ...selectedOutsideUsers,
+        ...assigneeSearch.users,
+        ...(item?.assignee_user_id != null
+          ? [
+              {
+                id: item.assignee_user_id,
+                user_name: item.assignee_name || String(item.assignee_user_id),
+              },
+            ]
+          : []),
+      ].map((user) => [user.id, user]),
+    ).values(),
+  ];
   const assigneeOptions: Array<{
     value: IssueAssigneeTarget;
     label: string;
     group?: string;
+    description?: string;
   }> = [
     {
       value: "",
@@ -2245,15 +2285,20 @@ export function TodoEditor(props: TodoEditorProps) {
           },
         ]
       : []),
-    ...projectMembers
+    ...projectMembers.map((member) => ({
+      value: `user:${member.user_id}` as IssueAssigneeTarget,
+      label: member.user_name,
+      group: t("todo.members", "成员"),
+    })),
+    ...outsidePeople
       .filter(
-        (member) =>
-          member.can_be_assignee !== false && member.role !== "Viewer",
+        (user) => !projectMembers.some((member) => member.user_id === user.id),
       )
-      .map((member) => ({
-        value: `user:${member.user_id}` as IssueAssigneeTarget,
-        label: member.user_name,
+      .map((user) => ({
+        value: `user:${user.id}` as IssueAssigneeTarget,
+        label: user.user_name,
         group: t("todo.members", "成员"),
+        description: outsideLabel,
       })),
     ...projectAgents.map((agent) => ({
       value: `agent:${agent.id}` as IssueAssigneeTarget,
@@ -2367,88 +2412,137 @@ export function TodoEditor(props: TodoEditorProps) {
     />
   );
   const assigneeSelect = (
-    <IssueDetailSearchableSelect<IssueAssigneeTarget>
-      testId={
-        isCreate ? "cloud-todo-create-assignee" : "cloud-todo-detail-assignee"
-      }
-      accessibleLabel={t("todo.assignee", "负责人")}
-      value={assigneeTarget}
-      onChange={(value) => changeProperty("assigneeTarget", value)}
-      disabled={!canAssign}
-      className={cn(
-        "relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default",
-        workspacePanel && "min-w-0 max-w-full",
-      )}
-      triggerContent={
-        <>
-          {assigneeTarget.startsWith("group:") ? (
-            <UsersRound aria-hidden="true" size={16} />
-          ) : assigneeTarget.startsWith("agent:") ||
-            assigneeTarget.startsWith("team:") ? (
-            <Bot aria-hidden="true" size={16} />
-          ) : (
-            <CircleUserRound aria-hidden="true" size={16} />
-          )}
-          <strong
-            className={cn(
-              workspacePanel ? "min-w-0 truncate font-medium" : "font-normal",
+    <>
+      <IssueDetailSearchableSelect<IssueAssigneeTarget>
+        testId={
+          isCreate ? "cloud-todo-create-assignee" : "cloud-todo-detail-assignee"
+        }
+        accessibleLabel={t("todo.assignee", "负责人")}
+        value={assigneeTarget}
+        onSearchChange={setAssigneeQuery}
+        searchStatus={
+          assigneeSearch.error ? (
+            <p role="alert">
+              {assigneeSearch.error}
+              <button
+                type="button"
+                data-testid="cloud-todo-assignee-search-retry"
+                onClick={assigneeSearch.retry}
+              >
+                {t("common.retry", "重试")}
+              </button>
+            </p>
+          ) : assigneeSearch.loading ? (
+            <p role="status">…</p>
+          ) : null
+        }
+        onChange={(value) => {
+          const user = outsidePeople.find(
+            (user) =>
+              value === `user:${user.id}` &&
+              !projectMembers.some((member) => member.user_id === user.id),
+          );
+          if (user) setOutsideAssignee(user);
+          else changeProperty("assigneeTarget", value);
+        }}
+        disabled={!canAssign}
+        className={cn(
+          "relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default",
+          workspacePanel && "min-w-0 max-w-full",
+        )}
+        triggerContent={
+          <>
+            {assigneeTarget.startsWith("group:") ? (
+              <UsersRound aria-hidden="true" size={16} />
+            ) : assigneeTarget.startsWith("agent:") ||
+              assigneeTarget.startsWith("team:") ? (
+              <Bot aria-hidden="true" size={16} />
+            ) : (
+              <CircleUserRound aria-hidden="true" size={16} />
             )}
-          >
-            {assigneeName ?? t("todo.unassigned", "未指派")}
-          </strong>
-          {item && !assigneeChanged && !workspacePanel
-            ? extensions?.renderAssignmentReceipts?.(item)
-            : null}
-          {canAssign ? <ChevronDown aria-hidden="true" size={12} /> : null}
-        </>
-      }
-      searchPlaceholder={t("todo.search_assignee", "搜索负责人")}
-      emptyLabel={t("todo.no_matching_assignee", "没有匹配的负责人")}
-      actions={
-        isCreate && canAssign
-          ? [
-              ...(props.onAddAssigneeMember
-                ? [
-                    {
-                      label: t("todo.assignee_add_member", "添加人员"),
-                      icon: <UserPlus className="h-4 w-4" />,
-                      testId: "cloud-todo-create-assignee-add-member",
-                      onSelect: props.onAddAssigneeMember,
-                    },
-                  ]
-                : []),
-              ...(props.onAddAssigneeAgent
-                ? [
-                    {
-                      label: t("todo.assignee_add_agent", "添加智能体"),
-                      icon: <Bot className="h-4 w-4" />,
-                      testId: "cloud-todo-create-assignee-add-agent",
-                      onSelect: props.onAddAssigneeAgent,
-                    },
-                  ]
-                : []),
-            ]
-          : undefined
-      }
-      groupLimit={5}
-      showAllLabel={(_group, count) =>
-        t("todo.view_all_count", "查看全部 {{count}} 个", { count })
-      }
-      footer={
-        !isCreate && canAssign ? (
-          <label className="flex min-h-8 items-center gap-2 text-sm text-text-secondary max-md:min-h-11">
-            <input
-              type="checkbox"
-              data-testid="cloud-todo-assignee-notify"
-              checked={notifyAssignee}
-              onChange={(event) => setNotifyAssignee(event.target.checked)}
-            />
-            {t("todo.notify_assignee")}
-          </label>
-        ) : undefined
-      }
-      options={assigneeOptions}
-    />
+            <strong
+              className={cn(
+                workspacePanel ? "min-w-0 truncate font-medium" : "font-normal",
+              )}
+            >
+              {assigneeName ?? t("todo.unassigned", "未指派")}
+            </strong>
+            {item && !assigneeChanged && !workspacePanel
+              ? extensions?.renderAssignmentReceipts?.(item)
+              : null}
+            {canAssign ? <ChevronDown aria-hidden="true" size={12} /> : null}
+          </>
+        }
+        searchPlaceholder={t("todo.search_assignee", "搜索负责人")}
+        emptyLabel={t("todo.no_matching_assignee", "没有匹配的负责人")}
+        actions={
+          isCreate && canAssign
+            ? [
+                ...(props.onAddAssigneeMember
+                  ? [
+                      {
+                        label: t("todo.assignee_add_member", "添加人员"),
+                        icon: <UserPlus className="h-4 w-4" />,
+                        testId: "cloud-todo-create-assignee-add-member",
+                        onSelect: props.onAddAssigneeMember,
+                      },
+                    ]
+                  : []),
+                ...(props.onAddAssigneeAgent
+                  ? [
+                      {
+                        label: t("todo.assignee_add_agent", "添加智能体"),
+                        icon: <Bot className="h-4 w-4" />,
+                        testId: "cloud-todo-create-assignee-add-agent",
+                        onSelect: props.onAddAssigneeAgent,
+                      },
+                    ]
+                  : []),
+              ]
+            : undefined
+        }
+        groupLimit={5}
+        showAllLabel={(_group, count) =>
+          t("todo.view_all_count", "查看全部 {{count}} 个", { count })
+        }
+        footer={
+          !isCreate && canAssign ? (
+            <label className="flex min-h-8 items-center gap-2 text-sm text-text-secondary max-md:min-h-11">
+              <input
+                type="checkbox"
+                data-testid="cloud-todo-assignee-notify"
+                checked={notifyAssignee}
+                onChange={(event) => setNotifyAssignee(event.target.checked)}
+              />
+              {t("todo.notify_assignee")}
+            </label>
+          ) : undefined
+        }
+        options={assigneeOptions}
+      />
+      {outsideAssignee && (
+        <ConfirmationDialog
+          title={confirmPersonLabel}
+          subject={outsideAssignee.user_name}
+          description={outsideLabel}
+          labels={{
+            cancel: t("common.cancel", "取消"),
+            confirm: t("common.confirm", "确认"),
+            pending: t("common.saving", "保存中"),
+            failed: t("todo.save_failed", "保存失败"),
+          }}
+          testIdPrefix="issue-outside-assignee"
+          onClose={() => setOutsideAssignee(null)}
+          onConfirm={async () => {
+            setSelectedOutsideUsers((current) => [
+              ...current.filter((user) => user.id !== outsideAssignee.id),
+              outsideAssignee,
+            ]);
+            changeProperty("assigneeTarget", `user:${outsideAssignee.id}`);
+          }}
+        />
+      )}
+    </>
   );
   const notificationAvailable =
     assigneeTarget.startsWith("user:") && (isCreate || assigneeChanged);
@@ -2657,12 +2751,18 @@ export function TodoEditor(props: TodoEditorProps) {
     </div>
   );
   const collaboratorPickerProps = {
-    value: selectedCollaboratorId,
     members: availableCollaborators,
-    onChange: setSelectedCollaboratorId,
-    onAdd: () => void addCollaborator(),
+    projectMemberIds: new Set(projectMembers.map((member) => member.user_id)),
+    excludedUserIds: new Set(collaborators.map((member) => member.user_id)),
+    onAdd: addCollaborator,
+    searchUsers: editorPort.members.searchUsers,
+    outsideLabel,
+    retryLabel: t("common.retry", "重试"),
+    confirmLabel: confirmPersonLabel,
+    cancelLabel: t("common.cancel", "取消"),
+    emptyLabel: t("todo.no_matching_assignee", "没有匹配的负责人"),
     busy: collaboratorBusy,
-    label: t("todo.select_project_member", "选择项目空间成员"),
+    label: t("todo.select_project_member", "搜索并选择参与者"),
     addLabel: t("common.add", "添加"),
   };
   const railProps = (

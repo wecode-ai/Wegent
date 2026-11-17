@@ -158,6 +158,49 @@ pub(super) async fn require_scope(
     Ok((access, external_issue))
 }
 
+/// Explicit invitations authorize only this Issue's public discussion.
+async fn require_comment_scope(
+    state: &AppState,
+    user_id: i64,
+    project_id: &str,
+    task_id: Option<&str>,
+    developer: bool,
+) -> Result<(ProjectAccess, Option<PageIssue>), ScopeError> {
+    let failure = match require_scope(state, user_id, project_id, task_id, developer).await {
+        Ok(scope) => return Ok(scope),
+        Err(failure) => failure,
+    };
+    if !matches!(failure, ScopeError::NotFound(_)) {
+        return Err(failure);
+    }
+    let Some(task_id) = task_id else {
+        return Err(failure);
+    };
+    if !crate::loop_tasks::issue_invitation::permits_read(&state.mysql, task_id, user_id as i32)
+        .await
+        .map_err(|_| ScopeError::NotFound("Project task not found"))?
+    {
+        return Err(failure);
+    }
+    let item = crate::loop_tasks::assignment_repository::loop_item_access(&state.mysql, task_id)
+        .await
+        .map_err(|_| ScopeError::NotFound("Project task not found"))?
+        .filter(|item| item.cloud_project_id == project_id)
+        .ok_or(ScopeError::NotFound("Project task not found"))?;
+    let project: Option<crate::board_snapshot::repository::ProjectRow> = state.mysql.fetch_optional(
+        format!("SELECT {} FROM loop_items WHERE loop_items.id = ? AND loop_items.resource_type = 'project'",
+            crate::cloud_projects::LOOP_ITEMS_COLUMNS), (item.cloud_project_id.as_str(),)
+    ).await.map_err(|_| ScopeError::NotFound("Project task not found"))?;
+    Ok((
+        ProjectAccess {
+            project: project.ok_or(ScopeError::NotFound("Cloud project not found"))?,
+            role: "IssueManager".into(),
+            workspace_id: None,
+        },
+        None,
+    ))
+}
+
 /// `on_project_chat_subscribe`.
 pub(crate) async fn subscribe(
     state: &AppState,
@@ -168,7 +211,7 @@ pub(crate) async fn subscribe(
         Ok(request) => request,
         Err(message) => return Ok(Reply::payload(ack_error("INVALID_MESSAGE", &message))),
     };
-    if let Err(scope) = require_scope(
+    if let Err(scope) = require_comment_scope(
         state,
         user_id,
         &request.project_id,
@@ -254,7 +297,7 @@ pub(crate) async fn send(
         Ok(request) => request,
         Err(message) => return Ok(Reply::payload(ack_error("INVALID_MESSAGE", &message))),
     };
-    let (access, _) = match require_scope(
+    let (access, _) = match require_comment_scope(
         state,
         user_id,
         &request.project_id,
@@ -325,6 +368,17 @@ async fn send_message(
     request: &SendRequest,
     access: &ProjectAccess,
 ) -> Result<(Value, bool), Value> {
+    if request.mentions.iter().any(|mention| !mention.is_user()) {
+        require_scope(
+            state,
+            user_id,
+            &request.project_id,
+            request.task_id.as_deref(),
+            true,
+        )
+        .await
+        .map_err(|failure| failure.ack())?;
+    }
     project_chat_mentions::validate_agents(state, &request.project_id, &request.mentions).await?;
     if let Some(existing) =
         existing_client_message(state, user_id, &request.client_message_id).await
@@ -400,6 +454,21 @@ async fn send_message(
                 }
                 None => None,
             };
+            if access.role == "IssueManager" {
+                use crate::loop_tasks::issue_invitation::{INVITATION_SQL, Invitation};
+                let task = request.task_id.as_deref().unwrap_or_default();
+                let invited: Option<Invitation> = tx
+                    .fetch_optional(
+                        INVITATION_SQL,
+                        (user_id as i32, task, user_id as i32, user_id as i32),
+                    )
+                    .await?;
+                if invited.is_none() {
+                    return Err(brz_mysql::MysqlError::InvalidQuery {
+                        reason: "Issue invitation revoked".into(),
+                    });
+                }
+            }
             let row = tx
                 .execute(
                     super::project_chat_messages::INSERT_MESSAGE_SQL,

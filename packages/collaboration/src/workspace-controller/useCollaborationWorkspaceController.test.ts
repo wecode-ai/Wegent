@@ -1691,4 +1691,20 @@ describe("collaboration workspace controller", () => {
     expect(api.projects.get).not.toHaveBeenCalled();
     expect(state.project).toEqual(assigneeProject);
   });
+  it("opens an invited Issue without requesting project executions or configuration", async () => {
+    const api = createApi();
+    api.issues.get = vi
+      .fn()
+      .mockResolvedValue({ ...issue, invited_only: true, can_edit: true });
+    api.executions!.list = vi
+      .fn()
+      .mockRejectedValue(new Error("Project access denied"));
+    const { commands } = createController(api);
+    const loaded = await commands.loadSelectedIssue(issue.id);
+    expect(loaded?.invited_only).toBe(true);
+    expect(state.selectedIssue?.id).toBe(issue.id);
+    expect(api.executions!.list).not.toHaveBeenCalled();
+    expect(api.projects.get).not.toHaveBeenCalled();
+    expect(api.members.list).not.toHaveBeenCalled();
+  });
 });
