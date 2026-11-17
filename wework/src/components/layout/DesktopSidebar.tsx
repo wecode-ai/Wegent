@@ -3741,6 +3741,10 @@ export function DesktopSidebar({
     standaloneWorkspacePath,
   ])
   const selectedRuntimeProjectId = selectedRuntimeProject?.id ?? null
+  const selectedRuntimeProjectPinned = Boolean(
+    selectedRuntimeProjectId !== null &&
+    runtimeWorkByProjectId.get(selectedRuntimeProjectId)?.project.pinned
+  )
   const selectedRuntimeProjectAutoExpandKey = selectedRuntimeProject?.autoExpandKey ?? null
   const selectedRuntimeChatVisible = useMemo(() => {
     if (!currentRuntimeTask) return false
@@ -3852,11 +3856,11 @@ export function DesktopSidebar({
     !collapsedReadTaskKeys.has(getRuntimeTaskReminderKey(currentRuntimeTask)) &&
     (currentRuntimeTaskPinned ||
       (selectedRuntimeProjectId !== null &&
-        displayedProjectsExpanded &&
+        (selectedRuntimeProjectPinned || displayedProjectsExpanded) &&
         displayedExpandedProjectIds.has(selectedRuntimeProjectId)) ||
       (selectedRuntimeChatVisible && displayedChatsExpanded))
   )
-  const autoExpandedProjectKeyRef = useRef<string | null>(null)
+  const [autoExpandedProjectKey, setAutoExpandedProjectKey] = useState<string | null>(null)
 
   const handleToggleProject = (projectId: number) => {
     const projectWork = runtimeWorkByProjectId.get(projectId)
@@ -3889,19 +3893,23 @@ export function DesktopSidebar({
     setChatsExpanded(expanded => hasCollapsedReadTasks || !expanded)
   }
 
-  useEffect(() => {
-    if (selectedRuntimeProjectId === null || !selectedRuntimeProjectAutoExpandKey) return
-
-    const scopedAutoExpandKey = `${storageScope}:${selectedRuntimeProjectAutoExpandKey}`
-    if (autoExpandedProjectKeyRef.current === scopedAutoExpandKey) return
-
-    autoExpandedProjectKeyRef.current = scopedAutoExpandKey
-    setProjectsExpanded(true)
-    setExpandedProjectIds(previous => {
-      if (previous.has(selectedRuntimeProjectId)) return previous
-      return new Set([...previous, selectedRuntimeProjectId])
-    })
-  }, [selectedRuntimeProjectAutoExpandKey, selectedRuntimeProjectId, storageScope])
+  const scopedAutoExpandKey = selectedRuntimeProjectAutoExpandKey
+    ? `${storageScope}:${selectedRuntimeProjectAutoExpandKey}`
+    : null
+  if (
+    selectedRuntimeProjectId !== null &&
+    scopedAutoExpandKey &&
+    autoExpandedProjectKey !== scopedAutoExpandKey
+  ) {
+    setAutoExpandedProjectKey(scopedAutoExpandKey)
+    if (!currentRuntimeTaskPinned) {
+      if (!selectedRuntimeProjectPinned) setProjectsExpanded(true)
+      setExpandedProjectIds(previous => {
+        if (previous.has(selectedRuntimeProjectId)) return previous
+        return new Set([...previous, selectedRuntimeProjectId])
+      })
+    }
+  }
 
   const openProjectCreateDialog = (event: ReactMouseEvent<HTMLButtonElement>) => {
     // Pointer activation should not restore keyboard focus to the icon on dismissal.
