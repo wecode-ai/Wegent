@@ -1,4 +1,10 @@
-import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
+} from '@/types/api'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { runtimeProjectToProject } from '@/lib/runtime-project'
 import { findRuntimeTaskProjectWork } from '@/features/workbench/workbenchRuntimeHelpers'
 
@@ -69,4 +75,20 @@ export function resolveRuntimeWorkbenchPane(
     }
   }
   return null
+}
+
+/** Preserve UI ownership only when discovery proves both addresses identify one task. */
+export function workbenchPanesShareTask(
+  previous: WorkbenchPaneIdentity,
+  current: WorkbenchPaneIdentity,
+  devices: DeviceInfo[]
+): boolean {
+  const before = previous.currentRuntimeTask
+  const after = current.currentRuntimeTask
+  if (!before || !after || before.taskId !== after.taskId) return false
+  const previousDevice = findWorkbenchDevice(devices, before.deviceId)
+  const currentDevice = findWorkbenchDevice(devices, after.deviceId)
+  return Boolean(
+    previousDevice && currentDevice && previousDevice.device_id === currentDevice.device_id
+  )
 }
