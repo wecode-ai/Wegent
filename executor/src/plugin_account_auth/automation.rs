@@ -170,7 +170,9 @@ impl Reconciler {
             let home = home.to_owned();
             let actions = actions.clone();
             pending.spawn(async move {
+                let observation = target_observation(&package, "started", None);
                 let result = reconcile_target(transport, &home, &package, &actions).await;
+                target_observation(&package, "settled", observation);
                 crate::logging::log_executor_event(
                     "plugin auth automatic enrollment finished",
                     &[
@@ -236,6 +238,27 @@ impl Reconciler {
         self.retries.clear();
         self.failures.clear();
     }
+}
+
+// A whole audit may contain no targets. Observe the exact enrollment separately
+// so integration tests never confuse another plugin's audit with this write.
+fn target_observation(package: &PreparedPackage, phase: &str, id: Option<u64>) -> Option<u64> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let mut path = super::e2e_reconcile_marker()?.into_os_string();
+    path.push(".targets");
+    let id = id.unwrap_or_else(|| NEXT.fetch_add(1, Ordering::Relaxed));
+    let event = json!({"process":std::process::id(),"id":id,"phase":phase,
+        "installed_plugin_id":package.installed_plugin_id,"connector_slug":package.connector_slug});
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(PathBuf::from(path))
+    {
+        let _ = writeln!(file, "{event}");
+    }
+    Some(id)
 }
 
 async fn reconcile_target<T: super::PluginAuthTransport>(
