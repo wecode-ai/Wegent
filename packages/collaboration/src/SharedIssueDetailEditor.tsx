@@ -1371,7 +1371,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
   const editScope = useMemo(
     () => ({}),
-    [editItemId, editProjectId, editorPort, invitedOnly],
+    [editItemId, editProjectId, invitedOnly],
   );
   const loadedEditScopeRef = useRef(editScope);
   useLayoutEffect(() => {
@@ -1390,6 +1390,13 @@ export function TodoEditor(props: TodoEditorProps) {
     setTasks(initialTaskBindingsRef.current ?? []);
     setAttachments([]);
     setCollaborators([]);
+    setDownloadingAttachmentId(null);
+    setAttachmentBusy(false);
+    setAttachmentError(null);
+    setEditingContent(!readFirst);
+  }, [editItemId, editScope, readFirst]);
+
+  useLayoutEffect(() => {
     setProjectMembers([]);
     setProjectAgents([]);
     setProjectGroups([]);
@@ -1400,11 +1407,7 @@ export function TodoEditor(props: TodoEditorProps) {
     outsideAssigneeConfirmationRef.current = null;
     setOutsideAssignee(null);
     setSelectedOutsideUsers([]);
-    setDownloadingAttachmentId(null);
-    setAttachmentBusy(false);
-    setAttachmentError(null);
-    setEditingContent(!readFirst);
-  }, [editItemId, editScope, readFirst]);
+  }, [editScope, editorPort]);
 
   useLayoutEffect(() => {
     if (loadedEditItemIdRef.current !== editItemId) return;
