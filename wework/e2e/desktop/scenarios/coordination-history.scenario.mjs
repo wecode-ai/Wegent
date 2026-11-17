@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   assistantMessage,
@@ -11,7 +12,6 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
-const USER = 9001
 const ROLE = 'history-owner'
 const MARKER = 'COORDINATION_HISTORY_NEW_WORK'
 const HISTORY_COUNT = 80_000
