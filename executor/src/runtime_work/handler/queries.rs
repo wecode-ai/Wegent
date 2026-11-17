@@ -835,7 +835,8 @@ impl RuntimeWorkRpcHandler {
         {
             if let Some(link) = local_link
                 .as_ref()
-                .filter(|link| !link.ephemeral && link.status != "archived")
+                // Background executions can own the native writer outside this handler.
+                .filter(|link| !link.running && !link.ephemeral && link.status != "archived")
             {
                 thread_id = self
                     .resume_codex_thread_for_action(link, &thread_id)
