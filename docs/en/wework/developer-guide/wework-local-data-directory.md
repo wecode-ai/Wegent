@@ -89,9 +89,9 @@ delete these directories directly.
 
 ## Isolating startup reads from writes
 
-Opening an initialized `data/tasks.sqlite` checks the current schema and default task project
+Opening an initialized `data/tasks.sqlite` checks the current schema, history tables/indexes and default task project
 without waiting for the task-store initialization mutex or resetting WAL mode. First creation,
-schema migration and default-project repair remain serialized when they modify data.
+schema migration, history-structure repair and default-project repair remain serialized when they modify data.
 
 UI assistant settings use one read-only WAL snapshot, normalizing legacy values and binding
 the current device in memory. Execution-owned reconciliation reserves a writer only for actual

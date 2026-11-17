@@ -927,3 +927,32 @@ fn startup_reads_do_not_acquire_database_or_initialization_write_locks() {
     let saved = reader.save_personal_stand_in(7, "mac", before).unwrap();
     assert_eq!(reader.personal_stand_in(7, "mac").unwrap(), saved);
 }
+
+#[test]
+fn opening_repairs_missing_history_indexes_before_using_the_read_path() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert!(stand_in_history_index::schema_is_current(&connection).unwrap());
+    connection
+        .execute_batch("DROP INDEX ix_stand_in_history_event_ref")
+        .unwrap();
+    assert!(!stand_in_history_index::schema_is_current(&connection).unwrap());
+    drop(store);
+    let reopened = LocalTaskStore::open(&path).unwrap();
+    assert!(stand_in_history_index::schema_is_current(&connection).unwrap());
+    let writer = connection.unchecked_transaction().unwrap();
+    writer
+        .execute(
+            "UPDATE loop_items SET title=title WHERE id=?1",
+            [DEFAULT_WORK_ITEM_PROJECT_ID],
+        )
+        .unwrap();
+    assert!(LocalTaskStore::open(&path)
+        .unwrap()
+        .get_project(DEFAULT_WORK_ITEM_PROJECT_ID)
+        .is_ok());
+    writer.rollback().unwrap();
+    drop(reopened);
+}

@@ -182,7 +182,10 @@ impl LocalTaskStore {
         connection.pragma_update(None, "foreign_keys", "ON")?;
         // Current stores can be read while another connection owns the writer slot.
         // Only schema initialization and default-board repair need serialization.
-        if schema_is_current(&connection)? && default_work_item_project_is_current(&connection)? {
+        if schema_is_current(&connection)?
+            && default_work_item_project_is_current(&connection)?
+            && stand_in_history_index::schema_is_current(&connection)?
+        {
             return Ok(Self {
                 connection: Arc::new(Mutex::new(connection)),
                 path,
