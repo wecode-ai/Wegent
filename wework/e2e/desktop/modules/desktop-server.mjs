@@ -1,3 +1,4 @@
+import { handleModelSubscriptionUsage } from './model-subscription-usage.mjs'
 import { selectedToolCall } from './model-tool-calls.mjs'
 import { completeCommandOnProcessExit } from './process-exit-command.mjs'
 import { processIsAlive } from '../process-lifecycle.mjs'
@@ -1406,6 +1407,8 @@ class DesktopE2EServer {
       json(response, 200, { status: 1 })
       return
     }
+
+    if (handleModelSubscriptionUsage(request, response)) return
 
     if (request.method === 'GET' && url.pathname === '/backend-api/wham/accounts/check') {
       assert.equal(

@@ -1,3 +1,7 @@
+import {
+  handleModelSubscriptionUsage,
+  modelSubscriptionUsage,
+} from './model-subscription-usage.mjs'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { lstat, mkdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
@@ -36,7 +40,9 @@ async function authFileMetadata(path) {
 
 // The failure belongs to the model subscription service. Executor IPC, native
 // Codex requests, notifications, persistence and restart are never substituted.
-export function createCloudConfigModelService({ readUsage } = {}) {
+export function createCloudConfigModelService({
+  readUsage = () => modelSubscriptionUsage('enterprise'),
+} = {}) {
   let server
   let codexHome
   let nativeHome
@@ -69,11 +75,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
     async prepareApp({ appEnvironment, codexHome: home, control }) {
       codexHome = home
       server = createServer((request, response) => {
-        if (readUsage && request.url?.includes('/wham/usage')) {
-          response.writeHead(200, { 'content-type': 'application/json' })
-          response.end(JSON.stringify(readUsage()))
-          return
-        }
+        if (handleModelSubscriptionUsage(request, response, readUsage)) return
         if (request.url?.startsWith('/backend-api/wham/accounts/check')) {
           accountChecks += 1
           response.writeHead(200, { 'content-type': 'application/json' })
