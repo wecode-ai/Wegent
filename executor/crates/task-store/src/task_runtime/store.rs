@@ -16,6 +16,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod assignment_receipts;
+#[cfg(test)]
+mod empty_write_tests;
 mod code_projects;
 pub mod execution_workspace;
 mod human_requests;
