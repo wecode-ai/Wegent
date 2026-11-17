@@ -762,7 +762,7 @@ function OwnedWorkbenchProvider({
         activationRevision: remoteProjectSyncActivationRevisionRef.current,
       }
       remoteProjectSyncAttemptRef.current = attempt
-      await enqueueRemoteProjectStateMutation(async () => {
+      const synced = await enqueueRemoteProjectStateMutation(async () => {
         const isCurrentAttempt = () =>
           remoteProjectSyncAttemptRef.current === attempt &&
           revision === remoteProjectSyncRevisionRef.current &&
@@ -786,8 +786,9 @@ function OwnedWorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to sync remote projects')
         }
-        await refreshWorkLists()
+        return true
       })
+      if (synced) await refreshWorkLists()
     })().catch(error => {
       if (
         attempt &&

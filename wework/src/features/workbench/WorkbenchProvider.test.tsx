@@ -11061,7 +11061,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
     )
     expect(runtimeWorkApi.removeRuntimeWorkspace).not.toHaveBeenCalled()
-    expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1)
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1)
     expect(
       JSON.parse(
         localStorage.getItem(
@@ -11165,7 +11165,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
     )
-    expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1)
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1)
   })
 
   test('keeps an offline remote project visible when the local index removal fails', async () => {
@@ -11526,6 +11526,86 @@ describe('WorkbenchProvider runtime tasks', () => {
       }
     }
   )
+
+  test('does not hold the project mutation queue while a sync refresh is pending', async () => {
+    const refresh = deferred<RuntimeWorkListResponse>()
+    let synced = false
+    const remoteRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: {
+            id: 7,
+            key: '/srv/project-alpha',
+            sidebarStateKey: 'remote-project-id',
+            name: 'Wegent',
+            source: 'remote_project',
+            stateDeviceId: 'local-device',
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              remoteHostId: 'remote-device',
+              workspacePath: '/srv/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      totalTasks: 0,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockImplementation(() => (synced ? refresh.promise : Promise.resolve(remoteRuntimeWork))),
+      syncRuntimeRemoteProjects: vi.fn().mockImplementation(async () => {
+        synced = true
+        return { accepted: true, deviceId: 'local-device' }
+      }),
+    })
+    const services = createWorkbenchServices({
+      getLocalRuntimeSidebarIdentity: createLocalSidebarIdentityMock(),
+      deviceApi: {
+        listDevices: vi
+          .fn()
+          .mockResolvedValue([
+            createDevice({ device_id: 'local-device', device_type: 'local' }),
+            createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+          ]),
+      } as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    services.cloudBackgroundApi = {
+      listDevices: vi
+        .fn()
+        .mockResolvedValue([
+          createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+        ]),
+      listRuntimeWork: vi.fn().mockResolvedValue(remoteRuntimeWork),
+    }
+    const view = renderWorkbench(<RuntimeProjectMutationProbe />, services)
+    try {
+      await waitFor(() => expect(runtimeWorkApi.syncRuntimeRemoteProjects).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+      await userEvent.click(screen.getByText('remove runtime project'))
+      await waitFor(() => expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenCalledTimes(2))
+      expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenNthCalledWith(2, {
+        deviceId: 'local-device',
+        projectKey: 'remote-project-id',
+        workspacePath: '/srv/project-alpha',
+        runtime: 'codex',
+      })
+      await waitFor(() =>
+        expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
+      )
+    } finally {
+      view.unmount()
+      await act(async () => refresh.resolve(createRuntimeWork({ projects: [], totalTasks: 0 })))
+    }
+  })
 
   test('renames and removes remote projects from both the remote executor and local Codex index', async () => {
     const initialRemoteProjectSync = deferred<{ accepted: boolean; deviceId: string }>()
