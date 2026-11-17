@@ -815,3 +815,35 @@ fn interrupt_stop_cannot_cancel_a_replacement_execution() {
             let _ = fs::remove_dir_all(root);
         });
 }
+
+#[tokio::test]
+async fn interrupt_timeout_preserves_the_unconfirmed_execution() {
+    let (handler, root) =
+        super::super::tests::isolated_runtime_work_handler("interrupt-unconfirmed");
+    handler.store.upsert_task(RuntimeTaskLink::new_pending(
+        "task".into(),
+        root.to_string_lossy().into(),
+        "Wait".into(),
+    ));
+    let (cancel, _cancelled) = oneshot::channel();
+    let (_stop_sender, stopped) = oneshot::channel();
+    let execution = handler.start_local_task_execution("task".into(), cancel, stopped);
+    let result = handler
+        .interrupt_and_send(json!({"taskId":"task", "message":"replacement"}))
+        .await;
+    assert!(
+        handler.is_current_local_task_execution("task", execution),
+        "An unacknowledged stop cannot release execution ownership: {result:?}"
+    );
+    let result = result.unwrap();
+    assert_eq!(result["success"], false);
+    assert_eq!(result["error"], "runtime task is already running");
+    assert!(handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .queued_turns
+        .is_empty());
+    handler.finish_local_task_execution("task", execution);
+    let _ = fs::remove_dir_all(root);
+}

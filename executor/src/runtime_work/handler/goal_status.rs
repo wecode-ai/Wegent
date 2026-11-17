@@ -76,10 +76,10 @@ impl RuntimeWorkRpcHandler {
         GoalStatusMutation(revision)
     }
 
-    pub(super) fn with_goal_status_change(&self, task: &str, update: impl FnOnce()) {
+    pub(super) fn with_goal_status_change(&self, task: &str, update: impl FnOnce(bool)) {
         let revision = self.goal_status_revision(task);
         let mut revision = revision.lock().expect("Goal status revision poisoned");
         revision.generation = revision.generation.wrapping_add(1);
-        update();
+        update(revision.mutating);
     }
 }

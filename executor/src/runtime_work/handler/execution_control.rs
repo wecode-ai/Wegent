@@ -160,26 +160,6 @@ impl RuntimeWorkRpcHandler {
         status: &str,
         reason: &str,
     ) -> bool {
-        let Some(execution_id) = self.active_local_execution_id(local_task_id) else {
-            return false;
-        };
-        self.force_settle_owned_local_task_execution(
-            local_task_id,
-            execution_id,
-            thread_id,
-            status,
-            reason,
-        )
-    }
-
-    pub(super) fn force_settle_owned_local_task_execution(
-        &self,
-        local_task_id: &str,
-        execution_id: u64,
-        thread_id: Option<String>,
-        status: &str,
-        reason: &str,
-    ) -> bool {
         {
             let mut active = self
                 .active_local_executions
@@ -188,9 +168,6 @@ impl RuntimeWorkRpcHandler {
             let Some(control) = active.get_mut(local_task_id) else {
                 return false;
             };
-            if control.execution_id != execution_id {
-                return false;
-            }
             request_execution_stop(control);
             active.remove(local_task_id);
         }

@@ -1572,12 +1572,11 @@ impl RuntimeWorkRpcHandler {
                 .await;
             let _guard = gate.lock().await;
             if !stopped {
-                self.force_settle_owned_local_task_execution(
-                    &local_task_id,
-                    execution_id,
-                    thread_id,
-                    "cancelled",
-                    "interrupt_and_send_timeout",
+                // Timeout is not confirmation that the provider stopped. Keep
+                // ownership so ordinary admission defers the replacement.
+                log_executor_event(
+                    "runtime work interrupt stop acknowledgement pending",
+                    &[("local_task_id", local_task_id.clone())],
                 );
             }
             // Ordinary admission rechecks a newer owner under the reacquired gate.

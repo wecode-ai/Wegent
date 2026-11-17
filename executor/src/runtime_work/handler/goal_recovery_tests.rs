@@ -502,3 +502,110 @@ fn goal_reads_cannot_release_a_newer_activation_or_deadlock_conditional_mutation
         let _ = fs::remove_dir_all(root);
     });
 }
+
+#[test]
+fn inactive_notification_during_activation_cannot_release_the_prepared_route() {
+    run_goal_test(async {
+        let (mut handler, root, mut request) = setup("goal-notification-activation-order");
+        let thread = "22222222-2222-4222-8222-222222222222";
+        request.model_config = json!({"model_id":"goal-route-model",
+            "base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"});
+        handler.store.update_task("task-1", |link| {
+            link.thread_id = Some(thread.into());
+            link.goal_status = Some("blocked".into());
+            store_runtime_execution_request(&mut link.runtime_handle, &request);
+        });
+        handler.retain_runtime_model_config("task-1", &request.model_config);
+        block_goal_admission(&handler);
+        install_native_history(&mut handler, &root, vec![], None);
+        fs::write(root.join("thread_goal_set.defer"), "").unwrap();
+        let writer = handler.clone();
+        let activating = tokio::spawn(async move {
+            writer
+                .set_task_goal(json!({"taskId":"task-1","status":"active"}))
+                .await
+        });
+        let deferred = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(request) = fs::read_to_string(root.join("requests.jsonl"))
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .find(|request| request["method"] == "thread/goal/set")
+                {
+                    break request;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+            .goal_model_route
+            .is_some());
+        fs::write(root.join("test_fence.json"), "{}").unwrap();
+        fs::write(root.join("test_fence.notifications.jsonl"), json!({
+            "method":"thread/goal/updated", "params":{"threadId":thread,"goal":{"status":"paused"}}
+        }).to_string() + "\n").unwrap();
+        handler
+            .call_codex_thread_method("test/fence", json!({"threadId":thread}))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while handler
+                .local_task_link("task-1")
+                .unwrap()
+                .goal_status
+                .as_deref()
+                != Some("paused")
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            handler.thread_event_routing.lock().unwrap().routes[thread]
+                .goal_model_route
+                .is_some(),
+            "An inactive notification cannot release a pending activation's registration"
+        );
+        fs::write(
+            root.join("test_fence.notifications.jsonl"),
+            json!({
+                "id":deferred["id"],"result":{"goal":{"status":"active"}}
+            })
+            .to_string()
+                + "\n",
+        )
+        .unwrap();
+        handler
+            .call_codex_thread_method("test/fence", json!({"threadId":thread}))
+            .await
+            .unwrap();
+        assert_eq!(
+            activating.await.unwrap().unwrap()["goal"]["status"],
+            "active"
+        );
+        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+            .goal_model_route
+            .is_some());
+        fs::write(
+            root.join("thread_goal_get.json"),
+            json!({"goal":{"status":"paused"}}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            handler
+                .get_task_goal(json!({"taskId":"task-1"}))
+                .await
+                .unwrap()["goal"]["status"],
+            "paused"
+        );
+        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+            .goal_model_route
+            .is_none());
+        handler.codex_app_server.restart().await;
+        let _ = fs::remove_dir_all(root);
+    });
+}
