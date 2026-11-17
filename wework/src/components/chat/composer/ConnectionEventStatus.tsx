@@ -174,7 +174,7 @@ export function ConnectionEventStatus({
                   : t('workbench.connection_event_cancel', '取消监听')}
               </Button>
             )}
-            {onCancel && cancellationUnsupported && (
+            {onCancel && cancellationUnsupported && !unavailable && (
               <span className="basis-full" data-testid="connection-event-upgrade-required">
                 {t(
                   'workbench.connection_event_upgrade_required',
@@ -182,7 +182,7 @@ export function ConnectionEventStatus({
                 )}
               </span>
             )}
-            {onCancel && unavailable && !cancellationUnsupported && (
+            {onCancel && unavailable && (
               <span className="basis-full">
                 {t('workbench.connection_event_cancel_unavailable', '设备离线，恢复后可取消')}
               </span>

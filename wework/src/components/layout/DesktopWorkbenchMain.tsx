@@ -4821,7 +4821,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [compactContextAction]
   )
   const setCurrentGoal = useCallback(() => void setCurrentGoalAction(), [setCurrentGoalAction])
-  const eventCancellationUnsupported = !supportsConnectionEvents(activeDevice)
+  const eventCancellationUnsupported =
+    !activeDeviceUnavailable && !supportsConnectionEvents(activeDevice)
   const cancelCurrentEventSubscription = async (key: string) => {
     if (!deviceApi || !currentRuntimeTask || activeDeviceUnavailable) {
       throw new Error(t('workbench.connection_event_cancel_unavailable', '设备离线，恢复后可取消'))

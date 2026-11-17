@@ -202,3 +202,29 @@ test('a replaced executor clears an unsupported response and permits cancellatio
   await waitFor(() => expect(screen.queryByRole('button')).not.toBeInTheDocument())
   expect(onCancel).toHaveBeenCalledTimes(2)
 })
+
+test('offline status takes precedence over unavailable capability metadata and recovers accurately', () => {
+  const onCancel = vi.fn()
+  const { rerender } = render(
+    <ConnectionEventStatus
+      subscriptions={[watch('PR')]}
+      onCancel={onCancel}
+      unavailable
+      unsupported
+    />
+  )
+  expect(screen.getByRole('button')).toBeDisabled()
+  expect(screen.getByText('设备离线，恢复后可取消')).toBeInTheDocument()
+  expect(screen.queryByTestId('connection-event-upgrade-required')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button'))
+  expect(onCancel).not.toHaveBeenCalled()
+
+  rerender(<ConnectionEventStatus subscriptions={[watch('PR')]} onCancel={onCancel} unsupported />)
+  expect(screen.queryByText('设备离线，恢复后可取消')).not.toBeInTheDocument()
+  expect(screen.getByTestId('connection-event-upgrade-required')).toBeInTheDocument()
+  expect(screen.getByRole('button')).toBeDisabled()
+
+  rerender(<ConnectionEventStatus subscriptions={[watch('PR')]} onCancel={onCancel} />)
+  expect(screen.queryByTestId('connection-event-upgrade-required')).not.toBeInTheDocument()
+  expect(screen.getByRole('button')).toBeEnabled()
+})

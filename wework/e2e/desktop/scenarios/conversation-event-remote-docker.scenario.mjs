@@ -285,6 +285,11 @@ export function createDesktopScenario(options) {
         await control.command('waitFor', '[data-testid="environment-read-error"]', {
           text: 'Event recovery Remote Docker',
         })
+        if (phase !== 'pause') {
+          const status = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="connection-event-status"]`
+          await control.command('waitFor', status, { text: '设备离线，恢复后可取消' })
+          assert.doesNotMatch(await control.command('getText', status), /需升级执行器/)
+        }
         await captureScreenshot(control, `remote-event-${phase}-offline.png`)
         const event = {
           id: `${phase}-real-record-change`,
