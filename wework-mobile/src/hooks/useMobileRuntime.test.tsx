@@ -3,149 +3,21 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createWorkbenchDeviceResolver } from '../../../packages/chat-core/src/runtime-device-identity'
 
+import {
+  mocks,
+  config,
+  computer,
+  deferred,
+  workFor,
+  emptyWork,
+  resetMobileRuntimeMocks,
+} from './mobileRuntimeTestFixtures'
+
 import type { MobileRuntimeState } from './useMobileRuntime'
 import { useMobileRuntime } from './useMobileRuntime'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import type { Attachment, DeviceInfo, RuntimeWorkListResponse } from '@/types/runtime'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-
-const mocks = vi.hoisted(() => ({
-  order: [] as string[],
-  homeDirectory: vi.fn(),
-  createDirectory: vi.fn(),
-  create: vi.fn(),
-  devices: vi.fn(),
-  models: vi.fn(),
-  nativeModels: vi.fn(),
-  listWork: vi.fn(),
-  transcript: vi.fn(),
-  preflight: vi.fn(),
-  streamCreated: vi.fn(),
-  updateAccessToken: vi.fn(),
-  writeCache: vi.fn(),
-  lifecycleSubscribe: vi.fn(),
-  conversationSubscribe: vi.fn(),
-  subscribeReady: vi.fn(),
-  sendMessage: vi.fn(),
-  cachedDevices: [] as DeviceInfo[],
-  streamInventory: vi.fn(),
-  appListeners: new Set<(state: string) => void>(),
-}))
-const emptyWork = { projects: [], chats: [], totalTasks: 0 }
-vi.mock('expo-crypto', () => ({ randomUUID: () => 'user-message-id' }))
-vi.mock('@/services/phoneLocalProfile', () => ({
-  PHONE_LOCAL_USER: { id: 0, user_name: 'local', email: 'local@wework.local' },
-}))
-vi.mock('react-native', () => ({
-  AppState: {
-    currentState: 'active',
-    addEventListener: (_: string, listener: (state: string) => void) => {
-      mocks.appListeners.add(listener)
-      return { remove: () => mocks.appListeners.delete(listener) }
-    },
-  },
-}))
-vi.mock('@/services/runtimePermissionPreference', () => ({
-  DEFAULT_RUNTIME_PERMISSION_MODE: 'full-access',
-  loadRuntimePermissionMode: async () => 'full-access',
-  saveRuntimePermissionMode: async () => undefined,
-}))
-vi.mock('@/services/runtimeCache', () => ({
-  MobileRuntimeCache: class {
-    async read() {
-      return {
-        devices: mocks.cachedDevices,
-        models: [],
-        selectedDeviceId: null,
-        allDevicesSelected: false,
-        workByDevice: {},
-      }
-    }
-    write = mocks.writeCache
-  },
-}))
-vi.mock('@/services/runtimeApi', () => ({
-  RuntimeApi: class {
-    updateBackend() {}
-    clearPluginCatalogs() {}
-    listDevices = mocks.devices
-    listModels = mocks.models
-    listNativeModels = mocks.nativeModels
-    preflightWorkspace = mocks.preflight
-    createConversation = mocks.create
-    getHomeDirectory = mocks.homeDirectory
-    createDirectory = mocks.createDirectory
-    sendMessage = mocks.sendMessage
-  },
-}))
-vi.mock('@/services/runtimeStream', () => ({
-  RuntimeStream: class {
-    constructor(_config: unknown, getDevices: () => DeviceInfo[]) {
-      mocks.streamCreated()
-      mocks.streamInventory(getDevices)
-    }
-    updateBackend(config: RuntimeSessionConfig | null) {
-      mocks.updateAccessToken(config?.accessToken ?? '')
-    }
-    listWork = mocks.listWork
-    getTranscript = mocks.transcript
-    async subscribe(scope: unknown, listener: unknown) {
-      mocks.order.push('subscribe')
-      mocks.conversationSubscribe(scope, listener)
-      await mocks.subscribeReady()
-      return () => undefined
-    }
-    subscribeLifecycle(listener: unknown, reconnect: unknown) {
-      mocks.lifecycleSubscribe(listener, reconnect)
-      return () => undefined
-    }
-    dispose() {}
-  },
-}))
-
-const config = {
-  backendUrl: 'http://backend',
-  apiBaseUrl: 'http://backend/api',
-  socketBaseUrl: 'http://backend',
-  socketPath: '/socket.io',
-  accessToken: 'test-token',
-}
-const computer: DeviceInfo = {
-  id: 11,
-  device_id: 'computer-name',
-  execution_target_id: 'app-record-11',
-  name: 'My only computer',
-  device_type: 'app',
-  bind_shell: 'claudecode',
-  status: 'online',
-  runtime_features: {
-    schemaVersion: 4,
-    remoteTaskAccess: { version: 1, enabled: true, taskCreation: true },
-  },
-}
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (reason: Error) => void
-  const promise = new Promise<T>((yes, no) => {
-    resolve = yes
-    reject = no
-  })
-  return { promise, resolve, reject }
-}
-const workFor = (deviceId: string): RuntimeWorkListResponse => ({
-  projects: [],
-  totalTasks: 1,
-  chats: [
-    {
-      deviceId,
-      deviceName: deviceId,
-      deviceStatus: 'online',
-      available: true,
-      workspacePath: '/work',
-      tasks: [{ taskId: 'task', title: deviceId, runtime: 'codex', workspacePath: '/work' }],
-    },
-  ],
-})
 
 describe('creating a conversation on the only computer', () => {
   let renderer: ReactTestRenderer
@@ -155,52 +27,17 @@ describe('creating a conversation on the only computer', () => {
     return null
   }
 
-  beforeEach(() => {
-    mocks.cachedDevices = []
-    mocks.appListeners.clear()
-    mocks.order.length = 0
-    mocks.devices.mockReset().mockResolvedValue({ items: [computer] })
-    mocks.models
-      .mockReset()
-      .mockResolvedValue({ data: [{ name: 'public-model', type: 'public', provider: 'cloud' }] })
-    mocks.nativeModels.mockReset().mockResolvedValue({ models: [] })
-    mocks.listWork.mockReset().mockResolvedValue(emptyWork)
-    mocks.transcript.mockReset().mockResolvedValue({ taskId: 'task', messages: [] })
-    mocks.preflight.mockReset().mockResolvedValue({ gitRepository: true, gitRef: 'main' })
-    mocks.streamCreated.mockClear()
-    mocks.streamInventory.mockClear()
-    mocks.updateAccessToken.mockClear()
-    mocks.writeCache.mockReset().mockResolvedValue(undefined)
-    mocks.lifecycleSubscribe.mockClear()
-    mocks.conversationSubscribe.mockClear()
-    mocks.subscribeReady.mockReset().mockResolvedValue(undefined)
-    mocks.sendMessage.mockReset().mockResolvedValue({ accepted: true })
-    mocks.homeDirectory.mockReset().mockImplementation(async () => {
-      mocks.order.push('home_dir')
-      return '/Users/owner'
-    })
-    mocks.createDirectory.mockReset().mockImplementation(async () => {
-      mocks.order.push('mkdir_p')
-    })
-    mocks.create.mockReset().mockImplementation(async (payload: Record<string, unknown>) => {
-      mocks.order.push('create')
-      return {
-        accepted: true,
-        taskId: payload.taskId,
-        workspacePath: payload.workspacePath ?? '/Users/owner/Documents/Codex/task',
-      }
-    })
-  })
+  beforeEach(resetMobileRuntimeMocks)
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
   })
 
-  async function mount() {
+  async function mount(expectedModelName = 'public-model') {
     await act(async () => {
       renderer = create(<Harness />)
     })
     expect(state.selectedDeviceId).toBe('app-record-11')
-    expect(state.selectedModel?.name).toBe('public-model')
+    expect(state.selectedModel?.name).toBe(expectedModelName)
     await act(() => state.startNewConversation())
   }
 
@@ -326,7 +163,10 @@ describe('creating a conversation on the only computer', () => {
     mocks.create.mockReturnValue(response.promise)
     let send!: Promise<boolean>
     await act(() => {
-      send = state.send('Inspect', { worktreeBranch: 'feature/preview' })
+      send = state.send('Inspect', {
+        executionMode: 'git_worktree',
+        worktreeBranch: 'feature/preview',
+      })
     })
     expect(state.fileTarget).toBeNull()
     const taskId = state.currentAddress!.taskId
@@ -345,6 +185,78 @@ describe('creating a conversation on the only computer', () => {
     mocks.listWork.mockResolvedValue({ ...work, chats: [ready] })
     await act(() => state.refresh())
     expect(state.fileTarget).toEqual({ deviceId: 'app-record-11', path: '/final-worktree', taskId })
+  })
+
+  it.each([null, 'feature/starting-point'])(
+    'creates a managed worktree with optional starting branch %s',
+    async branch => {
+      const work = workFor('app-record-11')
+      mocks.listWork.mockResolvedValue(work)
+      await mount()
+      await act(() => state.startNewConversation(work.chats[0]))
+      await act(async () => {
+        expect(
+          await state.send('Inspect in isolation', {
+            executionMode: 'git_worktree',
+            worktreeBranch: branch,
+          })
+        ).toBe(true)
+      })
+      expect(mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deviceId: 'app-record-11',
+          workspacePath: '/work',
+          execution: { workspace: { source: 'git_worktree', ...(branch ? { branch } : {}) } },
+        })
+      )
+      expect(state.currentAddress?.workspaceKind).toBe('worktree')
+    }
+  )
+
+  it('does not infer worktree mode from a saved branch when working in the current workspace', async () => {
+    mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+    await mount()
+    await act(() => state.startNewConversation(state.work.chats[0]))
+    await act(async () => {
+      expect(
+        await state.send('Use the current workspace', {
+          executionMode: 'current_workspace',
+          worktreeBranch: 'stale',
+        })
+      ).toBe(true)
+    })
+    expect(mocks.create.mock.calls[0]![0]).not.toHaveProperty('execution')
+  })
+
+  it('creates the worktree on the selected remote workspace owner', async () => {
+    const owner: DeviceInfo = {
+      ...computer,
+      id: 12,
+      device_id: 'storage',
+      device_type: 'remote',
+      execution_target_id: null,
+    }
+    mocks.devices.mockResolvedValue({ items: [computer, owner] })
+    mocks.listWork.mockResolvedValue(workFor('app-record-11'))
+    await mount()
+    await act(() =>
+      state.startNewConversation({
+        ...state.work.chats[0]!,
+        workspaceSource: 'remote',
+        remoteHostId: 'storage',
+      })
+    )
+    expect(state.selectedDeviceId).toBe('storage')
+    await act(async () => {
+      expect(await state.send('Isolate on owner', { executionMode: 'git_worktree' })).toBe(true)
+    })
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'storage',
+        workspacePath: '/work',
+        execution: { workspace: { source: 'git_worktree' } },
+      })
+    )
   })
 
   it('starts model loading before the device request finishes', async () => {
@@ -382,7 +294,7 @@ describe('creating a conversation on the only computer', () => {
           },
         ],
       })
-      await mount()
+      await mount('gpt-6.1-sol')
       if (kind === 'existing') await act(() => state.openConversation(state.conversations[0]!))
       await act(() => state.loadModels())
       expect(mocks.nativeModels).toHaveBeenCalledExactlyOnceWith(11, 'app-record-11')
@@ -476,7 +388,7 @@ describe('creating a conversation on the only computer', () => {
     await act(() => write.resolve())
   })
 
-  it('keeps connection failures quiet and waits for manual refresh after token renewal', async () => {
+  it('keeps failures quiet and retries each source independently after token renewal', async () => {
     mocks.devices.mockRejectedValueOnce(new Error('Expired token'))
     mocks.models.mockRejectedValueOnce(new Error('Expired token'))
     await act(() => {
@@ -488,9 +400,20 @@ describe('creating a conversation on the only computer', () => {
     expect(mocks.devices).toHaveBeenCalledOnce()
     expect(mocks.models).toHaveBeenCalledOnce()
     await act(() => state.refresh())
+    expect(mocks.devices).toHaveBeenCalledOnce()
+    expect(mocks.models).toHaveBeenCalledOnce()
+    expect(mocks.listWork).not.toHaveBeenCalled()
+    await act(() => state.retryFailure(state.failures.find(item => item.id === 'cloud-devices')!))
     expect(state.selectedDeviceId).toBe('app-record-11')
+    expect(mocks.models).toHaveBeenCalledOnce()
+    expect(mocks.listWork).not.toHaveBeenCalled()
+    await act(() => state.retryFailure(state.failures.find(item => item.id === 'cloud-models')!))
     expect(state.selectedModel?.name).toBe('public-model')
     expect(state.connectionError).toBeNull()
+    await act(() => state.refresh())
+    expect(mocks.listWork).toHaveBeenCalledOnce()
+    expect(mocks.conversationSubscribe).not.toHaveBeenCalled()
+    expect(mocks.reconnectCloud).not.toHaveBeenCalled()
     expect(mocks.devices).toHaveBeenCalledTimes(2)
     expect(mocks.streamCreated).toHaveBeenCalledOnce()
   })
@@ -641,29 +564,6 @@ describe('creating a conversation on the only computer', () => {
     })
     expect(state.currentAddress?.taskId).toBe('second')
     expect(state.conversationLoading).toBe(false)
-  })
-
-  it('preflights only a new cloud workspace and ignores equivalent workspace objects', async () => {
-    const cloud: DeviceInfo = {
-      ...computer,
-      device_type: 'cloud',
-      device_id: 'cloud',
-      execution_target_id: null,
-    }
-    mocks.devices.mockResolvedValue({ items: [cloud] })
-    mocks.listWork.mockResolvedValue(workFor('cloud'))
-    await act(() => {
-      renderer = create(<Harness />)
-    })
-    const workspace = state.work.chats[0]!
-    await act(() => state.startNewConversation(workspace))
-    expect(mocks.preflight).toHaveBeenCalledOnce()
-    await act(() => state.selectWorkspace({ ...workspace }))
-    expect(mocks.preflight).toHaveBeenCalledOnce()
-    await act(async () => {
-      await state.openConversation(state.conversations[0]!)
-    })
-    expect(mocks.preflight).toHaveBeenCalledOnce()
   })
 
   it('publishes each available device without waiting for a slow or failing peer', async () => {

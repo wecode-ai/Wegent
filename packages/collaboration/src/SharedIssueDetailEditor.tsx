@@ -683,6 +683,7 @@ export type TodoEditorProps = {
   onDelete?: () => void;
   deleteLabel?: string;
   selectedTaskId?: string | null;
+  linkedTaskAction?: ReactNode;
   onCreateTask?: () => void;
   onOpenTaskConversation?: (task: SharedIssueDetailTaskBinding) => void;
   onOpenChildTask?: (task: CloudLoopItem) => void;
@@ -2895,6 +2896,8 @@ export function TodoEditor(props: TodoEditorProps) {
     >
       <section
         data-testid={isCreate ? "cloud-todo-create-panel" : "cloud-todo-detail"}
+        data-field-save-state={fieldSaves.pending ? "pending" : "idle"}
+        aria-busy={fieldSaves.pending || undefined}
         className={cn(
           "flex flex-col overflow-hidden rounded-2xl bg-background shadow-2xl",
           workspacePanel
@@ -3792,6 +3795,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             ? props.onCreateTask
                             : undefined
                         }
+                        linkedTaskAction={props.linkedTaskAction}
                         onOpenTaskConversation={props.onOpenTaskConversation}
                         onOpenChildTask={props.onOpenChildTask}
                         translate={t}

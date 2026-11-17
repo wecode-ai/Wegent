@@ -353,6 +353,67 @@ describe('pane transcript reload ownership', () => {
     return restoredTranscript
   }
 
+  test('recovers an offline same-address read without discarding the draft', async () => {
+    const device = (status: string) => ({
+      device_id: address.deviceId,
+      device_type: 'remote',
+      name: 'Remote workspace',
+      status,
+    })
+    const contextState = () => mocks.context.state as Record<string, unknown>
+    mocks.context.state = { ...contextState(), devices: [device('offline')] }
+    const load = vi
+      .fn<RuntimeTranscriptLoader>()
+      .mockRejectedValue(
+        Object.assign(new Error('Device internal-id is offline'), { code: 'device_offline' })
+      )
+    mocks.context.loadRuntimeTranscriptForPane = load
+    const { result, rerender } = await renderSession()
+    expect(result.current.transcriptError).toContain('Remote workspace')
+    expect(result.current.transcriptError).not.toContain('internal-id')
+    load.mockImplementation(readRestoredTranscript)
+    const previousReads = load.mock.calls.length
+    act(() => {
+      mocks.context.state = { ...contextState(), devices: [device('online')] }
+      rerender({ currentRuntimeTask: { ...address } })
+    })
+    await waitFor(() => expect(load.mock.calls.length).toBeGreaterThan(previousReads))
+    await waitFor(() => expect(result.current.transcriptError).toBeNull())
+    expect(result.current.messages[0]?.content).toBe('Original archived prompt')
+    expectDraftPreserved(result.current)
+  })
+
+  test('a failed pre-reconnect request cannot replace the recovered history', async () => {
+    const offline = { device_id: address.deviceId, device_type: 'remote', status: 'offline' }
+    const contextState = () => mocks.context.state as Record<string, unknown>
+    mocks.context.state = { ...contextState(), devices: [offline] }
+    const load = vi.fn<RuntimeTranscriptLoader>().mockRejectedValue(new Error('device_offline'))
+    mocks.context.loadRuntimeTranscriptForPane = load
+    const { result, rerender } = await renderSession()
+    let rejectOld!: (error: Error) => void
+    load.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectOld = reject
+        })
+    )
+    act(() => result.current.reloadRuntimeTranscript())
+    await waitFor(() => expect(rejectOld).toBeTypeOf('function'))
+    const oldSignal = load.mock.calls.at(-1)?.[1]?.signal
+    load.mockImplementation(readRestoredTranscript)
+    act(() => {
+      mocks.context.state = { ...contextState(), devices: [{ ...offline, status: 'online' }] }
+      rerender({ currentRuntimeTask: { ...address } })
+    })
+    await waitFor(() =>
+      expect(result.current.messages[0]?.content).toBe('Original archived prompt')
+    )
+    expect(oldSignal?.aborted).toBe(true)
+    await act(async () => rejectOld(new Error('late device timeout')))
+    expect(result.current.transcriptError).toBeNull()
+    expectDraftPreserved(result.current)
+  })
+
   test.each(['failed', 'loaded'] as const)(
     'invalidates an archived owner %s read and reads its restored same-address history',
     async previousRead => {
@@ -1653,6 +1714,114 @@ describe('composer cancellation rollback', () => {
       ])
     )
   })
+
+  test('a rejected cancellation does not reopen a turn that completed while stopping', async () => {
+    const { result } = await renderSession()
+    let resolveCancellation!: (accepted: boolean) => void
+    mocks.cancel.mockImplementation(
+      () =>
+        new Promise<boolean>(resolve => {
+          resolveCancellation = resolve
+        })
+    )
+    let stopping!: Promise<void>
+    act(() => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_started',
+        subtaskId: 'completed-during-cancel',
+        clientUserMessageId: 'completed-during-cancel-user',
+      })
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_chunk',
+        subtaskId: 'completed-during-cancel',
+        itemId: 'completed-answer',
+        content: 'The runtime completed before the acknowledgement.',
+      })
+      stopping = result.current.pauseCurrentResponse()
+    })
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(address)
+
+    await act(async () => {
+      applyRuntimeConversationAction(address, {
+        type: 'assistant_done',
+        subtaskId: 'completed-during-cancel',
+        itemId: 'completed-answer',
+        content: 'The runtime completed before the acknowledgement.',
+      })
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subtaskId: 'completed-during-cancel',
+          status: 'done',
+          runtimeStatus: 'done',
+          content: 'The runtime completed before the acknowledgement.',
+        }),
+      ])
+    )
+
+    await act(async () => {
+      resolveCancellation(false)
+      await stopping
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subtaskId: 'completed-during-cancel',
+          status: 'done',
+          runtimeStatus: 'done',
+          content: 'The runtime completed before the acknowledgement.',
+        }),
+      ])
+    )
+  })
+
+  test.each([true, false])(
+    'settles an optimistic prompt before a native turn starts (accepted=%s)',
+    async accepted => {
+      const { result } = await renderSession()
+      act(() => {
+        applyRuntimeConversationAction(address, {
+          type: 'user_added',
+          message: {
+            id: 'cancelled-before-start',
+            role: 'user',
+            content: 'Old prompt',
+            status: 'done',
+          },
+        })
+      })
+      await waitFor(() =>
+        expect(result.current.messages).toContainEqual(
+          expect.objectContaining({ id: 'cancelled-before-start' })
+        )
+      )
+      mocks.cancel.mockResolvedValue(accepted)
+
+      await act(async () => {
+        await result.current.pauseCurrentResponse()
+      })
+
+      expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(address, {
+        pendingClientUserMessageId: 'cancelled-before-start',
+      })
+      if (accepted) {
+        await waitFor(() =>
+          expect(result.current.messages).not.toContainEqual(
+            expect.objectContaining({ id: 'cancelled-before-start' })
+          )
+        )
+      } else {
+        await waitFor(() =>
+          expect(result.current.messages).toContainEqual(
+            expect.objectContaining({ id: 'cancelled-before-start' })
+          )
+        )
+      }
+    }
+  )
 
   test.each([
     { pendingResume: false, outcome: 'rejected' },

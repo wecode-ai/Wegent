@@ -89,28 +89,25 @@ Local projects do not each create a separate board. Their tasks share **My tasks
 
 ## Create issues from external systems
 
-Maintainers of a cloud workspace can create an event subscription for a source (GitHub, GitLab) from inside the automation rule configuration. Configure the generated Webhook URL in GitHub, GitLab, Sentry, Grafana, an alerting platform, or any system that supports HTTP callbacks. Each accepted external event is deterministically converted into an unassigned issue in the workspace inbox. Existing `task.created` automation rules continue to run after the issue is created.
+**Automatic rules → External event** selects an event source already connected to the cloud project. The current settings UI has no connection, address rotation or credential-management form. If the source list is empty, a project administrator must connect a source through the existing management API, then return here, choose **Refresh sources**, select a supported event and save the rule.
 
-> Note: Event subscriptions are created and managed together with the automation rule that consumes them. Pick a source (GitHub, GitLab), then add the resource URL; the Webhook URL for the created subscription is shown on the same page, ready to copy into the external system.
+Administrators can read `GET /api/v1/cloud-projects/event-sources/catalog` for supported source types, collection modes and events. With an authenticated API session that has project management permission, submit the configuration to `POST /api/v1/cloud-projects/{project_id}/incoming-hooks`. For example, a generic Webhook source needs a stable external resource identifier:
 
-The hook address contains its own credential. Treat it as a secret and do not store it in a public repository or log. Select **Rotate address** if it is exposed; the old address becomes invalid immediately. Disable the hook when intake must be paused. This capability currently supports cloud workspaces whose tasks are managed by Wework.
-
-Built-in adapters recognize GitHub Issue `opened` and `reopened` events, GitLab Issue `open` and `reopen` events, and unresolved Sentry and Grafana alerts. Closed, resolved, or titleless events do not create issues, but their receipt is recorded. The same external event ID, delivery ID, or request body is processed only once.
-
-Other systems do not need to implement a Wework-specific protocol. They can send JSON, form data, or plain text. Generic JSON must provide at least one of `title`, `subject`, `summary`, `name`, or `message`:
-
-```bash
-curl -X POST '<Hook address>' \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: incident-2026-08-16-001' \
-  -d '{
-    "title": "Production payment failures",
-    "description": "The error rate crossed its threshold. Investigate and restore service.",
-    "url": "https://monitor.example.com/incidents/001"
-  }'
+```json
+{
+  "name": "Release events",
+  "source_type": "generic",
+  "collection_mode": "webhook",
+  "resource": {
+    "external_id": "release-events",
+    "display_name": "Release events"
+  }
+}
 ```
 
-For plain-text requests, the first line becomes the title and the complete body becomes the description. Request bodies are limited to 1 MiB. The service returns HTTP `202` with a `status` of `created`, `duplicate`, `ignored`, or `failed`; a `created` response also includes the new issue's `loop_item_id`.
+Configure the returned `webhook_url` in the external system and deliver events using that source's catalog protocol. Polling or hybrid collection also requires a valid `credential_ref`; never place credentials in rule descriptions. Connection configuration and event receipt do not establish real compatibility with an external service.
+
+The Webhook URL contains a credential. Treat it as a secret and keep it out of public repositories and logs. Read, disable, delete and rotate sources through the project event-source management API; the automation page selects existing sources only. Refresh the list after connection and explicitly save the rule.
 
 ## Move between issues and runtime tasks
 
@@ -235,6 +232,8 @@ When no task is running, the Wework Popout Window uses a compact composer with a
 The titlebar's **Open workspace location** and neighboring IDE dropdown open the working directory and select an available IDE, with a remembered preference. This differs from the device-oriented IDE entry under bottom-panel +; verify device and directory first.
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
+
+In a Markdown preview in the right-side Files tab, click a text link to an image or another file to open its file tab. Select the original Markdown tab to return to the document. Relative paths resolve from the current Markdown document’s directory, such as `./screenshot.png` or `../images/screenshot.png`, and load from the device that owns the tab. Missing files show a read error; retry or select the document again to continue browsing.
 
 Selecting a writable plain text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown and HTML files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
 

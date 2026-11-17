@@ -136,6 +136,7 @@ mod collection;
 mod command_items;
 mod command_journal;
 mod concurrency;
+mod connection_dependencies;
 mod connections;
 mod context_compaction;
 mod control;
@@ -554,9 +555,11 @@ pub struct RuntimeWorkRpcHandler {
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
+    cancelled_pending_sends: Arc<Mutex<HashMap<String, HashSet<String>>>>,
     stand_in_lifecycle_gate: Arc<Mutex<()>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
+    connection_goal_reconciliations: Arc<Mutex<HashMap<String, u64>>>,
     restore_startup_semaphore: Arc<Semaphore>,
     command_journal: Arc<Mutex<command_journal::CommandJournal>>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
@@ -597,6 +600,9 @@ pub struct RuntimeWorkRpcHandler {
     /// project-space MCP server.
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
     backend_device_route: Option<Arc<Mutex<Option<String>>>>,
+    cloud_connection_observations: Arc<AtomicBool>,
+    connection_scheduler_started: Arc<AtomicBool>,
+    connection_observation_wakeup: Arc<tokio::sync::Notify>,
 }
 
 struct CodexRuntimeProxyConfig {
@@ -691,6 +697,7 @@ struct PendingCodexNotificationReplay {
 }
 
 struct ScheduledTurnGuard {
+    transferred: bool,
     handler: RuntimeWorkRpcHandler,
     local_task_id: String,
     execution_id: u64,
@@ -726,6 +733,7 @@ impl ScheduledTurnGuard {
         command_id: Option<String>,
     ) -> Self {
         Self {
+            transferred: false,
             handler,
             local_task_id,
             execution_id,
@@ -737,6 +745,9 @@ impl ScheduledTurnGuard {
 
 impl Drop for ScheduledTurnGuard {
     fn drop(&mut self) {
+        if self.transferred {
+            return;
+        }
         let handler = self.handler.clone();
         let local_task_id = self.local_task_id.clone();
         let execution_id = self.execution_id;
@@ -934,12 +945,14 @@ impl RuntimeWorkRpcHandler {
             event_tx,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
+            cancelled_pending_sends: Arc::new(Mutex::new(HashMap::new())),
             stand_in_lifecycle_gate: Arc::new(Mutex::new(())),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
                 runtime_settings,
                 queued_turns,
             ))),
             active_goal_turns: Arc::new(Mutex::new(active_goal_turns)),
+            connection_goal_reconciliations: Arc::new(Mutex::new(HashMap::new())),
             command_journal: Arc::new(Mutex::new(command_journal)),
             restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
@@ -981,6 +994,9 @@ impl RuntimeWorkRpcHandler {
             ),
             backend_connection,
             backend_device_route,
+            cloud_connection_observations: Arc::new(AtomicBool::new(false)),
+            connection_scheduler_started: Arc::new(AtomicBool::new(false)),
+            connection_observation_wakeup: Arc::new(tokio::sync::Notify::new()),
         };
         for (local_task_id, turn) in handler
             .active_goal_turns
@@ -1051,6 +1067,12 @@ impl RuntimeWorkRpcHandler {
         handler
     }
 
+    pub fn with_connection_observation_device_type(self, device_type: &str) -> Self {
+        self.cloud_connection_observations
+            .store(matches!(device_type, "remote" | "cloud"), Ordering::Release);
+        self
+    }
+
     pub fn with_event_sender_deferred_startup_recovery(
         device_id: impl Into<String>,
         codex_binary: impl Into<String>,
@@ -1075,6 +1097,7 @@ impl RuntimeWorkRpcHandler {
             .store(true, Ordering::Release);
         handler.start_automation_scheduler();
         handler.start_local_issue_scheduler();
+        handler.start_connection_scheduler();
         if has_backend {
             handler.start_backend_services();
         }
@@ -1100,7 +1123,7 @@ impl RuntimeWorkRpcHandler {
     fn start_backend_services(&self) {
         crate::workbench_control::register(&self.device_id, Arc::new(self.clone()));
         self.start_local_stand_in_scheduler();
-        self.start_connection_stand_in_scheduler();
+        self.start_connection_scheduler();
         self.register_cloud_collaboration_dispatcher();
         self.register_stand_in_task_dispatcher();
         self.resume_cloud_collaboration_rounds();

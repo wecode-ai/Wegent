@@ -3,7 +3,7 @@ import {
   createLocalCollaborationProject,
   openProjectAgentCreator,
   selectAgentEnvironment,
-  selectAgentFormTab,
+  setAgentRuntimeExpanded,
   selectCollaborationProjectView,
   waitForTestIdByText,
 } from './workspace-flows.mjs'
@@ -39,10 +39,14 @@ export const hasScopedNativeFault = (entries, fault) =>
   )
 
 /** Inspect the default without ever activating runtime settings. */
-export async function readBasicCloudDefault(control, prefix, dialogId, timeoutMs) {
-  await control.command('waitFor', `[data-testid="${dialogId}-tab-basic"][aria-selected="true"]`, {
-    timeoutMs,
-  })
+export async function readCloudDefaultWithoutOpeningRuntime(control, prefix, dialogId, timeoutMs) {
+  await control.command(
+    'waitFor',
+    `[data-testid="${dialogId}-tab-runtime"][aria-expanded="false"]`,
+    {
+      timeoutMs,
+    }
+  )
   const options = `[data-testid="${prefix}-model"] option:not([value=""]):not([value="user_select"]):not(:disabled)`
   await control.command('waitFor', `${options}:checked`, { timeoutMs })
   const value = await control.command('getAttribute', `${options}:checked`, { value: 'value' })
@@ -94,14 +98,14 @@ export async function verifyCloudSaveDuringNativeFaults(
         'wework-agent-resource-creator'
       )
       await control.command('fill', '[data-testid="wework-agent-display-name"]', { value: name })
-      const model = await readBasicCloudDefault(
+      const model = await readCloudDefaultWithoutOpeningRuntime(
         control,
         'wework-agent',
         'wework-agent-resource-creator',
         timeoutMs
       )
       assertNativeCatalogRequests(proxy.requests.slice(start), true)
-      await selectAgentFormTab(control, 'wework-agent-resource-creator', 'runtime', timeoutMs)
+      await setAgentRuntimeExpanded(control, 'wework-agent-resource-creator', true, timeoutMs)
       assertNativeCatalogRequests(proxy.requests.slice(start), true)
       await selectAgentEnvironment(
         control,
@@ -166,7 +170,7 @@ export async function verifyLocalBasicDefaultSave(control, timeoutMs, proxy) {
   await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
     value: name,
   })
-  const model = await readBasicCloudDefault(
+  const model = await readCloudDefaultWithoutOpeningRuntime(
     control,
     'cloud-project-chat-agent',
     'cloud-project-chat-agent-editor',
@@ -197,7 +201,7 @@ export async function verifyLocalBasicDefaultSave(control, timeoutMs, proxy) {
     scoped(`[data-testid="project-agent-edit-${agentId}"]`),
     { timeoutMs }
   )
-  await selectAgentFormTab(control, 'cloud-project-chat-agent-editor', 'runtime', timeoutMs)
+  await setAgentRuntimeExpanded(control, 'cloud-project-chat-agent-editor', true, timeoutMs)
   await control.command(
     'waitFor',
     '[data-testid="cloud-project-chat-agent-environment"][data-value="policy:project_pool"]',

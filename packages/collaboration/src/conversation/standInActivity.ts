@@ -1,5 +1,12 @@
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 
+export function isHostActivityMessage(message: Pick<WorkbenchMessage, 'role' | 'source'>): boolean {
+  return (
+    message.role === 'user' &&
+    ['stand_in_activity', 'connection_event'].includes(message.source?.source ?? '')
+  )
+}
+
 export function isStandInActivityMessage(
   message: Pick<WorkbenchMessage, 'role' | 'source'>
 ): boolean {

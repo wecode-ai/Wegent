@@ -292,8 +292,19 @@ impl RuntimeWorkRpcHandler {
             _ => return false,
         };
         let goal_is_active = goal_status.as_deref() == Some("active");
-        self.sync_runtime_task_goal_status(local_task_id, goal_status);
+        self.observe_runtime_task_goal_status(local_task_id, goal_status);
         goal_is_active
+    }
+
+    pub(super) fn observe_runtime_task_goal_status(
+        &self,
+        local_task_id: &str,
+        goal_status: Option<String>,
+    ) {
+        // Delayed native notifications are projections, not authority to
+        // permanently cancel a wait established by a newer Goal mutation.
+        self.update_runtime_task_goal_status(local_task_id, goal_status, true);
+        self.schedule_connection_goal_reconciliation(local_task_id);
     }
 
     pub(super) fn sync_runtime_task_goal_status(
@@ -301,6 +312,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         goal_status: Option<String>,
     ) {
+        self.cancel_connection_goal_waits(local_task_id, goal_status.as_deref());
         self.update_runtime_task_goal_status(local_task_id, goal_status, true);
     }
 

@@ -18,6 +18,7 @@ import { Check, Copy, Code, ChevronDown, ChevronUp } from 'lucide-react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { createSchemeAwareUrlTransform } from '@/lib/scheme'
+import { stripConnectorAuthMarkers } from '@/lib/connectorAuthMarkers'
 import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
 import { SandboxedHtmlFrame } from '@/components/common/SandboxedHtmlFrame'
 import { preprocessCjkEmphasis } from '@wegent/collaboration/markdown/preprocessCjkEmphasis'
@@ -610,8 +611,12 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   components,
   rehypePlugins: extraRehypePlugins,
 }: EnhancedMarkdownProps) {
+  // Connector skills end a turn with `connector_auth_required`/`connectorSlug`
+  // markers for the client's authorization card; they must never be rendered.
+  const visibleSource = useMemo(() => stripConnectorAuthMarkers(source), [source])
+
   // Extract frontmatter before processing
-  const { frontmatter, body } = useMemo(() => extractFrontmatter(source), [source])
+  const { frontmatter, body } = useMemo(() => extractFrontmatter(visibleSource), [visibleSource])
 
   const contentParts = useMemo(() => {
     const rawParts = splitArtifactBlocks(body)
@@ -731,7 +736,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     return plugins
   }, [hasMath, extraRehypePlugins])
 
-  // URL transform to allow wegent:// and attachment:// scheme URLs
+  // URL transform to allow wegent:// and attachment:// scheme URLs.
   const urlTransform = useMemo(() => createSchemeAwareUrlTransform(['wegent:', 'attachment:']), [])
 
   // Render markdown content

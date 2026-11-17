@@ -12,10 +12,20 @@ export interface ConversationMenuAction {
 
 export interface ConversationMenuNativeProps {
   actions: ConversationMenuAction[]
-  children: ReactElement
+  children: ReactElement | ((trigger: ConversationMenuTrigger) => ReactElement)
   colorScheme: 'light' | 'dark'
   disabled: boolean
   onSelect: (id: string) => void
   title: string
-  width: number
+  width?: number
+  trigger?: 'press' | 'longPress'
+  height?: number
+  testID?: string
+  triggerTestID?: string
+  accessibilityLabel?: string
+}
+
+export interface ConversationMenuTrigger {
+  disabled: boolean
+  onLongPress?: () => void
 }

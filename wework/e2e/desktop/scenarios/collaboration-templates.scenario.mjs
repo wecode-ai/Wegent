@@ -21,6 +21,7 @@ const scoped = selector => `${CONTENT} ${selector}`
 const testId = name => scoped(`[data-testid="${name}"]`)
 
 export async function fillTemplateRoleBindings(control, count) {
+  await control.command('waitFor', testId('template-customize-main'))
   if (
     Number(
       await control.command(
@@ -29,7 +30,7 @@ export async function fillTemplateRoleBindings(control, count) {
       )
     ) > 0
   ) {
-    await control.command('click', testId('template-customize-main'))
+    await control.command('clickWhenEnabled', testId('template-customize-main'))
   }
   await control.command('waitFor', testId('template-role-main-role-0') + ' option[value^="human:"]')
   // This scenario covers an explicit human coordinator; lifecycle coverage uses the agent default.

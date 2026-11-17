@@ -97,7 +97,7 @@ describe('applySharedChangeRequestSnapshot', () => {
     expect(result.changeRequest).toEqual({ provider: 'github', state: 'not_found' })
   })
 
-  test('maps a stale shared CLI failure to an unavailable Environment result', () => {
+  test('preserves the last PR business state and separately reports a stale observation failure', () => {
     const result = applySharedChangeRequestSnapshot(environmentInfo, {
       target: {
         deviceId: 'local',
@@ -114,10 +114,8 @@ describe('applySharedChangeRequestSnapshot', () => {
       error: 'GitHub CLI is unavailable',
     })
 
-    expect(result.changeRequest).toEqual({
-      provider: 'github',
-      state: 'unavailable',
-    })
+    expect(result.changeRequest).toEqual(environmentInfo.changeRequest)
+    expect(result.changeRequestObservation).toMatchObject({ state: 'error', stale: true })
   })
 
   test('keeps an explicit Environment lookup failure instead of showing an older shared result', () => {

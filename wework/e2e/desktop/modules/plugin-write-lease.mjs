@@ -113,6 +113,7 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
     }
   )
   const events = []
+  const eventDetails = new Map()
   let failure
   let stderr = ''
   child.once('error', error => {
@@ -128,13 +129,15 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
   const lines = createInterface({ input: child.stdout })
   lines.on('line', line => {
     try {
-      events.push(JSON.parse(line).event)
+      const details = JSON.parse(line)
+      events.push(details.event)
+      eventDetails.set(details.event, details)
     } catch {
       failure = new Error('The Redis lease helper returned invalid diagnostics')
     }
   })
-  const waitFor = event =>
-    until(
+  const waitFor = async event => {
+    await until(
       () => {
         if (failure) throw failure
         if (child.exitCode !== null && child.exitCode !== 0) {
@@ -145,6 +148,8 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
       values => values.includes(event),
       `Redis lease helper never reported ${event}`
     )
+    return eventDetails.get(event)
+  }
   let closed = false
   const release = async () => {
     if (closed) return

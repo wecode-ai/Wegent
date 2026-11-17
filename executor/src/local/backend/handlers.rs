@@ -275,11 +275,13 @@ where
                         "Runtime work handler is not available",
                     ))
                 };
+                // Successful RPC methods may return an accepted/status projection.
                 let logical_success = response
                     .get("success")
                     .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                    .unwrap_or(true);
                 let logical_error = response.get("error").cloned();
+                let logical_error_code = response.get("code").cloned();
                 let response = encode_runtime_rpc_response(&method, response);
                 write_executor_log_line(&format_executor_log(
                     "runtime:rpc responded",
@@ -293,6 +295,14 @@ where
                                 .and_then(Value::as_bool)
                                 .unwrap_or(logical_success)
                                 .to_string(),
+                        ),
+                        (
+                            "error_code",
+                            logical_error_code
+                                .as_ref()
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
                         ),
                         (
                             "error",

@@ -11,6 +11,8 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 手机文件入口：**会话页右上角更多 → 文件 / 更改**；有可访问的工作目录时可用。
 回复中的文件链接、附件和展开后的变更路径也可直接打开预览。操作与限制见[移动端文件预览](./mobile-file-preview.md)。
 
+手机项目与会话管理：主页 **Wework ▾ → 新建项目 / 已归档会话**；项目行 **… → 置顶、重命名、归档全部聊天、移除**；会话行**左滑 → 归档**，**长按 → 置顶、重命名、复制 ID、归档**。移除项目保留文件和会话；永久删除仅在已归档会话中确认执行。详见 [Wework 手机版](./mobile.md)。
+
 ## 先认识界面
 
 | 区域       | 在哪里           | 可以做什么                                                              |
@@ -26,6 +28,8 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 左侧栏隐藏时，可用默认快捷键 `Command+B` 恢复；右侧工作区使用 `Option+Command+B`，底部面板使用 `Command+J`。这些是 macOS 默认值；其他系统及修改过的快捷键以 **设置 → 快捷键** 为准。
 
 ## 常见问题：我要去哪里
+
+让 AI 在文档、代码托管等连接来源有变化时继续任务：在**任务输入区**描述等待条件，AI 使用工具订阅，输入区上方显示来源和等待状态；持续目标也可等待事件。详见[让 AI 等待连接事件](./tasks.md#connection-event-waits)。
 
 会话内切换模型的确认与会话保留规则见[模型设置](./user-guide/model-settings.md#model-controls)。
 
@@ -62,13 +66,13 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 快筛某项目待我处理的 Issue      | 协作 → 选择项目 → 看板工具栏 → 待我处理                                                    | 临时过滤，不改保存视图；见[项目待办与等待时间](./workbench.md#project-pending-work)                                                                                                                                                                             |
 | 查看流程在我这里等了多久        | 待你处理 → 选择项目事项或问题                                                              | 有可靠本轮交接证据才显示计时；见[等待时长与流程分析](./personal-stand-in.md#等待时长与流程分析)                                                                                                                                                                 |
 | 配置项目执行设备、仓库、初始化  | 项目空间 → 项目设置 → 执行环境                                                             | 与全局设置的执行环境不是同一页；AI 执行前需在线设备完成初始化                                                                                                                                                                                                   |
-| 项目 AI / 项目管理者            | 项目设置 → AI 团队 / 自动处理                                                              | 当前入口与旧称差异见[项目 AI 管理者](./project-ai-manager.md)；不要寻找旧版底部按钮                                                                                                                                                                             |
+| 项目 AI / 项目管理者            | 项目设置 → AI 配置 / 自动处理                                                              | 当前入口与旧称差异见[项目 AI 管理者](./project-ai-manager.md)；不要寻找旧版底部按钮                                                                                                                                                                             |
 | 重试助理设置读取                | 我的助理 → 助理详情 → 管理助理 → 错误提示旁的重新加载                                      | 模型目录可在模型字段下方重试，环境错误只重试环境目录；重新读取保存配置前保护未保存修改。见[设置失败与重试](./personal-stand-in.md#assistant-settings-recovery)                                                                                                  |
 | 跳过助理连接引导                | 左侧栏 → 我的助理 → 首次引导 → 先聊天，稍后连接                                            | 仅首次使用时显示；不保存连接草稿，见[首次使用助理](./personal-stand-in.md#assistant-first-use)                                                                                                                                                                  |
 | 查看助理工作来源                | 我的助理 → 助理详情 → 关注的工作来源                                                       | 与浮层“从聊天工具联系助理”用途不同；见[首次使用助理](./personal-stand-in.md#assistant-first-use)                                                                                                                                                                |
 | 个人助理                        | 左侧栏 → 我的助理                                                                          | Beta 功能；版本不兼容时可从错误提示前往云端工作查看设备情况，见[个人助理](./personal-stand-in.md)                                                                                                                                                               |
 | 确认助理配置调整                | 我的助理 → 当前会话中的确认卡 → 确认并应用                                                 | 查看受影响角色和来源，成功后原会话显示实际变更；见[对话调整](./personal-stand-in.md#conversational-configuration)                                                                                                                                               |
-| 助理聊天与桌面通知              | 我的助理 → 输入框上方“打开通知设置”；或顶部铃铛 → 通知设置                                 | 异步聊天、气泡和未读数字，见[助理聊天与桌面通知](./personal-stand-in.md#分身聊天与桌面通知)                                                                                                                                                                     |
+| 助理聊天与桌面通知              | 我的助理 → 输入框上方“打开通知设置”；或顶部铃铛 → 通知设置                                 | 异步聊天、气泡和未读数字，见[助理聊天与桌面通知](./personal-stand-in.md#助理聊天与桌面通知)                                                                                                                                                                     |
 | 恢复已归档的助理来源工作        | 我的助理 → 助理详情 → 近期活动旁箭头 → 对应工作 → 取消归档                                 | 仅在工作已归档时显示；恢复不自动执行，见[来源会话策略](./personal-stand-in.md#stand-in-source-session-policy)                                                                                                                                                   |
 | 选择角色执行设备                | 我的助理 → 选择角色 → 助理详情 → 管理助理 → 执行设备                                       | 保存后新任务换设备，旧任务留原设备；见[角色档案逐项操作](./personal-stand-in.md#role-execution-device)                                                                                                                                                          |
 | 停止助理 / 更换绑定             | 左侧栏 → 我的助理 → 主助理 → 助理详情 → 管理助理 → 设置面板左下角“停止助理”                | 停止当前绑定设备上的助理任务后才显示主助理换绑选择；见[实例绑定与停止](./personal-stand-in.md#instance-binding-and-stopping)                                                                                                                                    |
@@ -96,9 +100,11 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 从侧栏的 **项目 → 新建项目 → 云端项目** 可在选择远程主机时添加设备，见[项目与工作区](./projects.md#add-device-from-project)。
 
-从 **项目设置 → AI 团队** 编辑智能体定义；项目 Maintainer 可以编辑项目内的非私有定义，共享源定义仍按原权限控制。导入和手动创建使用相同入口，分配设备冲突的排查步骤见[智能体配置](./projects.md#agent-capabilities)。
+从 **项目设置 → AI 配置** 编辑智能体定义；项目 Maintainer 可以编辑项目内的非私有定义，共享源定义仍按原权限控制。导入和手动创建使用相同入口，分配设备冲突的排查步骤见[智能体配置](./projects.md#agent-capabilities)。
 
 ## 侧栏的功能入口
+
+窄窗口的项目设置会将侧栏收为顶部 **协作导航**；展开后可进入首页、项目和其他协作入口，选择位置后自动收起。见[项目设置](./projects.md)。
 
 任务首次加载或加载失败时，在桌面侧栏的 **任务** 标题下方查看状态；失败后可点击 **重试**。优先级视图中的提示位于列表上方，详见[左侧栏任务管理](./tasks.md#sidebar-task-management)。
 
@@ -166,7 +172,7 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 集成 → 浏览器       | 下载目录、浏览器数据与缓存                                                            | `/settings/browser`                     |
 | 编码 → 执行环境     | Node.js 等执行环境配置，见[设置与数据](./settings.md)                                 | `/settings/execution-environments`      |
 | 编码 → 编码工具     | OpenCode、Claude Code、Kimi Code；实验性功能                                          | `/settings/harnesses`                   |
-| 编码 → Hooks        | 配置运行钩子                                                                          | `/settings/hooks`                       |
+| 编码 → Hooks        | 配置工具与异步生命周期钩子；见[设置说明](./settings.md#hooks-controls) | `/settings/hooks` |
 | 编码 → 代码托管     | GitHub / GitLab 等连接；开发者模式的 Git 插件入口，见[Git 连接](./git-connections.md) | `/settings/git-hosting`                 |
 | 编码 → 工作树       | Worktree 位置、保留与清理；开发者模式的 Git 插件入口                                  | `/settings/worktrees`                   |
 | 已归档 → 已归档任务 | 搜索、恢复、删除归档对话                                                              | `/settings/archived-conversations`      |
@@ -192,3 +198,5 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 Issue 动态中的图片、Markdown 和文件链接可打开附件预览，失败后可重试并下载原文件。见[附件与文档预览](./projects.md#issue-resource-preview)。
 
 默认执行设备与新建事项设备授权入口见[协作设备设置](./devices.md#collaboration-device-defaults)：**协作 → 协作管理 → 执行设备 → 个人默认执行环境**；**协作 → 新建事项 → 运行环境（可选）→ 个人默认执行环境 → 保存个人默认设备** 明确保存个人偏好，关联项目时通过 **项目设备授权（立即生效）→ 选择或添加设备** 管理项目授权。参与者弹层、固定创建操作区和未保存修改保护见[独立事项](./projects.md#independent-issues)。
+
+关联已有任务：**协作 → Issue 详情 → 关联任务 → 关联已有任务**，参见[项目与 Issue](./projects.md)。

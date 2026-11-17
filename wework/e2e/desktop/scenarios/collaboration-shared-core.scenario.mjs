@@ -15,6 +15,7 @@ import { createProjectSpacePickerRegression } from '../modules/project-space-pic
 import { verifyIssueConversationDrawers } from '../modules/issue-conversation-drawers.mjs'
 import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-home.mjs'
 import { verifyCollaborationMemberSettings } from '../modules/collaboration-member-settings.mjs'
+import { verifyCollaborationSettingsUx } from '../modules/collaboration-settings-ux.mjs'
 import {
   handleProjectCreateGroupModel,
   verifyPrivateProjectCreation,
@@ -536,6 +537,7 @@ export function createDesktopScenario({
         await capture(control, 'collaboration-shared-core-03-project-created.png')
         await verifyPrivateProjectCreation({ control, scoped, request, workspace, project })
         await verifyCollaborationMemberSettings(control, { scoped, owner, request, project })
+        await verifyCollaborationSettingsUx(control, { scoped, request, project })
 
         // Creation authorizes the current runner; this recovery case needs an unassigned project.
         const initialEnvironments = await request(

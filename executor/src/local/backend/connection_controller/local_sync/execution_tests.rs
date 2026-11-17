@@ -24,6 +24,12 @@ mod journal_tests;
 mod runtime_token_tests;
 mod scanning_tests;
 
+/// Upper bound for event-driven waits. The waits are notification-based, but
+/// full-suite parallel runs schedule the spawned scan tasks seconds late under
+/// CPU contention, so the guard must tolerate runner slowness instead of
+/// failing at interactive latency.
+const EVENT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[tokio::test]
 async fn foreground_and_recovery_use_only_the_registered_record_route_as_source() {
     for registered in [false, true] {
@@ -394,7 +400,7 @@ impl Fixture {
     }
 
     async fn wait_for_merge(&self, unconfirmed: bool) -> Value {
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(EVENT_WAIT_TIMEOUT, async {
             loop {
                 let state = load_journal(&self.path).unwrap();
                 if (unconfirmed

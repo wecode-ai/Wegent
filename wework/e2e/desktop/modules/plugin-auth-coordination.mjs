@@ -166,14 +166,29 @@ export async function verifyPluginAuthCoordination({
   const executorLog = join(resultDir, 'executor.log')
   let recoveryBefore
   let recoveryOffset
+  let pendingWait
+  const readPendingWait = async () => {
+    const [row] = await cloud.queryDatabase(
+      `SELECT EXISTS(SELECT 1 FROM performance_schema.data_lock_waits
+       WHERE REQUESTING_ENGINE_LOCK_ID = %s AND BLOCKING_ENGINE_LOCK_ID = %s) AS pending`,
+      [pendingWait.requestingLockId, pendingWait.blockingLockId]
+    )
+    return row.pending
+  }
   try {
     const before = {
       target: await readPluginAuthTarget(cloud, installedId),
     }
     await backgroundRow.assertHeld()
     await signalAutomaticRetry()
-    await backgroundRow.waitFor('blocked')
+    pendingWait = await backgroundRow.waitFor('blocked')
+    assert.ok(pendingWait.requestingLockId && pendingWait.blockingLockId)
     await verifyIndependentPluginMutations(cloud, independent, evidence)
+    assert.equal(
+      await readPendingWait(),
+      1,
+      'The target database request stopped waiting before its row was released'
+    )
     const after = { target: await readPluginAuthTarget(cloud, installedId) }
     assertBackgroundPluginAuthPaused({
       before,
@@ -187,6 +202,11 @@ export async function verifyPluginAuthCoordination({
   } finally {
     await backgroundRow.release()
   }
+  await until(
+    readPendingWait,
+    value => value === 0,
+    'The target database request remained blocked after its row was released'
+  )
   await signalAutomaticRetry()
   await until(
     async () => ({
@@ -201,6 +221,11 @@ export async function verifyPluginAuthCoordination({
     }),
     isFreshPluginAuthRecovery,
     'Background authentication did not freshly enroll its target after the row was released'
+  )
+  await until(
+    () => connectionFor('mail'),
+    value => value?.status === 'connected' && value.device_ids.length > 0,
+    'Background authentication did not retain its real credential registration'
   )
   await logout()
 

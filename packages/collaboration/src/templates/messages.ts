@@ -4,6 +4,8 @@
 export const templateMessages = {
   'zh-CN': {
     optionalRuntimeConfiguration: '运行环境（可选）',
+    chooseTemplate: '选择模板',
+    backToTemplates: '返回模板列表',
     deferredRuntimeHint: '可稍后在项目设置中配置。',
     environmentOnline: '在线',
     title: '协作模板',
@@ -132,6 +134,8 @@ export const templateMessages = {
   },
   en: {
     optionalRuntimeConfiguration: 'Runtime (optional)',
+    chooseTemplate: 'Choose template',
+    backToTemplates: 'Back to templates',
     deferredRuntimeHint: 'You can configure this later in project settings.',
     environmentOnline: 'Online',
     title: 'Collaboration templates',

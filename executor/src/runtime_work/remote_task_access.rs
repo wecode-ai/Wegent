@@ -28,6 +28,18 @@ pub(crate) const TASK_METHODS: &[&str] = &[
     "runtime.tasks.cancel",
     "runtime.tasks.goal.get",
     "runtime.tasks.goal.set",
+    "runtime.worktrees.capabilities",
+    "runtime.worktrees.preflight",
+    "runtime.projects.upsert_local",
+    "runtime.workspaces.rename",
+    "runtime.workspaces.remove",
+    "runtime.sidebar.projects.pin",
+    "runtime.sidebar.tasks.pin",
+    "runtime.tasks.rename",
+    "runtime.tasks.archive",
+    "runtime.archived_conversations.list",
+    "runtime.archived_conversations.unarchive",
+    "runtime.archived_conversations.delete",
 ];
 
 #[derive(Clone)]
@@ -157,7 +169,22 @@ mod tests {
         let access = RemoteTaskAccess::new(root.path().join("a/settings.json"));
         let peer = RemoteTaskAccess::new(root.path().join("b/settings.json"));
         let reader = access.clone();
-        for method in ["runtime.tasks.create", "runtime.tasks.guidance"] {
+        for method in [
+            "runtime.tasks.create",
+            "runtime.tasks.guidance",
+            "runtime.worktrees.capabilities",
+            "runtime.worktrees.preflight",
+            "runtime.projects.upsert_local",
+            "runtime.workspaces.rename",
+            "runtime.workspaces.remove",
+            "runtime.sidebar.projects.pin",
+            "runtime.sidebar.tasks.pin",
+            "runtime.tasks.rename",
+            "runtime.tasks.archive",
+            "runtime.archived_conversations.list",
+            "runtime.archived_conversations.unarchive",
+            "runtime.archived_conversations.delete",
+        ] {
             assert!(reader.authorize(method, None).is_err());
             assert!(reader.authorize(method, Some("project-session")).is_err());
             access.update(json!({"enabled": true})).unwrap();
@@ -179,6 +206,9 @@ mod tests {
             "runtime.settings.update",
             "runtime.codex.app_server.request",
             "device.execute_command",
+            "runtime.worktrees.settings.update",
+            "runtime.worktrees.prepare",
+            "runtime.worktrees.delete",
         ] {
             assert!(access.authorize(method, None).is_err(), "{method}");
             assert!(
