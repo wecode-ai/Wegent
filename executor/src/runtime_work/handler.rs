@@ -149,6 +149,7 @@ mod fork_transfer;
 mod git_connections;
 mod git_source_workspace;
 mod git_webhook_setup;
+mod goal_model_route;
 mod hooks;
 pub(super) mod lifecycle;
 mod mcp_app_source;
@@ -670,6 +671,7 @@ struct CachedCodexTranscriptNavigation {
 }
 
 struct RuntimeThreadEventRoute {
+    goal_model_route: Option<Arc<crate::agents::LocalProxyRegistration>>,
     local_task_id: String,
     request: ExecutionRequest,
     event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
@@ -782,6 +784,7 @@ impl RuntimeThreadEventRoute {
         generation: u64,
     ) -> Self {
         Self {
+            goal_model_route: None,
             local_task_id,
             request,
             event_mapper: Arc::new(Mutex::new(CodexNotificationEventMapper::default())),

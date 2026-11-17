@@ -278,3 +278,50 @@ fn reactivated_native_goal_recovers_without_a_live_local_execution() {
         let _ = fs::remove_dir_all(root);
     });
 }
+
+#[test]
+fn goal_activation_binds_and_retains_the_route_until_the_goal_stops() {
+    run_goal_test(async {
+        for status in [Some("paused"), Some("blocked"), Some("complete"), None] {
+            let (mut handler, root, mut request) = setup("goal-model-route-lifetime");
+            request.model_config = json!({
+                "model_id": "goal-route-model",
+                "base_url": "http://synthetic.invalid/v1",
+                "api_key": "synthetic-key"
+            });
+            handler.store.update_task("task-1", |link| {
+                store_runtime_execution_request(&mut link.runtime_handle, &request);
+                link.goal_status = Some("blocked".into());
+            });
+            handler.retain_runtime_model_config("task-1", &request.model_config);
+            install_native_history(&mut handler, &root, vec![], None);
+            let link = handler.local_task_link("task-1").unwrap();
+            handler
+                .prepare_goal_model_route(&link, "thread-1", &json!({"status":"active"}))
+                .await
+                .unwrap();
+            assert!(local_model_proxy::thread_has_bound_route("thread-1"));
+            assert!(
+                handler.thread_event_routing.lock().unwrap().routes["thread-1"]
+                    .goal_model_route
+                    .is_some()
+            );
+            // Passive history refreshes must not drop the Goal's inference lease.
+            handler.register_thread_event_route_from_store("thread-1");
+            handler.sync_runtime_task_goal_status("task-1", Some("active".into()));
+            assert!(
+                handler.thread_event_routing.lock().unwrap().routes["thread-1"]
+                    .goal_model_route
+                    .is_some()
+            );
+            handler.sync_runtime_task_goal_status("task-1", status.map(str::to_owned));
+            assert!(
+                handler.thread_event_routing.lock().unwrap().routes["thread-1"]
+                    .goal_model_route
+                    .is_none()
+            );
+            handler.codex_app_server.restart().await;
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+}

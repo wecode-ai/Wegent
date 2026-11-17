@@ -390,6 +390,13 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_goal_missing_session(&link));
         };
 
+        let prepared_model_route = match self
+            .prepare_goal_model_route(&link, &thread_id, &payload)
+            .await
+        {
+            Ok(prepared) => prepared,
+            Err(error) => return Ok(task_action_failure(&link, error.message)),
+        };
         let mut params = Map::new();
         params.insert("threadId".to_owned(), Value::String(thread_id));
         if let Some(objective) = payload.get("objective").cloned() {
@@ -438,7 +445,12 @@ impl RuntimeWorkRpcHandler {
                 response["resumed"] = Value::Bool(resumed);
                 Ok(response)
             }
-            Err(error) => Ok(task_action_failure(&link, error)),
+            Err(error) => {
+                if prepared_model_route {
+                    self.release_goal_model_routes(&link.local_task_id);
+                }
+                Ok(task_action_failure(&link, error))
+            }
         }
     }
 
