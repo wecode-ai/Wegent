@@ -92,10 +92,12 @@ export async function verifyBaseBoardStatusGrouping({
     await showAllCollaborationIssues(control, scoped('').trim())
     const columnKeys = async () =>
       JSON.parse(
-        await control.command('getTestIdOrder', scoped('[data-testid="collaboration-board"]'))
-      )
-        .filter(id => /^cloud-todo-column-(?!add-|dropzone-)/.test(id))
-        .map(id => id.slice('cloud-todo-column-'.length))
+        await control.command(
+          'getElementMetrics',
+          scoped('[data-testid="collaboration-board"] section[data-testid^="cloud-todo-column-"]'),
+          { value: JSON.stringify({ attributeNames: ['data-testid'] }) }
+        )
+      ).map(({ attributes }) => attributes['data-testid'].slice('cloud-todo-column-'.length))
     const expectColumns = keys =>
       waitForBoardValue(columnKeys, keys, 'Unexpected base or workflow column order', uiTimeoutMs)
     await expectColumns(views.views[0].columns.map(column => column.id))
