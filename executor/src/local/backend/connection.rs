@@ -144,6 +144,7 @@ where
             *slot = (!route_id.is_empty()).then_some(route_id);
         }
         self.connection_status.store(true, Ordering::Release);
+        crate::plugin_account_auth::broker::request_reconcile(None);
         Ok(())
     }
 

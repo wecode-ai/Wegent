@@ -31,6 +31,10 @@ export function useEscapeKey(
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (scope?.current?.closest("[inert], [hidden]")) return;
+      if (scope?.current && event.target instanceof Element) {
+        const nativeDialog = event.target.closest("dialog[open]");
+        if (nativeDialog && nativeDialog !== scope.current) return;
+      }
       const top = topLayer();
       if (event.defaultPrevented || isImeComposingEvent(event)) return;
       if (top && top !== scope?.current) return;

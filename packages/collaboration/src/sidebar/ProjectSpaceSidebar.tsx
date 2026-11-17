@@ -113,9 +113,9 @@ export function ProjectSpaceSidebar({
   const primaryTextClass = sectionOnly
     ? "text-text-primary"
     : "text-[rgb(var(--color-sidebar-text-primary))]";
-  const mutedTextClass = sectionOnly
-    ? "text-text-muted"
-    : "text-[rgb(var(--color-sidebar-text-muted))]";
+  const secondaryTextClass = sectionOnly
+    ? "text-text-secondary"
+    : "text-[rgb(var(--color-sidebar-text-secondary))]";
   const hoverBackgroundClass = sectionOnly
     ? "hover:bg-hover"
     : "hover:bg-[rgb(var(--color-sidebar-hover))]";
@@ -149,7 +149,7 @@ export function ProjectSpaceSidebar({
             current === project.id ? null : project.id,
           )
         }
-        className={`hidden h-7 w-7 shrink-0 items-center justify-center rounded-md transition focus:flex group-hover:flex ${mutedTextClass} ${hoverBackgroundClass} ${hoverPrimaryTextClass}`}
+        className={`hidden h-7 w-7 shrink-0 items-center justify-center rounded-md transition focus:flex group-hover:flex ${secondaryTextClass} ${hoverBackgroundClass} ${hoverPrimaryTextClass}`}
         aria-expanded={openProjectId === project.id}
         aria-label={labels.actions}
         title={renderTooltip ? undefined : labels.actions}
@@ -197,7 +197,7 @@ export function ProjectSpaceSidebar({
         </nav>
       ) : null}
       <div
-        className={`${sectionOnly ? "" : "mt-6 "}flex h-[30px] items-center px-2.5 text-xs font-medium opacity-75 ${mutedTextClass}`}
+        className={`${sectionOnly ? "" : "mt-6 "}flex h-[30px] items-center px-2.5 text-xs font-medium ${secondaryTextClass}`}
       >
         {sectionLabel}
         {renderTooltip ? (
@@ -236,7 +236,7 @@ export function ProjectSpaceSidebar({
             </button>
             {project.count ? (
               <span
-                className={`flex h-7 w-7 shrink-0 items-center justify-center text-xs group-hover:hidden ${mutedTextClass}`}
+                className={`flex h-7 w-7 shrink-0 items-center justify-center text-xs group-hover:hidden ${secondaryTextClass}`}
               >
                 {project.count}
               </span>

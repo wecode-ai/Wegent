@@ -21,6 +21,8 @@ from app.services import plugin_write_coordination as coordination
 from app.services import plugin_write_resources as resources
 from integration_checks.plugin_auth_fixtures import Context, context, sessions
 
+_real_redis_client = resources.redis_client
+
 
 @pytest.fixture
 def client(context: Context, monkeypatch: pytest.MonkeyPatch):
@@ -78,10 +80,12 @@ def test_concurrent_disconnect_requests_commit_once_and_report_revision_conflict
 def test_busy_http_write_preserves_state_and_can_be_retried_after_release(
     context: Context, client: TestClient
 ):
-    key = f"wegent:plugin-write:{context.user_id}"
+    key = f"wegent:plugin-write:{context.user_id}:@account-policy"
     redis = coordination._redis_client()
     with context.sessions() as holder:
-        coordination.acquire_plugin_write_lock(holder, context.user_id)
+        coordination.acquire_plugin_write_lock(
+            holder, context.user_id, name="@account-policy"
+        )
         token = redis.get(key)
         started = time.monotonic()
 
@@ -140,7 +144,9 @@ def test_authenticated_http_disconnect_does_not_wait_for_user_row_lock(
             assert response.json()["status"] == "disconnected"
             assert blocker.in_transaction()
     assert (
-        coordination._redis_client().get(f"wegent:plugin-write:{context.user_id}")
+        coordination._redis_client().get(
+            f"wegent:plugin-write:{context.user_id}:mysql-auth-fixture"
+        )
         is None
     )
 
@@ -170,6 +176,7 @@ def test_unreachable_redis_rejects_http_write_without_changing_state_and_recover
                 f"redis://127.0.0.1:{reserved.getsockname()[1]}/15",
             )
             patch.setattr(resources, "_redis", None)
+            patch.setattr(resources, "redis_client", _real_redis_client)
             patch.setattr(coordination, "_redis_client", resources.redis_client)
             with resources.redis_client():
                 started = time.monotonic()

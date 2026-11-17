@@ -11,6 +11,10 @@ import {
   verifyTemplateDeletion,
   verifyTemplateDeletionPermissions,
 } from '../modules/template-deletion-flow.mjs'
+import {
+  confirmProjectTemplateConfiguration,
+  openProjectTemplateConfiguration,
+} from '../modules/project-create-template-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
@@ -332,12 +336,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'collaboration-workspace-wework-local-workspace')
       await openTemplateProject(control, accountTemplate.document.spec.displayName)
       await capture(control, '00-account-download')
-      await control.command(
-        'click',
-        scoped(
-          '[data-testid="collaboration-project-create-dialog"] .collaboration-project-create-footer button[type="button"]'
-        )
-      )
+      await click(control, 'collaboration-project-create-cancel')
       await wait(
         control,
         `template-card-${accountTemplate.document.metadata.name}`,
@@ -367,19 +366,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         0,
         'A self-contained template must be ready without selecting existing Agents'
       )
+      await openProjectTemplateConfiguration(control, CONTENT)
       await click(control, 'template-customize-main')
       await control.command('select', testId('template-role-main-role-1'), { value: '' })
+      await control.command('waitFor', testId('collaboration-project-name-input'), {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         Number(
           await control.command(
             'getElementCount',
-            testId('collaboration-project-create-confirm') + ':disabled'
+            testId('project-create-template-configuration-apply') + ':disabled'
           )
         ),
         1,
-        'Unbound roles did not block project creation'
+        'Unbound roles did not block template configuration'
       )
       await fillTemplateRoleBindings(control, 6)
+      await confirmProjectTemplateConfiguration(control, CONTENT)
       await control.command('fill', testId('collaboration-project-name-input'), {
         value: projectName,
       })

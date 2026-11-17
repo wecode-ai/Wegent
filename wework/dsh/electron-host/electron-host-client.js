@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from 'node:fs'
-import { createInterface } from 'node:readline'
+import { JsonLineReader } from './json-line-reader.js'
 
 export const ELECTRON_HOST_PROTOCOL_VERSION = 1
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
@@ -110,8 +110,13 @@ export class ElectronHostClient {
       throw new ElectronHostError('client_closed', 'Electron host client is closed')
     }
     this.started = true
-    this.lines = createInterface({ input: this.input })
+    this.lines = new JsonLineReader(this.input, MAX_FRAME_BYTES)
     this.lines.on('line', line => this.handleLine(line))
+    this.lines.on('overflow', () =>
+      this.closeWithError(
+        new ElectronHostError('frame_too_large', 'Electron host response exceeds size limit')
+      )
+    )
     this.input.once('close', this.onInputClose)
     this.input.once('end', this.onInputEnd)
     this.output.once('error', this.onOutputError)
@@ -180,12 +185,6 @@ export class ElectronHostClient {
   }
 
   handleLine(rawLine) {
-    if (Buffer.byteLength(rawLine) > MAX_FRAME_BYTES) {
-      this.closeWithError(
-        new ElectronHostError('frame_too_large', 'Electron host response exceeds size limit')
-      )
-      return
-    }
     let message
     try {
       message = JSON.parse(rawLine)

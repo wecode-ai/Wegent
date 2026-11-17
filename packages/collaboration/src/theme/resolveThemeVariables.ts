@@ -43,6 +43,7 @@ export function resolveThemeVariables(
     palette.mobileDrawer = defaultPalette.mobileDrawer;
   }
   const destructive = resolvedMode === "dark" ? "248 113 113" : "220 38 38";
+  const focus = resolvedMode === "dark" ? "51 156 255" : "37 99 235";
   return {
     ...Object.fromEntries(
       Object.entries(PALETTE_VARIABLES).map(([key, variable]) => [
@@ -54,9 +55,9 @@ export function resolveThemeVariables(
     "--color-bg-subtle": palette.bgMuted,
     "--color-background": palette.bgBase,
     "--color-border-strong": palette.border,
-    "--color-focus": "51 156 255",
-    "--color-focus-ring": "51 156 255",
-    "--color-link": "51 156 255",
+    "--color-focus": focus,
+    "--color-focus-ring": focus,
+    "--color-link": focus,
     "--color-success": resolvedMode === "dark" ? "64 201 119" : "0 162 64",
     "--color-warning": resolvedMode === "dark" ? "251 191 36" : "180 83 9",
     "--color-destructive": destructive,
