@@ -629,19 +629,47 @@ export async function verifyPluginInstallUpdateResilience({
     })
 
     await runCase('auto-update-failed-plugin-does-not-block-next', async entry => {
-      const bad = await prepareUpgrade('auto-bad')
-      const good = await prepareUpgrade('auto-good')
-      entry.before = { failedPlugin: bad.before, healthyPlugin: good.before }
-      assert.ok(bad.before.account.id < good.before.account.id, 'Failed plugin must sort first')
-      const fault = await blockPackage(sharedRoot, bad.next)
+      const candidates = [await prepareUpgrade('auto-first'), await prepareUpgrade('auto-second')]
+      const syncPath = candidate =>
+        `/api/plugins/installed/${candidate.before.account.id}/sync-device`
+      let selectedRequest
+      let bad
+      let good
+      let fault
+      // A busy installation may legitimately be skipped by the real batch API.
+      // Fault the first actual sync, rather than assuming ID order selects it.
+      apiProxy.rule = request => {
+        if (
+          !selectedRequest &&
+          request.method === 'POST' &&
+          candidates.some(candidate => request.path === syncPath(candidate))
+        ) {
+          selectedRequest = request
+          return 'pause-request'
+        }
+        return null
+      }
       try {
-        entry.fault = await fault.verify()
-        // Both new releases were published while manual. Configure candidates
-        // away from the plugin page and observe actual per-plugin request order.
         await control.command('click', testId('new-chat-button'))
         entry.autoRequestStart = apiProxy.requests.length
-        await setPolicy(bad.old, 'auto')
-        await setPolicy(good.old, 'auto')
+        for (const candidate of candidates) await setPolicy(candidate.old, 'auto')
+        await openPlugin(control, candidates[0].old)
+        await until(
+          () => selectedRequest,
+          request => request?.fault === 'pause-request' && !request.released,
+          'The first real automatic per-plugin sync was not paused',
+          timeoutMs
+        )
+        bad = candidates.find(candidate => selectedRequest.path === syncPath(candidate))
+        good = candidates.find(candidate => candidate !== bad)
+        assert.ok(bad && good, 'The paused sync must belong to one of the two candidates')
+        entry.before = { failedPlugin: bad.before, healthyPlugin: good.before }
+        fault = await blockPackage(sharedRoot, bad.next)
+        entry.fault = await fault.verify()
+        entry.firstSyncPath = selectedRequest.path
+        assert.equal(selectedRequest.responseCompleted, undefined)
+        apiProxy.rule = () => null
+        assert.equal(selectedRequest.release(), true, 'The original first sync was not resumed')
         await refresh(good.old)
         entry.failed = await failedPackage(bad.old, bad.next, bad.old)
         entry.healthyUpdated = await awaitInstalled(good.old, good.next)
@@ -690,7 +718,9 @@ export async function verifyPluginInstallUpdateResilience({
         await setPolicy(bad.old, 'manual', true)
         await updateUi(bad.old, false)
       } finally {
-        await fault.release()
+        apiProxy.rule = () => null
+        if (selectedRequest && !selectedRequest.released) selectedRequest.cancel()
+        if (fault) await fault.release()
       }
       await control.command('clickWhenEnabled', testId('plugin-update-confirm-button'))
       entry.recovered = await awaitInstalled(bad.old, bad.next)
