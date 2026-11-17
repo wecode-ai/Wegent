@@ -1373,6 +1373,15 @@ class DesktopE2EServer {
         requestDiagnostic.finishedAtUnixMs - requestDiagnostic.startedAtUnixMs
     })
     if (await this.handleControlRoute(request, response, url)) return
+    const officialCodexResponses = url.pathname === '/backend-api/codex/responses'
+    const modelProtocol =
+      url.pathname === '/v1/responses' || url.pathname === '/responses' || officialCodexResponses
+        ? 'responses'
+        : url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions'
+          ? 'chat'
+          : url.pathname === '/v1/messages' || url.pathname === '/messages'
+            ? 'anthropic'
+            : null
     try {
       if (
         this.desktopScenario &&
@@ -1388,7 +1397,21 @@ class DesktopE2EServer {
           return
         }
       }
-      if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
+      if (
+        await this.desktopScenario?.handleHttp?.(
+          request,
+          response,
+          url,
+          request.method === 'POST' && modelProtocol
+            ? {
+                protocol: modelProtocol,
+                reply: text =>
+                  this.writeLocalAssistantMessage(response, { protocol: modelProtocol }, text),
+              }
+            : null
+        )
+      )
+        return
     } catch (error) {
       console.error(
         `[desktop-e2e] scenario HTTP handler failed for ${request.method} ${url.pathname}`,
@@ -1465,15 +1488,6 @@ class DesktopE2EServer {
       return
     }
 
-    const officialCodexResponses = url.pathname === '/backend-api/codex/responses'
-    const modelProtocol =
-      url.pathname === '/v1/responses' || url.pathname === '/responses' || officialCodexResponses
-        ? 'responses'
-        : url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions'
-          ? 'chat'
-          : url.pathname === '/v1/messages' || url.pathname === '/messages'
-            ? 'anthropic'
-            : null
     if (request.method === 'POST' && modelProtocol) {
       if (officialCodexResponses) {
         assert.match(

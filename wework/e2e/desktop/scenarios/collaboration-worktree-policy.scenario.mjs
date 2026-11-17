@@ -15,14 +15,7 @@ import {
   waitForTestIdByText,
   reloadMainWindow,
 } from '../modules/workspace-flows.mjs'
-import {
-  assistantMessage,
-  codexRequestKind,
-  createSse,
-  readRequestBody,
-  responseCompleted,
-  responseCreated,
-} from '../modules/response-protocol.mjs'
+import { codexRequestKind, readRequestBody } from '../modules/response-protocol.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PANEL = `${CONTENT} [data-testid="ai-chat-modal"]`
@@ -89,10 +82,7 @@ async function createIssue(control, label) {
 
 async function createTask(control, label, timeoutMs, executionMode = 'current_workspace') {
   await createIssue(control, label)
-  await control.command(
-    'clickWhenEnabled',
-    scoped('[data-testid="cloud-todo-create-task"]')
-  )
+  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-create-task"]'))
   await control.command('waitFor', COMPOSER)
   const projectButton = `${PANEL} [data-testid="project-work-button"]`
   if (!(await control.command('getText', projectButton)).includes('Worktree policy E2E')) {
@@ -183,16 +173,11 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
 }) {
   return {
-    async handleHttp(request, response, url) {
-      if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
-        return false
+    async handleHttp(request, _response, _url, modelRequest) {
+      if (!modelRequest) return false
       const body = await readRequestBody(request)
-      const id = `worktree-policy-${Date.now()}`
       const message = codexRequestKind(body) === 'prewarm' ? 'Ready' : `${MARKER}_DONE`
-      response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-      response.end(
-        createSse([responseCreated(id), assistantMessage(message), responseCompleted(id)])
-      )
+      modelRequest.reply(message)
       return true
     },
 
