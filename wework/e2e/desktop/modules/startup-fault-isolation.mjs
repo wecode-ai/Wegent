@@ -224,6 +224,11 @@ function recoveryWindowAssertion(evidencePath, gpuLaunch) {
     const gpu = gpuLaunch ? {
       required:true,nativeHostPid:process.pid,initial:null,reopened:null,childProcessGone:[],quitObserved:false
     } : null
+    if (gpu) record('gpu-launcher-config', {
+      expected:gpuLaunch.launcher,
+      actual:app.commandLine.getSwitchValue('gpu-launcher'),
+      disableGpuSandbox:app.commandLine.hasSwitch('disable-gpu-sandbox')
+    })
     let result = null
     const persistResult = () => {
       if (result) fs.writeFileSync(output, JSON.stringify({...result,...(gpu ? {gpu} : {})}))

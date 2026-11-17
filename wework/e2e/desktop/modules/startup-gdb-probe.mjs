@@ -62,6 +62,11 @@ async function settleWithin(promise, timeoutMs) {
 export function spawnStartupGdbProbe(appBinary, args, spawnOptions) {
   assert.equal(process.platform, 'linux', 'The startup GDB probe requires Linux')
   assert.equal(spawnOptions.detached, true, 'GDB must own its process group')
+  // Let the fixed POSIX shell interpret GDB's --args escaping and exec the
+  // inferior with the same PID. Do not load caller-provided shell startup code.
+  const environment = { ...(spawnOptions.env ?? process.env), SHELL: '/bin/sh' }
+  delete environment.BASH_ENV
+  delete environment.ENV
   const child = spawn(
     'gdb',
     [
@@ -80,7 +85,7 @@ export function spawnStartupGdbProbe(appBinary, args, spawnOptions) {
       '-iex',
       'set print frame-arguments none',
       '-iex',
-      'set startup-with-shell off',
+      'set startup-with-shell on',
       '-iex',
       'set disable-randomization off',
       '-iex',
@@ -92,6 +97,8 @@ export function spawnStartupGdbProbe(appBinary, args, spawnOptions) {
       '-iex',
       'handle SIGTERM nostop noprint pass',
       '-ex',
+      'show version',
+      '-ex',
       'run',
       '-ex',
       'thread apply all bt',
@@ -101,7 +108,7 @@ export function spawnStartupGdbProbe(appBinary, args, spawnOptions) {
       appBinary,
       ...args,
     ],
-    spawnOptions
+    { ...spawnOptions, env: environment }
   )
   let output = ''
   let exit = null
@@ -327,16 +334,38 @@ export function spawnStartupGdbProbe(appBinary, args, spawnOptions) {
 export async function verifyStartupGdbContract({ resultDir }) {
   assert.equal(process.platform, 'linux', 'The startup GDB contract requires Linux')
   await mkdir(resultDir, { recursive: true })
+  const argumentsToPreserve = [
+    '',
+    'two  words',
+    "single 'quoted' word",
+    'double "quoted" word',
+    'back\\slash',
+    'trailing\\',
+    '$WEWORK_E2E_GDB_LITERAL',
+    '${IFS}',
+    'startup-gdb-*.mjs',
+    '',
+    'C:\\Program Files\\WeWork\\workbench.exe',
+    '',
+  ]
   for (const mode of ['normal', 'trap', 'interrupt']) {
     const handshakeDeadline = Date.now() + SMOKE_TIMEOUT_MS
-    // GDB reconstructs --args before its shell-free launch. Keep source code and
-    // even a whitespace-containing fixture directory out of that argument string.
-    const probe = spawnStartupGdbProbe(process.execPath, ['startup-gdb-smoke.mjs', mode], {
-      cwd: SMOKE_DIRECTORY,
-      env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' },
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
-    })
+    // Both Unit and Core must preserve these literal arguments through their
+    // installed GDB versions before the fixture accepts its acknowledgement.
+    const probe = spawnStartupGdbProbe(
+      process.execPath,
+      ['startup-gdb-smoke.mjs', mode, ...argumentsToPreserve],
+      {
+        cwd: SMOKE_DIRECTORY,
+        env: {
+          PATH: '/usr/bin:/bin',
+          LC_ALL: 'C',
+          WEWORK_E2E_GDB_EXPECTED_ARGUMENTS: JSON.stringify(argumentsToPreserve),
+        },
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
+      }
+    )
     let failure
     let inferiorPid
     let handshakeError
@@ -403,6 +432,10 @@ export async function verifyStartupGdbContract({ resultDir }) {
       await writeFile(join(resultDir, `startup-gdb-${mode}.log`), probe.output)
     }
     if (failure) throw failure
-    console.log(`[startup-gdb-contract] ${mode} passed; inferior ${inferiorPid} is gone`)
+    const version =
+      mode === 'normal'
+        ? `; ${probe.output.match(/^GNU gdb[^\r\n]*/m)?.[0] ?? 'GDB version unavailable'}`
+        : ''
+    console.log(`[startup-gdb-contract] ${mode} passed; inferior ${inferiorPid} is gone${version}`)
   }
 }
