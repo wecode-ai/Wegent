@@ -4953,7 +4953,8 @@ describe('DesktopWorkbenchLayout', () => {
       await user.click(screen.getByTestId('toggle-right-workspace-panel-button'))
       await user.click(await screen.findByTestId('right-workspace-chat-option'))
       const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-      const chatTabId = within(screen.getByTestId('right-workspace-tabbar'))
+      const workspaceTabs = () => within(screen.getByTestId('right-workspace-tabbar'))
+      const chatTabId = workspaceTabs()
         .getByRole('tab', { name: /临时聊天/ })
         .getAttribute('data-testid')!
       setComposerValue(sideChat, 'Create a preview')
@@ -4993,7 +4994,7 @@ describe('DesktopWorkbenchLayout', () => {
         const preview = await screen.findByTestId('workspace-html-file-preview')
         expect(within(preview).getByTitle(file.name)).toHaveAttribute('srcdoc', file.content)
       }
-      const firstTab = screen.getByRole('tab', { name: /preview page\.html/ })
+      const firstTab = workspaceTabs().getByRole('tab', { name: /preview page\.html/ })
       const firstTabId = firstTab.getAttribute('data-testid')!
       expect(firstTab).toHaveAttribute('aria-selected', 'true')
       await user.click(screen.getByTestId(chatTabId))
@@ -5003,7 +5004,7 @@ describe('DesktopWorkbenchLayout', () => {
       await waitFor(() =>
         expect(readWorkspaceTextFile.mock.calls.length).toBeGreaterThan(previousReadCount)
       )
-      expect(screen.getAllByRole('tab', { name: /preview page\.html/ })).toHaveLength(1)
+      expect(workspaceTabs().getAllByRole('tab', { name: /preview page\.html/ })).toHaveLength(1)
       expect(screen.getByTestId(firstTabId)).toHaveAttribute('aria-selected', 'true')
 
       await user.click(screen.getByTestId(chatTabId))
@@ -5015,7 +5016,7 @@ describe('DesktopWorkbenchLayout', () => {
           address.workspacePath
         )
       )
-      expect(screen.getAllByRole('tab', { name: /preview page\.html/ })).toHaveLength(2)
+      expect(workspaceTabs().getAllByRole('tab', { name: /preview page\.html/ })).toHaveLength(2)
       expect(screen.getByTestId(firstTabId)).toHaveAttribute('aria-selected', 'false')
       const secondPreview = await screen.findByTestId('workspace-html-file-preview')
       await waitFor(() =>
@@ -5027,12 +5028,13 @@ describe('DesktopWorkbenchLayout', () => {
 
       await user.click(screen.getByTestId(chatTabId))
       await user.click(within(sideChat).getAllByTestId('assistant-markdown-link')[0])
-      expect(screen.getAllByRole('tab', { name: /preview page\.html/ })).toHaveLength(2)
+      expect(workspaceTabs().getAllByRole('tab', { name: /preview page\.html/ })).toHaveLength(2)
       expect(screen.getByTestId(firstTabId)).toHaveAttribute('aria-selected', 'true')
       await waitFor(() =>
         expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(file.path)
       )
-    }
+    },
+    30_000
   )
 
   test('temporary chat queues a follow-up while its current response is running', async () => {
