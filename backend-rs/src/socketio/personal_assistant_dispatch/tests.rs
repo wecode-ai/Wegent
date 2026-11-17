@@ -167,6 +167,25 @@ fn absence_preserves_consent_but_an_explicit_invalid_feature_revokes() {
 }
 
 #[test]
+fn disabled_primary_survives_the_device_feature_envelope_without_granting_execution() {
+    let declaration = json!({"version":1,"roles":[{"id":"@primary","userId":7,
+        "enabled":false,"collaboration":{"enabled":false}}]});
+    let invalid = super::super::runtime_features::normalize(
+        &json!({"personalAssistantDispatch":declaration}),
+    )
+    .unwrap();
+    assert_eq!(invalid["personalAssistantDispatch"]["roles"], json!([]));
+    let feature = super::super::runtime_features::normalize(
+        &json!({"schemaVersion":4,"personalAssistantDispatch":declaration}),
+    )
+    .unwrap();
+    let stored = schema::owned(&feature["personalAssistantDispatch"], 7);
+    assert_eq!(stored["roles"][0]["id"], "@primary");
+    assert_eq!(stored["roles"][0]["enabled"], false);
+    assert!(!role(stored["roles"][0].clone()).permits(7, "1001", &json!([])));
+}
+
+#[test]
 fn project_override_exclusions_stores_and_tags_define_effective_authority() {
     let mut value = advertised_role(7);
     value["handlingPolicy"]["automatic"] = json!(false);

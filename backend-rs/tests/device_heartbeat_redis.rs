@@ -130,7 +130,7 @@ async fn assert_heartbeats(
             1,
             "device:register",
             json!({"device_id": device_id, "name": "Heartbeat E2E", "device_type": "local",
-                "runtime_features":{"personalAssistantDispatch":{"version":1,"roles":[]}}}),
+                "runtime_features":{"schemaVersion":4,"personalAssistantDispatch":{"version":1,"roles":[]}}}),
         )
         .await,
         json!({"success": true, "device_id": device_id, "device_route_id": device_id})
@@ -233,7 +233,7 @@ async fn assert_personal_dispatch_json(client: &PollClient, mysql: &MysqlService
                 id,
                 "device:heartbeat",
                 json!({"device_id":device_id,
-                "runtime_features":{"personalAssistantDispatch":declaration}})
+                "runtime_features":{"schemaVersion":4,"personalAssistantDispatch":declaration}})
             )
             .await,
             json!({"success":true})
