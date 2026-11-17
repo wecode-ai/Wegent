@@ -106,6 +106,8 @@ pnpm --filter wework test src/features/todo/CloudTodoWorkspace.test.tsx src/feat
 
 Rust 验证通过：`runtime_work::handler::turns::tests` 17 项、`runtime_work::handler::hooks::tests` 1 项、`hooks::lifecycle::tests` 2 项；均使用 locked、all-features 的既有 lib 测试。Rustfmt 与差异检查通过。新主线整合后 Wework typecheck、双语文档契约 8 项再次通过。后续交接只采用最终新 head 的完整 CI 与可合并状态，不沿用 `126016bbf` 因冲突尚未启动的桌面检查。
 
+随后主线进入 `4702fff1`（项目设置与智能体配置维护），再次通过 `git merge-tree` 确认共享桌面场景存在导入及调用冲突。合并保留主线 `verifyCollaborationSettingsUx`，也保留本项 `selectProjectCreateMembers` 与传给成员验证器的真实所选成员，不删除任何一侧场景。自动合并的 Platform 仅增加设置页渲染器透传及分组 scope，创建核心源码未变。完整 Platform/App 15 文件、345 项、普通入口与工厂 73 项、导航协议 6 项、文档契约 8 项通过；共享构建、Wework typecheck、场景格式及差异检查通过。最终 CI 必须属于包含这次整合的新 head。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

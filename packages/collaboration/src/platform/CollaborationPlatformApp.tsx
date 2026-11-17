@@ -2197,6 +2197,7 @@ function CollaborationPlatformAppContent({
           onProjectChange={commands.registerProject}
           showProjectBack={false}
           host={{
+            settingsPages: host.settingsPages,
             capabilities: {
               automation: host.capabilities.automation,
               dingtalkAitable: host.capabilities.dingtalkAitable,
@@ -2687,6 +2688,8 @@ function CollaborationPlatformAppContent({
       ];
       content = (
         <ProjectSettingsShell
+          pageRenderer={host.settingsPages}
+          scopeKey={workspace.id}
           ariaLabel={`${messages.settings} · ${workspaceDisplayName}`}
           testId="workspace-settings-shell"
           selectedSectionId={workspaceSettingsView}

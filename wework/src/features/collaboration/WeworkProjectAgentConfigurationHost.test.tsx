@@ -58,7 +58,9 @@ async function selectProjectNativeModel(prefix: string) {
   await waitFor(() =>
     expect(screen.getByTestId(`${prefix}-model`)).toHaveValue(modelValue(codexModel))
   )
-  fireEvent.click(screen.getByTestId(`${dialog}-tab-basic`))
+  expect(screen.getByTestId(`${prefix}-system-prompt`)).toBeVisible()
+  fireEvent.click(screen.getByTestId(`${dialog}-tab-runtime`))
+  expect(screen.getByTestId(`${dialog}-tab-runtime`)).toHaveAttribute('aria-expanded', 'false')
 }
 
 function setRichInputValue(testId: string, value: string) {
@@ -190,7 +192,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
     }
   )
 
-  it('creates an Agent from the basic tab using the first cloud model without device discovery', async () => {
+  it('creates an Agent from responsibilities using the first cloud model without device discovery', async () => {
     const cloudModel = {
       name: 'cloud-model',
       type: 'public' as const,
@@ -219,10 +221,8 @@ describe('weworkProjectAgentConfigurationHost', () => {
     expect(api.listEnvironments).not.toHaveBeenCalled()
     expect(api.listModels).toHaveBeenCalledOnce()
     await waitFor(() => expect(screen.getByTestId('wework-agent-resource-create')).toBeEnabled())
-    expect(screen.getByTestId('wework-agent-resource-creator-tab-basic')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-agent-system-prompt')).toBeVisible()
     expect(screen.getByTestId('wework-agent-resource-creator-runtime-summary')).toHaveTextContent(
       'cloud-model'
     )
@@ -290,7 +290,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
     expect(await screen.findByTestId('local-skill-option-review')).toBeVisible()
   })
 
-  it('preserves prompt and manual capabilities across tabs and exposes runtime conflicts on the basic tab', async () => {
+  it('preserves responsibilities and manual tools across independent runtime disclosure changes', async () => {
     const otherModel = { ...codexModel, model_id: 'other-model' }
     const createAgent = vi.fn(async () => ({ id: 53, name: 'review', displayName: 'Review' }))
     const api = {
@@ -347,25 +347,30 @@ describe('weworkProjectAgentConfigurationHost', () => {
     fireEvent.click(await screen.findByTestId('wework-agent-environment-option-2'))
     expect(screen.getByTestId('wework-agent-model')).toHaveValue('')
     expect(screen.getByTestId('wework-agent-resource-create')).toBeDisabled()
-    fireEvent.keyDown(screen.getByTestId('wework-agent-resource-creator-tab-runtime'), {
-      key: 'Home',
-    })
-    expect(screen.getByTestId('wework-agent-resource-creator-tab-basic')).toHaveFocus()
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-tab-runtime'))
+    expect(screen.getByTestId('wework-agent-resource-creator-tab-runtime')).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    expect(screen.getByTestId('wework-agent-model')).not.toBeVisible()
     expect(screen.getByTestId('wework-agent-resource-create')).toBeDisabled()
     expect(screen.getByTestId('wework-agent-system-prompt')).toHaveValue('Keep this draft.')
     expect(screen.getByTestId('wework-agent-capability-mode-manual')).toBeChecked()
     expect(screen.getByTestId('wework-agent-mcp')).toHaveValue('{"browser":{"command":"node"}}')
-    fireEvent.keyDown(screen.getByTestId('wework-agent-resource-creator-tab-basic'), {
-      key: 'ArrowRight',
-    })
-    expect(screen.getByTestId('wework-agent-resource-creator-tab-runtime')).toHaveFocus()
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-tab-runtime'))
+    expect(screen.getByTestId('wework-agent-resource-creator-tab-runtime')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
     fireEvent.change(screen.getByTestId('wework-agent-model'), {
       target: { value: modelValue(otherModel) },
     })
-    expect(screen.getByTestId('wework-agent-resource-creator-runtime-summary')).toHaveTextContent(
-      'Other runner · Other model'
-    )
-    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-tab-basic'))
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-tab-runtime'))
+    const summary = screen.getByTestId('wework-agent-resource-creator-runtime-summary')
+    expect(summary).toHaveTextContent('workbench.runner_environment')
+    expect(summary).toHaveTextContent('Other runner')
+    expect(summary).toHaveTextContent('workbench.agent_creator_model')
+    expect(summary).toHaveTextContent('Other model')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('wework-agent-resource-create'))
     await waitFor(() =>
@@ -534,10 +539,8 @@ describe('weworkProjectAgentConfigurationHost', () => {
     )
     expect(screen.queryByTestId('wework-agent-resource-name')).not.toBeInTheDocument()
     expect(screen.queryByTestId('wework-agent-runtime')).not.toBeInTheDocument()
-    expect(screen.getByTestId('wework-agent-resource-creator-tab-basic')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-agent-system-prompt')).toBeVisible()
     expect(screen.getByTestId('wework-agent-environment')).not.toBeVisible()
     expect(screen.getByTestId('wework-agent-owner')).toHaveValue('workspace-alpha')
     fireEvent.change(screen.getByTestId('wework-agent-owner'), {

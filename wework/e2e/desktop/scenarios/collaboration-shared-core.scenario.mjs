@@ -18,6 +18,7 @@ import {
   selectProjectCreateMembers,
   verifyCollaborationMemberSettings,
 } from '../modules/collaboration-member-settings.mjs'
+import { verifyCollaborationSettingsUx } from '../modules/collaboration-settings-ux.mjs'
 import {
   handleProjectCreateGroupModel,
   verifyPrivateProjectCreation,
@@ -560,6 +561,7 @@ export function createDesktopScenario({
           project,
           members: selectedMembers,
         })
+        await verifyCollaborationSettingsUx(control, { scoped, request, project })
 
         // Creation authorizes the current runner; this recovery case needs an unassigned project.
         const initialEnvironments = await request(
