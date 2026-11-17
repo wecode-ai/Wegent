@@ -6,6 +6,7 @@ import '@/i18n'
 import {
   copyLocalExecutorDebugInfo,
   ensureLocalExecutorAvailable,
+  ensureLocalExecutorStarted,
   readLocalExecutorLog,
 } from '@/desktop/localExecutor'
 import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
@@ -20,11 +21,13 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 vi.mock('@/desktop/localExecutor', () => ({
   copyLocalExecutorDebugInfo: vi.fn(),
   ensureLocalExecutorAvailable: vi.fn(),
+  ensureLocalExecutorStarted: vi.fn(),
   readLocalExecutorLog: vi.fn(),
 }))
 
 const copyDebugMock = vi.mocked(copyLocalExecutorDebugInfo)
 const ensureMock = vi.mocked(ensureLocalExecutorAvailable)
+const prepareMock = vi.mocked(ensureLocalExecutorStarted)
 const readLogMock = vi.mocked(readLocalExecutorLog)
 const SLOW_STARTUP_WARNING_MS = 10000
 
@@ -45,6 +48,7 @@ describe('LocalRuntimeInitializer', () => {
     vi.stubEnv('DEV', false)
     copyDebugMock.mockReset()
     ensureMock.mockReset()
+    prepareMock.mockReset().mockResolvedValue({ running: true, ready: true })
     readLogMock.mockReset()
     desktopHostInvokeMock.mockReset()
     desktopHostInvokeMock.mockResolvedValue(undefined)
@@ -88,6 +92,36 @@ describe('LocalRuntimeInitializer', () => {
 
     expect(await screen.findByTestId('main-app')).toBeVisible()
     expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
+  })
+
+  test('prepares execution recovery without gating the workbench', async () => {
+    let resolveAvailability!: (value: { running: true; ready: true }) => void
+    ensureMock.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveAvailability = resolve
+        })
+    )
+    let rejectConfiguration!: (error: Error) => void
+    prepareMock.mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectConfiguration = reject
+        })
+    )
+    render(
+      <LocalRuntimeInitializer startupReady={false}>
+        <LocalRuntimeNotice />
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+    expect(prepareMock).not.toHaveBeenCalled()
+    await act(async () => resolveAvailability({ running: true, ready: true }))
+    expect(await screen.findByTestId('main-app')).toBeVisible()
+    await waitFor(() => expect(prepareMock).toHaveBeenCalledOnce())
+    await act(async () => rejectConfiguration(new Error('execution configuration unavailable')))
+    expect(screen.getByTestId('main-app')).toBeVisible()
+    expect(screen.getByText('execution configuration unavailable')).toBeVisible()
   })
 
   test('shows slow startup help and copies diagnostic details with executor log', async () => {

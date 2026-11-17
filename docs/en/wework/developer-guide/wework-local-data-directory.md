@@ -100,7 +100,8 @@ permission and device validation. Legacy roles have stable identities across vie
 Refreshing an existing code project reads its existence and archive state without filling in
 execution metadata; importing a new project remains a write. Reading the model picker does not
 write custom catalogs, synchronize creation profiles or wait for a Codex restart. Execution
-preparation still reconciles catalogs before using a model.
+preparation still reconciles catalogs before using a model. Enabled custom models remain
+selectable while catalog reconciliation is pending.
 
 Electron singleton protection, coherent file snapshots, connection mutexes and actual write
 transactions continue to guard their owning operations. They must not be bypassed to claim
@@ -108,6 +109,8 @@ readiness. The desktop `startup-fault-isolation` checkpoint additionally reloads
 while a real database write transaction remains open, checks project, task and assistant reads,
 and verifies saving after release. It never modifies a personal database.
 
-Task updates publish their index state before recording telemetry outside the index lock. SQLite waits cannot hold the task-list index mutex. Telemetry reads filter retention and queue limits in SQL; append and configuration writes own cleanup.
+Task updates publish their index state before recording telemetry outside the index lock, using timestamps captured when transitions are queued. SQLite waits cannot hold the task-list index mutex. Telemetry reads filter retention and queue limits in SQL; append and configuration writes own cleanup.
 
 Native quota account checks run outside the task send gate; state publication reacquires it and checks execution ownership, so cancellation does not wait for account reads.
+
+After the workbench mounts, its local runtime initializer prepares execution recovery and default plugins in the background. UI reads do not wait for this phase; failures use the existing runtime notice and retry action.

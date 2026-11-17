@@ -332,7 +332,7 @@ function localRuntimeModels(
   return [
     ...codexRuntimeModels(codexOfficialModels, codexOfficialError, codexAuthConfigured),
     ...listLocalModelConfigs()
-      .filter(config => config.enabled && config.catalogReady)
+      .filter(config => config.enabled)
       .map(localModelConfigToUnifiedModel),
   ]
 }
@@ -515,6 +515,7 @@ interface RuntimeWorkIpcOptions {
   user?: User
   transportLabel?: 'Local' | 'Cloud'
   syncConfiguredModelCatalog?: boolean
+  prepareLocalModelCatalog?: () => Promise<void>
   requestModelCatalogSync?: (request: {
     deviceId: string
     deviceName: string
@@ -2282,6 +2283,7 @@ export function createRuntimeWorkApiFromIpc(
   }
 
   const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
+    await options.prepareLocalModelCatalog?.()
     if (!(await prepareConfiguredRuntimeModel(data))) return false
     // Creation profiles belong to the desktop's trusted local IPC. Cloud adapters
     // prepare their selected model through the existing catalog/send contract.
@@ -3598,6 +3600,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       user: deps.user,
       materializeRuntimeTask: deps.materializeRuntimeTask,
       getLocalRuntimeSidebarIdentity,
+      prepareLocalModelCatalog: async () => {
+        await ensureStatus()
+      },
       localIssueUserIds: localParticipationIdentity.viewerUserIds,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>

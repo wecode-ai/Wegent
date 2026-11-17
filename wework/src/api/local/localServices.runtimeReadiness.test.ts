@@ -221,7 +221,9 @@ test('model picker reads do not wait for runtime preparation or restart the app 
     subscribe: vi.fn(),
   })
   const models = await services.modelApi.listModels()
-  expect(models.data.length).toBeGreaterThan(0)
+  expect(models.data).toEqual(
+    expect.arrayContaining([expect.objectContaining({ name: 'local-model:startup-read' })])
+  )
   expect(ensure).not.toHaveBeenCalled()
   expect(request.mock.calls.map(([method]) => method)).not.toContain(
     'runtime.codex.catalog.custom.write'
@@ -229,4 +231,57 @@ test('model picker reads do not wait for runtime preparation or restart the app 
   expect(request.mock.calls.map(([method]) => method)).not.toContain(
     'runtime.codex.app_server.restart'
   )
+})
+
+test('execution prepares a pending local catalog before publishing creation profiles', async () => {
+  localStorage.clear()
+  clearLocalModelConfigs()
+  resetLocalRuntimeChatStreamsForTests()
+  saveLocalModelConfig({
+    id: 'execution-pending',
+    displayName: 'Execution pending',
+    modelId: 'execution-pending',
+    baseUrl: 'https://models.example.com/v1',
+    catalogEntry: createDefaultLocalModelCatalogEntry({
+      id: 'execution-pending',
+      displayName: 'Execution pending',
+      toolProfile: 'custom',
+    }),
+    catalogReady: false,
+  })
+  const ensure = vi.fn(async () => status)
+  const request = vi.fn().mockImplementation(async (method: string) => {
+    if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+    return { data: [], models: [] }
+  })
+  const services = createLocalAppServices({
+    available: async () => status,
+    ensure,
+    request,
+    subscribe: vi.fn(),
+  })
+  await services.modelApi.listModels()
+  expect(ensure).not.toHaveBeenCalled()
+  expect(
+    request.mock.calls.some(([method]) => method === 'runtime.codex.catalog.custom.write')
+  ).toBe(false)
+  request.mockClear()
+
+  await services.runtimeWorkApi!.prepareRuntimeModel({
+    deviceId: status.deviceId,
+    modelId: 'local-model:execution-pending',
+  })
+
+  expect(ensure).toHaveBeenCalled()
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    'runtime.codex.catalog.custom.write',
+    'runtime.codex.app_server.restart',
+    'runtime.models.sync_creation_profiles',
+  ])
+  expect(request).toHaveBeenCalledWith('runtime.models.sync_creation_profiles', {
+    deviceId: status.deviceId,
+    profiles: expect.arrayContaining([
+      expect.objectContaining({ runtime: 'codex', modelName: 'local-model:execution-pending' }),
+    ]),
+  })
 })

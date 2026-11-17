@@ -455,10 +455,21 @@ export async function createDesktopScenario({
           'Migration must preserve identity, versions and grants'
         )
         assert.equal(Object.hasOwn(migrated.primary, 'collaboration'), false)
+        const saved = await requestExecutor(
+          control,
+          'runtime.stand_in.personal.save',
+          { userId: USER_ID, settings: migrated },
+          uiTimeoutMs
+        )
+        assert.deepEqual(saved, {
+          ...migrated,
+          version: migrated.version + 1,
+          roles: migrated.roles.map(role => ({ ...role, version: role.version + 1 })),
+        })
         const persisted = database
           .prepare('SELECT metadata FROM loop_items WHERE id=?')
           .get(`personal-stand-in:${USER_ID}`)
-        assert.deepEqual(JSON.parse(persisted.metadata), migrated)
+        assert.deepEqual(JSON.parse(persisted.metadata), saved)
         assert.deepEqual(
           await requestExecutor(
             control,
@@ -466,7 +477,7 @@ export async function createDesktopScenario({
             { userId: USER_ID },
             uiTimeoutMs
           ),
-          migrated,
+          saved,
           'Repeated reads must not change the migrated settings'
         )
       } finally {
