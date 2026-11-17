@@ -194,8 +194,8 @@ pub(crate) use skill_config::reload_skill_configuration;
 mod event_goal;
 pub(crate) mod event_receipt;
 pub use event_goal::EventGoalAdmission;
-mod local_notifications;
 mod isolated_rpc;
+mod local_notifications;
 mod native_activity;
 mod native_turn;
 use native_activity::{CodexNativeActivity, CodexNativeRequest};
@@ -440,7 +440,8 @@ impl CodexAppServerClient {
         if isolated_rpc::is_source_read(method) {
             if let Some(result) = self.request_isolated(method, params.clone()).await {
                 return result.map_err(|error| match error {
-                    CodexAppToolError::NotDispatched(message) | CodexAppToolError::OutcomeUnknown(message) => message,
+                    CodexAppToolError::NotDispatched(message)
+                    | CodexAppToolError::OutcomeUnknown(message) => message,
                 });
             }
         }
