@@ -126,8 +126,17 @@ export function collectDescendantPids(
   processes: readonly SystemProcessInfo[],
   roots: readonly number[]
 ): Set<number> {
+  const byPid = new Map(processes.map(processInfo => [processInfo.pid, processInfo]))
   const childrenByParent = new Map<number, number[]>()
   for (const processInfo of processes) {
+    const parent = byPid.get(processInfo.parentPid)
+    // An older child refers to a previous process that owned this parent PID.
+    if (
+      processInfo.startedAt !== null &&
+      parent?.startedAt != null &&
+      processInfo.startedAt < parent.startedAt
+    )
+      continue
     const children = childrenByParent.get(processInfo.parentPid) ?? []
     children.push(processInfo.pid)
     childrenByParent.set(processInfo.parentPid, children)
