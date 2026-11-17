@@ -341,3 +341,25 @@ test('keeps actual structured results and native permission-denial text', async 
     })
   ).toEqual([denied])
 })
+
+test.each([
+  [{ name: 'other_capability', description: 'Do not include schema content' }],
+  [{ name: 'exec_command' }, { name: 'native__exec_command' }],
+])(
+  'native invocation diagnoses missing and ambiguous capabilities without schemas: %j',
+  async (...catalog) => {
+    const selected = programmaticSelection(variants[0], 'exec_command', { cmd: 'pwd' })
+    const matches = catalog.filter(
+      tool => tool.name === 'exec_command' || tool.name.endsWith('__exec_command')
+    )
+    await expect(
+      run(inputOf(finalCall(selectedToolCall('invoke', selected))), catalog, {})
+    ).rejects.toThrow(
+      JSON.stringify({
+        requested: 'exec_command',
+        matchedNames: matches.map(tool => tool.name),
+        availableNames: catalog.map(tool => tool.name),
+      })
+    )
+  }
+)
