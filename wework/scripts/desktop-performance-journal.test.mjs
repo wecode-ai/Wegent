@@ -131,6 +131,39 @@ test('cumulative snapshots retain command boundaries without double counting', (
   assert.equal(result.baselineStatus, 'not-established')
 })
 
+test('observed zero counters establish coverage once without inventing missing counters', () => {
+  const journal = new DesktopPerformanceJournal(metadata)
+  journal.record('client', snapshot())
+  journal.record('client', snapshot(), 'click', 'started', 'zero-command')
+  journal.record('client', snapshot(), 'click', 'result', 'zero-command')
+  const report = journal.report(true)
+  assert.equal(report.observations[0].changes['ui.document.rootRemovals'], 0)
+  assert.equal(report.observations[0].changes['executor.fullTaskListReads'], 0)
+  assert.equal(Object.hasOwn(report.observations[0].changes, 'renders.unavailable'), false)
+  assert.equal(Object.hasOwn(report.observations[0].changes, 'react.commitCount'), false)
+  assert.deepEqual(report.observations[1].changes, {})
+  assert.deepEqual(report.observations[2].changes, {})
+  assert.equal(report.metrics['ui.document.rootRemovals'], 0)
+})
+
+test('late region coverage preserves zero at its first observation in either delivery order', () => {
+  for (const reverse of [false, true]) {
+    const journal = new DesktopPerformanceJournal(metadata)
+    const early = snapshot()
+    early.regions.document = { observed: false }
+    const late = snapshot()
+    late.durationMs = 20
+    const frames = [early, late]
+    if (reverse) frames.reverse()
+    for (const frame of frames) journal.record('client', frame)
+    const report = journal.report(true)
+    assert.equal(report.complete, true)
+    assert.equal(Object.hasOwn(report.observations[0].changes, 'ui.document.rootRemovals'), false)
+    assert.equal(report.observations[1].changes['ui.document.rootRemovals'], 0)
+    assert.equal(report.metrics['ui.document.rootRemovals'], 0)
+  }
+})
+
 test('missing data, resets and cross-client reuse remain incomplete', () => {
   for (const next of [
     undefined,

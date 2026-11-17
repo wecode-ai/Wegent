@@ -96,7 +96,7 @@ function frameObservation(frame, previous) {
     changes: Object.fromEntries(
       Object.entries(frame.metrics)
         .map(([name, count]) => [name, count - (previous?.metrics[name] ?? 0)])
-        .filter(([, count]) => count !== 0)
+        .filter(([name, count]) => count !== 0 || !Object.hasOwn(previous?.metrics ?? {}, name))
     ),
     observedAt: frame.finishedAt,
     elapsedMs: frame.durationMs,
