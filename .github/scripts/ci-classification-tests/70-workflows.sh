@@ -258,7 +258,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const [workflowPath, classifierOutput] = process.argv.slice(2)
-const workflow = readFileSync(workflowPath, 'utf8')
+const workflow = readFileSync(workflowPath, 'utf8').replace(/\r\n/g, '\n')
 const outputs = Object.fromEntries(
   classifierOutput.trim().split('\n').map(line => {
     const separator = line.indexOf('=')
