@@ -81,7 +81,10 @@ describe.each(['local', 'backend'] as const)('new task association in %s project
 
       const submission = await act(() => result.current.prepareSubmission('First message'))
       expect(submission.origin?.loopItemId).toBe(choice === 'existing' ? issue.id : undefined)
-      expect(submission.additionalContext?.cloudCollaboration.value).toContain(target.name)
+      expect(submission.additionalContext?.cloudCollaboration.value).toContain(
+        `"space_id":"${target.id}"`
+      )
+      expect(submission.additionalContext?.cloudCollaboration.value).not.toContain(target.name)
       expect(api.bindTask).not.toHaveBeenCalled()
       expect(api.trackProjectTask).not.toHaveBeenCalled()
       const task = { deviceId: 'draft-device', taskId: `draft-${store}-${choice}` }

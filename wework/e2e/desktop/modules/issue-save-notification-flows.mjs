@@ -37,10 +37,10 @@ export async function verifySilentIssueSaves({
     method: 'POST',
     body: JSON.stringify({ user_id: member.id, role: 'Developer' }),
   })
-  const setRole = role =>
-    request(`/api/v1/cloud-projects/${projectId}/members/${member.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ role }),
+  const setActive = is_active =>
+    request(`/api/admin/users/${member.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ is_active }),
     })
   const assertNoNotification = async issueId => {
     const inbox = await requestJson(
@@ -81,9 +81,12 @@ export async function verifySilentIssueSaves({
         `${CONTENT} [data-testid="cloud-todo-detail-description"]`
       )
       assert.ok(draftDescription.length > 0)
-      await setRole('Viewer')
+      await setActive(false)
       await saveSilently(control, 'cloud-todo-create-confirm')
-      await control.command('waitFor', ERROR, { text: 'Assignee is not a member', visible: true })
+      await control.command('waitFor', ERROR, {
+        text: 'Issue recipient must be an active user',
+        visible: true,
+      })
       assert.equal(
         await control.command('getValue', `${CONTENT} [data-testid="cloud-todo-title"]`),
         title
@@ -110,7 +113,7 @@ export async function verifySilentIssueSaves({
         'Failed creation persisted an Issue'
       )
       await capture('assignment-09-silent-create-rejected-draft-preserved.png')
-      await setRole('Developer')
+      await setActive(true)
     },
   })
   assert.equal(String(created.assignee_user_id), String(member.id))
@@ -133,9 +136,12 @@ export async function verifySilentIssueSaves({
     'waitFor',
     `${CONTENT} [data-testid="cloud-todo-detail-assignee"][data-value="user:${owner.id}"]`
   )
-  await setRole('Viewer')
+  await setActive(false)
   await selectAssignee(member.id)
-  await control.command('waitFor', ERROR, { text: 'Assignee is not a member', visible: true })
+  await control.command('waitFor', ERROR, {
+    text: 'Issue recipient must be an active user',
+    visible: true,
+  })
   assert.equal(
     await control.command('getAttribute', `${CONTENT} [data-testid="cloud-todo-detail-assignee"]`, {
       value: 'data-value',
@@ -146,14 +152,14 @@ export async function verifySilentIssueSaves({
   assert.equal(String(rejected.assignee_user_id), String(owner.id))
   assert.equal(rejected.status, created.status)
   assert.equal(rejected.description, created.description)
+  await setActive(true)
   await assertNoNotification(created.id)
   await capture('assignment-11-silent-reassignment-rejected.png')
-  await setRole('Developer')
   await control.command('clickWhenEnabled', `${CONTENT} [data-testid="cloud-todo-field-retry"]`)
   const reassigned = await waitForValue(
     () => request(`/api/v1/loop-items/${created.id}`),
     item => String(item.assignee_user_id) === String(member.id),
-    'Silent reassignment was not persisted after restoring membership',
+    'Silent reassignment was not persisted after reactivating the recipient',
     uiTimeoutMs
   )
   assert.equal(reassigned.status, created.status)

@@ -1,3 +1,4 @@
+import { conversationReferenceReadEvents } from '../modules/conversation-reference-model.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
@@ -271,13 +272,32 @@ export function createDesktopScenario({
 
       if (
         serialized.includes('wework-conversation://') &&
-        serialized.includes(LARGE_SOURCE_PROMPT)
+        requestContainsToolOutput(body, 'read-large-reference')
       ) {
         largeTargetRequest = body
         completion = LARGE_TARGET_COMPLETION
-      } else if (serialized.includes('wework-conversation://')) {
+      } else if (
+        serialized.includes('wework-conversation://') &&
+        requestContainsToolOutput(body, 'read-reference')
+      ) {
         targetRequest = body
         completion = TARGET_COMPLETION
+      } else if (serialized.includes('wework-conversation://')) {
+        const isLarge = largeSourceToolRequested
+        assert.equal(
+          serialized.includes(SOURCE_COMPLETION),
+          false,
+          'Referenced text must not be embedded before the tool read'
+        )
+        assert.equal(
+          serialized.includes(LARGE_SOURCE_COMPLETION),
+          false,
+          'Large referenced text must not be embedded before the tool read'
+        )
+        output = conversationReferenceReadEvents(
+          body,
+          isLarge ? 'read-large-reference' : 'read-reference'
+        )
       } else if (requestContainsToolOutput(body, LARGE_TOOL_CALL_ID)) {
         completion = LARGE_SOURCE_COMPLETION
       } else if (serialized.includes(LARGE_SOURCE_PROMPT) && requestAdvertisesShellTool(body)) {

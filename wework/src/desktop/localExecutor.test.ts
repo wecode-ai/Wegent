@@ -36,6 +36,7 @@ import {
   subscribeLocalExecutorEvents,
 } from './localExecutor'
 import { marketplace, mockStartup } from './localExecutor.test-fixtures'
+import * as desktopHost from '@/api/dsh/desktopHost'
 
 vi.mock('@/api/dsh/executorTransport', async importOriginal => ({
   ...(await importOriginal<typeof import('@/api/dsh/executorTransport')>()),
@@ -58,6 +59,63 @@ describe('localExecutor', () => {
     subscribeDshExecutorEventsMock.mockReset()
     subscribeDshExecutorEventsMock.mockReturnValue(() => undefined)
     mockStartup()
+  })
+
+  test.each([
+    'runtime.text.generate',
+    'runtime.text.predict_reply',
+    'runtime.harness_proxy.register',
+  ])('keeps the metadata-only %s request inside the native credential owner', async method => {
+    const invoke = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue({ accepted: true })
+    const reference = {
+      wework_model_kind: 'model-interface',
+      wework_local_model_id: 'local-model:saved',
+      model_provider: 'local-saved',
+      api_key: 'dummy',
+    }
+    const params =
+      method === 'runtime.harness_proxy.register'
+        ? { upstream: reference }
+        : { modelConfig: reference }
+    try {
+      await expect(requestLocalExecutor(method, params)).resolves.toEqual({ accepted: true })
+      expect(invoke).toHaveBeenCalledWith('modelConfiguration.requestRuntime', { method, params })
+      expect(requestDshExecutorMock).not.toHaveBeenCalledWith(method, expect.anything())
+    } finally {
+      invoke.mockRestore()
+    }
+  })
+
+  test.each([
+    'runtime.tasks.transcript',
+    'runtime.tasks.transcript.search',
+    'runtime.tasks.get',
+    'runtime.tasks.goal.get',
+    'runtime.tasks.cancel',
+    'todos.update',
+  ])('keeps %s on its existing transport when an address retains model metadata', async method => {
+    const invoke = vi.spyOn(desktopHost, 'invokeDesktopHost')
+    const params = {
+      taskId: 'task',
+      transcriptProtocolVersion: 1,
+      runtimeHandle: {
+        modelConfig: {
+          wework_model_kind: 'model-interface',
+          wework_local_model_id: 'local-model:deleted',
+          model_provider: 'local-deleted',
+        },
+      },
+    }
+    requestDshExecutorMock.mockResolvedValue({ accepted: true })
+    try {
+      await expect(requestLocalExecutor(method, params)).resolves.toEqual({ accepted: true })
+      expect(requestDshExecutorMock).toHaveBeenCalledWith(method, params)
+      expect(
+        invoke.mock.calls.some(([capability]) => capability === 'modelConfiguration.requestRuntime')
+      ).toBe(false)
+    } finally {
+      invoke.mockRestore()
+    }
   })
 
   test('starts the Electron-managed DSH executor and caches its marketplace', async () => {

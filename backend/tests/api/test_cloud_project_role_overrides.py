@@ -176,7 +176,7 @@ def test_inherited_developer_cannot_promote_themselves(test_client, scope):
     assert response.status_code == 403, response.text
 
 
-def test_direct_viewer_downgrade_blocks_actual_assignment_and_creator_mutations(
+def test_direct_viewer_needs_current_issue_invitation_for_mutations(
     test_client, test_db, scope
 ):
     invite(test_client, scope, "Developer")
@@ -187,10 +187,18 @@ def test_direct_viewer_downgrade_blocks_actual_assignment_and_creator_mutations(
         json={
             "title": "Creator does not bypass a Viewer override",
             "notify_assignee": False,
+            "assignee_user_id": None,
         },
     )
     assert created.status_code == 201, created.text
     issue = created.json()
+    unassigned = test_client.patch(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=scope["owner"],
+        json={"version": issue["version"], "assignee_user_id": None},
+    )
+    assert unassigned.status_code == 200, unassigned.text
+    issue = unassigned.json()
     invite(test_client, scope, "Viewer", project=True)
     edited = test_client.patch(
         f"/api/v1/loop-items/{issue['id']}",
@@ -205,16 +213,35 @@ def test_direct_viewer_downgrade_blocks_actual_assignment_and_creator_mutations(
         "assignee_id": str(scope["user"].id),
         "notify_assignee": False,
     }
-    denied = test_client.post(endpoint, headers=scope["owner"], json=assignment)
-    assert denied.status_code == 422, denied.text
+    accepted = test_client.post(endpoint, headers=scope["owner"], json=assignment)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["assignee_user_id"] == scope["user"].id
+    invited = test_client.patch(
+        f"/api/v1/loop-items/{issue['id']}",
+        headers=scope["member"],
+        json={
+            "version": accepted.json()["version"],
+            "title": "Invited Viewer can edit",
+        },
+    )
+    assert invited.status_code == 200, invited.text
+    assert invited.json()["permissions"]["execute"] is False
+    from app.services.cloud_projects.access import require_cloud_project_role
+
+    assert (
+        require_cloud_project_role(test_db, pid, scope["user"].id).role
+        == BaseRole.Viewer
+    )
     removed = test_client.delete(
         f"/api/v1/cloud-projects/{pid}/members/{scope['user'].id}",
         headers=scope["owner"],
     )
     assert removed.status_code == 204, removed.text
-    accepted = test_client.post(endpoint, headers=scope["owner"], json=assignment)
-    assert accepted.status_code == 200, accepted.text
-    assert accepted.json()["assignee_user_id"] == scope["user"].id
+    still_invited = test_client.get(
+        f"/api/v1/loop-items/{issue['id']}", headers=scope["member"]
+    )
+    assert still_invited.status_code == 200, still_invited.text
+    assert still_invited.json()["can_edit"] is True
 
 
 @pytest.mark.parametrize("initial", ["queued", "running"])

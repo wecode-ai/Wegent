@@ -8,6 +8,7 @@ import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 import { nativeCloudAuthorizationFixture } from './native-cloud-authorization-client.mjs'
+import { readInspectorEndpoint } from './inspect-before-start.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -75,6 +76,7 @@ import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs
 
 import { DesktopE2EServer } from './desktop-server.mjs'
 import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
+import { prepareNativeKeychainPreferences } from './native-keychain-preferences.mjs'
 import { desktopApplicationDataDirectory, resolveUpgradeUserHome } from './upgrade-user-home.mjs'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
@@ -379,15 +381,20 @@ function assertDefaultIssueContextAbsent(request) {
   )
 }
 
-function assertDefaultIssueContextInjected(request) {
+function assertDefaultIssueReferenceIncluded(request) {
   const serializedRequest = JSON.stringify(request.body)
   assert.ok(
-    serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
-    'The follow-up request did not include the enriched default Issue title'
+    !serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
+    'The follow-up request eagerly included the default Issue title'
   )
   assert.match(
     serializedRequest,
-    /cloud:\/\/projects\/default-work-items\/todos\/WORK-\d+/,
+    /space_id\\?":\\?"default-work-items\\?"/,
+    'The follow-up request did not identify the default Issue project'
+  )
+  assert.match(
+    serializedRequest,
+    /item_id\\?":\\?"WORK-\d+\\?"/,
     'The follow-up request did not include the bound default Issue reference'
   )
 }
@@ -1156,6 +1163,7 @@ async function main() {
     mkdir(codexSqliteHome, { recursive: true }),
     mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  await prepareNativeKeychainPreferences(homePath)
   // Desktop scenarios own their viewport instead of inheriting first-launch defaults.
   // The host clamps these bounds to each runner's available display, as before.
   // Exercise consent explicitly; the product default already marks it as asked.
@@ -1554,18 +1562,12 @@ async function main() {
       Object.assign(appEnvironment, cleanEnvironment)
     }
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
-    if (desktopScenario?.requiresNativeCloudAuthorization) {
-      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
-      nativeCloudLogin = nativeCloudAuthorizationFixture(
-        cloudEnvironment,
-        electronUserDataDirectory,
-        appBinary
-      )
-      await nativeCloudLogin.authorize()
-    }
     await desktopScenario?.prepareUserDataLaunch?.()
+    const usesNativeCloudInspector =
+      cloudEnvironment && (!desktopScenario || desktopScenario.requiresNativeCloudAuthorization)
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
+        ...(usesNativeCloudInspector ? ['--inspect=127.0.0.1:0'] : []),
         ...(process.platform === 'win32'
           ? ['--enable-logging=file', `--log-file=${join(resultDir, 'electron.log')}`]
           : []),
@@ -1584,6 +1586,8 @@ async function main() {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       })
+      const nativeInspector = usesNativeCloudInspector ? readInspectorEndpoint(child) : null
+      nativeInspector?.catch(() => undefined)
       const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
       // Observe early failure now; the await below still propagates it after log setup.
       scenarioStartup?.catch(() => undefined)
@@ -1625,10 +1629,14 @@ async function main() {
       }
       try {
         await scenarioStartup
+        if (nativeInspector) {
+          control.nativeInspectorPort = Number(new URL(await nativeInspector).port)
+        }
       } catch (error) {
         await stopDesktopAppProcess(child)
         throw error
       }
+      control.applicationProcessId = child.pid
       return child
     }
     app = await startDesktopAppProcess()
@@ -1728,6 +1736,15 @@ async function main() {
       /^https?:/,
       'The Electron desktop controller did not connect from its local renderer origin'
     )
+    if (usesNativeCloudInspector) {
+      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
+      nativeCloudLogin = nativeCloudAuthorizationFixture(
+        cloudEnvironment,
+        electronUserDataDirectory,
+        control
+      )
+      await nativeCloudLogin.authorize()
+    }
     if (VERIFIES_INITIAL_TELEMETRY_CONSENT) {
       await verifyInitialTelemetryConsent(control, [
         workspacePath,
@@ -3083,7 +3100,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
         control.setScenario('checkpoint_task')
         const enrichedIssueRequest = await sendProjectAiCheckpointPrompt(control, composerSelector)
-        assertDefaultIssueContextInjected(enrichedIssueRequest)
+        assertDefaultIssueReferenceIncluded(enrichedIssueRequest)
         phase = 'cloud-issue-task-sidebar-restored'
         await reloadMainWindow(
           control,
