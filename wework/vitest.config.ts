@@ -45,7 +45,8 @@ export default mergeConfig(
         : {}),
       server: {
         deps: {
-          inline: [/@file-viewer/, /@panzoom/, /mermaid/],
+          // Mermaid's native ESM avoids cold-transforming lazy Dagre chunks during rendering.
+          inline: [/@file-viewer/, /@panzoom/],
         },
       },
       // Keep local and pre-push runs below the resource-contention point where
