@@ -1206,8 +1206,11 @@ function loadDesktopControlScreenshot(snapshot: string): Promise<HTMLImageElemen
 }
 
 function desktopControlElementEnabled(element: HTMLElement): boolean {
-  if (element.getAttribute('aria-disabled') === 'true') return false
-  return !('disabled' in element) || !(element as HTMLButtonElement).disabled
+  return (
+    element.getAttribute('aria-disabled') !== 'true' &&
+    !element.matches(':disabled') &&
+    !element.closest('[inert]')
+  )
 }
 
 function desktopControlElementRendered(element: HTMLElement): boolean {
