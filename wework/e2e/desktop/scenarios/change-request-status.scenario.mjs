@@ -675,9 +675,9 @@ export async function createDesktopScenario({
       )
       await control.command('click', '[data-testid="settings-back-button"]')
       await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
+      await writeFile(statePath, 'merged\n')
       await openEnvironment(control, executorLogPath, runtimeOperationTimeoutMs)
 
-      await writeFile(statePath, 'merged\n')
       await refreshEnvironment(control, executorLogPath, runtimeOperationTimeoutMs)
       await control.command('waitFor', CHANGE_REQUEST_BUTTON, {
         text: '#2631',

@@ -2,10 +2,29 @@
 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createDesktopScenario } from '../e2e/desktop/scenarios/change-request-status.scenario.mjs'
+import { ChangeRequestUiObserver } from '../src/features/workbench/changeRequestUiObserver'
+import { createConnectionObserverFixture } from '../src/test/connection-observer'
 
 const fixture = vi.hoisted(() => ({ log: '', state: 'pending', writes: [] }))
+
+vi.mock('@/api/changeRequests', () => ({
+  linkedChangeRequestTarget: (deviceId, changeRequestUrl) => ({
+    deviceId,
+    changeRequestUrl,
+    remoteUrl: 'https://github.com/wecode-ai/Wegent',
+  }),
+  observedChangeRequest: (_provider, data) => ({ ...data, state: data.state.toLowerCase() }),
+}))
+vi.mock('@/api/environment', () => ({
+  outputAsRecord: value => (value && typeof value === 'object' ? value : null),
+}))
+vi.mock(
+  '@/features/workbench/resourceObservation',
+  async () => import('../src/features/workbench/resourceObservation')
+)
 
 vi.mock('node:child_process', async importOriginal => ({
   ...(await importOriginal()),
@@ -142,6 +161,44 @@ test('does not enter original DOM assertions when the native envelope fails', as
   expect(run.control.checks).toEqual([])
 })
 
+test.each([true, false])(
+  'restores the provider before reopening a released observation lease with initial open=%s',
+  async initiallyOpen => {
+    const run = await startVerification({
+      initiallyOpen,
+      stopAt: 'recovered',
+      productionObserver: true,
+    })
+    await vi.advanceTimersByTimeAsync(100_000)
+    expect(await run.result).toBe(run.stopAfterPhase)
+    expect(run.runtime.operations).toContainEqual(
+      expect.objectContaining({
+        command: 'connection_observer_start',
+        state: 'unavailable',
+        ok: false,
+      })
+    )
+    expect(run.runtime.operations.at(-1)).toMatchObject({
+      command: 'connection_observer_refresh',
+      state: 'merged',
+      ok: true,
+    })
+    expect(run.runtime.latest).toMatchObject({ changeRequest: { number: 2631, state: 'merged' } })
+    expect(fixture.writes.map(write => write.state)).toEqual([
+      'pending',
+      'failure',
+      'success',
+      'unavailable',
+      'merged',
+    ])
+    expect(run.control.checks.at(-1)).toMatchObject({
+      text: '检查通过',
+      timeoutMs: 10_000,
+      pending: 0,
+    })
+  }
+)
+
 async function startVerification(options = {}) {
   const stopAfterPhase = new Error('The unchanged settings flow starts after this phase')
   const scenario = await createDesktopScenario({
@@ -153,8 +210,20 @@ async function startVerification(options = {}) {
     uiTimeoutMs: 10_000,
     runtimeOperationTimeoutMs: 30_000,
   })
-  const runtime = queuedNativeRefreshes(options)
-  const control = baseControl(runtime, { ...options, stopAfterPhase })
+  const runtime = options.productionObserver
+    ? nativeObservationLease()
+    : queuedNativeRefreshes(options)
+  const syncGitAccounts = async () => {
+    const request = Readable.from([JSON.stringify({ allow_empty: false })])
+    request.method = 'PUT'
+    request.headers = { authorization: 'Bearer wework-desktop-e2e-cloud-token' }
+    await scenario.handleHttp(
+      request,
+      { writeHead() {}, end() {} },
+      new URL('http://fixture/api/devices/desktop-e2e-git-target/git-accounts')
+    )
+  }
+  const control = baseControl(runtime, { ...options, stopAfterPhase, syncGitAccounts })
   const result = scenario.verify(control).catch(error => error)
   await vi.advanceTimersByTimeAsync(0)
   return { result, control, runtime, stopAfterPhase }
@@ -186,8 +255,76 @@ function queuedNativeRefreshes({ latencyMs = 9_000, ok = true }) {
   }
 }
 
-function baseControl(runtime, { initiallyOpen = true, stopAt, domError, stopAfterPhase }) {
+function nativeObservationLease() {
+  const target = {
+    deviceId: 'fixture-device',
+    changeRequestUrl: 'https://github.com/wecode-ai/Wegent/pull/2631',
+  }
+  const reply = createConnectionObserverFixture()
+  const operations = []
+  const observer = new ChangeRequestUiObserver({
+    async executeCommand(_device, request) {
+      const operation = {
+        id: `native-${operations.length + 1}`,
+        command: request.command_key,
+        state: fixture.state,
+      }
+      operations.push(operation)
+      fixture.log += observationLog('started', operation)
+      await delay(250)
+      operation.ok = !(
+        operation.command === 'connection_observer_start' && operation.state === 'unavailable'
+      )
+      operation.finishedAt = Date.now()
+      fixture.log += observationLog('finished', operation)
+      if (!operation.ok)
+        throw Object.assign(new Error('Git CLI is unavailable'), { code: 'git_cli_missing' })
+      const result = reply(request)
+      if (operation.command !== 'connection_observer_stop') {
+        result.stdout.observation.refreshPending = false
+        result.stdout.observation.errorCode =
+          operation.state === 'unavailable' ? 'git_cli_missing' : null
+        result.stdout.observation.resourceStates[0].data.state =
+          operation.state === 'merged' ? 'MERGED' : 'OPEN'
+      }
+      return result
+    },
+  })
+  const runtime = {
+    operations,
+    get pending() {
+      return operations.filter(operation => operation.finishedAt === undefined).length
+    },
+    async initialize() {
+      observer.synchronize([target])
+      runtime.latest = await observer.read(target, false)
+    },
+    refresh() {
+      void observer.read(target, true).then(snapshot => {
+        runtime.latest = snapshot
+      })
+    },
+    setEnabled(enabled) {
+      observer.synchronize(enabled ? [target] : [])
+      if (enabled)
+        void observer.read(target, false).then(snapshot => {
+          runtime.latest = snapshot
+        })
+    },
+  }
+  return runtime
+}
+
+function observationLog(stage, operation) {
+  return `app IPC request ${stage} request_id=${operation.id} method=device.execute_command command_key=${operation.command}${stage === 'finished' ? ` elapsed_ms=250 ok=${operation.ok}` : ''}\n`
+}
+
+function baseControl(
+  runtime,
+  { initiallyOpen = true, stopAt, domError, stopAfterPhase, syncGitAccounts }
+) {
   let open = initiallyOpen
+  let enabled = true
   const checks = []
   const control = {
     checks,
@@ -196,24 +333,38 @@ function baseControl(runtime, { initiallyOpen = true, stopAt, domError, stopAfte
         action === 'fill' &&
         options.value === 'Inspect the pull request status for this branch'
       ) {
-        fixture.log +=
-          'app IPC request started command_key=connection_observer_start\n' +
-          'app IPC request finished command_key=connection_observer_start ok=true\n' +
-          ipcLog('started', 'old') +
-          ipcLog('finished', 'old')
+        if (runtime.initialize) await runtime.initialize()
+        else
+          fixture.log +=
+            'app IPC request started command_key=connection_observer_start\n' +
+            'app IPC request finished command_key=connection_observer_start ok=true\n' +
+            ipcLog('started', 'old') +
+            ipcLog('finished', 'old')
       }
       if (action === 'click' && selector === ENVIRONMENT) {
         open = !open
         if (open) runtime.refresh()
       }
       if (action === 'getElementCount') {
+        if (selector.endsWith('option[value="desktop-e2e-git-target"]')) return 1
         return selector === '[data-testid="environment-info-popover"]' && open ? 1 : 0
       }
       if (action === 'getWorkbenchDebugSnapshot') {
         return JSON.stringify({ workbench: { currentRuntimeTask: { taskId: 'fixture-task' } } })
       }
-      if (action === 'getAttribute') return '#2631 检查中'
+      if (action === 'getAttribute')
+        return selector === '[data-testid="change-request-status-switch"]'
+          ? String(enabled)
+          : '#2631 检查中'
       if (action === 'getText') return 'feat(wework): show pull request status'
+      if (action === 'click' && selector === '[data-testid="change-request-open-settings"]')
+        open = false
+      if (action === 'click' && selector === '[data-testid="change-request-status-switch"]') {
+        enabled = !enabled
+        runtime.setEnabled?.(enabled)
+      }
+      if (action === 'clickWhenEnabled' && selector === '[data-testid="git-device-sync-submit"]')
+        await syncGitAccounts()
       if (action === 'waitFor' && selector === CHECKS) {
         checks.push({
           text: options.text,
@@ -222,10 +373,11 @@ function baseControl(runtime, { initiallyOpen = true, stopAt, domError, stopAfte
         })
         if (options.text === '检查通过' && domError) throw domError
         if (options.text === '检查中' && stopAt === 'pending') throw stopAfterPhase
+        if (fixture.state === 'merged' && stopAt === 'recovered') throw stopAfterPhase
       }
       if (action === 'waitFor' && selector === '[data-testid="change-request-lookup-hint"]') {
         control.lookupHint = { options, pending: runtime.pending }
-        throw stopAfterPhase
+        if (stopAt !== 'recovered') throw stopAfterPhase
       }
       return ''
     }),
