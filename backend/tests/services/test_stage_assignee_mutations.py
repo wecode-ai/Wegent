@@ -136,6 +136,184 @@ def test_introduction_reassignment_commits_review_with_owner(
     )
 
 
+@pytest.mark.parametrize("future_constrained", [False, True])
+def test_scoped_assignment_advances_the_introduction_root_atomically(
+    stage_scenario, test_admin_user, future_constrained
+):
+    s = stage_scenario
+    s.owner.user_name = "jiangyang7"
+    s.db.add(
+        ResourceMember.create(
+            resource_type="CloudProject",
+            resource_id=int(s.project.id),
+            entity_id=str(test_admin_user.id),
+            role="Developer",
+            status="approved",
+        )
+    )
+    future = {"id": "build", "name": "开发实现"}
+    if future_constrained:
+        future.update(
+            required_assignee_type="user", required_assignee_id=str(test_admin_user.id)
+        )
+    s.issue.metadata_json = {
+        "tags": ["需求提出"],
+        "workflow": {
+            "current_stage_id": "proposal",
+            "nodes": [
+                {"id": "proposal", "name": "需求提出"},
+                {"id": "review", "name": "共同评审"},
+                future,
+            ],
+        },
+    }
+    s.db.commit()
+    version = s.issue.version
+
+    saved = loop_item_service.assign(
+        s.db,
+        project_id=int(s.project.id),
+        item_id=s.issue.id,
+        user_id=s.owner.id,
+        values=LoopItemAssign(
+            version=version,
+            assignee_type="user",
+            assignee_id=str(test_admin_user.id),
+            workflow_step="build",
+        ),
+    )
+
+    assert saved.assignee_user_id == test_admin_user.id
+    assert saved.metadata_json["workflow"]["current_stage_id"] == "review"
+    assert saved.metadata_json["tags"] == ["共同评审"]
+    assert saved.version == version + 1
+    assert len(saved.metadata_json["stage_assignee_history"]) == 1
+    assert (
+        s.db.query(LoopItemComment)
+        .filter(
+            LoopItemComment.metadata_json["event_type"].as_string()
+            == "stage_assignee_transition"
+        )
+        .count()
+        == 1
+    )
+    assert (
+        s.db.query(WeworkNotification)
+        .filter(WeworkNotification.title == "Issue stage advanced")
+        .count()
+        == 1
+    )
+
+
+@pytest.mark.parametrize("future_constrained", [False, True])
+def test_scoped_assignment_cannot_bypass_another_current_stage_constraint(
+    stage_scenario, test_admin_user, future_constrained
+):
+    s = stage_scenario
+    s.db.add(
+        ResourceMember.create(
+            resource_type="CloudProject",
+            resource_id=int(s.project.id),
+            entity_id=str(test_admin_user.id),
+            role="Developer",
+            status="approved",
+        )
+    )
+    metadata = deepcopy(s.issue.metadata_json)
+    future = {"id": "future", "name": "Later work"}
+    if future_constrained:
+        future.update(
+            required_assignee_type="user", required_assignee_id=str(test_admin_user.id)
+        )
+    metadata["workflow"]["nodes"].append(future)
+    s.issue.metadata_json = metadata
+    s.db.commit()
+    before = _counts(s.db)
+    version = s.issue.version
+
+    with pytest.raises(HTTPException) as error:
+        loop_item_service.assign(
+            s.db,
+            project_id=int(s.project.id),
+            item_id=s.issue.id,
+            user_id=s.owner.id,
+            values=LoopItemAssign(
+                version=version,
+                assignee_type="user",
+                assignee_id=str(test_admin_user.id),
+                workflow_step="future",
+            ),
+        )
+
+    assert error.value.detail["reason_code"] == "stage_assignee_mismatch"
+    assert error.value.detail["stage_id"] == "build"
+    assert _counts(s.db) == before
+    s.db.refresh(s.issue)
+    assert s.issue.metadata_json == metadata
+    assert s.issue.assignee_user_id == s.owner.id
+    assert s.issue.version == version
+
+
+def test_scoped_assignment_still_enforces_the_requested_stage(stage_scenario):
+    s = stage_scenario
+    metadata = deepcopy(s.issue.metadata_json)
+    metadata["workflow"]["nodes"].append(
+        {
+            "id": "future",
+            "name": "Later work",
+            "required_assignee_type": "user",
+            "required_assignee_id": "other",
+        }
+    )
+    s.issue.metadata_json = metadata
+    s.db.commit()
+    before = _counts(s.db)
+
+    with pytest.raises(HTTPException) as error:
+        loop_item_service.assign(
+            s.db,
+            project_id=int(s.project.id),
+            item_id=s.issue.id,
+            user_id=s.owner.id,
+            values=LoopItemAssign(
+                version=s.issue.version,
+                assignee_type="user",
+                assignee_id=str(s.owner.id),
+                workflow_step="future",
+            ),
+        )
+
+    assert error.value.detail["stage_id"] == "future"
+    assert error.value.detail["reason_code"] == "stage_assignee_mismatch"
+    assert _counts(s.db) == before
+
+
+def test_patch_cannot_replace_the_current_stage_with_an_unknown_pointer(stage_scenario):
+    s = stage_scenario
+    s.db.commit()
+    original = deepcopy(s.issue.metadata_json)
+    workflow = deepcopy(original["workflow"])
+    workflow["current_stage_id"] = "missing"
+    before = _counts(s.db)
+
+    with pytest.raises(HTTPException) as error:
+        loop_item_service.update(
+            s.db,
+            s.issue.id,
+            s.owner.id,
+            LoopItemUpdate(
+                version=s.issue.version, workflow=workflow, assignee_user_id=9999999
+            ),
+        )
+
+    assert error.value.detail["reason_code"] == "stage_assignee_mismatch"
+    assert error.value.detail["stage_id"] == "missing"
+    assert _counts(s.db) == before
+    s.db.refresh(s.issue)
+    assert s.issue.metadata_json == original
+    assert s.issue.assignee_user_id == s.owner.id
+
+
 def test_stale_assignment_cannot_create_an_assignment(stage_scenario):
     s = stage_scenario
     s.db.commit()

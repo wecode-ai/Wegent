@@ -2355,6 +2355,18 @@ class LoopItemService:
             allow_stage_advance=True,
             actor_user_id=user_id,
         )
+        if values.workflow_step:
+            # Scoped assignments also replace the Issue's visible root owner.
+            metadata = validate_stage_assignee(
+                db,
+                project=project,
+                item=item,
+                assignee_type=values.assignee_type,
+                assignee_id=values.assignee_id,
+                metadata=metadata,
+                allow_stage_advance=True,
+                actor_user_id=user_id,
+            )
         if values.assignee_type != "group":
             record_stage_transition(
                 db, project=project, item=item, metadata=metadata, user_id=user_id
