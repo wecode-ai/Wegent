@@ -1752,15 +1752,14 @@ export function useWorkbenchPaneSession({
         // any other user message. Codex then steers the running turn while the model
         // is still working and starts a new turn once it has stopped, instead of
         // rejecting the answer for arriving mid-turn.
-        const answerIsUserMessage =
-          options.appendUserMessage ||
-          isAsyncRequestUserInputPayload(
-            findRequestUserInputPayload(
-              getRuntimeConversationMessages(currentRuntimeTask),
-              requestUserInputKey
-            )
+        const asyncQuestion = isAsyncRequestUserInputPayload(
+          findRequestUserInputPayload(
+            getRuntimeConversationMessages(currentRuntimeTask),
+            requestUserInputKey
           )
-        if (answerIsUserMessage) {
+        )
+        const answerIsUserMessage = options.appendUserMessage || asyncQuestion
+        if (answerIsUserMessage && !asyncQuestion) {
           const answerMessage: RuntimePaneQueuedMessage = {
             id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
             content: message,
@@ -1778,7 +1777,8 @@ export function useWorkbenchPaneSession({
           const sent = await sendRuntimePaneMessage({
             address: currentRuntimeTask,
             message,
-            requestUserInputResponse: response,
+            requestUserInputResponse: asyncQuestion ? { ...response, delivery: 'async' } : response,
+            ...(attachments.length ? { attachments } : {}),
             ...(additionalContext ? { additionalContext } : {}),
           })
           if (!sent) return false

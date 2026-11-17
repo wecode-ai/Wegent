@@ -19,7 +19,7 @@ export async function composeDesktopInput(
   const nativeValue =
     element instanceof HTMLInputElement
       ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!
-      : ownValue
+      : undefined
   const editor = element as HTMLElement & { value: string }
   const writes: string[] = []
   const steps: { value: string; actual: string; focused: boolean; connected: boolean }[] = []
@@ -40,7 +40,19 @@ export async function composeDesktopInput(
       element.dispatchEvent(
         new CompositionEvent('compositionupdate', { bubbles: true, data: value })
       )
-      nativeValue.set!.call(element, value)
+      if (nativeValue) nativeValue.set!.call(element, value)
+      else {
+        const paragraph = element.querySelector('p')
+        if (!paragraph) throw new Error('The composing editor has no text paragraph')
+        let text = paragraph.firstChild
+        if (!(text instanceof Text)) {
+          text = document.createTextNode('')
+          paragraph.replaceChildren(text)
+        }
+        text.textContent = value
+        const selection = window.getSelection()
+        selection?.collapse(text, value.length)
+      }
       element.dispatchEvent(
         new InputEvent('input', {
           bubbles: true,

@@ -144,17 +144,20 @@ export function RequestUserInputCard({
   )
   const savedAttachments =
     store && address
-      ? Object.fromEntries(
-          (props.payload.questions ?? []).flatMap(question => {
-            if (!question.id) return []
-            const target = requestUserInputQuestionTarget(props.payload, question.id)
-            const attachments =
-              store.sessions[questionDiscussionKey(address, target.payload)]?.attachments?.[
-                target.questionId
-              ]
-            return attachments ? [[question.id, attachments]] : []
-          })
-        )
+      ? {
+          ...props.draftAttachments,
+          ...Object.fromEntries(
+            (props.payload.questions ?? []).flatMap(question => {
+              if (!question.id) return []
+              const target = requestUserInputQuestionTarget(props.payload, question.id)
+              const attachments =
+                store.sessions[questionDiscussionKey(address, target.payload)]?.attachments?.[
+                  target.questionId
+                ]
+              return attachments ? [[question.id, attachments]] : []
+            })
+          ),
+        }
       : props.draftAttachments
   const questionId = question?.id
   const callId = questionId?.startsWith('mcp_tool_call_approval_')
@@ -265,6 +268,40 @@ export function RequestUserInputCard({
         allowSkip={canDiscussQuestion(props.payload)}
         composerServices={props.composerServices ?? composerServices}
         draftAttachments={savedAttachments}
+        draftOptionAnswers={
+          store && address
+            ? {
+                ...props.draftOptionAnswers,
+                ...questionDiscussionDrafts(
+                  store.sessions,
+                  address,
+                  props.payload,
+                  'optionAnswers'
+                ),
+              }
+            : props.draftOptionAnswers
+        }
+        onDraftOptionAnswersChange={answers => {
+          props.onDraftOptionAnswersChange?.(answers)
+          if (!store || !address) return
+          for (const question of props.payload.questions ?? []) {
+            if (!question.id) continue
+            const target = requestUserInputQuestionTarget(props.payload, question.id)
+            store.update(questionDiscussionKey(address, target.payload), current => {
+              const optionAnswers = { ...current?.optionAnswers }
+              if (question.id! in answers) optionAnswers[target.questionId] = answers[question.id!]
+              else delete optionAnswers[target.questionId]
+              return {
+                ...current,
+                source: address,
+                payload: current?.payload ?? target.payload,
+                address: current?.address ?? null,
+                answers: current?.answers ?? {},
+                optionAnswers,
+              }
+            })
+          }
+        }}
         onDraftAttachmentsChange={attachments => {
           props.onDraftAttachmentsChange?.(attachments)
           if (!store || !address) return

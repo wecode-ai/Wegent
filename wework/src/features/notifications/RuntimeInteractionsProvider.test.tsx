@@ -792,8 +792,7 @@ describe('unified human response', () => {
     expect(context!.pending).toHaveLength(1)
   })
 
-  it('guides a running async task and accepts the guidance API success response', async () => {
-    harness.guide.mockResolvedValue({ success: true })
+  it('routes a running async answer through attachment preparation before guidance', async () => {
     const task = {
       ...interactionTask,
       lifecycle: { turn: { active: true } },
@@ -803,10 +802,48 @@ describe('unified human response', () => {
     await act(async () => {
       expect(await context!.respond(context!.pending[0], 'keep')).toBe(true)
     })
-    expect(harness.guide).toHaveBeenCalledWith(
-      expect.objectContaining({ address: interactionTask.address, message: 'keep' })
+    expect(harness.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: interactionTask.address,
+        message: 'keep',
+        requestUserInputResponse: expect.objectContaining({ delivery: 'async' }),
+      })
     )
-    expect(harness.send).not.toHaveBeenCalled()
+    expect(harness.guide).not.toHaveBeenCalled()
+    expect(context!.pending).toHaveLength(0)
+  })
+
+  it('retains non-image attachments and the pending reminder after a rejected running answer', async () => {
+    view(interactionQuestion, {
+      ...interactionTask,
+      lifecycle: { turn: { active: true } },
+    } as typeof interactionTask)
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    const file = {
+      id: 42,
+      filename: 'brief.txt',
+      mime_type: 'text/plain',
+      status: 'ready' as const,
+    }
+    const response = {
+      itemId: item.payload.itemId,
+      requestId: item.payload.requestId,
+      answers: { [item.payload.questions![0].id!]: { answers: [''], attachments: [file] } },
+    }
+    harness.send.mockResolvedValueOnce({ accepted: false, error: 'Offline' })
+    await act(async () => expect(await context!.respond(item, '', { response })).toBe(false))
+    expect(context!.pending).toHaveLength(1)
+    await act(async () => expect(await context!.respond(item, '', { response })).toBe(true))
+    expect(harness.send).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        address: interactionTask.address,
+        attachments: [file],
+        requestUserInputResponse: { ...response, delivery: 'async' },
+      })
+    )
+    expect(harness.guide).not.toHaveBeenCalled()
     expect(context!.pending).toHaveLength(0)
   })
 
@@ -836,7 +873,7 @@ describe('unified human response', () => {
   })
 
   it.each([false, true])(
-    'preserves the owning remote model configuration (handle only: %s)',
+    'lets the owning executor restore its saved model for an async response (handle only: %s)',
     async handleOnly => {
       const modelSelection = {
         modelName: 'team-review-model',
@@ -857,11 +894,12 @@ describe('unified human response', () => {
       })
       expect(harness.send).toHaveBeenCalledWith(
         expect.objectContaining({
-          modelSelection,
-          modelId: modelSelection.modelName,
-          modelOptions: modelSelection.options,
+          address: interactionTask.address,
+          requestUserInputResponse: expect.objectContaining({ delivery: 'async' }),
         })
       )
+      expect(harness.send.mock.calls[0][0]).not.toHaveProperty('modelId')
+      expect(harness.send.mock.calls[0][0]).not.toHaveProperty('executionRequest')
     }
   )
 
@@ -985,7 +1023,10 @@ describe('unified human response', () => {
     expect(harness.send).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'keep', queueIfBusy: true })
     )
-    expect(harness.send.mock.calls[0][0]).not.toHaveProperty('requestUserInputResponse')
+    expect(harness.send.mock.calls[0][0].requestUserInputResponse).toMatchObject({
+      delivery: 'async',
+      answers: expect.any(Object),
+    })
     expect(context!.pending).toHaveLength(0)
     expect(context!.history).toHaveLength(1)
   })

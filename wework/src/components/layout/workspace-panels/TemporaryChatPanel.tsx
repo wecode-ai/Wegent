@@ -1312,39 +1312,21 @@ export function TemporaryChatPanel({
       const hosted = await requestUserInputHost?.submit(response, payload)
       if (hosted !== undefined) return hosted
       const appendUserMessage = isAsyncRequestUserInputPayload(payload)
-      // A non-blocking Codex question carries no runtime request to answer, so it
-      // is answered by the next user message: Codex steers the running turn while
-      // the model is still working and starts a new turn once it has stopped.
-      if (appendUserMessage) {
-        const answerMessage: RuntimePaneQueuedMessage = {
-          id: `queued-side-chat-${Date.now()}-${queuedMessages.length}`,
-          content: requestUserInputResponseText(response),
-          attachments: requestUserInputResponseAttachments(response),
-          status: 'queued',
-          createdAt: new Date().toISOString(),
-          ...selectedModelFields,
-          ...runtimeContext,
-        }
-        conversationQueue.enqueue(answerMessage)
-        return sendQueuedMessageAsGuidance(answerMessage)
-      }
+      const attachments = requestUserInputResponseAttachments(response)
       return sendRuntimePaneMessage({
         address,
         message: requestUserInputResponseText(response),
-        requestUserInputResponse: response,
+        requestUserInputResponse: appendUserMessage ? { ...response, delivery: 'async' } : response,
+        ...(attachments.length ? { attachments } : {}),
         ...runtimeContext,
       })
     },
     [
       address,
-      conversationQueue,
       messages,
       active,
       readOnly,
-      queuedMessages.length,
       runtimeContext,
-      selectedModelFields,
-      sendQueuedMessageAsGuidance,
       sendRuntimePaneMessage,
       requestUserInputHost,
     ]
@@ -1466,9 +1448,10 @@ export function TemporaryChatPanel({
                     }
                     onCollapse={onCollapse}
                     onSkip={() => {
-                      const keys = pendingRequestUserInputPayloads(
-                        messages,
-                        hiddenRequestUserInputIds
+                      const keys = (
+                        focusedRequest
+                          ? [pendingRequest]
+                          : pendingRequestUserInputPayloads(messages, hiddenRequestUserInputIds)
                       )
                         .filter(isAsyncRequestUserInputPayload)
                         .map(requestUserInputPayloadKey)

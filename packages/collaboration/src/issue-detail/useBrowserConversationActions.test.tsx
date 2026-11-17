@@ -158,15 +158,48 @@ describe('browser runtime question actions', () => {
       renderPayload: { response: { requestId: 'question-1' } },
     })
   })
-  it('steers the running turn when a non-blocking question is answered mid-turn', async () => {
+  it('retains async question identity so the executor prepares files before steering', async () => {
     await mountQuestion(asyncPayload, true)
     await act(async () => button('request-user-input-submit-button').click())
-    expect(runtime.work.guideRuntimeTask).toHaveBeenCalledWith({
+    expect(runtime.work.sendRuntimeMessage).toHaveBeenCalledWith({
       address,
       message: '/repo',
-      clientGuidanceId: expect.stringMatching(/^queued-runtime-pane-/),
+      requestUserInputResponse: {
+        requestId: 'question-async',
+        itemId: 'tool-async',
+        delivery: 'async',
+        answers: { directory: { answers: ['/repo'] } },
+      },
     })
-    expect(runtime.work.sendRuntimeMessage).not.toHaveBeenCalled()
+    expect(runtime.work.guideRuntimeTask).not.toHaveBeenCalled()
+  })
+  it.each([false, true])('keeps file-only async answers retryable (running=%s)', async running => {
+    await mountQuestion(asyncPayload, running)
+    const file = {
+      id: -1,
+      filename: 'brief.txt',
+      local_path: '/tmp/brief.txt',
+      status: 'ready' as const,
+    }
+    const response = {
+      requestId: asyncPayload.requestId,
+      itemId: asyncPayload.itemId,
+      answers: { directory: { answers: [''], attachments: [file] } },
+    }
+    vi.mocked(runtime.work.sendRuntimeMessage).mockResolvedValueOnce({
+      accepted: false,
+      error: 'Offline',
+    })
+    await act(async () => expect(await actions.onRequestUserInputSubmit(response)).toBe(false))
+    expect(answeredBlock().renderPayload).not.toHaveProperty('response')
+    await act(async () => expect(await actions.onRequestUserInputSubmit(response)).toBe(true))
+    expect(runtime.work.sendRuntimeMessage).toHaveBeenNthCalledWith(2, {
+      address,
+      message: '继续',
+      attachments: [file],
+      requestUserInputResponse: { ...response, delivery: 'async' },
+    })
+    expect(runtime.work.guideRuntimeTask).not.toHaveBeenCalled()
   })
   it('keeps the answer editable and the question pending when runtime rejects it', async () => {
     vi.mocked(runtime.work.sendRuntimeMessage).mockResolvedValueOnce({

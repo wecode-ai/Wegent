@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import { ComposerTextInput, type ComposerTextInputProps } from '../composer/ComposerTextInput'
 import { useComposerAttachments } from '../composer/useComposerAttachments'
@@ -40,7 +40,7 @@ export function RequestUserInputAnswerEditor({
   onAttachmentsChange(attachments: Attachment[]): void
   onReadyChange(ready: boolean): void
 }) {
-  const { t } = useConversationTranslation()
+  const { t, translate } = useConversationTranslation()
   const textareaRef = useRef<HTMLElement | null>(null)
   const [transferReady, setTransferReady] = useState(true)
   const attachments = useComposerAttachments({
@@ -55,7 +55,9 @@ export function RequestUserInputAnswerEditor({
   const ready =
     transferReady && attachments.isAttachmentReadyToSend && attachments.errors.size === 0
   const callbacks = useRef({ onAttachmentsChange, onReadyChange })
-  callbacks.current = { onAttachmentsChange, onReadyChange }
+  useLayoutEffect(() => {
+    callbacks.current = { onAttachmentsChange, onReadyChange }
+  }, [onAttachmentsChange, onReadyChange])
   useEffect(() => {
     callbacks.current.onAttachmentsChange(attachments.attachments)
   }, [attachments.attachments])
@@ -78,9 +80,17 @@ export function RequestUserInputAnswerEditor({
       })}
       {!services?.renderAttachments &&
         [...attachments.errors].map(([filename, error]) => (
-          <p key={filename} role="alert">
+          <div key={filename} role="alert">
             {filename}: {error}
-          </p>
+            <button
+              type="button"
+              data-testid={`request-user-input-dismiss-file-error-${questionId}-${filename}`}
+              onClick={() => attachments.dismissAttachmentError(filename)}
+              className="ml-2 rounded px-1 underline"
+            >
+              {translate('common.close')}
+            </button>
+          </div>
         ))}
       <ComposerTextInput
         value={value}
@@ -98,6 +108,7 @@ export function RequestUserInputAnswerEditor({
         transferServices={services?.transferServices}
         onPasteFiles={files => attachments.handleFileSelect(files)}
         onTransferReadyChange={setTransferReady}
+        dismissTransferErrorLabel={translate('common.close')}
       />
     </div>
   )

@@ -1402,11 +1402,18 @@ describe('pane continuation without composer submission', () => {
       })
 
       expect(lifecycleStore.getTask(address)?.derived.shouldShowSidebarWaiting).toBe(!accepted)
-      const sender = running ? mocks.guide : mocks.send
-      expect(sender).toHaveBeenCalledWith(
-        expect.objectContaining({ address, message: 'Continue' }),
-        ...(running ? [] : [expect.any(Object)])
+      expect(mocks.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          address,
+          message: 'Continue',
+          requestUserInputResponse: {
+            requestId: 'async-question',
+            delivery: 'async',
+            answers: { direction: { answers: ['Continue'] } },
+          },
+        })
       )
+      expect(mocks.guide).not.toHaveBeenCalled()
       expectDraftPreserved(result.current)
     }
   )
@@ -1960,10 +1967,10 @@ test.each([true, false])(
 )
 
 test.each([true, false])(
-  'settles the whole async group after guidance without a turn ID (accepted=%s)',
+  'settles the whole async group only after the runtime accepts its response (accepted=%s)',
   async accepted => {
     const { result } = await renderSession()
-    mocks.guide.mockResolvedValueOnce({ sent: accepted })
+    mocks.send.mockResolvedValueOnce(accepted)
     act(() => {
       reconcileRuntimeConversationSnapshot(address, [
         {
@@ -2019,7 +2026,12 @@ test.each([true, false])(
         },
       ])
     }
-    expect(mocks.guide).toHaveBeenCalledOnce()
+    expect(mocks.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestUserInputResponse: { ...response, delivery: 'async' },
+      })
+    )
+    expect(mocks.guide).not.toHaveBeenCalled()
     expect(result.current.answeredRequestUserInputIds.has('item:first')).toBe(accepted)
     expect(result.current.answeredRequestUserInputIds.has('item:second')).toBe(accepted)
     expect(

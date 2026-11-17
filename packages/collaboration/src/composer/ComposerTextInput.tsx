@@ -37,6 +37,7 @@ export interface ComposerTextInputProps {
   nativeEmptyCaret?: boolean
   onPasteFiles?: (files: File[]) => void | Promise<void>
   onTransferReadyChange?: (ready: boolean) => void
+  dismissTransferErrorLabel?: string
   sendKey?: 'enter' | 'cmd_enter'
   isStreaming?: boolean
   followUpBehavior?: ComposerFollowUpBehavior
@@ -68,6 +69,7 @@ export function ComposerTextInput({
   nativeEmptyCaret,
   onPasteFiles,
   onTransferReadyChange,
+  dismissTransferErrorLabel,
   sendKey,
   isStreaming,
   followUpBehavior,
@@ -128,7 +130,9 @@ export function ComposerTextInput({
   })
   const transferReady = !transfers.isTransferring && !transfers.transferError
   const transferReadyCallback = useRef(onTransferReadyChange)
-  transferReadyCallback.current = onTransferReadyChange
+  useLayoutEffect(() => {
+    transferReadyCallback.current = onTransferReadyChange
+  }, [onTransferReadyChange])
   useEffect(() => {
     transferReadyCallback.current?.(transferReady)
   }, [transferReady])
@@ -149,7 +153,22 @@ export function ComposerTextInput({
 
   return (
     <div className="relative min-w-0 flex-1 w-full">
-      <ComposerErrorBanner error={transfers.transferError} />
+      <ComposerErrorBanner
+        error={transfers.transferError}
+        action={
+          dismissTransferErrorLabel && (
+            <button
+              type="button"
+              data-testid={`${testId}-dismiss-transfer-error`}
+              disabled={transfers.isTransferring}
+              onClick={transfers.dismissTransferError}
+              className="ml-2 rounded px-1 underline disabled:opacity-50"
+            >
+              {dismissTransferErrorLabel}
+            </button>
+          )
+        }
+      />
       <ComposerProseMirrorEditor
         ref={editorRef}
         value={value}

@@ -1,4 +1,4 @@
-import { useCallback, useState, type RefObject } from 'react'
+import { useCallback, useRef, useState, type RefObject } from 'react'
 import { SELECTED_TEXT_DRAG_TYPE } from '@wegent/chat-core/selected-text-drag'
 import type { ComposerEditorHandle } from './ComposerProseMirrorEditor'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
@@ -44,7 +44,12 @@ export function useComposerTransfers({
 }) {
   const [transferError, setTransferError] = useState<string | null>(null)
   const [pendingTransfers, setPendingTransfers] = useState(0)
+  const activeTransfers = useRef(0)
+  const dismissTransferError = useCallback(() => {
+    if (activeTransfers.current === 0) setTransferError(null)
+  }, [])
   const runTransfer = useCallback((transfer: () => void | Promise<void>) => {
+    activeTransfers.current += 1
     setTransferError(null)
     setPendingTransfers(count => count + 1)
     void (async () => {
@@ -53,6 +58,7 @@ export function useComposerTransfers({
       } catch (cause) {
         setTransferError(cause instanceof Error ? cause.message : String(cause))
       } finally {
+        activeTransfers.current -= 1
         setPendingTransfers(count => count - 1)
       }
     })()
@@ -160,5 +166,11 @@ export function useComposerTransfers({
     ]
   )
 
-  return { handlePaste, handleDrop, transferError, isTransferring: pendingTransfers > 0 }
+  return {
+    handlePaste,
+    handleDrop,
+    transferError,
+    dismissTransferError,
+    isTransferring: pendingTransfers > 0,
+  }
 }

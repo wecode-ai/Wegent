@@ -684,7 +684,8 @@ function RuntimeInteractionsState({
       const api = sourceRef.current?.services?.runtimeWorkApi
       if (
         (!api && !item.sharedRequest) ||
-        !answer.trim() ||
+        (!answer.trim() &&
+          (!options?.response || !requestUserInputResponseAttachments(options.response).length)) ||
         !canReplyToInteraction(item) ||
         inFlight.current.has(item.id)
       )
@@ -750,11 +751,14 @@ function RuntimeInteractionsState({
           )
             throw new Error(t('interactions.expired'))
           if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
-          const originalResponse =
-            options?.response ??
-            interactionResponse(live.payload, {
-              [live.payload.questions![0].id!]: { answers: [answer] },
-            })
+          const asyncInput = isAsyncRequestUserInputPayload(live.payload)
+          const originalResponse = {
+            ...(options?.response ??
+              interactionResponse(live.payload, {
+                [live.payload.questions![0].id!]: { answers: [answer] },
+              })),
+            ...(asyncInput ? { delivery: 'async' as const } : {}),
+          }
           const response = live.project
             ? originalResponse
             : await prepareRuntimeQuestionResponse(
@@ -770,7 +774,6 @@ function RuntimeInteractionsState({
           clientIds.current.set(item.id, { answer, id })
           const message = requestUserInputResponseText(response)
           const attachments = requestUserInputResponseAttachments(response)
-          const asyncInput = isAsyncRequestUserInputPayload(live.payload)
           const result = options?.send
             ? { accepted: await options.send(), error: undefined }
             : live.project
@@ -782,34 +785,24 @@ function RuntimeInteractionsState({
                   t('interactions.failed'),
                   attachments
                 ).then(() => ({ accepted: true, error: undefined }))
-              : asyncInput && (live.running ?? live.task.lifecycle?.turn.active ?? false)
-                ? await api.guideRuntimeTask({
-                    address: live.task.address,
-                    message,
-                    ...(attachments.length ? { attachments } : {}),
-                    clientGuidanceId: id,
-                  })
-                : await api.sendRuntimeMessage(
-                    await prepareRuntimeContinuationModel(
-                      {
-                        address: live.task.address,
-                        message,
-                        ...(attachments.length ? { attachments } : {}),
-                        ...(asyncInput
-                          ? {
-                              queueIfBusy: true,
-                            }
-                          : { requestUserInputResponse: response }),
-                        clientUserMessageId: id,
-                      },
-                      {
-                        projects: [],
-                        chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
-                        totalTasks: 1,
-                      },
-                      () => api.listRuntimeWork()
-                    )
+              : await api.sendRuntimeMessage(
+                  await prepareRuntimeContinuationModel(
+                    {
+                      address: live.task.address,
+                      message,
+                      ...(attachments.length ? { attachments } : {}),
+                      ...(asyncInput ? { queueIfBusy: true } : {}),
+                      requestUserInputResponse: response,
+                      clientUserMessageId: id,
+                    },
+                    {
+                      projects: [],
+                      chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
+                      totalTasks: 1,
+                    },
+                    () => api.listRuntimeWork()
                   )
+                )
           const accepted = result.accepted ?? ('success' in result && result.success)
           if (!accepted) throw new Error(result.error || t('notifications.failed'))
           saveInteractionState(acceptancePrefix + item.id, true)

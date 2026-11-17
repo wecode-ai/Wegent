@@ -240,7 +240,7 @@ Interrupting stops the current response but does not roll back completed file ed
 
 Question cards show the full question above the answer field. Long questions wrap, and oversized cards scroll. Questions without options remain visible while you type. Enter your answer in the field labeled “Type your answer”, then click **Submit**.
 
-Paste or drop files and images into the answer field. Use `Shift + Enter` for a new line and `Enter` to submit. Selecting an option keeps your custom draft; editing it again or pressing Enter in the field submits the custom answer. Attachment failures show an error; resolve or remove the failed item before retrying.
+Paste or drop files and images into the answer field. Use `Shift + Enter` for a new line and `Enter` to submit. Selecting an option keeps your custom draft; editing it again or pressing Enter in the field submits the custom answer. Selected options survive collapsing and reopening the card. If attachment handling fails, paste again to retry, or close the error after processing finishes to discard the failed attachment and submit text. An attachment alone can answer a question or provide plan feedback.
 
 On business question cards, **Skip** hides asynchronous questions without sending a message or starting another AI reply. Blocking questions receive empty answers to end their wait. **Collapse** preserves the text and attachment drafts. **Talk it through** opens a discussion and lets you fill an answer for review before submitting. Permission approvals and connector authorization keep their existing controls and do not offer business-question skipping.
 

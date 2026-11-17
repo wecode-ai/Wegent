@@ -142,33 +142,22 @@ export function useBrowserConversationActions(
       setError(null)
       try {
         const message = requestUserInputResponseText(response)
-        // Non-blocking Codex questions carry no runtime request to answer, so the
-        // answer only travels as the next user message.
+        // Preserve async question identity so the executor can validate it and
+        // prepare files before choosing active-turn guidance or a new turn.
         const appendUserMessage = isAsyncRequestUserInputPayload(
           findRequestUserInputPayload(
             session.getSnapshot().messages,
             requestUserInputResponseKey(response)
           )
         )
-        // Codex steers the turn that is still running and starts a new one once
-        // the model has stopped, so the answer is never rejected mid-turn.
         const attachments = requestUserInputResponseAttachments(response)
-        if (appendUserMessage && session.getSnapshot().running) {
-          const guided = await runtime.work.guideRuntimeTask({
-            address,
-            message,
-            ...(attachments.length ? { attachments } : {}),
-            clientGuidanceId: `queued-runtime-pane-${Date.now()}`,
-          })
-          if (guided.accepted === false || guided.success === false)
-            throw new Error(guided.error || translate('todo.send_failed'))
-          return true
-        }
         const accepted = await runtime.work.sendRuntimeMessage({
           address,
           message,
           ...(attachments.length ? { attachments } : {}),
-          ...(appendUserMessage ? {} : { requestUserInputResponse: response }),
+          requestUserInputResponse: appendUserMessage
+            ? { ...response, delivery: 'async' }
+            : response,
         })
         if (!accepted.accepted) throw new Error(accepted.error || translate('todo.send_failed'))
         if (appendUserMessage) return true

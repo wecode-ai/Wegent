@@ -3151,6 +3151,50 @@ describe('TemporaryChatPanel', () => {
     )
   })
 
+  it('skips only the focused async request while another request stays answerable', async () => {
+    const questions = ['first', 'second'].map(itemId => ({
+      kind: 'request_user_input' as const,
+      itemId,
+      delivery: 'async' as const,
+      questions: [{ id: itemId, question: `${itemId} decision?`, is_other: true }],
+    }))
+    mocks.conversationMessages = questions.map(question => ({
+      id: question.itemId,
+      role: 'assistant',
+      content: '',
+      status: 'done',
+      blocks: [
+        {
+          id: question.itemId,
+          type: 'tool',
+          toolName: 'request_user_input_async',
+          status: 'done',
+          renderPayload: question,
+        },
+      ],
+    })) as typeof mocks.conversationMessages
+    const panel = (focusedRequest: (typeof questions)[number]) => (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="skip-focused"
+        focusedRequest={focusedRequest}
+        focusRequestKey={focusedRequest.itemId}
+      />
+    )
+    const view = render(panel(questions[0]))
+    await userEvent.click(screen.getByTestId('request-user-input-skip-button'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+    )
+    view.rerender(panel(questions[1]))
+    expect(screen.getByTestId('request-user-input-custom-second')).toBeVisible()
+    expect(screen.getByTestId('request-user-input-submit-button')).toBeEnabled()
+    expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+  })
+
   it('shows the selected older question and targets its original turn instead of the latest request', async () => {
     const older = {
       kind: 'request_user_input' as const,

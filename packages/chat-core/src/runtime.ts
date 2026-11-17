@@ -347,6 +347,7 @@ export interface RequestUserInputResponseAnswer {
 }
 
 export interface RequestUserInputResponse {
+  delivery?: "async";
   requestId?: number | string;
   request_id?: number | string;
   itemId?: string;

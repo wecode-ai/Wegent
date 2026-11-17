@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
 import {
   ChevronDown,
@@ -40,6 +40,8 @@ export interface RequestUserInputCardProps {
   error?: string
   draftAnswers?: Record<string, string>
   onDraftAnswersChange?: (answers: Record<string, string>) => void
+  draftOptionAnswers?: Record<string, string>
+  onDraftOptionAnswersChange?: (answers: Record<string, string>) => void
   draftAttachments?: Record<string, Attachment[]>
   onDraftAttachmentsChange?: (attachments: Record<string, Attachment[]>) => void
   composerServices?: RequestUserInputComposerServices
@@ -90,6 +92,8 @@ function RequestUserInputForm({
   error,
   draftAnswers,
   onDraftAnswersChange,
+  draftOptionAnswers,
+  onDraftOptionAnswersChange,
   remainingTime,
   draftAttachments,
   onDraftAttachmentsChange,
@@ -110,13 +114,42 @@ function RequestUserInputForm({
     questions.length === 1 &&
     questions[0].options.length > 0 &&
     !questions[0].allowCustom
-  const [localAnswers, setLocalAnswers] = useState<Record<string, string>>(() =>
-    initialAnswers(questions),
+  const [localAnswers, setLocalAnswers] = useState<Record<string, string>>(
+    () => ({
+      ...initialAnswers(questions),
+      ...draftOptionAnswers,
+    }),
   )
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({})
-  const [customModes, setCustomModes] = useState<Record<string, boolean>>({})
+  const [customModes, setCustomModes] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(
+      Object.keys(draftOptionAnswers ?? {}).map((id) => [id, false]),
+    ),
+  )
   const [answerAttachments, setAnswerAttachments] = useState(
     draftAttachments ?? {},
+  )
+  const answerAttachmentsRef = useRef(answerAttachments)
+  const draftOptionsRef = useRef(draftOptionAnswers ?? {})
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(
+    () =>
+      Object.keys(draftOptionAnswers ?? {})[0] ??
+      initialActiveQuestionId(questions, draftAnswers),
+  )
+  const selectCustomQuestion = useCallback(
+    (id: string) => {
+      setActiveQuestionId(id)
+      setCustomModes((current) => ({ ...current, [id]: true }))
+      if (id in draftOptionsRef.current || isImplementationPlanRequest) {
+        const next = isImplementationPlanRequest
+          ? {}
+          : { ...draftOptionsRef.current }
+        delete next[id]
+        draftOptionsRef.current = next
+        onDraftOptionAnswersChange?.(next)
+      }
+    },
+    [isImplementationPlanRequest, onDraftOptionAnswersChange],
   )
   const [inputReadiness, setInputReadiness] = useState<Record<string, boolean>>(
     {},
@@ -129,11 +162,11 @@ function RequestUserInputForm({
     previousDrafts.current = draftAnswers
     for (const [id, value] of Object.entries(draftAnswers ?? {})) {
       if (previous?.[id] !== value) {
-        setCustomModes((current) => ({ ...current, [id]: true }))
+        selectCustomQuestion(id)
         setCustomAnswers((current) => ({ ...current, [id]: value }))
       }
     }
-  }, [draftAnswers])
+  }, [draftAnswers, selectCustomQuestion])
   // Newly arriving questions receive their defaults without resetting drafts.
   const selectedAnswers = {
     ...initialAnswers(questions),
@@ -159,11 +192,7 @@ function RequestUserInputForm({
     const next = typeof update === 'function' ? update(selectedAnswers) : update
     setLocalAnswers(next)
   }
-  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(() =>
-    initialActiveQuestionId(questions, draftAnswers),
-  )
-  const selectedQuestionId =
-    customDraftQuestionId(questions, draftAnswers) ?? activeQuestionId
+  const selectedQuestionId = activeQuestionId
   const [submitted, setSubmitted] = useState(false)
   const questionIds = JSON.stringify(questions.map((question) => question.id))
   const [skippedQuestionIds, setSkippedQuestionIds] = useState<string | null>(
@@ -196,6 +225,9 @@ function RequestUserInputForm({
         itemId: payload.itemId ?? payload.item_id,
         ...(payload.interactionScope
           ? { interactionScope: payload.interactionScope }
+          : {}),
+        ...(isAsyncRequestUserInputPayload(payload)
+          ? { delivery: 'async' as const }
           : {}),
         answers,
       })
@@ -283,6 +315,11 @@ function RequestUserInputForm({
     setActiveQuestionId(question.id)
     setCustomModes((current) => ({ ...current, [question.id]: false }))
     setSelectedAnswers(nextAnswers)
+    draftOptionsRef.current = {
+      ...draftOptionsRef.current,
+      [question.id]: option.value ?? '',
+    }
+    onDraftOptionAnswersChange?.(draftOptionsRef.current)
     if (shouldSubmitOnOptionSelect(question, option, questions)) {
       void handleSubmit(nextAnswers, question.id)
     }
@@ -506,11 +543,7 @@ function RequestUserInputForm({
                       services={composerServices}
                       initialAttachments={draftAttachments?.[question.id]}
                       onChange={(value) => {
-                        setActiveQuestionId(question.id)
-                        setCustomModes((current) => ({
-                          ...current,
-                          [question.id]: true,
-                        }))
+                        selectCustomQuestion(question.id)
                         const next = {
                           ...draftAnswers,
                           ...customAnswers,
@@ -527,22 +560,18 @@ function RequestUserInputForm({
                         )
                       }}
                       onAttachmentsChange={(attachments) => {
-                        setAnswerAttachments((current) => {
-                          if (
-                            current[question.id] === attachments ||
-                            (!current[question.id] && !attachments.length)
-                          )
-                            return current
-                          return { ...current, [question.id]: attachments }
-                        })
+                        const current = answerAttachmentsRef.current
                         if (
-                          attachments.length ||
-                          answerAttachments[question.id]?.length
+                          current[question.id] === attachments ||
+                          (!current[question.id] && !attachments.length)
                         )
-                          onDraftAttachmentsChange?.({
-                            ...answerAttachments,
-                            [question.id]: attachments,
-                          })
+                          return
+                        const next = { ...current, [question.id]: attachments }
+                        answerAttachmentsRef.current = next
+                        setAnswerAttachments(next)
+                        if (attachments.length)
+                          selectCustomQuestion(question.id)
+                        onDraftAttachmentsChange?.(next)
                       }}
                       onReadyChange={(ready) =>
                         setInputReadiness((current) =>
