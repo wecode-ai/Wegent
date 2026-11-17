@@ -1,152 +1,151 @@
 use super::*;
 
-fn insert(store: &LocalTaskStore, kind: &str, value: Value, at: chrono::DateTime<Utc>) {
-    let connection = store.connection().unwrap();
-    write(&connection, kind, &value).unwrap();
-    connection
-        .execute(
-            "UPDATE loop_items SET created_at=?2,updated_at=?2 WHERE id=?1",
-            params![value["id"].as_str().unwrap(), at.to_rfc3339()],
-        )
-        .unwrap();
+fn insert(connection: &Connection, id: &str, kind: &str, at: &str) {
+    connection.execute(
+        "INSERT INTO loop_items(id,resource_type,metadata,created_at,updated_at) VALUES (?1,?2,'not JSON',?3,?3)",
+        params![id, kind, at],
+    ).unwrap();
+}
+
+fn prune(connection: &Connection, at: chrono::DateTime<Utc>) -> usize {
+    // Retention semantics must not depend on scheduling under the parallel suite.
+    // The zero-budget test independently verifies interruption and rollback.
+    LocalTaskStore::prune_stand_in_history(connection, at, Duration::from_secs(10)).unwrap()
 }
 
 #[test]
-fn retention_keeps_recovery_and_deduplication_but_removes_expired_diagnostics() {
+fn retention_uses_only_type_and_time_and_preserves_recent_and_unrelated_records() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let connection = store.connection().unwrap();
     let at = Utc::now();
-    let old = at - chrono::Duration::days(8);
-    let event = store.enqueue_stand_in_event(7, json!("settled"), json!({"kind":"connection","roleScoped":true,"roleIds":["role"],"source":{"id":"group"},"message":{"text":"Payload"}})).unwrap();
-    let mut settled = event.clone();
-    settled["status"] = json!("handled");
-    insert(&store, "stand_in_event", settled, old);
-    for (id, status) in [
-        ("blocked", "pending"),
-        ("waiting", "handled"),
-        ("snapshot", "handled"),
-    ] {
+    let cutoff = at - chrono::Duration::days(7);
+    let old = cutoff - chrono::Duration::seconds(1);
+    for kind in ["stand_in_event", "stand_in_action", "stand_in_route"] {
         insert(
-            &store,
-            "stand_in_event",
-            json!({"id":id,"userId":7,"status":status,"payload":"Keep"}),
-            old,
+            &connection,
+            &format!("expired-{kind}"),
+            kind,
+            &old.to_rfc3339(),
         );
-    }
-    for (id, status, batch, events, age) in [
-        (
-            "expired",
-            "succeeded",
-            "expired-batch",
-            json!([event["id"]]),
-            old,
-        ),
-        ("recent", "succeeded", "recent-batch", json!([]), at),
-        ("queued", "pending", "queued-batch", json!([]), old),
-        (
-            "sending",
-            "sending",
-            "sending-batch",
-            json!(["waiting"]),
-            old,
-        ),
-        (
-            "duplicate-failure",
-            "failed",
-            "old-failure",
-            json!(["blocked"]),
-            old - chrono::Duration::seconds(1),
-        ),
-        (
-            "latest-failure",
-            "failed",
-            "latest-failure",
-            json!(["blocked"]),
-            old,
-        ),
-        ("assessment", "failed", "current-batch", json!([]), old),
-        ("unknown-result", "failed", "unknown-batch", json!([]), old),
-    ] {
         insert(
-            &store,
-            "stand_in_action",
-            json!({"id":id,"userId":7,"status":status,"kind":"continue_work","batchId":batch,"arguments":{"eventIds":events}}),
-            age,
+            &connection,
+            &format!("boundary-{kind}"),
+            kind,
+            &cutoff.to_rfc3339(),
+        );
+        insert(
+            &connection,
+            &format!("recent-{kind}"),
+            kind,
+            &at.to_rfc3339(),
         );
     }
     insert(
-        &store,
-        "stand_in_action",
-        json!({"id":"foreign","userId":8,"status":"succeeded","kind":"ignore_events"}),
-        old,
+        &connection,
+        "legacy-time",
+        "stand_in_event",
+        &old.format("%Y-%m-%d %H:%M:%S").to_string(),
     );
-    for (id, batch) in [
-        ("expired-route", "expired-batch"),
-        ("live-route", "current-batch"),
-        ("failed-route", "latest-failure"),
+    for kind in [
+        "stand_in_processing",
+        "personal_stand_in",
+        "stand_in_settings",
+        "task",
     ] {
-        insert(
-            &store,
-            "stand_in_route",
-            json!({"id":id,"userId":7,"result":{"snapshotId":batch}}),
-            old,
-        );
+        insert(&connection, kind, kind, &old.to_rfc3339());
     }
-    store.save_stand_in_processing_state(7, &json!({"batchId":"current-batch","error":{"commandId":"unknown-result"},"snapshot":{"events":[{"id":"snapshot"}]}})).unwrap();
-    assert_eq!(store.prune_stand_in_history(7, at).unwrap(), 4);
-    let actions = store.stand_in_actions(7).unwrap();
-    for id in [
-        "recent",
-        "queued",
-        "sending",
-        "latest-failure",
-        "assessment",
-        "unknown-result",
-    ] {
-        assert!(actions.iter().any(|action| action["id"] == id), "{id}");
-    }
-    assert_eq!(actions.len(), 6);
-    assert_eq!(store.stand_in_actions(8).unwrap().len(), 1);
-    let compact = store
-        .stand_in_event(7, event["id"].as_str().unwrap())
+    assert_eq!(prune(&connection, at), 4);
+    let retained: usize = connection
+        .query_row(
+            "SELECT count(*) FROM loop_items WHERE metadata='not JSON'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
-    assert_eq!(compact["compacted"], true);
-    assert!(compact.get("message").is_none());
-    assert_eq!(
-        store
-            .enqueue_stand_in_event(7, json!("settled"), event)
-            .unwrap(),
-        compact
-    );
-    for id in ["blocked", "waiting", "snapshot"] {
-        assert_eq!(store.stand_in_event(7, id).unwrap()["payload"], "Keep");
-    }
-    assert!(store.get_item("expired-route", "stand_in_route").is_err());
-    assert!(store.get_item("live-route", "stand_in_route").is_ok());
-    assert!(store.get_item("failed-route", "stand_in_route").is_ok());
-    assert_eq!(store.prune_stand_in_history(7, at).unwrap(), 0);
+    assert_eq!(retained, 10);
+    assert_eq!(prune(&connection, at), 0);
 }
 
 #[test]
-fn retention_is_bounded_and_resumes_the_backlog_without_waiting_a_day() {
+fn retention_is_bounded_and_resumes_the_backlog() {
     let root = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let connection = store.connection().unwrap();
     let at = Utc::now();
-    {
-        let mut guard = store.connection().unwrap();
-        let tx = guard.transaction().unwrap();
-        for index in 0..=CLEANUP_BATCH {
-            write(&tx, "stand_in_action", &json!({"id":format!("old-{index}"),"userId":7,"status":"succeeded","kind":"ignore_events"})).unwrap();
-        }
-        tx.execute(
-            "UPDATE loop_items SET updated_at=?1 WHERE resource_type='stand_in_action'",
-            [(at - chrono::Duration::days(8)).to_rfc3339()],
+    let old = (at - chrono::Duration::days(8)).to_rfc3339();
+    for index in 0..=CLEANUP_BATCH {
+        insert(
+            &connection,
+            &format!("old-{index}"),
+            "stand_in_action",
+            &old,
+        );
+    }
+    assert_eq!(prune(&connection, at), CLEANUP_BATCH);
+    assert_eq!(prune(&connection, at), 1);
+    assert_eq!(prune(&connection, at), 0);
+}
+
+#[test]
+fn interrupted_retention_rolls_back_and_releases_the_writer() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let connection = store.connection().unwrap();
+    let at = Utc::now();
+    let old = (at - chrono::Duration::days(8)).to_rfc3339();
+    for index in 0..100 {
+        insert(
+            &connection,
+            &format!("old-{index}"),
+            "stand_in_action",
+            &old,
+        );
+    }
+    let error =
+        LocalTaskStore::prune_stand_in_history(&connection, at, Duration::ZERO).unwrap_err();
+    assert!(
+        matches!(error, TaskRuntimeError::Database(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::OperationInterrupted)
+    );
+    let count: usize = connection
+        .query_row(
+            "SELECT count(*) FROM loop_items WHERE resource_type='stand_in_action'",
+            [],
+            |row| row.get(0),
         )
         .unwrap();
-        tx.commit().unwrap();
-    }
-    assert_eq!(store.prune_stand_in_history(7, at).unwrap(), CLEANUP_BATCH);
-    assert_eq!(store.stand_in_actions(7).unwrap().len(), 1);
-    assert_eq!(store.prune_stand_in_history(7, at).unwrap(), 1);
-    assert_eq!(store.prune_stand_in_history(7, at).unwrap(), 0);
+    assert_eq!(count, 100);
+    let writer = Connection::open(&path).unwrap();
+    writer.busy_timeout(Duration::ZERO).unwrap();
+    insert(&writer, "user-event", "stand_in_event", &at.to_rfc3339());
+    assert_eq!(prune(&connection, at), 100);
+}
+
+#[test]
+fn maintenance_yields_to_an_existing_writer_without_schema_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let mut connection = store.connection().unwrap();
+    let before: String = connection
+        .query_row("SELECT group_concat(sql) FROM sqlite_master", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    let error = LocalTaskStore::maintain_stand_in_history(&path).unwrap_err();
+    assert!(
+        matches!(error, TaskRuntimeError::Database(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::DatabaseBusy)
+    );
+    tx.commit().unwrap();
+    assert_eq!(LocalTaskStore::maintain_stand_in_history(&path).unwrap(), 0);
+    let after: String = connection
+        .query_row("SELECT group_concat(sql) FROM sqlite_master", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(before, after);
 }
