@@ -314,6 +314,32 @@ console.log('HOOK_WRITES_COMPLETE')
           'Hook scripts did not finish before cleanup',
           uiTimeoutMs
         )
+        if (!verified) {
+          // Top-level diagnostics survive runtime artifact compaction.
+          const queues = await readdir(join(root, 'logs', 'queues')).catch(() => [])
+          const workers = await Promise.all(
+            queues.map(async id => ({
+              id,
+              log: await optionalFile(join(root, 'logs', 'queues', id, 'worker.log')),
+              pending: await readdir(join(root, 'logs', 'queues', id, 'pending')).catch(() => []),
+            }))
+          )
+          const hooks = await rpc('runtime.hooks.list', {}).catch(error => ({
+            error: String(error),
+          }))
+          await writeFile(
+            join(resultDir, 'async-hooks-diagnostics.json'),
+            JSON.stringify(
+              {
+                workers,
+                runs: hooks.plugins?.find(plugin => plugin.manifest.id === pluginId)?.recentRuns,
+                error: hooks.error,
+              },
+              null,
+              2
+            )
+          ).catch(error => console.error('[async-hooks-diagnostics]', error))
+        }
         if (installed) await rpc('runtime.hooks.delete', { pluginId })
         if (!verified) await cp(root, join(resultDir, 'async-hooks-failure'), { recursive: true })
         await rm(root, { recursive: true, force: true })

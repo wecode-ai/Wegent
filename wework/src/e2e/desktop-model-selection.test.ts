@@ -106,3 +106,55 @@ test('waits for the new conversation before reading its Anthropic model selectio
     error => error === submitted
   )
 })
+
+test('explicitly chooses the protocol model even when the pending default label matches', async () => {
+  const { verifyAnthropicEmptyResponseRecovery } =
+    await import('../../e2e/desktop/modules/resilience-flows.mjs')
+  const { ACTIVE_WORKBENCH_SELECTOR, CLOUD_MODEL_CASES } =
+    await import('../../e2e/desktop/modules/shared.mjs')
+  const model = CLOUD_MODEL_CASES.find(candidate => candidate.protocol === 'anthropic')!
+  const option = `model-option-${model.optionIds[0]}`
+  let open = false
+  let explicitlySelected = false
+  const submitted = new Error('Reached model submission')
+  await assert.rejects(
+    verifyAnthropicEmptyResponseRecovery({
+      composerSelector: `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`,
+      control: {
+        setScenario() {},
+        async awaitNextScenarioRequest() {},
+        async command(action: string, selector: string, options?: { value?: string }) {
+          if (action === 'getWorkbenchDebugSnapshot')
+            return JSON.stringify({
+              workbench: { currentRuntimeTask: null },
+              pane: { currentRuntimeTask: null },
+            })
+          if (action === 'snapshot')
+            return JSON.stringify({ testIds: open ? ['model-selector-menu', option] : [] })
+          if (selector.endsWith('[data-testid="model-selector-button"]')) {
+            if (action === 'getText') return model.modelId
+            if (action === 'getAttribute') return ''
+            if (action === 'clickWhenEnabled') open = true
+          }
+          if (action === 'getElementCount') return open ? '1' : '0'
+          if (action === 'click' && selector.includes(option)) {
+            assert.ok(open)
+            explicitlySelected = true
+          }
+          if (action === 'getAttribute' && options?.value === 'aria-checked')
+            return String(explicitlySelected)
+          if (action === 'press') open = false
+          if (action === 'fill') {
+            assert.ok(
+              explicitlySelected,
+              'The matching draft default can still reconcile to another configured model'
+            )
+            throw submitted
+          }
+          return ''
+        },
+      },
+    }),
+    error => error === submitted
+  )
+})

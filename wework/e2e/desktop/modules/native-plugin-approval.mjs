@@ -93,6 +93,16 @@ while ([DateTime]::UtcNow -lt $deadline) {
   }
   Start-Sleep -Milliseconds 100
 }
+$top = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition) | ForEach-Object {
+  @{ name = $_.Current.Name; className = $_.Current.ClassName; handle = $_.Current.NativeWindowHandle; processId = $_.Current.ProcessId }
+})
+[Console]::Error.WriteLine('Native decision top-level windows: ' + (ConvertTo-Json -InputObject $top -Compress))
+$diagnostics = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition) | Where-Object {
+  $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window
+} | Select-Object -First 20 | ForEach-Object {
+  @{ name = $_.Current.Name; className = $_.Current.ClassName; handle = $_.Current.NativeWindowHandle; processId = $_.Current.ProcessId }
+})
+[Console]::Error.WriteLine('Native decision owned windows: ' + (ConvertTo-Json -InputObject $diagnostics -Compress))
 throw 'The isolated app did not display its native Core plugin decision'
 `
     await execute(

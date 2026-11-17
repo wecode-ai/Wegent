@@ -540,10 +540,23 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
   assert.ok(reply, 'The persisted comment must offer a reply')
   const replySelector = scope(`[data-testid="${reply}"]`)
   await control.command('scrollIntoView', replySelector)
-  await control.command('waitFor', scope('[data-testid="issue-header-context"]'), {
-    text: `${TITLE}已更新`,
-    visible: true,
-  })
+  try {
+    await control.command('waitFor', scope('[data-testid="issue-header-context"]'), {
+      text: `${TITLE}已更新`,
+      visible: true,
+    })
+  } catch (error) {
+    const selectors = [
+      title,
+      replySelector,
+      scope('[data-testid="cloud-todo-detail-scroll"]'),
+    ].join(', ')
+    console.error(
+      '[issue-detail-reading] sticky header geometry:',
+      await control.command('getElementMetrics', selectors)
+    )
+    throw error
+  }
   const timestamp = `${list} .task-detail-thread-actions time`
   const foreground = luminance(
     await control.command('getComputedStyleValue', timestamp, { value: 'color' })
