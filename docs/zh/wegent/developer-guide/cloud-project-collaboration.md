@@ -377,3 +377,22 @@ HTTP transcript 响应必须保留 Runtime 的 `turns`、`running`、`origin`、
 里程碑复用 `loop_items` 的 `resource_type=milestone`，Issue 的关联保存于 `metadata.milestone_id`。本地通过 Executor IPC 和 SQLite 事务持久化，云端里程碑管理 API 由 Rust 实现；现有 Python Issue API 负责关联字段的创建和更新。同项目校验与删除使用同一里程碑记录的事务锁，更新和删除均校验版本。无需新增表或数据库迁移。外部 GitHub/GitLab/钉钉 Issue provider 不包含在此支持范围内。
 
 已完成 Issue 归档后继续计入里程碑的总数和完成数，未完成 Issue 归档后仍计入未完成数，归档与恢复均不改变交付进度；界面单独标明已归档数量，可从里程碑详情进入现有归档箱查看。
+
+## 协作指标时间边界
+
+Rust 的项目与个人协作指标 API 使用同一 UTC `as_of` 和过去七天的半开窗口。项目权限、Issue 可见性与根需求范围先行约束数据；完成量和生命周期终点使用最近一次完成状态事件的精确时间，没有可解析事件的旧记录使用持久化完成时间。重新打开的 Issue 不计入完成量。
+
+MySQL 的秒级 `completed_at` 可能把小数秒四舍五入到下一秒。数据库只用该列筛选两端各扩一秒的候选记录，并纳入完成时间缺失的记录；精确事件时间随后重新判定窗口。响应中的 `as_of` 和窗口不扩展，未来完成与窗口起点之前的完成仍被排除。AI 时长继续合并重叠执行区间，个人指标复用同一项目计算。指标 UI 接入由 W-0064 承担。
+
+```mermaid
+flowchart LR
+    Scope[项目权限与可见根需求] --> Candidates[秒级索引筛选候选记录]
+    Candidates --> Active{进行中或待确认}
+    Active -->|是| Timing[生命周期与执行区间并集]
+    Active -->|否| Event[最近完成事件的精确时间]
+    Event --> Window[真实七天半开窗口]
+    Window --> Completion[完成量与完成时负责人]
+    Window --> Timing
+    Completion --> Personal[个人跨项目汇总]
+    Timing --> Personal
+```

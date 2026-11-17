@@ -1,7 +1,6 @@
 //! Batch public authorship from the original message, trigger and project robot.
 
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 use super::{MessageRow, ack_error, message_view};
@@ -122,11 +121,6 @@ fn apply_private_source_access(
     if row.runtime_device_id.is_empty() || row.runtime_task_id.is_empty() {
         return;
     }
-    let identity = format!(
-        "{}\0{}\0{}\0{}",
-        row.project_id, row.task_id, row.runtime_device_id, row.runtime_task_id
-    );
-    view["traceRef"] = json!(format!("{:x}", Sha256::digest(identity.as_bytes())));
     view["traceState"] = json!(if owner || project_execution {
         "available"
     } else {

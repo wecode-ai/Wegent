@@ -347,6 +347,35 @@ describe('private discussion pane', () => {
   })
 
   it.each([0, 7])(
+    'continues authorized local owner %s through its Runtime identity while retaining the profile actor',
+    async owner => {
+      const localProject = project({ project_store: 'local', current_user_id: 7 })
+      const { props, createAssistantPublication } = fixture({
+        project: localProject,
+        participationViewer: [0, 7],
+      })
+      props.conversation.ownerUserId = owner
+      render(<PrivateDiscussionPane {...props} />)
+      const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+      await expect(
+        panelProps.assistantSend({
+          message: 'Continue the existing local discussion',
+          clientUserMessageId: 'native-owner-request',
+        })
+      ).resolves.toEqual({ sent: true })
+      expect(mocks.runtimeApiSend).toHaveBeenCalledExactlyOnceWith({
+        address: props.conversation.address,
+        message: 'Continue the existing local discussion',
+        clientUserMessageId: 'native-owner-request',
+        conversationContext: 'private_discussion',
+        queueIfBusy: true,
+      })
+      expect(createAssistantPublication).not.toHaveBeenCalled()
+      expect(props.project.current_user_id).toBe(7)
+    }
+  )
+
+  it.each([0, 7])(
     'reads local owner %s and publishes as the current profile actor',
     async owner => {
       const localProject = project({ project_store: 'local', current_user_id: 7 })

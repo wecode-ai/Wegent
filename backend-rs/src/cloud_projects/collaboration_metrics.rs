@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use brz_http_server::StatusCode;
-use brz_mysql::{FromMysqlRow, Json};
+use brz_mysql::{FromMysqlRow, Json, MysqlService};
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use serde_json::{Value, json};
 
@@ -13,6 +13,10 @@ use crate::state::AppState;
 
 const LIVE: &str =
     "(deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))";
+
+#[cfg(test)]
+#[path = "collaboration_metrics_mysql_tests.rs"]
+mod mysql_tests;
 
 #[derive(Debug, FromMysqlRow)]
 struct Issue {
@@ -51,13 +55,29 @@ fn history(issue: &Issue) -> &[Value] {
         .unwrap_or(&[])
 }
 
-fn completion_owner(issue: &Issue) -> Option<i64> {
-    // A snapshot is authoritative; never infer ownership from today's assignee.
-    let event = history(issue)
+fn completion_event(issue: &Issue) -> Option<&Value> {
+    history(issue)
         .iter()
         .rev()
-        .find(|event| event["to_status"] == "completed");
-    if let Some(event) = event {
+        .find(|event| event["to_status"] == "completed")
+}
+
+fn completion_time(issue: &Issue) -> Option<NaiveDateTime> {
+    completion_event(issue)
+        .and_then(|event| timestamp(&event["at"]))
+        .filter(|time| valid_time(*time))
+        .or_else(|| issue.completed_at.filter(|time| valid_time(*time)))
+}
+
+fn completed_in_window(issue: &Issue, as_of: NaiveDateTime) -> bool {
+    issue.status == "completed"
+        && completion_time(issue)
+            .is_some_and(|time| time >= as_of - Duration::days(7) && time < as_of)
+}
+
+fn completion_owner(issue: &Issue) -> Option<i64> {
+    // A snapshot is authoritative; never infer ownership from today's assignee.
+    if let Some(event) = completion_event(issue) {
         if let Some(owner) = event.get("completion_owner_user_id") {
             return owner.as_i64().filter(|id| *id > 0);
         }
@@ -106,7 +126,7 @@ fn union_seconds(intervals: &mut [(NaiveDateTime, NaiveDateTime)]) -> f64 {
 
 fn timing(issue: &Issue, runs: &[&Run], as_of: NaiveDateTime) -> Value {
     let start = issue_start(issue).min(as_of);
-    let authoritative_end = issue.completed_at.filter(|time| valid_time(*time));
+    let authoritative_end = completion_time(issue);
     let end = if issue.status == "completed" {
         authoritative_end.unwrap_or(as_of)
     } else {
@@ -170,15 +190,10 @@ fn timing(issue: &Issue, runs: &[&Run], as_of: NaiveDateTime) -> Value {
 }
 
 fn completion(issues: &[Issue], member_count: usize, as_of: NaiveDateTime) -> Value {
-    let start = as_of - Duration::days(7);
     let mut owners = BTreeMap::<String, usize>::new();
     let mut count = 0;
     for issue in issues {
-        if issue.status != "completed"
-            || !issue
-                .completed_at
-                .is_some_and(|time| time >= start && time < as_of)
-        {
+        if !completed_in_window(issue, as_of) {
             continue;
         }
         count += 1;
@@ -192,6 +207,36 @@ fn completion(issues: &[Issue], member_count: usize, as_of: NaiveDateTime) -> Va
         "per_member": (member_count > 0).then(|| count as f64 / member_count as f64),
         "per_person": owners, "unknown": owners.get("unknown").copied().unwrap_or_default(),
     })
+}
+
+fn candidate_window(as_of: NaiveDateTime) -> (NaiveDateTime, NaiveDateTime) {
+    // DATETIME(0) rounds fractional seconds. Exact event times decide membership.
+    (
+        as_of - Duration::days(7) - Duration::seconds(1),
+        as_of + Duration::seconds(1),
+    )
+}
+
+fn metric_cohort(visibility: &str) -> String {
+    format!(
+        "cloud_project_id=? AND resource_type='task' AND (parent_id IS NULL OR parent_id='') AND {LIVE} {visibility} \
+         AND (status IN ('in_progress','in_review') OR (status='completed' AND \
+         ((completed_at >= ? AND completed_at < ?) OR completed_at IS NULL OR completed_at <= '1970-01-01 00:00:01')))"
+    )
+}
+
+async fn load_issues(
+    mysql: &MysqlService,
+    project_id: &str,
+    visibility: &str,
+    as_of: NaiveDateTime,
+) -> Result<Vec<Issue>, brz_mysql::MysqlError> {
+    let (start, end) = candidate_window(as_of);
+    let cohort = metric_cohort(visibility);
+    mysql.fetch_all(format!(
+        "SELECT id,status,created_at,completed_at,COALESCE(metadata,JSON_OBJECT()) AS metadata FROM loop_items \
+         WHERE {cohort}"
+    ), (project_id, start, end)).await
 }
 
 async fn project_metrics(
@@ -230,15 +275,11 @@ async fn project_metrics(
         visible_item_filter_sql(user_id, access.project.default_issue_security())
     };
     let id = project_id.to_string();
-    let start = as_of - Duration::days(7);
-    let cohort = format!(
-        "cloud_project_id=? AND resource_type='task' AND (parent_id IS NULL OR parent_id='') AND {LIVE} {visibility} \
-         AND (status IN ('in_progress','in_review') OR (status='completed' AND completed_at >= ? AND completed_at < ?))"
-    );
-    let mut issues: Vec<Issue> = state.mysql.fetch_all(format!(
-        "SELECT id,status,created_at,completed_at,COALESCE(metadata,JSON_OBJECT()) AS metadata FROM loop_items \
-         WHERE {cohort}"
-    ), (id.as_str(),start,as_of)).await.map_err(internal)?;
+    let (start, candidate_end) = candidate_window(as_of);
+    let cohort = metric_cohort(&visibility);
+    let mut issues = load_issues(&state.mysql, &id, &visibility, as_of)
+        .await
+        .map_err(internal)?;
     // created_at is database-generated in the session timezone; lifecycle and
     // execution timestamps are explicitly persisted as naive UTC by their owners.
     for issue in &mut issues {
@@ -248,7 +289,7 @@ async fn project_metrics(
         "SELECT loop_item_id,executor_owner_user_id,status,started_at,completed_at FROM loop_item_executions \
          WHERE cloud_project_id=? AND loop_item_id IN (SELECT id FROM loop_items WHERE {cohort}) \
          AND started_at > '1970-01-01 00:00:01' AND started_at < ?"),
-        (id.as_str(), id.as_str(), start, as_of, as_of),
+        (id.as_str(), id.as_str(), start, candidate_end, as_of),
     ).await.map_err(internal)?;
     let mut grouped = BTreeMap::<&str, Vec<&Run>>::new();
     for run in &runs {
@@ -259,10 +300,7 @@ async fn project_metrics(
         .iter()
         .filter(|issue| {
             matches!(issue.status.as_str(), "in_progress" | "in_review")
-                || (issue.status == "completed"
-                    && issue
-                        .completed_at
-                        .is_some_and(|time| time >= start && time < as_of))
+                || completed_in_window(issue, as_of)
         })
         .map(|issue| {
             timing(
@@ -387,7 +425,7 @@ async fn read_personal_metrics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn at(hour: i64) -> NaiveDateTime {
+    pub(super) fn at(hour: i64) -> NaiveDateTime {
         DateTime::from_timestamp(1_800_000_000 + hour * 3600, 0)
             .unwrap()
             .naive_utc()
@@ -434,6 +472,50 @@ mod tests {
         assert_eq!(result["per_member"], 0.4);
         assert_eq!(result["unknown"], 1);
         assert!(completion(&issues, 0, at(168))["per_member"].is_null());
+    }
+    #[test]
+    fn precise_completion_events_override_mysql_second_rounding_at_both_window_edges() {
+        let as_of = at(168) + Duration::milliseconds(900);
+        let mut recent = issue();
+        recent.completed_at = Some(at(168) + Duration::seconds(1));
+        let actual = at(168) + Duration::milliseconds(800);
+        recent.metadata = Json(json!({"status_history":[{
+            "to_status":"completed", "at":actual.and_utc(),
+            "trigger":"user_update", "by_user_id":7
+        }]}));
+        assert_eq!(completion(&[recent], 2, as_of)["completed"], 1);
+
+        let mut outside = issue();
+        outside.completed_at = Some(at(0) + Duration::seconds(1));
+        outside.metadata = Json(json!({"status_history":[{
+            "to_status":"completed", "at":(at(0)+Duration::milliseconds(800)).and_utc()
+        }]}));
+        assert_eq!(completion(&[outside], 2, as_of)["completed"], 0);
+
+        let mut boundary = issue();
+        boundary.completed_at = Some(at(168));
+        boundary.metadata = Json(json!({"status_history":[{
+            "to_status":"completed", "at":as_of.and_utc()
+        }]}));
+        assert_eq!(completion(&[boundary], 2, as_of)["completed"], 0);
+    }
+
+    #[test]
+    fn lifecycle_timing_uses_the_current_completion_event_without_rounding() {
+        let mut issue = issue();
+        issue.completed_at = Some(at(2) + Duration::seconds(1));
+        let end = at(2) + Duration::milliseconds(800);
+        issue.metadata = Json(json!({"status_history":[
+            {"to_status":"completed", "at":at(1).and_utc()},
+            {"to_status":"in_progress", "at":at(1).and_utc()},
+            {"to_status":"completed", "at":end.and_utc()}
+        ]}));
+        let result = timing(&issue, &[], at(4));
+        assert_eq!(result["end"], json!(end.and_utc()));
+        assert_eq!(result["wall_seconds"], 3600.8);
+        assert_eq!(result["partial"], false);
+        issue.completed_at = None;
+        assert_eq!(completion(&[issue], 1, at(4))["completed"], 1);
     }
     #[test]
     fn missing_terminal_end_is_unknown_and_running_end_is_clipped() {

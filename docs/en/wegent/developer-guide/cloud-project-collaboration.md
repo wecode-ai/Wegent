@@ -377,3 +377,22 @@ Each Issue can reference one milestone in the same project. Parent and child Iss
 Milestones reuse `loop_items` nodes with `resource_type=milestone`; Issue references live in `metadata.milestone_id`. Executor IPC and SQLite transactions own local persistence. Rust owns the new cloud milestone APIs, while existing Python Issue APIs create and update references. Association validation and deletion lock the same milestone row; updates and deletion check versions. No new table or migration is required. External GitHub, GitLab and DingTalk Issue providers are outside this feature's scope.
 
 Archived completed Issues remain in both total and completed counts, and archived unfinished Issues remain in the remaining count. Archiving and restoration do not change delivery progress. The UI identifies the archived count and links milestone details to the existing archive.
+
+## Collaboration metric time boundaries
+
+The Rust project and personal collaboration metric APIs share one UTC `as_of` and a half-open trailing seven-day window. Project authority, Issue visibility and root-Issue scope constrain the data first. Completion counts and lifecycle ends use the precise latest completion event; older records without a parseable event use their persisted completion time. Reopened Issues do not count as completed.
+
+MySQL can round fractional seconds in second-precision `completed_at` into the next second. That column only selects candidates with a one-second margin at each boundary, including records with missing completion times; precise event times then determine actual window membership. The response's `as_of` and window never expand: future completions and completions before the start remain excluded. AI timing still unions overlapping execution intervals, and personal metrics reuse the project calculation. W-0064 owns metric UI integration.
+
+```mermaid
+flowchart LR
+    Scope[Project authority and visible root Issues] --> Candidates[Second-precision indexed candidates]
+    Candidates --> Active{In progress or in review}
+    Active -->|Yes| Timing[Lifecycle and execution interval union]
+    Active -->|No| Event[Precise latest completion event]
+    Event --> Window[Actual half-open seven-day window]
+    Window --> Completion[Completions and completion owner]
+    Window --> Timing
+    Completion --> Personal[Personal cross-project totals]
+    Timing --> Personal
+```

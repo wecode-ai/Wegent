@@ -311,7 +311,8 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                           idempotencyKey: input.clientUserMessageId,
                           projectId: project.id,
                           issueId: issue.id,
-                          senderUserId: Number(actorId),
+                          // Runtime ownership is distinct from the profile publishing conclusions.
+                          senderUserId: conversation.ownerUserId,
                           visibility: 'private',
                           message: input.message,
                           attachmentIds: input.attachmentIds,

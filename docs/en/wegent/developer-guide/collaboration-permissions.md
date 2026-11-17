@@ -11,7 +11,9 @@ flowchart TD
     Source[Current user and Issue permission] --> Lock[Lock Issue and owned active task binding]
     Lock --> Commit[Atomically persist content and verified provenance]
     Commit --> Owner[Full view in owner acknowledgement only]
-    Commit --> Filter[Room projection removes private process and parameters]
+    Commit --> Projection[Canonical message projection and opaque source reference]
+    Live[Live execution and background completion] --> Projection
+    Projection --> Filter[Room projection removes private process and parameters]
     Filter --> Public[Public conclusion and summary]
     Public --> Receipt{Current assignment and Runtime turn match}
     Receipt -->|Yes| Complete[Update current assignment receipt]
@@ -23,6 +25,19 @@ flowchart TD
 ```
 
 A restricted source notification from a shared room is not the current viewer's message view. The client reads that message by sequence through the existing subscription history endpoint, which revalidates project, Issue and source access. Only a response matching the message and subscription scope can update the source entry. Responses after unsubscribe and older responses superseded by a newer notification are discarded. A failed authorized read retains the received public projection and logs the error; bindings never imply private access.
+
+Rust live execution, background completion and history reads share one message projection. When a durable source exists, an unauthenticated projection carries only an opaque reference and restricted state. Shared pushes contain no Runtime address, private process text or parameters. The client uses the existing subscription endpoint to obtain the current viewer's authorized source, preserving the read entry across running and completion notifications. Missing sources remain history-unavailable. Projection and shared-push contracts cover live deltas, final results, background completion and missing sources. CP01–CP20 remain unchanged.
+
+Private discussion sends retain the original Runtime owner within the validated participation scope, including local owner 0. Public conclusions retain the current profile as publisher. This identity composition applies only within the local project's participation scope for the current account; 0 is never a global account alias and grants no cloud private-history access. `PrivateDiscussionPane` regressions verify actual sends for local owner 0 and the profile owner, plus rejection of account changes, cloud and out-of-scope owners.
+
+```mermaid
+flowchart LR
+    Account[Current account and project] --> Scope[Validate local participation and durable binding]
+    Scope --> Discussion[Continue as the original Runtime owner]
+    Scope --> Conclusion[Publish as the current profile]
+    Discussion --> Native[Native owner 0 or profile owner]
+    Conclusion --> Publish[Server validates permission and publication provenance]
+```
 
 Manual source starts use the host snapshot's existing `origin.manual` and exact `standInSourceBindings`. Transient confirmation flags confer no durable authorization, and later arrivals cannot reuse the grant. Disabling automation does not block authorized manual workers or their completion reports. Queue admission revalidates the original message grant, source, identity and configuration version while retaining native confirmation. Automatic workers still require enabled role and source policies; revoking the binding blocks both workers and reports. Native manual-start, snapshot and source-task admission regressions protect these boundaries. CP01–CP20 remain unchanged.
 

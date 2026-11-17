@@ -12,6 +12,7 @@
 use brz_mysql::{Json, MysqlTransaction as _};
 use chrono::Utc;
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 use super::project_chat_events::ack_error;
 use crate::json_compat::python_json_value;
@@ -571,6 +572,14 @@ pub(crate) async fn update_message(
 /// `ProjectChatMessageView`.
 pub(crate) fn message_view(row: &MessageRow) -> Value {
     let metadata = row.metadata();
+    let trace_ref =
+        (!row.runtime_device_id.is_empty() && !row.runtime_task_id.is_empty()).then(|| {
+            let identity = format!(
+                "{}\0{}\0{}\0{}",
+                row.project_id, row.task_id, row.runtime_device_id, row.runtime_task_id
+            );
+            format!("{:x}", Sha256::digest(identity.as_bytes()))
+        });
     let historical = metadata
         .get("history_import")
         .is_some_and(|value| !value.is_null())
@@ -637,8 +646,8 @@ pub(crate) fn message_view(row: &MessageRow) -> Value {
         "rootMessageId": optional_text(&row.thread_root_message_id),
         "agentId": optional_text(&row.agent_id),
         "runtimeAddress": Value::Null,
-        "traceRef": Value::Null,
-        "traceState": "history-unavailable",
+        "traceState": if trace_ref.is_some() { "restricted" } else { "history-unavailable" },
+        "traceRef": trace_ref,
         "status": row.status,
         "createdAt": utc_isoformat(row.created_at),
         "updatedAt": utc_isoformat(row.updated_at),

@@ -871,7 +871,7 @@ export function TemporaryChatPanel({
   const send = useCallback(
     async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
       if (runtimeContext?.conversationContext === 'private_discussion') {
-        console.info('[runtime-v2] private conversation submit', {
+        console.debug('[runtime-v2] private conversation submit', {
           taskId: address?.taskId,
           active,
           readOnly,
@@ -955,7 +955,7 @@ export function TemporaryChatPanel({
                   !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
                 ))
           if (runtimeContext?.conversationContext === 'private_discussion') {
-            console.info('[runtime-v2] private conversation send result', {
+            console.debug('[runtime-v2] private conversation send result', {
               taskId: address.taskId,
               sent: result.sent,
               transport: assistantSend ? 'assistant' : 'runtime',
