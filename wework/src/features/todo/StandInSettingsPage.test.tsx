@@ -71,6 +71,99 @@ function fixture(overrides: Partial<PersonalStandInSettings> = {}) {
 const userSetup = () => userEvent.setup({ delay: null })
 
 describe('Personal stand-in settings', () => {
+  it.each([false, true])(
+    'keeps new-role name validation after returning (advanced: %s)',
+    async advanced => {
+      const { props, personalSave } = fixture()
+      const user = userSetup()
+      render(<StandInSettingsPage {...props} />)
+      await user.click(await screen.findByTestId('stand-in-list-configure'))
+      await screen.findByTestId('stand-in-role-name')
+      await user.click(screen.getByTestId('stand-in-back'))
+      if (advanced) await user.click(screen.getByTestId('stand-in-advanced-open'))
+      await user.click(screen.getByTestId('stand-in-save'))
+      expect(personalSave).not.toHaveBeenCalled()
+      expect(await screen.findByRole('alert')).toHaveTextContent('请填写助理名称')
+      expect(screen.getByTestId('stand-in-role-name')).toHaveFocus()
+      await user.type(screen.getByTestId('stand-in-role-name'), 'Review role')
+      await user.click(screen.getByTestId('stand-in-save'))
+      await waitFor(() => expect(personalSave).toHaveBeenCalledOnce())
+    }
+  )
+
+  it('cancels nested project-role creation without closing its parent editor', async () => {
+    const { props, personalSave } = fixture()
+    const onCancel = vi.fn()
+    const user = userSetup()
+    render(
+      <StandInSettingsPage {...props} initialProject={props.projects[0]} onCancel={onCancel} />
+    )
+    await user.selectOptions(await screen.findByTestId('stand-in-project-select'), '__new')
+    await screen.findByTestId('stand-in-role-name')
+    await user.click(screen.getByTestId('stand-in-cancel'))
+    expect(screen.queryByTestId('stand-in-role-name')).not.toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-project-select')).not.toHaveValue('__new')
+    expect(screen.queryByTestId('stand-in-discard')).not.toBeInTheDocument()
+    expect(onCancel).not.toHaveBeenCalled()
+    expect(personalSave).not.toHaveBeenCalled()
+  })
+
+  it('retries a failed environment request without reloading settings or losing the role draft', async () => {
+    const { props, personalGet } = fixture()
+    const listRuntimeWork = vi
+      .fn(async () => ({ projects: [], chats: [] }))
+      .mockRejectedValueOnce(new Error('Environment unavailable'))
+    props.services = {
+      ...props.services,
+      runtimeWorkApi: { listRuntimeWork } as unknown as WorkbenchServices['runtimeWorkApi'],
+    }
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    const name = await screen.findByRole('textbox', { name: '助理名称' })
+    await user.clear(name)
+    await user.type(name, 'Retained draft')
+    await user.click(screen.getByTestId('stand-in-advanced-open'))
+    await screen.findByRole('alert')
+    await user.click(screen.getByRole('button', { name: '重新加载' }))
+    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
+    expect(personalGet).toHaveBeenCalledOnce()
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    await user.click(screen.getByTestId('stand-in-back'))
+    expect(screen.getByRole('textbox', { name: '助理名称' })).toHaveValue('Retained draft')
+  })
+
+  it('protects a failed save draft before explicitly reloading saved settings', async () => {
+    const { props, personalSave, personalGet } = fixture()
+    personalSave.mockRejectedValueOnce(new Error('Save unavailable'))
+    const user = userSetup()
+    render(<StandInSettingsPage {...props} />)
+    const name = await screen.findByRole('textbox', { name: '助理名称' })
+    await user.clear(name)
+    await user.type(name, 'Retained draft')
+    await user.click(screen.getByTestId('stand-in-save'))
+    await screen.findByRole('alert')
+    await user.click(screen.getByTestId('stand-in-reload'))
+    await user.click(screen.getByTestId('stand-in-keep-editing'))
+    expect(name).toHaveValue('Retained draft')
+    expect(personalGet).toHaveBeenCalledOnce()
+    await user.click(screen.getByTestId('stand-in-reload'))
+    await user.click(screen.getByTestId('stand-in-discard'))
+    await waitFor(() => expect(personalGet).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('textbox', { name: '助理名称' })).toHaveValue('')
+  })
+
+  it('keeps configured project scope visible when receiving is paused', async () => {
+    const role = newStandInRole('mac', 'default')
+    role.collaboration.enabled = false
+    role.collaboration.allProjects = true
+    const { props, personalSave } = fixture({ roles: [role] })
+    render(<StandInSettingsPage {...props} />)
+    const summary = await screen.findByTestId('stand-in-source-summary')
+    expect(summary).toHaveTextContent('已连接 2 个项目')
+    expect(screen.getByTestId('stand-in-sources-empty')).toHaveTextContent('当前未开启工作来源接收')
+    expect(personalSave).not.toHaveBeenCalled()
+  })
+
   it('saves the role device while keeping draft text and leaving old workspace settings at the source', async () => {
     const role = {
       ...newStandInRole('mac', 'review'),
@@ -285,7 +378,7 @@ describe('Personal stand-in settings', () => {
     await user.click(await screen.findByTestId('stand-in-role-delete'))
     await user.click(screen.getByTestId('stand-in-role-delete-confirm'))
     expect(
-      await screen.findByText('分身设置未保存。请保留当前修改，检查执行设备连接后重新保存。')
+      await screen.findByText('助理设置未保存。请保留当前修改，检查执行设备连接后重新保存。')
     ).toBeInTheDocument()
     expect(onDeleted).not.toHaveBeenCalled()
     expect(screen.getByTestId('stand-in-role-delete-confirm')).toBeInTheDocument()
@@ -415,7 +508,7 @@ describe('Personal stand-in settings', () => {
     const user = userSetup()
     render(<StandInSettingsPage {...props} initialProject={props.projects[0]} onSaved={onSaved} />)
     await user.selectOptions(await screen.findByTestId('stand-in-project-select'), '__new')
-    expect(screen.getByTestId('stand-in-role-name')).toHaveValue('First project 分身')
+    expect(screen.getByTestId('stand-in-role-name')).toHaveValue('First project 助理')
     expect(screen.getByTestId('stand-in-project-select')).toHaveValue('__new')
     expect(screen.queryByTestId('execution-settings')).not.toBeInTheDocument()
     expect(personalSave).not.toHaveBeenCalled()
@@ -428,7 +521,7 @@ describe('Personal stand-in settings', () => {
         roles: [
           expect.objectContaining({ id: 'default' }),
           expect.objectContaining({
-            name: 'First project 分身',
+            name: 'First project 助理',
             enabled: true,
             collaboration: expect.objectContaining({
               enabled: true,
@@ -454,7 +547,7 @@ describe('Personal stand-in settings', () => {
     await user.click(screen.getByTestId('stand-in-cancel'))
     expect(screen.getByTestId('stand-in-project-select')).toHaveValue('default')
     expect(screen.queryByTestId('stand-in-role-name')).not.toBeInTheDocument()
-    expect(screen.queryByRole('option', { name: 'First project 分身' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'First project 助理' })).not.toBeInTheDocument()
     expect(personalSave).not.toHaveBeenCalled()
   })
 
@@ -481,7 +574,7 @@ describe('Personal stand-in settings', () => {
     render(<StandInSettingsPage {...props} />)
     await user.click(await screen.findByTestId('stand-in-list-configure'))
     await user.click(screen.getByTestId('stand-in-save'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('请填写分身名称')
+    expect(await screen.findByRole('alert')).toHaveTextContent('请填写助理名称')
     expect(personalSave).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('stand-in-role-name'))
     await user.paste('Review')
@@ -578,7 +671,7 @@ describe('Personal stand-in settings', () => {
     render(<StandInSettingsPage {...props} />)
     await user.click(await screen.findByTestId('stand-in-list-configure'))
     await user.click(screen.getByTestId('stand-in-save'))
-    expect(await screen.findByRole('alert')).toHaveTextContent('请填写分身名称')
+    expect(await screen.findByRole('alert')).toHaveTextContent('请填写助理名称')
     expect(screen.queryByTestId('stand-in-reload')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('stand-in-cancel'))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
@@ -587,8 +680,8 @@ describe('Personal stand-in settings', () => {
   })
 
   it.each([
-    ['first', '默认分身'],
-    ['second', '默认分身 2'],
+    ['first', '默认助理'],
+    ['second', '默认助理 2'],
   ])('keeps the migrated role %s identifiable and allows saving', async (id, name) => {
     const first = { ...newStandInRole('mac', 'first'), version: 1 }
     const second = { ...newStandInRole('mac', 'second'), version: 1 }
@@ -605,7 +698,7 @@ describe('Personal stand-in settings', () => {
     const { props, personalSave } = fixture({ roles: [first, second] })
     const user = userSetup()
     render(<StandInSettingsPage {...props} initialProfileId={id} />)
-    expect(await screen.findByRole('textbox', { name: '分身名称' })).toHaveAttribute(
+    expect(await screen.findByRole('textbox', { name: '助理名称' })).toHaveAttribute(
       'placeholder',
       name
     )
@@ -623,7 +716,7 @@ describe('Personal stand-in settings', () => {
     personalSave.mockRejectedValueOnce(new Error('version_conflict'))
     const user = userSetup()
     const { unmount } = render(<StandInSettingsPage {...props} initialProfileId="review" />)
-    const name = await screen.findByRole('textbox', { name: '分身名称' })
+    const name = await screen.findByRole('textbox', { name: '助理名称' })
     expect(name).toHaveValue('Review')
     expect(screen.queryByTestId('stand-in-role-select')).not.toBeInTheDocument()
     await user.clear(name)
@@ -631,7 +724,7 @@ describe('Personal stand-in settings', () => {
     expect(personalSave).not.toHaveBeenCalled()
     await user.click(screen.getByTestId('stand-in-save'))
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      '分身设置已在其他位置更新，请刷新后重新修改。'
+      '助理设置已在其他位置更新，请刷新后重新修改。'
     )
     expect(name).toHaveValue('代码审查')
     await user.click(screen.getByTestId('stand-in-save'))
@@ -643,10 +736,10 @@ describe('Personal stand-in settings', () => {
     )
     unmount()
     render(<StandInSettingsPage {...props} initialProfileId="review" />)
-    expect(await screen.findByRole('textbox', { name: '分身名称' })).toHaveValue('代码审查')
+    expect(await screen.findByRole('textbox', { name: '助理名称' })).toHaveValue('代码审查')
   })
 
-  it('discards connection drafts on Back and does not change saved configuration', async () => {
+  it('retains connection drafts on Back and persists them only after Save', async () => {
     const { props, personalSave } = fixture()
     const user = userSetup()
     render(<StandInSettingsPage {...props} />)
@@ -657,8 +750,22 @@ describe('Personal stand-in settings', () => {
     expect(screen.getAllByTestId('stand-in-connections-back')).toHaveLength(1)
     await user.click(screen.getByTestId('stand-in-connections-back'))
     await user.click(screen.getByTestId('stand-in-back'))
-    expect(screen.getByTestId('stand-in-sources-empty')).toBeInTheDocument()
+    expect(screen.getByTestId('stand-in-source-summary')).toHaveTextContent('协作项目')
+    expect(screen.queryByTestId('stand-in-sources-empty')).not.toBeInTheDocument()
     expect(personalSave).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('stand-in-save'))
+    await waitFor(() => expect(personalSave).toHaveBeenCalledOnce())
+    expect(personalSave).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        roles: expect.arrayContaining([
+          expect.objectContaining({
+            collaboration: expect.objectContaining({ enabled: true }),
+          }),
+        ]),
+      }),
+      'mac'
+    )
   })
 
   it('applies instructions only after Save and preserves a failed-save draft', async () => {
@@ -671,7 +778,7 @@ describe('Personal stand-in settings', () => {
     expect(screen.queryByTestId('stand-in-auto')).not.toBeInTheDocument()
     await user.click(screen.getByTestId('stand-in-save'))
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      '分身设置已在其他位置更新，请刷新后重新修改。'
+      '助理设置已在其他位置更新，请刷新后重新修改。'
     )
     expect(screen.getByTestId('stand-in-role-name')).toHaveValue(' changed')
   })
@@ -745,7 +852,7 @@ it('preserves independent source connections and the draft after a save failure'
   const user = userSetup()
   render(<StandInSettingsPage {...props} />)
   await user.click(await screen.findByTestId('stand-in-save'))
-  expect(await screen.findByRole('alert')).toHaveTextContent('分身设置未保存')
+  expect(await screen.findByRole('alert')).toHaveTextContent('助理设置未保存')
   expect(screen.getByTestId('stand-in-role-name')).toHaveValue('Review')
   expect(personalSave.mock.calls[0][1].roles[0].connections).toEqual(role.connections)
   await user.click(screen.getByTestId('stand-in-save'))

@@ -91,6 +91,9 @@ class RunnerSelection(BaseModel):
 
     execution_policy: ExecutionPolicy | None = None
     model: ModelIdentity | None = None
+    recovery_from_environment_id: str | None = Field(
+        default=None, pattern=r"^[1-9][0-9]*$"
+    )
 
 
 class WorkspaceRunnerCreate(BaseModel):

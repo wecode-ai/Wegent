@@ -109,7 +109,7 @@ fn write_gated_model_codex(root: &Path, log_path: &Path, gate_path: &Path) -> Pa
     let binary = root.join("fake-codex.sh");
     fs::write(
         &binary,
-        format!(
+        wegent_executor_test_support::with_codex_bundled_catalog(&format!(
             r#"#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> '{}'
@@ -132,7 +132,7 @@ done
             log_path.display(),
             gate_path.display(),
             gate_path.display(),
-        ),
+        )),
     )
     .unwrap();
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();

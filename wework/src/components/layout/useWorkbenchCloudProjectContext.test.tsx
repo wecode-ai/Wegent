@@ -7,6 +7,15 @@ import {
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import '@/i18n'
 import type { RuntimeTaskAddress } from '@/types/api'
+import {
+  forgetProjectSpaceTaskBinding,
+  projectSpaceForRuntimeTask,
+  projectSpaceRef,
+  publishProjectSpaceTaskBindingChanged,
+  publishProjectSpaceTaskContextChanged,
+  rememberProjectSpaceTaskBinding,
+  subscribeProjectSpaceTaskBindingChanged,
+} from '@/features/todo/projectSpaceSelection'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
@@ -67,6 +76,17 @@ describe('useWorkbenchCloudProjectContext', () => {
     const { result, unmount } = renderCloudContext()
     act(() => result.current.clearPendingProjectContext())
     unmount()
+    for (const address of [
+      { deviceId: 'device-1', taskId: 'runtime-1' },
+      { deviceId: 'device-1', taskId: 'runtime-2' },
+      { deviceId: 'device-retained', taskId: 'retained-task' },
+      { deviceId: 'device-retained', taskId: 'different-task' },
+      { deviceId: 'cloud-device', taskId: 'claude-task' },
+      { deviceId: 'local-device', taskId: 'runtime-existing' },
+    ]) {
+      const binding = projectSpaceForRuntimeTask(address)
+      if (binding) forgetProjectSpaceTaskBinding(address, binding)
+    }
   })
 
   test('prepares a pending backend project and task for runtime creation', async () => {
@@ -587,4 +607,258 @@ describe('useWorkbenchCloudProjectContext', () => {
       '完成已有任务的看板关联'
     )
   })
+})
+
+describe('current project binding context ownership', () => {
+  const tasks: RuntimeTaskAddress[] = []
+  const task = (id: string, deviceId = 'local-device'): RuntimeTaskAddress => {
+    const address = { deviceId, taskId: `context-owner-${id}` }
+    tasks.push(address)
+    return address
+  }
+  const sources = (id: string) => {
+    const makeApi = (target: CloudProject) => ({
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [target] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      findCloudContextForTask: vi.fn().mockResolvedValue({
+        project: target,
+        loop_item: loopItem(target.id),
+      }),
+    })
+    const projects = {
+      local: project(`${id}-local`, 'local'),
+      backend: project(`${id}-backend`, 'backend'),
+    }
+    const apis = { local: makeApi(projects.local), backend: makeApi(projects.backend) }
+    const services = {
+      projectSpaceApis: { local: apis.local, cloud: apis.backend },
+      workspaceRuntimePort: cloudRuntimePort(apis.backend),
+    } as unknown as WorkbenchServices
+    return { projects, apis, services }
+  }
+  const renderContext = (address: RuntimeTaskAddress, services: WorkbenchServices) =>
+    renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: address,
+        defaultProjectSpace: null,
+        paneKey: address.taskId,
+        runtimeTaskTitle: 'Current task',
+        services,
+      })
+    )
+
+  afterEach(() => {
+    for (const address of tasks.splice(0)) {
+      const binding = projectSpaceForRuntimeTask(address)
+      if (binding) forgetProjectSpaceTaskBinding(address, binding)
+    }
+  })
+
+  test.each([
+    ['local', 'local-device'],
+    ['local', 'remote-device'],
+    ['backend', 'local-device'],
+    ['backend', 'remote-device'],
+  ] as const)('uses the known %s owner on %s for load and send', async (store, deviceId) => {
+    const address = task(`${store}-${deviceId}`, deviceId)
+    const { projects, apis, services } = sources(address.taskId)
+    rememberProjectSpaceTaskBinding(address, projectSpaceRef(projects[store]))
+    const other = store === 'local' ? 'backend' : 'local'
+    const { result } = renderContext(address, services)
+
+    await waitFor(() => expect(result.current.boundCloudProject).toEqual(projects[store]))
+    expect(apis[store].findCloudContextForTask).toHaveBeenCalledOnce()
+    expect(apis[other].findCloudContextForTask).not.toHaveBeenCalled()
+    await act(async () => {
+      await result.current.prepareSubmission('Continue current work')
+    })
+    expect(apis[store].findCloudContextForTask).toHaveBeenCalledTimes(2)
+    expect(apis[other].findCloudContextForTask).not.toHaveBeenCalled()
+  })
+
+  test.each([undefined, 'local', 'backend'] as const)(
+    'retains concurrent discovery when only origin %s is available',
+    async originStore => {
+      const address = {
+        ...task(`unknown-${originStore}`),
+        runtimeHandle: { origin: { type: 'board_task', projectStore: originStore } },
+      }
+      const { apis, services } = sources(address.taskId)
+      const { result } = renderContext(address, services)
+      await waitFor(() => expect(result.current.boundCloudProject).not.toBeNull())
+      expect(apis.local.findCloudContextForTask).toHaveBeenCalledOnce()
+      expect(apis.backend.findCloudContextForTask).toHaveBeenCalledOnce()
+    }
+  )
+
+  test('keeps project-session authorization ahead of a local binding and origin', async () => {
+    const address = {
+      ...task('cloud-session'),
+      projectSession: { projectId: 'authorized-project', issueId: 'authorized-issue' },
+      runtimeHandle: { origin: { projectStore: 'local' } },
+    }
+    const { projects, apis, services } = sources(address.taskId)
+    rememberProjectSpaceTaskBinding(address, projectSpaceRef(projects.local))
+    const { result } = renderContext(address, services)
+    await waitFor(() => expect(result.current.boundCloudProject).toEqual(projects.backend))
+    expect(apis.local.findCloudContextForTask).not.toHaveBeenCalled()
+    await act(async () => {
+      await result.current.prepareSubmission('Continue authorized work')
+    })
+    expect(apis.backend.findCloudContextForTask).toHaveBeenCalledTimes(2)
+    expect(apis.local.findCloudContextForTask).not.toHaveBeenCalled()
+  })
+
+  test.each(['local', 'backend'] as const)(
+    'refreshes a %s binding after moving stores and rejects its late response',
+    async store => {
+      const other = store === 'local' ? 'backend' : 'local'
+      const address = task(`move-${store}`)
+      const { projects, apis, services } = sources(address.taskId)
+      let resolveInitial!: (value: { project: CloudProject; loop_item: CloudLoopItem }) => void
+      apis[store].findCloudContextForTask.mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveInitial = resolve
+          })
+      )
+      rememberProjectSpaceTaskBinding(address, projectSpaceRef(projects[store]))
+      const { result } = renderContext(address, services)
+      await waitFor(() => expect(apis[store].findCloudContextForTask).toHaveBeenCalledOnce())
+      expect(apis[other].findCloudContextForTask).not.toHaveBeenCalled()
+
+      act(() =>
+        publishProjectSpaceTaskBindingChanged({
+          task: address,
+          project: projectSpaceRef(projects[other]),
+          type: 'bound',
+        })
+      )
+      await waitFor(() => expect(result.current.boundCloudProject).toEqual(projects[other]))
+      await act(async () => {
+        resolveInitial({ project: projects[store], loop_item: loopItem(projects[store].id) })
+      })
+      expect(result.current.boundCloudProject).toEqual(projects[other])
+      expect(projectSpaceForRuntimeTask(address)).toEqual(projectSpaceRef(projects[other]))
+    }
+  )
+
+  test('invalidates an unbound owner and discovers the actual new binding', async () => {
+    const address = task('unbound')
+    const { projects, apis, services } = sources(address.taskId)
+    rememberProjectSpaceTaskBinding(address, projectSpaceRef(projects.local))
+    const { result } = renderContext(address, services)
+    await waitFor(() => expect(result.current.boundCloudProject).toEqual(projects.local))
+    expect(apis.backend.findCloudContextForTask).not.toHaveBeenCalled()
+    apis.local.findCloudContextForTask.mockRejectedValue(new Error('No local binding'))
+
+    act(() =>
+      publishProjectSpaceTaskBindingChanged({
+        task: address,
+        project: projectSpaceRef(projects.local),
+        type: 'unbound',
+      })
+    )
+    await waitFor(() => expect(result.current.boundCloudProject).toEqual(projects.backend))
+    expect(apis.local.findCloudContextForTask).toHaveBeenCalledTimes(2)
+    expect(apis.backend.findCloudContextForTask).toHaveBeenCalledOnce()
+    expect(projectSpaceForRuntimeTask(address)).toEqual(projectSpaceRef(projects.backend))
+  })
+
+  test('uses a confirmed context change for refresh and the latest cache before send', async () => {
+    const address = task('context-event')
+    const { projects, apis, services } = sources(address.taskId)
+    rememberProjectSpaceTaskBinding(address, projectSpaceRef(projects.local))
+    const { result } = renderContext(address, services)
+    await waitFor(() => expect(result.current.boundCloudProject).toEqual(projects.local))
+    act(() =>
+      publishProjectSpaceTaskContextChanged({
+        task: address,
+        project: projectSpaceRef(projects.backend),
+      })
+    )
+    await waitFor(() => expect(result.current.boundCloudProject).toEqual(projects.backend))
+
+    rememberProjectSpaceTaskBinding(address, projectSpaceRef(projects.local))
+    await act(async () => {
+      await result.current.prepareSubmission('Read the current binding')
+    })
+    expect(result.current.boundCloudProject).toEqual(projects.local)
+    expect(apis.local.findCloudContextForTask).toHaveBeenCalledTimes(2)
+    expect(apis.backend.findCloudContextForTask).toHaveBeenCalledOnce()
+  })
+
+  test('replaces a stale cached project with the actual returned project', async () => {
+    const address = task('actual-project')
+    const { projects, apis, services } = sources(address.taskId)
+    const actualProject = project('actual-local-context', 'local')
+    rememberProjectSpaceTaskBinding(address, projectSpaceRef(projects.local))
+    apis.local.findCloudContextForTask.mockResolvedValue({
+      project: actualProject,
+      loop_item: loopItem(actualProject.id),
+    })
+    const { result } = renderContext(address, services)
+    await waitFor(() => expect(result.current.boundCloudProject).toEqual(actualProject))
+    expect(projectSpaceForRuntimeTask(address)).toEqual(projectSpaceRef(actualProject))
+    expect(apis.local.findCloudContextForTask).toHaveBeenCalledTimes(2)
+    expect(apis.backend.findCloudContextForTask).toHaveBeenCalledOnce()
+  })
+
+  test('publishes confirmed discovered bindings once without reloading its own read', async () => {
+    const address = task('confirmed-event')
+    const { apis, services } = sources(address.taskId)
+    const observed = vi.fn()
+    const unsubscribe = subscribeProjectSpaceTaskBindingChanged(observed)
+    try {
+      const { result } = renderContext(address, services)
+      await waitFor(() => expect(result.current.boundCloudProject).not.toBeNull())
+      expect(observed).toHaveBeenCalledOnce()
+      expect(observed).toHaveBeenCalledWith({
+        task: address,
+        project: projectSpaceRef(result.current.boundCloudProject!),
+        type: 'bound',
+      })
+      expect(apis.local.findCloudContextForTask).toHaveBeenCalledOnce()
+      expect(apis.backend.findCloudContextForTask).toHaveBeenCalledOnce()
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  test.each([true, false])(
+    'reports an unavailable known owner with other APIs present: %s',
+    async hasOtherApi => {
+      const address = task(`unavailable-owner-${hasOtherApi}`)
+      const { projects, apis, services } = sources(address.taskId)
+      const unavailableServices = hasOtherApi
+        ? { ...services, workspaceRuntimePort: undefined }
+        : {}
+      rememberProjectSpaceTaskBinding(address, projectSpaceRef(projects.backend))
+      const { result, rerender } = renderHook(
+        ({ currentServices }) =>
+          useWorkbenchCloudProjectContext({
+            active: true,
+            currentRuntimeTask: address,
+            defaultProjectSpace: null,
+            paneKey: address.taskId,
+            runtimeTaskTitle: 'Current task',
+            services: currentServices,
+          }),
+        { initialProps: { currentServices: unavailableServices as WorkbenchServices } }
+      )
+      await waitFor(() => expect(result.current.todoBindingError).not.toBeNull())
+      expect(result.current.boundCloudProject).toBeNull()
+      expect(apis.local.findCloudContextForTask).not.toHaveBeenCalled()
+      await act(async () => {
+        await expect(result.current.prepareSubmission('Continue')).rejects.toThrow()
+      })
+      expect(apis.local.findCloudContextForTask).not.toHaveBeenCalled()
+      rerender({ currentServices: services })
+      await waitFor(() => expect(result.current.boundCloudProject).toEqual(projects.backend))
+      expect(result.current.todoBindingError).toBeNull()
+    }
+  )
 })

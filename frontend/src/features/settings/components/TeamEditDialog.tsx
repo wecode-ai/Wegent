@@ -29,7 +29,7 @@ import { createAgentResourceName } from '@wegent/collaboration'
 
 import { botApis } from '@/apis/bots'
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
-import { fetchUnifiedSkillsList, type UnifiedSkill } from '@/apis/skills'
+import { useBotSkillOptions } from '@/hooks/useBotSkillOptions'
 import {
   Bot,
   Team,
@@ -60,8 +60,9 @@ import TeamModeEditor from './team-edit/TeamModeEditor'
 import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog'
 import SimpleTeamEditForm from './team-edit/SimpleTeamEditForm'
 import { useSimpleTeamDraft } from './team-edit/useSimpleTeamDraft'
-import { toModelSelectValue } from './team-edit/model-select-utils'
+import { isRetainedPrivateModel, toModelSelectValue } from './team-edit/model-select-utils'
 import { useShellModels } from '../hooks/useShellModels'
+import { useTeamLeaderBot } from '../hooks/useTeamLeaderBot'
 import {
   bindModeRequiresCodingAgent,
   getDefaultSimpleBindMode,
@@ -418,6 +419,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       simpleCustomShellName,
       simpleBotName,
       simpleModelName,
+      simpleModelId,
       simpleModelType,
       simpleModelNamespace,
       simplePrompt,
@@ -434,9 +436,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     initializeNewDraft,
     normalizeExecutor,
   } = useSimpleTeamDraft()
-  const [simpleAllSkills, setSimpleAllSkills] = useState<UnifiedSkill[]>([])
-  const [simpleAvailableSkills, setSimpleAvailableSkills] = useState<UnifiedSkill[]>([])
-  const [simpleLoadingSkills, setSimpleLoadingSkills] = useState(false)
 
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
@@ -499,6 +498,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }, [editingTeam, unsavedPrompts])
 
   const useSimpleEditor = mode === 'solo'
+  const {
+    bot: scopedLeaderBot,
+    pending: leaderBotPending,
+    failed: leaderBotFailed,
+    reload: reloadLeaderBot,
+  } = useTeamLeaderBot(formTeam, bots, open && isEditing && useSimpleEditor)
 
   const selectedSimpleShell = useMemo(
     () =>
@@ -525,7 +530,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     return shellSupportsPreloadSkills(selectedSimpleShell)
   }, [selectedSimpleShell])
 
-  const skillLoadingFailedTitle = t('common:skills.loading_failed')
   const modelLoadingFailedTitle = t('common:bot.errors.fetch_models_failed')
   const agentBindingsFetchFailedTitle = t('common:teams.bindings_fetch_failed')
   const handleModelLoadError = useCallback(() => {
@@ -544,15 +548,23 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     category: getModelCategoryTypeForBindMode(bindMode),
     onError: handleModelLoadError,
   })
-  const simpleModelIsCompatible = simpleModels.some(
-    model =>
-      toModelSelectValue(model.name, model.type, model.namespace || 'default') ===
-      toModelSelectValue(
-        simpleModelName,
-        simpleModelType || 'public',
-        simpleModelNamespace || 'default'
-      )
-  )
+  const simpleModelIsCompatible =
+    isRetainedPrivateModel(
+      scopedLeaderBot,
+      simpleModelName,
+      simpleModelType,
+      simpleModelNamespace,
+      selectedSimpleShell?.name
+    ) ||
+    simpleModels.some(
+      model =>
+        toModelSelectValue(model.name, model.type, model.namespace || 'default') ===
+        toModelSelectValue(
+          simpleModelName,
+          simpleModelType || 'public',
+          simpleModelNamespace || 'default'
+        )
+    )
 
   useEffect(() => {
     if (
@@ -564,6 +576,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleField('simpleModelName', '', { userEdited: false })
       setSimpleField('simpleModelType', undefined, { userEdited: false })
       setSimpleField('simpleModelNamespace', undefined, { userEdited: false })
+      setSimpleField('simpleModelId', null, { userEdited: false })
     }
   }, [
     setSimpleField,
@@ -584,7 +597,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     if (formSessionRef.current?.formTeamId === formTeamId) return
 
     const leaderBot = formTeam?.bots.find(bot => bot.role === 'leader') || formTeam?.bots[0]
-    const fullLeaderBot = bots.find(bot => bot.id === leaderBot?.bot_id)
+    const fullLeaderBot = scopedLeaderBot || bots.find(bot => bot.id === leaderBot?.bot_id)
     formSessionRef.current = {
       formTeamId,
       sourceTeam: formTeam,
@@ -680,6 +693,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     initializeNewDraft,
     open,
     publishAfterCreate,
+    scopedLeaderBot,
     scope,
   ])
 
@@ -687,7 +701,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   useEffect(() => {
     const session = formSessionRef.current
     if (!open || !session?.pendingBotId) return
-    const bot = bots.find(candidate => candidate.id === session.pendingBotId)
+    const bot = scopedLeaderBot || bots.find(candidate => candidate.id === session.pendingBotId)
     if (!bot) return
     session.pendingBotId = null
     const sourceTeam = session.sourceTeam
@@ -701,7 +715,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         shellType: bot.shell_type,
       })
     initializeBotFields(bot, usesAutomaticBindMode ? [] : initialBindMode, { preserveEdited: true })
-  }, [bots, formTeam, initializeBotFields, open])
+  }, [bots, formTeam, initializeBotFields, open, scopedLeaderBot])
 
   useEffect(() => {
     if (!open || !isEditing || !formTeam?.id) {
@@ -777,58 +791,25 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     useSimpleEditor,
   ])
 
-  const reloadSimpleSkills = useCallback(async () => {
-    if (!useSimpleEditor) return
-
-    setSimpleLoadingSkills(true)
-    try {
-      const personalSkills = await fetchUnifiedSkillsList({ scope: 'personal' })
-      let skills = personalSkills
-
-      if (publishTarget === 'team' && publishGroupNames.length > 0) {
-        const groupSkillLists = await Promise.all(
-          publishGroupNames.map(targetGroupName =>
-            fetchUnifiedSkillsList({
-              scope: 'group',
-              groupName: targetGroupName,
-            })
-          )
-        )
-        const commonGroupSkillIds = new Set(groupSkillLists[0].map(skill => skill.id))
-        for (const groupSkills of groupSkillLists.slice(1)) {
-          const groupSkillIds = new Set(groupSkills.map(skill => skill.id))
-          for (const skillId of commonGroupSkillIds) {
-            if (!groupSkillIds.has(skillId)) {
-              commonGroupSkillIds.delete(skillId)
-            }
-          }
-        }
-
-        const mergedSkills = new Map(personalSkills.map(skill => [skill.id, skill]))
-        for (const skill of groupSkillLists[0]) {
-          if (commonGroupSkillIds.has(skill.id)) {
-            mergedSkills.set(skill.id, skill)
-          }
-        }
-        skills = Array.from(mergedSkills.values())
-      }
-
-      setSimpleAllSkills(skills)
-      setSimpleAvailableSkills(filterVisibleSkills(skills))
-    } catch {
-      toast({
-        variant: 'destructive',
-        title: skillLoadingFailedTitle,
-      })
-    } finally {
-      setSimpleLoadingSkills(false)
-    }
-  }, [publishGroupNames, publishTarget, skillLoadingFailedTitle, toast, useSimpleEditor])
-
-  useEffect(() => {
-    if (!open || !useSimpleEditor) return
-    reloadSimpleSkills()
-  }, [open, reloadSimpleSkills, useSimpleEditor])
+  const {
+    skills: simpleAllSkills,
+    loading: simpleLoadingSkills,
+    error: simpleSkillsError,
+    reload: reloadSimpleSkills,
+  } = useBotSkillOptions(
+    {
+      botId: isEditing
+        ? (formTeam?.bots.find(bot => bot.role === 'leader')?.bot_id ?? formTeam?.bots[0]?.bot_id)
+        : undefined,
+      namespace: (scope === 'group' ? groupName : undefined) || 'default',
+      targetGroupNames: publishTarget === 'team' ? publishGroupNames : [],
+    },
+    open && useSimpleEditor
+  )
+  const simpleAvailableSkills = useMemo(
+    () => filterVisibleSkills(simpleAllSkills),
+    [simpleAllSkills]
+  )
 
   // Check if mode change needs confirmation
   const needsModeChangeConfirmation = useCallback(() => {
@@ -902,6 +883,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleField('simpleModelName', '')
       setSimpleField('simpleModelType', undefined)
       setSimpleField('simpleModelNamespace', undefined)
+      setSimpleField('simpleModelId', null)
     }
     setBindMode(nextBindMode)
   }
@@ -1057,6 +1039,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           name: simpleBotName,
           shellName: selectedShell.name,
           modelName: simpleModelName,
+          modelId: simpleModelId,
           modelType: simpleModelType,
           modelNamespace: simpleModelNamespace,
           prompt: simplePrompt,
@@ -1074,6 +1057,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       ),
       target_group_names: publishTarget === 'team' ? publishGroupNames : [],
       namespace,
+      team_id: editingTeamId ?? undefined,
     }
     const trimmedDisplayName = displayName.trim()
     const displayNamePayload = trimmedDisplayName || (formTeam?.displayName ? null : undefined)
@@ -1140,6 +1124,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     identityConfirmed?: boolean
     publicationReductionConfirmed?: boolean
   } = {}) => {
+    if (useSimpleEditor && leaderBotPending) return
     if (!name.trim()) {
       toast({
         variant: 'destructive',
@@ -1459,6 +1444,18 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                     {t('common:teams.identity_change_warning')}
                   </div>
                 )}
+                {leaderBotFailed && (
+                  <div role="alert">
+                    <p>{t('common:teams.loading')}</p>
+                    <Button
+                      variant="outline"
+                      data-testid="team-leader-load-retry"
+                      onClick={reloadLeaderBot}
+                    >
+                      {t('common:actions.retry')}
+                    </Button>
+                  </div>
+                )}
                 <SimpleTeamEditForm
                   collaborationModeSelector={collaborationModeSelector}
                   name={name}
@@ -1497,6 +1494,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                     setSimpleField('simpleModelName', value.name)
                     setSimpleField('simpleModelType', value.type)
                     setSimpleField('simpleModelNamespace', value.namespace)
+                    setSimpleField('simpleModelId', value.id ?? null)
                   }}
                   selectedSkills={simpleSelectedSkills}
                   selectedSkillRefs={simpleSelectedSkillRefs}
@@ -1506,6 +1504,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   availableSkills={simpleAvailableSkills}
                   allSkills={simpleAllSkills}
                   loadingSkills={simpleLoadingSkills}
+                  skillsError={simpleSkillsError}
                   onSkillsChange={(skills, refs) => {
                     setSimpleField('simpleSelectedSkills', skills)
                     setSimpleField('simpleSelectedSkillRefs', refs)
@@ -1667,7 +1666,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               onClick={() => void handleSave()}
               disabled={
                 saving ||
-                (useSimpleEditor && (loadingShells || (!!simpleModelName && simpleLoadingModels)))
+                (useSimpleEditor &&
+                  (leaderBotPending || loadingShells || (!!simpleModelName && simpleLoadingModels)))
               }
               variant="primary"
             >
@@ -1753,6 +1753,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         allowedAgents={effectiveAllowedAgents}
         scope={scope}
         groupName={groupName}
+        targetGroupNames={publishTarget === 'team' ? publishGroupNames : []}
       />
 
       {/* Mode change confirmation dialog */}

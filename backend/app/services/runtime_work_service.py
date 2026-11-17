@@ -94,6 +94,7 @@ from app.schemas.runtime_work import (
 )
 from app.schemas.turn_file_changes import TurnFileChangesSummary
 from app.services.device.command_service import execute_configured_device_command
+from app.services.device.remote_control_policy import personal_task_devices
 from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.device.runtime_rpc_service import (
     DEFAULT_RUNTIME_RPC_TIMEOUT_SECONDS,
@@ -384,7 +385,7 @@ async def list_runtime_work(
 ) -> RuntimeWorkListResponse:
     """Return runtime-native work grouped by executor workspace."""
 
-    devices = await device_service.get_all_devices(db, user_id)
+    devices = personal_task_devices(await device_service.get_all_devices(db, user_id))
     if device_id is not None:
         devices = [device for device in devices if device.get("device_id") == device_id]
     devices_by_id = {str(device.get("device_id")): device for device in devices}
@@ -640,7 +641,7 @@ async def search_runtime_work(
 ) -> RuntimeWorkSearchResponse:
     """Search runtime transcripts on online or busy devices owned by the user."""
 
-    devices = await device_service.get_all_devices(db, user_id)
+    devices = personal_task_devices(await device_service.get_all_devices(db, user_id))
     searchable_devices: list[tuple[str, dict[str, Any]]] = []
     for device in devices:
         device_id = str(device.get("device_id") or "")
@@ -778,6 +779,11 @@ async def send_runtime_message(
 
     address = _normalized_address(request.address)
     _ensure_owned_device(db, user_id, address.device_id)
+    if request.im_question_answer is not None:
+        from app.services.im.question_context import submit_interpreted_answer
+
+        return await submit_interpreted_answer(db, user_id, request)
+
     _touch_workspace_mapping(db, user_id, address)
     payload = {
         **_runtime_task_address_payload(address),
@@ -868,9 +874,26 @@ async def _dispatch_runtime_send(
     model config, user info, skills, etc.). Backend clients use the same compiler
     as Wework's Team materialization, preserving the original task binding and
     selected model. Unbound tasks use the direct Wework execution builder.
-    Request-user-input responses use a dedicated executor channel and do not
-    spawn a new turn, so they intentionally omit ``executionRequest``.
+    Blocking question responses use a dedicated executor channel. Async answers
+    reauthorize the native origin and let the Executor continue with its saved
+    execution profile. Both omit ``executionRequest`` from the backend RPC.
     """
+    if request.conversation_context is not None:
+        payload["conversationContext"] = request.conversation_context
+    if (request.request_user_input_response or {}).get("delivery") == "async":
+        # Async answers may start a new execution. Reauthorize its native origin
+        # just like ordinary continuation, while the Executor restores its model.
+        address = await resolve_continuation_address(
+            db=db,
+            user_id=user_id,
+            address=address,
+            allow_app_device_task_messaging=allow_app_device_task_messaging,
+        )
+        handle = address.runtime_handle or {}
+        authorize_execution_origin(
+            db, user_id, handle.get("origin"), handle.get("cloudProjectId")
+        )
+        payload.update(_runtime_task_address_payload(address))
     if request.request_user_input_response is None:
         address = await resolve_continuation_address(
             db=db,
@@ -941,6 +964,8 @@ async def send_runtime_guidance(
         payload["attachments"] = attachments
     if request.client_guidance_id:
         payload["clientGuidanceId"] = request.client_guidance_id
+    if request.conversation_context is not None:
+        payload["conversationContext"] = request.conversation_context
     if request.additional_context:
         payload["additionalContext"] = request.additional_context
     try:

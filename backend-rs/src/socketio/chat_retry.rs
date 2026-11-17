@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use brz_json::OpaqueJson;
 use brz_mysql::{Json, MysqlTransaction as _};
+use brz_redis::Redis as _;
 use brz_socket_io::{ClientError, Reply};
 use serde_json::{Map, Value, json};
 
@@ -71,9 +72,40 @@ pub(crate) async fn retry(
                 subtask_id = payload.subtask_id,
                 "chat:retry trigger failed"
             );
+            finalize_retry_failure(
+                state,
+                payload.task_id,
+                payload.subtask_id,
+                user_id,
+                prepared.turn.assistant_message_id,
+                &error,
+            )
+            .await;
             Ok(Reply::payload(error_ack("Internal server error")))
         }
     }
+}
+
+async fn finalize_retry_failure(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+    user_id: i64,
+    message_id: i64,
+    error: &crate::http_compat::FastApiError,
+) {
+    let message = error
+        .detail_message()
+        .unwrap_or("Execution could not start");
+    crate::responses::dispatch::finalize_executor_failure(
+        &crate::responses::dispatch::ConsumerState::from_app(state),
+        task_id,
+        subtask_id,
+        user_id,
+        Some(message_id),
+        (message, "EXECUTOR_DISPATCH_FAILED"),
+    )
+    .await;
 }
 
 /// `ChatRetryPayload`.
@@ -147,6 +179,8 @@ struct UserSubtask {
     id: i64,
     #[mysql(rename = "prompt")]
     prompt: Option<String>,
+    #[mysql(rename = "result")]
+    result: Option<Json<OpaqueJson>>,
 }
 
 /// One task row (`get_non_deleted_task`).
@@ -209,15 +243,23 @@ async fn prepare_retry(
             failed.status
         ))));
     }
-    reset_subtask_for_retry(state, &tables, payload, task_owner, &mut task_json).await?;
     let user = crate::user_reader::user_entity_by_id(&state.mysql, user_id)
         .await
         .map_err(|_| RetryFailure::Internal)?;
-    let Some(_user) = user else {
+    if user.is_none() {
         return Err(RetryFailure::Ack(error_ack("User not found")));
-    };
-    apply_model_override(state, &tables.tasks, payload, task_owner, &mut task_json).await?;
+    }
     let bot_ids = team_bot_ids(state, &team).await?;
+    apply_model_override(payload, &mut task_json);
+    reset_subtask_for_retry(
+        state,
+        &tables,
+        payload,
+        &failed.status,
+        task_owner,
+        &mut task_json,
+    )
+    .await?;
     let message = extract_display_prompt(user_subtask.prompt.as_deref()).unwrap_or_default();
     // Follow-ups reuse the device bound to the Task (`extract_task_device_id`).
     let device_id = task_json
@@ -237,7 +279,13 @@ async fn prepare_retry(
             message,
             interactive_form_answer: None,
             additional_skills: Vec::new(),
-            options: Default::default(),
+            options: super::chat_trigger::ChatTurnOptions {
+                generation: user_subtask
+                    .result
+                    .as_ref()
+                    .and_then(|result| retry_image_generation(&result.0.to_value())),
+                ..Default::default()
+            },
             is_group_chat: task_json
                 .pointer("/spec/is_group_chat")
                 .and_then(Value::as_bool)
@@ -246,6 +294,7 @@ async fn prepare_retry(
             client_origin: "frontend".to_string(),
             device_id,
             task_json,
+            created_git_repository: None,
             executor_name: failed.executor_name.unwrap_or_default(),
             executor_namespace: failed.executor_namespace.unwrap_or_default(),
             assistant_created_at: failed.created_at,
@@ -311,7 +360,7 @@ async fn fetch_user_subtask(
     message_id: i64,
 ) -> Result<Option<UserSubtask>, RetryFailure> {
     let statement = format!(
-        "SELECT id, prompt FROM `{table}` WHERE task_id = ? AND message_id = ? \
+        "SELECT id, prompt, result FROM `{table}` WHERE task_id = ? AND message_id = ? \
          AND `role` = 'USER' LIMIT 1"
     );
     let mut handle = &state.mysql;
@@ -323,6 +372,11 @@ async fn fetch_user_subtask(
     )
     .await
     .map_err(|_| RetryFailure::Internal)
+}
+
+fn retry_image_generation(result: &Value) -> Option<Value> {
+    let size = result.pointer("/image_config/size")?.as_str()?;
+    Some(json!({ "size": size }))
 }
 
 /// `_is_code_wiki_task`.
@@ -339,6 +393,7 @@ async fn reset_subtask_for_retry(
     state: &AppState,
     tables: &crate::task_store::MessageEditTables,
     payload: &RetryPayload,
+    previous_status: &str,
     task_owner: i64,
     task_json: &mut Value,
 ) -> Result<(), RetryFailure> {
@@ -349,14 +404,14 @@ async fn reset_subtask_for_retry(
     let mut pending = task_json.clone();
     crate::responses::create::continuation::mark_pending(&mut pending, &local_isoformat());
     let task_payload = python_json_value(&pending);
-    state
+    let reset = state
         .mysql
         .with_transaction(async |transaction| {
-            transaction
+            let updated = transaction
                 .execute(
                     &format!(
                         "UPDATE {subtasks} SET status=?, progress=?, result=?, \
-                         error_message=?, updated_at=? WHERE {subtasks}.id = ?"
+                         error_message=?, updated_at=? WHERE {subtasks}.id = ? AND status = ?"
                     ),
                     (
                         "PENDING".to_string(),
@@ -365,9 +420,25 @@ async fn reset_subtask_for_retry(
                         String::new(),
                         now.clone(),
                         payload.subtask_id,
+                        previous_status,
                     ),
                 )
                 .await?;
+            if updated.rows_affected == 0 {
+                return Ok(false);
+            }
+            // Clear stale cancellation while the reset is still private to this
+            // transaction. A cancel for the new attempt can only see PENDING
+            // after commit, and a concurrent retry cannot clear its flag.
+            if let Some(redis) = state.redis.as_ref() {
+                let key = super::chat_control::cancel_key(payload.subtask_id);
+                redis.del(key.as_str()).await.map_err(|error| {
+                    tracing::warn!(%error, subtask_id = payload.subtask_id, "retry cancel cleanup failed");
+                    brz_mysql::MysqlError::InvalidQuery {
+                        reason: "could not clear previous cancellation".to_string(),
+                    }
+                })?;
+            }
             transaction
                 .execute(
                     &format!(
@@ -376,10 +447,15 @@ async fn reset_subtask_for_retry(
                     (task_payload.clone(), row_now.clone(), payload.task_id),
                 )
                 .await?;
-            Ok(())
+            Ok(true)
         })
         .await
         .map_err(|_| RetryFailure::Internal)?;
+    if !reset {
+        return Err(RetryFailure::Ack(error_ack(
+            "Subtask state changed before retry",
+        )));
+    }
     *task_json = pending;
     let _ = state
         .task_store
@@ -393,13 +469,7 @@ async fn reset_subtask_for_retry(
 }
 
 /// `extract_model_override_info` + the label rewrite.
-async fn apply_model_override(
-    state: &AppState,
-    _task_table: &str,
-    payload: &RetryPayload,
-    task_owner: i64,
-    task_json: &mut Value,
-) -> Result<(), RetryFailure> {
+fn apply_model_override(payload: &RetryPayload, task_json: &mut Value) {
     let (model_id, model_type) = if payload.use_model_override {
         (
             payload.force_override_bot_model.clone(),
@@ -408,7 +478,7 @@ async fn apply_model_override(
     } else {
         extract_model_override_info(task_json)
     };
-    let changed = if let Some(model_id) = model_id {
+    if let Some(model_id) = model_id {
         let labels = labels_mut(task_json);
         labels.insert("modelId".into(), Value::String(model_id));
         labels.insert("forceOverrideBotModel".into(), Value::String("true".into()));
@@ -423,35 +493,16 @@ async fn apply_model_override(
                 labels.remove("forceOverrideBotModelType");
             }
         }
-        true
     } else if payload.use_model_override {
         let labels = labels_mut(task_json);
-        let mut changed = false;
         for key in [
             "modelId",
             "forceOverrideBotModel",
             "forceOverrideBotModelType",
         ] {
-            changed |= labels.remove(key).is_some();
+            labels.remove(key);
         }
-        changed
-    } else {
-        false
-    };
-    if !changed {
-        return Ok(());
     }
-    let json = python_json_value(task_json);
-    state
-        .task_store
-        .update_task_json(payload.task_id, task_owner, &json, &task_update_timestamp())
-        .await
-        .map_err(|_| RetryFailure::Internal)?;
-    let _ = state
-        .task_store
-        .refresh_task(payload.task_id, task_owner)
-        .await;
-    Ok(())
 }
 
 /// `Task.metadata.labels` (`setdefault` chains).
@@ -519,4 +570,100 @@ fn local_isoformat() -> String {
         .naive_local()
         .format("%Y-%m-%dT%H:%M:%S%.6f")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn offline_device_retry_finalizes_pending_subtask_and_task() {
+        use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
+        use crate::task_store_statements::{subtask_column_index, task_column_index};
+
+        let fixture = MysqlRows::start_results(|sql| {
+            if sql.starts_with("UPDATE ") {
+                return (vec![], vec![]);
+            }
+            if sql.contains("ORDER BY message_id DESC, id DESC LIMIT 1") {
+                let row = vec![("id", SqlValue::I64(20))];
+                return (row.clone(), vec![row]);
+            }
+            let mut row: Row;
+            if sql.contains("FROM subtasks") || sql.contains("FROM `subtasks`") {
+                row = vec![("unused", SqlValue::Null); 23];
+                for (column, value) in [
+                    ("id", SqlValue::I64(20)),
+                    ("task_id", SqlValue::I64(10)),
+                    ("user_id", SqlValue::I32(7)),
+                    (
+                        "status",
+                        SqlValue::Text(
+                            if sql.ends_with("FOR UPDATE") {
+                                "PENDING"
+                            } else {
+                                "FAILED"
+                            }
+                            .into(),
+                        ),
+                    ),
+                ] {
+                    row[subtask_column_index(column).unwrap()] = (column, value);
+                }
+            } else if sql.contains("FROM tasks") || sql.contains("FROM `tasks`") {
+                row = vec![("unused", SqlValue::Null); 12];
+                for (column, value) in [
+                    ("id", SqlValue::I64(10)),
+                    ("user_id", SqlValue::I32(7)),
+                    (
+                        "json",
+                        SqlValue::Text(json!({"status": {"status": "PENDING"}}).to_string()),
+                    ),
+                ] {
+                    row[task_column_index(column).unwrap()] = (column, value);
+                }
+            } else {
+                return (vec![("id", SqlValue::I64(0))], vec![]);
+            }
+            (row.clone(), vec![row])
+        })
+        .await;
+        let state = crate::app_test_support::app(fixture.mysql.clone());
+        let error = crate::http_compat::FastApiError::detail(
+            brz_http_server::StatusCode::BAD_REQUEST,
+            "Selected device is offline",
+        );
+
+        finalize_retry_failure(&state, 10, 20, 7, 2, &error).await;
+
+        let queries = fixture.queries();
+        let subtask_lock = queries.iter().position(|sql| {
+            sql.contains("FROM subtasks") && sql.trim_end().ends_with("FOR UPDATE")
+        });
+        let subtask_write = queries
+            .iter()
+            .position(|sql| sql.starts_with("UPDATE subtasks"));
+        let task_write = queries
+            .iter()
+            .position(|sql| sql.starts_with("UPDATE tasks"));
+        assert!(
+            matches!((subtask_lock, subtask_write, task_write), (Some(lock), Some(subtask), Some(task)) if lock < subtask && subtask < task),
+            "{queries:?}"
+        );
+    }
+
+    #[test]
+    fn retry_restores_image_size_from_the_user_turn() {
+        assert_eq!(
+            retry_image_generation(&json!({
+                "image_config": {"model": "gpt-image-e2e", "size": "1536x1024"}
+            })),
+            Some(json!({ "size": "1536x1024" }))
+        );
+        assert_eq!(retry_image_generation(&Value::Null), None);
+        assert_eq!(
+            retry_image_generation(&json!({"image_config": {"size": null}})),
+            None
+        );
+    }
 }

@@ -65,7 +65,7 @@ export async function startRealMailServer(directory, runtimeRoot) {
   await mkdir(directory, { recursive: true })
   const jar = join(directory, 'greenmail.jar')
   const response = await fetch(
-    `https://repo.maven.apache.org/maven2/com/icegreen/greenmail-standalone/${VERSION}/greenmail-standalone-${VERSION}.jar`
+    `https://repo1.maven.org/maven2/com/icegreen/greenmail-standalone/${VERSION}/greenmail-standalone-${VERSION}.jar`
   )
   assert.equal(response.ok, true, `GreenMail download failed: ${response.status}`)
   const bytes = Buffer.from(await response.arrayBuffer())

@@ -24,7 +24,7 @@ import type {
   UpgradeDeviceResponse,
 } from '@/types/devices'
 import type { DeviceGitAccountSyncResult, GitAccountSyncSummary } from '@/types/gitCredentials'
-import { filterClaudeCodeDevices } from '@/lib/device-capabilities'
+import { filterClaudeCodeDevices, isRemoteTaskAccessEnabled } from '@/lib/device-capabilities'
 import {
   normalizeAbsoluteWorkspacePath,
   normalizeWorkspaceFileChunk,
@@ -92,7 +92,13 @@ export function createDeviceApi(client: HttpClient) {
     const response = requestOptions
       ? await client.get<DeviceListResponse>('/devices', requestOptions)
       : await client.get<DeviceListResponse>('/devices')
-    return filterClaudeCodeDevices(response.items)
+    return filterClaudeCodeDevices(response.items).map(device =>
+      device.device_type === 'app' &&
+      isRemoteTaskAccessEnabled(device) &&
+      device.execution_target_id
+        ? { ...device, device_id: device.execution_target_id }
+        : device
+    )
   }
 
   return {
@@ -326,8 +332,10 @@ export function createDeviceApi(client: HttpClient) {
     },
 
     async restartCloudDevice(deviceId: string): Promise<{ message: string }> {
-      return client.post<{ message: string }>(
-        `/cloud-devices/${encodeURIComponent(deviceId)}/restart`
+      // The registered device action delegates to the deployment's restart provider.
+      return client.post<UpgradeDeviceResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/upgrade`,
+        { force_stop_tasks: true }
       )
     },
 

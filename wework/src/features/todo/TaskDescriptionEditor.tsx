@@ -18,6 +18,7 @@ import {
   type ImeCompositionSnapshot,
 } from './imeComposition'
 import { normalizeTaskDescription } from './taskDescription'
+import { normalizeClipboardImageFiles } from '@/lib/clipboard-images'
 
 interface TaskDescriptionEditorProps {
   value: string
@@ -290,6 +291,8 @@ export function TaskDescriptionEditor({
   // Tracks the markdown value the editor state is currently mirrored from, so
   // external value updates replace content only when they are real changes.
   const lastEmittedMarkdownRef = useRef<string | null>(null)
+  // Compare edits with the parsed document, whose Markdown may differ from the source.
+  const lastSerializedMarkdownRef = useRef<string | null>(null)
   // Guards onChange while an external value is being applied, so opening an
   // item never rewrites its stored description just because the editor's
   // markdown round-trip normalizes line breaks.
@@ -333,6 +336,10 @@ export function TaskDescriptionEditor({
     },
   })
 
+  useEffect(() => {
+    editor.domElement?.setAttribute('aria-label', ariaLabel)
+  }, [ariaLabel, editor])
+
   // Mirror external markdown into the editor without resetting it on every
   // keystroke: only apply the value when it differs from the markdown we last
   // emitted (or the value we last loaded).
@@ -348,6 +355,7 @@ export function TaskDescriptionEditor({
     }
     applyingExternalRef.current = false
     lastEmittedMarkdownRef.current = next
+    lastSerializedMarkdownRef.current = taskDescriptionMarkdown(editor)
     onInlineAttachmentIdsChangeRef.current?.(inlineAttachmentIds(editor))
   }, [editor, value])
 
@@ -355,7 +363,8 @@ export function TaskDescriptionEditor({
     const markdown = taskDescriptionMarkdown(editor)
     onInlineAttachmentIdsChangeRef.current?.(inlineAttachmentIds(editor))
     if (applyingExternalRef.current) return
-    if (markdown === lastEmittedMarkdownRef.current) return
+    if (markdown === lastSerializedMarkdownRef.current) return
+    lastSerializedMarkdownRef.current = markdown
     lastEmittedMarkdownRef.current = markdown
     onChangeRef.current(markdown)
   }, [editor])
@@ -407,18 +416,20 @@ export function TaskDescriptionEditor({
       const referenceBlockId = editor.getTextCursorPosition().block.id
       event.preventDefault()
       event.stopPropagation()
-      void Promise.resolve(pasteFiles(files)).then(markdown => {
-        if (!markdown) return
-        const blocks = parseTaskDescriptionBlocks(editor, markdown)
-        if (!blocks.length) return
-        const inserted = editor.insertBlocks(blocks, referenceBlockId, 'after')
-        let lastInserted = inserted.at(-1)
-        if (lastInserted?.type === 'attachmentImage') {
-          ;[lastInserted] = editor.insertBlocks([{ type: 'paragraph' }], lastInserted.id, 'after')
-        }
-        if (lastInserted) editor.setTextCursorPosition(lastInserted.id, 'end')
-        emitEditorChange()
-      })
+      void normalizeClipboardImageFiles(files)
+        .then(async normalizedFiles => pasteFiles(normalizedFiles))
+        .then(markdown => {
+          if (!markdown) return
+          const blocks = parseTaskDescriptionBlocks(editor, markdown)
+          if (!blocks.length) return
+          const inserted = editor.insertBlocks(blocks, referenceBlockId, 'after')
+          let lastInserted = inserted.at(-1)
+          if (lastInserted?.type === 'attachmentImage') {
+            ;[lastInserted] = editor.insertBlocks([{ type: 'paragraph' }], lastInserted.id, 'after')
+          }
+          if (lastInserted) editor.setTextCursorPosition(lastInserted.id, 'end')
+          emitEditorChange()
+        })
     },
     [editor, emitEditorChange]
   )
@@ -491,12 +502,20 @@ export function TaskDescriptionEditor({
 
   return (
     <div
-      className={cn('task-description-editor', className)}
+      className={cn('task-description-editor relative', className)}
       onPasteCapture={handlePasteCapture}
       onKeyDownCapture={handleKeyDownCapture}
       onCompositionStartCapture={handleCompositionStartCapture}
       onCompositionEndCapture={handleCompositionEndCapture}
     >
+      {disabled && !normalizeTaskDescription(value).trim() ? (
+        <p
+          data-testid={`${testId}-empty`}
+          className="pointer-events-none absolute inset-x-0 top-0 m-0 text-sm leading-7 text-text-muted"
+        >
+          {placeholder}
+        </p>
+      ) : null}
       <AttachmentImageServicesContext.Provider value={{ readAttachment }}>
         <BlockNoteView
           editor={editor}

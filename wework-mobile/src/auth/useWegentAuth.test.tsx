@@ -242,6 +242,65 @@ afterEach(async () => {
 })
 
 describe('authentication generation', () => {
+  it('cancels only an in-progress login and permits a new login before the old continuation settles', async () => {
+    await renderHook()
+    await waitForStatus('unauthenticated')
+    const oldSession = deferred<Response>()
+    harness.fetchState.sessionDeferred = oldSession
+    let old!: Promise<void>
+    await act(() => {
+      old = latest!.login()
+    })
+    await waitFor(() => harness.fetchState.sessionCalls === 1)
+    await act(() => latest!.cancelLogin())
+    expect(latest!.status).toBe('unauthenticated')
+    harness.fetchState.sessionDeferred = null
+    let next!: Promise<void>
+    await act(() => {
+      next = latest!.login()
+    })
+    await waitFor(() => harness.fetchState.sessionCalls === 2)
+    await act(async () => {
+      oldSession.resolve(
+        json({
+          session_id: 'old',
+          poll_token: 'old',
+          authorize_url: 'https://auth.example.com/old',
+        })
+      )
+      await old
+      expect(latest!.login()).toBe(next)
+      await next
+    })
+    expect(latest!.status).toBe('authenticated')
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledOnce()
+  })
+
+  it('surfaces browser-launch failures without polling an authorization the user could not open', async () => {
+    await renderHook()
+    await waitForStatus('unauthenticated')
+    vi.mocked(WebBrowser.openBrowserAsync).mockRejectedValueOnce(new Error('browser unavailable'))
+    let failure!: Promise<void>
+    await act(() => {
+      failure = latest!.login()
+    })
+    await act(async () => {
+      await expect(failure).rejects.toThrow('browser unavailable')
+    })
+    expect(latest!.status).toBe('error')
+    expect(latest!.user).toBeNull()
+    expect(harness.fetchState.claimCalls).toBe(0)
+  })
+  it('keeps the runtime config stable across unrelated auth renders', async () => {
+    seedCredential()
+    await renderHook()
+    await waitForStatus('authenticated')
+    const config = latest?.config
+    await act(() => {
+      root?.update(<Harness />)
+    })
+    expect(latest?.config).toBe(config)
+  })
   it('stale refresh continuation cannot restore auth after logout', async () => {
     seedCredential()
     await renderHook()

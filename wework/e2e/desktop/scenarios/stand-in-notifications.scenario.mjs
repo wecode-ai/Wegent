@@ -168,7 +168,7 @@ export function createDesktopScenario({
       })
       await assertInboxReady(control)
       const notificationRow = selector(`wework-notification-${id}`)
-      await control.command('waitFor', notificationRow, { text: '分身处理' })
+      await control.command('waitFor', notificationRow, { text: '助理处理' })
       const rowText = await control.command('getText', notificationRow)
       assert.ok(rowText.includes('在通知内继续处理分身任务'))
       assert.ok(!rowText.includes('我的分身'), 'Handling must preserve the original title')
@@ -303,6 +303,9 @@ export function createDesktopScenario({
           text: issue.id,
         })
         await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
+        await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
+          visible: false,
+        })
       }
       await control.command('activateSystemNotification', 'body', { value: completionAlert.url })
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {

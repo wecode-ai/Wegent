@@ -5,11 +5,13 @@
 import asyncio
 import copy
 import hashlib
+import json
 import os
 import tempfile
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Generator, Tuple
 
 import pytest
@@ -67,21 +69,28 @@ class FakeIMSessionRedisClient:
     class _Lock:
         def __init__(self) -> None:
             self._lock = asyncio.Lock()
+            self.local = SimpleNamespace(token=None)
+            self.owner_token = None
 
         async def __aenter__(self) -> "FakeIMSessionRedisClient._Lock":
-            await self._lock.acquire()
+            await self.acquire()
             return self
 
         async def __aexit__(self, *_args) -> None:
-            self._lock.release()
+            await self.release()
 
         async def acquire(self) -> bool:
-            return await self._lock.acquire()
+            await self._lock.acquire()
+            self.local.token = uuid.uuid4().hex.encode()
+            self.owner_token = self.local.token
+            return True
 
         async def owned(self) -> bool:
-            return self._lock.locked()
+            return self._lock.locked() and self.owner_token == self.local.token
 
         async def release(self) -> None:
+            self.local.token = None
+            self.owner_token = None
             self._lock.release()
 
     def __init__(self, cache: "FakeIMSessionCache") -> None:
@@ -89,6 +98,21 @@ class FakeIMSessionRedisClient:
 
     def lock(self, _name: str, **_options) -> "FakeIMSessionRedisClient._Lock":
         return self._cache.locks.setdefault(_name, self._Lock())
+
+    async def eval(self, script: str, numkeys: int, *args: Any) -> bytes | int | None:
+        if numkeys == 1:
+            assert script == "return redis.call('get', KEYS[1])"
+            value = await self._cache.get(args[0])
+            return json.dumps(value).encode() if value is not None else None
+        from app.services.im.runtime_questions import STATE_COMMIT
+
+        assert script == STATE_COMMIT
+        assert numkeys == 2
+        lock_key, key, token, document, ttl = args
+        if self._cache.locks[lock_key].owner_token != token:
+            return 0
+        await self._cache.set(key, json.loads(document), expire=ttl or None)
+        return 1
 
     async def zadd(self, key: str, mapping: dict[str, float]) -> int:
         zset = self._cache.zsets.setdefault(key, {})
@@ -186,6 +210,7 @@ class FakeIMSessionCache:
 def fake_im_session_cache(monkeypatch: pytest.MonkeyPatch) -> FakeIMSessionCache:
     cache = FakeIMSessionCache()
     monkeypatch.setattr("app.services.im.session_service.cache_manager", cache)
+    monkeypatch.setattr("app.services.im.runtime_questions.cache_manager", cache)
     return cache
 
 
@@ -233,6 +258,21 @@ def _set_sqlite_pragma(dbapi_conn, connection_record):
     cursor.close()
 
 
+def _register_sqlite_functions(dbapi_conn, connection_record):
+    """Register share lookup functions on every SQLite connection."""
+    # SQLite unit fixtures use the same SHA-256 expression as MySQL share lookup.
+    dbapi_conn.create_function(
+        "sha2",
+        2,
+        lambda value, bits: (
+            hashlib.sha256(value.encode("utf-8")).hexdigest()
+            if value is not None and bits == 256
+            else None
+        ),
+        deterministic=True,
+    )
+
+
 # Session-scoped engine and tables - created once per test session (per worker)
 @pytest.fixture(scope="session")
 def test_engine(worker_id):
@@ -259,6 +299,7 @@ def test_engine(worker_id):
         pool_pre_ping=True,
     )
 
+    event.listen(engine, "connect", _register_sqlite_functions)
     # Enable WAL mode for better concurrent access (only for file-based databases)
     if worker_id != "master":
         event.listen(engine, "connect", _set_sqlite_pragma)

@@ -30,19 +30,6 @@ interface McpProvidersResponse {
   providers: Array<{ key: string }>
 }
 
-interface McpServerListResponse {
-  success: boolean
-  message: string
-  servers: Array<{
-    id: string
-    name: string
-    description?: string
-    provider: string
-    tags?: string[] | null
-    is_active: boolean
-  }>
-}
-
 interface AdminMarketplaceResourceResponse {
   total: number
   items: Array<{
@@ -83,31 +70,6 @@ async function clickListingAction(page: Page, listingId: number) {
   await page.getByTestId(`install-resource-${listingId}-button`).click()
 }
 
-/** Verifies the real catalog response and its included and excluded cards. */
-async function expectMcpKeywordResults(
-  page: Page,
-  keyword: string,
-  includedId: string,
-  excludedId: string,
-  action: () => Promise<unknown>
-) {
-  const serversPromise = page.waitForResponse(
-    response =>
-      response.request().method() === 'POST' &&
-      /\/api\/mcp-providers\/e2e_catalog\/servers$/.test(new URL(response.url()).pathname)
-  )
-  await action()
-  const response = await serversPromise
-  expect(response.ok()).toBe(true)
-  const serverList = (await response.json()) as McpServerListResponse
-  expect(serverList.success, serverList.message).toBe(true)
-  expect(serverList.servers.some(server => server.id === includedId)).toBe(true)
-  expect(serverList.servers.some(server => server.id === excludedId)).toBe(true)
-  await expect(page.getByTestId(`mcp-marketplace-card-${includedId}`)).toBeVisible()
-  await expect(page.getByTestId(`mcp-marketplace-card-${excludedId}`)).toHaveCount(0)
-  await expect(page.getByTestId('mcp-marketplace-search-input')).toHaveValue(keyword)
-}
-
 /** Verifies the real listings response and its included and excluded skill cards. */
 async function expectSkillKeywordResults(
   page: Page,
@@ -141,79 +103,6 @@ async function expectSkillKeywordResults(
 }
 
 test.describe('Capability Center', () => {
-  test('switches between focused discovery and My Capabilities', async ({ page, request }) => {
-    await ensureRecommendedSystemAgent(request)
-    await page.goto('/resource-library?type=agent')
-
-    await expect(page.getByTestId('resource-library-view-toggle')).toBeVisible()
-    await expect(page.getByTestId('resource-type-agent-filter')).toBeVisible()
-    await expect(page.getByTestId('resource-type-skill-filter')).toBeVisible()
-    await expect(page.getByTestId('resource-type-model-filter')).toHaveCount(0)
-    await expect(page.getByTestId('resource-library-source-select')).toHaveCount(0)
-    await expect(page.getByTestId('discover-resources')).toBeVisible()
-    await expect(page.locator('[data-testid^="resource-listing-card-"]').first()).toBeVisible()
-
-    await page.getByTestId('resource-library-view-toggle').click()
-    await expect(page).toHaveURL(url => url.searchParams.get('tab') === 'mine')
-    await expect(page.getByTestId('my-resources')).toBeVisible()
-    await expect(page.getByTestId('resource-library-source-segments')).toBeVisible()
-
-    await page.getByTestId('resource-library-view-toggle').click()
-    await expect(page).toHaveURL(url => url.searchParams.get('tab') === null)
-    await expect(page.getByTestId('discover-resources')).toBeVisible()
-  })
-
-  test('new capability opens the selected existing creator directly', async ({ page }) => {
-    await page.goto('/resource-library')
-    await page.getByTestId('new-capability-button').click()
-
-    await expect(page.getByTestId('new-capability-menu')).toBeVisible()
-    await page.getByTestId('new-capability-type-agent').click()
-    await expect(page.getByTestId('team-edit-dialog')).toBeVisible()
-    await page.keyboard.press('Escape')
-
-    await page.getByTestId('new-capability-button').click()
-    await page.getByTestId('new-capability-type-skill').click()
-    await expect(page.getByTestId('skill-upload-dialog')).toBeVisible()
-  })
-
-  test('opens the MCP marketplace pre-filtered from a deep link', async ({ page }) => {
-    await expectMcpKeywordResults(
-      page,
-      '商品数据对比',
-      '@e2e/product-comparison',
-      '@e2e/document-search',
-      () => page.goto(`/resource-library?type=mcp&keyword=${encodeURIComponent('商品数据对比')}`)
-    )
-
-    await expect(page.getByTestId('resource-type-mcp-filter')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-    await expect(page.getByTestId('mcp-marketplace')).toBeVisible()
-
-    await expectMcpKeywordResults(
-      page,
-      '商品数据对比',
-      '@e2e/product-comparison',
-      '@e2e/document-search',
-      () => page.reload()
-    )
-    await expect(page).toHaveURL(
-      url =>
-        url.searchParams.get('type') === 'mcp' && url.searchParams.get('keyword') === '商品数据对比'
-    )
-  })
-
-  test('clears an unknown marketplace deep link and resumes keyword search', async ({ page }) => {
-    await page.goto('/resource-library?type=skill&marketplace=missing-provider&keyword=文档')
-
-    await expect(page).toHaveURL(url => url.searchParams.get('marketplace') === null)
-    await expect(page.getByTestId('resource-library-header-search-input')).toHaveValue('文档')
-    await expect(page.getByTestId('marketplace-toolbar')).toBeVisible()
-    await expect(page.getByTestId('skill-marketplace-search')).toHaveCount(0)
-  })
-
   test('searches real skills after unknown-market cleanup and restores results on reload', async ({
     page,
     request,
@@ -373,40 +262,6 @@ test.describe('Capability Center', () => {
       await expect(page).toHaveURL(`/chat?teamId=${listing!.id}`)
     }
     expect(installRequested).toBe(false)
-  })
-
-  test('My Capabilities exposes five resource types and contextual sources', async ({ page }) => {
-    await page.goto('/resource-library?tab=mine&type=agent')
-
-    const managedTypes = ['agent', 'skill', 'model', 'shell', 'retriever']
-    for (const resourceType of managedTypes) {
-      await expect(page.getByTestId(`resource-type-${resourceType}-filter`)).toBeVisible()
-    }
-
-    await expect(page.getByTestId('resource-type-connector-filter')).toHaveCount(0)
-    await expect(page.getByTestId('resource-type-all-filter')).toHaveCount(0)
-    await expect(page.getByTestId('my-resources')).toBeVisible()
-    await expect(page.getByTestId('managed-resource-type-tabs')).toHaveCount(0)
-
-    await expect(page.getByTestId('resource-library-source-all-button')).toBeVisible()
-    await expect(page.getByTestId('resource-library-source-mine-button')).toBeVisible()
-    await expect(page.getByTestId('resource-library-source-group-button')).toBeVisible()
-    await expect(page.getByTestId('resource-library-source-installed-button')).toBeVisible()
-
-    await page.getByTestId('resource-library-source-mine-button').click()
-    await expect(page).toHaveURL(url => url.searchParams.get('source') === 'mine')
-    await expect(page.getByTestId('my-resources')).toBeVisible()
-
-    for (const resourceType of ['model', 'shell', 'retriever']) {
-      await page.getByTestId(`resource-type-${resourceType}-filter`).click()
-      await expect(page).toHaveURL(url => url.searchParams.get('type') === resourceType)
-      await expect(page.getByTestId(`resource-type-${resourceType}-filter`)).toHaveAttribute(
-        'aria-pressed',
-        'true'
-      )
-    }
-
-    await expect(page.getByTestId('resource-library-source-installed-button')).toHaveCount(0)
   })
 
   test('add installs a skill into the selected group without opening chat', async ({

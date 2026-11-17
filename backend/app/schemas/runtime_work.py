@@ -628,6 +628,15 @@ class RuntimeWorkSearchResponse(BaseModel):
     items: list[RuntimeWorkSearchItem] = Field(default_factory=list)
 
 
+class RuntimeIMQuestionAnswer(BaseModel):
+    """An answer interpreted from one authenticated private IM message."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    reply_token: str = Field(..., alias="replyToken", min_length=1)
+    question_id: str = Field(..., alias="questionId", min_length=1)
+
+
 class RuntimeSendRequest(BaseModel):
     """Request to continue a native runtime task."""
 
@@ -636,6 +645,9 @@ class RuntimeSendRequest(BaseModel):
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
     queue_if_busy: bool = Field(default=False, alias="queueIfBusy")
+    conversation_context: Optional[Literal["private_discussion"]] = Field(
+        default=None, alias="conversationContext"
+    )
     client_user_message_id: Optional[str] = Field(
         default=None,
         alias="clientUserMessageId",
@@ -649,6 +661,9 @@ class RuntimeSendRequest(BaseModel):
     request_user_input_response: Optional[dict[str, Any]] = Field(
         default=None,
         alias="requestUserInputResponse",
+    )
+    im_question_answer: Optional[RuntimeIMQuestionAnswer] = Field(
+        default=None, alias="imQuestionAnswer"
     )
     additional_context: Optional[dict[str, dict[str, Any]]] = Field(
         default=None,
@@ -676,6 +691,9 @@ class RuntimeGuidanceRequest(BaseModel):
 
     address: RuntimeTaskAddress
     message: str = ""
+    conversation_context: Optional[Literal["private_discussion"]] = Field(
+        default=None, alias="conversationContext"
+    )
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     client_guidance_id: Optional[str] = Field(
         default=None,

@@ -17,7 +17,9 @@ use brz_mysql::{FromMysqlRow, MysqlError, MysqlResult, MysqlTransaction};
 use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 
-use crate::background_jobs::project::{authority, routing, store};
+use crate::background_jobs::project::{
+    authority, device_access::personal_owner, routing, runner_recovery, store,
+};
 use crate::background_jobs::robot::{authority as robot_authority, model};
 use crate::device_identity::{
     DeviceKindRow, owned_device_identity_ids, resolve_owned_device_alias,
@@ -203,6 +205,7 @@ pub(super) async fn reserve(
     canonical_device: &str,
 ) -> MysqlResult<bool> {
     app.mysql.with_transaction(async |tx| {
+        crate::device_records::lock_device_owner(tx, command.owner_user_id).await?;
         let Some(issue) = store::locked(tx, "task", &candidate.loop_item_id).await? else {
             return Ok(false);
         };
@@ -235,7 +238,11 @@ pub(super) async fn reserve(
         let environments = authority::execution_environment_ids_on(
             &mut query, &row.cloud_project_id, &row.agent_id,
         ).await.map_err(claim_error)?;
-        if !environments.contains(&runner.id) {
+        if !environments.contains(&runner.id)
+            && !execution.permits_personal_device(personal_owner(command.owner_user_id, &runner.json), runner.id) {
+            return Ok(false);
+        }
+        if !runner_recovery::session_matches_on(&mut query, &execution, runner.id).await.map_err(claim_error)? {
             return Ok(false);
         }
         let runner_id = runner.id.to_string();
@@ -244,18 +251,34 @@ pub(super) async fn reserve(
             Err(error) if robot_authority::infrastructure(&error) => return Err(claim_error(error)),
             Err(_) => return Ok(false),
         };
-        if binding.is_some_and(|bound| bound != runner_id) {
+        if let Some(bound) = binding.as_ref()
+            && bound != &runner_id
+            && !runner_recovery::original_session(&execution)
+            && !runner_recovery::permits_on(&mut query, &execution, bound).await.map_err(claim_error)?
+        {
             return Ok(false);
         }
         if execution.routed() {
             for (agent, snapshot) in model::runner_routes(&row.agent_id, &execution.selection()) {
                 let candidates = routing::candidates_for_snapshot_on(
                     &mut query, &row.cloud_project_id, agent, snapshot,
+                    execution.assigner_user_id, execution.automatic(),
                 ).await.map_err(claim_error)?;
                 if !candidates.contains(&runner.id) {
                     return Ok(false);
                 }
             }
+        }
+        // Recheck the persisted occurrence after authorization under the claim lock.
+        if !matches!(
+            super::device_pull::workday::check_on(
+                &mut query,
+                &execution,
+                chrono::Utc::now().naive_utc(),
+            ).await?,
+            Ok(true)
+        ) {
+            return Ok(false);
         }
         if !row.execution_scope.is_empty() {
             let occupied: Option<(i64,)> = tx.fetch_optional(
@@ -282,7 +305,9 @@ pub(super) async fn reserve(
         if updated.rows_affected != 1 {
             return Ok(false);
         }
-        if issue.metadata.0["runner_binding"].is_null() {
+        if !runner_recovery::original_session(&execution)
+            && binding.as_ref() != Some(&runner_id)
+        {
             tx.execute(
                 "UPDATE loop_items SET metadata=JSON_SET(
                    IF(JSON_TYPE(metadata)='OBJECT',metadata,JSON_OBJECT()),
@@ -498,7 +523,9 @@ pub(super) async fn select_claimable(
 ) -> anyhow::Result<Option<QueueExecutionRow>> {
     let mut claimable = Vec::new();
     for row in rows {
-        if claimable_by_device(app, owner_user_id, execution_target_id, &row).await? {
+        if claimable_by_device(app, owner_user_id, execution_target_id, &row).await?
+            && super::device_pull::workday::eligible(app, &row.execution()).await?
+        {
             claimable.push(row);
         }
     }
@@ -539,7 +566,10 @@ async fn claimable_by_device(
     // aggregate `routing::allowed_devices` starts with.
     let environments =
         authority::execution_environment_ids(app, &row.cloud_project_id, &row.agent_id).await?;
-    if !environments.contains(&runner.id) {
+    if !environments.contains(&runner.id)
+        && !execution
+            .permits_personal_device(personal_owner(owner_user_id, &runner.json), runner.id)
+    {
         return Ok(false);
     }
     if execution.routed() {
@@ -565,6 +595,9 @@ async fn eligible_runner(
     if !robot_authority::authorized(app, execution).await? {
         return Ok(false);
     }
+    if !runner_recovery::session_matches_on(&mut &app.mysql, execution, runner.id).await? {
+        return Ok(false);
+    }
     let selection = execution.selection();
     let bound = match load_issue_binding(app, &execution.loop_item_id).await {
         Ok(bound) => bound,
@@ -573,6 +606,13 @@ async fn eligible_runner(
     };
     if let Some(bound) = bound
         && bound != runner.id.to_string()
+        && !runner_recovery::original_session(execution)
+        && !runner_recovery::permits_on(&mut &app.mysql, execution, &bound).await?
+    {
+        return Ok(false);
+    }
+    if let Some(resolved) = selection["resolved_environment_id"].as_str()
+        && resolved != runner.id.to_string()
     {
         return Ok(false);
     }
@@ -582,6 +622,8 @@ async fn eligible_runner(
             &execution.cloud_project_id,
             agent_id,
             route,
+            execution.assigner_user_id,
+            execution.automatic(),
         )
         .await
         {
@@ -616,6 +658,14 @@ async fn matches_issue_device_affinity(
     execution_target_id: &str,
     execution: &model::Execution,
 ) -> anyhow::Result<bool> {
+    if runner_recovery::original_session(execution) {
+        let runner =
+            resolve_owned_device_alias(&app.mysql, owner_user_id, execution_target_id).await?;
+        let Some(runner) = runner else {
+            return Ok(false);
+        };
+        return runner_recovery::session_matches_on(&mut &app.mysql, execution, runner.id).await;
+    }
     let bound = match load_issue_binding(app, &execution.loop_item_id).await {
         Ok(bound) => bound,
         Err(error) if robot_authority::infrastructure(&error) => return Err(error),

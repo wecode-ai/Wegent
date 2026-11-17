@@ -64,6 +64,19 @@ fn apply_local_execution_state(
     queue_position: Option<usize>,
 ) {
     if let Some(queue_position) = queue_position {
+        if link.runtime == "codex" {
+            // The durable queue owns admission even when history reconciliation
+            // has just projected the preceding failed turn as idle.
+            let recovering = crate::runtime_work::lifecycle::native_execution_state(link)
+                .is_some_and(|state| {
+                    state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Recovering
+                });
+            crate::runtime_work::lifecycle::queue_native_execution(
+                link,
+                queue_position,
+                recovering,
+            );
+        }
         link.running = false;
         link.status = "queued".to_owned();
         link.thread_status = if link.thread_id.is_some() {
@@ -117,6 +130,20 @@ fn apply_local_task_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
             "lastErrorCode".to_owned(),
             Value::String(error.code.clone()),
         );
+    }
+    record_runtime_start_failure(link, error);
+}
+
+fn record_runtime_start_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
+    if link.runtime_handle["lastTurnId"].is_null() {
+        let message = crate::agents::redact_diagnostic_text(&error.message);
+        link.runtime_handle["startupFailure"] = json!({
+            "code":error.code,
+            "message":message,
+            "failedAt":link.completed_at.unwrap_or_else(now_ms)
+        });
+        link.runtime_handle["lastError"] = json!(message);
+        link.runtime_handle["lastErrorCode"] = json!(error.code);
     }
 }
 
@@ -370,6 +397,55 @@ fn runtime_task_uses_ephemeral_codex_thread(link: &RuntimeTaskLink) -> bool {
     request.uses_ephemeral_codex_thread()
 }
 
+/// Fill omitted native Home identity from the conversation's persisted request.
+fn restore_request_home_identity(request: &mut ExecutionRequest, link: &RuntimeTaskLink) {
+    let saved = runtime_event_request_from_link(link);
+    if crate::agents::instance_home::request_home(&saved).is_none() {
+        return;
+    }
+    request.user_name = request.user_name.take().or(saved.user_name);
+    request.team_namespace = request.team_namespace.take().or(saved.team_namespace);
+    for key in [
+        "user_id",
+        "team_id",
+        "team_name",
+        "team_owner",
+        "collaboration_model",
+    ] {
+        if let Some(value) = saved.extra.get(key) {
+            request
+                .extra
+                .entry(key.to_owned())
+                .or_insert_with(|| value.clone());
+        }
+    }
+    let source = saved
+        .bot
+        .as_array()
+        .and_then(|bots| bots.first())
+        .unwrap_or(&saved.bot);
+    if !request.bot.is_object() && !request.bot.is_array() {
+        request.bot = json!([{}]);
+    }
+    if request.bot.as_array().is_some_and(Vec::is_empty) {
+        request.bot = json!([{}]);
+    }
+    let target = if request.bot.is_array() {
+        &mut request.bot[0]
+    } else {
+        &mut request.bot
+    };
+    if let Some(target) = target.as_object_mut() {
+        for key in ["id", "shell_type"] {
+            if let Some(value) = source.get(key) {
+                target
+                    .entry(key.to_owned())
+                    .or_insert_with(|| value.clone());
+            }
+        }
+    }
+}
+
 fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
     let mut request = link
         .runtime_handle
@@ -451,6 +527,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "collaborationMode"
                 | "collaboration_mode"
                 | "collaboration_model"
+                | "conversationContext"
                 | "modelSelection"
                 | "model_selection"
                 | "origin"
@@ -499,16 +576,24 @@ mod stand_in_request_snapshot_tests {
     fn native_collaboration_mode_survives_saved_execution_round_trip() {
         for mode in ["default", "plan", "single"] {
             let mut request = ExecutionRequest::default();
-            request.extra.extend(json!({"collaborationMode":mode,"collaboration_model":"single"})
-                .as_object().unwrap().clone());
+            request.extra.extend(
+                json!({"collaborationMode":mode,"collaboration_model":"single"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            );
             let mut handle = json!({});
             store_runtime_execution_request(&mut handle, &request);
             let root = tempfile::tempdir().unwrap();
             let path = root.path().join("index.json");
             RuntimeWorkStore::new(path.clone()).upsert_task(RuntimeTaskLink {
-                local_task_id: "native-mode".into(), runtime_handle: handle, ..Default::default()
+                local_task_id: "native-mode".into(),
+                runtime_handle: handle,
+                ..Default::default()
             });
-            let restored = RuntimeWorkStore::new(path).get_task_summary("native-mode").unwrap();
+            let restored = RuntimeWorkStore::new(path)
+                .get_task_summary("native-mode")
+                .unwrap();
             let request = runtime_event_request_from_link(&restored);
             assert_eq!(request.extra["collaborationMode"], mode);
             assert_eq!(request.extra["collaboration_model"], "single");
@@ -525,6 +610,7 @@ mod stand_in_request_snapshot_tests {
             ..Default::default()
         };
         let fields = json!({"user_id":7,"runtime_command_id":"command-1", "client_user_message_id":"message-1",
+            "conversationContext":"private_discussion",
             "standInReportTo":{"userId":7,"taskId":"stand-in-chat-7-primary"},
             "standInSourceBindings":[{"recordId":"record","source":{"id":"group","profile":"corp","kind":"group"}}]});
         request.extra.extend(fields.as_object().unwrap().clone());
@@ -649,10 +735,6 @@ fn is_cached_codex_link_hidden(
             .as_ref()
             .is_some_and(|thread_id| discovered_thread_ids.contains(thread_id))
         && link.status != "archived"
-}
-
-fn is_codex_runtime(runtime: &str) -> bool {
-    runtime.eq_ignore_ascii_case("codex")
 }
 
 fn is_claude_runtime(runtime: &str) -> bool {

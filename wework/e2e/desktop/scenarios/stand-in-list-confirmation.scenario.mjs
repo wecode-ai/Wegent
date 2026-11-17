@@ -96,8 +96,10 @@ export function createDesktopScenario(options) {
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
     await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
     await control.command('waitFor', ROOT)
-    await control.command('waitFor', `[data-testid="stand-in-overview-role-${roleId}"]`)
-    await control.command('click', `[data-testid="stand-in-overview-role-${roleId}"]`)
+    await control.command('clickWhenEnabled', `[data-testid="stand-in-overview-role-${roleId}"]`, {
+      visible: true,
+      timeoutMs: uiTimeoutMs,
+    })
     await openStandInActivity(control)
     await control.command('waitFor', `[data-testid="stand-in-activity-task-${taskId}"]`, {
       timeoutMs: modelResponseTimeoutMs,

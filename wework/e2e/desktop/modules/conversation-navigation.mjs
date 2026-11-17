@@ -11,6 +11,7 @@ import {
 } from './conversation-layout.mjs'
 
 import { ensureTaskRowVisible } from './memory-tool-flows.mjs'
+import { waitForClosedStartupSplash } from './native-window-state.mjs'
 
 import { latestModelInputText } from './response-protocol.mjs'
 
@@ -1613,6 +1614,7 @@ async function verifyLastUserMessageEdit({ composerSelector, control, restartDes
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await restartDesktopApp()
+  await waitForClosedStartupSplash(control)
   await control.command('focusMainWindow', 'body')
   await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
   await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {

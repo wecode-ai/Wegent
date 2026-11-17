@@ -118,7 +118,8 @@ it('removes a previous account question even if the new account inbox is offline
 
 it('keeps an empty local workbench quiet and uses the existing discovery hint for durable questions', async () => {
   const inbox = vi.fn().mockResolvedValue({ items: [question] })
-  const services = { localIssueHumanRequestsApi: { inbox } } as unknown as WorkbenchServices
+  const list = vi.fn().mockResolvedValue({ items: [{ ...question, status: 'resolved' }] })
+  const services = { localIssueHumanRequestsApi: { inbox, list } } as unknown as WorkbenchServices
   const { result } = renderHook(() => useIssueHumanInteractions(services, []))
   await act(async () => {
     await result.current.discover(false)
@@ -141,4 +142,58 @@ it('keeps an empty local workbench quiet and uses the existing discovery hint fo
     await result.current.refresh()
   })
   expect(inbox).toHaveBeenCalledTimes(3)
+})
+
+it.each([false, true])('recovers settlement after a failed lookup (remount: %s)', async remount => {
+  const inbox = vi.fn().mockResolvedValue({ items: [question] })
+  const list = vi.fn().mockRejectedValueOnce(new Error('Issue temporarily offline'))
+  const services = {
+    issueHumanRequestsApi: { inbox, list },
+  } as unknown as WorkbenchServices
+  const rendered = renderHook(() => useIssueHumanInteractions(services, []))
+  let { result } = rendered
+  await waitFor(() => expect(result.current.items).toHaveLength(1))
+  inbox.mockResolvedValue({ items: [] })
+  await act(async () => result.current.refresh())
+  expect(result.current.items).toHaveLength(1)
+  expect(result.current.items[0].cached).toBe(true)
+  expect(canReplyToInteraction(result.current.items[0])).toBe(false)
+  expect(result.current.errors['issue:backend']).toBe('Issue temporarily offline')
+  expect(result.current.resolved).toHaveLength(0)
+  if (remount) {
+    const cached = result.current.items
+    rendered.unmount()
+    list.mockRejectedValueOnce(new Error('Issue still offline'))
+    result = renderHook(() => useIssueHumanInteractions(services, cached)).result
+    await waitFor(() => expect(result.current.errors['issue:backend']).toBe('Issue still offline'))
+  }
+  list.mockResolvedValue({ items: [{ ...question, status: 'resolved' }] })
+  await act(async () => result.current.refresh())
+  expect(result.current.resolved).toHaveLength(1)
+  expect(result.current.items).toHaveLength(0)
+  expect(result.current.errors).toEqual({})
+})
+
+it('removes reply authority as soon as the inbox removes a question while settlement is loading', async () => {
+  const inbox = vi.fn().mockResolvedValue({ items: [question] })
+  let complete!: (value: { items: IssueHumanRequest[] }) => void
+  const list = vi.fn(
+    () => new Promise<{ items: IssueHumanRequest[] }>(resolve => (complete = resolve))
+  )
+  const services = { issueHumanRequestsApi: { inbox, list } } as unknown as WorkbenchServices
+  const { result } = renderHook(() => useIssueHumanInteractions(services, []))
+  await waitFor(() => expect(result.current.items).toHaveLength(1))
+  inbox.mockResolvedValue({ items: [] })
+  let refresh!: Promise<void>
+  act(() => {
+    refresh = result.current.refresh()
+  })
+  await waitFor(() => expect(result.current.items[0].cached).toBe(true))
+  expect(canReplyToInteraction(result.current.items[0])).toBe(false)
+  await act(async () => {
+    complete({ items: [{ ...question, status: 'resolved' }] })
+    await refresh
+  })
+  expect(result.current.items).toHaveLength(0)
+  expect(result.current.resolved).toHaveLength(1)
 })

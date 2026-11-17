@@ -1,4 +1,5 @@
 import { FileReferenceIcon } from '../composer/FileReferenceIcon'
+import { MarkdownLinkScope } from './markdownLinkScope'
 import {
   Fragment,
   createContext,
@@ -21,7 +22,6 @@ import 'katex/dist/katex.min.css'
 import { normalizeMathDelimiters, remarkMathDelimiters } from './remarkMathDelimiters'
 import {
   classifyMarkdownLink,
-  isHtmlFilePath,
   transformMarkdownUrl,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
@@ -92,7 +92,7 @@ export interface AssistantMarkdownProps {
   preserveLineBreaks?: boolean
   variant?: 'default' | 'document' | 'process' | 'user'
   sourceLineAnchors?: boolean
-  renderLink?: (href: string, text: string) => ReactNode
+  renderLink?: (href: string, text: string, children?: ReactNode) => ReactNode
   onOpenFile?: (path: string, options?: MarkdownFileOpenOptions) => void
   renderVisualization?: (part: { file: string; mode?: 'wide'; title?: string }) => ReactNode
 }
@@ -377,7 +377,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           )
         }
         const text = reactNodeToText(children)
-        const customLink = href ? renderLink?.(href, text) : undefined
+        const customLink = href ? renderLink?.(href, text, children) : undefined
         if (customLink !== undefined) return customLink
         const isComposerLink =
           href &&
@@ -664,7 +664,10 @@ function AssistantMarkdownLink({
   onOpenFile?: (path: string, options?: MarkdownFileOpenOptions) => void
   children?: ReactNode
 }) {
-  const { openExternalUrl, navigateTo, openHtmlFile, translate } = useMarkdownServices()
+  const { openExternalUrl, navigateTo, translate } = useMarkdownServices()
+  const linkContent = (
+    <MarkdownLinkScope.Provider value={true}>{children}</MarkdownLinkScope.Provider>
+  )
   const target: MarkdownLinkTarget = citation ?? classifyMarkdownLink(href)
   const icon =
     target.kind === 'file' ? (
@@ -687,7 +690,6 @@ function AssistantMarkdownLink({
 
   if (target.kind === 'file') {
     const filePath = target.path
-    const canOpenWithoutWorkspace = isHtmlFilePath(filePath) && Boolean(openHtmlFile)
     const artifact = citation?.artifact
     const lineLabel =
       artifact?.kind === 'document'
@@ -719,11 +721,8 @@ function AssistantMarkdownLink({
           data-testid="assistant-markdown-link"
           data-citation-purpose={citation?.purpose}
           data-search-excluded={citation ? true : undefined}
-          disabled={!onOpenFile && !canOpenWithoutWorkspace}
+          disabled={!onOpenFile}
           onClick={() => {
-            if (isHtmlFilePath(filePath)) {
-              if (openHtmlFile?.(filePath)) return
-            }
             if (openOptions) {
               onOpenFile?.(filePath, openOptions)
               return
@@ -737,7 +736,7 @@ function AssistantMarkdownLink({
             className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
             data-testid="assistant-markdown-link-label"
           >
-            {children}
+            {linkContent}
           </span>
           {lineLabel ? (
             <span className="shrink-0" data-testid="assistant-markdown-link-line">
@@ -759,7 +758,7 @@ function AssistantMarkdownLink({
         onClick={() => navigateTo?.(target.path)}
       >
         {icon}
-        <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{children}</span>
+        <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{linkContent}</span>
       </button>
     )
   }
@@ -787,7 +786,7 @@ function AssistantMarkdownLink({
         className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
         data-testid="assistant-markdown-link-label"
       >
-        {children}
+        {linkContent}
       </span>
     </a>
   )

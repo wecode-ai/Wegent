@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import {
   findRuntimeWorkTask,
+  runtimeCompletionReceiptPatterns,
   waitForCompletedRuntimeTaskThread,
   waitForRunningRuntimeTask,
 } from '../e2e/desktop/modules/runtime-task-evidence.mjs'
@@ -11,6 +12,33 @@ import {
 const selectedTaskId = 'runtime-selected'
 const threadId = '01a1388e-17ed-74a1-a926-28d723f9dab4'
 const stepTimeoutMs = 10_000
+
+test('completion receipts require delivery and an active owner for the exact task', () => {
+  const patterns = runtimeCompletionReceiptPatterns(selectedTaskId)
+  const line = values => `Runtime task create diagnostic ${JSON.stringify(values)}`
+  const delivered = {
+    taskId: selectedTaskId,
+    stage: 'runtime-terminal-received',
+    event: 'response.completed',
+    matchedSubscriptionCount: 1,
+  }
+  const settled = {
+    taskId: selectedTaskId,
+    stage: 'runtime-stream-owner',
+    action: 'assistant-settled',
+    activeRegistrations: 1,
+  }
+  const complete = [line(delivered), line(settled)].join('\n')
+  expect(patterns.every(pattern => pattern.test(complete))).toBe(true)
+  expect(patterns.every(pattern => pattern.test(line(delivered)))).toBe(false)
+  expect(
+    patterns.every(pattern =>
+      pattern.test(complete.replaceAll(selectedTaskId, `${selectedTaskId}-other`))
+    )
+  ).toBe(false)
+  expect(patterns[0].test(line({ ...delivered, matchedSubscriptionCount: 0 }))).toBe(false)
+  expect(patterns[1].test(line({ ...settled, activeRegistrations: 0 }))).toBe(false)
+})
 
 function ownerWork(tasks) {
   return { workspaces: [{ workspacePath: '/workspace', tasks }] }

@@ -182,6 +182,11 @@ export function SubscriptionOptionsSection({
             <CronSchedulePicker
               value={(triggerConfig.expression as string) || '0 9 * * *'}
               onChange={expression => setTriggerConfig({ ...triggerConfig, expression })}
+              timezone={(triggerConfig.timezone as string) || getUserTimezone()}
+              workdayOnly={triggerConfig.workday_only === true}
+              onWorkdayOnlyChange={workday_only =>
+                setTriggerConfig({ ...triggerConfig, workday_only })
+              }
             />
             <p className="text-xs text-text-muted">
               {t('timezone_hint')}: {(triggerConfig.timezone as string) || getUserTimezone()}

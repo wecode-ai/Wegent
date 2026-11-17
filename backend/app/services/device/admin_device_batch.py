@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.db.session import SessionLocal
 from app.schemas.device import DeviceStatusEnum
-from app.services.device.admin_device_restart import restart_admin_device
+from app.services.device.cloud_device_restart import restart_cloud_device
 from app.services.device.local_provider import local_device_provider
 
 logger = logging.getLogger(__name__)
@@ -267,7 +267,7 @@ class AdminDeviceBatchManager:
 
         try:
             result = await asyncio.wait_for(
-                restart_admin_device(db, item.user_id, item.device_id),
+                restart_cloud_device(db, item.user_id, item.device_id),
                 timeout=DEVICE_BATCH_ACTION_TIMEOUT_SECONDS,
             )
         except Exception as exc:

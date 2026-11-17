@@ -125,7 +125,7 @@ pub async fn build_with_clients(
 
     Ok(AppState {
         completion_app: std::sync::OnceLock::new(),
-        background_jobs: crate::background_jobs::BackgroundJobsClient::from_env()?,
+        background_jobs: crate::background_jobs::client_from_env()?,
         video_extensions: Arc::new(crate::background_jobs::video::DefaultVideoExtensions),
         entity_resolvers: crate::permissions::EntityResolvers::public(mysql.clone()),
         seed_tasks: crate::new_user_resources::default_tasks(mysql.clone()),
@@ -164,6 +164,9 @@ pub async fn build_with_clients(
         erp: Arc::new(NoopErpProvider),
         video_result_urls: Arc::new(crate::video_result_urls::NoVideoResultUrlRefresh),
         cloud_runtime_features: Arc::new(crate::devices::NoCloudRuntimeFeatures),
+        cloud_device_destroyer: None,
+        unique_app_device_names: config::env_or_dotenv("WEGENT_RS_UNIQUE_APP_DEVICE_NAMES")
+            .is_some_and(|value| value == "1"),
         skill_market: crate::skill_market::SkillMarketRegistry::default(),
         mcp_providers: crate::mcp_providers::McpProviderRegistry::default(),
         interactive_form: crate::InteractiveFormRegistry::default(),

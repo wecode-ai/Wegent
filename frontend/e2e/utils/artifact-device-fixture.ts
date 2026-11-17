@@ -24,6 +24,7 @@ export const artifactModelUrl =
 export type ArtifactShell = 'ClaudeCode' | 'Codex'
 export type ArtifactDevice = {
   id: string
+  recordId: number
   targetId: string
   stop(): Promise<void>
   close(): Promise<void>
@@ -33,7 +34,7 @@ export function artifactHeaders(token: string) {
   return { Authorization: `Bearer ${token}` }
 }
 
-async function stopOwnedProcess(child: ChildProcess, closed: Promise<void>): Promise<void> {
+export async function stopOwnedProcess(child: ChildProcess, closed: Promise<void>): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) {
     await closed
     return
@@ -69,7 +70,27 @@ export async function startArtifactDevice(
   shell: ArtifactShell,
   testInfo: TestInfo
 ): Promise<ArtifactDevice> {
-  const id = `e2e-artifact-${shell.toLowerCase()}-${crypto.randomUUID()}`
+  return startExecutorDevice(request, token, shell, testInfo)
+}
+
+export async function startIdeDevice(
+  request: APIRequestContext,
+  token: string,
+  testInfo: TestInfo,
+  codeServer: { port: number; password: string }
+): Promise<ArtifactDevice> {
+  return startExecutorDevice(request, token, 'ClaudeCode', testInfo, codeServer)
+}
+
+async function startExecutorDevice(
+  request: APIRequestContext,
+  token: string,
+  shell: ArtifactShell,
+  testInfo: TestInfo,
+  codeServer?: { port: number; password: string }
+): Promise<ArtifactDevice> {
+  const kind = codeServer ? 'ide' : 'artifact'
+  const id = `e2e-${kind}-${shell.toLowerCase()}-${crypto.randomUUID()}`
   const binary =
     process.env.E2E_EXECUTOR_BINARY || join(repository, 'executor/target/release/wegent-executor')
   const claude =
@@ -83,7 +104,7 @@ export async function startArtifactDevice(
     )
   for (const executable of [binary, shell === 'Codex' ? codex : claude])
     await access(executable, constants.X_OK)
-  const root = await mkdtemp(join(tmpdir(), 'wegent-artifact-e2e-'))
+  const root = await mkdtemp(join(tmpdir(), `wegent-${kind}-e2e-`))
   await mkdir(join(root, 'home'))
   const identity = await prepareArtifactDeviceUser(root).catch(async error => {
     await rm(root, { recursive: true })
@@ -102,9 +123,17 @@ export async function startArtifactDevice(
       WEGENT_AUTH_TOKEN: token,
       DEVICE_ID: id,
       DEVICE_NAME: id,
-      DEVICE_TYPE: 'app',
-      DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
+      DEVICE_TYPE: codeServer ? 'remote' : 'app',
+      DEVICE_SESSION_GATEWAY_HOST:
+        (codeServer && process.env.E2E_TEST_CONTAINER_ADDRESS) || '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
+      ...(codeServer && {
+        DEVICE_SESSION_GATEWAY_ENABLED: 'true',
+        DEVICE_CODE_SERVER_ENABLED: 'true',
+        DEVICE_CODE_SERVER_PORT: String(codeServer.port),
+        CODE_SERVER_PASSWORD: codeServer.password,
+        RUNTIME_TRANSFER_HOST: process.env.E2E_TEST_CONTAINER_ADDRESS,
+      }),
       // Registration's transport family is distinct from the Task's Bot Shell.
       // Both SDKs execute on this real device; the explicit Team selects one.
       BIND_SHELL: 'claudecode',
@@ -191,12 +220,15 @@ export async function startArtifactDevice(
           targetId = device?.execution_target_id || ''
           return device?.status
         },
-        { timeout: 60_000, message: `The real ${shell} artifact executor did not register` }
+        { timeout: 60_000, message: `The real ${shell} ${kind} executor did not register` }
       )
       .toBe('online')
-    expect(targetId).toMatch(/^app-record-\d+$/)
-    recordId = Number(targetId.slice('app-record-'.length))
-    return { id, targetId, stop, close }
+    if (!codeServer) {
+      expect(targetId).toMatch(/^app-record-\d+$/)
+      recordId = Number(targetId.slice('app-record-'.length))
+    }
+    if (!recordId) throw new Error(`The online executor did not return a device record: ${id}`)
+    return { id, recordId, targetId: targetId || id, stop, close }
   } catch (error) {
     await close()
     throw error

@@ -94,7 +94,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(created.accepted, true, created.error)
         address = { deviceId: created.deviceId, taskId, workspacePath }
         const original = await waitDone()
-        // A cold Goal mutation persists its objective but cannot run until resume.
+        // Start from an unloaded thread; activation must durably own its native resume.
         await waitForValue(
           () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
           value => value.restarted === true,
@@ -109,7 +109,13 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(set.accepted, true, set.error)
         const before = set.goal
         assert.equal(before.status, 'active')
-        assert.equal(requests, 1, 'An unloaded Goal cannot start a model turn')
+        assert.equal(set.resumed, true, 'Activation must admit the owned Goal recovery')
+        await waitForValue(
+          task,
+          value => requests === 2 && value.running === true,
+          'The active Goal waited for its own resume instead of reaching the model',
+          uiTimeoutMs
+        )
         const protectedProcess = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
         assert.equal(
           protectedProcess.restarted,
@@ -127,13 +133,10 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
             wegent_resume_goal_only: true,
           },
         })
-        assert.equal(sent.accepted, true, sent.error)
-        await waitForValue(
-          task,
-          value => requests === 2 && value.running === true,
-          'The active Goal waited for its own resume instead of reaching the model',
-          uiTimeoutMs
-        )
+        assert.equal(sent.success, false, 'A second recovery must not replace its active owner')
+        assert.equal(sent.code, 'bad_request')
+        assert.equal(sent.error, 'runtime task is already running')
+        assert.equal(requests, 2, 'Duplicate recovery submitted another model turn')
         const after = (await rpc('runtime.tasks.goal.get', { address })).goal
         for (const key of ['objective', 'createdAt', 'tokenBudget'])
           assert.equal(after[key], before[key], `Recovery replaced Goal ${key}`)

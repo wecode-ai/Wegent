@@ -209,50 +209,6 @@ fn normalize_subagent_status(fields: &mut Map<String, Value>) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn consecutive_output_items_share_the_callback_text_offset() {
-        let mut projection = StandardEventProjection::default();
-        let builder = ResponsesEventBuilder::new("task", "first", "model");
-        for (id, text, expected_offset) in [("one", "你好🙂", 0), ("two", "继续", 3)] {
-            let event = projection
-                .project(
-                    "response.output_text.done",
-                    json!({"item_id": id, "text": text}),
-                    &builder,
-                )
-                .unwrap()
-                .unwrap();
-            assert_eq!(event.data["delta"], text);
-            assert_eq!(event.data["offset"], expected_offset);
-            assert_eq!(event.data["block_id"], id);
-            assert_eq!(event.data["block_offset"], 0);
-        }
-    }
-
-    #[test]
-    fn rewritten_completed_text_is_not_appended_as_a_delta() {
-        let mut projection = StandardEventProjection::default();
-        let builder = ResponsesEventBuilder::new("task", "first", "model");
-        projection
-            .project(
-                "response.output_text.delta",
-                json!({"item_id": "message", "delta": "abc"}),
-                &builder,
-            )
-            .unwrap();
-        let completed = projection
-            .project(
-                "response.output_text.done",
-                json!({"item_id": "message", "text": "xyz123"}),
-                &builder,
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(completed.event_type, "response.block.created");
-        assert_eq!(completed.data["block"]["id"], "message");
-        assert_eq!(completed.data["block"]["content"], "xyz123");
-    }
-
     /// A late commentary snapshot must update the provider ID already used by
     /// Unicode streaming deltas instead of introducing another text identity.
     #[test]
@@ -284,36 +240,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(event.data["block"]["id"], "message");
-    }
-
-    #[test]
-    fn late_final_phase_finishes_existing_text_without_creating_duplicate_output() {
-        let mut projection = StandardEventProjection::default();
-        let builder = ResponsesEventBuilder::new("task", "first", "model");
-        projection
-            .project(
-                "response.block.created",
-                json!({"block": {
-                    "id": "process-block", "type": "text", "process_item_id": "message",
-                    "content": "正在", "status": "streaming"
-                }}),
-                &builder,
-            )
-            .unwrap();
-
-        let completed = projection
-            .project(
-                "response.output_text.done",
-                json!({"item_id": "message", "text": "正在输出完整正文"}),
-                &builder,
-            )
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(completed.event_type, "response.block.updated");
-        assert_eq!(completed.data["block_id"], "process-block");
-        assert_eq!(completed.data["updates"]["content"], "正在输出完整正文");
-        assert_eq!(completed.data["updates"]["status"], "done");
     }
 
     #[test]

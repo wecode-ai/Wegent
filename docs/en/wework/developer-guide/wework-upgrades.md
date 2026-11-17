@@ -4,6 +4,119 @@ sidebar_position: 61
 
 # Desktop upgrades, rollback, and E2E maintenance
 
+## Codex session provider migration
+
+Reserve stdout for the offline entry's single JSON completion response before migration starts;
+writer-lock contention and other diagnostics belong on stderr. Otherwise a successful migration
+can fail bridge JSON parsing and roll back unnecessarily. The real contention regression waits
+for the diagnostic before releasing the writer and verifies both the complete stdout protocol
+and the retained stderr diagnostic.
+
+Session conversion is separate from download-time environment preparation. The target's
+`DesktopRuntime.prepareExecutor` invokes its delivered executor's offline
+`--workbench-codex-providers-migrate` entry before constructing the managed executor and
+admitting queued work or Goal recovery. Never rewrite live sessions during
+`release-preparation-cli` prewarming. A Home relocation's `beforeMove` is insufficient:
+an already relocated Home does not move again on upgrade.
+
+Migration holds Home process ownership, agent execution and native thread writer coordination
+leases. It changes only rollout `session_meta.model_provider` and SQLite
+`threads.model_provider` to the logical Wework router, persisted as the single-byte ID `~`.
+Replace only the raw JSON provider value and pad unused bytes with JSON whitespace, preserving
+the header length and every subsequent byte offset used by paginated/fork history. Never
+re-serialize the entire header and shift those references. Older metadata without a saved
+provider remains byte-identical and uses native current-provider selection. A versioned Home-local journal
+retains original providers and index provenance. Conversation bodies, compression/history
+references, permissions, creator accounts, Goal state/budgets and recoverable user commands
+are not regenerated. Authentication files, repositories and cloud data are excluded.
+
+Journal v3 stores the original provider's exact JSON value and SHA-256 digests of both header
+states, not base instructions or complete header snapshots. Release each header buffer after
+processing it. Recovery reconstructs the original provider value and verifies its digest so
+permissions, accounts and all other fields cannot change. Validate existing v2 entries one at
+a time and atomically compact them to v3 without loading every session header simultaneously.
+Interruption before atomic v3 publication restarts conversion of the v2 entries from the beginning.
+Existing rollout/index migration progress remains durable; journal compaction itself has no
+persisted per-entry cursor.
+Leave empty rollouts without published metadata unchanged and retain native metadata-readiness
+recovery. A nonempty truncated header, or a missing header already recorded in the pending
+journal, still blocks completion. Auxiliary named-Home readers share native process lifetime
+leases rather than migrating while a writer is live; they never inherit another Home's auth.
+The offline command has no fixed kill deadline. Shutdown cancels it and waits for process exit
+before releasing writer ownership. This does not remove an older independent launcher's
+activation health budget. Verify the stopped-writer preparation phase and any required bridge
+release separately; recoverable migration alone does not certify arbitrary legacy upgrade edges.
+
+Persist intent before mutation; publish rollout files atomically and update indexes in
+transactions. Re-entering preparation after interruption must converge, not treat an exception
+as completion. Compatible older clients may rewrite the index provider or materialize compressed
+history before appending turns. Re-upgrade reconciles indexes against existing sessions without
+restoring stale history or discarding those turns. Writers must stop first. Failure cannot admit
+the new executor or Goal recovery; activation failure uses existing healthy-release rollback
+and startup recovery.
+
+A shared identity never implies shared credentials. API-key and native-account threads replace
+the complete provider definition independently. Unscoped account RPCs keep native Codex authentication.
+The local router serves the merged catalog using a non-secret catalog credential, never an account
+token or task API key. Threads must not inherit that credential or another route's bearer command.
+Runtimes with shared routing report `modelProviderRouting: "thread"` in public task and identity
+conversation address handles. The owning runtime generates this capability rather than trusting
+persisted or caller-supplied values. Composers can switch API and native-account models in the same
+thread instead of splitting by logical provider name. Older runtimes without this capability retain
+their existing provider-boundary confirmation. The executor still enforces permissions and credentials.
+Local catalog discovery has process-owned settings. Native threads retain an explicit Home
+`features.api_key_model_discovery` value; local discovery must not enable external API-key discovery.
+Before starting the shared process, acquire Home ownership and complete offline migration. Atomically
+write the complete merged catalog to a process-owned file inside that Home and load it through native
+`model_catalog_json`, avoiding the custom HTTP catalog's 1 MB limit without stripping native
+instructions or permission templates. Retain the file until the native process actually exits;
+cleanup of unrelated runtime profiles must not remove it.
+On Unix, a wrapper's exit does not prove its native descendants have stopped. Reserve the leader
+PID until its owned process group exits, then reap the leader and release the Home lease and catalog.
+An exit notification alone cannot admit migration. Windows retains its whole-tree termination flow.
+On Linux, a zombie main thread can leave workers holding the shared file table. Check the thread
+count in `/proc/<pid>/stat` before treating it as a resource-free, single-thread zombie.
+Diagnostics retain kernel lock records and the owner's state, process group and thread count;
+[`/proc/<pid>/fd` can disappear after the main thread exits](https://man7.org/linux/man-pages/man5/proc_pid_fd.5.html).
+A real multithreaded Linux regression exits the main thread while a worker holds a file lock,
+then verifies that retirement waits for the full thread group and the actual lock release.
+Catalog edits use the existing idle restart and active-work confirmation flow. Explicit native
+catalog configuration in the Home remains authoritative. Local discovery adds no resident process
+and does not serialize model requests from separate threads.
+Editing a persisted conversation must use the regular inference resume after `thread/revert`,
+restoring its provider, authentication and MCP before `turn/start`. A cold history control context
+cannot serve the replacement response directly. Native OpenAI threads retain native WebSocket and
+account authentication; public API threads use their HTTP provider. Fill omitted Agent Home identity
+from the original conversation without restoring old authentication tokens. Unsaved temporary
+threads retain direct execution.
+Context compaction also calls the model. After the shared app-server restarts, a cold thread must
+restore its complete inference context from the request's freshly resolved model configuration.
+A control-only resume must not inherit the process discovery profile's OpenAI compaction v2
+capability. Bind model routes and notification subscriptions before resume, retaining the route
+registration until native compaction completes. Native accounts retain their own compaction protocol.
+
+Server-created tasks must also retain one stable identity for the initial visible user message
+across provisional history, the execution request and native turn presentation bindings. Reconcile
+recovered history by identity, never by text: identical prompts can belong to distinct turns.
+Recovery acceptance counts answers within assistant messages; a turn-navigation preview is not
+another message.
+Paused Goals must remain paused across ordinary restarts. Reactivation uses the original task's
+persisted execution configuration and existing admission flow. Repeated activation cannot enqueue
+duplicate recovery or change queued recovery to running. Native `goal/set` on an unloaded thread
+only updates persisted metadata and emits a notification. Activity tracking must account for thread
+loading so that this notification cannot block the same thread's recovery. Loaded native Goal
+continuations retain their existing concurrency protection.
+
+Bind model routes and notification subscriptions before `thread/resume`, since native Goals can continue
+before that RPC returns. Never resubmit original user input or settle an active Goal from a
+previous turn's completed outcome.
+
+Acceptance requires delivered-package upgrade, legacy continuation, writes after rollback and
+re-upgrade. Cover ordinary/tool history, compressed/compacted history, forks/children, active
+Goals, interruption at durable publication boundaries and concurrent account/API-key isolation.
+Migration unit tests and native-binary protocol probes do not replace packaged Electron upgrade
+and rollback evidence.
+
 ## Repairs delivered with the update package
 
 Repairs run through the target package's `release-preparation-cli`, under the same integrity
@@ -57,7 +170,13 @@ Keep the existing Electron YAML and `components-<channel>-<platform>-<arch>.json
 
 Legacy clients ignore the new fields and continue updating directly to their advertised latest version. Enforcement begins when the client contains the new implementation. Pre-protocol clients are outside the new E2E matrix; do not pin their channel to a bridge.
 
-A minimum version never proves compatibility. The client follows tested edges to the newest reachable version, minimizing hops and confirming each hop separately. A fixed test pair A → B requires B to be newer than A, not globally newest. Recheck revocation immediately before installation. Missing paths must never cause unrestricted updating.
+A verified A → D upgrade/rollback pair grants interval compatibility to published sources B with A ≤ B < D in the same platform, architecture, and channel catalog. B may upgrade directly to D without separate B → D verification. Thus A → B → C → D plus A → D lets a user on B go straight to D. Intermediate direct upgrades are accepted compatibility inferences, not tested pairs; retain actual evidence without fabricating verified edges. A chain alone still requires its intermediate hops unless a direct pair covers the interval.
+
+The target's minimum source version remains a constraint, never permission by itself. Unknown sources, sources below the verified anchor, and sources at or above the target are ineligible. Choose the shortest path to the newest reachable version and confirm each hop separately. A fixed test target only needs to be newer than its source, not globally newest. Existing clients retain their shipped planning algorithm; interval behavior requires a client containing this updater change.
+
+Revoked targets, witness edges, and witness source releases cannot authorize inferred upgrades. An explicitly revoked B → D pair overrides A → D interval coverage; other valid paths remain available. An installed revoked source may still escape through its own non-revoked verified pair. Recheck the same policy immediately before installation. Missing paths must never cause unrestricted updating.
+
+Acceptance version 22 reuses the upgraded real client in the existing `app-rollback` checkpoint to check interval discovery, revocation, and recovery. Its future target manifest is explicitly marked `fixture`; no fixture archive is downloaded and no release evidence is produced for that pair. Real source-to-target upgrade, data retention, and rollback assertions continue independently. Results are retained in `interval-policy-result.json`, with no additional checkpoint or package build.
 
 ## Release lifecycle
 
@@ -184,6 +303,16 @@ When upgrade tests quit an installed host, they first confirm command execution 
 
 When diagnostics need new packages, `build_only=true` produces immutable inputs for a subsequent non-publishing `verification_run_id` replay. This mode cannot publish, start the upgrade matrix, or generate compatibility evidence. Ordinary releases and default dry runs still require the complete upgrade gate.
 
+`Wework App` accepts `verification_writer_wait_seconds`, an integer from 0 to 600, to observe
+an independently owned native writer during stopped preparation. The default is 0 and adds no
+ordinary CI wait. Setting 65 adds one 65-second observation to `app-rollback` for each package
+pair, without repeating it in the two recovery checkpoints. While the writer remains alive,
+the rollout header must stay unchanged and neither the migration receipt nor the trial health
+timer may admit activation. Releasing the writer must automatically complete upgrade, task
+continuation, and rollback. Nonzero values require a target declaring `afterStopPreparation=1`;
+they do not extend product health budgets or weaken assertions. Locally, run the same scenario
+with `WEWORK_E2E_UPGRADE_WRITER_WAIT_SECONDS=65`.
+
 Upgrade edges explicitly record `fromSourceSha` and `toSourceSha`, each matching the delivered package metadata’s `sourceSha`; E2E results record both revisions. Missing or mismatched revisions block promotion, and clients also check the downloaded package revision. Diagnostic log failures must neither block preparation nor replace its original error. Before restoring data after a startup timeout, the native launcher must terminate the complete runtime tree, including writers in independent process groups.
 
 Isolated E2E startup diagnostics also monitor the main-thread heartbeat. A five-second stall
@@ -227,6 +356,12 @@ assertion budget.
 
 `wework/upgrade-policy.json` declares only the product's minimum source constraint; no per-release source list is maintained. For each platform, architecture, and target channel, release jobs read the published catalog and retain the previous release's `minSourceVersion` as the fixed baseline X, bounded below by the repository constraint. Stable catalogs contain only Stable versions and floors. Beta catalogs may contain both Stable and Beta and can bootstrap from Stable when Beta has no history. Stable never imports Beta sources or edges.
 
+Stable 0.6.7 must first upgrade to the stable 0.6.8 bridge, which preserves the old session format, before entering the new runtime. The new target retains the repository minimum of 0.6.8-beta.5 so existing beta users remain eligible; stable establishes its path from stable 0.6.8. The bridge branch's minimum is 0.6.7. Stable still selects only stable sources, and both hops require real delivered-package upgrade and rollback evidence.
+
+Release preparation validates that the minimum source is no newer than the target before building,
+including explicit version overrides and tag triggers. A stable version sorts after its matching Beta,
+so a Beta release cannot use its matching stable version as the minimum source.
+
 CI verifies X to target, then previous release to target, running once if both sources are identical. Each verification must start the actual delivered source, upgrade through the real UI, open the target's main interface, confirm persisted tasks and plugin configuration, continue a task, and roll back to a usable source. Process startup, extraction, and a health endpoint alone are insufficient.
 
 | Fixed baseline X                        | Previous release | Publication decision                                                                       |
@@ -249,7 +384,7 @@ It defaults to empty; aggregation reports unapproved exclusions and blocks promo
 excludes only the matching failed source, never skips tests, converts failure to success, or
 removes existing historical edges and intermediate packages. The CI summary records approved exclusions.
 
-Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Passing X does not prove compatibility for intermediate versions: verify the previous release independently and preserve existing edges and bridge packages for continuous upgrades.
+Download, permission, malformed-catalog, and checksum errors abort rather than count as compatibility failures. Revoked releases and regression fixtures are excluded. A genuine initial protocol baseline starts at its own version. Historical catalogs without an eligible previous release are errors, never new baselines. Successful X-to-target verification permits published intermediate sources to upgrade directly under the interval policy. Release CI still verifies the previous release independently and preserves existing edges and bridge packages for other upgrade paths. Interval inference adds no package-pair tests or CI jobs; acceptance version 22 retains the existing real-package upgrade and rollback gate.
 
 Persist the confirmed floor and exact edges in each target channel's `upgradePolicy`. Publish immutable version assets before promoting rolling manifests. The next release reads X from that catalog and retains or raises it automatically, without writing version lists back to source. Stable publication verifies Stable and Beta independently; Beta publication advances only Beta. All platform jobs must succeed before publication. Always retain CI decision summaries and failure logs, distinguishing unavailable baselines, failed verification, and blocked publication; do not retry to hide failures.
 

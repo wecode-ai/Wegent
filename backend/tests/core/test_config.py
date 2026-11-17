@@ -312,14 +312,12 @@ class TestSettings:
         with pytest.raises(ValidationError, match="ISSUE_PAGE_CACHE_SECONDS"):
             build_settings_from_env()
 
-    def test_settings_share_token_encryption(self):
-        """Test share token encryption configuration"""
+    def test_settings_do_not_expose_share_token_crypto(self):
+        """Share tokens use random opaque values rather than shared AES keys."""
         s = build_settings()
 
-        assert s.SHARE_TOKEN_AES_KEY is not None
-        assert len(s.SHARE_TOKEN_AES_KEY) == 32  # AES-256 requires 32 bytes
-        assert s.SHARE_TOKEN_AES_IV is not None
-        assert len(s.SHARE_TOKEN_AES_IV) == 16  # AES IV requires 16 bytes
+        assert not hasattr(s, "SHARE_TOKEN_AES_KEY")
+        assert not hasattr(s, "SHARE_TOKEN_AES_IV")
 
     def test_global_settings_instance(self):
         """Test global settings instance"""

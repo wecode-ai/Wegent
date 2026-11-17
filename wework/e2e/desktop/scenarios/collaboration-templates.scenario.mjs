@@ -1,7 +1,12 @@
+import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
-import { reloadMainWindow, selectCollaborationProjectView } from '../modules/workspace-flows.mjs'
+import {
+  expandCollaborationSpaces,
+  reloadMainWindow,
+  selectCollaborationProjectView,
+} from '../modules/workspace-flows.mjs'
 import {
   verifyTemplateDeletion,
   verifyTemplateDeletionPermissions,
@@ -22,9 +27,7 @@ export async function fillTemplateRoleBindings(control, count) {
   ) {
     await control.command('click', testId('template-customize-main'))
   }
-  await control.command('waitFor', testId('template-role-main-role-0'), {
-    text: '当前设备智能体',
-  })
+  await control.command('waitFor', testId('template-role-main-role-0') + ' option[value^="human:"]')
   // This scenario covers an explicit human coordinator; lifecycle coverage uses the agent default.
   const human = await control.command(
     'getAttribute',
@@ -33,12 +36,12 @@ export async function fillTemplateRoleBindings(control, count) {
   )
   await control.command('select', testId('template-role-main-role-0'), { value: human })
   for (let index = 1; index < count; index++) {
-    await control.command('waitFor', testId(`template-role-main-role-${index}`), {
-      text: '当前设备智能体',
-    })
+    await control.command(
+      'waitFor',
+      `${testId(`template-role-main-role-${index}`)} option[value="agent:template-agent:main-role-${index}"]`
+    )
     await control.command('select', testId(`template-role-main-role-${index}`), {
-      by: 'label',
-      value: '当前设备智能体',
+      value: `agent:template-agent:main-role-${index}`,
     })
   }
 }
@@ -94,12 +97,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     })
   }
 
-  const disableCreationRule = async control => {
+  const verifyDeferredCreationRule = async control => {
     await click(control, 'collaboration-project-settings-automatic-processing')
     const enabled = scoped('[data-testid^="automatic-processing-enabled-"][aria-checked="true"]')
-    await control.command('waitFor', enabled, { timeoutMs: uiTimeoutMs })
-    await control.command('clickWhenEnabled', enabled, { timeoutMs: uiTimeoutMs })
-    await control.command('waitFor', enabled, { visible: false, timeoutMs: uiTimeoutMs })
+    await control.command(
+      'waitFor',
+      scoped('[data-testid^="automatic-processing-enabled-"][aria-checked="false"]'),
+      { timeoutMs: uiTimeoutMs }
+    )
+    assert.equal(
+      Number(await control.command('getElementCount', enabled)),
+      0,
+      'Templates with deferred native Agent configuration must keep automatic execution disabled'
+    )
     await click(control, 'collaboration-project-settings-sharing')
   }
 
@@ -307,6 +317,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await wait(control, 'collaboration-platform-root')
+      await expandCollaborationSpaces(control, CONTENT)
+      await revealCollaborationSidebarElement(control, testId('collaboration-primary-templates'))
       await click(control, 'collaboration-primary-templates')
       await click(control, 'template-tab-available')
       await wait(
@@ -375,6 +387,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('clickWhenEnabled', testId('collaboration-project-create-confirm'), {
         timeoutMs: uiTimeoutMs,
       })
+      // Creation configures template resources before onCreated closes the form.
+      await control.command('waitFor', testId('collaboration-project-create-confirm'), {
+        visible: false,
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await wait(control, 'cloud-project-header-title', projectName)
       await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
       await click(control, 'collaboration-project-settings-sharing')
@@ -399,7 +416,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'collaboration-template-dialog', '模板已发布')
       await capture(control, '07-published')
       await click(control, 'template-save-close')
-      await disableCreationRule(control)
+      await verifyDeferredCreationRule(control)
       await control.command('clickWhenEnabled', testId('project-template-import'), {
         timeoutMs: uiTimeoutMs,
       })
@@ -418,7 +435,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'collaboration-project-settings-groups')
       await wait(control, 'collaboration-project-groups-page', '调研分析小组')
       await capture(control, '10-persisted')
-      await disableCreationRule(control)
+      await verifyDeferredCreationRule(control)
       await click(control, 'collaboration-project-settings-groups')
       await click(control, 'collaboration-group-open-create')
       await click(control, 'group-template-create')

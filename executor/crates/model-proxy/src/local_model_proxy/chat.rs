@@ -23,6 +23,9 @@ use crate::logging::log_executor_event;
 mod tool_catalog;
 use tool_catalog::effective_tools;
 
+mod custom_tools;
+pub(crate) use custom_tools::CustomToolConversion;
+
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const TOOL_SEARCH_NAME: &str = "tool_search";
 pub(super) const BRIDGED_TOOL_SEARCH_NAME: &str = "search_deferred_tools";
@@ -785,6 +788,4 @@ use tool_schema::bridged_tool_search_description;
 use tool_schema::bridged_tool_search_parameters;
 use tool_schema::build_tool_context;
 use tool_schema::chat_tools;
-#[cfg(test)]
-use tool_schema::is_kimi_k3_model;
 use tool_schema::request_uses_kimi_k3;

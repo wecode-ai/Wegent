@@ -198,6 +198,7 @@ pub(super) fn validate_local_workflow_task_binding(
 
 pub(super) fn map_task_binding(row: &Row<'_>) -> rusqlite::Result<TaskBinding> {
     Ok(TaskBinding {
+        stand_in_pending: row.get(18)?,
         id: row.get(0)?,
         cloud_project_id: row.get(1)?,
         loop_item_id: row.get(2)?,

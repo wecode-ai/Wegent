@@ -7,6 +7,7 @@ vi.mock('expo-file-system', () => ({
 }))
 
 import { RuntimeApi, RuntimeApiError } from './runtimeApi'
+import type { LocalRuntimeApi } from './localRuntimeApi'
 
 const config = {
   backendUrl: 'https://wegent.example',
@@ -17,7 +18,179 @@ const config = {
 }
 
 describe('RuntimeApi', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  it('opens offline without contacting Backend and does not expose cloud models', async () => {
+    const fetcher = vi.fn()
+    vi.stubGlobal('fetch', fetcher)
+    const api = new RuntimeApi(null)
+    expect(await api.listDevices()).toEqual({ items: [] })
+    expect(await api.listModels()).toEqual({ data: [] })
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it.each([null, { ...config, accessToken: 'account-b' }])(
+    'invalidates old account HTTP responses on session change',
+    async next => {
+      let complete!: (response: Response) => void
+      const fetcher = vi.fn().mockImplementationOnce(
+        () =>
+          new Promise<Response>(resolve => {
+            complete = resolve
+          })
+      )
+      vi.stubGlobal('fetch', fetcher)
+      const api = new RuntimeApi(config)
+      api.updateBackend(config, 1)
+      const pending = api.listModels()
+      const rejected = expect(pending).rejects.toThrow('账号已变化')
+      api.updateBackend(next, 2)
+      expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true)
+      complete(new Response(JSON.stringify({ data: [{ name: 'private-account-a' }] })))
+      await rejected
+    }
+  )
+
+  it('checks account ownership again after asynchronous response decoding', async () => {
+    let complete!: (body: string) => void
+    const body = new Promise<string>(resolve => {
+      complete = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: () => body,
+      })
+    )
+    const api = new RuntimeApi(config)
+    api.updateBackend(config, 1)
+    const pending = api.listModels()
+    const rejected = expect(pending).rejects.toThrow('账号已变化')
+    await Promise.resolve()
+    api.updateBackend({ ...config, accessToken: 'account-b' }, 2)
+    complete('{"data":[{"name":"private-account-a"}]}')
+    await rejected
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('sends blocking answers through the PC structured-response endpoint with scoped identity', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"accepted":true,"taskId":"task"}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi(config)
+    const address = { deviceId: 'device', taskId: 'task' }
+    const response = {
+      requestId: 0,
+      itemId: 'item',
+      interactionScope: 'turn',
+      answers: { choice: { answers: ['One'] } },
+    }
+    await api.respondToUserInput(address, response)
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${config.apiBaseUrl}/runtime-work/send`)
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
+      address,
+      message: 'One',
+      requestUserInputResponse: response,
+    })
+  })
+
+  it('guides an active async question without sending a blocking response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"accepted":true}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const address = { deviceId: 'device', taskId: 'task' }
+    await new RuntimeApi(config).guideTask(address, 'One', 'guidance')
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${config.apiBaseUrl}/runtime-work/guidance`)
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body)).toEqual({
+      address,
+      message: 'One',
+      clientGuidanceId: 'guidance',
+    })
+  })
+
+  it('uses the latest access token without rebuilding its data scope', async () => {
+    let token = 'before'
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('{"items":[]}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi(config, undefined, () => token)
+    await api.listDevices()
+    token = 'after'
+    await api.listDevices()
+    expect(fetchMock.mock.calls.map(call => call[1].headers.Authorization)).toEqual([
+      'Bearer before',
+      'Bearer after',
+    ])
+  })
+
+  it('coalesces composer inventory reads, caches for 30 seconds, and isolates devices', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1)
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('{"items":[]}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi(config)
+    const one = api.listInstalledPlugins('first')
+    expect(api.listInstalledPlugins('first')).toBe(one)
+    await one
+    await api.listInstalledPlugins('first')
+    expect(fetchMock).toHaveBeenCalledOnce()
+    await api.listInstalledPlugins('second')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    now.mockReturnValue(30_002)
+    await api.listInstalledPlugins('first')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    api.clearPluginCatalogs()
+    await api.listInstalledPlugins('first')
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('never caches failed inventory reads', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{"detail":"denied"}', { status: 403 }))
+      .mockResolvedValueOnce(new Response('{"items":[]}'))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi(config)
+    await expect(api.listInstalledPlugins('first')).rejects.toThrow('denied')
+    await expect(api.listInstalledPlugins('first')).resolves.toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('recovers a rejected read only when its in-flight token has already been replaced', async () => {
+    let token = 'expired'
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        token = 'fresh'
+        return new Response('{}', { status: 401 })
+      })
+      .mockResolvedValueOnce(new Response('{"items":[]}'))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(new RuntimeApi(config, undefined, () => token).listDevices()).resolves.toEqual({
+      items: [],
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1]![1].headers.Authorization).toBe('Bearer fresh')
+  })
+
+  it('never repeats a rejected mutation or a read with an unchanged invalid token', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('{}', { status: 401 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(new RuntimeApi(config).listDevices()).rejects.toBeInstanceOf(RuntimeApiError)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    let token = 'old'
+    fetchMock.mockImplementation(async () => {
+      token = 'new'
+      return new Response('{}', { status: 401 })
+    })
+    await expect(
+      new RuntimeApi(config, undefined, () => token).setGoal(
+        { deviceId: 'device', taskId: 'task' },
+        'goal'
+      )
+    ).rejects.toBeInstanceOf(RuntimeApiError)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 
   it('loads the Wework model catalog including execution configuration', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
@@ -36,6 +209,72 @@ describe('RuntimeApi', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer secret-token' }),
       })
     )
+  })
+
+  it('loads only the selected APP catalog through the existing authorized PC endpoint', async () => {
+    const native = { runtime: 'codex', provider: 'openai', model_id: 'gpt-6.1-sol' }
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { id: '11', models: [native], catalog_error: null },
+            { id: '12', models: [{ ...native, model_id: 'other-device' }] },
+          ])
+        )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi({ ...config, apiBaseUrl: 'https://wegent.example/api' })
+
+    await expect(api.listNativeModels(11)).resolves.toEqual({
+      models: [native],
+      catalog_error: null,
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://wegent.example/api/v1/resources/execution-environments',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer secret-token' }),
+      })
+    )
+    await expect(api.listNativeModels(13)).rejects.toThrow('设备已不可用')
+  })
+
+  it('creates a standalone chat through the existing create endpoint without preparing a directory', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          accepted: true,
+          deviceId: 'app-record-11',
+          taskId: 'task',
+          workspacePath: '/Users/owner/Documents/Codex/task',
+          runtime: 'codex',
+        })
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      new RuntimeApi(config).createConversation({
+        schemaVersion: 2,
+        deviceId: 'app-record-11',
+        taskId: 'task',
+        runtime: 'codex',
+        message: '你好',
+        clientUserMessageId: 'message',
+        title: '你好',
+        modelId: 'public-model',
+        modelType: 'public',
+        modelOptions: {},
+        standaloneChatWorkspace: true,
+      })
+    ).resolves.toMatchObject({ accepted: true, workspacePath: '/Users/owner/Documents/Codex/task' })
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [url, request] = fetchMock.mock.calls[0]!
+    expect(url).toBe('https://wegent.example/api/v1/runtime-work/create')
+    expect(request.method).toBe('POST')
+    expect(JSON.parse(request.body)).toMatchObject({
+      deviceId: 'app-record-11',
+      standaloneChatWorkspace: true,
+    })
+    expect(JSON.parse(request.body)).not.toHaveProperty('workspacePath')
   })
 
   it('creates a chat using its prepared workspace path', async () => {
@@ -73,7 +312,7 @@ describe('RuntimeApi', () => {
     expect(body).not.toHaveProperty('standaloneChatWorkspace')
   })
 
-  it('prepares a standalone conversation workspace through device commands', async () => {
+  it('reads the home directory and creates project directories on a cloud device', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -231,6 +470,59 @@ describe('RuntimeApi', () => {
       fileSize: 2048,
       mimeType: 'image/jpeg',
     })
+  })
+
+  it.each([false, true])(
+    'never uploads a phone attachment to Backend when the local adapter is missing or mismatched (%s)',
+    async hasLocal => {
+      const uploadFile = vi.fn().mockResolvedValue({
+        status: 200,
+        body: JSON.stringify({
+          id: 41,
+          filename: 'private.txt',
+          file_size: 8,
+          mime_type: 'text/plain',
+        }),
+      })
+      const localUpload = vi.fn()
+      const local = hasLocal
+        ? ({
+            runtime: { ownsDevice: vi.fn().mockReturnValue(false) },
+            uploadAttachment: localUpload,
+          } as unknown as LocalRuntimeApi)
+        : undefined
+      const api = new RuntimeApi(config, uploadFile, undefined, undefined, local)
+      await expect(
+        api.uploadAttachment(
+          { uri: 'file:///private.txt', name: 'private.txt', mimeType: 'text/plain', size: 8 },
+          'mobile-local:installation:previous-environment'
+        )
+      ).rejects.toThrow('本机执行环境尚未就绪')
+      expect(uploadFile).not.toHaveBeenCalled()
+      expect(localUpload).not.toHaveBeenCalled()
+    }
+  )
+
+  it('imports current phone attachments through the owning local adapter', async () => {
+    const asset = {
+      uri: 'file:///private.txt',
+      name: 'private.txt',
+      mimeType: 'text/plain',
+      size: 8,
+    }
+    const result = { id: -1, filename: 'private.txt', fileSize: 8, mimeType: 'text/plain' }
+    const localUpload = vi.fn().mockResolvedValue(result)
+    const local = {
+      runtime: { ownsDevice: vi.fn().mockReturnValue(true) },
+      uploadAttachment: localUpload,
+    } as unknown as LocalRuntimeApi
+    const uploadFile = vi.fn()
+    const api = new RuntimeApi(config, uploadFile, undefined, undefined, local)
+    await expect(api.uploadAttachment(asset, 'mobile-local:installation:current')).resolves.toEqual(
+      result
+    )
+    expect(localUpload).toHaveBeenCalledWith(asset)
+    expect(uploadFile).not.toHaveBeenCalled()
   })
 
   it('preserves a nested backend attachment error', async () => {

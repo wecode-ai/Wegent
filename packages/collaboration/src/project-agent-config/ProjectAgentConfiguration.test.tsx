@@ -83,6 +83,12 @@ function createApi(options?: {
       return next;
     },
   );
+  const remove = vi.fn(
+    async (_projectId: string, agentId: string, _version: number) => {
+      const index = rows.findIndex((row) => row.id === agentId);
+      if (index >= 0) rows.splice(index, 1);
+    },
+  );
   const api = {
     projects: {},
     resources: {
@@ -95,6 +101,7 @@ function createApi(options?: {
       list,
       create,
       update,
+      remove,
     },
     automationExecutionCatalog: {
       load: vi.fn(async () => ({
@@ -117,7 +124,7 @@ function createApi(options?: {
       ),
     },
   } as unknown as SharedWorkspaceApi;
-  return { api, create, list, update };
+  return { api, create, list, update, remove };
 }
 
 function element(testId: string): HTMLElement {
@@ -238,6 +245,71 @@ describe("ProjectAgentConfiguration", () => {
       );
     });
   }
+
+  it("confirms deletion and preserves the Agent when cancelled", async () => {
+    const { api, remove } = createApi();
+    await render(api);
+    await click("project-agent-delete-project-agent-1");
+    expect(remove).not.toHaveBeenCalled();
+    await click("project-agent-delete-cancel");
+    expect(remove).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("已有智能体");
+    await click("project-agent-delete-project-agent-1");
+    await click("project-agent-delete-confirm");
+    expect(remove).toHaveBeenCalledWith(project.id, "project-agent-1", 1);
+    expect(
+      container.querySelector(
+        '[data-testid="project-agent-delete-project-agent-1"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps a referenced Agent and explains how to remove its group dependency", async () => {
+    const { api, remove } = createApi();
+    remove.mockRejectedValueOnce(new Error("PROJECT_AGENT_IN_USE: referenced"));
+    await render(api);
+    await click("project-agent-delete-project-agent-1");
+    await click("project-agent-delete-confirm");
+    expect(container.textContent).toContain("请先在小组中替换或移除");
+    expect(
+      container.querySelector(
+        '[data-testid="project-agent-delete-project-agent-1"]',
+      ),
+    ).not.toBeNull();
+    await click("project-agent-delete-confirm");
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(
+      container.querySelector(
+        '[data-testid="project-agent-delete-project-agent-1"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("reports a refresh failure separately after successful deletion and retries only the list", async () => {
+    const { api, remove, list } = createApi();
+    await render(api);
+    list.mockRejectedValueOnce(new Error("Refresh unavailable"));
+    await click("project-agent-delete-project-agent-1");
+    await click("project-agent-delete-confirm");
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(
+      container.querySelector('[data-testid="project-agent-delete-dialog"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="project-agent-config-error"]')
+        ?.textContent,
+    ).toContain("Refresh unavailable");
+    await click("project-agent-config-retry");
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(
+      container.querySelector('[data-testid="project-agent-config-error"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="project-agent-delete-project-agent-1"]',
+      ),
+    ).toBeNull();
+  });
 
   it("shows a retryable list failure without claiming the catalog is empty", async () => {
     const { api, list } = createApi();

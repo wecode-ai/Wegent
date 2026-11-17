@@ -9,6 +9,7 @@ import {
 } from './desktop-runtime.js'
 import type { DshRuntimeOptions } from './dsh-runtime.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
+import { migrateCodexProviderState } from './codex-provider-upgrade.js'
 import { resolveDesktopDeviceId } from './desktop-device-id.js'
 import { CoreDshPluginManager } from './core-dsh-plugin-manager.js'
 import type { ModelConfigurationStore } from '../host/model-configuration-store.js'
@@ -16,6 +17,7 @@ import type { ModelConfigurationStore } from '../host/model-configuration-store.
 vi.mock('./workbench-executor-schema.js', () => ({
   assertExecutorWorkbenchCompatibility: vi.fn(),
 }))
+vi.mock('./codex-provider-upgrade.js', () => ({ migrateCodexProviderState: vi.fn() }))
 
 interface Deferred<T> {
   promise: Promise<T>
@@ -164,6 +166,7 @@ async function flush(): Promise<void> {
 
 describe('DesktopRuntime lifecycle generation', () => {
   beforeEach(() => {
+    vi.mocked(migrateCodexProviderState).mockReset().mockResolvedValue(undefined)
     vi.mocked(assertExecutorWorkbenchCompatibility).mockReset().mockResolvedValue(undefined)
     created.length = 0
     createdOptions.length = 0
@@ -357,6 +360,24 @@ describe('DesktopRuntime lifecycle generation', () => {
     await expect(runtime.start()).rejects.toThrow('incompatible schema')
     expect(createExecutor).not.toHaveBeenCalled()
     expect(resolveDesktopDeviceId).not.toHaveBeenCalled()
+    await runtime.stop()
+  })
+
+  test('starts and restarts without an offline Home migration gate', async () => {
+    const createExecutor = vi.fn(() => new FakeExecutor())
+    const runtime = createRuntime(
+      { ...EXTERNAL_DSH, WEWORK_EXECUTOR_PATH: '/executor' },
+      { createExecutor }
+    )
+    await runtime.start()
+    expect(createExecutor).toHaveBeenCalledTimes(1)
+    expect(runtime.state().ready).toBe(true)
+    expect(migrateCodexProviderState).not.toHaveBeenCalled()
+    await runtime.stop()
+    await runtime.start()
+    expect(createExecutor).toHaveBeenCalledTimes(2)
+    expect(runtime.state().ready).toBe(true)
+    expect(migrateCodexProviderState).not.toHaveBeenCalled()
     await runtime.stop()
   })
 

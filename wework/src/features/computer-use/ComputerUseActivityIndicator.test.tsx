@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ComputerUseActivityIndicator } from './ComputerUseActivityIndicator'
@@ -33,6 +33,28 @@ describe('ComputerUseActivityIndicator', () => {
     vi.clearAllMocks()
     mocks.getStatus.mockResolvedValue(activeStatus)
     mocks.stop.mockResolvedValue({ ...activeStatus, currentTool: null })
+  })
+
+  test('keeps one status request in flight when the host is slow', async () => {
+    vi.useFakeTimers()
+    let resolve!: (value: typeof activeStatus) => void
+    mocks.getStatus.mockImplementationOnce(
+      () =>
+        new Promise<typeof activeStatus>(accept => {
+          resolve = accept
+        })
+    )
+    const { unmount } = render(<ComputerUseActivityIndicator />)
+    try {
+      await act(async () => vi.advanceTimersByTimeAsync(5_000))
+      expect(mocks.getStatus).toHaveBeenCalledOnce()
+      await act(async () => resolve(activeStatus))
+      await act(async () => vi.advanceTimersByTimeAsync(1_000))
+      expect(mocks.getStatus).toHaveBeenCalledTimes(2)
+    } finally {
+      unmount()
+      vi.useRealTimers()
+    }
   })
 
   test('shows the active tool and stops it from the button', async () => {

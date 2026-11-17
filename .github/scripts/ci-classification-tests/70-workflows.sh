@@ -290,6 +290,7 @@ for (const checkpoint of [
   'plugin-runtime-route-refresh',
   'plugin-background-sync-isolation',
   'plugin-periodic-reconcile',
+  'plugin-package-integrity-recovery',
 ]) {
   assert.ok(minioSetup.includes(`contains(matrix.segments, '${checkpoint}')`), `${checkpoint}: CI must prepare real object storage`)
 }
@@ -562,7 +563,7 @@ if [[ "$(grep -Fc "$test_archive_exclusion" "$wework_workflow")" -ne 7 ]] ||
   exit 1
 fi
 
-if [[ "$(grep -Fc 'compression-level: 6' "$wework_workflow")" -ne 7 ]] ||
+if [[ "$(grep -Fc 'compression-level: 6' "$wework_workflow")" -ne 8 ]] ||
   [[ "$(grep -Fc 'compression-level: 6' \
     "$script_dir/../workflows/wework-app.yml")" -ne 1 ]]; then
   printf 'Every Wework desktop diagnostics upload must compress retained evidence\n' >&2

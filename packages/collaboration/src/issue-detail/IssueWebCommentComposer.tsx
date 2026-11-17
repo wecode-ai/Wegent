@@ -33,6 +33,7 @@ const imageServices: AttachmentImageServices<IssueCommentAttachment> = {
 
 /** Web persistence adapter for the same composer and attachment UI used by desktop. */
 export function IssueWebCommentComposer({
+  issueActions,
   assignment,
   issueId,
   attachmentApi,
@@ -47,6 +48,7 @@ export function IssueWebCommentComposer({
   onError,
   settings,
 }: {
+  issueActions?: import('./issueCommentActions').CommentIssueActions
   assignment?: import('./useCommentAssignment').CommentAssignment
   issueId: string
   attachmentApi?: SharedWorkspaceAttachmentsApi
@@ -78,7 +80,11 @@ export function IssueWebCommentComposer({
   }, [])
   const mentionCandidates = useIssueMentionCandidates(members, agents, translate)
 
-  async function submit(body: string, mentions: IssueMentionOption[]) {
+  async function submit(
+    body: string,
+    mentions: IssueMentionOption[],
+    submission?: { commentOnly?: boolean }
+  ) {
     if (!canComment || loading || submitting.current || !body || !selection.isAttachmentReadyToSend)
       return false
     submitting.current = true
@@ -87,7 +93,13 @@ export function IssueWebCommentComposer({
     try {
       const comment = await send(
         issueCommentBody(body, selection.attachments),
-        ...(mentions.length ? [mentions] : [])
+        ...(mentions.length
+          ? [
+              submission?.commentOnly
+                ? mentions.filter(mention => mention.type === 'user')
+                : mentions,
+            ]
+          : [])
       )
       if (!active.current) return true
       if (comment) onSent(comment)
@@ -107,6 +119,7 @@ export function IssueWebCommentComposer({
 
   return (
     <IssueMainCommentComposer
+      issueActions={issueActions}
       assignment={assignment}
       value={draft}
       onChange={setDraft}
@@ -130,6 +143,7 @@ export function IssueWebCommentComposer({
           onRemoveAttachment={id => void selection.removeAttachment(id)}
           imageServices={imageServices}
           labels={{
+            removeAttachment: translate('todo.remove_attachment'),
             showText: translate('todo.show_text_attachment'),
             addingText: translate('todo.adding_pasted_text_attachment'),
             pastedText: translate('todo.pasted_text_attachment'),

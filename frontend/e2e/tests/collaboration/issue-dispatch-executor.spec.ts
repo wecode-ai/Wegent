@@ -108,6 +108,7 @@ test.describe('Collaboration group Executor coordination', () => {
         await page.getByTestId('template-details-product-lifecycle').click()
         await page.getByTestId('template-use').click()
         await page.getByTestId(`template-project-${fixture.projectId}`).click()
+        await page.getByTestId('template-runtime-configuration').locator('summary').click()
         const environment = page.getByTestId('template-project-environment-select')
         await expect(environment).toBeEnabled()
         await expect(environment).toHaveValue(
@@ -134,6 +135,8 @@ test.describe('Collaboration group Executor coordination', () => {
           'href',
           `${fixture.projectPath}?view=manage&section=environments`
         )
+        // Web imports retain user-selected model routing until actual execution.
+        await expect(page.getByTestId('template-model-codex')).toHaveCount(0)
         await page.getByTestId('template-bindings-apply').click()
         await expect(page).toHaveURL(new RegExp(`${fixture.projectPath}$`))
         await page.reload()
@@ -154,7 +157,7 @@ test.describe('Collaboration group Executor coordination', () => {
             mode: 'fixed',
             environment_id: String(appDevice.id),
           })
-          expect(agent.modelPolicy.mode).toBe('fixed')
+          expect(agent.modelPolicy.mode).toBe('user_select')
         }
         const groups = await apiRequest<{ items: Array<{ name: string }> }>(
           request,
@@ -452,7 +455,8 @@ test.describe('Collaboration group Executor coordination', () => {
       const completed = await waitForIssueStatus(request, model.token, fixture.issueId, 'in_review')
       expect(completed.execution_state).not.toBe('failed')
       expect(completed.assignee_group_id).toBeNull()
-      expect(completed.assignee_agent_id).toBe(collector.id)
+      // The manager takes ownership again after evaluating the delivered rounds.
+      expect(completed.assignee_agent_id).toBe(leader.id)
 
       // The status tool commits before the manager's final model response.
       await expect
@@ -525,7 +529,7 @@ test.describe('Collaboration group Executor coordination', () => {
       await expect(page.getByText(synthesisTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
         'data-value',
-        `agent:${collector.id}`
+        `agent:${leader.id}`
       )
       await expect(page.getByText(finalComment, { exact: false }).first()).toBeVisible()
       await captureEvidence(page, testInfo, '03-manager-reviewed-two-rounds')

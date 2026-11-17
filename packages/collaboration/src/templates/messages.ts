@@ -3,6 +3,9 @@
 
 export const templateMessages = {
   'zh-CN': {
+    optionalRuntimeConfiguration: '运行环境（可选）',
+    deferredRuntimeHint: '可稍后在项目设置中配置。',
+    environmentOnline: '在线',
     title: '协作模板',
     destination: '选择模板使用位置',
     newProject: '创建新项目',
@@ -15,9 +18,8 @@ export const templateMessages = {
     configureProjectEnvironment: '配置项目执行设备（新标签页）',
     projectEnvironmentSetupHint:
       '还没有在线的项目执行设备。配置设备后，点击刷新即可继续，当前填写内容会保留。',
-    environmentAuthorizationHint:
-      '勾选后，创建时将把执行环境共享给所选空间并授权给新项目。包含智能体的模板需要勾选账号的默认执行环境。',
-    selectExecutionEnvironment: '请先选择要授权的默认执行环境；可在设备页面配置默认设备。',
+    environmentAuthorizationHint: '允许此项目使用所选设备，同时共享给所属分组。',
+    selectExecutionEnvironment: '暂无可用设备，可先创建项目。',
     description: '把成熟的分工与流程，带进你的下一个项目。',
     discover: '发现模板',
     available: '可用模板',
@@ -85,13 +87,13 @@ export const templateMessages = {
     syncConflict: '模板尚未同步。请检查冲突，或另存为副本。',
     bindingsTitle: '确认协作配置',
     bindingsHint:
-      '确认后，模板中的智能体和分工将在当前项目或空间内生效。未预配置的角色可在下方补充成员。',
+      '确认后，模板中的智能体和分工将在当前项目或分组内生效。未预配置的角色可在下方补充成员。',
     embeddedAgents: '应用时自动创建模板智能体并绑定角色，模型和工具使用当前执行环境的配置。',
     agentsCount: '将创建 {count} 个智能体并绑定角色。',
     environmentHint: '模型和工具使用当前执行环境的配置。',
     agentModel: '智能体使用的模型',
     chooseModel: '请选择模型',
-    selectedModelHint: '请在下方确认智能体使用的模型，工具沿用当前设备的配置。',
+    selectedModelHint: '运行环境和模型可稍后配置。',
     modelUnavailable: '所选模型已不可用，请刷新模型列表并重新选择。',
     noModels: '暂无可用模型。请在设置中添加模型，然后刷新此列表。',
     modelLoadFailed: '模型列表加载失败，请刷新后重试。',
@@ -103,7 +105,7 @@ export const templateMessages = {
     destinationDeviceRequired: '当前执行设备暂不可用，请先连接设备并确认账号可访问，再重试。',
     unsupportedAgent: '此智能体的运行时或多机器人配置无法完整保存为模板，请先调整智能体配置。',
     unavailableAgent: '无法读取小组中的智能体配置，请检查智能体是否可用及访问权限。',
-    unsupportedPolicy: '云端空间无法保留模板中的执行策略，请在项目中直接应用此模板。',
+    unsupportedPolicy: '云端分组无法保留模板中的执行策略，请在项目中直接应用此模板。',
     autoCreate: '自动创建',
     customizeMembers: '调整成员（可选）',
     choose: '选择成员或智能体',
@@ -118,11 +120,14 @@ export const templateMessages = {
     importProject: '导入协作模板',
     importProjectHint: '为项目添加一套新的分工与流程。选择模板、确认配置后即可使用。',
     exportHint:
-      '下载配置文件，在其他设备或空间导入使用。文件包含智能体配置、分工与流程，不包含任务、讨论或连接凭据。',
+      '下载配置文件，在其他设备或分组导入使用。文件包含智能体配置、分工与流程，不包含任务、讨论或连接凭据。',
     bindError: '负责人不能同时承担执行角色，请调整成员。',
     partial: '部分智能体或小组已添加。请检查当前配置后再继续，避免重复创建。',
   },
   en: {
+    optionalRuntimeConfiguration: 'Runtime (optional)',
+    deferredRuntimeHint: 'You can configure this later in project settings.',
+    environmentOnline: 'Online',
     title: 'Collaboration templates',
     destination: 'Choose where to use this template',
     newProject: 'Create a new project',
@@ -136,9 +141,8 @@ export const templateMessages = {
     projectEnvironmentSetupHint:
       'No project device is online. Configure a device, then refresh to continue. Your current input is preserved.',
     environmentAuthorizationHint:
-      'Selected environments will be shared with the chosen space and authorized for the new project. Templates containing Agents require your account’s default executor.',
-    selectExecutionEnvironment:
-      'Select the default execution environment to authorize. You can set your default device on the Devices page.',
+      'Allow this project to use selected devices and share them with its group.',
+    selectExecutionEnvironment: 'No devices available. You can create the project first.',
     description: 'Bring proven roles and workflows into your next project.',
     discover: 'Discover',
     available: 'Available',
@@ -211,7 +215,7 @@ export const templateMessages = {
     agentModel: 'Model for Agents',
     chooseModel: 'Choose a model',
     selectedModelHint:
-      'Confirm the Agent models below. Tools follow the current device configuration.',
+      'Execution environments and models can be configured later.',
     modelUnavailable:
       'The selected model is no longer available. Refresh the model list and choose again.',
     noModels: 'No models available. Add a model in Settings, then refresh this list.',
@@ -231,7 +235,7 @@ export const templateMessages = {
     unavailableAgent:
       'Cannot read a group Agent definition. Check its availability and your access.',
     unsupportedPolicy:
-      'Cloud workspaces cannot preserve the template execution settings. Apply it directly to a project instead.',
+      'Cloud groups cannot preserve the template execution settings. Apply it directly to a project instead.',
     autoCreate: 'Created automatically',
     customizeMembers: 'Customize members (optional)',
     bindingsTitle: 'Confirm collaboration setup',
@@ -250,7 +254,7 @@ export const templateMessages = {
     importProjectHint:
       'Add roles and a workflow to this project. Choose a template and confirm its members.',
     exportHint:
-      'Download a configuration to import on another device or space. Includes roles and workflows, without tasks, discussions or credentials.',
+      'Download a configuration to import on another device or group. Includes roles and workflows, without tasks, discussions or credentials.',
     bindError: 'The coordinator cannot also execute a stage. Choose a different member.',
     partial:
       'Some Agents or groups were added. Check the current configuration before continuing to avoid duplicates.',

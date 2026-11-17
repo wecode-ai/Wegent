@@ -1,3 +1,4 @@
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { WorkbenchServices } from './workbenchServices'
 import {
@@ -39,9 +40,11 @@ export function registerRuntimeConversationStream(
     order: coordinator.nextOrder++,
   })
   ensureSubscription()
+  logCoordinatorStage('registered')
   return () => {
     coordinator.registrations.delete(token)
     ensureSubscription()
+    logCoordinatorStage('unregistered')
   }
 }
 
@@ -96,7 +99,10 @@ function createDelegatingHandlers(coordinator: Coordinator): ChatStreamHandlers 
       activeHandlers(coordinator)?.onAssistantFirstToken?.(...args),
     onAssistantResponseSize: (...args) =>
       activeHandlers(coordinator)?.onAssistantResponseSize?.(...args),
-    onAssistantSettled: (...args) => activeHandlers(coordinator)?.onAssistantSettled?.(...args),
+    onAssistantSettled: (...args) => {
+      logCoordinatorStage('assistant-settled', { taskId: args[0].taskId, turnId: args[1] })
+      activeHandlers(coordinator)?.onAssistantSettled?.(...args)
+    },
     onContextUsageUpdated: (...args) =>
       activeHandlers(coordinator)?.onContextUsageUpdated?.(...args),
     onSubagentActivity: (...args) => activeHandlers(coordinator)?.onSubagentActivity?.(...args),
@@ -110,5 +116,18 @@ function createDelegatingHandlers(coordinator: Coordinator): ChatStreamHandlers 
     onRuntimePlanUpdated: (...args) => activeHandlers(coordinator)?.onRuntimePlanUpdated?.(...args),
     onRuntimeTransportReplaced: (...args) =>
       activeHandlers(coordinator)?.onRuntimeTransportReplaced?.(...args),
+  })
+}
+
+function logCoordinatorStage(action: string, details: Record<string, unknown> = {}): void {
+  if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
+  logRuntimeTaskCreateStage('runtime-stream-owner', {
+    action,
+    registrations: coordinator.registrations.size,
+    activeRegistrations: [...coordinator.registrations.values()].filter(entry => entry.active)
+      .length,
+    sourceOrder: preferredRegistration()?.order ?? null,
+    subscribed: coordinator.unsubscribe !== null,
+    ...details,
   })
 }

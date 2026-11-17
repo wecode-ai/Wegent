@@ -18,7 +18,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, posix, relative, resolve, win32 } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
@@ -506,13 +506,13 @@ const PROVIDER_SWITCH_LUNA_LABELS = [
   'GPT 5.6 Luna (海外)',
 ]
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
-// The local E2E Codex catalog is classified as third-party (custom provider), so
-// the official option is served from the cloud model catalog with a canonical
-// model id that does not collide with the local Codex catalog.
+// Runtime model selections use the catalog name as the upstream model id.
 const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT-5.5'
+const PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID = 'wework-model-switch-e2e'
+const PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN = 'wework-model-switch-e2e-access'
 const PROVIDER_SWITCH_PROMPT =
   'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with official GPT.'
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
@@ -520,6 +520,10 @@ const PROVIDER_SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_GPT_COMPL
 const PROVIDER_SWITCH_RESUME_PROMPT =
   'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_RESUME: continue the loaded official thread with Luna.'
 const PROVIDER_SWITCH_RESUME_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_RESUME_LUNA_COMPLETE'
+const PROVIDER_SWITCH_REASONING_PROMPT =
+  'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_REASONING: continue this thread with official GPT.'
+const PROVIDER_SWITCH_REASONING_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_REASONING_COMPLETE'
+const PROVIDER_SWITCH_FOREIGN_REASONING = 'WEWORK_DESKTOP_E2E_FOREIGN_REASONING_SUMMARY'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const TELEMETRY_CAPTURE_PATH = '/e/'
 const TELEMETRY_TEST_PROJECT_KEY = 'wework-desktop-e2e'
@@ -601,6 +605,10 @@ const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
 const CLOUD_FOLLOW_UP_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP: confirm the cloud task remains available.'
 const CLOUD_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP_COMPLETE'
+const CLOUD_HTML_LINK_PROMPT =
+  'WEWORK_DESKTOP_E2E_CLOUD_HTML_LINK: open the Cloud HTML preview and missing-file links.'
+const CLOUD_HTML_LINK_FILENAME = 'cloud-html-link-preview.html'
+const CLOUD_HTML_LINK_MISSING_FILENAME = 'cloud-html-link-missing.html'
 const CLOUD_ARTIFACT_NAME = 'wework-cloud-e2e-result.txt'
 const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
@@ -1058,6 +1066,18 @@ async function commandOutputAsync(command, args, options = {}) {
       )
     })
   })
+}
+
+function redisCliBinary(
+  serverBinary = process.env.WEWORK_E2E_REDIS_SERVER_BIN?.trim(),
+  platform = process.platform
+) {
+  if (!serverBinary) return 'redis-cli'
+  const paths = platform === 'win32' ? win32 : posix
+  return paths.join(
+    paths.dirname(serverBinary),
+    platform === 'win32' ? 'redis-cli.exe' : 'redis-cli'
+  )
 }
 
 async function stopDesktopAppProcess(app, { forceSnapshot } = {}) {
@@ -1935,11 +1955,16 @@ export {
   PROVIDER_SWITCH_OFFICIAL_LABEL,
   PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
   PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
   PROVIDER_SWITCH_PROMPT,
   PROVIDER_SWITCH_FAILURE,
   PROVIDER_SWITCH_COMPLETION,
   PROVIDER_SWITCH_RESUME_PROMPT,
   PROVIDER_SWITCH_RESUME_COMPLETION,
+  PROVIDER_SWITCH_REASONING_PROMPT,
+  PROVIDER_SWITCH_REASONING_COMPLETION,
+  PROVIDER_SWITCH_FOREIGN_REASONING,
   BLOCKED_CLOUD_MODEL_PATH,
   TELEMETRY_CAPTURE_PATH,
   TELEMETRY_TEST_PROJECT_KEY,
@@ -1986,6 +2011,9 @@ export {
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+  CLOUD_HTML_LINK_PROMPT,
+  CLOUD_HTML_LINK_FILENAME,
+  CLOUD_HTML_LINK_MISSING_FILENAME,
   CLOUD_ARTIFACT_NAME,
   CLOUD_ARTIFACT_CONTENT,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -2086,6 +2114,7 @@ export {
   pathExists,
   commandOutput,
   commandOutputAsync,
+  redisCliBinary,
   stopDesktopAppProcess,
   runChecked,
   reservePort,

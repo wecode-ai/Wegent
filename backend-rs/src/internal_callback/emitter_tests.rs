@@ -127,6 +127,15 @@ impl RecordingRedis {
 }
 
 impl brz_redis::Redis for RecordingRedis {
+    async fn hset<K, F, V>(&self, _key: K, _field: F, _value: V) -> brz_redis::RedisResult<i64>
+    where
+        K: brz_redis::EncodeRedisArg + Send,
+        F: brz_redis::EncodeRedisArg + Send,
+        V: brz_redis::EncodeRedisArg + Send,
+    {
+        Ok(1)
+    }
+
     async fn eval<S, K, A, R>(&self, script: S, keys: K, arguments: A) -> brz_redis::RedisResult<R>
     where
         S: brz_redis::EncodeRedisArg + Send,
@@ -145,6 +154,22 @@ impl brz_redis::Redis for RecordingRedis {
             .collect();
         let mut state = self.state.lock().expect("state");
         state.evals.push(captured.clone());
+        if captured[2].starts_with("chat:streaming:blocks:") {
+            let found = state.lists.get(&captured[2]).and_then(|blocks| {
+                blocks.iter().enumerate().rev().find(|(_, raw)| {
+                    serde_json::from_str::<Value>(raw).unwrap()["id"] == captured[4]
+                })
+            });
+            let values = found
+                .map(|(index, raw)| {
+                    vec![
+                        brz_redis::Value::BulkString(index.to_string().into_bytes().into()),
+                        brz_redis::Value::BulkString(raw.as_bytes().to_vec().into()),
+                    ]
+                })
+                .unwrap_or_default();
+            return R::from_redis_value(&brz_redis::Value::Array(values));
+        }
         if captured[2].starts_with("chat:task_streaming:") {
             let key = &captured[2];
             state.calls.push(format!("EVAL {key}"));
@@ -526,16 +551,17 @@ async fn identified_text_flush_preserves_unicode_offsets_and_callback_replays() 
         .collect();
     assert_eq!(content_appends.len(), 3);
     for (call, id) in content_appends.into_iter().zip(["one", "one", "two"]) {
-        assert_eq!(call[1], "6");
+        assert_eq!(call[1], "7");
         assert_eq!(call[3], format!("chat:streaming:block_content:9:{id}"));
         assert_eq!(
             call[4],
             format!("chat:streaming:block_content:9:{id}:offset")
         );
-        assert_eq!(&call[8..11], ["0", "4", "检查🙂中"]);
-        assert_eq!(call[12], session::STREAMING_TTL.to_string());
-        assert_eq!(call[13], id);
-        let block: Value = serde_json::from_str(&call[11]).expect("block JSON");
+        assert_eq!(call[8], "chat:streaming:blocks_index:9");
+        assert_eq!(&call[9..12], ["0", "4", "检查🙂中"]);
+        assert_eq!(call[13], session::STREAMING_TTL.to_string());
+        assert_eq!(call[14], id);
+        let block: Value = serde_json::from_str(&call[12]).expect("block JSON");
         assert_eq!(block["id"], id);
         assert_eq!(block["_content_key"], call[3]);
     }
@@ -893,7 +919,7 @@ async fn the_done_frame_publishes_the_contexts_field() {
         893_490_636_671_584,
     );
     event.error = Some("boom".to_owned());
-    emit_error_frames(&redis, &event, Some(6501))
+    emit_terminal_frames(&redis, &event, Some(6501), &Value::Null, None)
         .await
         .expect("error frames");
     let state = redis.state.lock().expect("state");

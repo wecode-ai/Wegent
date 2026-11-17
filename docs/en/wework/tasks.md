@@ -26,24 +26,49 @@ After creating a Goal, inspect its status bar near the composer. Hover or focus 
 
 Goals may be active, paused, blocked, budget/usage-limited or complete. Exhausted budgets, tool failures and disconnections are not completion evidence. Resolve the reported condition before continuing. Deleting a goal differs from deleting its conversation.
 
+### Model overload and quota recovery
+
+Local Codex tasks automatically retry an overloaded model after 10 seconds, 30 seconds, 2 minutes and 5 minutes. The countdown appears in the conversation. Recovery continues the original conversation and model with completed tool history preserved.
+
+When subscription usage is exhausted, the task waits in the queue and releases its execution slot. The composer shows the reset countdown. At that time, Wework checks usage again and continues with the original model, including a persistent goal stopped by the usage limit. If no reset time is available, it checks once per minute. Waiting records survive a Wework restart on the same device; execution requires the application to be running.
+
+Click **Cancel automatic recovery** beside the composer countdown to stop recovery. Pausing, editing or deleting its goal, or sending new task input, invalidates the old wait. Changed account, model configuration or conversation requires a new execution request. An exhausted task budget still requires a budget adjustment before continuing.
+
+<a id="sidebar-task-management"></a>
+
 ### Sidebar task management
 
-| Feature                          | Steps and limits                                                                                                                                      |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Search                           | Click the magnifying glass, enter keywords, select with arrow keys and Enter or click a result; close with X                                          |
-| Priority / collapse read / board | Use the task-view dropdown to choose an action, then click the main icon to execute it; expand read conversations from the menu after collapsing them |
-| Queued executions                | Hover for up/down actions; use the right-click menu to move to the front. Force-start requests immediate execution, so consider resource usage        |
-| Pin, unread and archive          | Use the task-row actions to pin/unpin, mark read/unread or archive; restore from Archived tasks in settings                                           |
+During the initial task load, the desktop sidebar shows **Loading tasks…** below the **Tasks** heading. A failed load shows an error and **Retry** in the same position. In priority view, the status appears above the priority list. Background refreshes do not show a loading indicator.
+
+| Feature                          | Steps and limits                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search                           | Click the magnifying glass, enter keywords, select with arrow keys and Enter or click a result; close with X                                                                                                                                                                                                                                                                                                                                                              |
+| Show more / Show less            | Expand a project, then use **Show more** at the bottom of its task list to reveal up to 10 more tasks per click, or **Show less** to return to the default list. **Show more** appears only while eligible tasks remain hidden; **Show less** appears after the visible limit is expanded beyond the initial five. Running and queued tasks remain visible outside the five-task limit, and pinned tasks also remain visible. Neither action changes task execution state |
+| Priority / collapse read / board | Use the task-view dropdown to choose an action, then click the main icon to execute it; expand read conversations from the menu after collapsing them                                                                                                                                                                                                                                                                                                                     |
+| Queued executions                | Hover for up/down actions; use the right-click menu to move to the front. Force-start requests immediate execution, so consider resource usage                                                                                                                                                                                                                                                                                                                            |
+| Pin, unread and archive          | Use the task-row actions to pin/unpin, mark read/unread or archive; restore from Archived tasks in settings                                                                                                                                                                                                                                                                                                                                                               |
+
+<a id="conversation-interactions"></a>
+
+### Interact inside a conversation
+
+The same capability applies to finding conversations, restoring archived items and selecting targets for operations. Standalone tasks are conversations: ask AI to find a task you accidentally removed, including archived candidates, without first providing its exact title or the time of the action. Describe your goal in the **Codex conversation composer**, then use the buttons, lists or forms in the reply. The interface is generated for your request. To recover an archived conversation, select **Restore** in the candidate list, then use **Open conversation** after restoration succeeds. Permanent deletion differs from archiving; the restoration tool handles conversations that are still archived. When no operation tool exists, a button can open an existing feature. Existing permissions still apply; navigation itself does not perform the operation.
+
+The interface height follows its content, and saved interaction state is restored when you reopen the conversation. You can scroll the conversation with the pointer over a card. Scrollable controls consume wheel movement first, then pass remaining movement to the conversation at their boundary. Use **Expand** for more space and return to the message afterwards. This capability requires personal control access in a Codex conversation and does not grant extra authority to delegated executions.
+
+<a id="personal-schedules"></a>
 
 ### Personal scheduled tasks
+
+In the **Codex conversation composer**, describe an operation such as “Create a task for today at 18:00”. The AI can generate an interactive interface inside the message for that scenario, prefill known values and let you complete missing fields in its form. Submitting calls real tools and displays their results in place. New schedules inherit the current conversation’s model, workspace and execution settings; Wework must remain running on the owning device.
 
 <!-- ui-source: src/features/automations/AutomationsPage.tsx -->
 
 1. Open **left sidebar → Scheduled**, search existing schedules or create one.
 2. Enter a name and instructions. Choose a new task per run or an existing pinned task; enable a persistent goal only when intended and specify it.
 3. Choose local/cloud location, device, project, model and available reasoning effort. Directory, accounts and plugins belong to that device.
-4. Choose weekdays, daily, weekly, custom or once; set execution time and custom intervals. Notifications support every run, attention-only or none.
-5. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
+4. Choose Monday–Friday, daily, weekly, custom or once; set execution time and custom intervals. Recurring Cron schedules offer **Run only on mainland China statutory workdays**. It uses Beijing dates to exclude statutory days off and include make-up working weekends. Choose Daily to cover every make-up workday; Monday–Friday, weekly and custom Cron schedules retain their existing date constraints. Interval and once-only schedules do not offer this option. Notifications support every run, attention-only or none.
+5. The workday filter defaults to off, preserving existing Monday–Friday schedules. It works on local and cloud devices without changing execution location. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
 6. Disable to suspend future scheduling or delete after confirmation. Personal schedules, project-board automation and stand-in calendars are separate flows.
 
 Personal schedules using a cloud model revalidate model access and read the current cloud connection credentials on each trigger, including manual runs. Renewing your login token does not require recreating a schedule; both new tasks and existing-task continuations use current credentials. If login has expired, the model was removed or access was revoked, the run fails. Check your cloud connection and model access before retrying.
@@ -62,7 +87,7 @@ After you send a local image, Wework keeps its preview in the message. The image
 
 ### Voice input
 
-Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also prepare the model under **Settings → General → Voice input**.
+Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also open **bottom-left account menu → Settings → Personal → General** and prepare the model in **Voice input**, below the basic preferences. This section appears when the official voice plugin has loaded and does not require Experimental features. Opening the page does not download a model or start recording.
 
 Start with **INT8 (lightweight)** for everyday dictation to reduce download size and memory use. If it makes frequent recognition errors, try **FP32 (full precision)**, which retains full 32-bit floating-point precision with a larger download and higher memory use. Both the settings page and the first-use setup dialog explain these choices.
 
@@ -98,7 +123,7 @@ After selecting **Let AI handle it** in an issue detail, use the task composer t
 
 When an issue already has linked tasks, the **Linked tasks** section directly shows every running task and the two most recent tasks. If more history is available, use **Expand** and **Collapse** instead of opening a separate task-list view. The action for creating another task appears beside the section heading.
 
-After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. Wework offers two choices:
+After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. When changing the link is supported, the entry remains available while project options refresh or are temporarily empty; you can select a destination once the options load. Wework offers two choices:
 
 - **Create board task** creates and links a card using the current task title and execution status.
 - **Link an existing board task** searches editable cards in the destination board by task ID or title and links the current task to the selected card without changing that card's status.
@@ -174,7 +199,7 @@ Wework remembers the model, selection mode, and reasoning effort separately for 
 
 After a conversation starts, you can still switch between official GPT/Codex models and third-party models. Wework asks for confirmation when the selected model changes, and the new model applies to the next message.
 
-If the existing context contains encrypted reasoning or compaction state produced by the previous provider, the executor removes those non-portable fields from the switch request so the target model does not return `invalid_encrypted_content`. Portable messages, tool results, and other context remain available.
+In Codex tasks using official OAuth, official GPT and third-party models share the same compatibility layer. On a switch, the executor clears encrypted reasoning or compaction state owned by the previous provider. If third-party history stores readable reasoning in `reasoning.content`, the request sent to official GPT promotes it to `summary_text` and clears the restricted `content` array. These changes apply only to the outgoing copy; the original thread history stays intact. Portable messages, tool results, and other context remain available, so switching models does not require a new conversation or a reference to the old one.
 
 ## Control a running task
 

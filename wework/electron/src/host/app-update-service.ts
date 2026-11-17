@@ -10,6 +10,7 @@ import type {
 } from './app-update-progress.js'
 import {
   compareVersions,
+  upgradeTargets,
   validateUpgradeCatalog,
   type UpgradeCatalog,
   type UpgradeRelease,
@@ -526,11 +527,10 @@ export class AppUpdateService {
     channel: WeworkUpdateChannel
   ): Promise<void> {
     const catalog = await this.readCatalog(channel)
-    const edge = catalog.edges.find(
-      e => e.from === this.options.currentVersion && e.to === release.version && !e.revoked
+    const target = upgradeTargets(catalog, this.options.currentVersion).find(
+      r => r.version === release.version
     )
-    const target = catalog.releases.find(r => r.version === release.version && !r.revoked)
-    if (!edge || !target || !matchesRelease(pending, target))
+    if (!target || !matchesRelease(pending, target))
       throw new Error('The verified upgrade path was revoked or changed')
     const retry = releaseRetryConfirmation(
       catalog,

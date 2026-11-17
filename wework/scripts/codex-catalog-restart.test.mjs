@@ -41,6 +41,40 @@ function controlFixture(snapshots) {
   }
 }
 
+function fileCatalogLog({ prepared = true, initialized = true, processId = '123' } = {}) {
+  return restartLog('write', { served: false }).replace(
+    'codex shared app-server process starting process_id=123',
+    [
+      ...(prepared === true ? ['codex router model catalog prepared catalog_bytes=3294246'] : []),
+      'codex shared app-server process starting process_id=123',
+      ...(prepared === 'late' ? ['codex router model catalog prepared catalog_bytes=3294246'] : []),
+      ...(initialized
+        ? [`codex shared app-server process initialized process_id=${processId}`]
+        : []),
+    ].join('\n')
+  )
+}
+
+test('accepts a prepared file catalog only after its native process initializes', async () => {
+  vi.mocked(readFile).mockResolvedValue(fileCatalogLog())
+  await waitForCatalogRestart(controlFixture([false]), '/fixture/executor.log', 0)
+})
+
+test.each([
+  { prepared: false },
+  { prepared: 'late' },
+  { initialized: false },
+  { processId: '1234' },
+])('rejects incomplete file catalog initialization: %j', async options => {
+  vi.useFakeTimers()
+  vi.mocked(readFile).mockResolvedValue(fileCatalogLog(options))
+  const rejected = expect(
+    waitForCatalogRestart(controlFixture([false]), '/fixture/executor.log', 0)
+  ).rejects.toThrow('The saved Catalog was not loaded by a restarted Codex app-server')
+  await vi.advanceTimersByTimeAsync(DEFAULT_STEP_TIMEOUT_MS)
+  await rejected
+})
+
 test.each(['write', 'delete'])(
   'handles restart confirmation before accepting a completed catalog %s',
   async operation => {

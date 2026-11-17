@@ -10,8 +10,23 @@ use super::{BackgroundJobRegistry, JobContext, with_lock_watchdog};
 use crate::{AppState, task_store_maintenance::MaintenanceScan};
 
 const JOB: &str = "device_heartbeat_monitor";
+pub(super) const RETENTION_JOB: &str = "device_registration_retention";
 
 pub(super) fn register(registry: &mut BackgroundJobRegistry, state: Arc<AppState>) -> Result<()> {
+    let retention_state = state.clone();
+    registry.register(RETENTION_JOB, move |context, _| {
+        let state = retention_state.clone();
+        async move {
+            Ok(with_lock_watchdog(&state.background_jobs, &context,
+                "wegent:lock:device_registration_retention", Duration::from_secs(300),
+                async { Ok(json!({"removed": crate::device_records::retention::prune(&state, &context).await?})) }
+            ).await?.unwrap_or_else(|| json!({"skipped":"lock_busy"})))
+        }
+    })?;
+    registry.max_failures(RETENTION_JOB, 1)?;
+    registry.timeout(RETENTION_JOB, None)?;
+    registry.startup(RETENTION_JOB, Duration::from_secs(60))?;
+    registry.interval(RETENTION_JOB, Duration::from_secs(3600), false)?;
     registry.register(JOB, move |context, _| {
         let state = state.clone();
         async move {
@@ -87,24 +102,14 @@ async fn check_devices(state: &AppState, context: &JobContext) -> Result<Value> 
         if online.is_some() {
             continue;
         }
-        let marked = state
-            .task_store
-            .mark_device_subtask_failed(
-                candidate.task_id,
-                candidate.id,
-                candidate.owner_id,
-                chrono::Local::now().naive_local(),
-            )
-            .await?;
-        if marked {
-            emit_timeout(state, &candidate).await?;
+        if emit_timeout(state, &candidate).await? {
             failed += 1;
         }
     }
     Ok(json!({"failed":failed}))
 }
 
-async fn emit_timeout(state: &AppState, candidate: &Candidate) -> Result<()> {
+async fn emit_timeout(state: &AppState, candidate: &Candidate) -> Result<bool> {
     use crate::internal_callback::{
         completion, emitter,
         event::{EventType, ExecutionEvent},
@@ -128,30 +133,31 @@ async fn emit_timeout(state: &AppState, candidate: &Candidate) -> Result<()> {
     event.message_id = Some(candidate.message_id);
     event.error = Some("Device connection lost".to_owned());
     event.status = "FAILED".to_owned();
-    let (result, owner) = completion::complete_terminal(
+    let attempt = completion::DeviceAttempt {
+        owner_id: candidate.owner_id,
+        name: &format!("device-{}", candidate.device_id),
+        namespace: &format!("user-{}", candidate.owner_id),
+    };
+    let Some(committed) = completion::complete_device_timeout(
         &completion,
         candidate.task_id,
         candidate.id,
-        "FAILED",
-        None,
-        event.error.as_deref(),
-        None,
-        None,
-        None,
+        &attempt,
+        "Device connection lost (heartbeat timeout)",
     )
-    .await;
-    emitter::emit_done_frames(
+    .await?
+    else {
+        return Ok(false);
+    };
+    emitter::emit_terminal_frames(
         redis,
         &event,
-        owner,
-        &result.unwrap_or_else(|| json!({})),
-        None,
-        // Error-carrying terminal frame: the Source's `emit_chat_error` has no
-        // `contexts` field.
+        committed.user_id,
+        &committed.result.unwrap_or_else(|| json!({})),
         None,
     )
     .await?;
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]

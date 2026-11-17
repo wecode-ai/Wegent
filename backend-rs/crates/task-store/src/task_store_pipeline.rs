@@ -11,7 +11,7 @@ use crate::message_pair::{next_message_ids, subtask_rows};
 use crate::projection::task_column;
 use crate::task_store::SubtaskPairInsert;
 use crate::task_store_executor_reference::{
-    assistant_row_with_executor, consume_executor_reference, insert_subtask_row,
+    AssistantExecutor, assistant_row_with_executor, consume_executor_reference, insert_subtask_row,
     inserted_subtask_timestamps_statement, resolve_executor_reference,
     task_for_update_first_statement,
 };
@@ -97,6 +97,10 @@ async fn advance_on<T: MysqlTransaction>(
     let Some(Json(mut task_json)) = task_column::<Json<Value>>(&task, "json") else {
         return Ok(None);
     };
+    if dispatchable_task_status(&task_json).is_none() {
+        retire_pipeline_handoff(transaction, tasks, task_id, &mut task_json, completed_id).await?;
+        return Ok(None);
+    }
     let user_id = task_column::<i64>(&task, "user_id").unwrap_or_default();
     let user: Option<MysqlRow> = transaction
         .fetch_optional(USER_FOR_PIPELINE, (user_id,))
@@ -129,15 +133,19 @@ async fn advance_on<T: MysqlTransaction>(
     {
         return Ok(None);
     }
-    // The Task row lock serializes pair insertion. A replayed completion must
-    // never advance again once a newer assistant has been appended, even when
-    // adjacent stages reference the same Bot.
+    // The Task lock serializes pair insertion. Only the handoff recorded by
+    // this completion can be resumed when a newer assistant already exists.
     let latest: Option<i64> = transaction.fetch_optional(
         format!("SELECT {subtasks}.id FROM {subtasks} WHERE {subtasks}.task_id = ? AND {subtasks}.`role` = 'ASSISTANT' ORDER BY {subtasks}.message_id DESC, {subtasks}.id DESC LIMIT 1"),
         (task_id,)).await?;
-    if !is_current_completion(completed_id, latest) {
-        return Ok(None);
-    }
+    let replay = if is_current_completion(completed_id, latest) {
+        None
+    } else {
+        let Some(replay) = pending_handoff(&task_json, completed_id, latest) else {
+            return Ok(None);
+        };
+        Some(replay)
+    };
     let Some(previous_bot_id) = subtask_column::<Json<Value>>(&completed, "bot_ids")
         .and_then(|ids| ids.0.as_array()?.first()?.as_i64())
     else {
@@ -146,38 +154,209 @@ async fn advance_on<T: MysqlTransaction>(
     let Some(team) = load_team(transaction, &task_json).await? else {
         return Ok(None);
     };
-    let previous_bot: Option<KindRow> = transaction.fetch_optional(
-        format!("SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.id = ? AND kinds.kind = 'Bot' AND kinds.is_active = true LIMIT 1"),
-        (previous_bot_id,)).await?;
-    let Some(previous_bot) = previous_bot else {
-        return Ok(None);
+    let stage = if replay.is_some() {
+        task_json
+            .pointer("/spec/currentStage")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+    } else {
+        let previous_bot: Option<KindRow> = transaction.fetch_optional(
+            format!("SELECT {KIND_COLUMNS} FROM kinds WHERE kinds.id = ? AND kinds.kind = 'Bot' AND kinds.is_active = true LIMIT 1"),
+            (previous_bot_id,)).await?;
+        let Some(previous_bot) = previous_bot else {
+            return Ok(None);
+        };
+        automatic_next_stage(
+            &task_json,
+            &team.json.0,
+            &previous_bot.name,
+            &previous_bot.namespace,
+        )
     };
-    let Some(stage) = automatic_next_stage(
-        &task_json,
-        &team.json.0,
-        &previous_bot.name,
-        &previous_bot.namespace,
-    ) else {
-        return Ok(None);
-    };
-    let members = team
+    let Some(stage) = stage else { return Ok(None) };
+    let Some(members) = team
         .json
         .0
         .pointer("/spec/members")
         .and_then(Value::as_array)
-        .expect("validated members");
-    let member = members[stage].clone();
+    else {
+        return Ok(None);
+    };
+    let Some(member) = members.get(stage).cloned() else {
+        return Ok(None);
+    };
     let Some(bot) = load_member_bot(transaction, team.user_id, &member).await? else {
         return Ok(None);
     };
-    let before = subtask_column::<i64>(&completed, "message_id").unwrap_or_default();
+    let handoff = match replay {
+        Some((user, assistant)) => {
+            load_pending_handoff(transaction, subtasks, task_id, user, assistant).await?
+        }
+        None => Some(
+            insert_handoff(
+                transaction,
+                tasks,
+                subtasks,
+                task_id,
+                user_id,
+                &completed,
+                &mut task_json,
+                stage,
+                &members[stage - 1],
+                team.id,
+                bot.id,
+                assigned_ids,
+            )
+            .await?,
+        ),
+    };
+    let Some((message_id, message, pair)) = handoff else {
+        return Ok(None);
+    };
+    Ok(Some(PipelineStageAdvance {
+        task_id,
+        user_id,
+        user_name,
+        user_preferences,
+        message_id,
+        message,
+        task_json,
+        project_id: task_column::<i64>(&task, "project_id").unwrap_or_default(),
+        pair,
+        previous_bot_id,
+        team,
+        bot,
+        member,
+    }))
+}
+
+const PIPELINE_HANDOFF: &str = "pipelinePendingHandoff";
+
+pub fn dispatchable_task_status(task: &Value) -> Option<&str> {
+    task.pointer("/status/status")
+        .and_then(Value::as_str)
+        .filter(|status| matches!(*status, "PENDING" | "RUNNING"))
+}
+
+/// Drop only the handoff owned by this completion while the task row is locked.
+pub async fn retire_pipeline_handoff(
+    transaction: &mut impl MysqlTransaction,
+    tasks: &str,
+    task_id: i64,
+    task: &mut Value,
+    completed_id: i64,
+) -> MysqlResult<()> {
+    if pending_pipeline_parent(task) == Some(completed_id) {
+        clear_pending_pipeline_handoff(task);
+        transaction
+            .execute(
+                format!("UPDATE {tasks} SET json=? WHERE id=?"),
+                (python_json_value(task), task_id),
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+pub fn clear_pending_pipeline_handoff(task: &mut Value) {
+    if let Some(labels) = task["metadata"]["labels"].as_object_mut() {
+        labels.remove(PIPELINE_HANDOFF);
+    }
+}
+
+pub fn pending_pipeline_parent(task: &Value) -> Option<i64> {
+    task.pointer("/metadata/labels/pipelinePendingHandoff")?
+        .as_str()?
+        .split_once(':')?
+        .0
+        .parse()
+        .ok()
+}
+
+/// Retire an SSE handoff in the transaction that settles its assistant.
+pub fn settle_pipeline_handoff(task: &mut Value, subtask_id: i64) {
+    if let Some(labels) = task["metadata"]["labels"].as_object_mut() {
+        labels.retain(|key, value| {
+            let Some(marker) = value.as_str() else {
+                return true;
+            };
+            if key == PIPELINE_HANDOFF {
+                return marker.rsplit_once(':').and_then(|(_, id)| id.parse().ok())
+                    != Some(subtask_id);
+            }
+            if key.starts_with("pipelineAutoAdvance:")
+                && let Ok(intent) = serde_json::from_str::<Value>(marker)
+            {
+                return intent["next_pair"][1].as_i64() != Some(subtask_id);
+            }
+            true
+        });
+    }
+}
+
+fn pending_handoff(task: &Value, completed: i64, latest: Option<i64>) -> Option<(i64, i64)> {
+    let label = task["metadata"]["labels"][PIPELINE_HANDOFF].as_str()?;
+    let (parent, pair) = label.split_once(':')?;
+    let (user, assistant) = pair.split_once(':')?;
+    let assistant = assistant.parse::<i64>().ok()?;
+    if parent.parse::<i64>().ok()? != completed || latest != Some(assistant) {
+        return None;
+    }
+    Some((user.parse().ok()?, assistant))
+}
+
+async fn load_pending_handoff<T: MysqlTransaction>(
+    transaction: &mut T,
+    subtasks: &str,
+    task_id: i64,
+    user: i64,
+    assistant: i64,
+) -> MysqlResult<Option<(i64, String, SubtaskPairInsert)>> {
+    let row: Option<MysqlRow> = transaction.fetch_optional(
+        format!("SELECT u.message_id, u.prompt, a.executor_name, a.executor_namespace, a.executor_deleted_at, a.created_at FROM {subtasks} a JOIN {subtasks} u ON u.task_id = a.task_id WHERE a.task_id = ? AND u.id = ? AND a.id = ? AND a.status IN ('PENDING','RUNNING')"),
+        (task_id, user, assistant),
+    ).await?;
+    let Some(row) = row else { return Ok(None) };
+    let prompt: Option<String> = row.get_at(1)?;
+    Ok(Some((
+        row.get_at(0)?,
+        crate::prompt::extract_display_prompt(prompt.as_deref()).unwrap_or_default(),
+        SubtaskPairInsert {
+            user_subtask_id: user,
+            assistant_subtask_id: assistant,
+            executor: AssistantExecutor {
+                name: row.get_at::<Option<String>>(2)?.unwrap_or_default(),
+                namespace: row.get_at::<Option<String>>(3)?.unwrap_or_default(),
+                deleted_at: i64::from(row.get_at::<Option<bool>>(4)?.unwrap_or_default()),
+            },
+            assistant_created_at: row.get_at(5)?,
+        },
+    )))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_handoff<T: MysqlTransaction>(
+    transaction: &mut T,
+    tasks: &str,
+    subtasks: &str,
+    task_id: i64,
+    user_id: i64,
+    completed: &MysqlRow,
+    task_json: &mut Value,
+    stage: usize,
+    previous_member: &Value,
+    team_id: i64,
+    bot_id: i64,
+    assigned_ids: Option<(i64, i64)>,
+) -> MysqlResult<(i64, String, SubtaskPairInsert)> {
+    let before = subtask_column::<i64>(completed, "message_id").unwrap_or_default();
     let first_prompt: Option<String> = transaction.fetch_optional(
         format!("SELECT {subtasks}.prompt FROM {subtasks} WHERE {subtasks}.task_id = ? AND {subtasks}.`role` = 'USER' AND {subtasks}.message_id < ? ORDER BY {subtasks}.message_id ASC, {subtasks}.id ASC LIMIT 1"),
         (task_id, before)).await?;
-    let result = subtask_column::<Json<Value>>(&completed, "result")
+    let result = subtask_column::<Json<Value>>(completed, "result")
         .map(|json| json.0)
         .unwrap_or(Value::Null);
-    let context_mode = members[stage - 1]
+    let context_mode = previous_member
         .get("contextPassing")
         .and_then(Value::as_str)
         .unwrap_or("none");
@@ -185,8 +364,8 @@ async fn advance_on<T: MysqlTransaction>(
         crate::prompt::extract_display_prompt(first_prompt.as_deref()).unwrap_or_default();
     let message = handoff_message(context_mode, &original, &result);
     let executor = resolve_executor_reference(transaction, tasks, subtasks, task_id).await?;
-    if let Some(stripped) = consume_executor_reference(&task_json).stripped_json {
-        task_json = stripped;
+    if let Some(stripped) = consume_executor_reference(task_json).stripped_json {
+        *task_json = stripped;
     }
     let now = chrono::Local::now().naive_local();
     task_json["spec"]["currentStage"] = json!(stage);
@@ -194,25 +373,15 @@ async fn advance_on<T: MysqlTransaction>(
     task_json["status"]["progress"] = json!(0);
     task_json["status"]["updatedAt"] = json!(now.format("%Y-%m-%dT%H:%M:%S%.6f").to_string());
     task_json["status"]["completedAt"] = Value::Null;
-    transaction
-        .execute(
-            update_task_json_statement(tasks),
-            (
-                python_json_value(&task_json),
-                now.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
-                task_id,
-            ),
-        )
-        .await?;
     let maximum: Option<i64> = transaction.fetch_optional(
         format!("SELECT COALESCE(MAX({subtasks}.message_id), 0) FROM {subtasks} WHERE {subtasks}.task_id = ?"), (task_id,)).await?;
     let ids = next_message_ids(maximum);
-    let bot_ids = python_json_value(&json!([bot.id]));
+    let bot_ids = python_json_value(&json!([bot_id]));
     let completed_at = now.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
     let (mut user, mut assistant) = subtask_rows(
         user_id,
         task_id,
-        team.id,
+        team_id,
         &bot_ids,
         &message,
         &completed_at,
@@ -238,26 +407,30 @@ async fn advance_on<T: MysqlTransaction>(
             .ok()
             .flatten()
     });
-    Ok(Some(PipelineStageAdvance {
-        task_id,
-        user_id,
-        user_name,
-        user_preferences,
-        message_id: ids.next_message_id,
+    let completed_id = subtask_column::<i64>(completed, "id").unwrap_or_default();
+    task_json["metadata"]["labels"][PIPELINE_HANDOFF] = json!(format!(
+        "{completed_id}:{user_subtask_id}:{assistant_subtask_id}"
+    ));
+    transaction
+        .execute(
+            update_task_json_statement(tasks),
+            (
+                python_json_value(task_json),
+                now.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
+                task_id,
+            ),
+        )
+        .await?;
+    Ok((
+        ids.next_message_id,
         message,
-        task_json,
-        project_id: task_column::<i64>(&task, "project_id").unwrap_or_default(),
-        pair: SubtaskPairInsert {
+        SubtaskPairInsert {
             user_subtask_id,
             assistant_subtask_id,
             executor,
             assistant_created_at,
         },
-        previous_bot_id,
-        team,
-        bot,
-        member,
-    }))
+    ))
 }
 
 async fn load_team<T: MysqlTransaction>(

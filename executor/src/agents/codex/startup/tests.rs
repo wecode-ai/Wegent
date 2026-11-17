@@ -17,6 +17,7 @@ fn shared_client() -> CodexAppServerClient {
 
 fn options(cancellation: Option<oneshot::Receiver<()>>) -> SharedTurnNotificationOptions {
     SharedTurnNotificationOptions {
+        recover_usage_limits: false,
         runtime_notifications: None,
         overload_turn_recovering: None,
         overload_continuation_params: json!({"threadId": "thread-slow"}),
@@ -70,6 +71,7 @@ async fn process_fixture() -> (
     let pending = Arc::new(Mutex::new(HashMap::from([(
         999,
         PendingCodexResponse {
+            method: "test/pending".to_owned(),
             sender: release_tx,
             native_request: None,
         },

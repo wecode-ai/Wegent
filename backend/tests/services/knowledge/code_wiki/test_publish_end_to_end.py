@@ -197,6 +197,7 @@ def test_a_published_page_uses_the_normal_document_summary_flow(
         document=document,
         user=test_user,
         trigger_summary=True,
+        trigger="code_wiki_publish",
         replace_active=True,
         allow_if_success=True,
     )

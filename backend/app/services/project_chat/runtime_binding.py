@@ -3,6 +3,8 @@
 
 """Resolve comment and group sessions through durable Issue identities."""
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,6 +41,17 @@ class BoundCommentSession:
     automation_run_id: str = ""
     runtime_selection: dict[str, Any] = field(default_factory=dict)
     runtime_origin_context: dict[str, Any] = field(default_factory=dict)
+
+
+def resumed_manager_task_id(manager_task_id: str, round_id: str) -> str:
+    """Encode a manager lineage within the persisted Runtime ID's 255 characters."""
+    candidate = f"{manager_task_id}-manager-after-{round_id}"
+    if len(candidate) <= 255:
+        return candidate
+    identity = json.dumps(
+        [manager_task_id, round_id], ensure_ascii=False, separators=(",", ":")
+    )
+    return f"collaboration-manager-{hashlib.sha256(identity.encode()).hexdigest()}"
 
 
 def collaboration_manager_task_id(
@@ -84,7 +97,7 @@ def collaboration_manager_task_id(
             current = recorded
         if row.id == activity.id:
             break
-        current = f"{current}-manager-after-{round_id}"
+        current = resumed_manager_task_id(current, round_id)
         known_ids.add(current)
     recorded = activity.runtime_task_id or (activity.metadata_json or {}).get(
         "manager_runtime_task_id"

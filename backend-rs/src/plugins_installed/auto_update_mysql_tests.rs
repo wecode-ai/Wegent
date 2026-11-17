@@ -10,7 +10,7 @@
 
 use super::*;
 use brz_mysql::{MysqlError, MysqlService, MysqlTransaction};
-use brz_redis::RedisService;
+use brz_redis::{RedisService, RedisServiceOptions};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::oneshot;
 
@@ -27,6 +27,10 @@ const SCHEMA: &[&str] = &[
 
 fn registry() -> EntityResolvers<brz_redis::RedisService> {
     EntityResolvers::public(MysqlService::connect_lazy("mysql://unused@127.0.0.1/unused").unwrap())
+}
+
+fn fixture_redis_options() -> RedisServiceOptions {
+    RedisServiceOptions::default().with_timeout(Duration::from_secs(5))
 }
 
 #[tokio::test]
@@ -47,7 +51,7 @@ async fn writer_batch_preserves_rollback_and_rejects_stale_updates() {
     let redis = RedisService::noshard_with_options(
         redis_address.clone(),
         [redis_address],
-        brz_redis::RedisServiceOptions::default().with_timeout(Duration::from_secs(5)),
+        fixture_redis_options(),
     )
     .await
     .unwrap();

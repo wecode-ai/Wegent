@@ -486,7 +486,7 @@ async def test_direct_block_updates_are_persisted_before_done():
         "tool_output": "The file has been updated successfully.",
     }
 
-    mock_session_manager.get_blocks.return_value = [pending_block]
+    mock_session_manager.get_block.return_value = pending_block
 
     block_created = ExecutionEvent(
         type=EventType.BLOCK_CREATED.value,
@@ -521,6 +521,8 @@ async def test_direct_block_updates_are_persisted_before_done():
         await emitter.emit(block_updated)
         await emitter.emit(done)
 
+    mock_session_manager.get_block.assert_awaited_once_with(202, "call_write_1")
+    mock_session_manager.get_blocks.assert_not_awaited()
     mock_session_manager.add_block.assert_has_awaits(
         [
             call(202, pending_block),
@@ -737,3 +739,39 @@ async def test_done_event_forwards_finalized_result_to_wrapped_emitter():
     wrapped.emit.assert_awaited_once()
     forwarded_event = wrapped.emit.await_args.args[0]
     assert forwarded_event.result == finalized_result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("write_error", [None, RuntimeError("database timeout")])
+async def test_uncommitted_done_is_not_forwarded(write_error):
+    from app.services.execution.emitters import status_updating
+
+    wrapped = AsyncMock()
+    emitter = status_updating.StatusUpdatingEmitter(
+        wrapped=wrapped, task_id=101, subtask_id=202
+    )
+    done = ExecutionEvent(type=EventType.DONE.value, task_id=101, subtask_id=202)
+
+    with (
+        patch.object(
+            status_updating,
+            "collect_completed_result",
+            new=AsyncMock(return_value={"value": "done"}),
+        ),
+        patch.object(
+            status_updating,
+            "persist_completed_result",
+            new=AsyncMock(return_value=False, side_effect=write_error),
+        ),
+        patch.object(
+            emitter, "_publish_task_completed_event", new=AsyncMock()
+        ) as publish,
+    ):
+        if write_error is None:
+            await emitter.emit(done)
+        else:
+            with pytest.raises(RuntimeError, match="database timeout"):
+                await emitter.emit(done)
+
+    publish.assert_not_awaited()
+    wrapped.emit.assert_not_awaited()

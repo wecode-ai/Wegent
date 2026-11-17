@@ -1,3 +1,52 @@
+import { readFile, readdir } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { until } from './plugin-regression-fixture.mjs'
+
+export function waitForBackendRuntimeTerminal(cloud, deviceId, taskId, timeoutMs) {
+  return until(
+    async () => {
+      const directory = join(dirname(cloud.backendLogPath), 'backend-rs-logs')
+      const files = (await readdir(directory)).filter(name => name.startsWith('info.log'))
+      return (await Promise.all(files.map(name => readFile(join(directory, name), 'utf8')))).join(
+        '\n'
+      )
+    },
+    log =>
+      log
+        .split('\n')
+        .some(
+          line =>
+            line.includes('runtime terminal relay') &&
+            line.includes(taskId) &&
+            line.includes(JSON.stringify(deviceId)) &&
+            /phase["\s:=]*forwarded/.test(line)
+        ),
+    `Rust Backend did not finish terminal processing: ${taskId}`,
+    timeoutMs
+  )
+}
+
+export function runtimeCompletionReceiptPatterns(taskId) {
+  const task = JSON.stringify(taskId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const receipt = fields =>
+    new RegExp(
+      `^.*Runtime task create diagnostic (?=[^\\n]*"taskId":${task}(?:,|}))${fields.map(field => `(?=[^\\n]*${field})`).join('')}[^\\n]*$`,
+      'm'
+    )
+  return [
+    receipt([
+      '"stage":"runtime-terminal-received"',
+      '"event":"response.completed"',
+      '"matchedSubscriptionCount":[1-9][0-9]*(?:,|})',
+    ]),
+    receipt([
+      '"stage":"runtime-stream-owner"',
+      '"action":"assistant-settled"',
+      '"activeRegistrations":[1-9][0-9]*(?:,|})',
+    ]),
+  ]
+}
+
 export function findRuntimeWorkTask(runtimeWork, taskId) {
   const workspaces = Array.isArray(runtimeWork.workspaces)
     ? runtimeWork.workspaces

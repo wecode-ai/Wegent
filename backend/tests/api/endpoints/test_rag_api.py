@@ -472,6 +472,17 @@ def test_public_rag_chunks_rejects_page_ranges_crossing_scan_limit(
         ),
     ],
 )
+@pytest.mark.parametrize(
+    ("remote_status", "remote_code", "remote_message"),
+    [
+        (503, "runtime_unavailable", "knowledge runtime unavailable"),
+        (
+            502,
+            "external_engine_unavailable",
+            "External index cleanup could not be confirmed",
+        ),
+    ],
+)
 def test_public_rag_admin_entries_surface_remote_failure_without_local_fallback(
     test_client,
     test_token: str,
@@ -480,6 +491,9 @@ def test_public_rag_admin_entries_surface_remote_failure_without_local_fallback(
     patch_target: str,
     builder: str,
     local_method: str,
+    remote_status: int,
+    remote_code: str,
+    remote_message: str,
 ):
     """A retryable runtime failure must reach the caller, not the local plane."""
 
@@ -489,10 +503,10 @@ def test_public_rag_admin_entries_surface_remote_failure_without_local_fallback(
         local_method,
         AsyncMock(
             side_effect=RemoteRagGatewayError(
-                "knowledge runtime unavailable",
-                code="runtime_unavailable",
+                remote_message,
+                code=remote_code,
                 retryable=True,
-                status_code=503,
+                status_code=remote_status,
             )
         ),
     )
@@ -506,8 +520,8 @@ def test_public_rag_admin_entries_surface_remote_failure_without_local_fallback(
     ):
         response = getattr(test_client, method)(url, headers=_auth_header(test_token))
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == "knowledge runtime unavailable"
+    assert response.status_code == remote_status
+    assert response.json()["detail"] == remote_message
 
 
 def test_public_rag_index_delete_keeps_conflict_for_remote_shared_strategy(

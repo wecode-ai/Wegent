@@ -60,6 +60,20 @@ def test_collaboration_message_import_response_requires_typed_issue() -> None:
         CollaborationMessageImportResponse.model_validate({"issue": {}})
 
 
+@pytest.mark.parametrize("tags", [{}, {"tags": []}])
+@pytest.mark.parametrize("metadata", [None, {}, {"personal_task_assignment_at": None}])
+def test_assignment_timestamp_survives_missing_metadata(
+    tags: dict, metadata: dict | None
+) -> None:
+    direct = "2026-11-12T01:00:00Z"
+    result = LoopItemResponse.populate_tags(
+        {"personal_task_assignment_at": direct, "metadata_json": metadata, **tags}
+    )
+    assert result["personal_task_assignment_at"] == (
+        None if metadata and "personal_task_assignment_at" in metadata else direct
+    )
+
+
 def test_loop_item_response_normalizes_mysql_sentinel_values() -> None:
     now = datetime(2026, 7, 24, 21, 30)
 

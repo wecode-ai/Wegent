@@ -25,6 +25,7 @@ import {
 import type { ProjectAgentConfigurationHost, ProjectAgentMode } from "./types";
 import styles from "./ProjectAgentConfiguration.module.css";
 import { ProjectAgentPicker } from "./ProjectAgentPicker";
+import { ConfirmationDialog } from "../controls/ConfirmationDialog";
 
 function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message ? cause.message : fallback;
@@ -109,6 +110,8 @@ export function ProjectAgentConfiguration({
   const [candidateRevision, setCandidateRevision] = useState(0);
   const [composerOpen, setComposerOpen] = useState(false);
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [pendingRemoval, setPendingRemoval] =
+    useState<ProjectAgentConfigurationRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -194,6 +197,7 @@ export function ProjectAgentConfiguration({
     setSelectedTeamId("");
     setComposerOpen(false);
     setEditingAgentId(null);
+    setPendingRemoval(null);
     setError(null);
     setLoadError(null);
     let active = true;
@@ -475,7 +479,7 @@ export function ProjectAgentConfiguration({
     }
   }
 
-  async function finishAgentEdit() {
+  async function finishAgentChange() {
     if (activeAgentScope.current !== agentScope) return;
     setEditingAgentId(null);
     onAgentsChange?.();
@@ -506,7 +510,7 @@ export function ProjectAgentConfiguration({
           ...(saved.name ? { name: saved.name } : {}),
         });
       }
-      await finishAgentEdit();
+      await finishAgentChange();
     } catch (cause) {
       setError(
         errorMessage(
@@ -524,7 +528,7 @@ export function ProjectAgentConfiguration({
     scope === "workspace"
       ? translate(
           "todo.agent_picker_workspace_description",
-          "选择一个智能体，供空间内项目复用。",
+          "选择一个智能体，供分组内项目复用。",
         )
       : translate(
           "todo.agent_picker_description",
@@ -624,7 +628,7 @@ export function ProjectAgentConfiguration({
           <div className={styles.titleRow}>
             <h2 className={styles.title}>
               {scope === "workspace"
-                ? translate("todo.workspace_agents", "空间智能体")
+                ? translate("todo.workspace_agents", "分组智能体")
                 : translate("todo.project_agents", "项目智能体")}
             </h2>
             {!loading && !loadError ? (
@@ -635,11 +639,11 @@ export function ProjectAgentConfiguration({
             {scope === "workspace"
               ? translate(
                   "todo.workspace_agents_description",
-                  "管理空间共享智能体，空间内项目可以直接复用。",
+                  "管理分组共享智能体，分组内项目可以直接复用。",
                 )
               : translate(
                   "todo.project_agents_description",
-                  "直接管理这个项目的智能体；既可使用我的智能体，也可复用空间共享的智能体。",
+                  "直接管理这个项目的智能体；既可使用我的智能体，也可复用分组共享的智能体。",
                 )}
           </p>
         </div>
@@ -747,7 +751,7 @@ export function ProjectAgentConfiguration({
                       {agent.unavailableReason === "resource_sharing_required"
                         ? translate(
                             "todo.agent_resource_sharing_required",
-                            "需要资源所有者共享到空间",
+                            "需要资源所有者共享到分组",
                           )
                         : agent.unavailableReason ===
                             "private_binding_requires_explicit_share"
@@ -826,11 +830,22 @@ export function ProjectAgentConfiguration({
                             : scope === "workspace"
                               ? translate(
                                   "todo.remove_workspace_agent",
-                                  "移出空间",
+                                  "移出分组",
                                 )
                               : translate("todo.archive_project_agent", "停用")}
                         </button>
                       ) : null}
+                      {scope === "project" && agent.deletable && (
+                        <button
+                          type="button"
+                          className={styles.archiveButton}
+                          data-testid={`project-agent-delete-${agent.id}`}
+                          disabled={archivingId === agent.id}
+                          onClick={() => setPendingRemoval(agent)}
+                        >
+                          {translate("todo.delete_project_agent", "删除")}
+                        </button>
+                      )}
                     </div>
                   ) : null}
                 </div>
@@ -843,12 +858,69 @@ export function ProjectAgentConfiguration({
                   ? "todo.no_workspace_agents"
                   : "todo.no_project_agents",
                 scope === "workspace"
-                  ? "当前空间还没有智能体。"
+                  ? "当前分组还没有智能体。"
                   : "当前项目还没有智能体。",
               )}
             </p>
           )}
 
+          {pendingRemoval && (
+            <ConfirmationDialog
+              key={pendingRemoval.id}
+              title={translate(
+                "todo.delete_project_agent_title",
+                "删除项目智能体？",
+              )}
+              subject={pendingRemoval.displayName}
+              description={translate(
+                "todo.delete_project_agent_hint",
+                "将删除此项目中的智能体配置。共享资源、已有任务和执行历史会保留。若协作小组仍在引用它，请先替换或移除成员。",
+              )}
+              labels={{
+                cancel: translate("common.cancel", "取消"),
+                confirm: translate("todo.delete_project_agent", "删除"),
+                pending: translate("common.saving", "处理中…"),
+                failed: translate(
+                  "todo.delete_project_agent_failed",
+                  "删除项目智能体失败",
+                ),
+              }}
+              testIdPrefix="project-agent-delete"
+              onClose={() => setPendingRemoval(null)}
+              onConfirm={async () => {
+                try {
+                  await api.agents.remove(
+                    project.id,
+                    pendingRemoval.id,
+                    pendingRemoval.version,
+                  );
+                  if (activeAgentScope.current === agentScope) {
+                    setAgents((current) =>
+                      current.filter((agent) => agent.id !== pendingRemoval.id),
+                    );
+                  }
+                  await finishAgentChange();
+                } catch (cause) {
+                  const message = errorMessage(cause, "");
+                  if (message.includes("PROJECT_AGENT_IN_USE"))
+                    throw new Error(
+                      translate(
+                        "todo.project_agent_in_use",
+                        "该智能体仍被协作小组引用，请先在小组中替换或移除，再删除。",
+                      ),
+                    );
+                  if (message.includes("PROJECT_AGENT_MANAGED"))
+                    throw new Error(
+                      translate(
+                        "todo.project_agent_managed",
+                        "当前设备智能体由系统管理，不能删除。",
+                      ),
+                    );
+                  throw cause;
+                }
+              }}
+            />
+          )}
           {composerOpen
             ? (customAgentCreator ??
               renderDialog(
@@ -887,7 +959,7 @@ export function ProjectAgentConfiguration({
                 projectId: agentProjectId,
                 resourceId: editingAgent.id,
                 onClose: () => setEditingAgentId(null),
-                onSaved: finishAgentEdit,
+                onSaved: finishAgentChange,
               })
             : editingAgent &&
                 editingAgent.definitionSource === "shared_agent" &&

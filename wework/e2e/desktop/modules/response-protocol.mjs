@@ -313,6 +313,18 @@ function encryptedReasoningItem(id, encryptedContent) {
   }
 }
 
+function reasoningTextItem(id, text) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'reasoning',
+      id,
+      summary: [],
+      content: [{ type: 'reasoning_text', text }],
+    },
+  }
+}
+
 function streamingMarkdownReport() {
   const sectionCount = readPositiveInteger(
     process.env.WEWORK_E2E_MEMORY_SECTION_COUNT,
@@ -743,7 +755,11 @@ function selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
   }
   return {
     mode: 'search',
-    ...selectToolSearch(request, namespaceName ? `${namespaceName} ${toolName}` : toolName),
+    ...selectToolSearch(
+      request,
+      namespaceName ? `${namespaceName} ${toolName}` : toolName,
+      directToolName
+    ),
   }
 }
 
@@ -752,6 +768,15 @@ function mcpToolRequestEvents(
   { toolName, argumentsValue, directToolName, searchCallId, toolCallId }
 ) {
   const selection = selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
+  if (
+    selection.mode === 'search' &&
+    searchCallId &&
+    requestContainsToolOutput(request, searchCallId)
+  ) {
+    assert.fail(
+      `Native discovery did not expose ${directToolName ?? toolName}: ${String(toolOutputText(request, searchCallId)).slice(0, 3000)}`
+    )
+  }
   return {
     mode: selection.mode,
     events:
@@ -761,8 +786,9 @@ function mcpToolRequestEvents(
   }
 }
 
-function selectToolSearch(request, query) {
-  if (requestAdvertisesProgrammaticExec(request)) return discoverySelection(request, query)
+function selectToolSearch(request, query, qualifiedName) {
+  if (requestAdvertisesProgrammaticExec(request))
+    return discoverySelection(request, query, qualifiedName)
   const tools = Array.isArray(request.tools) ? request.tools : []
   const toolNames = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
   const searchTools = tools.filter(
@@ -934,6 +960,7 @@ export {
   assistantMessageSequence,
   assistantMessage,
   encryptedReasoningItem,
+  reasoningTextItem,
   streamingMarkdownReport,
   streamingTextEvents,
   localProtocolCase,

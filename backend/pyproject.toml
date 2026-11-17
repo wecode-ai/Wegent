@@ -138,6 +138,8 @@ wegent-shared = { path = "../shared", editable = true }
 
 [dependency-groups]
 dev = [
+    # Offline statutory calendar data maintenance
+    "chinesecalendar==1.12.1",
     # Testing related
     "pytest>=9.0.1",
     "pytest-asyncio>=1.3.0",

@@ -3,7 +3,15 @@ import { Readable } from 'node:stream'
 import test from 'node:test'
 import { gzipSync, zstdCompressSync } from 'node:zlib'
 import { runInNewContext } from 'node:vm'
+import { createMcpElicitationModel } from '../e2e/desktop/modules/mcp-elicitation-model.mjs'
 import { readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
+import {
+  MCP_ELICITATION_ACCEPTED_MARKER,
+  MCP_ELICITATION_COMPLETION_TEXT,
+  MCP_ELICITATION_NAMESPACE,
+  MCP_ELICITATION_PROMPT,
+  MCP_ELICITATION_TOOL_NAME,
+} from '../e2e/desktop/modules/shared.mjs'
 import { createDesktopScenario } from '../e2e/desktop/scenarios/stand-in-list-confirmation.scenario.mjs'
 import { createDesktopScenario as createActionScenario } from '../e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs'
 
@@ -26,6 +34,61 @@ test('rejects malformed zstd instead of returning an empty request', async () =>
   const request = Readable.from([Buffer.from('invalid compressed request')])
   request.headers = { 'content-encoding': 'zstd' }
   await assert.rejects(readRequestBody(request))
+})
+
+test('waits for a yielded MCP elicitation cell and uses its cancellation result', () => {
+  const model = createMcpElicitationModel()
+  const tools = [
+    {
+      type: 'function',
+      name: 'functions__exec',
+      parameters: { type: 'object', properties: { input: { type: 'string' } } },
+    },
+    { type: 'function', name: 'functions__wait' },
+  ]
+  const output = (callId, value) => ({
+    type: 'function_call_output',
+    call_id: callId,
+    output: value,
+  })
+  const request = input =>
+    model({ tools, input }, 'response').find(event => event.type === 'response.output_item.done')
+      .item
+  const discovery = JSON.stringify({
+    tools: [
+      {
+        name: `${MCP_ELICITATION_NAMESPACE}__${MCP_ELICITATION_TOOL_NAME}`,
+        description: 'exec tool declaration:',
+      },
+    ],
+  })
+  const markers = [
+    MCP_ELICITATION_ACCEPTED_MARKER,
+    MCP_ELICITATION_ACCEPTED_MARKER,
+    'E2E_MCP_ELICITATION_TIMEOUT:url_timeout:cancel',
+    'E2E_MCP_ELICITATION_TIMEOUT:form_timeout:cancel',
+  ]
+
+  for (const [index, marker] of markers.entries()) {
+    const search = request([{ type: 'message', role: 'user', content: MCP_ELICITATION_PROMPT }])
+    const call = request([output(search.call_id, discovery)])
+    let result = output(call.call_id, marker)
+    if (index === 3) {
+      const pending = output(
+        call.call_id,
+        'Script running with cell ID 4\nWall time 31.0 seconds\nOutput:\n'
+      )
+      const wait = request([pending])
+      assert.equal(wait.name, 'functions__wait')
+      assert.deepEqual(JSON.parse(wait.arguments), { cell_id: '4', yield_time_ms: 30_000 })
+      assert.throws(() => request([pending, output(wait.call_id, 'unexpected')]), /did not return/)
+      result = output(wait.call_id, [{ type: 'input_text', text: marker }])
+    }
+    assert.equal(
+      request([result]).content[0].text,
+      `${MCP_ELICITATION_COMPLETION_TEXT}:${index + 1}`
+    )
+  }
 })
 
 for (const [surface, createScenario] of [

@@ -1,0 +1,11 @@
+{
+  "order": 28021,
+  "scenario": "./scenarios/project-create-people.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 28021, "shard": 8, "position": 5021 } },
+  "paths": [
+    "packages/collaboration/src/project-create/*",
+    "packages/collaboration/src/controls/MemberSearchPicker.tsx",
+    "packages/collaboration/src/platform/CollaborationPlatformApp.tsx"
+  ]
+}

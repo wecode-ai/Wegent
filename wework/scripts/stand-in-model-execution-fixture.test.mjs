@@ -229,6 +229,73 @@ describe('stand-in execution model fixture', () => {
     )
   })
 
+  test('preserves native context and verifies exact authorized message identities for in-place retries', () => {
+    const context = {
+      ...state(),
+      retryTaskId,
+      retryThreadId,
+      retryMessageIds,
+      retrySameNativeThread: true,
+    }
+    const body = {
+      model: 'kimi-k3',
+      input: [
+        { role: 'assistant', content: `${marker}_OFFICIAL_DONE` },
+        user(`${marker}_CHAT_cloud`),
+        { role: 'assistant', content: `${marker}_PROGRESS_cloud` },
+        user(RETRY_CONTINUATION_PROMPT),
+      ],
+      tools: [
+        { type: 'function', name: 'mcp__wework_stand_in__read_task', parameters: {} },
+        { type: 'function', name: 'mcp__wework_stand_in__create_task', parameters: {} },
+      ],
+    }
+    const pending = executionModelEvents(body, context)
+    expect(() =>
+      executionModelEvents(
+        { ...body, input: [{ type: 'additional_tools', tools: [] }, ...body.input] },
+        context
+      )
+    ).toThrow('An in-place API retry must not forward the previous native Lite tool catalog')
+    const call = pending.events.find(
+      event => event.type === 'response.output_item.done' && event.item?.type === 'function_call'
+    ).item
+    expect(JSON.parse(call.arguments)).toEqual({ taskId: retryTaskId })
+    expect(JSON.stringify(pending.events)).not.toContain('create_task')
+    const continued = executionModelEvents(
+      { ...body, input: [...body.input, historyOutput(retryHistory())] },
+      context
+    )
+    expect(continued.retryEvidence).toEqual({
+      taskId: retryTaskId,
+      threadId: retryThreadId,
+      name: 'cloud',
+      requestMessageId: retryMessageIds.request,
+      progressMessageId: retryMessageIds.progress,
+    })
+    expect(() =>
+      executionModelEvents({ ...body, input: [user(RETRY_CONTINUATION_PROMPT)] }, context)
+    ).toThrow('An in-place retry must retain exactly one original native request')
+    expect(() =>
+      executionModelEvents(
+        {
+          ...body,
+          input: [...body.input, user(`${RETRY_CONTINUATION_PROMPT}\n${marker}_CHAT_cloud`)],
+        },
+        context
+      )
+    ).toThrow('An in-place retry must retain exactly one original native request')
+    expect(() =>
+      executionModelEvents(
+        {
+          ...body,
+          input: [...body.input, historyOutput({ ...retryHistory(), taskId: 'foreign-task' })],
+        },
+        context
+      )
+    ).toThrow('Retry must read its exact original logical task')
+  })
+
   test('follows the earlier native session cursor before deciding which work to continue', () => {
     const context = { ...state(), retryTaskId, retryThreadId, retryMessageIds }
     const body = {

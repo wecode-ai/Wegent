@@ -52,6 +52,7 @@ export interface AppPreferences {
   terminalContextInjectionEnabled: boolean
   contextCompactionThreshold: number
   experimentalFeaturesEnabled: boolean
+  collaborationExperienceEnabled: boolean
   localCodexSubscriptionEnabled: boolean
   telemetryConsentAsked: boolean
   telemetryConsentRevision: number
@@ -138,6 +139,7 @@ export interface AppPreferencesPatch {
   terminalContextInjectionEnabled?: boolean
   contextCompactionThreshold?: number
   experimentalFeaturesEnabled?: boolean
+  collaborationExperienceEnabled?: boolean
   localCodexSubscriptionEnabled?: boolean
   telemetryConsentAsked?: boolean
   telemetryEnabled?: boolean
@@ -188,6 +190,7 @@ export const defaultAppPreferences: AppPreferences = {
   terminalContextInjectionEnabled: true,
   contextCompactionThreshold: DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
   experimentalFeaturesEnabled: false,
+  collaborationExperienceEnabled: false,
   localCodexSubscriptionEnabled: true,
   telemetryConsentAsked: false,
   telemetryConsentRevision: 0,
@@ -353,6 +356,7 @@ export function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.experimentalFeaturesEnabled === 'boolean'
         ? record.experimentalFeaturesEnabled
         : defaultAppPreferences.experimentalFeaturesEnabled,
+    collaborationExperienceEnabled: record.collaborationExperienceEnabled === true,
     localCodexSubscriptionEnabled:
       typeof record.localCodexSubscriptionEnabled === 'boolean'
         ? record.localCodexSubscriptionEnabled

@@ -1,5 +1,23 @@
 use super::*;
 
+#[test]
+fn conversation_view_exposes_persisted_startup_failure_without_the_execution_profile() {
+    let root = tempfile::tempdir().unwrap();
+    let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    let failure = json!({"code":"runtime_start_failed","message":"Cannot start native process","failedAt":123});
+    let view = handler.control_task_view(RuntimeTaskLink {
+        local_task_id: "failed-start".into(),
+        runtime: "codex".into(),
+        runtime_handle: json!({"startupFailure":failure,
+            "executionRequest":{"auth_token":"private-execution-token"}}),
+        ..Default::default()
+    });
+    assert_eq!(view["startup_failure"], failure);
+    assert!(view.get("runtimeHandle").is_none());
+    assert!(!view.to_string().contains("private-execution-token"));
+}
+
 pub(super) struct EnvGuard(&'static str, Option<std::ffi::OsString>);
 impl EnvGuard {
     pub(super) fn home(path: &str) -> Self {
@@ -454,6 +472,7 @@ fn local_creation_binds_project_or_issue_and_preserves_personal_scope() {
                 .control_operation(&context("caller"), "create_conversation", args)
                 .await
                 .unwrap();
+            workbench_control::assert_output_contract("create_conversation", &result);
             assert_eq!(result["accepted"], true);
             let task = result["taskId"].as_str().unwrap();
             let binding = store

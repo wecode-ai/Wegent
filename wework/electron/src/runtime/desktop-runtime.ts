@@ -285,7 +285,6 @@ export class DesktopRuntime {
     const executorPath = this.options.environment.WEWORK_EXECUTOR_PATH?.trim()
     if (!executorPath) return null
     const generation = this.lifecycleGeneration
-    // Device identity and managed auth preparation may write Homes. Gate both first.
     await assertExecutorWorkbenchCompatibility(this.options.environment)
     if (this.lifecycleGeneration !== generation) return null
     const deviceId = await this.resolveDesktopDeviceId()

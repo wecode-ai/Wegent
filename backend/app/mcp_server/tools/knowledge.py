@@ -22,6 +22,7 @@ Tools are declared using @mcp_tool decorator which provides:
 import asyncio
 import logging
 from typing import Any, Dict, Optional
+from uuid import uuid4
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -143,6 +144,8 @@ async def search_knowledge_base(
             folder_ids=folder_ids,
             include_subfolders=include_subfolders,
             route_mode="rag_retrieval",
+            entrypoint="mcp",
+            client_surface="mcp",
         )
 
         # Convert retrieve_knowledge format to MCP expected format
@@ -537,6 +540,7 @@ def create_document(
             attachment_id=attachment_id,
             trigger_indexing=trigger_indexing,
             trigger_summary=trigger_summary,
+            trigger="mcp",
         )
 
         return result.model_dump()
@@ -634,7 +638,16 @@ def read_document_content(
     Returns:
         Dict with document content slice and pagination metadata
     """
+    from app.services.knowledge.read_reporting import (
+        report_read,
+        suppressed_read_events,
+    )
+
     db = SessionLocal()
+    invocation_id = uuid4().hex
+    reader_id = None
+    event_result = {"id": document_id, "error_code": "DOCUMENT_READ_FAILED"}
+    suppression = suppressed_read_events.set(True)
     try:
         from app.models.knowledge import KnowledgeDocument
 
@@ -649,7 +662,10 @@ def read_document_content(
             else _get_user_from_token(db, token_info)
         )
         if not user:
+            event_result["error_code"] = "DOCUMENT_READ_IDENTITY_UNRESOLVED"
             return {"error": "User not found"}
+
+        reader_id = getattr(user, "id", None)
 
         result = knowledge_orchestrator.read_document_content(
             db=db,
@@ -657,9 +673,19 @@ def read_document_content(
             document_id=document_id,
             offset=offset,
             limit=limit,
+            entrypoint="mcp",
         )
 
-        return result.model_dump()
+        payload = result.model_dump()
+        event_result = {
+            "id": document_id,
+            "kb_id": payload.get("kb_id"),
+            "offset": payload.get("offset"),
+            "returned_length": payload.get("returned_length"),
+            "total_length": payload.get("total_length"),
+            "has_more": payload.get("has_more"),
+        }
+        return payload
 
     except ValueError as e:
         logger.warning(f"[MCP] read_document_content validation error: {e}")
@@ -670,6 +696,19 @@ def read_document_content(
         return {"error": str(e)}
 
     finally:
+        suppressed_read_events.reset(suppression)
+        try:
+            report_read(
+                event_result,
+                user_id=reader_id,
+                actor_user_id=token_info.user_id,
+                task_id=token_info.task_id,
+                subtask_id=token_info.subtask_id,
+                invocation_id=invocation_id,
+                entrypoint="mcp",
+            )
+        except Exception:
+            logger.debug("Failed to report MCP document read", exc_info=True)
         db.close()
 
 

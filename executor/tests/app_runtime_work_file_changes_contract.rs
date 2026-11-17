@@ -927,12 +927,12 @@ fn write_fake_legacy_transcript_codex(prefix: &str, log_path: &Path, thread: Val
     let turns = thread["turns"].as_array().unwrap();
     fs::write(
         &path,
-        fake_transcript_codex_script(
+        wegent_executor_test_support::with_codex_bundled_catalog(&fake_transcript_codex_script(
             log_path,
             &read_response,
             &fake_turn_page_response_cases(turns),
             "",
-        ),
+        )),
     )
     .unwrap();
     #[cfg(unix)]
@@ -958,7 +958,11 @@ fn write_fake_transcript_codex(prefix: &str, log_path: &Path, mut thread: Value)
         &turn_page_response_cases,
         &item_response_cases,
     );
-    fs::write(&path, content).unwrap();
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();

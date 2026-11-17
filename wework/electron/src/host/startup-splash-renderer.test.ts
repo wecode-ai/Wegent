@@ -72,6 +72,7 @@ async function createRendererFixture(
     setPaused: vi.fn(),
     complete: vi.fn(async () => undefined),
     destroy: vi.fn(),
+    refresh: vi.fn(),
   }
   const createStartupBrandAnimation = vi.fn(() => brandAnimation)
   const listeners = new Map<string, (event: unknown) => void>()
@@ -363,8 +364,13 @@ describe('startup splash renderer', () => {
 
     expect(createStartupBrandAnimation).toHaveBeenCalledExactlyOnceWith(
       element('#startup-brand-canvas'),
-      element('#startup-status')
+      element('#startup-status'),
+      [
+        [element('#startup-slow')],
+        [element('#startup-timeout'), element('#startup-timeout-actions')],
+      ]
     )
+    expect(brandAnimation.refresh).toHaveBeenCalledOnce()
     expect(element('documentElement').dataset.animationReady).toBeUndefined()
     expect(frames.size).toBe(1)
     await step(0)
@@ -683,7 +689,11 @@ describe('startup splash renderer', () => {
       performance: { now: () => 0 },
       requestAnimationFrame: vi.fn(),
       window: {
-        createStartupBrandAnimation: vi.fn(() => ({ setPaused: vi.fn(), destroy: vi.fn() })),
+        createStartupBrandAnimation: vi.fn(() => ({
+          setPaused: vi.fn(),
+          destroy: vi.fn(),
+          refresh: vi.fn(),
+        })),
         location: { search: '' },
         addEventListener: (event: string, listener: () => void) => {
           windowListeners.set(event, listener)
@@ -758,7 +768,11 @@ describe('startup splash renderer', () => {
         performance: { now: () => 0 },
         requestAnimationFrame: vi.fn(),
         window: {
-          createStartupBrandAnimation: vi.fn(() => ({ setPaused: vi.fn(), destroy: vi.fn() })),
+          createStartupBrandAnimation: vi.fn(() => ({
+            setPaused: vi.fn(),
+            destroy: vi.fn(),
+            refresh: vi.fn(),
+          })),
           location: { search },
           addEventListener: vi.fn(),
           matchMedia: () => ({ matches: true }),
@@ -877,7 +891,11 @@ describe('startup splash renderer', () => {
       performance: { now: () => 0 },
       requestAnimationFrame: vi.fn(),
       window: {
-        createStartupBrandAnimation: vi.fn(() => ({ setPaused: vi.fn(), destroy: vi.fn() })),
+        createStartupBrandAnimation: vi.fn(() => ({
+          setPaused: vi.fn(),
+          destroy: vi.fn(),
+          refresh: vi.fn(),
+        })),
         location: { search: '' },
         addEventListener: vi.fn(),
         matchMedia: () => ({ matches: true }),
@@ -898,6 +916,7 @@ describe('startup splash renderer', () => {
     await setImmediate()
     expect(element('#startup-copy-diagnostics').textContent).toBe(recoveryCopyLabel)
     expect(element('#startup-toast').textContent).toContain('诊断信息已复制')
+    expect(element('#startup-toast').dataset.sequence).toBe('1')
     element('#startup-open-logs').click()
     await vi.waitFor(() => expect(openLogs).toHaveBeenCalledOnce())
 
@@ -905,6 +924,7 @@ describe('startup splash renderer', () => {
     await vi.waitFor(() => expect(copy).toHaveBeenCalledTimes(2))
     await setImmediate()
     expect(element('#startup-timeout-copy').textContent).toBe(timeoutCopyLabel)
+    expect(element('#startup-toast').dataset.sequence).toBe('2')
     element('#startup-timeout-open-logs').click()
     await vi.waitFor(() => expect(openLogs).toHaveBeenCalledTimes(2))
   })

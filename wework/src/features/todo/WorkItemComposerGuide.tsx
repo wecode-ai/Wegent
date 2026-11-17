@@ -57,7 +57,7 @@ function WorkItemComposerGuideContent({
   const [open, setOpen] = useState(false)
   const [refreshedItem, setRefreshedItem] = useState<CloudLoopItem | null>(null)
   const [taskBindings, setTaskBindings] = useState<TaskBinding[] | null>(item ? null : [])
-  const canChangeProject = projects.length > 0 && Boolean(onSelectProject)
+  const canChangeProject = Boolean(onSelectProject)
   const menuOpen = open && canChangeProject
   const closeMenu = useCallback(() => setOpen(false), [])
 

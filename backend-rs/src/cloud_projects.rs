@@ -33,6 +33,9 @@ mod workflow_definition;
 /// Execution-environment route for `GET /api/v1/cloud-projects/{project_id}/execution-environments`.
 mod execution_environments;
 
+mod agent_deletion;
+#[cfg(test)]
+mod agent_deletion_mysql_tests;
 /// Collaboration-group route for
 /// `GET /api/v1/cloud-projects/{project_id}/collaboration-groups`.
 mod collaboration_groups;
@@ -69,6 +72,7 @@ pub(crate) use access::{
 
 /// `PATCH /api/v1/cloud-projects/{project_id}`: update one cloud project.
 mod update;
+pub(crate) use update::metadata_board_statuses;
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]

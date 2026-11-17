@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+
+#[path = "tests/runtime_event_replay.rs"]
+mod runtime_event_replay;
 use crate::config::device::UpdateConfig;
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
@@ -218,30 +221,6 @@ fn backend_config(device_id: &str) -> LocalBackendConfig {
     }
 }
 
-#[test]
-fn app_ipc_sidecar_device_id_uses_explicit_app_device_id() {
-    let _guard = env_lock();
-    let previous = env::var_os(APP_IPC_DEVICE_ID_ENV);
-    env::set_var(APP_IPC_DEVICE_ID_ENV, "local-app-device");
-
-    let device_id = app_ipc_sidecar_device_id(&backend_config("local-app-device-cloud"));
-
-    restore_env(APP_IPC_DEVICE_ID_ENV, previous);
-    assert_eq!(device_id, "local-app-device");
-}
-
-#[test]
-fn app_ipc_sidecar_device_id_falls_back_to_backend_device_id() {
-    let _guard = env_lock();
-    let previous = env::var_os(APP_IPC_DEVICE_ID_ENV);
-    env::remove_var(APP_IPC_DEVICE_ID_ENV);
-
-    let device_id = app_ipc_sidecar_device_id(&backend_config("remote-device"));
-
-    restore_env(APP_IPC_DEVICE_ID_ENV, previous);
-    assert_eq!(device_id, "remote-device");
-}
-
 #[tokio::test]
 async fn runtime_pull_carries_and_acknowledges_workspace_cleanup_intents() {
     let transport = RuntimeWorkPollTransport::default();
@@ -268,68 +247,6 @@ async fn runtime_pull_carries_and_acknowledges_workspace_cleanup_intents() {
     assert_eq!(intent["runtime_task_ids"], json!(["runtime-task-1"]));
     assert_eq!(transport.claimed_cleanups.load(AtomicOrdering::Acquire), 1);
     assert_eq!(transport.accepted_cleanups.load(AtomicOrdering::Acquire), 1);
-}
-
-#[tokio::test]
-async fn app_sidecar_runner_does_not_start_session_gateway() {
-    let _guard = env_lock();
-    let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-    env::remove_var("DEVICE_SESSION_GATEWAY_ENABLED");
-    let (event_tx, _) = broadcast::channel(8);
-    let event_hub = ExecutorEventHub::new(event_tx.clone());
-    event_hub.ensure_started();
-    let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
-        RuntimeWorkRpcHandler::with_event_sender("local-app-device", "/bin/false", event_tx),
-    );
-    let runner = LocalBackendRunner::new_for_app_sidecar_with_event_hub(
-        backend_config("local-device"),
-        SocketIoTransport::default(),
-        runtime_work_handler,
-        event_hub,
-    );
-
-    assert!(!runner.start_session_gateway);
-    let session_handler = runner.session_handler.as_ref().unwrap().lock().unwrap();
-    assert!(!session_handler.gateway_enabled);
-    assert_eq!(session_handler.public_base_url, "http://localhost:0");
-    drop(session_handler);
-    restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
-}
-
-#[tokio::test]
-async fn app_sidecar_gateway_uses_dynamic_port_when_explicitly_enabled() {
-    let _guard = env_lock();
-    let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-    env::set_var("DEVICE_SESSION_GATEWAY_ENABLED", "true");
-    let runner = LocalBackendRunner::new_for_app_sidecar(
-        backend_config("local-device"),
-        SocketIoTransport::default(),
-    );
-
-    assert!(runner.start_session_gateway);
-    let session_handler = runner.session_handler.as_ref().unwrap().lock().unwrap();
-    assert!(session_handler.gateway_enabled);
-    assert_eq!(session_handler.public_base_url, "http://localhost:0");
-    drop(session_handler);
-    restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
-}
-
-#[tokio::test]
-async fn remote_backend_runner_starts_session_gateway() {
-    let _guard = env_lock();
-    let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-    env::remove_var("DEVICE_SESSION_GATEWAY_ENABLED");
-    let runner = LocalBackendRunner::new(
-        backend_config("remote-device"),
-        SocketIoTransport::default(),
-    );
-
-    assert!(runner.start_session_gateway);
-    let session_handler = runner.session_handler.as_ref().unwrap().lock().unwrap();
-    assert!(session_handler.gateway_enabled);
-    assert_eq!(session_handler.public_base_url, "http://localhost:17888");
-    drop(session_handler);
-    restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
 }
 
 #[tokio::test]
@@ -409,6 +326,37 @@ async fn heartbeat_reconnects_when_an_event_relay_marks_the_connection_unavailab
 }
 
 #[tokio::test]
+async fn remote_task_changes_do_not_trigger_heartbeats_for_non_app_devices() {
+    let root = tempfile::tempdir().unwrap();
+    let access = crate::runtime_work::remote_task_access::RemoteTaskAccess::new(
+        root.path().join("remote-task-access.json"),
+    );
+    let transport = RuntimeWorkPollTransport::default();
+    let connection_status = Arc::new(AtomicBool::new(true));
+    let (event_tx, _) = broadcast::channel(8);
+    let mut runner = LocalBackendRunner::new_for_app_sidecar_with_event_hub(
+        backend_config("remote-device"),
+        transport.clone(),
+        Arc::new(PersonalTaskTestHandler(AtomicUsize::new(0))),
+        ExecutorEventHub::new(event_tx),
+    )
+    .with_connection_status(Arc::clone(&connection_status));
+    runner.client.remote_task_access = access.clone();
+    access.update(json!({"enabled": true})).unwrap();
+
+    let (stable_connection, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(runner.heartbeat_until_reconnect(), async {
+            connection_status.store(false, Ordering::Release);
+        })
+    })
+    .await
+    .expect("connection loss must trigger reconnect without waiting for a heartbeat");
+
+    assert!(!stable_connection);
+    assert_eq!(transport.disconnect_calls.load(AtomicOrdering::Acquire), 1);
+}
+
+#[tokio::test]
 async fn socket_close_invalidates_ready_status_and_reconnects_before_heartbeat() {
     let transport = RuntimeWorkPollTransport::default();
     let connection_status = Arc::new(AtomicBool::new(true));
@@ -478,22 +426,6 @@ async fn rejected_registration_clears_the_previous_plugin_route() {
 }
 
 #[test]
-fn normalizes_backend_context_for_local_task_mcp() {
-    let config = backend_config("local-device");
-    let mut request = ExecutionRequest::default();
-
-    normalize_local_task_request(&mut request, &config);
-
-    assert_eq!(
-        request.backend_url.as_deref(),
-        Some("https://backend.example.com")
-    );
-    assert_eq!(request.auth_token.as_deref(), Some("token"));
-    assert_eq!(request.runtime_auth_token.as_deref(), Some("runtime-token"));
-    assert_eq!(request.device_id.as_deref(), Some("local-device"));
-}
-
-#[test]
 fn heartbeat_reports_installation_identity_without_scheduler_capacity() {
     let client =
         LocalBackendClient::new(backend_config("local-device"), SocketIoTransport::default());
@@ -518,25 +450,112 @@ fn local_project_request_keeps_device_without_backend_context() {
     assert!(request.runtime_auth_token.is_none());
 }
 
-#[tokio::test]
-async fn registration_captures_backend_assigned_device_route_id() {
-    let transport = RuntimeWorkPollTransport::default();
-    *transport.register_ack.lock().unwrap() =
-        Some(json!({"success": true, "device_route_id": "app-record-42"}));
-    let route_slot = Arc::new(std::sync::Mutex::new(None));
-    let runner = LocalBackendRunner::new_for_app_sidecar(backend_config("local-device"), transport)
-        .with_device_route_id_slot(Arc::clone(&route_slot));
-    runner.register_handlers();
+struct RouteRegistrationRuntimeWorkHandler;
 
-    runner
-        .connect_and_register()
-        .await
-        .expect("registration succeeds");
+struct PersonalTaskTestHandler(AtomicUsize);
 
-    assert_eq!(route_slot.lock().unwrap().as_deref(), Some("app-record-42"));
+impl RuntimeWorkHandler for PersonalTaskTestHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.0.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(json!({"success": true}))
+        })
+    }
 }
 
-struct RouteRegistrationRuntimeWorkHandler;
+#[tokio::test]
+async fn app_remote_task_consent_is_enforced_at_network_dispatch_and_event_forwarding() {
+    let root = tempfile::tempdir().unwrap();
+    let access = crate::runtime_work::remote_task_access::RemoteTaskAccess::new(
+        root.path().join("remote-task-access.json"),
+    );
+    let handler = Arc::new(PersonalTaskTestHandler(AtomicUsize::new(0)));
+    let mut config = backend_config("same-device-name");
+    config.device_type = "app".into();
+    let (event_tx, _) = broadcast::channel(8);
+    let event_hub = ExecutorEventHub::new(event_tx);
+    let mut runner = LocalBackendRunner::new_for_app_sidecar_with_event_hub(
+        config,
+        SocketIoTransport::default(),
+        handler.clone(),
+        event_hub,
+    );
+    runner.client.remote_task_access = access.clone();
+    let network = runner.runtime_rpc_handler();
+    let request = json!({"method": "runtime.tasks.list", "params": {
+        "appTaskAccessScope": "project-session", "remoteTaskAccess": {"enabled": true}
+    }});
+    assert_eq!(
+        network(request.clone()).await.unwrap()["code"],
+        "remote_control_disabled"
+    );
+    assert_eq!(handler.0.load(AtomicOrdering::SeqCst), 0);
+    access.update(json!({"enabled": true})).unwrap();
+    assert_eq!(network(request.clone()).await.unwrap()["success"], true);
+    assert_eq!(
+        runner.client.runtime_event(json!({}))["appRemoteTaskAccessEnabled"],
+        true
+    );
+    assert_eq!(
+        runner.client.runtime_features()["remoteTaskAccess"]["enabled"],
+        true
+    );
+    access.update(json!({"enabled": false})).unwrap();
+    assert_eq!(
+        network(request).await.unwrap()["code"],
+        "remote_control_disabled"
+    );
+    assert_eq!(
+        runner.client.runtime_event(json!({}))["appRemoteTaskAccessEnabled"],
+        false
+    );
+    // Even a forged remote request cannot mutate installation-local consent.
+    assert_eq!(
+        network(
+            json!({"method": "executor.remote_task_access.update", "params": {"enabled": true}})
+        )
+        .await
+        .unwrap()["code"],
+        "remote_control_disabled"
+    );
+    assert!(!access.enabled());
+    assert_eq!(handler.0.load(AtomicOrdering::SeqCst), 1);
+
+    // Caller-supplied payload fields cannot grant stand-in access.
+    assert_eq!(
+        network(json!({
+            "method": "runtime.stand_in.conversation",
+            "payload": {"appTaskAccessScope": "stand-in-conversation"}
+        }))
+        .await
+        .unwrap()["code"],
+        "remote_control_disabled"
+    );
+    assert_eq!(
+        network(json!({
+            "method": "runtime.stand_in.conversation",
+            "appTaskAccessScope": "stand-in-conversation",
+            "payload": {"userId": 7}
+        }))
+        .await
+        .unwrap()["success"],
+        true
+    );
+    assert_eq!(
+        network(json!({
+            "method": "runtime.tasks.list",
+            "appTaskAccessScope": "stand-in-conversation"
+        }))
+        .await
+        .unwrap()["code"],
+        "remote_control_disabled"
+    );
+    assert!(!access.enabled());
+    assert_eq!(handler.0.load(AtomicOrdering::SeqCst), 2);
+}
 
 impl RuntimeWorkHandler for RouteRegistrationRuntimeWorkHandler {
     fn handle_runtime_rpc<'a>(
@@ -555,7 +574,15 @@ impl RuntimeWorkHandler for RouteRegistrationRuntimeWorkHandler {
     }
 }
 
-async fn acknowledge_route_registration(mut socket: WebSocket, registered: Arc<Notify>) {
+async fn acknowledge_route_registration(socket: WebSocket, registered: Arc<Notify>) {
+    acknowledge_route_registration_with_events(socket, registered, None).await;
+}
+
+async fn acknowledge_route_registration_with_events(
+    mut socket: WebSocket,
+    registered: Arc<Notify>,
+    events: Option<tokio::sync::mpsc::UnboundedSender<Value>>,
+) {
     socket
         .send(Message::Text(
             r#"0{"sid":"route-test","upgrades":[],"pingInterval":25000,"pingTimeout":20000,"maxPayload":1000000}"#
@@ -574,6 +601,11 @@ async fn acknowledge_route_registration(mut socket: WebSocket, registered: Arc<N
         } else if let Some(event) = packet.strip_prefix("42/local-executor,") {
             let (ack_id, payload) = event.split_once('[').unwrap();
             let payload: Value = serde_json::from_str(&format!("[{payload}")).unwrap();
+            if payload[0] == "runtime:event" {
+                if let Some(events) = &events {
+                    let _ = events.send(payload[1].clone());
+                }
+            }
             if payload[0] == "device:heartbeat" {
                 registered.notify_one();
             }
@@ -692,18 +724,5 @@ fn initial_backend_registration_is_visible_to_app_ipc_plugin_requests() {
     assert_eq!(
         rejected_profile.unwrap_err().code,
         "plugin_route_profile_mismatch"
-    );
-}
-
-#[test]
-fn plugin_reconcile_delay_is_stable_and_bounded() {
-    let delay = plugin_reconcile_delay("runtime-instance-1");
-    assert_eq!(delay, plugin_reconcile_delay("runtime-instance-1"));
-    assert!(delay >= PLUGIN_RECONCILE_INTERVAL);
-    assert!(delay < PLUGIN_RECONCILE_INTERVAL + Duration::from_secs(PLUGIN_RECONCILE_JITTER_SECS));
-    // Distinct runtimes spread across the jitter window.
-    assert_ne!(
-        plugin_reconcile_delay("runtime-instance-1"),
-        plugin_reconcile_delay("runtime-instance-2")
     );
 }

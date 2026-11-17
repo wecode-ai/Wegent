@@ -4,7 +4,10 @@ import { mcpToolRequestEvents, requestContainsToolOutput } from './response-prot
 
 const HISTORY_CALL = 'retry-previous-conversation'
 
-export function retryConversationHistory(body, { marker, retryTaskId, retryThreadId }) {
+export function retryConversationHistory(
+  body,
+  { marker, retryTaskId, retryThreadId, retrySameNativeThread = false }
+) {
   assert.ok(retryTaskId && retryThreadId, 'Retry must retain its original logical conversation')
   const conversation = (body.input ?? []).filter(item => ['user', 'assistant'].includes(item.role))
   const message = conversation.filter(item => item.role === 'user').at(-1)
@@ -12,19 +15,38 @@ export function retryConversationHistory(body, { marker, retryTaskId, retryThrea
     typeof message?.content === 'string'
       ? message.content
       : (message?.content ?? []).map(part => part.text ?? '').join('')
-  assert.ok(
-    text.includes(`read_task(${JSON.stringify({ taskId: retryTaskId })})`),
-    'A new-session retry must identify the exact authorized conversation history'
-  )
+  if (retrySameNativeThread) {
+    assert.equal(
+      conversation.filter(
+        item => item.role === 'user' && JSON.stringify(item.content).includes(`${marker}_CHAT_`)
+      ).length,
+      1,
+      'An in-place retry must retain exactly one original native request'
+    )
+    for (const previous of ['OFFICIAL', 'PROGRESS'])
+      assert.ok(
+        conversation.some(
+          item =>
+            item.role === 'assistant' &&
+            JSON.stringify(item.content).includes(`${marker}_${previous}`)
+        ),
+        `An in-place retry must retain its previous native ${previous} content`
+      )
+  } else {
+    assert.ok(
+      text.includes(`read_task(${JSON.stringify({ taskId: retryTaskId })})`),
+      'A new-session retry must identify the exact authorized conversation history'
+    )
+    assert.equal(
+      JSON.stringify(conversation).includes(`${marker}_OFFICIAL`),
+      false,
+      'A cross-provider retry must not copy the previous official native session'
+    )
+  }
   assert.equal(
-    JSON.stringify(conversation).includes(`${marker}_CHAT_`),
+    JSON.stringify(retrySameNativeThread ? [message] : conversation).includes(`${marker}_CHAT_`),
     false,
     'Retry must send the continuation prompt rather than replaying the original request'
-  )
-  assert.equal(
-    JSON.stringify(conversation).includes(`${marker}_OFFICIAL`),
-    false,
-    'A cross-provider retry must not copy the previous official native session'
   )
 
   const messages = []

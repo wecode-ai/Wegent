@@ -1,19 +1,11 @@
-import type { RuntimeTaskSummary } from '@/types/api'
 import type { TFunction } from 'i18next'
 import type { ProjectWorkPreferenceScope } from './projectWorkPreferences'
-import { getModelSelectionScopeKey, getProjectChatScopeKey } from './workbenchProviderHelpers'
 // Keep memoized callbacks in independent scopes so they cannot retain prior provider renders.
-import { createConversationMentionReference } from '@/lib/conversation-mentions'
-import { navigateTo } from '@/lib/navigation'
-import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import type {
   ModelCompatibilityDisabledReason,
-  ModelOptions,
   ModelSelectionConfig,
   ProjectExecutionMode,
-  RuntimeTaskAddress,
   UnifiedModel,
-  User,
   UserPreferences,
 } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
@@ -22,7 +14,6 @@ import { useCallback } from 'react'
 import { mergeProjectWorkPreference } from './projectWorkPreferences'
 import { getBlockedModelSelectionMessage } from './workbenchProviderHelpers'
 import type { WorkbenchAction } from './workbenchReducer'
-import { writeLastProjectId } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
 export function usePersistProjectWorkPreference({
   projectWorkPreferenceScope,
@@ -265,131 +256,5 @@ export function useHandleModelSelectorOpenChange({ refreshModels }: { refreshMod
       if (open) refreshModels()
     },
     [refreshModels]
-  )
-}
-
-export function useContinueInNewConversation({
-  state,
-  selectModelAndOptions,
-  currentUser,
-  resolveRuntimeTaskSummary,
-  draftInputByScope,
-  projectChatScopeKey,
-  t,
-  selectModelForScope,
-  projectModelSelection,
-  setDraftInputForScope,
-  ownershipKey,
-  dispatch,
-  workspaceTabId,
-}: {
-  state: WorkbenchState
-  selectModelAndOptions: (model: UnifiedModel, options: ModelOptions) => void
-  currentUser: User
-  resolveRuntimeTaskSummary: (
-    address: RuntimeTaskAddress | null | undefined
-  ) => RuntimeTaskSummary | null
-  draftInputByScope: Record<string, string>
-  projectChatScopeKey: string
-  t: TFunction<'common', undefined>
-  selectModelForScope: (
-    targetScopeKey: string,
-    model: UnifiedModel | null,
-    options?: ModelOptions,
-    restoredSelectionConfig?: ModelSelectionConfig | null,
-    persist?: boolean
-  ) => void
-  projectModelSelection: ModelSelectionConfig | null
-  setDraftInputForScope: (scopeKey: string, value: string) => void
-  ownershipKey: string
-  dispatch: ActionDispatch<[action: WorkbenchAction]>
-  workspaceTabId: string | undefined
-}) {
-  return useCallback(
-    (
-      model: UnifiedModel,
-      options: ModelOptions = {},
-      source?: {
-        address?: RuntimeTaskAddress
-        draft?: string
-      }
-    ) => {
-      const sourceTask = source?.address ?? state.currentRuntimeTask
-      if (!sourceTask) {
-        selectModelAndOptions(model, options)
-        return
-      }
-
-      const nextStandaloneChatKey = state.standaloneChatKey + 1
-      const nextChatScopeKey = getProjectChatScopeKey({
-        currentRuntimeTask: null,
-        standaloneChatKey: nextStandaloneChatKey,
-      })
-      const nextModelScopeKey = getModelSelectionScopeKey({
-        userId: currentUser.id,
-        currentProjectId: state.currentProject?.id ?? null,
-        currentRuntimeTask: null,
-        standaloneChatKey: nextStandaloneChatKey,
-      })
-      const sourceTitle = resolveRuntimeTaskSummary(sourceTask)?.title.trim() || sourceTask.taskId
-      const reference = createConversationMentionReference(sourceTitle, sourceTask)
-      const currentDraft = (source?.draft ?? draftInputByScope[projectChatScopeKey] ?? '').trim()
-      const nextDraft = currentDraft
-        ? `${reference}\n\n${currentDraft}`
-        : `${reference}\n\n${t(
-            'workbench.model_switch_new_conversation_prompt',
-            'Continue from the referenced conversation.'
-          )}`
-
-      selectModelForScope(
-        nextModelScopeKey,
-        model,
-        options,
-        projectModelSelection ?? undefined,
-        projectModelSelection === null
-      )
-      setDraftInputForScope(nextChatScopeKey, nextDraft)
-
-      if (state.currentProject) {
-        writeLastProjectId(ownershipKey, state.currentProject.id)
-        dispatch({
-          type: 'project_workspace_selected',
-          project: state.currentProject,
-          deviceWorkspaceId: state.selectedDeviceWorkspaceId,
-          startFreshChat: true,
-        })
-      } else {
-        writeLastProjectId(ownershipKey, null)
-        dispatch({
-          type: 'project_cleared',
-          standaloneDeviceId: sourceTask.deviceId || state.standaloneDeviceId,
-          standaloneWorkspacePath:
-            sourceTask.workspacePath ?? state.standaloneWorkspacePath ?? null,
-          startFreshChat: true,
-        })
-      }
-      navigateTo('/')
-      requestNewChatComposerFocus(workspaceTabId)
-    },
-    [
-      state.currentRuntimeTask,
-      state.standaloneChatKey,
-      state.currentProject,
-      state.selectedDeviceWorkspaceId,
-      state.standaloneDeviceId,
-      state.standaloneWorkspacePath,
-      currentUser.id,
-      resolveRuntimeTaskSummary,
-      draftInputByScope,
-      projectChatScopeKey,
-      t,
-      selectModelForScope,
-      projectModelSelection,
-      setDraftInputForScope,
-      workspaceTabId,
-      selectModelAndOptions,
-      ownershipKey,
-      dispatch,
-    ]
   )
 }

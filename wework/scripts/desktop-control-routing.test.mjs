@@ -233,6 +233,33 @@ test('records failed and late control results without accepting an expired comma
   assert.equal(control.commandResults.has(command.id), false)
 })
 
+test('accepts an in-flight runtime result after the control client reconnects', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  const result = control.command('fetchLocalRuntime', 'body', {
+    preserveResultAcrossClientReplacement: true,
+  })
+  const response = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  const command = await response.json()
+  await post(control, 'started', { id: command.id, clientId: 'main-1' })
+
+  await register(control, 'main', 'main-2')
+  assert.equal(control.commandResults.has(command.id), true)
+  const late = await fetch(`${control.controlUrl}/results`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: command.id,
+      clientId: 'main-1',
+      ok: true,
+      value: '{"status":200,"body":"completed"}',
+    }),
+  })
+  assert.equal(late.status, 200)
+  assert.equal(await result, '{"status":200,"body":"completed"}')
+  assert.ok(control.controlCommandAvailableAt.get('main-2') > Date.now())
+})
+
 test('delivers account credentials without retaining them in diagnostic command history', async t => {
   const control = await startControl(t)
   await register(control, 'main', 'main-1')

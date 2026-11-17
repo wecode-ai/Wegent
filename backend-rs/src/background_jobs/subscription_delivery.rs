@@ -10,8 +10,6 @@ use serde_json::{Value, json};
 use sha2::Sha256;
 use std::time::Duration;
 
-const DINGTALK_API: &str = "https://api.dingtalk.com";
-
 struct DingTalkContext<'a> {
     app: &'a AppState,
     http: &'a brz_http::Client,
@@ -335,11 +333,7 @@ async fn dingtalk(
     if client_id.is_empty() || client_secret.is_empty() {
         return Ok(());
     }
-    let api = config["api_base_url"]
-        .as_str()
-        .map(|value| value.trim_end_matches('/'))
-        .filter(|value| !value.is_empty())
-        .unwrap_or(DINGTALK_API);
+    let api = crate::background_jobs::project::notifications::dingtalk_api_base(config);
     let result = post(
         http,
         &format!("{api}/v1.0/oauth2/accessToken"),

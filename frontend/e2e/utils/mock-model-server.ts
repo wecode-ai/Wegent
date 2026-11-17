@@ -63,6 +63,8 @@ interface StreamRule {
   responseTool?: ToolResponse
   responseTools?: ToolResponse[]
   chunkDelayMs?: number
+  holdDone?: boolean
+  terminalError?: string
   doneDelayMs?: number
   holdResponse?: boolean
 }
@@ -395,7 +397,9 @@ function writeStreamingResponse(
   res: http.ServerResponse,
   content: string,
   chunkDelayMs: number,
-  doneDelayMs: number
+  doneDelayMs: number,
+  doneGate?: MockResponseGate,
+  terminalError?: string
 ): void {
   const chunks = content.split(' ')
   let index = 0
@@ -409,7 +413,16 @@ function writeStreamingResponse(
       return
     }
 
-    setTimeout(() => writeSseDone(res), doneDelayMs)
+    const finish = async () => {
+      await doneGate?.wait(res)
+      if (res.destroyed) return
+      if (terminalError) {
+        res.end(`data: ${JSON.stringify({ error: { message: terminalError } })}\n\n`)
+      } else {
+        writeSseDone(res)
+      }
+    }
+    setTimeout(() => void finish(), doneDelayMs)
   }
 
   sendChunk()
@@ -424,7 +437,8 @@ function writeResponsesStreamingResponse(
   res: http.ServerResponse,
   content: string,
   model: string,
-  doneDelayMs: number
+  doneDelayMs: number,
+  doneGate?: MockResponseGate
 ): void {
   const responseId = `resp_${Date.now()}`
   const messageId = `msg_${Date.now()}`
@@ -458,7 +472,9 @@ function writeResponsesStreamingResponse(
     output_index: 0,
     item: output[0],
   })
-  setTimeout(() => {
+  const finish = async () => {
+    await doneGate?.wait(res)
+    if (res.destroyed) return
     writeResponsesSseEvent(res, {
       type: 'response.completed',
       response: {
@@ -477,7 +493,8 @@ function writeResponsesStreamingResponse(
       },
     })
     res.end()
-  }, doneDelayMs)
+  }
+  setTimeout(() => void finish(), doneDelayMs)
 }
 
 /** Emit tool calls after an optional phase-changing message in the same response. */
@@ -486,7 +503,8 @@ function writeResponsesToolCalls(
   request: ModelRequest | null,
   toolCalls: ToolCallRule[],
   model: string,
-  preamble?: PhaseChangingMessage
+  preamble?: PhaseChangingMessage,
+  doneGate?: MockResponseGate
 ): void {
   const responseId = `resp_${Date.now()}`
   const output = toolCalls.map((toolCall, index) => {
@@ -525,7 +543,7 @@ function writeResponsesToolCalls(
     response: { id: responseId, object: 'response', status: 'in_progress', model, output: [] },
   })
   /** Finish tool output after the optional assistant item at output index zero. */
-  const finish = (message?: Record<string, unknown>) => {
+  const finish = async (message?: Record<string, unknown>) => {
     output.forEach((item, outputIndex) => {
       writeResponsesSseEvent(res, {
         type: 'response.output_item.done',
@@ -533,6 +551,8 @@ function writeResponsesToolCalls(
         item,
       })
     })
+    await doneGate?.wait(res)
+    if (res.destroyed) return
     writeResponsesSseEvent(res, {
       type: 'response.completed',
       response: {
@@ -552,8 +572,8 @@ function writeResponsesToolCalls(
     })
     res.end()
   }
-  if (preamble) writePhaseChangingMessage(res, preamble, finish)
-  else finish()
+  if (preamble) writePhaseChangingMessage(res, preamble, value => void finish(value))
+  else void finish()
 }
 
 /**
@@ -677,7 +697,7 @@ const server = http.createServer((req, res) => {
       (req.url?.includes('/messages') && !req.url.includes('/messages/count_tokens'))
     const streamRule = modelEndpoint ? findStreamRule(parsedBody) : undefined
     const responseGate = streamRule && responseGates.get(streamRule.matchText)
-    if (responseGate) {
+    if (responseGate && !streamRule?.holdDone) {
       await responseGate.wait(res)
       if (res.destroyed) return
     }
@@ -705,7 +725,8 @@ const server = http.createServer((req, res) => {
             parsedBody,
             resolveScenarioToolCalls(parsedBody, scenarioStep.toolCalls),
             parsedBody?.model || 'mock-codex',
-            scenarioStep.preamble
+            scenarioStep.preamble,
+            streamRule?.holdDone ? responseGate : undefined
           )
           return
         }
@@ -720,7 +741,8 @@ const server = http.createServer((req, res) => {
         res,
         responseContent,
         model,
-        scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0
+        scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0,
+        streamRule?.holdDone ? responseGate : undefined
       )
     } else if (req.url?.includes('/chat/completions')) {
       if (toolScenario && scenarioStep) {
@@ -762,7 +784,9 @@ const server = http.createServer((req, res) => {
           res,
           responseContent,
           streamRule?.chunkDelayMs ?? DEFAULT_CHUNK_DELAY_MS,
-          scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0
+          scenarioStep?.doneDelayMs ?? streamRule?.doneDelayMs ?? 0,
+          streamRule?.holdDone ? responseGate : undefined,
+          streamRule?.terminalError
         )
       } else {
         // Return non-streaming response
@@ -886,7 +910,7 @@ const server = http.createServer((req, res) => {
       const existingIndex = streamRules.findIndex(rule => rule.matchText === streamRule.matchText)
       responseGates.get(streamRule.matchText)?.release()
       responseGates.delete(streamRule.matchText)
-      if (streamRule.holdResponse) {
+      if (streamRule.holdResponse || streamRule.holdDone) {
         responseGates.set(streamRule.matchText, new MockResponseGate())
       }
       servedToolRuleCounts.delete(streamRule.matchText)

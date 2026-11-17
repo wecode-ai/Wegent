@@ -619,7 +619,7 @@ class SqlAlchemySubtaskStore:
         row = query.order_by(Subtask.message_id.desc(), Subtask.id.desc()).first()
         if row is None:
             return None
-        subtasks = self._load_ordered(db, [row[0]], with_contexts=False)
+        subtasks = self._load_ordered(db, [row[0]], include_contexts=False)
         return subtasks[0] if subtasks else None
 
     def get_latest_running_assistant_by_task(
@@ -662,7 +662,7 @@ class SqlAlchemySubtaskStore:
         query = db.query(Subtask.id).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         rows = query.order_by(Subtask.message_id.desc(), Subtask.id.desc()).all()
-        return self._load_ordered(db, [row[0] for row in rows], with_contexts=False)
+        return self._load_ordered(db, [row[0] for row in rows], include_contexts=False)
 
     def list_completed_before_message_id(
         self,
@@ -788,7 +788,12 @@ class SqlAlchemySubtaskStore:
         return query.first()
 
     def list_assistant_by_task(
-        self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: Optional[int] = None,
+        include_contexts: bool = True,
     ) -> list[Subtask]:
         query = db.query(Subtask.id).filter(
             Subtask.task_id == task_id,
@@ -796,7 +801,9 @@ class SqlAlchemySubtaskStore:
         )
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         rows = query.order_by(Subtask.message_id.asc()).all()
-        return self._load_ordered(db, [row[0] for row in rows])
+        return self._load_ordered(
+            db, [row[0] for row in rows], include_contexts=include_contexts
+        )
 
     def list_after_message_id(
         self,
@@ -1300,7 +1307,7 @@ class SqlAlchemySubtaskStore:
         db: Session,
         *,
         subtask: Subtask,
-        from_status: SubtaskStatus,
+        from_status: SubtaskStatus | tuple[SubtaskStatus, ...],
         **fields: Any,
     ) -> bool:
         """Update fields only while the subtask still has ``from_status``.
@@ -1313,9 +1320,10 @@ class SqlAlchemySubtaskStore:
             getattr(Subtask, field): value for field, value in fields.items()
         }
         values[Subtask.updated_at] = datetime.now()
+        statuses = from_status if isinstance(from_status, tuple) else (from_status,)
         updated = (
             db.query(Subtask)
-            .filter(Subtask.id == subtask.id, Subtask.status == from_status)
+            .filter(Subtask.id == subtask.id, Subtask.status.in_(statuses))
             .update(values, synchronize_session=False)
         )
         return updated == 1
@@ -1505,23 +1513,18 @@ class SqlAlchemySubtaskStore:
         return self._delete_subtasks(db, subtasks)
 
     def _load_ordered(
-        self, db: Session, subtask_ids: list[int], *, with_contexts: bool = True
+        self, db: Session, subtask_ids: list[int], *, include_contexts: bool = True
     ) -> list[Subtask]:
         if not subtask_ids:
             return []
-        options = [
+        query = db.query(Subtask).options(
             undefer(Subtask.prompt),
             undefer(Subtask.result),
             undefer(Subtask.error_message),
-        ]
-        if with_contexts:
-            options.append(subqueryload(Subtask.contexts))
-        subtasks = (
-            db.query(Subtask)
-            .options(*options)
-            .filter(Subtask.id.in_(subtask_ids))
-            .all()
         )
+        if include_contexts:
+            query = query.options(subqueryload(Subtask.contexts))
+        subtasks = query.filter(Subtask.id.in_(subtask_ids)).all()
         id_to_subtask = {subtask.id: subtask for subtask in subtasks}
         return [
             id_to_subtask[subtask_id]

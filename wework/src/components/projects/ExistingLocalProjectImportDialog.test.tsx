@@ -53,7 +53,7 @@ describe('ExistingLocalProjectImportDialog', () => {
     )
 
     expect(screen.getByTestId('existing-local-project-import-empty')).toHaveTextContent(
-      '任务中的本地项目都已加入协作空间。'
+      '任务中的本地项目都已加入项目列表。'
     )
     expect(screen.getByTestId('confirm-existing-local-project-import')).toBeDisabled()
   })

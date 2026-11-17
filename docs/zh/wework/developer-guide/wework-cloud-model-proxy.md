@@ -56,6 +56,8 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 透传模式保留思考、历史、原始调用 ID、加密内容、`previous_response_id`、`include`、`store` 和扩展字段。它也跳过图片预算裁剪、视觉副模型替换、历史增强、fork/模型切换清理及输出上限注入；配置的 `max_output_tokens` 不会由代理添加到请求中。上游需要直接支持这些 Codex 请求内容。
 
+官方 ChatGPT 的内部路由是一条独立的透传路径。它保留相同的原生字段和响应流行为，但兼容层仍会规范化不可移植的推理历史，并在模型切换后的首个请求执行清理。这样普通对话和分身共用一条路由，同时不会把第三方 `reasoning_text` 或过期密封状态发送给官方 endpoint。
+
 例如，Kimi Responses 可配置为：
 
 ```json
@@ -95,6 +97,15 @@ namespace 内的内置工具类型会返回请求校验错误，避免错误定�
 
 `responses-tool-compatibility` 桌面 E2E 使用真实 Electron、Backend、executor 和 Codex，只模拟模型服务。模拟服务拒绝未转换的 custom `exec`，校验 function 参数，并要求本机和云端模型真实执行命令、重载后读取文件以及保留工具历史，同时验证显式原生配置。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
 
+#### 旧 DeepSeek 配置
+
+旧配置已保存 `tool_profile: "custom"` 时，仅更改默认值不能修复 `exec` 被拒绝的问题。
+直接调用 `api.deepseek.com` Responses 且模式为 `auto` 时，仍遵循其实际工具能力：
+保留原生 `apply_patch`，将其他 custom 工具、namespace 和客户端工具搜索转换为可逆
+function 协议。没有旧 profile 的配置使用上述通用 function 默认策略。
+规则按实际端点匹配，不猜测模型名称，也不失败后重试。显式 `standard` 和 `passthrough`
+模式仍各自优先；其他网关使用通用策略。
+
 #### Kimi K3 Chat Completions 兼容
 
 云端 Model CRD 配置为 OpenAI Chat Completions，且 provider 模型名称包含不区分大小写的 `kimi-k3`（例如 `moonshot-kimi-k3`）时，如果 Model CRD 未配置 `codex_catalog_model_id` 或 `codexCatalogModelId`，Wework 会自动选择上下文窗口为 1,048,576 tokens 的 `wework-kimi-k3` Codex 模型目录。显式配置的模型目录始终优先于 Kimi K3 自动选择。Codex 内部仍使用 Responses 协议，executor 在边界将请求转换为 Chat Completions，并为 Kimi K3 进行以下兼容处理：
@@ -128,7 +139,7 @@ WebSocket 重试，暂时无法由界面识别。
 
 ### Codex 直连模型过载恢复
 
-使用原生 Codex provider 直连模型时，请求不经过 compat proxy。Codex
+用户配置的原生 Codex provider 在未选择 Wework 兼容路由时仍可直连模型，请求不经过 compat proxy。Codex
 app-server 报告结构化 `serverOverloaded` 错误后，executor 会等待该轮
 `turn/completed` 确认失败轮次已经结束，再在同一 thread、同一模型下恢复。
 最多恢复 5 次，等待时间依次为 5、10、20、40 和 60 秒。

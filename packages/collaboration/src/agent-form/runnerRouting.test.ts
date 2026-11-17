@@ -42,12 +42,38 @@ const environment = (id: string, provider = 'openai'): RunnerEnvironment => ({
 const environments = [environment('a'), environment('b', 'other')]
 
 describe('runner routing', () => {
+  it('requires an explicit recovery choice after a bound-runner conflict', () => {
+    const input = {
+      environments: [environment('a'), environment('b')],
+      runtime: 'codex' as const,
+      executionPolicy: { mode: 'fixed', environment_id: 'b' } as const,
+      modelPolicy: { mode: 'fixed', model } as const,
+      boundEnvironmentId: 'a',
+    }
+    expect(() => resolveRunnerSelection(input)).toThrow('ISSUE_RUNNER_CONFLICT')
+    const selection = { recovery_from_environment_id: 'a' }
+    const recovered = resolveRunnerSelection({ ...input, selection })
+    expect(recovered.candidates.map(item => item.id)).toEqual(['b'])
+    expect(recovered.recovery_from_environment_id).toBe('a')
+    expect(() => resolveRunnerSelection({ ...input, selection, automatic: true })).toThrow(
+      'ISSUE_RUNNER_CONFLICT'
+    )
+    expect(() =>
+      resolveRunnerSelection({
+        ...input,
+        selection: { recovery_from_environment_id: 'stale' },
+      })
+    ).toThrow('ISSUE_RUNNER_CONFLICT')
+  })
   it('offers cloud models to both native runtimes through the executor protocol bridge', () => {
     expect(cloudModels.map(model => model.runtime)).toEqual(['codex', 'claude_code'])
     expect(JSON.stringify(cloudModels)).not.toContain('must-not-be-copied')
   })
   it('keeps native models distinct by stable provider identity', () => {
-    const models = policyModels(environments, 'codex', { mode: 'fixed', environment_id: 'a' })
+    const models = policyModels(environments, 'codex', {
+      mode: 'fixed',
+      environment_id: 'a',
+    })
     expect(models).toHaveLength(1)
     expect(models[0].environments).toEqual(['a · Runner account'])
   })
@@ -75,6 +101,28 @@ describe('runner routing', () => {
       })
     }
   }
+  it('accepts a native model for a deferred Agent only after the caller chooses a fixed environment', () => {
+    const input = {
+      environments,
+      runtime: 'codex' as const,
+      executionPolicy: { mode: 'user_select' as const },
+      modelPolicy: { mode: 'user_select' as const },
+      selection: {
+        model: { ...model, source: 'native' as const },
+        execution_policy: { mode: 'fixed' as const, environment_id: 'a' },
+      },
+    }
+    expect(resolveRunnerSelection(input).candidates.map(item => item.id)).toEqual(['a'])
+    expect(() =>
+      resolveRunnerSelection({
+        ...input,
+        selection: {
+          ...input.selection,
+          execution_policy: { mode: 'project_pool' },
+        },
+      })
+    ).toThrow('RUNNER_MODEL_UNAVAILABLE')
+  })
   it('never moves a bound Issue when the personal default changes', () => {
     expect(
       resolveRunnerSelection({
@@ -154,7 +202,12 @@ describe('runner routing', () => {
             modelMode === 'fixed' ? { mode: modelMode, model: selectedModel } : { mode: modelMode },
           selection: {
             ...(mode === 'user_select'
-              ? { execution_policy: { mode: 'fixed', environment_id: 'a' } as const }
+              ? {
+                  execution_policy: {
+                    mode: 'fixed',
+                    environment_id: 'a',
+                  } as const,
+                }
               : {}),
             ...(modelMode === 'user_select' ? { model: selectedModel } : {}),
           },
@@ -175,13 +228,39 @@ describe('runner routing', () => {
       executionPolicy: { mode: 'project_pool' } as const,
       modelPolicy: { mode: 'fixed', model: cloudModels[0] } as const,
     }
-    expect(() => resolveRunnerSelection({ ...input, cloudModels: [] })).toThrow(
-      'RUNNER_MODEL_UNAVAILABLE'
-    )
+    expect(() =>
+      resolveRunnerSelection({
+        ...input,
+        cloudModels: [],
+        modelPolicy: { mode: 'user_select' },
+        selection: { model: cloudModels[0] },
+      })
+    ).toThrow('RUNNER_MODEL_UNAVAILABLE')
     expect(() =>
       resolveRunnerSelection({
         ...input,
         environments: [{ ...environment('a'), models: [], runtimes: ['claude_code'] }],
+      })
+    ).toThrow('RUNNER_MODEL_UNAVAILABLE')
+  })
+
+  it('keeps a saved hidden cloud model outside the discovery catalog', () => {
+    const saved = cloudModels.find(item => item.runtime === 'codex')!
+    const input = {
+      environments: [{ ...environment('a'), models: [], runtimes: ['codex' as const] }],
+      cloudModels: [] as typeof cloudModels,
+      runtime: 'codex' as const,
+      executionPolicy: { mode: 'fixed', environment_id: 'a' } as const,
+      modelPolicy: { mode: 'fixed', model: saved } as const,
+    }
+    const result = resolveRunnerSelection(input)
+    expect(result.model.source).toBe('cloud')
+    expect(result.model.cloud_model?.name).toBe('cloud-x')
+    expect(result.candidates.map(item => item.id)).toEqual(['a'])
+    expect(() =>
+      resolveRunnerSelection({
+        ...input,
+        modelPolicy: { mode: 'fixed', model: { ...saved, cloud_model: null } },
       })
     ).toThrow('RUNNER_MODEL_UNAVAILABLE')
   })

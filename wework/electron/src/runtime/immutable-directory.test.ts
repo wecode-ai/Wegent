@@ -1,8 +1,34 @@
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { publishImmutableDirectory } from './immutable-directory.js'
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rm: vi.fn(actual.rm) }
+})
+
+test('preserves the publication error when cleanup also fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-immutable-errors-'))
+  const publicationError = new Error('Archive extraction failed')
+  const cleanupError = Object.assign(new Error('Directory not empty'), { code: 'ENOTEMPTY' })
+  try {
+    vi.mocked(rm).mockRejectedValueOnce(cleanupError)
+    await expect(
+      publishImmutableDirectory(join(root, 'runtime'), async () => {
+        throw publicationError
+      })
+    ).rejects.toMatchObject({
+      name: 'AggregateError',
+      message: 'Archive extraction failed',
+      cause: publicationError,
+      errors: [publicationError, cleanupError],
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 test.each([false, true])('publishes long component paths with failure=%s', async failure => {
   const root = await mkdtemp(join(tmpdir(), 'wework-immutable-'))

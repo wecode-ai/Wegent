@@ -27,14 +27,10 @@ from app.services.knowledge.protected_mediation import (
     RestrictedSafeSummaryResult,
     protected_knowledge_mediator,
 )
-from app.services.knowledge.retrieval_persistence import (
-    retrieval_persistence_service,
-)
+from app.services.knowledge.retrieval_persistence import retrieval_persistence_service
 from app.services.rag import direct_injection
-from app.services.rag.remote_gateway import (
-    RemoteRagGateway,
-    RemoteRagGatewayError,
-)
+from app.services.rag.remote_gateway import RemoteRagGateway, RemoteRagGatewayError
+from app.services.rag.reporting import report_retrieval_request
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from app.services.rag.runtime_specs import QueryRuntimeSpec
 from app.services.rag.sources import (
@@ -42,10 +38,7 @@ from app.services.rag.sources import (
     RetrievalSourceSummary,
     retrieval_source_registry,
 )
-from shared.models import (
-    RetrievalScope,
-    SearchHints,
-)
+from shared.models import RetrievalScope, SearchHints
 from shared.telemetry.decorators import trace_async
 
 # Constants for document reading pagination
@@ -487,6 +480,8 @@ async def _execute_scoped_retrieve(
     resolved_document_ids: list[int],
     runtime_context: DirectInjectionRuntimeContext | None,
     restricted_mode: bool,
+    read_user_id: int,
+    task_id: int | None,
 ) -> dict:
     """Execute retrieve grouped by per-KB scopes."""
     if resolved_document_ids:
@@ -523,7 +518,6 @@ async def _execute_scoped_retrieve(
     all_records: list[dict] = []
     modes: set[str] = set()
     total_estimated_tokens = 0
-    read_user_id, task_id = _resolve_read_identity(db, request)
     for kb_ids, group_document_ids in retrieve_groups:
         retrieval_scope = (
             RetrievalScope(document_ids=group_document_ids)
@@ -694,6 +688,51 @@ async def internal_retrieve(
     request: InternalRetrieveRequest,
     db: Session = Depends(get_db),
 ):
+    """Record a request fact without constructing a statistical result wrapper."""
+    try:
+        read_user_id, task_id = _resolve_read_identity(db, request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    requested_ids = request.knowledge_base_ids or []
+    knowledge_base_ids = (
+        _scope_kb_ids(request.knowledge_base_scopes)
+        if request.knowledge_base_scopes
+        else requested_ids
+    )
+    if request.knowledge_base_id is not None:
+        knowledge_base_ids = [request.knowledge_base_id]
+    return await report_retrieval_request(
+        entrypoint="chat",
+        client_surface="chat_shell",
+        requested_kb_ids=requested_ids or knowledge_base_ids,
+        effective_kb_ids=knowledge_base_ids,
+        route_mode=request.route_mode,
+        restricted_mode=request.restricted_mode,
+        actor_user_id=read_user_id,
+        task_id=task_id,
+        subtask_id=(
+            request.persistence_context.user_subtask_id
+            if request.persistence_context
+            else None
+        ),
+        execute=lambda: _execute_internal_retrieve(
+            request,
+            db,
+            read_user_id=read_user_id,
+            task_id=task_id,
+        ),
+    )
+
+
+async def _execute_internal_retrieve(
+    request: InternalRetrieveRequest,
+    db: Session,
+    *,
+    read_user_id: int | None,
+    task_id: int | None,
+):
     """
     Internal RAG retrieval endpoint for chat_shell.
 
@@ -732,13 +771,14 @@ async def internal_retrieve(
                 document_names=request.document_names,
             )
             if not resolved_document_ids:
-                return InternalRetrieveResponse(
+                response = InternalRetrieveResponse(
                     mode="rag_retrieval",
                     records=[],
                     total=0,
                     total_estimated_tokens=0,
                     message="Document names not found in the selected knowledge bases. Use kb_ls to inspect available documents first.",
                 )
+                return response
 
         if resolved_document_ids:
             logger.info(
@@ -766,9 +806,10 @@ async def internal_retrieve(
                 resolved_document_ids=resolved_document_ids,
                 runtime_context=runtime_context,
                 restricted_mode=restricted_mode,
+                read_user_id=read_user_id,
+                task_id=task_id,
             )
         else:
-            read_user_id, task_id = _resolve_read_identity(db, request)
             runtime_spec = runtime_resolver.build_query_runtime_spec(
                 knowledge_base_ids=knowledge_base_ids,
                 query=request.query,
@@ -901,7 +942,7 @@ async def internal_retrieve(
                 user_name=request.user_name or "system",
             )
             if external_records or source_summaries:
-                return MixedRestrictedRetrieveResponse(
+                response = MixedRestrictedRetrieveResponse(
                     retrieval_mode=internal_mode,
                     restricted_safe_summary=_mediation_field(
                         mediated_response, "restricted_safe_summary"
@@ -918,9 +959,10 @@ async def internal_retrieve(
                     external_records=external_records,
                     source_summaries=source_summaries or None,
                 )
+                return response
             return mediated_response
 
-        return InternalRetrieveResponse(
+        response = InternalRetrieveResponse(
             mode=response_mode,
             records=[
                 *[_to_retrieve_record(record) for record in response_records],
@@ -931,6 +973,7 @@ async def internal_retrieve(
             message=result.get("message"),
             source_summaries=source_summaries or None,
         )
+        return response
 
     except ValueError as e:
         logger.warning("[internal_rag] Retrieval error: %s", e)
@@ -1393,6 +1436,7 @@ async def read_document(
             offset=request.offset,
             limit=request.limit,
             knowledge_base_ids=request.knowledge_base_ids,
+            entrypoint="kb_head",
         )
         result = results[0] if results else None
 
@@ -1462,6 +1506,7 @@ async def read_documents(
                 persistence_context.user_subtask_id if persistence_context else None
             ),
             user_id=request.user_id,
+            entrypoint="kb_head",
         )
 
         logger.info(

@@ -30,6 +30,7 @@ const definitions = {
       "backend-rs/Cargo.lock",
       "backend-rs/crates",
       "shared/rust",
+      "shared/assets/calendars",
       ".github/ci/rust-toolchain",
     ],
   },

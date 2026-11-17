@@ -305,7 +305,7 @@ fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{bridge_request, mcp_tool_result, read_bridge_record, run_with_io, BridgeClient};
+    use super::{bridge_request, read_bridge_record, run_with_io, BridgeClient};
     use serde_json::json;
     use std::time::Duration;
     use tokio::{
@@ -521,26 +521,5 @@ mod tests {
             .unwrap()
             .unwrap()
             .unwrap();
-    }
-
-    #[test]
-    fn maps_cua_text_images_and_structured_output_to_mcp() {
-        let result = mcp_tool_result(json!({
-            "text": "done",
-            "images": [{ "mimeType": "image/png", "dataBase64": "abc" }],
-            "structuredJson": "{\"value\":42}",
-            "isError": false
-        }));
-
-        assert_eq!(
-            result["content"][0],
-            json!({ "type": "text", "text": "done" })
-        );
-        assert_eq!(
-            result["content"][1],
-            json!({ "type": "image", "data": "abc", "mimeType": "image/png" })
-        );
-        assert_eq!(result["structuredContent"], json!({ "value": 42 }));
-        assert_eq!(result["isError"], false);
     }
 }

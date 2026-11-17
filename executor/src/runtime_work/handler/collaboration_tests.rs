@@ -60,7 +60,10 @@ async fn assignment_report_backend_with_status(
         .route(
             "/api/v1/cloud-projects/7/executions/assignment-status",
             post(
-                move |State(reports): State<Arc<AtomicUsize>>, Json(_payload): Json<Value>| async move {
+                move |State(reports): State<Arc<AtomicUsize>>, Json(payload): Json<Value>| async move {
+                    if payload["role"] == "manager" {
+                        return StatusCode::OK;
+                    }
                     if reports.fetch_add(1, Ordering::SeqCst) == 0 {
                         first_status
                     } else {
@@ -74,6 +77,91 @@ async fn assignment_report_backend_with_status(
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (format!("http://{address}"), reports, server)
+}
+
+#[tokio::test]
+async fn recovered_manager_publishes_its_issue_session_before_clearing_the_round() {
+    let root = tempfile::tempdir().unwrap();
+    let received = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let app = Router::new().route(
+        "/api/v1/cloud-projects/7/executions/assignment-status",
+        post({
+            let received = received.clone();
+            move |Json(payload): Json<Value>| {
+                let received = received.clone();
+                async move {
+                    received.lock().unwrap().push(payload);
+                    StatusCode::OK
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let handler = round_handler(root.path(), &format!("http://{address}"));
+    let mut command = command();
+    command.human_assignment_ids.clear();
+    handler.store.upsert_task(source_link());
+    store_completed_member(&handler, &command);
+    store_started_manager(&handler, &command);
+    handler.persist_cloud_collaboration_round(&command).unwrap();
+
+    handler
+        .monitor_cloud_collaboration_round(command.clone())
+        .await;
+
+    let reports = received.lock().unwrap();
+    assert_eq!(reports.len(), 2);
+    assert_eq!(reports[0]["status"], "completed");
+    assert_eq!(
+        reports[1],
+        json!({
+            "role":"manager", "loop_item_id":"issue-1", "dispatch_id":"dispatch-1",
+            "round_id":"round-1", "runtime_device_id":"device-1",
+            "runtime_task_id":"manager-task-1-manager-after-round-1"
+        })
+    );
+    assert!(handler
+        .local_task_link(&command.manager_runtime_task_id)
+        .unwrap()
+        .runtime_handle
+        .get(CLOUD_COLLABORATION_ROUND_KEY)
+        .is_none());
+    server.abort();
+}
+
+#[tokio::test]
+async fn rejected_manager_publication_keeps_the_round_without_starting_a_hidden_run() {
+    let root = tempfile::tempdir().unwrap();
+    let app = Router::new().route(
+        "/api/v1/cloud-projects/7/executions/assignment-status",
+        post(|| async { StatusCode::FORBIDDEN }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let handler = round_handler(root.path(), &format!("http://{address}"));
+    let command = command();
+    handler.store.upsert_task(source_link());
+    handler.persist_cloud_collaboration_round(&command).unwrap();
+
+    let error = handler
+        .launch_fresh_cloud_manager(&command, vec![])
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("403"));
+    assert!(handler
+        .local_task_link(&fresh_cloud_manager_task_id(&command))
+        .is_none());
+    assert!(handler
+        .local_task_link(&command.manager_runtime_task_id)
+        .unwrap()
+        .runtime_handle
+        .get(CLOUD_COLLABORATION_ROUND_KEY)
+        .is_some());
+    server.abort();
 }
 
 fn round_handler(root: &std::path::Path, backend_url: &str) -> RuntimeWorkRpcHandler {

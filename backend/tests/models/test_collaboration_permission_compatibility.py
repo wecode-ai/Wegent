@@ -24,7 +24,7 @@ def test_cp01_no_new_database_columns_or_pending_migration(test_db):
         LoopNode.__table__.columns.keys()
     )
     scripts = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert scripts.get_heads() == ["f3a7c9e1b2d4"]
+    assert scripts.get_heads() == ["b1c2d3e4f5a6"]
 
 
 def test_cp01_new_project_preserves_v1_containment(test_db, scope):
@@ -234,7 +234,7 @@ def test_cp11_legacy_team_binding_preserves_authorization_and_explicit_revocatio
 
     from app.models.delivery import ProjectChatAgent
     from app.schemas.workspace import WorkspaceAgentCreate
-    from app.services.workspaces import workspace_service
+    from app.services.workspaces.service import workspace_service
     from tests.api.test_workspace_shared_agents import _native_team
 
     team = _native_team(test_db, test_user)

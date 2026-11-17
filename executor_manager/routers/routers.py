@@ -26,6 +26,7 @@ from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from executor_manager.clients.executor_binding import BINDING_SCHEME, BINDING_TOKEN
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
@@ -291,6 +292,11 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
                     f"[Callback] Backend returned error: "
                     f"status_code={response.status_code}, "
                     f"body_preview={_to_log_preview(response.text)}"
+                )
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    media_type=response.headers.get("content-type"),
                 )
 
         # Handle terminal events - remove from RunningTaskTracker
@@ -1026,7 +1032,11 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
         set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
 
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
-        result = executor.cancel_task(request.task_id, request.subtask_id)
+        result = await asyncio.to_thread(
+            executor.cancel_task,
+            request.task_id,
+            request.subtask_id,
+        )
 
         if result["status"] == "success":
             logger.info(f"Successfully cancelled task {request.task_id}")
@@ -1465,6 +1475,12 @@ async def openai_responses(http_request: Request):
 
     # Extract task identification from metadata
     metadata = request_data.get("metadata", {})
+    # Only the backend-to-manager authorization header carries this grant.
+    metadata.pop(BINDING_TOKEN, None)
+    scheme, _, credential = http_request.headers.get("Authorization", "").partition(" ")
+    if scheme == BINDING_SCHEME and credential:
+        metadata[BINDING_TOKEN] = credential
+        request_data["metadata"] = metadata
     task_id = metadata.get("task_id", 0)
     subtask_id = metadata.get("subtask_id", 0)
     background = request_data.get("background", False)
@@ -1484,7 +1500,11 @@ async def openai_responses(http_request: Request):
         queue_type = metadata.get("type") or "online"
         service_pool = os.getenv("SERVICE_POOL", "default")
         queue_service = TaskQueueService(service_pool, queue_type)
-        success = queue_service.enqueue_task(request_data)
+        request_id = metadata.get("request_id")
+        if task_id and subtask_id and request_id == f"pipeline-{task_id}-{subtask_id}":
+            success = queue_service.enqueue_pipeline_task(request_data)
+        else:
+            success = queue_service.enqueue_task(request_data)
 
         if not success:
             logger.error(f"[v1/responses] Failed to enqueue task {task_id}")

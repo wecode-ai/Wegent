@@ -102,7 +102,7 @@ pub(crate) async fn execute(state: &AppState, input: Execute) -> Result<Value> {
                     tables: crate::internal_callback::tables(state),
                     executor_manager: &state.executor_manager,
                 };
-                crate::internal_callback::completion::complete_terminal(
+                let committed = crate::internal_callback::completion::complete_terminal(
                     &ctx,
                     input.task_id,
                     input.assistant_subtask_id,
@@ -114,6 +114,9 @@ pub(crate) async fn execute(state: &AppState, input: Execute) -> Result<Value> {
                     None,
                 )
                 .await;
+                if !matches!(committed, Ok(Some(_))) {
+                    return Err(error);
+                }
                 if let Err(project_error) = super::completion::complete(
                     &state.mysql,
                     redis,

@@ -58,6 +58,8 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 
 Passthrough retains reasoning, history, original call IDs, encrypted content, `previous_response_id`, `include`, `store` and extension fields. It also bypasses image budget trimming, vision sidecar replacement, history enhancement, fork/model-switch cleanup and output-limit injection. The proxy does not add the configured `max_output_tokens` to the request. The upstream must support the original Codex request contents directly.
 
+The internal official ChatGPT route is a separate passthrough path. It preserves the same native fields and stream behavior, but the compatibility layer still normalizes non-portable reasoning history and performs the first-request cleanup after a model switch. This keeps ordinary conversations and stand-in chats on one route without sending third-party `reasoning_text` or stale sealed state to the official endpoint.
+
 For example, configure Kimi Responses with:
 
 ```json
@@ -97,6 +99,16 @@ Built-in tool types inside namespaces return a request validation error instead 
 
 The `responses-tool-compatibility` desktop E2E checkpoint runs real Electron, Backend, executor, and Codex components with only the model service simulated. The simulator rejects unconverted custom `exec`, checks function arguments, and requires local and cloud models to execute real commands, read a file after reload, and preserve tool history. It also verifies explicit native configuration. This is model protocol regression coverage; compatibility with real provider services remains unverified.
 
+#### Legacy DeepSeek configurations
+
+Changing defaults alone cannot fix rejected `exec` calls when a legacy configuration already
+stores `tool_profile: "custom"`. Direct `api.deepseek.com` Responses requests in `auto` mode
+still follow its supported tool capabilities: preserve native `apply_patch` and reversibly adapt
+other custom tools, namespaces, and client tool search to function tools. Configurations without
+a legacy profile use the shared function default above. Match the actual endpoint, without
+guessing model names or retrying failed requests. Explicit `standard` and `passthrough` modes
+retain precedence; other gateways use the shared policy.
+
 #### Kimi K3 Chat Completions Compatibility
 
 When a cloud Model CRD uses OpenAI Chat Completions and its provider model name contains the case-insensitive substring `kimi-k3`, such as `moonshot-kimi-k3`, Wework automatically selects the `wework-kimi-k3` Codex model catalog with a 1,048,576-token context window if the Model CRD does not configure `codex_catalog_model_id` or `codexCatalogModelId`. An explicitly configured catalog always takes precedence over automatic Kimi K3 selection. Codex continues to use the Responses protocol internally, while the executor translates requests to Chat Completions at the boundary and applies the following Kimi K3 compatibility behavior:
@@ -133,7 +145,8 @@ the UI.
 
 ### Codex Direct-Provider Overload Recovery
 
-Native Codex providers can bypass the compatibility proxy. When the app-server
+User-configured native Codex providers can remain direct when they do not select
+the Wework compatibility route. When the app-server
 reports a structured `serverOverloaded` error, the executor waits for the failed
 turn's `turn/completed` event before continuing in the same thread with the same
 model. Recovery is bounded to five attempts, delayed by 5, 10, 20, 40, and 60

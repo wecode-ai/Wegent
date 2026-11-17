@@ -85,7 +85,7 @@ export interface UseKnowledgeBaseDialogsReturn {
     data: Omit<KnowledgeBaseCreate, 'namespace'> & { selectedGroupId?: string }
   ) => Promise<void>
   handleUpdate: (data: KnowledgeBaseUpdate) => Promise<void>
-  handleDelete: () => Promise<void>
+  handleDelete: (continueOnExternalFailure?: boolean) => Promise<void>
   handleMigrate: (targetGroupName: string) => Promise<void>
   handleCreateKbFromAll: (kbType: KnowledgeBaseType) => void
   handleCreateKbFromGroups: (kbType: KnowledgeBaseType) => void
@@ -137,6 +137,11 @@ export function useKnowledgeBaseDialogs({
   // Delete dialog state
   const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const deletingKbRef = useRef(deletingKb)
+  deletingKbRef.current = deletingKb
+  useEffect(() => {
+    setIsDeleting(false)
+  }, [deletingKb?.id, scope])
 
   // Migrate dialog state
   const [migratingKb, setMigratingKb] = useState<KnowledgeBase | null>(null)
@@ -221,7 +226,7 @@ export function useKnowledgeBaseDialogs({
         let namespace = 'default'
 
         if (data.selectedGroupId) {
-          const selectedGroup = latest.current.sidebar.groups.find(
+          const selectedGroup = latest.current.availableGroups?.find(
             g => g.id === data.selectedGroupId
           )
           if (!selectedGroup) {
@@ -346,25 +351,41 @@ export function useKnowledgeBaseDialogs({
     [editingKb, sidebar]
   )
 
-  const handleDelete = useCallback(async () => {
-    if (!deletingKb) return
-    setIsDeleting(true)
-    try {
-      const { deleteKnowledgeBase } = await import('@/apis/knowledge')
-      await deleteKnowledgeBase(deletingKb.id)
+  const handleDelete = useCallback(
+    async (continueOnExternalFailure = false) => {
+      if (!deletingKb) return
+      const targetId = deletingKb.id
+      const current = () =>
+        mounted.current &&
+        scopeRef.current === scope &&
+        generation.current === epoch &&
+        client.getCacheScope() === cacheScope &&
+        deletingKbRef.current?.id === targetId
+      setIsDeleting(true)
+      try {
+        const { deleteKnowledgeBase } = await import('@/apis/knowledge')
+        if (!current()) return
+        const outcome = await deleteKnowledgeBase(deletingKb.id, continueOnExternalFailure)
+        if (!current()) return
+        if (outcome?.index_cleanup === 'unconfirmed') {
+          toast.warning(t('knowledge:document.deletion.residualWarning'))
+        }
 
-      await sidebar.refreshAll()
+        await latest.current.sidebar.refreshAll()
+        if (!current()) return
 
-      if (deletingKb.id === sidebar.selectedKbId) {
-        sidebar.clearSelection()
-        router.push('/knowledge?type=document')
+        if (targetId === latest.current.sidebar.selectedKbId) {
+          latest.current.sidebar.clearSelection()
+          router.push('/knowledge?type=document')
+        }
+
+        setDeletingKb(null)
+      } finally {
+        if (current()) setIsDeleting(false)
       }
-
-      setDeletingKb(null)
-    } finally {
-      setIsDeleting(false)
-    }
-  }, [deletingKb, sidebar, router])
+    },
+    [deletingKb, router, t, scope, epoch, cacheScope]
+  )
 
   const handleMigrate = useCallback(
     async (targetGroupName: string) => {

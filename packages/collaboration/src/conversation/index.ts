@@ -31,3 +31,5 @@ export { projectConversationSearchRegion } from './conversationSearchProjection'
 export * from './TemporaryConversationLayout'
 
 export * from './ProcessingDurationLabel'
+
+export { AutomaticRetryStatus } from './AutomaticRetryStatus'

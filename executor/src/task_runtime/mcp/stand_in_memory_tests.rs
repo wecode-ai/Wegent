@@ -177,9 +177,11 @@ async fn memory_review_tools_allow_evidence_but_reject_actions_even_when_called_
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
     let runtime = TaskRuntime::new(store).unwrap();
     for name in [
+        "search_context",
         "create_task",
         "continue_task",
         "schedule_task",
+        "update_schedule",
         "cancel_schedule",
         "connect_source",
         "reply",
@@ -419,6 +421,7 @@ async fn delegated_worker_raw_catalog_is_readonly_and_roles_have_history_tools()
         vec![
             "list_tasks",
             "read_task",
+            "search_context",
             "list_connection_providers",
             "read_source"
         ]
@@ -470,6 +473,18 @@ fn source_bound_work_catalog_keeps_read_source_without_identity_configuration_to
     assert!(catalog
         .iter()
         .any(|tool| tool["name"] == "list_connection_providers"));
+    let create = catalog
+        .iter()
+        .find(|tool| tool["name"] == "create_task")
+        .unwrap();
+    assert_eq!(
+        create["inputSchema"]["required"],
+        json!(["requestId", "messageId", "title", "message"])
+    );
+    assert!(create["inputSchema"]["properties"]
+        .get("readSources")
+        .is_none());
+    assert_eq!(create["inputSchema"]["additionalProperties"], false);
     let reply = catalog.iter().find(|tool| tool["name"] == "reply").unwrap();
     assert_eq!(reply["title"], "Wework: Reply to source");
     assert_eq!(
@@ -478,6 +493,14 @@ fn source_bound_work_catalog_keeps_read_source_without_identity_configuration_to
     );
     assert_eq!(reply["annotations"]["readOnlyHint"], false);
     assert_eq!(reply["annotations"]["openWorldHint"], true);
+    assert_eq!(
+        reply["inputSchema"]["properties"]["mentionOpenDingTalkIds"]["type"],
+        "array"
+    );
+    assert!(reply["description"]
+        .as_str()
+        .unwrap()
+        .contains("Follow current scoped provider assistance"));
     assert!(catalog.iter().all(|tool| !matches!(
         tool["name"].as_str(),
         Some(
@@ -485,7 +508,7 @@ fn source_bound_work_catalog_keeps_read_source_without_identity_configuration_to
                 | "propose_profile"
                 | "connect_source"
                 | "search_connections"
-                | "create_task"
+                | "continue_task"
         )
     )));
 }
@@ -502,7 +525,7 @@ async fn stand_in_review_has_only_generic_read_tools_and_other_schedules_have_no
         .into_iter()
         .map(|tool| tool["name"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(names, vec!["list_tasks", "read_task"]);
+    assert_eq!(names, vec!["list_tasks", "read_task", "search_context"]);
     let directory = tempfile::tempdir().unwrap();
     let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
     let runtime = TaskRuntime::new(store).unwrap();

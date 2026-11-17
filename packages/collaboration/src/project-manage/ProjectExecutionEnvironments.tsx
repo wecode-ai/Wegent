@@ -135,8 +135,12 @@ export function ProjectExecutionEnvironments({
   project,
   translate,
   workspace,
+  presentation = 'page',
+  onEnvironmentsChange,
 }: {
   api: SharedWorkspaceApi
+  presentation?: 'page' | 'devices'
+  onEnvironmentsChange?(): void
   onManageDevices?(): void
   onProjectChange?(project: CollaborationProject): void
   translate: CollaborationTranslate
@@ -148,7 +152,7 @@ export function ProjectExecutionEnvironments({
     : 'collaboration-project-execution-environment'
   const accessRole = workspace?.access_role ?? project?.access_role
   const canManage = canManageEnvironment(accessRole, isWorkspaceScope)
-  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(presentation === 'devices')
   const assigned = useExecutionEnvironmentList(
     api,
     isWorkspaceScope ? 'workspace' : 'project',
@@ -598,13 +602,14 @@ export function ProjectExecutionEnvironments({
         : await api.projects.addExecutionEnvironment(scopeId, deviceId)
       assigned.update(current => [...current.filter(item => item.device_id !== deviceId), created])
       setPickerOpen(false)
+      onEnvironmentsChange?.()
     } catch (saveError) {
       const reason = environmentAuthorizationError(saveError, translate)
       setError(
         sharedDuringAdd
           ? translate(
               'todo.execution_environment_shared_add_failed',
-              '环境已共享到空间，但添加到项目失败：{{reason}}。请重试添加。',
+              '环境已共享到分组，但添加到项目失败：{{reason}}。请重试添加。',
               { reason }
             )
           : sharing
@@ -630,6 +635,7 @@ export function ProjectExecutionEnvironments({
         await api.projects.removeExecutionEnvironment(scopeId, environment.device_id)
       }
       assigned.update(current => current.filter(item => item.id !== environment.id))
+      onEnvironmentsChange?.()
     } catch (saveError) {
       setError(
         saveError instanceof Error
@@ -705,28 +711,35 @@ export function ProjectExecutionEnvironments({
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-8 py-7">
+    <div
+      className={
+        presentation === 'devices' ? 'min-w-0' : 'min-h-0 flex-1 overflow-y-auto px-8 py-7'
+      }
+    >
       <div className="mx-auto max-w-[840px]">
-        <h1 className="text-heading-lg font-semibold">
-          {translate(
-            isWorkspaceScope
-              ? 'todo.workspace_execution_environments'
-              : 'todo.project_execution_environments',
-            '执行环境'
-          )}
-        </h1>
-        <p className="mt-1 text-sm text-text-muted">
-          {translate(
-            isWorkspaceScope
-              ? 'todo.workspace_execution_environments_intro'
-              : 'todo.project_execution_environments_intro',
-            isWorkspaceScope
-              ? '管理共享给空间内项目的执行环境。'
-              : '选择此项目可以使用的执行环境，项目目录会在首次运行时自动准备。'
-          )}
-        </p>
-
-        <section className="mt-6">
+        {presentation === 'page' && (
+          <>
+            <h1 className="text-heading-lg font-semibold">
+              {translate(
+                isWorkspaceScope
+                  ? 'todo.workspace_execution_environments'
+                  : 'todo.project_execution_environments',
+                '执行环境'
+              )}
+            </h1>
+            <p className="mt-1 text-sm text-text-muted">
+              {translate(
+                isWorkspaceScope
+                  ? 'todo.workspace_execution_environments_intro'
+                  : 'todo.project_execution_environments_intro',
+                isWorkspaceScope
+                  ? '管理共享给分组内项目的执行环境。'
+                  : '选择此项目可以使用的执行环境，项目目录会在首次运行时自动准备。'
+              )}
+            </p>
+          </>
+        )}
+        <section className={presentation === 'devices' ? '' : 'mt-6'}>
           <ProjectEnvironmentDevices
             {...{
               testIdPrefix,
@@ -807,96 +820,105 @@ export function ProjectExecutionEnvironments({
               </div>
             </div>
           ) : null}
-          <details
-            className="group mt-6 border-t border-border"
-            data-testid={`${testIdPrefix}-preparation`}
-            onToggle={event => {
-              if (
-                event.currentTarget.open &&
-                repositoryOptions === null &&
-                !repositoriesLoadFailed
-              ) {
-                void loadRepositoryOptions()
-              }
-            }}
-          >
-            <summary
-              className="flex min-h-11 cursor-pointer list-none items-center gap-3 py-4 [&::-webkit-details-marker]:hidden focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
-              data-testid={`${testIdPrefix}-preparation-toggle`}
+          {presentation === 'page' && (
+            <details
+              className="group mt-6 border-t border-border"
+              data-testid={`${testIdPrefix}-preparation`}
+              onToggle={event => {
+                if (
+                  event.currentTarget.open &&
+                  repositoryOptions === null &&
+                  !repositoriesLoadFailed
+                ) {
+                  void loadRepositoryOptions()
+                }
+              }}
             >
-              <ChevronRight
-                className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
-                aria-hidden="true"
+              <summary
+                className="flex min-h-11 cursor-pointer list-none items-center gap-3 py-4 [&::-webkit-details-marker]:hidden focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
+                data-testid={`${testIdPrefix}-preparation-toggle`}
+              >
+                <ChevronRight
+                  className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">
+                    {translate('todo.execution_environment_preparation', '项目准备')}
+                  </span>
+                  <span className="mt-1 block truncate text-xs text-text-muted">
+                    {repositories.length || setupSteps.length
+                      ? translate(
+                          'todo.execution_environment_preparation_summary',
+                          '{{repositories}} 个仓库 · {{steps}} 个初始化步骤',
+                          {
+                            repositories: repositories.length,
+                            steps: setupSteps.length,
+                          }
+                        )
+                      : translate(
+                          'todo.execution_environment_preparation_default',
+                          '默认使用空白工作目录，可按需添加仓库和初始化命令。'
+                        )}
+                  </span>
+                </span>
+                {configurationDirty ? (
+                  <span className="text-xs text-text-secondary">
+                    {translate(
+                      'todo.execution_environment_configuration_unsaved',
+                      '有未保存的修改'
+                    )}
+                  </span>
+                ) : null}
+              </summary>
+              <ProjectEnvironmentConfiguration
+                {...{
+                  testIdPrefix,
+                  translate,
+                  canManage,
+                  saving,
+                  workspacePolicy,
+                  repositories,
+                  setupSteps,
+                  repositoryOptions,
+                  repositoriesByUrl,
+                  repositoriesLoadFailed,
+                  branchesByRepository,
+                  loadRepositoryOptions,
+                  loadBranches,
+                  selectRepository,
+                  updateRepository,
+                  updateRepositoryUrl,
+                  removeRepository,
+                  addRepository,
+                  updateSetupStep,
+                  configurationError,
+                  configurationSaved,
+                  configurationDirty,
+                  saveConfiguration,
+                }}
+                onWorkspacePolicyChange={value => {
+                  setWorkspacePolicy(value)
+                  markConfigurationDirty()
+                }}
+                addSetupStep={() => {
+                  setSetupSteps(current => [
+                    ...current,
+                    {
+                      id: draftId('setup'),
+                      command: '',
+                      working_directory: '',
+                    },
+                  ])
+                  markConfigurationDirty()
+                }}
+                removeSetupStep={id => {
+                  setSetupSteps(current => current.filter(step => step.id !== id))
+                  markConfigurationDirty()
+                }}
               />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">
-                  {translate('todo.execution_environment_preparation', '项目准备')}
-                </span>
-                <span className="mt-1 block truncate text-xs text-text-muted">
-                  {repositories.length || setupSteps.length
-                    ? translate(
-                        'todo.execution_environment_preparation_summary',
-                        '{{repositories}} 个仓库 · {{steps}} 个初始化步骤',
-                        {
-                          repositories: repositories.length,
-                          steps: setupSteps.length,
-                        }
-                      )
-                    : translate(
-                        'todo.execution_environment_preparation_default',
-                        '默认使用空白工作目录，可按需添加仓库和初始化命令。'
-                      )}
-                </span>
-              </span>
-              {configurationDirty ? (
-                <span className="text-xs text-text-secondary">
-                  {translate('todo.execution_environment_configuration_unsaved', '有未保存的修改')}
-                </span>
-              ) : null}
-            </summary>
-            <ProjectEnvironmentConfiguration
-              {...{
-                testIdPrefix,
-                translate,
-                canManage,
-                saving,
-                workspacePolicy,
-                repositories,
-                setupSteps,
-                repositoryOptions,
-                repositoriesByUrl,
-                repositoriesLoadFailed,
-                branchesByRepository,
-                loadRepositoryOptions,
-                loadBranches,
-                selectRepository,
-                updateRepository,
-                updateRepositoryUrl,
-                removeRepository,
-                addRepository,
-                updateSetupStep,
-                configurationError,
-                configurationSaved,
-                configurationDirty,
-                saveConfiguration,
-              }}
-              onWorkspacePolicyChange={value => {
-                setWorkspacePolicy(value)
-                markConfigurationDirty()
-              }}
-              addSetupStep={() => {
-                setSetupSteps(current => [
-                  ...current,
-                  { id: draftId('setup'), command: '', working_directory: '' },
-                ])
-                markConfigurationDirty()
-              }}
-              removeSetupStep={id => {
-                setSetupSteps(current => current.filter(step => step.id !== id))
-                markConfigurationDirty()
-              }}
-            />
-          </details>
+            </details>
+          )}
         </section>
       </div>
     </div>

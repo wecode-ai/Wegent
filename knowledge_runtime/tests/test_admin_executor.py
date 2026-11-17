@@ -196,14 +196,14 @@ class TestAdminExecutor:
                 "title": "Doc1",
                 "chunk_id": 0,
                 "doc_ref": "doc_1",
-                "metadata": {"key": "value"},
+                "metadata": {"knowledge_id": "1", "doc_ref": "doc_1", "key": "value"},
             },
             {
                 "content": "Chunk 2 content",
                 "title": "Doc2",
                 "chunk_id": 1,
                 "doc_ref": "doc_2",
-                "metadata": {},
+                "metadata": {"knowledge_id": "1", "doc_ref": "doc_2"},
             },
         ]
         mock_storage_backend.extract_chunk_text = lambda x: x
@@ -214,7 +214,9 @@ class TestAdminExecutor:
         ):
             admin_executor._config_loader.resolve_admin_config.return_value = (
                 AdminResolvedConfig(
-                    index_owner_user_id=7, retriever_config=mock_retriever_config
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                    document_ids=[1, 2],
                 )
             )
 
@@ -276,7 +278,9 @@ class TestAdminExecutor:
         ):
             admin_executor._config_loader.resolve_admin_config.return_value = (
                 AdminResolvedConfig(
-                    index_owner_user_id=7, retriever_config=mock_retriever_config
+                    index_owner_user_id=7,
+                    retriever_config=mock_retriever_config,
+                    document_ids=[11],
                 )
             )
 

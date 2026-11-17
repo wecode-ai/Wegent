@@ -16,6 +16,26 @@ import {
 } from "./workspaceDtoMappers";
 
 describe("workspace DTO mappers", () => {
+  it("preserves the explicit system-default identity without inferring it from a name", () => {
+    expect(
+      mapCollaborationWorkspaceDto({
+        id: "default",
+        name: "Renamed",
+        is_system_default: true,
+      }).is_system_default,
+    ).toBe(true);
+    expect(
+      mapCollaborationWorkspaceDto({
+        id: "business",
+        name: "默认空间",
+        is_default: true,
+      }).is_system_default,
+    ).toBeUndefined();
+    expect(
+      mapCollaborationWorkspaceDto({ id: "business", is_system_default: false })
+        .is_system_default,
+    ).toBe(false);
+  });
   it.each(["available", "unavailable", "unchecked"])(
     "preserves the explicit %s readiness state",
     (status) => {

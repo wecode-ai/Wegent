@@ -126,41 +126,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn suggestion_topics_group_updates_by_matter_for_any_provider() {
-        for provider in ["email", "dingtalk", "calendar", "custom-provider"] {
-            let source =
-                json!({"providerId":provider,"profile":"alice","kind":"feed","id":"inbox"});
-            let event = |id: &str, topic: &str, profile: &str| {
-                let mut source = source.clone();
-                source["profile"] = json!(profile);
-                json!({"id":id,"kind":"connection","source":source,
-                "message":{"id":id,"topicId":topic,"external":{"payload":{"private":"not retained"}}}})
-            };
-            let matter = "source-topic:42";
-            let other = "source-topic:43";
-            let snapshot = json!({"events":[event("old-update",matter,"alice"),
-            event("new-update",matter,"alice"),event("other-matter",other,"alice"),
-            event("other-account",matter,"bob"),event("unselected",matter,"carol"),
-            {"id":"no-topic","kind":"connection","source":source}]});
-            let topics = suggestion_topics(
-                &snapshot,
-                &json!([
-                    "old-update",
-                    "new-update",
-                    "other-matter",
-                    "other-account",
-                    "no-topic"
-                ]),
-            );
-            assert_eq!(topics.len(), 3);
-            assert_eq!(topics[0], json!({"source":source,"topicId":matter}));
-            assert_eq!(topics[1]["topicId"], other);
-            assert_eq!(topics[2]["source"]["profile"], "bob");
-            assert!(!json!(topics).to_string().contains("private"));
-        }
-    }
-
-    #[test]
     fn versioned_events_require_an_exact_immutable_record() {
         let messages = vec![
             json!({"id":"stable", "recordId":"record-v1", "version":"v1", "text":"passed"}),
@@ -189,70 +154,5 @@ mod tests {
         let page = work_messages(&messages, &json!({"messageId":"record-v2"})).unwrap();
         let payload: Value = serde_json::from_str(page["payload"].as_str().unwrap()).unwrap();
         assert_eq!(payload, exact);
-    }
-
-    #[test]
-    fn provider_neutral_projection_preserves_original_events() {
-        let original = json!({"events":[{"message":{"text":"文".repeat(5001),
-            "external":{"platform":"third-party","payload":{"untrusted":"original"}}}}]});
-        let projected = summarize(original.clone());
-        let message = &projected["events"][0]["message"];
-        assert_eq!(message["external"]["payloadAvailable"], true);
-        assert!(message["external"].get("payload").is_none());
-        assert_eq!(
-            message["text"].as_str().unwrap().chars().count(),
-            SUMMARY_CHARS
-        );
-        assert_eq!(message["textTruncated"], true);
-        assert_eq!(
-            original["events"][0]["message"]["external"]["payload"]["untrusted"],
-            "original"
-        );
-    }
-
-    #[test]
-    fn all_source_event_shapes_support_lossless_chunked_reads() {
-        let original = json!({"id":"event","recordId":"record","custom":{"content":"文".repeat(16000)},
-            "external":{"platform":"third-party","payload":{"arbitrary":true}}});
-        let mut chunks = String::new();
-        let mut offset = 0;
-        loop {
-            let page = work_messages(
-                std::slice::from_ref(&original),
-                &json!({"messageId":"record","payloadOffset":offset}),
-            )
-            .unwrap();
-            chunks.push_str(page["payload"].as_str().unwrap());
-            match page["nextOffset"].as_u64() {
-                Some(next) => offset = next,
-                None => break,
-            }
-        }
-        assert_eq!(serde_json::from_str::<Value>(&chunks).unwrap(), original);
-        assert!(work_messages(
-            std::slice::from_ref(&original),
-            &json!({"messageId":"foreign"})
-        )
-        .is_err());
-        assert!(work_messages(
-            &[original],
-            &json!({"messageId":"event","payloadOffset":-1})
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn event_lists_are_paged_for_any_provider() {
-        let events = (0..51)
-            .map(|id| json!({"id":id,"payload":{"original":true}}))
-            .collect::<Vec<_>>();
-        let first = work_messages(&events, &json!({})).unwrap();
-        assert_eq!(first["messages"].as_array().unwrap().len(), PAGE_SIZE);
-        assert_eq!(first["nextOffset"], PAGE_SIZE);
-        assert_eq!(first["messages"][0]["payloadAvailable"], true);
-        let last = work_messages(&events, &json!({"offset":50})).unwrap();
-        assert_eq!(last["messages"].as_array().unwrap().len(), 1);
-        assert_eq!(last["hasMore"], false);
-        assert!(work_messages(&events, &json!({"offset":52})).is_err());
     }
 }

@@ -1,6 +1,8 @@
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
+import { runtimeCompletionReceiptPatterns } from '../modules/runtime-task-evidence.mjs'
 
 import {
   functionCall,
@@ -9,7 +11,11 @@ import {
   selectShellToolCommand,
 } from '../modules/response-protocol.mjs'
 import { sendPrompt } from '../modules/conversation-navigation.mjs'
-import { ACTIVE_SEND_BUTTON_SELECTOR, selectE2EModel } from '../modules/shared.mjs'
+import {
+  ACTIVE_SEND_BUTTON_SELECTOR,
+  selectE2EModel,
+  waitForLogPattern,
+} from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -200,6 +206,7 @@ export function createDesktopScenario({
   uiTimeoutMs,
   modelResponseTimeoutMs,
   workspacePath,
+  resultDir,
 }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let active = false
@@ -515,6 +522,19 @@ export function createDesktopScenario({
       assert.ok(
         largeSourceToolRequested,
         'The large referenced conversation did not execute the real shell tool'
+      )
+      const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      const largeSourceTaskId = debug.workbench?.currentRuntimeTask?.taskId
+      assert.ok(largeSourceTaskId, 'The large source conversation has no owning Runtime task')
+      // History refresh can render a completed answer even after losing the live connection.
+      await Promise.all(
+        runtimeCompletionReceiptPatterns(largeSourceTaskId).map(pattern =>
+          waitForLogPattern(
+            join(resultDir, 'electron-user-data', 'logs', 'runtime-launch.log'),
+            pattern,
+            { timeoutMs: uiTimeoutMs }
+          )
+        )
       )
 
       await control.command('click', '[data-testid="new-chat-button"]')

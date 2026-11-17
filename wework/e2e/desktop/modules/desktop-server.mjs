@@ -38,6 +38,7 @@ import {
 } from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
 import { CONCURRENT_SCENARIO, respondToConcurrentMcpInput } from './mcp-concurrent-model.mjs'
+import { createMcpElicitationModel } from './mcp-elicitation-model.mjs'
 
 import {
   assistantMessage,
@@ -65,6 +66,7 @@ import {
   matrixToolPrompt,
   namespacedFunctionCall,
   parseTelemetryPayload,
+  reasoningTextItem,
   readRawRequestBody,
   readRequestBody,
   requestAdvertisesProgrammaticExec,
@@ -117,6 +119,9 @@ import {
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
+  CLOUD_HTML_LINK_FILENAME,
+  CLOUD_HTML_LINK_MISSING_FILENAME,
+  CLOUD_HTML_LINK_PROMPT,
   CLOUD_MODEL_CASES,
   CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -205,13 +210,6 @@ import {
   MODEL_PROXY_RESTART_INITIAL_PROMPT,
   MODEL_SERVICE_CONNECTION_ERROR,
   MODEL_SERVICE_CONNECTION_PROMPT,
-  MCP_ELICITATION_ACCEPTED_MARKER,
-  MCP_ELICITATION_CALL_ID,
-  MCP_ELICITATION_COMPLETION_TEXT,
-  MCP_ELICITATION_NAMESPACE,
-  MCP_ELICITATION_PROMPT,
-  MCP_ELICITATION_SEARCH_ID,
-  MCP_ELICITATION_TOOL_NAME,
   MESSAGE_EDIT_ORIGINAL_COMPLETION_TEXT,
   MESSAGE_EDIT_ORIGINAL_PROMPT,
   MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
@@ -237,6 +235,7 @@ import {
   PLUGIN_REFINEMENT_COMPLETION_TEXT,
   PLUGIN_REFINEMENT_PROMPT,
   PROVIDER_SWITCH_COMPLETION,
+  PROVIDER_SWITCH_FOREIGN_REASONING,
   PROVIDER_SWITCH_FAILURE,
   PROVIDER_SWITCH_LUNA_MODEL_ID,
   PROVIDER_SWITCH_OFFICIAL_LABEL,
@@ -244,8 +243,12 @@ import {
   PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL,
   PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
   PROVIDER_SWITCH_PROMPT,
+  PROVIDER_SWITCH_REASONING_COMPLETION,
+  PROVIDER_SWITCH_REASONING_PROMPT,
   PROVIDER_SWITCH_RESUME_COMPLETION,
   PROVIDER_SWITCH_RESUME_PROMPT,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
   QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
   QUALIFIED_SKILL_MENTION_PROMPT,
   QUEUE_CLEAR_INITIAL,
@@ -491,6 +494,7 @@ const HELD_RESPONSE_SCENARIOS = new Set([
   'worktree_restart_hold',
   'worktree_status_hold',
   'attachment_submit_cleanup',
+  'cloud_device_restart_busy',
 ])
 
 class DesktopE2EServer {
@@ -562,6 +566,7 @@ class DesktopE2EServer {
     this.sitesConnectionBootstrapRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
+    this.mcpElicitationModel = createMcpElicitationModel()
     this.viewImageStage = 'initial'
     this.memoryStage = 'initial'
     this.concurrentMemoryResponses = []
@@ -574,6 +579,7 @@ class DesktopE2EServer {
     this.viewImageToolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
+    this.cloudHtmlLinkToolLessPrewarmHandled = false
     this.officialPluginToolLessPrewarmHandled = false
     this.toolOutput = null
     this.initialToolRelease = new Promise(resolvePromise => {
@@ -968,6 +974,7 @@ class DesktopE2EServer {
         'side_chat_guidance',
         'cloud_initial',
         'cloud_follow_up',
+        'cloud_html_link',
         'model_protocol_matrix',
         'provider_switch_retry',
         'vision_sidecar',
@@ -1256,7 +1263,12 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
-    const { expectClientReplacement = false, exitProcessId, ...commandOptions } = options
+    const {
+      expectClientReplacement = false,
+      exitProcessId,
+      preserveResultAcrossClientReplacement = false,
+      ...commandOptions
+    } = options
     assert.ok(
       !expectClientReplacement || action === 'click',
       'Only clicks may expect client replacement'
@@ -1302,6 +1314,8 @@ class DesktopE2EServer {
         resolveDelivery,
         started: false,
         expectClientReplacement,
+        preserveResultAcrossClientReplacement,
+        windowLabel: this.controlWindowsByClient.get(clientId),
       })
     })
     this.commandQueue.push({ clientId, command, rejectDelivery })
@@ -1468,6 +1482,24 @@ class DesktopE2EServer {
         rawBody,
       })
       json(response, 200, { status: 1 })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/backend-api/wham/accounts/check') {
+      assert.equal(
+        request.headers.authorization,
+        `Bearer ${PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN}`,
+        'The official Codex account check did not use the synthetic subscription token'
+      )
+      json(response, 200, {
+        accounts: [
+          {
+            id: PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+            workspace_backend_origin: 'https://chatgpt.com',
+            account_routing_override: 'NO_CONSTRAINT',
+          },
+        ],
+      })
       return
     }
 
@@ -1899,6 +1931,7 @@ class DesktopE2EServer {
                 protocol: 'openai-responses',
                 apiFormat: 'responses',
                 weworkModelKind: 'codex-official',
+                codexProviderId: 'openai',
                 ui: { family: 'codex-official', modelLabel: PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL },
               },
               runtime: { family: 'openai.openai-responses' },
@@ -2029,8 +2062,12 @@ class DesktopE2EServer {
     }
 
     const cloudResponsesProxy = url.pathname === '/api/runtime-work/llm-responses-proxy/responses'
+    const officialCodexResponses = url.pathname === '/backend-api/codex/responses'
     const modelProtocol =
-      url.pathname === '/v1/responses' || url.pathname === '/responses' || cloudResponsesProxy
+      url.pathname === '/v1/responses' ||
+      url.pathname === '/responses' ||
+      url.pathname === '/backend-api/codex/responses' ||
+      cloudResponsesProxy
         ? 'responses'
         : url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions'
           ? 'chat'
@@ -2038,6 +2075,13 @@ class DesktopE2EServer {
             ? 'anthropic'
             : null
     if (request.method === 'POST' && modelProtocol) {
+      if (officialCodexResponses) {
+        assert.match(
+          String(request.headers.authorization ?? ''),
+          /^Bearer /,
+          'The official Codex request did not forward its native bearer token'
+        )
+      }
       if (cloudResponsesProxy) {
         assert.equal(
           request.headers['x-wegent-model-type'],
@@ -2059,6 +2103,7 @@ class DesktopE2EServer {
         acceptedAuthorization: cloudResponsesProxy
           ? 'Bearer wework-desktop-e2e-cloud-token'
           : undefined,
+        acceptAnyBearer: officialCodexResponses,
       })
       return
     }
@@ -2102,6 +2147,10 @@ class DesktopE2EServer {
         })
         for (const [id, pending] of this.commandResults) {
           if (pending.clientId !== previousClientId) continue
+          if (pending.preserveResultAcrossClientReplacement && pending.started) {
+            pending.clientReplacedAt = new Date().toISOString()
+            continue
+          }
           this.commandResults.delete(id)
           // A started refresh click may replace its renderer before reporting its result.
           if (pending.expectClientReplacement && pending.started) pending.resolve('')
@@ -2203,10 +2252,16 @@ class DesktopE2EServer {
         return true
       }
       const resultWindowLabel = this.controlWindowsByClient.get(result.clientId)
+      const acceptsRetiredClientResult =
+        pending.preserveResultAcrossClientReplacement &&
+        pending.started &&
+        result.clientId === pending.clientId &&
+        !resultWindowLabel
       if (
         result.clientId !== pending.clientId ||
-        !resultWindowLabel ||
-        this.controlClientsByWindow.get(resultWindowLabel) !== result.clientId
+        (!acceptsRetiredClientResult &&
+          (!resultWindowLabel ||
+            this.controlClientsByWindow.get(resultWindowLabel) !== result.clientId))
       ) {
         json(response, 409, {
           error: `Command ${result.id} belongs to a different desktop control client`,
@@ -2222,8 +2277,10 @@ class DesktopE2EServer {
       // Observations may check readiness during an input cooldown, but must
       // neither extend nor shorten the interval between state-changing actions.
       if (!ELECTRON_OBSERVATION_ACTIONS.has(pending.action)) {
+        const cooldownClientId =
+          this.controlClientsByWindow.get(pending.windowLabel) ?? result.clientId
         this.controlCommandAvailableAt.set(
-          result.clientId,
+          cooldownClientId,
           Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
         )
       }
@@ -2253,7 +2310,8 @@ class DesktopE2EServer {
     const authenticated =
       authorization === `Bearer ${MODEL_API_KEY}` ||
       authorization === options.acceptedAuthorization ||
-      request.headers['x-api-key'] === MODEL_API_KEY
+      request.headers['x-api-key'] === MODEL_API_KEY ||
+      (options.acceptAnyBearer === true && authorization?.startsWith('Bearer '))
     if (!authenticated) {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
       return
@@ -2666,6 +2724,17 @@ class DesktopE2EServer {
     }
 
     if (
+      this.scenario === 'cloud_html_link' &&
+      !this.cloudHtmlLinkToolLessPrewarmHandled &&
+      !JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT) &&
+      !requestAdvertisesShellTool(body)
+    ) {
+      this.cloudHtmlLinkToolLessPrewarmHandled = true
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (
       this.scenario === 'cloud_initial' &&
       this.cloudModelStage === 'initial' &&
       !this.cloudToolLessPrewarmHandled &&
@@ -2775,7 +2844,11 @@ class DesktopE2EServer {
         )
         this.resolveToolBlockNodeOutputObserved()
         await this.toolBlockNodeRelease
-        const search = selectToolSearch(body, 'github issue details')
+        const search = selectToolSearch(
+          body,
+          'github issue details',
+          'mcp__github__issues__get_issue_details'
+        )
         this.writeSse(response, [
           responseCreated(responseId),
           ...toolSearchResponseEvents(GENERIC_MCP_TOOL_SEARCH_ID, search),
@@ -3319,6 +3392,30 @@ class DesktopE2EServer {
       this.memoryStage = 'streaming'
       await this.writeStreamingMarkdown(response, responseId, streamingMarkdownReport())
       this.memoryStage = 'complete'
+      return
+    }
+
+    if (this.scenario === 'cloud_html_link') {
+      this.recordScenarioRequest('cloud_html_link', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT),
+        'The real cloud Codex request did not contain the HTML link prompt'
+      )
+      const previewPath = join(this.cloudWorkspacePath, CLOUD_HTML_LINK_FILENAME).replaceAll(
+        '\\',
+        '/'
+      )
+      const missingPath = join(
+        this.cloudWorkspacePath,
+        CLOUD_HTML_LINK_MISSING_FILENAME
+      ).replaceAll('\\', '/')
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(
+          '[Cloud HTML preview](<' + previewPath + '>)\n[Missing Cloud HTML](<' + missingPath + '>)'
+        ),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -4176,61 +4273,7 @@ class DesktopE2EServer {
 
     if (this.scenario === 'mcp_elicitation') {
       this.recordScenarioRequest('mcp_elicitation', modelRequest)
-      const requestNumber = this.scenarioRequests.get('mcp_elicitation').length
-      assert.ok(requestNumber <= 12, `Unexpected MCP elicitation request ${requestNumber}`)
-      const round = Math.ceil(requestNumber / 3)
-      const stage = ((requestNumber - 1) % 3) + 1
-      const callId = `${MCP_ELICITATION_CALL_ID}-${round}`
-      const requestText = JSON.stringify(body)
-      const timeoutScenario = round === 3 ? 'url_timeout' : round === 4 ? 'form_timeout' : null
-
-      if (stage === 1) {
-        assert.ok(
-          requestText.includes(MCP_ELICITATION_PROMPT),
-          'The real Codex request did not contain the MCP elicitation prompt'
-        )
-        const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...toolSearchResponseEvents(`${MCP_ELICITATION_SEARCH_ID}-${round}`, search),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (stage === 2) {
-        const tool = selectMcpTool(
-          body,
-          MCP_ELICITATION_NAMESPACE,
-          MCP_ELICITATION_TOOL_NAME,
-          timeoutScenario ? { scenario: timeoutScenario } : {},
-          `${MCP_ELICITATION_SEARCH_ID}-${round}`
-        )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(callId, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      assert.ok(
-        requestContainsToolOutput(body, callId),
-        'The MCP elicitation tool output did not return to the real model request'
-      )
-      assert.ok(
-        requestText.includes(
-          timeoutScenario
-            ? `E2E_MCP_ELICITATION_TIMEOUT:${timeoutScenario}:cancel`
-            : MCP_ELICITATION_ACCEPTED_MARKER
-        ),
-        'The MCP server did not return the expected answer or timeout cancellation to the model'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`${MCP_ELICITATION_COMPLETION_TEXT}:${round}`),
-        responseCompleted(responseId),
-      ])
+      this.writeSse(response, this.mcpElicitationModel(body, responseId))
       return
     }
 
@@ -5171,7 +5214,7 @@ class DesktopE2EServer {
       )
       assert.equal(
         body.model,
-        PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+        PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
         `The provider-switch retry was routed to ${String(body.model)} instead of official GPT`
       )
       const responseId = 'provider-switch-gpt-complete'
@@ -5195,7 +5238,53 @@ class DesktopE2EServer {
       const responseId = 'provider-switch-resume-luna-complete'
       this.writeSse(response, [
         responseCreated(responseId),
+        reasoningTextItem('provider-switch-foreign-reasoning', PROVIDER_SWITCH_FOREIGN_REASONING),
         assistantMessage(PROVIDER_SWITCH_RESUME_COMPLETION),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    if (promptRequestCount === 4) {
+      assert.ok(
+        serialized.includes(PROVIDER_SWITCH_REASONING_PROMPT),
+        'The official follow-up lost its prompt'
+      )
+      assert.equal(
+        body.model,
+        PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
+        'The follow-up was routed to the wrong official model'
+      )
+      const reasoning = (body.input ?? []).find(
+        item =>
+          item.type === 'reasoning' &&
+          item.summary?.some(
+            part => part.type === 'summary_text' && part.text === PROVIDER_SWITCH_FOREIGN_REASONING
+          )
+      )
+      assert.ok(
+        reasoning,
+        'The official follow-up did not replay the third-party reasoning summary'
+      )
+      assert.deepEqual(
+        reasoning.content,
+        [],
+        'Official GPT received a non-empty reasoning content array'
+      )
+      assert.equal(
+        reasoning.summary?.[0]?.text,
+        PROVIDER_SWITCH_FOREIGN_REASONING,
+        'Official GPT lost the promoted reasoning summary'
+      )
+      assert.equal(
+        'encrypted_content' in reasoning,
+        false,
+        'Official GPT received foreign reasoning state'
+      )
+      assert.equal('id' in reasoning, false, 'Official GPT received a foreign reasoning item id')
+      const responseId = 'provider-switch-reasoning-complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PROVIDER_SWITCH_REASONING_COMPLETION),
         responseCompleted(responseId),
       ])
       return
@@ -6433,4 +6522,9 @@ class DesktopE2EServer {
   }
 }
 
-export { DesktopE2EServer, inputUserMessageTexts, requestContainsSkillLocator }
+export {
+  DesktopE2EServer,
+  hasUserReplyAfterToolOutput,
+  inputUserMessageTexts,
+  requestContainsSkillLocator,
+}

@@ -42,12 +42,12 @@ from app.schemas.workspace import (
     WorkspaceResponse,
     WorkspaceUpdate,
 )
-from app.services.cloud_projects import cloud_project_service
 from app.services.cloud_projects.responses import (
     list_project_responses,
 )
 from app.services.cloud_projects.responses import project_response as _project_response
-from app.services.workspaces import workspace_service
+from app.services.cloud_projects.service import cloud_project_service
+from app.services.workspaces.service import workspace_service
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()

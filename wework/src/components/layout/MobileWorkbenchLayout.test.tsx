@@ -789,16 +789,14 @@ describe('MobileWorkbenchLayout', () => {
     ])
     expect(screen.queryByText('Oldest hidden task')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toHaveTextContent(
-      '展开显示'
+      '显示更多'
     )
 
     await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-expand-1'))
 
     expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(6)
     expect(screen.getByText('Fourth task')).toBeInTheDocument()
-    expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toHaveTextContent(
-      '折叠显示'
-    )
+    expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toHaveTextContent('收起')
 
     await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-collapse-1'))
 

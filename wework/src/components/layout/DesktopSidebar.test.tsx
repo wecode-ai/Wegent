@@ -259,10 +259,14 @@ describe('DesktopSidebar', () => {
       workspacePath: `/workspace/worktrees/${taskId.replace('worktree-', '')}/Wegent`,
       taskId,
     })
-    await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
+    const expandButton = screen.getByTestId('project-runtime-tasks-expand-7')
+    expect(expandButton).toHaveTextContent('显示更多')
+    await userEvent.click(expandButton)
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(15)
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('project-runtime-tasks-collapse-7'))
+    const collapseButton = screen.getByTestId('project-runtime-tasks-collapse-7')
+    expect(collapseButton).toHaveTextContent('收起')
+    await userEvent.click(collapseButton)
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
     expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
   })
@@ -276,9 +280,23 @@ describe('DesktopSidebar', () => {
         runtimeWorkLoad: { phase, error: phase === 'error' ? 'Request timed out' : null },
         onRetryRuntimeWork,
       })
-      expect(screen.getByTestId('runtime-work-load-status')).toBeInTheDocument()
+      const taskSection = screen.getByTestId('runtime-chat-section')
+      const status = screen.getByTestId('runtime-work-load-status')
+      expect(taskSection).toContainElement(status)
+      expect(
+        screen.getByTestId('runtime-chat-section-toggle').compareDocumentPosition(status) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
       expect(screen.queryByTestId('runtime-chat-empty')).not.toBeInTheDocument()
       expect(screen.queryByTestId('projects-empty-create-button')).not.toBeInTheDocument()
+
+      await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+      const priorityStatus = screen.getByTestId('runtime-work-load-status')
+      expect(priorityStatus.closest('nav')).toBeNull()
+      expect(
+        priorityStatus.compareDocumentPosition(screen.getByTestId('runtime-priority-section')) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
       if (phase === 'error') {
         await userEvent.click(screen.getByTestId('runtime-work-load-retry'))
         expect(onRetryRuntimeWork).toHaveBeenCalledOnce()
@@ -2727,6 +2745,7 @@ describe('DesktopSidebar', () => {
     })
 
     await user.click(screen.getByTestId('project-menu-7'))
+    expect(screen.getByTestId('archive-project-conversations-7')).toHaveTextContent('归档所有聊天')
     await user.click(screen.getByTestId('archive-project-conversations-7'))
 
     const dialog = screen.getByTestId('archive-project-conversations-dialog-7')

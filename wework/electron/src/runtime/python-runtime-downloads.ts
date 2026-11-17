@@ -114,6 +114,9 @@ export async function fetchPythonRuntimeDownloads(
     throw new Error('Python download configuration: Backend changed during request')
   const platform = options.platform ?? process.platform
   const arch = options.arch ?? process.arch
+  const startedAt = performance.now()
+  let phase = 'headers'
+  let headersMs: number | undefined
   const payload = await metadataRequest(async signal => {
     const response = await options.fetch(`${api}/wework/runtime-downloads`, {
       method: 'POST',
@@ -121,11 +124,24 @@ export async function fetchPythonRuntimeDownloads(
       body: JSON.stringify({ platform, arch, uvVersion: '0.9.5', pythonVersion: '3.12.12' }),
       signal,
     })
+    headersMs = performance.now() - startedAt
+    phase = 'body'
     if (response.status === 401) throw new PythonRuntimeLoginRequiredError()
     if (!response.ok) throw new Error(`Python download configuration: HTTP ${response.status}`)
-    return response.json().catch(() => {
+    const payload = await response.json().catch(() => {
       throw new Error('Python download configuration: invalid response')
     })
+    phase = 'completed'
+    return payload
+  }).catch(error => {
+    if (error instanceof PythonRuntimeDownloadTimeoutError)
+      console.warn('[python-runtime]', {
+        event: 'python-runtime-download-config-timeout',
+        phase,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        headersMs: headersMs == null ? undefined : Math.round(headersMs),
+      })
+    throw error
   })
   if (payload?.uv?.version !== '0.9.5' || payload?.python?.version !== '3.12.12')
     throw new Error('Python download configuration: invalid runtime version')

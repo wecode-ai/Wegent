@@ -160,6 +160,14 @@ impl RuntimeWorkRpcHandler {
         let operation_gate =
             self.task_send_gate(&format!("automation-operation:{}", automation.id));
         let _operation_guard = operation_gate.lock().await;
+        if !self
+            .automation_store
+            .allow_dispatch(&automation, &run, Utc::now())
+            .unwrap_or(false)
+        {
+            self.emit_automation_runs_changed(&automation.id, &run.id);
+            return;
+        }
         let payload = if automation.task_request["type"] == "wework_control" {
             self.control_automation_payload(&automation).await
         } else {
@@ -218,6 +226,14 @@ impl RuntimeWorkRpcHandler {
         }
         set_payload_string(&mut payload, "message", &automation.prompt);
         add_automation_context(&mut payload, &automation.id, &run.id, run.scheduled_for);
+        if !self
+            .automation_store
+            .allow_dispatch(&automation, &run, Utc::now())
+            .unwrap_or(false)
+        {
+            self.emit_automation_runs_changed(&automation.id, &run.id);
+            return;
+        }
         let _ = self.automation_store.mark_running(&run.id, task_id.clone());
 
         let result = match automation.conversation_mode {
@@ -251,7 +267,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn refresh_automation_model(&self, payload: &mut Value) -> Result<(), AppIpcError> {
-        self.refresh_automation_payload_model(payload).await?;
+        self.refresh_persisted_model_credentials(payload).await?;
         for path in [
             "/runtimeHandle/collaborationMemberRuntimeProfiles",
             "/runtime_handle/collaborationMemberRuntimeProfiles",
@@ -261,7 +277,7 @@ impl RuntimeWorkRpcHandler {
             };
             for profile in profiles {
                 if let Some(member) = profile.get_mut("runtimePayload") {
-                    self.refresh_automation_payload_model(member).await?;
+                    self.refresh_persisted_model_credentials(member).await?;
                 }
                 if let Some(variants) = profile
                     .get_mut("modelRuntimeProfiles")
@@ -269,47 +285,9 @@ impl RuntimeWorkRpcHandler {
                 {
                     for variant in variants {
                         if let Some(member) = variant.get_mut("runtimePayload") {
-                            self.refresh_automation_payload_model(member).await?;
+                            self.refresh_persisted_model_credentials(member).await?;
                         }
                     }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn refresh_automation_payload_model(
-        &self,
-        payload: &mut Value,
-    ) -> Result<(), AppIpcError> {
-        let Some(selection) = creation::normalized_selection(payload)? else {
-            return Ok(());
-        };
-        if !matches!(
-            selection["modelType"].as_str(),
-            Some("public" | "user" | "group")
-        ) {
-            return Ok(());
-        }
-        let runtime = payload["runtime"].as_str().unwrap_or("codex");
-        // A persisted model identity is reusable; its access token is not.
-        let current = self
-            .creation_model_config(runtime, &selection, &Value::Null)
-            .await?;
-        for key in ["modelConfig", "executionRequest", "execution_request"] {
-            if !payload[key].is_object() {
-                continue;
-            }
-            let config = if key == "modelConfig" {
-                &mut payload[key]
-            } else {
-                &mut payload[key]["model_config"]
-            };
-            if !config.is_object() {
-                *config = current.clone();
-            } else {
-                for field in ["api_key", "base_url", "default_headers"] {
-                    config[field] = current[field].clone();
                 }
             }
         }
@@ -319,9 +297,13 @@ impl RuntimeWorkRpcHandler {
     pub(super) fn finish_automation_run(
         &self,
         local_task_id: &str,
+        request: &ExecutionRequest,
         status: AutomationRunStatus,
         error: Option<String>,
     ) {
+        if super::super::util::is_private_discussion(request) {
+            return;
+        }
         if let Some(automation_id) =
             self.automation_store
                 .complete_task(local_task_id, status, error)

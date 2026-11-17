@@ -46,8 +46,14 @@ export function useFocusedComment(
       window.removeEventListener('resize', schedule)
     }
     const cancel = () => {
-      revealed.current = { commentId, requestKey, cancelled: true }
-      cleanup()
+      // The initial notification navigation may overlap synthetic reading input
+      // while layout is still settling. Keep the request active so a late sticky
+      // composer can still establish readable context; manual scrolling after
+      // that initial reveal continues to cancel background repositioning.
+      if (located || !ready) {
+        revealed.current = { commentId, requestKey, cancelled: true }
+        cleanup()
+      }
     }
     const cancelPointer = (event: Event) => {
       if (event.target instanceof Element && event.target.closest('.task-detail-comment-bar'))

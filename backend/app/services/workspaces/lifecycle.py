@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
+from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.workspace import WorkspaceCreate, WorkspaceUpdate
 from app.services.cloud_project_visibility import readable_workspace_ids
@@ -50,10 +51,7 @@ class WorkspaceLifecycleService:
                 status.HTTP_403_FORBIDDEN,
                 "Insufficient permission to create a Workspace in this Group",
             )
-        personal_workspaces = self._owned_active_kinds(db, user_id, namespace="default")
-        is_default = values.namespace == "default" and (
-            values.is_default or not personal_workspaces
-        )
+        is_default = values.namespace == "default" and values.is_default
         public_id = str(uuid.uuid4())
         kind = Kind(
             user_id=user_id,
@@ -88,10 +86,12 @@ class WorkspaceLifecycleService:
     def get_or_create_default(
         self, db: Session, user_id: int
     ) -> CollaborationWorkspace:
+        # Serialize first-use creation across concurrent project requests.
+        db.get(User, user_id, with_for_update=True)
         owned = self._owned_active_kinds(db, user_id, namespace="default")
         for kind in owned:
             workspace = workspace_from_kind(kind)
-            if workspace.is_default:
+            if workspace.is_system_default:
                 ensure_human_member(
                     db,
                     workspace_id=workspace.id,
@@ -99,18 +99,6 @@ class WorkspaceLifecycleService:
                     role=BaseRole.Owner,
                 )
                 return workspace
-        if owned:
-            kind = owned[0]
-            self._set_kind_values(kind, is_default=True)
-            self._clear_other_defaults(db, user_id, int(kind.id))
-            ensure_human_member(
-                db,
-                workspace_id=int(kind.id),
-                user_id=user_id,
-                role=BaseRole.Owner,
-            )
-            db.flush()
-            return workspace_from_kind(kind)
         return self._create_uncommitted_default(db, user_id)
 
     def list_accessible(
@@ -152,8 +140,6 @@ class WorkspaceLifecycleService:
         return require_workspace_role(db, workspace_id, user_id)
 
     def transfer_ownership(self, db: Session, workspace_id: int, user_id: int, values):
-        from app.models.user import User
-
         require_workspace_role(db, workspace_id, user_id, BaseRole.Owner)
         kind = db.query(Kind).filter_by(id=workspace_id).with_for_update().one()
         if workspace_from_kind(kind).version != values.version:
@@ -182,7 +168,7 @@ class WorkspaceLifecycleService:
         metadata = dict(payload.get("metadata") or {})
         metadata.setdefault("createdByUserId", kind.user_id)
         kind.json = {**payload, "metadata": metadata}
-        self._set_kind_values(kind, is_default=False)
+        self._set_kind_values(kind, is_default=False, clear_system_default=True)
         for member_user_id in (kind.user_id, target.id):
             member = ensure_human_member(
                 db,
@@ -292,14 +278,15 @@ class WorkspaceLifecycleService:
         kind = Kind(
             user_id=user_id,
             kind=COLLABORATION_WORKSPACE_KIND,
-            name="默认协作空间",
+            name="默认空间",
             namespace="default",
             json=workspace_kind_payload(
-                name="默认协作空间",
+                name="默认空间",
                 description="",
                 namespace="default",
                 public_id=public_id,
                 is_default=True,
+                is_system_default=True,
                 created_by_user_id=user_id,
             ),
             is_active=True,
@@ -307,6 +294,7 @@ class WorkspaceLifecycleService:
         db.add(kind)
         db.flush()
         db.add(_owner_membership(int(kind.id), user_id))
+        self._clear_other_defaults(db, user_id, int(kind.id))
         return workspace_from_kind(kind)
 
     @staticmethod
@@ -349,6 +337,7 @@ class WorkspaceLifecycleService:
         name: str | None = None,
         description: str | None = None,
         is_default: bool | None = None,
+        clear_system_default: bool = False,
         execution_environment: dict | None = None,
         state: str = "active",
     ) -> None:
@@ -363,6 +352,7 @@ class WorkspaceLifecycleService:
             namespace=current.namespace,
             public_id=current.public_id,
             is_default=(is_default if is_default is not None else current.is_default),
+            is_system_default=current.is_system_default and not clear_system_default,
             execution_environment=(
                 execution_environment
                 if execution_environment is not None

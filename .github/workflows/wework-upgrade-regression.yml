@@ -73,6 +73,8 @@ jobs:
           else
             node wework/scripts/sync-desktop-release-version.mjs "$REGRESSION_TARGET_VERSION"
           fi
+      - name: Verify Windows native runtime independence
+        run: node --test wework/scripts/windows-native-runtime.test.mjs
       - name: Build complete native application with the real runtime
         env:
           WEWORK_SOURCE_SHA: ${{ github.sha }}

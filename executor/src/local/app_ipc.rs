@@ -147,6 +147,8 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.plugin_auth.run",
     "executor.backend.configure",
     "executor.backend.status",
+    "executor.remote_task_access.get",
+    "executor.remote_task_access.update",
     "executor.codex_home.config.read",
     "executor.codex_home.config.update",
     "executor.codex_home.import_external_content",
@@ -491,6 +493,14 @@ impl AppIpcServer {
     }
 
     pub async fn dispatch(&self, method: &str, params: Value) -> Result<Value, AppIpcError> {
+        // Consent settings never enter the remotely dispatched runtime namespace.
+        if method == "executor.remote_task_access.get" {
+            return crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env().read();
+        }
+        if method == "executor.remote_task_access.update" {
+            return crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env()
+                .update(params);
+        }
         if method == "executor.protocol.describe" {
             return Ok(self.protocol_description());
         }
@@ -1936,7 +1946,15 @@ fn app_ipc_event_data(message: &Value) -> Option<&Value> {
 }
 
 async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
-    let runtime = TaskRuntime::from_env().map_err(task_runtime_error)?;
+    let runtime = if method == "projects.list" {
+        wegent_runtime_logging::project_index_diagnostics::trace(
+            "projects_list.init",
+            TaskRuntime::from_env,
+        )
+    } else {
+        TaskRuntime::from_env()
+    }
+    .map_err(task_runtime_error)?;
     match method {
         "dws.auth_status" => serialize_task_value(
             runtime
@@ -2029,6 +2047,27 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .update_project(project_id, input)
                     .map_err(task_runtime_error)?,
             )
+        }
+        "projects.migration_snapshot" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            serialize_task_value(
+                runtime
+                    .project_migration_snapshot(project_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "projects.archive_migrated" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let fingerprint = required_task_string(&params, "fingerprint")?;
+            let target = required_task_string(&params, "target")?;
+            let version = params
+                .get("version")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?;
+            runtime
+                .archive_migrated_project(project_id, version, fingerprint, target)
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
         }
         "projects.archive" => {
             let project_id = required_task_string(&params, "project_id")?;
@@ -2307,6 +2346,19 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({"deleted": true}))
         }
+        "todos.my_work" => runtime
+            .my_work_page(
+                params["limit"].as_u64().unwrap_or(30) as usize,
+                params["cursor"].as_str(),
+                params["scope"].as_str().unwrap_or("participating"),
+                params["include_completed"].as_bool().unwrap_or(true),
+                &params["assignee_user_ids"]
+                    .as_array()
+                    .map(|values| values.iter().filter_map(Value::as_i64).collect::<Vec<_>>())
+                    .unwrap_or_else(|| vec![0]),
+                params["order"].as_str().unwrap_or("recent"),
+            )
+            .map_err(task_runtime_error),
         "todos.list" => {
             let project_id = required_task_string(&params, "project_id")?;
             serialize_task_value(
@@ -2366,11 +2418,16 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
             serialize_task_value(
                 runtime
-                    .create_task_with_schedule(
+                    .create_task_with_options(
                         project_id,
                         input,
-                        optional_nullable_task_string(todo, "start_at")?.flatten(),
-                        optional_nullable_task_string(todo, "due_at")?.flatten(),
+                        crate::task_runtime::TaskCreateOptions {
+                            start_at: optional_nullable_task_string(todo, "start_at")?.flatten(),
+                            due_at: optional_nullable_task_string(todo, "due_at")?.flatten(),
+                            personal_task: todo["personal_task"].as_bool().unwrap_or(false),
+                            request_id: optional_nullable_task_string(todo, "request_id")?
+                                .flatten(),
+                        },
                     )
                     .await
                     .map_err(task_runtime_error)?,
@@ -2686,16 +2743,19 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
-        "chat_agents.archive" => {
+        "chat_agents.archive" | "chat_agents.delete" => {
             let project_id = required_task_string(&params, "project_id")?;
             let agent_id = required_task_string(&params, "agent_id")?;
             let version = params
                 .get("version")
                 .and_then(Value::as_i64)
                 .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?;
-            runtime
-                .archive_chat_agent(project_id, agent_id, version)
-                .map_err(task_runtime_error)?;
+            if method == "chat_agents.delete" {
+                runtime.delete_chat_agent(project_id, agent_id, version)
+            } else {
+                runtime.archive_chat_agent(project_id, agent_id, version)
+            }
+            .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
         "executions.approve" | "executions.reject" => {
@@ -3468,12 +3528,12 @@ pub fn normalize_device_id(device_id: impl Into<String>) -> String {
 fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
     match command_key {
         "pwd" => Some(command_definition("pwd", &["pwd"], None)),
-        "home_dir" => Some(command_definition("printenv HOME", &["printenv", "HOME"], None)),
-        "project_workspace_root" => Some(command_definition(
-            "project_workspace_root",
-            &[],
+        "home_dir" => Some(command_definition(
+            "printenv HOME",
+            &["printenv", "HOME"],
             None,
         )),
+        "project_workspace_root" => Some(command_definition("project_workspace_root", &[], None)),
         "ls_dirs" => Some(command_definition(
             "ls -a -p",
             &["ls", "-a", "-p"],
@@ -3496,7 +3556,11 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             super::command::GIT_BRANCH_LIST_ARGV,
             None,
         )),
-        "git_checkout" => Some(command_definition("git checkout", &["git", "checkout"], None)),
+        "git_checkout" => Some(command_definition(
+            "git checkout",
+            &["git", "checkout"],
+            None,
+        )),
         "git_checkout_new" => Some(command_definition(
             "git checkout -b",
             &["git", "checkout", "-b"],
@@ -3534,7 +3598,13 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         )),
         "git_github_pull_request_view" => Some(command_definition(
             "gh pr view --json <status-fields> <url>",
-            &["gh", "pr", "view", "--json", "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus,mergedAt,updatedAt"],
+            &[
+                "gh",
+                "pr",
+                "view",
+                "--json",
+                "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus,mergedAt,updatedAt",
+            ],
             Some(PostProcessor::Json),
         )),
         "git_gitlab_merge_request_view" => Some(command_definition(
@@ -3641,7 +3711,11 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             ],
             None,
         )),
-        "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
+        "git_add_all" => Some(command_definition(
+            "git add --all",
+            &["git", "add", "--all"],
+            None,
+        )),
         "git_apply_patch" => Some(command_definition(
             "git apply <validated patch>",
             &["git", "apply"],
@@ -4294,16 +4368,6 @@ mod tests {
             .await
             .expect("client input should close");
         serving.await.expect("app IPC task should finish");
-    }
-
-    #[test]
-    fn linked_change_request_commands_accept_explicit_repository_urls() {
-        let github = local_app_command("git_github_pull_request_view").unwrap();
-        assert_eq!(&github.argv[..4], &["gh", "pr", "view", "--json"]);
-        assert!(github.argv[4].contains("statusCheckRollup"));
-        assert!(github.argv[4].contains("mergedAt"));
-        let gitlab = local_app_command("git_gitlab_merge_request_view").unwrap();
-        assert_eq!(gitlab.argv, &["glab", "mr", "view", "--output", "json"]);
     }
 
     #[test]

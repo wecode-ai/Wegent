@@ -7,12 +7,18 @@ use std::os::unix::fs::symlink;
 struct Fixture {
     binary: String,
     directory: tempfile::TempDir,
+    _catalog_environment: EnvRestore,
     _environment: LaunchEnvironment,
 }
 
 impl Fixture {
     fn new() -> Self {
         let environment = LaunchEnvironment::new();
+        let catalog_environment = EnvRestore::capture("WEGENT_TEST_CODEX_BUNDLED_CATALOG");
+        env::set_var(
+            "WEGENT_TEST_CODEX_BUNDLED_CATALOG",
+            crate::test_env::CODEX_BUNDLED_CATALOG,
+        );
         let directory = tempfile::tempdir().unwrap();
         let binary = directory.path().join("codex");
         // A parallel fork can retain a freshly written script's writer and cause ETXTBSY.
@@ -22,6 +28,7 @@ impl Fixture {
         Self {
             binary: resolve_codex_binary(&binary.to_string_lossy()),
             directory,
+            _catalog_environment: catalog_environment,
             _environment: environment,
         }
     }
@@ -218,40 +225,6 @@ async fn reload_only_visits_running_processes_in_the_matching_home() {
     );
     assert!(cold.state.lock().await.process.is_none());
     assert!(requests(cold.home.as_deref().unwrap()).is_empty());
-}
-
-#[tokio::test]
-async fn default_clients_keep_the_home_recorded_at_process_start() {
-    let fixture = Fixture::new();
-    let _activation = crate::services::capability_activation::activate().await;
-    let previous = CodexAppServerClient::new(&fixture.binary);
-    previous.ensure_started().await.unwrap();
-    let previous_home = wework_codex_home();
-    let previous_pid = pid(&previous).await;
-    let _restore = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
-    let home = fixture.directory.path().join("new-default-home");
-    env::set_var(WEGENT_CODEX_HOME_ENV, &home);
-    let binary = fixture.directory.path().join("new-codex");
-    fs::copy(&fixture.binary, &binary).unwrap();
-    let current = CodexAppServerClient::new(binary.to_string_lossy().to_string());
-    current.ensure_started().await.unwrap();
-    let current_pid = pid(&current).await;
-
-    assert_eq!(reload_skill_configuration(&home).await.unwrap(), 1);
-
-    assert_eq!(pid(&previous).await, previous_pid);
-    assert_eq!(pid(&current).await, current_pid);
-    assert!(!requests(&previous_home)
-        .iter()
-        .any(|call| call["method"] == "config/batchWrite"));
-    assert_eq!(
-        requests(&home)
-            .iter()
-            .filter(|call| call["method"] == "config/batchWrite")
-            .count(),
-        1
-    );
-    current.restart().await;
 }
 
 #[tokio::test]

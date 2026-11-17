@@ -56,12 +56,166 @@ async fn with_fixture(run: impl AsyncFnOnce(&Fixture)) {
     let outcome = std::panic::AssertUnwindSafe(run(&fixture))
         .catch_unwind()
         .await;
+    crate::responses::stream_state::unregister_stream(Some(&fixture.redis), fixture.subtask_id)
+        .await;
     session::cleanup_streaming_state(&fixture.redis, fixture.subtask_id, Some(fixture.task_id))
         .await
         .expect("remove fixture keys");
+    fixture
+        .redis
+        .del(crate::internal_callback::pipeline::execution_lease_key(
+            fixture.task_id,
+            fixture.subtask_id,
+        ))
+        .await
+        .expect("remove fixture lease");
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+}
+
+#[tokio::test]
+#[ignore = "requires explicit disposable WEGENT_TEST_REDIS_ADDRESS; CI runs this group"]
+async fn indexed_blocks_preserve_reserved_ids_and_python_writer_positions() {
+    with_fixture(async |fixture| {
+        let redis = &fixture.redis;
+        let id = fixture.subtask_id;
+        let list = session::blocks_key(id);
+        let index = format!("chat:streaming:blocks_index:{id}");
+        let ids = ["_watermark", "_watermark_id", "block:a", "a"];
+        for block_id in ids {
+            let mut block = json!({"id": block_id, "type": "tool", "tool_use_id": block_id,
+                "status": "pending", "tool_output": "original"}).as_object().unwrap().clone();
+            session::add_block(redis, id, &mut block).await.unwrap();
+        }
+        for block_id in ids {
+            session::update_tool_block_status(redis, id, block_id, Some("done"),
+                Some(&json!("updated")), None, None, None, None).await.unwrap();
+        }
+        let blocks = session::get_blocks(redis, id).await;
+        assert_eq!(blocks.len(), ids.len());
+        for (block, block_id) in blocks.iter().zip(ids) {
+            assert_eq!(block["id"], block_id);
+            assert_eq!(block["tool_output"], "updated");
+            let position: Option<String> = redis.hget(&index, format!("block:{block_id}")).await.unwrap();
+            assert!(position.is_some());
+        }
+
+        // A Python writer records its append position using the same field format.
+        let length = redis.rpush(&list, (r#"{"id":"python","type":"tool","tool_use_id":"python"}"#,)).await.unwrap();
+        redis.hset(&index, "block:python", length - 1).await.unwrap();
+        assert_eq!(session::get_block(redis, id, "python").await.unwrap().unwrap()["id"], "python");
+        // Legacy writers can append without the index, far beyond a fixed tail.
+        for offset in 0..20 {
+            redis.rpush(&list, (format!(r#"{{"id":"legacy-{offset}","type":"tool","tool_use_id":"legacy-{offset}"}}"#),)).await.unwrap();
+        }
+        session::update_tool_block_status(redis, id, "legacy-0", Some("done"), None, None, None, None, None).await.unwrap();
+        assert_eq!(session::get_blocks(redis, id).await.len(), 25);
+        assert_eq!(session::get_block(redis, id, "legacy-0").await.unwrap().unwrap()["status"], "done");
+
+        // Expiring the cache rebuilds it from the unchanged source list.
+        let mut expire = brz_redis::cmd("PEXPIREAT");
+        expire.arg_encoded(&index).unwrap().arg_encoded(1).unwrap();
+        let _: i64 = redis.command(expire).await.unwrap();
+        assert!(session::get_block(redis, id, "_watermark_id").await.unwrap().is_some());
+        session::cleanup_streaming_state(redis, id, None).await.unwrap();
+        let remaining: Option<String> = redis.hget(&index, "block:_watermark_id").await.unwrap();
+        assert!(remaining.is_none(), "cleanup removes the index with the list");
+    }).await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit disposable WEGENT_TEST_REDIS_ADDRESS; CI runs this group"]
+async fn identified_text_and_block_updates_share_the_streaming_index() {
+    with_fixture(async |fixture| {
+        let redis = &fixture.redis;
+        let id = fixture.subtask_id;
+        session::add_identified_text_content(redis, id, "你好", "_watermark_id", Some(0))
+            .await
+            .unwrap();
+        session::add_thinking_content(redis, id, "reasoning")
+            .await
+            .unwrap();
+        session::add_identified_text_content(redis, id, "next", "next-text", Some(0))
+            .await
+            .unwrap();
+        session::add_identified_text_content(redis, id, "!", "next-text", Some(4))
+            .await
+            .unwrap();
+        session::add_identified_text_content(redis, id, "next!", "next-text", Some(0))
+            .await
+            .unwrap();
+        assert!(
+            session::add_identified_text_content(redis, id, "gap", "next-text", Some(8))
+                .await
+                .is_err(),
+            "a forward gap fails before changing block state"
+        );
+        let first = session::get_block(redis, id, "_watermark_id")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first["content"], "你好");
+        assert_eq!(first["status"], "done");
+        let next = session::get_block(redis, id, "next-text")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(next["content"], "next!");
+        assert!(!next.contains_key(session::BLOCK_CONTENT_KEY_FIELD));
+        let loaded = session::finalize_and_get_blocks(redis, id, None, Some("COMPLETED")).await;
+        assert_eq!(loaded.blocks.len(), 3);
+        assert!(loaded.blocks.iter().all(|block| block["status"] == "done"));
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit disposable WEGENT_TEST_REDIS_ADDRESS; CI runs this group"]
+async fn response_cancel_registration_preserves_intent_until_atomic_owner_cleanup() {
+    with_fixture(async |fixture| {
+        use crate::responses::stream_state::{register_stream, unregister_stream};
+        let flag = format!("chat:cancel:{}", fixture.subtask_id);
+        let intent = format!("chat:cancel-intent:{}", fixture.subtask_id);
+
+        fixture.redis.set(&flag, "true").await.expect("old flag");
+        register_stream(Some(&fixture.redis), fixture.subtask_id).await;
+        let cleared: Option<String> = fixture.redis.get(&flag).await.expect("old flag read");
+        assert!(
+            cleared.is_none(),
+            "registration clears a flag without an intent"
+        );
+
+        fixture
+            .redis
+            .set(&intent, "pending-token")
+            .await
+            .expect("admitted intent");
+        register_stream(Some(&fixture.redis), fixture.subtask_id).await;
+        fixture
+            .redis
+            .set(&flag, "true")
+            .await
+            .expect("committed notification");
+        // Both the outer response and inner dispatch may register after COMMIT.
+        register_stream(Some(&fixture.redis), fixture.subtask_id).await;
+        register_stream(Some(&fixture.redis), fixture.subtask_id).await;
+        let preserved: Option<String> = fixture.redis.get(&flag).await.expect("flag read");
+        assert_eq!(preserved.as_deref(), Some("true"));
+        let preserved_intent: Option<String> =
+            fixture.redis.get(&intent).await.expect("intent read");
+        assert_eq!(preserved_intent.as_deref(), Some("pending-token"));
+
+        unregister_stream(Some(&fixture.redis), fixture.subtask_id).await;
+        let closed: Vec<Option<String>> = fixture
+            .redis
+            .mget([&flag, &intent])
+            .await
+            .expect("closed keys");
+        assert_eq!(closed, [None, None]);
+        unregister_stream(Some(&fixture.redis), fixture.subtask_id).await;
+    })
+    .await;
 }
 
 // Only inject a failed START command or a new START immediately after GET.
@@ -85,6 +239,15 @@ impl<'a> InterleavedRedis<'a> {
 }
 
 impl Redis for InterleavedRedis<'_> {
+    async fn hset<K, F, V>(&self, key: K, field: F, value: V) -> RedisResult<i64>
+    where
+        K: EncodeRedisArg + Send,
+        F: EncodeRedisArg + Send,
+        V: EncodeRedisArg + Send,
+    {
+        self.fixture.redis.hset(key, field, value).await
+    }
+
     async fn eval<S, K, A, T>(&self, script: S, keys: K, arguments: A) -> RedisResult<T>
     where
         S: EncodeRedisArg + Send,
@@ -303,6 +466,179 @@ async fn activity_cas_never_overwrites_a_start_after_its_get() {
             );
             assert_eq!(fixture.marker().await["subtask_id"], fixture.subtask_id + 1);
         }
+    })
+    .await;
+}
+
+async fn lease_ttl(redis: &RedisService, key: &str) -> i64 {
+    let mut command = brz_redis::cmd("PTTL");
+    command.arg(key);
+    redis.command(command).await.expect("lease TTL")
+}
+
+#[tokio::test]
+#[ignore = "requires explicit disposable WEGENT_TEST_REDIS_ADDRESS; CI runs this group"]
+async fn pipeline_receipt_is_fenced_and_preserves_the_live_owner_ttl() {
+    use crate::internal_callback::completion::lease_receipt::{LeaseReceipt, accepted_owner};
+    use brz_redis::{SetExpiration, SetOptions};
+    with_fixture(async |fixture| {
+        let key = crate::internal_callback::pipeline::execution_lease_key(
+            fixture.task_id,
+            fixture.subtask_id,
+        );
+        let owner = LeaseReceipt::new(&key, "owner".into());
+        let old_owner = LeaseReceipt::new(&key, "old-owner".into());
+        assert!(
+            !owner.accept(&fixture.redis).await.unwrap(),
+            "missing owner"
+        );
+        assert!(!accepted_owner(&fixture.redis, &key).await.unwrap());
+        fixture
+            .redis
+            .set_with(
+                &key,
+                "owner",
+                SetOptions::default().with_expiration(SetExpiration::Milliseconds(10_000)),
+            )
+            .await
+            .unwrap();
+        assert!(
+            owner.renew(&fixture.redis, 10_000).await.unwrap(),
+            "raw owner renews before first event"
+        );
+        let before = lease_ttl(&fixture.redis, &key).await;
+        assert!(!old_owner.accept(&fixture.redis).await.unwrap());
+        assert!(!old_owner.renew(&fixture.redis, 30_000).await.unwrap());
+        assert!(!old_owner.release(&fixture.redis).await.unwrap());
+        assert!(owner.accept(&fixture.redis).await.unwrap());
+        assert!(
+            owner.accept(&fixture.redis).await.unwrap(),
+            "idempotent owner acceptance"
+        );
+        assert!(accepted_owner(&fixture.redis, &key).await.unwrap());
+        let after = lease_ttl(&fixture.redis, &key).await;
+        assert!(
+            after > 0 && after <= before,
+            "acceptance must not extend TTL"
+        );
+        assert_eq!(
+            fixture
+                .redis
+                .get::<_, String>(&key)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("accepted:owner")
+        );
+        assert!(owner.renew(&fixture.redis, 30_000).await.unwrap());
+        assert!(lease_ttl(&fixture.redis, &key).await > after);
+        assert!(!old_owner.release(&fixture.redis).await.unwrap());
+        assert!(owner.release(&fixture.redis).await.unwrap());
+        assert!(!accepted_owner(&fixture.redis, &key).await.unwrap());
+
+        fixture.redis.set(&key, "owner").await.unwrap();
+        assert!(
+            !owner.accept(&fixture.redis).await.unwrap(),
+            "a non-expiring value is not a live lease"
+        );
+        let mut expire = brz_redis::cmd("PEXPIREAT");
+        expire.arg(&key).arg(1);
+        fixture.redis.command::<i64>(expire).await.unwrap();
+        assert!(
+            !owner.accept(&fixture.redis).await.unwrap(),
+            "expired owner cannot be resurrected"
+        );
+        fixture
+            .redis
+            .set_with(
+                &key,
+                "new-owner",
+                SetOptions::default().with_expiration(SetExpiration::Milliseconds(10_000)),
+            )
+            .await
+            .unwrap();
+        assert!(!owner.accept(&fixture.redis).await.unwrap());
+        assert!(!owner.renew(&fixture.redis, 30_000).await.unwrap());
+        assert!(!owner.release(&fixture.redis).await.unwrap());
+        assert_eq!(
+            fixture
+                .redis
+                .get::<_, String>(&key)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("new-owner")
+        );
+        fixture.redis.del(&key).await.unwrap();
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires explicit disposable WEGENT_TEST_REDIS_ADDRESS; CI runs this group"]
+async fn pipeline_receipt_observers_never_execute_or_release_the_owner() {
+    use crate::internal_callback::completion::{LeaseReceipt, with_owned_lease};
+    use brz_redis::{SetExpiration, SetOptions};
+    with_fixture(async |fixture| {
+        let key = crate::internal_callback::pipeline::execution_lease_key(
+            fixture.task_id,
+            fixture.subtask_id,
+        );
+        fixture
+            .redis
+            .set_with(
+                &key,
+                "fixture",
+                SetOptions::default().with_expiration(SetExpiration::Milliseconds(20_000)),
+            )
+            .await
+            .unwrap();
+        let started = tokio::time::Instant::now();
+        let phantom = with_owned_lease(
+            &fixture.redis,
+            &key,
+            || "unaccepted",
+            Some(|| ()),
+            |_| async {
+                panic!("a busy observer must not run consumer work or its cleanup");
+                #[allow(unreachable_code)]
+                Ok::<(), &str>(())
+            },
+        )
+        .await;
+        assert_eq!(phantom, Err("unaccepted"));
+        assert!(started.elapsed() >= std::time::Duration::from_secs(5));
+        let owner = LeaseReceipt::new(&key, "fixture".into());
+        assert!(owner.accept(&fixture.redis).await.unwrap());
+        let before = lease_ttl(&fixture.redis, &key).await;
+        let observed = with_owned_lease(
+            &fixture.redis,
+            &key,
+            || "unavailable",
+            Some(|| ()),
+            |_| async {
+                panic!("an accepted observer must not run consumer work or its cleanup");
+                #[allow(unreachable_code)]
+                Ok::<(), &str>(())
+            },
+        )
+        .await;
+        assert_eq!(observed, Ok(()));
+        let after = lease_ttl(&fixture.redis, &key).await;
+        assert!(
+            after > 0 && after <= before,
+            "observer does not renew or release"
+        );
+        assert_eq!(
+            fixture
+                .redis
+                .get::<_, String>(&key)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("accepted:fixture")
+        );
+        owner.release(&fixture.redis).await.unwrap();
     })
     .await;
 }

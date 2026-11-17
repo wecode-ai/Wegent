@@ -238,6 +238,21 @@ fn account_identity(account: &ParsedAuthAccount, auth: &[u8]) -> String {
     format!("{:x}", Sha256::digest(auth))
 }
 
+pub(super) fn quota_account_identity(request: &ExecutionRequest) -> Result<Option<String>, String> {
+    let home = crate::agents::instance_home::request_home(request)
+        .unwrap_or_else(crate::agents::wework_codex_home);
+    let auth = match fs::read(home.join("auth.json")) {
+        Ok(auth) => auth,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("Codex account identity is unavailable".into()),
+    };
+    let account = parse_auth_account(&auth).ok_or("Codex account identity is invalid")?;
+    Ok(Some(format!(
+        "{:x}",
+        Sha256::digest(account_identity(&account, &auth).as_bytes())
+    )))
+}
+
 fn current_auth_path() -> PathBuf {
     crate::agents::wework_codex_home().join("auth.json")
 }

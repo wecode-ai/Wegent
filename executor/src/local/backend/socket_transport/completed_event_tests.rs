@@ -83,8 +83,7 @@ fn completed_events_keep_terminal_state_within_device_wire_budget() {
         .enumerate()
         .map(|(index, wire)| {
             assert!(wire.len() <= 1_000_000, "wire size: {}", wire.len());
-            let args: Value =
-                serde_json::from_str(wire.strip_prefix("42/local-executor,").unwrap()).unwrap();
+            let args: Value = serde_json::from_str(wire_event_body(wire)).unwrap();
             assert_eq!(args[0], "response.completed");
             assert_eq!(args[1]["event_type"], "response.completed");
             assert_eq!(args[1]["task_id"], [11, 12, 13][index]);
@@ -195,7 +194,7 @@ fn managed_runner_reports_oversized_completions_and_recovers_remaining_diff() {
         .iter()
         .map(|wire| {
             assert!(wire.len() <= 1_000_000, "wire size: {}", wire.len());
-            serde_json::from_str::<Value>(wire.strip_prefix("42/local-executor,").unwrap()).unwrap()
+            serde_json::from_str::<Value>(wire_event_body(wire)).unwrap()
         })
         .collect::<Vec<_>>();
     for (index, event) in events.iter().enumerate() {
@@ -375,6 +374,26 @@ async fn send_events_over_device_socket(events: [EventEnvelope; 3], root: &Path)
     wires
 }
 
+#[tokio::test]
+async fn terminal_delivery_retries_a_rejected_ack_with_the_same_payload() {
+    let root = tempfile::tempdir().unwrap();
+    let mut device = WireDevice::connect_with_terminal_rejection(root.path(), true).await;
+    let sink = LocalBackendEventSink::new(device.client.clone());
+    let terminal =
+        ResponsesEventBuilder::new("11", "112", "coding-test").response_completed("saved result");
+    sink.send(terminal).await.unwrap();
+    let first = device.next_frame().await;
+    let retry = device.next_frame().await;
+    assert_ne!(first, retry, "each attempt has its own acknowledgement ID");
+    assert_eq!(wire_event_body(&first), wire_event_body(&retry));
+    device.close().await;
+}
+
+fn wire_event_body(packet: &str) -> &str {
+    let event = packet.strip_prefix("42/local-executor,").unwrap();
+    &event[event.find('[').unwrap()..]
+}
+
 struct WireDevice {
     client: LocalBackendClient<SocketIoTransport>,
     frames: mpsc::UnboundedReceiver<String>,
@@ -389,6 +408,10 @@ impl Drop for WireDevice {
 
 impl WireDevice {
     async fn connect(root: &Path) -> Self {
+        Self::connect_with_terminal_rejection(root, false).await
+    }
+
+    async fn connect_with_terminal_rejection(root: &Path, mut reject_terminal: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (sender, frames) = mpsc::unbounded_channel();
@@ -403,6 +426,25 @@ impl WireDevice {
                 }
                 if packet == "41/local-executor," {
                     return;
+                }
+                let ack_id = packet
+                    .strip_prefix("42/local-executor,")
+                    .and_then(|frame| frame.split_once('['))
+                    .map(|(id, _)| id)
+                    .filter(|id| !id.is_empty());
+                if let Some(ack_id) = ack_id {
+                    use futures_util::SinkExt;
+                    let payload = if std::mem::take(&mut reject_terminal) {
+                        json!([{"error":"terminal delivery temporarily unavailable"}])
+                    } else {
+                        json!([{"success":true}])
+                    };
+                    socket
+                        .send(Message::Text(format!(
+                            "43/local-executor,{ack_id}{payload}"
+                        )))
+                        .await
+                        .unwrap();
                 }
                 sender.send(packet).unwrap();
             }

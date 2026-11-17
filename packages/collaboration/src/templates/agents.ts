@@ -11,8 +11,8 @@ import type {
   CollaborationTemplate,
   TemplateRoleAssignments,
 } from './types'
-import { templateFailureMessage, templateMessages } from './messages'
-import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
+import { agentDefinitionRouting } from '../agent-form/runnerRouting'
+import { PartialTemplateApplyError } from './apply'
 
 const prefix = 'template-agent:'
 export const templateAgentId = (key: string) => `${prefix}${key}`
@@ -79,9 +79,7 @@ export async function materializeTemplateAgents(
     agent: TemplateAgent,
     routing: TemplateAgentRouting
   ) => Promise<CollaborationAgent>,
-  resolveRouting: TemplateRoutingResolver = async () => {
-    throw new TemplateConfigurationError('template_model_default_unavailable')
-  }
+  resolveRouting: TemplateRoutingResolver = templateRoutingResolver()
 ): Promise<{
   drafts: ProjectCreateCollaborationGroupDraft[]
   agentIds: Set<string>
@@ -174,47 +172,10 @@ export function templateAgentReferences(
 }
 
 export function templateRoutingResolver(
-  host: import('../project-agent-config/types').ProjectAgentConfigurationHost | undefined,
-  location: 'local' | 'cloud',
-  projectId?: string,
-  locale: 'zh-CN' | 'en' = 'en',
   environmentId?: string,
   models: Partial<
     Record<TemplateAgent['runtime'], import('../agent-form/runnerRouting').RunnerModelIdentity>
   > = {}
 ): TemplateRoutingResolver {
-  return async runtime => {
-    try {
-      if (!host?.resolveTemplateAgentRouting) throw new Error('template_model_default_unavailable')
-      const model = models[runtime]
-      if (model !== undefined)
-        return await host.resolveTemplateAgentRouting(
-          runtime,
-          location,
-          projectId,
-          environmentId,
-          model
-        )
-      return await (environmentId === undefined
-        ? host.resolveTemplateAgentRouting(runtime, location, projectId)
-        : host.resolveTemplateAgentRouting(runtime, location, projectId, environmentId))
-    } catch (cause) {
-      if (
-        cause instanceof Error &&
-        [
-          'template_model_default_unavailable',
-          'template_model_unavailable',
-          'template_environment_unavailable',
-          'template_environment_ambiguous',
-        ].includes(cause.message)
-      )
-        throw new TemplateConfigurationError(
-          cause.message === 'template_environment_unavailable' && !projectId
-            ? templateMessages[locale].destinationDeviceRequired
-            : templateFailureMessage(cause, locale),
-          { cause }
-        )
-      throw cause
-    }
-  }
+  return async runtime => agentDefinitionRouting(environmentId, models[runtime])
 }

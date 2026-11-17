@@ -149,6 +149,7 @@ import {
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
 import { captureFailureFollowup, failedWaitCondition } from './failure-followup.mjs'
+import { startRendererCpuProfile } from './renderer-cpu-profile.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -215,6 +216,8 @@ import {
   MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES,
   MODEL_API_KEY,
   MODEL_SWITCH_ONLY,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
   PASTED_WORKSPACE_PATHS_ONLY,
   PLUGIN_DISPLAY_NAME,
   PLUGIN_MARKETPLACE_NAME,
@@ -1254,9 +1257,10 @@ async function main() {
     desktopScenario = await loadDesktopScenario(process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE, {
       appIdentifier,
       checkpoint: SELECTED_DESKTOP_SEGMENT,
-      captureScreenshot: (control, name, selector) =>
-        captureVerificationScreenshot(control, name, selector),
+      captureScreenshot: (control, name, selector, options) =>
+        captureVerificationScreenshot(control, name, selector, options),
       codexSqliteHome,
+      codexHome,
       executorHome,
       electronUserDataDirectory,
       usesDefaultUserData,
@@ -1341,10 +1345,14 @@ async function main() {
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
     if (!RUNS_PLUGIN_E2E) {
+      const usesModelRoutingSubscription = DESKTOP_SEGMENT === 'model-routing' || MODEL_SWITCH_ONLY
+      const modelRoutingConfigToml = usesModelRoutingSubscription
+        ? `openai_base_url = "${control.url}/backend-api/codex"\nchatgpt_base_url = "${control.url}/backend-api/"`
+        : ''
       await writeCodexConfig(
         codexHome,
         desktopScenario?.modelServerUrl ?? control.url,
-        `${desktopScenario?.codexConfigToml ?? ''}\n${
+        `${desktopScenario?.codexConfigToml ?? ''}\n${modelRoutingConfigToml}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
         }\n${
           DESKTOP_SEGMENT === 'permission-modes'
@@ -1357,11 +1365,37 @@ async function main() {
         desktopScenario?.modelProviderId,
         desktopScenario?.modelId
       )
-      await writeFile(
-        join(codexHome, 'auth.json'),
-        `${JSON.stringify({ OPENAI_API_KEY: MODEL_API_KEY })}\n`,
-        'utf8'
-      )
+      if (usesModelRoutingSubscription) {
+        const claims = Buffer.from(
+          JSON.stringify({
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            'https://api.openai.com/auth': {
+              chatgpt_account_id: PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+              chatgpt_plan_type: 'pro',
+            },
+          })
+        ).toString('base64url')
+        await writeFile(
+          join(codexHome, 'auth.json'),
+          `${JSON.stringify({
+            auth_mode: 'chatgpt',
+            tokens: {
+              account_id: PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+              access_token: PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
+              refresh_token: 'wework-model-switch-e2e-refresh',
+              id_token: `header.${claims}.signature`,
+            },
+            last_refresh: new Date().toISOString(),
+          })}\n`,
+          'utf8'
+        )
+      } else {
+        await writeFile(
+          join(codexHome, 'auth.json'),
+          `${JSON.stringify({ OPENAI_API_KEY: MODEL_API_KEY })}\n`,
+          'utf8'
+        )
+      }
     }
 
     const needsPackagedHarnessRuntime =
@@ -1411,9 +1445,6 @@ async function main() {
       WEWORK_E2E_BACKGROUND_WINDOW: process.env.WEWORK_E2E_BACKGROUND_WINDOW ?? '1',
       WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '1',
       WEWORK_E2E_DISABLE_PYTHON_BOOTSTRAP: '1',
-      ...(DESKTOP_SEGMENT === 'local-file-preview'
-        ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
-        : {}),
       WEWORK_APP_CONFIG_DIR: join(homePath, 'app-config'),
       WEWORK_E2E_CLOUD_BACKEND_URL: cloudEnvironment?.backendUrl ?? control.url,
       WEWORK_E2E_CLOUD_TOKEN:
@@ -3075,7 +3106,15 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         control.setScenario('late_bound_project_space')
         const lateBoundRequestCount =
           control.scenarioRequests.get('late_bound_project_space')?.length ?? 0
-        await sendPrompt(control, composerSelector, LATE_BOUND_PROJECT_SPACE_PROMPT)
+        // Native admission precedes this four-request tool loop. Reuse its
+        // model-request readiness boundary instead of spending the loop budget
+        // on UI submission and native thread initialization.
+        await sendPromptUntilScenarioRequest(
+          control,
+          composerSelector,
+          LATE_BOUND_PROJECT_SPACE_PROMPT,
+          'late_bound_project_space'
+        )
         await control.awaitScenarioRequestCount(
           'late_bound_project_space',
           lateBoundRequestCount + 4
@@ -4697,6 +4736,20 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     // Anchor the follow-up measurement to the failure itself; the diagnostic
     // captures below can consume several seconds of wall-clock time.
     const failedAt = Date.now()
+    if (String(error).includes('Timed out delivering UI action')) {
+      // Sample the stalled renderer without retrying or relaxing the failed command.
+      const stopProfile = await startRendererCpuProfile(
+        resultDir,
+        'command-delivery-timeout.cpuprofile',
+        3000,
+        { captureControlDiagnostics: true }
+      )
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      } finally {
+        await stopProfile()
+      }
+    }
     const networkDiagnostics = collectWindowsNetworkDiagnostics()
     await writeFile(
       join(resultDir, 'codex-sqlite-diagnostics.json'),

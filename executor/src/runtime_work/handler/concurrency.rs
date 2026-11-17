@@ -201,18 +201,24 @@ impl RuntimeTurnScheduler {
     pub(super) fn available(&self, kind: RuntimeTaskKind) -> usize {
         self.settings
             .limit(kind)
-            .saturating_sub(self.active(kind) + self.queued(kind))
+            .saturating_sub(self.active(kind) + self.ready_queued_turns(kind).count())
     }
 
     pub(super) fn has_capacity(&self, turn: &SpawnTurnRequest) -> bool {
-        self.active(turn.task_kind()) < self.settings.limit(turn.task_kind())
+        super::quota_recovery::is_ready(turn, now_ms())
+            && self.active(turn.task_kind()) < self.settings.limit(turn.task_kind())
             && !self.active_task_ids.contains_key(&turn.local_task_id)
     }
 
-    pub(super) fn has_queued_kind(&self, kind: RuntimeTaskKind) -> bool {
-        self.queued_turns
-            .iter()
-            .any(|turn| turn.task_kind() == kind)
+    fn ready_queued_turns(&self, kind: RuntimeTaskKind) -> impl Iterator<Item = &SpawnTurnRequest> {
+        let now = now_ms();
+        self.queued_turns.iter().filter(move |turn| {
+            turn.task_kind() == kind && super::quota_recovery::is_ready(turn, now)
+        })
+    }
+
+    pub(super) fn has_ready_queued_kind(&self, kind: RuntimeTaskKind) -> bool {
+        self.ready_queued_turns(kind).next().is_some()
     }
 
     pub(super) fn refresh_automatic_waits(
@@ -246,7 +252,7 @@ impl RuntimeTurnScheduler {
     pub(super) fn enqueue(&mut self, turn: SpawnTurnRequest) -> Option<SpawnTurnRequest> {
         if !self.has_capacity(&turn)
             || self.automatic_waits(&turn)
-            || self.has_queued_kind(turn.task_kind())
+            || self.has_ready_queued_kind(turn.task_kind())
         {
             self.queued_turns.push_back(turn);
             return None;
