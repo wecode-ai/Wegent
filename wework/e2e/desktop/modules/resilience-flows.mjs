@@ -439,8 +439,10 @@ async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control 
   await waitForWorkbenchDebugState(
     control,
     snapshot =>
-      snapshot.workbench?.currentRuntimeTask === null && snapshot.pane?.currentRuntimeTask === null,
-    'The Anthropic recovery scenario did not activate its new conversation'
+      snapshot.workbench?.currentRuntimeTask === null &&
+      snapshot.pane?.currentRuntimeTask === null &&
+      snapshot.workbench?.composer?.isModelSelectionReady === true,
+    'The Anthropic recovery scenario did not finish restoring its new conversation model'
   )
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

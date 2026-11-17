@@ -1,8 +1,17 @@
 // @vitest-environment node
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { runInNewContext } from 'node:vm'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { startRendererTransitionTrace } from '../e2e/desktop/modules/renderer-transition-trace.mjs'
+import {
+  collectScopedLongAnimationFrames,
+  ELEMENT_METRICS_MARKS,
+  startRendererTransitionTrace,
+} from '../e2e/desktop/modules/renderer-transition-trace.mjs'
+import {
+  ELEMENT_METRICS_START_MARK,
+  ELEMENT_METRICS_STOP_MARK,
+} from '../src/e2e/element-frame-metrics.ts'
 
 const devtools = vi.hoisted(() => ({ client: vi.fn(), create: vi.fn(), write: vi.fn() }))
 vi.mock('./ai-verify-devtools.mjs', async importOriginal => ({
@@ -62,6 +71,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
@@ -86,6 +96,7 @@ test('captures bounded native timing without enabling network, CPU profiling or 
           'gpu',
           'v8',
           'disabled-by-default-v8.gc',
+          'blink.user_timing',
         ],
       },
     },
@@ -106,6 +117,132 @@ test('captures bounded native timing without enabling network, CPU profiling or 
   )
   expect(JSON.stringify(devtools.write.mock.calls)).not.toContain(privateValue)
   expect(devtools.client).toHaveBeenLastCalledWith({ action: 'detach', target: 2 })
+})
+
+test('retains only the renderer sampler clock marks from user timing without retaining private names', async () => {
+  const markers = [ELEMENT_METRICS_START_MARK, ELEMENT_METRICS_STOP_MARK].map((name, index) => ({
+    name,
+    cat: 'blink.user_timing',
+    ph: 'R',
+    pid: 3,
+    tid: 7,
+    ts: 100000 + index * 395000,
+    args: { detail: privateValue },
+  }))
+  expect(ELEMENT_METRICS_MARKS).toEqual({
+    start: ELEMENT_METRICS_START_MARK,
+    stop: ELEMENT_METRICS_STOP_MARK,
+  })
+  const original = devtools.client.getMockImplementation()
+  devtools.client.mockImplementation(input =>
+    input.method === 'IO.read'
+      ? {
+          data: JSON.stringify({
+            traceEvents: [
+              ...trace.traceEvents,
+              ...markers,
+              { name: privateValue, cat: 'blink.user_timing', ph: 'R', ts: 1 },
+            ],
+          }),
+          eof: true,
+        }
+      : original(input)
+  )
+  const stop = await startRendererTransitionTrace(directory, 'close.trace.json', 10000)
+  await stop()
+
+  const evidence = devtools.write.mock.calls[0][1]
+  expect(evidence.traceEvents.map(event => event.name)).toEqual([
+    'RunTask',
+    ELEMENT_METRICS_START_MARK,
+    ELEMENT_METRICS_STOP_MARK,
+  ])
+  expect(evidence.traceEvents.slice(1)).toEqual(markers.map(({ args, ...timing }) => timing))
+  expect(JSON.stringify(evidence)).not.toContain(privateValue)
+})
+
+test('serialized LoAF collection keeps only frames overlapping the marked sampling window', async () => {
+  const frame = (startTime, duration) => ({
+    startTime,
+    duration,
+    blockingDuration: duration - 50,
+    renderStart: startTime + 30,
+    styleAndLayoutStart: startTime + 40,
+    firstUIEventTimestamp: startTime + 2,
+    scripts: [
+      {
+        duration: 12,
+        sourceURL: 'https://renderer.invalid/app.js?token=secret#private',
+        sourceFunctionName: 'sample',
+      },
+    ],
+  })
+  const disconnect = vi.fn()
+  const observe = vi.fn()
+  class Observer {
+    static supportedEntryTypes = ['long-animation-frame']
+    constructor(callback) {
+      this.callback = callback
+    }
+    observe(options) {
+      observe(options)
+      this.callback({ getEntries: () => [frame(0, 90), frame(50, 50), frame(90, 60)] })
+    }
+    takeRecords() {
+      return [frame(120, 60), frame(190, 60), frame(200, 60)]
+    }
+    disconnect() {
+      disconnect()
+    }
+  }
+  const result = await runInNewContext(
+    `(${collectScopedLongAnimationFrames.toString()})(${JSON.stringify(ELEMENT_METRICS_MARKS)})`,
+    {
+      PerformanceObserver: Observer,
+      performance: {
+        timeOrigin: 10000,
+        now: () => 1000,
+        getEntriesByName: name => [{ startTime: name === ELEMENT_METRICS_START_MARK ? 100 : 200 }],
+      },
+      setTimeout,
+      URL,
+    }
+  )
+
+  expect(result).toMatchObject({
+    supported: true,
+    timeOrigin: 10000,
+    startTime: 100,
+    endTime: 200,
+    startMarked: true,
+    stopMarked: true,
+  })
+  expect(result.frames.map(entry => entry.startTime)).toEqual([90, 120, 190])
+  expect(result.frames[0].firstUIEventTimestamp).toBe(92)
+  expect(result.frames[0].scripts[0].sourceURL).toBe('https://renderer.invalid/app.js')
+  expect(observe).toHaveBeenCalledExactlyOnceWith({ type: 'long-animation-frame', buffered: true })
+  expect(disconnect).toHaveBeenCalledOnce()
+})
+
+test('does not report unscoped historical LoAF entries when the sampler mark is unavailable', async () => {
+  const observer = vi.fn()
+  const result = await runInNewContext(
+    `(${collectScopedLongAnimationFrames.toString()})(${JSON.stringify(ELEMENT_METRICS_MARKS)})`,
+    {
+      PerformanceObserver: Object.assign(observer, {
+        supportedEntryTypes: ['long-animation-frame'],
+      }),
+      performance: { timeOrigin: 10000, now: () => 1000, getEntriesByName: () => [] },
+    }
+  )
+
+  expect(result).toMatchObject({
+    supported: true,
+    startMarked: false,
+    stopMarked: false,
+    frames: [],
+  })
+  expect(observer).not.toHaveBeenCalled()
 })
 
 test('ends recording at the bound even when the motion action has not returned', async () => {

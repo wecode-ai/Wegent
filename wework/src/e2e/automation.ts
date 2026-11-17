@@ -12,7 +12,12 @@ import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnos
 import { createDesktopControlFile } from './file-fixture'
 import { selectDesktopControlFile } from './select-file'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
-import { createElementFrameSampler } from './element-frame-metrics'
+import {
+  createElementFrameSampler,
+  startElementMetricsClock,
+  stopElementMetricsClock,
+  type ElementMetricsClock,
+} from './element-frame-metrics'
 import { readElementVisibility, readSelectionVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
@@ -309,6 +314,7 @@ interface ElementMetricsSamplePoint {
 }
 
 interface ElementMetricsSample {
+  clock: ElementMetricsClock
   done: boolean
   frames: ElementMetricsSamplePoint[]
   stop: () => void
@@ -3136,6 +3142,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         ? createElementFrameSampler(initialElement, command.target)
         : undefined
       const sample: ElementMetricsSample = {
+        clock: startElementMetricsClock(),
         done: false,
         frames: [],
         stop: () => {},
@@ -3143,10 +3150,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const finish = () => {
         if (sample.done) return
         sample.done = true
+        stopElementMetricsClock(sample.clock)
         if (animationFrame) window.cancelAnimationFrame(animationFrame)
       }
       const captureFrame = (time: number) => {
         startedAt ??= time
+        sample.clock.firstFrameTime ??= time
         const element = initialElement
         const rect = element?.getBoundingClientRect()
         const testIds = element
@@ -3190,6 +3199,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!sample) throw new Error('Element metrics sampling has not started')
       if (command.action === 'stopElementMetricsSampling') sample.stop()
       return JSON.stringify({
+        clock: sample.clock,
         done: sample.done,
         frames: sample.frames,
       })

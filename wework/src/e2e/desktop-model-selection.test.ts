@@ -158,3 +158,65 @@ test('explicitly chooses the protocol model even when the pending default label 
     error => error === submitted
   )
 })
+
+test('selects Anthropic after the new conversation finishes restoring another model', async () => {
+  const { verifyAnthropicEmptyResponseRecovery } =
+    await import('../../e2e/desktop/modules/resilience-flows.mjs')
+  const { ACTIVE_WORKBENCH_SELECTOR, CLOUD_MODEL_CASES } =
+    await import('../../e2e/desktop/modules/shared.mjs')
+  const model = CLOUD_MODEL_CASES.find(candidate => candidate.protocol === 'anthropic')!
+  const composerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`
+  const submitted = new Error('Reached model submission')
+  let snapshots = 0
+  let open = false
+  let selected = false
+  await assert.rejects(
+    verifyAnthropicEmptyResponseRecovery({
+      composerSelector,
+      control: {
+        setScenario() {},
+        async awaitNextScenarioRequest() {},
+        async command(action: string, selector: string, options?: { value?: string }) {
+          if (action === 'getWorkbenchDebugSnapshot') {
+            snapshots++
+            const task = snapshots === 1 ? { taskId: 'previous-conversation' } : null
+            return JSON.stringify({
+              workbench: {
+                currentRuntimeTask: task,
+                composer: { isModelSelectionReady: snapshots >= 4 },
+              },
+              pane: { currentRuntimeTask: task },
+            })
+          }
+          if (action === 'snapshot') {
+            return JSON.stringify({
+              testIds: open ? ['model-selector-menu', `model-option-${model.optionIds[0]}`] : [],
+            })
+          }
+          if (action === 'getText') {
+            // The mounted selector can still display the target while its scope restores Luna.
+            return snapshots < 4 || selected ? model.labels[0] : 'GPT 5.6 Luna'
+          }
+          if (action === 'getAttribute') {
+            return options?.value === 'aria-checked' ? String(selected) : ''
+          }
+          if (action === 'hover') open = true
+          if (action === 'getElementCount') return open ? '1' : '0'
+          if (action === 'click') {
+            if (selector === '[data-testid="new-chat-button"]') return ''
+            assert.ok(selector.includes(`model-option-${model.optionIds[0]}`))
+            selected = true
+          }
+          if (action === 'press' && selector === 'body') open = false
+          if (action === 'fill') {
+            assert.equal(snapshots, 4, 'Model restoration must finish before selecting a model')
+            assert.ok(selected, 'The restored Luna selection must be changed to Anthropic')
+            throw submitted
+          }
+          return ''
+        },
+      },
+    }),
+    error => error === submitted
+  )
+})

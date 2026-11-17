@@ -15,18 +15,81 @@ const TRACE_CATEGORIES = [
   'gpu',
   'v8',
   'disabled-by-default-v8.gc',
+  'blink.user_timing',
 ]
+
+export const ELEMENT_METRICS_MARKS = {
+  start: 'wework-e2e-element-metrics-start',
+  stop: 'wework-e2e-element-metrics-stop',
+}
 
 function timingEvidence(trace) {
   // Arguments can contain URLs or page content even without Network.enable.
   // Native event names, thread ids and timings suffice to locate a missed frame.
-  return trace.traceEvents.map(event =>
-    Object.fromEntries(
-      ['name', 'cat', 'ph', 'pid', 'tid', 'ts', 'dur', 'tts', 'tdur']
-        .filter(key => event[key] !== undefined)
-        .map(key => [key, event[key]])
+  return trace.traceEvents
+    .filter(
+      event =>
+        !event.cat?.split(',').includes('blink.user_timing') ||
+        Object.values(ELEMENT_METRICS_MARKS).includes(event.name)
     )
-  )
+    .map(event =>
+      Object.fromEntries(
+        ['name', 'cat', 'ph', 'pid', 'tid', 'ts', 'dur', 'tts', 'tdur']
+          .filter(key => event[key] !== undefined)
+          .map(key => [key, event[key]])
+      )
+    )
+}
+
+// This function is serialized into Runtime.evaluate and has no module dependencies.
+export async function collectScopedLongAnimationFrames(markers) {
+  const supported = PerformanceObserver.supportedEntryTypes.includes('long-animation-frame')
+  const start = performance.getEntriesByName(markers.start, 'mark').at(-1)?.startTime
+  const stop = performance.getEntriesByName(markers.stop, 'mark').at(-1)?.startTime
+  const endTime = stop ?? performance.now()
+  const scope = {
+    timeOrigin: performance.timeOrigin,
+    startTime: start,
+    endTime,
+    startMarked: start !== undefined,
+    stopMarked: stop !== undefined,
+  }
+  if (!supported || start === undefined) return { supported, ...scope, frames: [] }
+  const entries = await new Promise(resolve => {
+    const frames = []
+    const observer = new PerformanceObserver(list => frames.push(...list.getEntries()))
+    observer.observe({ type: 'long-animation-frame', buffered: true })
+    setTimeout(() => {
+      frames.push(...observer.takeRecords())
+      observer.disconnect()
+      resolve(frames)
+    }, 0)
+  })
+  return {
+    supported,
+    ...scope,
+    frames: entries
+      .filter(frame => frame.startTime < endTime && frame.startTime + frame.duration > start)
+      .map(frame => ({
+        startTime: frame.startTime,
+        duration: frame.duration,
+        blockingDuration: frame.blockingDuration,
+        renderStart: frame.renderStart,
+        styleAndLayoutStart: frame.styleAndLayoutStart,
+        firstUIEventTimestamp: frame.firstUIEventTimestamp,
+        scripts: frame.scripts.map(script => ({
+          duration: script.duration,
+          invoker: script.invoker,
+          invokerType: script.invokerType,
+          sourceFunctionName: script.sourceFunctionName,
+          sourceURL: script.sourceURL
+            ? new URL(script.sourceURL).origin + new URL(script.sourceURL).pathname
+            : '',
+          sourceCharPosition: script.sourceCharPosition,
+          forcedStyleAndLayoutDuration: script.forcedStyleAndLayoutDuration,
+        })),
+      })),
+  }
 }
 
 export async function startRendererTransitionTrace(directory, fileName, timeoutMs) {

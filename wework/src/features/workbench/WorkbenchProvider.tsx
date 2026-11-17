@@ -931,6 +931,8 @@ function OwnedWorkbenchProvider({
         scopeKey: projectChatScopeKey,
         standaloneChatKey: state.standaloneChatKey,
         availableModelNames: modelSelection.models.map(model => model.name),
+        isModelSelectionReady:
+          modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
         currentInputLength: draftInput.length,
         scopedInputLengths: Object.fromEntries(
           Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])

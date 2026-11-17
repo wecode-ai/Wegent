@@ -4,6 +4,7 @@ import type { DesktopControlCommand } from '@/extensions/desktop-control-contrac
 import * as desktopHost from '@/api/dsh/desktopHost'
 import * as nativeKey from './native-key-acknowledgement'
 import { getDesktopControlDiagnostics } from './desktop-control-diagnostics'
+import { ELEMENT_METRICS_START_MARK, ELEMENT_METRICS_STOP_MARK } from './element-frame-metrics'
 import {
   fillDesktopControlElement,
   isWeworkAutomationEnabled,
@@ -723,6 +724,18 @@ describe('Electron desktop E2E automation', () => {
         expect(sample.done).toBe(true)
         expect(sample.frames.length).toBeGreaterThan(0)
         expect(sample.frames.at(-1).time).toBeLessThan(10000)
+        if (kind === 'element') {
+          expect(sample.clock).toEqual({
+            timeOrigin: performance.timeOrigin,
+            startedAt: performance.getEntriesByName(ELEMENT_METRICS_START_MARK, 'mark').at(-1)!
+              .startTime,
+            firstFrameTime: expect.any(Number),
+            stoppedAt: performance.getEntriesByName(ELEMENT_METRICS_STOP_MARK, 'mark').at(-1)!
+              .startTime,
+          })
+          expect(sample.frames[0].time).toBe(0)
+          expect(sample.clock.stoppedAt).toBeGreaterThanOrEqual(sample.clock.startedAt)
+        }
       } finally {
         root.remove()
       }
