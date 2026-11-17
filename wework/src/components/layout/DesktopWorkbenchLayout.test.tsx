@@ -5980,7 +5980,10 @@ describe('DesktopWorkbenchLayout', () => {
     await user.click(await screen.findByTestId('assistant-markdown-link'))
 
     expect(await screen.findByTestId('workspace-binary-file-preview')).toBeInTheDocument()
-    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /result\.png/ })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
     expect(listWorkspaceEntries).toHaveBeenCalledWith(
       localDevice.device_id,
       '/Users/me/.wework/workspace/attachments/draft/42',
