@@ -48,7 +48,7 @@ use crate::state::AppState;
 const QUEUE_LIMIT: usize = 200;
 
 /// `ACTIVE_STATUSES` (`app.services.loop_item_executions.service`).
-const ACTIVE_STATUSES: [&str; 6] = [
+pub(crate) const ACTIVE_STATUSES: [&str; 6] = [
     "waiting_runtime",
     "pending_approval",
     "queued",

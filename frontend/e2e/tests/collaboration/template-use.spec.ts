@@ -7,8 +7,12 @@ import { expect, test } from '../../fixtures/executor-test'
 import { REGULAR_USER } from '../../config/test-users'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
+// The web application defaults to English; persistence follows the localized builtin document.
 const definitions = JSON.parse(
-  readFileSync(resolve(__dirname, '../../../../shared/data/collaboration-templates.json'), 'utf8')
+  readFileSync(
+    resolve(__dirname, '../../../../packages/collaboration/src/templates/builtins.en.json'),
+    'utf8'
+  )
 )
 
 for (const destination of ['existing', 'new'] as const) {
@@ -91,7 +95,12 @@ for (const destination of ['existing', 'new'] as const) {
         if (await picker.isVisible()) await picker.click()
         await expect(nameInput).toHaveValue(configuration.project.name)
         await nameInput.fill(name)
+        await page.getByTestId('project-create-configure-template').click()
+        await expect(page.getByTestId('project-create-template-configuration')).toBeVisible()
         await bindMembers()
+        await page.getByTestId('project-create-template-configuration-apply').click()
+        await expect(page.getByTestId('project-create-template-configuration')).toBeHidden()
+        await expect(nameInput).toHaveValue(name)
         const created = page.waitForResponse(
           response =>
             response.request().method() === 'POST' &&
@@ -164,7 +173,7 @@ for (const destination of ['existing', 'new'] as const) {
   })
 }
 
-test('keeps the built-in template form open without creating a project when the default executor is missing', async ({
+test('creates a built-in template project without a device and defers runtime setup', async ({
   page,
   request,
 }) => {
@@ -190,17 +199,58 @@ test('keeps the built-in template form open without creating a project when the 
     await expect(picker.or(name)).toBeVisible()
     if (await picker.isVisible()) await picker.click()
     await page.getByTestId('collaboration-project-create-confirm').click()
-    await expect(
-      page.getByTestId('collaboration-project-create-dialog').getByRole('alert')
-    ).toContainText(/执行设备暂不可用|execution device is unavailable/)
-    await expect(name).toHaveValue(definitions[0].spec.resources.collaboration.project.name)
+    await expect(page.getByTestId('collaboration-project-create-dialog')).toBeHidden()
+    await expect(page.getByTestId('collaboration-board')).toBeVisible()
     const projects = await request.get(
       `${API_BASE_URL}/api/v1/workspaces/${workspace.id}/projects`,
       { headers }
     )
     expect(projects.ok()).toBeTruthy()
-    expect((await projects.json()).items).toHaveLength(0)
+    const created = (await projects.json()).items
+    expect(created).toHaveLength(1)
+    expect(created[0].name).toBe(definitions[0].spec.resources.collaboration.project.name)
+    const agents = await request.get(
+      `${API_BASE_URL}/api/v1/cloud-projects/${created[0].id}/chat-agents`,
+      { headers }
+    )
+    expect(agents.ok()).toBeTruthy()
+    const definitionsCreated = await agents.json()
+    expect(definitionsCreated).toHaveLength(
+      definitions[0].spec.resources.collaboration.agents.length
+    )
+    for (const agent of definitionsCreated) {
+      expect(agent.executionPolicy ?? agent.execution_policy).toMatchObject({ mode: 'user_select' })
+      expect((agent.executionPolicy ?? agent.execution_policy).environment_id ?? null).toBeNull()
+      expect(agent.modelPolicy ?? agent.model_policy).toMatchObject({ mode: 'user_select' })
+      expect((agent.modelPolicy ?? agent.model_policy).model ?? null).toBeNull()
+    }
+    const rules = await request.get(
+      `${API_BASE_URL}/api/v1/cloud-projects/${created[0].id}/automations`,
+      { headers }
+    )
+    expect(rules.ok()).toBeTruthy()
+    const automations = await rules.json()
+    expect(automations).not.toHaveLength(0)
+    expect(automations.every((rule: { enabled: boolean }) => !rule.enabled)).toBe(true)
   } finally {
+    // Project creation is independent of device readiness, so remove its resources first.
+    const projects = await request.get(
+      `${API_BASE_URL}/api/v1/workspaces/${workspace.id}/projects`,
+      { headers }
+    )
+    expect(projects.ok()).toBeTruthy()
+    for (const project of (await projects.json()).items) {
+      const current = await request.get(`${API_BASE_URL}/api/v1/cloud-projects/${project.id}`, {
+        headers,
+      })
+      expect(current.ok()).toBeTruthy()
+      const removed = await request.delete(
+        `${API_BASE_URL}/api/v1/cloud-projects/${project.id}?version=${(await current.json()).version}`,
+        { headers }
+      )
+      expect(removed.status()).toBe(204)
+    }
+
     const current = await request.get(`${API_BASE_URL}/api/v1/workspaces/${workspace.id}`, {
       headers,
     })

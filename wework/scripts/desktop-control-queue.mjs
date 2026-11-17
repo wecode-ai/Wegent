@@ -12,6 +12,10 @@ export class WindowCommandQueue {
     return this.#commands.length
   }
 
+  get windowClients() {
+    return Object.fromEntries(this.#windows)
+  }
+
   register(clientId, windowLabel) {
     const previous = this.#windows.get(windowLabel)
     if (previous && previous !== clientId) {

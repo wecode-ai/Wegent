@@ -2,7 +2,7 @@ import { dequal } from 'dequal'
 import { useImperativeHandle, useRef, useState, type Ref } from 'react'
 import type { CollaborationProject } from '@wegent/collaboration'
 import {
-  newStandInRole,
+  newStandInPrimaryRole,
   type PersonalStandInSettings,
   type StandInRole,
 } from '@/api/personalStandIn'
@@ -54,15 +54,11 @@ export function StandInOnboardingSetup({
   const [initialRole, setInitialRole] = useState<StandInRole | null>(null)
   if (!baseline && settings && !loading) {
     setBaseline(settings)
-    const empty = newStandInRole(settings.executionDeviceId, '@primary')
+    const empty = newStandInPrimaryRole(settings.executionDeviceId)
     const initial = {
       ...empty,
       ...settings.primary,
-      collaboration: settings.primary?.collaboration ?? {
-        ...empty.collaboration,
-        allProjects: false,
-        policy: { automatic: true, askBeforeAct: true, immediate: false },
-      },
+      collaboration: settings.primary?.collaboration ?? empty.collaboration,
     }
     setRole(initial)
     setInitialRole(initial)
@@ -76,13 +72,28 @@ export function StandInOnboardingSetup({
   const navigation = useStandInPanelNavigation(!dequal(initialRole, role), busy, () =>
     setDiscard(true)
   )
-  useImperativeHandle(ref, () => ({
-    requestLeave(action) {
-      const leave = () => navigation.requestLeave(action)
-      if (connections.current) connections.current.requestLeave(leave)
-      else leave()
-    },
-  }))
+  const requestLeave = (action: () => void) => {
+    const leave = (discarded?: boolean) => {
+      if (discarded) {
+        setRole(initialRole)
+        action()
+      } else navigation.requestLeave(action)
+    }
+    if (connections.current) connections.current.requestLeave(leave)
+    else leave()
+  }
+  useImperativeHandle(ref, () => ({ requestLeave }))
+  const skipConnections = async () => {
+    if (busy) return
+    setBusy(true)
+    onBusyChange(true)
+    try {
+      await onComplete()
+    } finally {
+      setBusy(false)
+      onBusyChange(false)
+    }
+  }
   /** Persist settings before completion, retaining the saved version for completion-only retries. */
   const finish = async () => {
     if (!baseline || !role || busy) return
@@ -130,10 +141,7 @@ export function StandInOnboardingSetup({
             devices={configuration.devices ?? []}
             disabled={busy}
             onChange={device => {
-              const change = () =>
-                navigation.requestLeave(() => configuration.onSelectDevice?.(device))
-              if (connections.current) connections.current.requestLeave(change)
-              else change()
+              requestLeave(() => configuration.onSelectDevice?.(device))
             }}
           />
         </label>
@@ -208,6 +216,7 @@ export function StandInOnboardingSetup({
               <Button
                 variant="ghost"
                 data-testid="stand-in-onboarding-connections-back"
+                className="min-h-11 md:min-h-10"
                 disabled={busy}
                 onClick={() => connections.current?.back()}
               >
@@ -237,6 +246,7 @@ export function StandInOnboardingSetup({
           {configuration.error && (
             <Button
               data-testid="stand-in-onboarding-settings-retry"
+              className="min-h-11 min-w-11 md:min-h-10"
               disabled={busy || loading}
               onClick={() =>
                 navigation.requestLeave(() => {
@@ -254,10 +264,21 @@ export function StandInOnboardingSetup({
         </div>
       )}
       <div className="sticky bottom-0 flex flex-wrap justify-end gap-2 bg-background pt-3">
+        <Button
+          variant="ghost"
+          data-testid="stand-in-onboarding-skip"
+          className="min-h-11 md:min-h-10"
+          aria-busy={busy}
+          disabled={busy}
+          onClick={() => requestLeave(() => void skipConnections())}
+        >
+          {t('standIn.onboarding.skip_connections')}
+        </Button>
         {confirming && (
           <Button
             variant="ghost"
             data-testid="stand-in-onboarding-back"
+            className="min-h-11 md:min-h-10"
             disabled={busy}
             onClick={() => setConfirming(false)}
           >
@@ -267,6 +288,7 @@ export function StandInOnboardingSetup({
         <Button
           variant="primary"
           data-testid={confirming ? 'stand-in-onboarding-complete' : 'stand-in-onboarding-continue'}
+          className="min-h-11 md:min-h-10"
           aria-busy={busy}
           disabled={busy || !role || loading}
           onClick={() => {
@@ -300,6 +322,7 @@ export function StandInOnboardingSetup({
         }}
         onConfirm={() => {
           setDiscard(false)
+          setRole(initialRole)
           navigation.confirmLeave(() => {})
         }}
       />

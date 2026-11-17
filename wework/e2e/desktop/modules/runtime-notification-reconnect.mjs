@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
-import { mkdir, readFile, readdir } from 'node:fs/promises'
-import { delimiter, dirname, join } from 'node:path'
+import { mkdir, readFile } from 'node:fs/promises'
+import { delimiter, join } from 'node:path'
 import { RuntimeEventProxy } from './runtime-event-proxy.mjs'
 import { until } from './plugin-regression-fixture.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { currentExecutorPid } from './executor-restart-readiness.mjs'
-import { waitForCompletedRuntimeTaskThread } from './runtime-task-evidence.mjs'
+import {
+  waitForBackendRuntimeTerminal,
+  waitForCompletedRuntimeTaskThread,
+} from './runtime-task-evidence.mjs'
 import { commandOutputAsync, fetchJson, repoDir } from './shared.mjs'
 import {
   createSse,
@@ -63,31 +66,8 @@ export function createRuntimeNotificationReconnect({
   const terminal = (entry, taskId) =>
     entry.event === 'response.completed' && entry.payload.taskId === taskId
 
-  async function waitForBackendTerminal(taskId) {
-    // This Rust handler writes "forwarded" only after IM side effects finish.
-    // It also proves that the real migrated handler consumed the terminal event.
-    await until(
-      async () => {
-        const directory = join(dirname(cloud.backendLogPath), 'backend-rs-logs')
-        const files = (await readdir(directory)).filter(name => name.startsWith('info.log'))
-        return (await Promise.all(files.map(name => readFile(join(directory, name), 'utf8')))).join(
-          '\n'
-        )
-      },
-      log =>
-        log
-          .split('\n')
-          .some(
-            line =>
-              line.includes('runtime terminal relay') &&
-              line.includes(taskId) &&
-              line.includes(JSON.stringify(notificationDeviceId)) &&
-              /phase["\s:=]*forwarded/.test(line)
-          ),
-      `Rust Backend did not finish terminal processing: ${taskId}`,
-      uiTimeoutMs
-    )
-  }
+  const waitForBackendTerminal = taskId =>
+    waitForBackendRuntimeTerminal(cloud, notificationDeviceId, taskId, uiTimeoutMs)
 
   async function subscribe(address) {
     const result = await request(
@@ -240,6 +220,13 @@ export function createRuntimeNotificationReconnect({
     async verify(value, desktopControl) {
       cloud = value
       control = desktopControl
+      await control.command('seedLocalProject', 'body', {
+        value: JSON.stringify({
+          projectKey: 'notification-reconnect-workspace',
+          name: 'Notification reconnect',
+          path: workspacePath,
+        }),
+      })
       active = true
       storedProfile = JSON.parse(
         await control.command('getLocalStorageItem', 'body', {

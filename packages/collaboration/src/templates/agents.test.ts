@@ -13,8 +13,7 @@ import {
   templateAgentBindings,
   templateRoutingResolver,
 } from './agents'
-import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
-import { templateMessages } from './messages'
+import { PartialTemplateApplyError } from './apply'
 import { applyProjectTemplate } from './projectConfiguration'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { TemplateRoutingResolver } from './types'
@@ -33,54 +32,23 @@ const routing: TemplateRoutingResolver = async runtime => ({
   },
 })
 
-it.each(['zh-CN', 'en'] as const)('explains ambiguous project environments in %s', async locale => {
-  const resolve = templateRoutingResolver(
-    {
-      renderDialog: () => null,
-      resolveTemplateAgentRouting: async () => {
-        throw new Error('template_environment_ambiguous')
-      },
-    },
-    'cloud',
-    'project',
-    locale
-  )
-  await expect(resolve('codex')).rejects.toBeInstanceOf(TemplateConfigurationError)
-  await expect(resolve('codex')).rejects.toThrow(
-    templateMessages[locale].destinationEnvironmentAmbiguous
-  )
+it('saves an unconfigured Agent without resolving a live device or model', async () => {
+  expect(await templateRoutingResolver()('codex')).toEqual({
+    executionPolicy: { mode: 'user_select' },
+    modelPolicy: { mode: 'user_select' },
+  })
 })
-
-it.each([
-  ['template_environment_unavailable', 'destinationDeviceRequired'],
-  ['template_environment_ambiguous', 'destinationEnvironmentAmbiguous'],
-  ['template_model_unavailable', 'modelUnavailable'],
-] as const)(
-  'preserves localized %s guidance with an explicit model selection',
-  async (code, message) => {
-    const model = { runtime: 'codex' as const, provider: 'company', model_id: 'selected' }
-    const resolveTemplateAgentRouting = vi.fn(async () => {
-      throw new Error(code)
-    })
-    const resolve = templateRoutingResolver(
-      { renderDialog: () => null, resolveTemplateAgentRouting },
-      'cloud',
-      undefined,
-      'zh-CN',
-      undefined,
-      { codex: model }
-    )
-    await expect(resolve('codex')).rejects.toBeInstanceOf(TemplateConfigurationError)
-    await expect(resolve('codex')).rejects.toThrow(templateMessages['zh-CN'][message])
-    expect(resolveTemplateAgentRouting).toHaveBeenLastCalledWith(
-      'codex',
-      'cloud',
-      undefined,
-      undefined,
-      model
-    )
+it('persists explicit configuration as a definition and leaves admission to execution', async () => {
+  const model = {
+    runtime: 'codex' as const,
+    provider: 'company',
+    model_id: 'selected',
   }
-)
+  expect(await templateRoutingResolver('device', { codex: model })('codex')).toEqual({
+    executionPolicy: { mode: 'fixed', environment_id: 'device' },
+    modelPolicy: { mode: 'fixed', model },
+  })
+})
 
 function fixture() {
   const document = structuredClone(builtinCollaborationTemplates()[0].document)

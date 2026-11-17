@@ -102,6 +102,7 @@ jest.mock('@/features/devices/hooks', () => ({
     handleDeleteDevice: jest.fn(),
     handleCancelTask: jest.fn(),
     handleUpgradeDevice: jest.fn(),
+    handleRestartDevice: jest.fn(),
     handleEditAlias: jest.fn(),
   }),
 }))

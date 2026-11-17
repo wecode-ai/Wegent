@@ -70,7 +70,10 @@ describe('runner routing', () => {
     expect(JSON.stringify(cloudModels)).not.toContain('must-not-be-copied')
   })
   it('keeps native models distinct by stable provider identity', () => {
-    const models = policyModels(environments, 'codex', { mode: 'fixed', environment_id: 'a' })
+    const models = policyModels(environments, 'codex', {
+      mode: 'fixed',
+      environment_id: 'a',
+    })
     expect(models).toHaveLength(1)
     expect(models[0].environments).toEqual(['a · Runner account'])
   })
@@ -98,6 +101,28 @@ describe('runner routing', () => {
       })
     }
   }
+  it('accepts a native model for a deferred Agent only after the caller chooses a fixed environment', () => {
+    const input = {
+      environments,
+      runtime: 'codex' as const,
+      executionPolicy: { mode: 'user_select' as const },
+      modelPolicy: { mode: 'user_select' as const },
+      selection: {
+        model: { ...model, source: 'native' as const },
+        execution_policy: { mode: 'fixed' as const, environment_id: 'a' },
+      },
+    }
+    expect(resolveRunnerSelection(input).candidates.map(item => item.id)).toEqual(['a'])
+    expect(() =>
+      resolveRunnerSelection({
+        ...input,
+        selection: {
+          ...input.selection,
+          execution_policy: { mode: 'project_pool' },
+        },
+      })
+    ).toThrow('RUNNER_MODEL_UNAVAILABLE')
+  })
   it('never moves a bound Issue when the personal default changes', () => {
     expect(
       resolveRunnerSelection({
@@ -177,7 +202,12 @@ describe('runner routing', () => {
             modelMode === 'fixed' ? { mode: modelMode, model: selectedModel } : { mode: modelMode },
           selection: {
             ...(mode === 'user_select'
-              ? { execution_policy: { mode: 'fixed', environment_id: 'a' } as const }
+              ? {
+                  execution_policy: {
+                    mode: 'fixed',
+                    environment_id: 'a',
+                  } as const,
+                }
               : {}),
             ...(modelMode === 'user_select' ? { model: selectedModel } : {}),
           },

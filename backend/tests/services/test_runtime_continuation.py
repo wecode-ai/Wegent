@@ -21,6 +21,48 @@ from tests.utils.collaboration import authorize_project
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("denial", [None, "viewer", "revoked", "hidden_issue"])
+async def test_im_async_question_answers_reauthorize_the_original_project(
+    test_db, scope, transport, monkeypatch, denial
+):
+    user, grant, issue, origin = scope
+    if denial == "viewer":
+        grant.role = "Viewer"
+    elif denial == "revoked":
+        grant.status = "rejected"
+    elif denial == "hidden_issue":
+        issue.metadata_json = {"security_level": "related"}
+    test_db.commit()
+    history(monkeypatch, origin)
+    reply = request().model_copy(
+        update={
+            "request_user_input_response": {
+                "delivery": "async",
+                "itemId": "question",
+                "interactionScope": "turn",
+                "answers": {"scope": {"answers": ["Continue"]}},
+            }
+        }
+    )
+    if denial is None:
+        result = await service.send_runtime_message(
+            db=test_db, user_id=user.id, request=reply
+        )
+        assert result.accepted
+        payload = transport.await_args.kwargs["payload"]
+        assert payload["workspacePath"] == "/original/workspace"
+        assert "executionRequest" not in payload
+        assert payload["runtimeHandle"]["origin"] == origin
+    else:
+        with pytest.raises(HTTPException) as error:
+            await service.send_runtime_message(
+                db=test_db, user_id=user.id, request=reply
+            )
+        assert error.value.status_code == (403 if denial == "viewer" else 404)
+        transport.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("authorized_im", [True, False])
 async def test_app_continuation_keeps_existing_im_authorization(
     test_db, test_user, monkeypatch, authorized_im
@@ -356,3 +398,45 @@ def test_project_only_materialization_denies_viewer_execution(
         )
     assert error.value.status_code == 403
     compiler.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revoked", [False, True])
+async def test_interpreted_im_answers_recheck_actor_ownership_before_recording(
+    monkeypatch,
+    revoked,
+):
+    from app.schemas.runtime_work import RuntimeSendResponse
+    from app.services.im import question_context
+
+    ownership = Mock(
+        side_effect=HTTPException(404, "Device revoked") if revoked else None
+    )
+    monkeypatch.setattr(service, "_ensure_owned_device", ownership)
+    record = AsyncMock(
+        return_value=RuntimeSendResponse(accepted=True, taskId="original")
+    )
+    monkeypatch.setattr(question_context, "submit_interpreted_answer", record)
+    reply = RuntimeSendRequest.model_validate(
+        {
+            "address": {
+                "deviceId": "stand-in-device",
+                "taskId": "stand-in-chat-7-primary",
+            },
+            "message": "Use option two",
+            "imQuestionAnswer": {
+                "replyToken": "private-message-token",
+                "questionId": "question",
+            },
+        }
+    )
+    db = Mock()
+    if revoked:
+        with pytest.raises(HTTPException, match="revoked"):
+            await service.send_runtime_message(db=db, user_id=7, request=reply)
+        record.assert_not_awaited()
+    else:
+        result = await service.send_runtime_message(db=db, user_id=7, request=reply)
+        assert result.local_task_id == "original"
+        record.assert_awaited_once_with(db, 7, reply)
+    ownership.assert_called_once_with(db, 7, "stand-in-device")

@@ -3,6 +3,25 @@ use super::*;
 use crate::{Application, auth::AppAuthenticator, config::AuthConfig};
 use std::sync::Arc;
 
+#[path = "local_sync_completion_mysql_tests.rs"]
+mod completion_tests;
+
+#[derive(FromMysqlRow)]
+struct StoredKind {
+    id: i64,
+    json: Value,
+}
+
+fn http_client() -> brz_http::Client {
+    // The default 400ms socket budget is shorter than the valid 3s lease wait.
+    brz_http::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .read_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap()
+}
+
 #[tokio::test]
 #[ignore = "requires disposable MySQL/Redis and PLUGIN_LOCAL_SYNC_ENABLED=true"]
 async fn http_without_device_reuses_account_state_without_ledgers() -> anyhow::Result<()> {
@@ -40,7 +59,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             })
             .await
     });
-    let client = brz_http::Client::new();
+    let client = http_client();
     let post = |id, path: &'static str, body: Value| {
         let client = client.clone();
         let token = jsonwebtoken::encode(
@@ -94,9 +113,9 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     assert_eq!(unchanged["unchanged"], true);
     assert_eq!(read().await.json::<Value>().await?["generation"], 2);
     mysql.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) VALUES (81001,'InstalledPlugin','default','target',?,1,NOW(),NOW())",(json!({"metadata":{"name":"target","namespace":"default"},"spec":{"revision":1,"installState":"installed","version":"1.0","enabled":true,"source":{"pluginKey":"target"}}}),)).await?;
-    let target:StateRow=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND kind='InstalledPlugin' AND name='target'",()).await?;
+    let target:StoredKind=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND kind='InstalledPlugin' AND name='target'",()).await?;
     let slot = json!({"operationId":"target-operation","requestHash":"hash","installedId":target.id,"installedRevision":1,"intentOrder":7,"action":"install"});
-    let mut account:StateRow=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?;
+    let mut account:StoredKind=mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?;
     account.json["spec"]["localIntents"] = json!({"native":{target.id.to_string():slot}});
     mysql
         .execute(
@@ -142,6 +161,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     assert_eq!(removed["payload"]["plugins"], json!([]));
     assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM kinds WHERE namespace='plugin-local-sync' OR kind='Device'",()).await?.n,0);
     assert_eq!(mysql.fetch_one::<_,_,Count>("SELECT COUNT(*) AS n FROM kinds WHERE user_id=81001 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'",()).await?.n,1);
+    completion_tests::verify(mysql, address, target.id, &state).await?;
     stop.send(()).unwrap();
     task.await??;
     Ok(())

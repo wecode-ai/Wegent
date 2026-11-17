@@ -205,7 +205,13 @@ impl LocalTaskStore {
             }
             return self.change_project_tag(project_id, input.version, change);
         }
-        let project = self.get_project(project_id)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let project = match get_item_from(&transaction, project_id, "project")? {
+            Some(project) => project,
+            None => external_project_from_catalog(&transaction, project_id)?
+                .ok_or(TaskRuntimeError::ProjectNotFound)?,
+        };
         if project.version != input.version {
             return Err(TaskRuntimeError::VersionConflict);
         }
@@ -246,11 +252,27 @@ impl LocalTaskStore {
             metadata["workflow_definition"] = workflow_definition;
         }
         if let Some(collaboration_groups) = input.collaboration_groups {
+            let previous: std::collections::HashSet<&str> = metadata["collaboration_groups"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(wegent_protocol::collaboration::group_agent_ids)
+                .collect();
+            for id in collaboration_groups
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(wegent_protocol::collaboration::group_agent_ids)
+            {
+                if !previous.contains(id) {
+                    collaboration::collaboration_agent(&transaction, project_id, id)?;
+                }
+            }
             metadata["collaboration_groups"] = collaboration_groups;
         }
         if let Some(automatic_processing_rules) = input.automatic_processing_rules {
             local_automation::validate_rules(
-                &*self.connection()?,
+                &transaction,
                 &project.id,
                 &metadata,
                 &automatic_processing_rules,
@@ -263,8 +285,7 @@ impl LocalTaskStore {
                 execution_environment,
             );
         }
-        let connection = self.connection()?;
-        let updated = connection.execute(
+        let updated = transaction.execute(
             "UPDATE loop_items
              SET name = COALESCE(?1, name),
                  description = COALESCE(?2, description),
@@ -285,8 +306,10 @@ impl LocalTaskStore {
         if updated == 0 {
             return Err(TaskRuntimeError::VersionConflict);
         }
-        drop(connection);
-        self.get_project(project_id)
+        let project = get_item_from(&transaction, project_id, "project")?
+            .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        transaction.commit()?;
+        Ok(project)
     }
 
     pub fn archive_project(&self, project_id: &str, version: i64) -> Result<(), TaskRuntimeError> {

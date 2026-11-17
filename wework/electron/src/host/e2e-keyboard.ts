@@ -11,6 +11,8 @@ const KEYS: Record<string, string> = {
   ArrowDown: 'Down',
   ArrowLeft: 'Left',
   ArrowRight: 'Right',
+  Home: 'Home',
+  End: 'End',
   PageUp: 'PageUp',
   PageDown: 'PageDown',
   A: 'A',
