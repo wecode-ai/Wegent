@@ -1,5 +1,13 @@
 import { parseWeworkScheme } from '@/features/notifications/scheme'
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { BlockNoteSchema, type Block } from '@blocknote/core'
 import { createReactBlockSpec, useCreateBlockNote } from '@blocknote/react'
@@ -342,8 +350,9 @@ export function TaskDescriptionEditor({
 
   // Mirror external markdown into the editor without resetting it on every
   // keystroke: only apply the value when it differs from the markdown we last
-  // emitted (or the value we last loaded).
-  useEffect(() => {
+  // emitted (or the value we last loaded). Resolve it during commit, before a
+  // newer native transaction can make a pending parent echo look external.
+  useLayoutEffect(() => {
     if (!editor) return
     const next = normalizeTaskDescription(value)
     if (next === lastEmittedMarkdownRef.current) return

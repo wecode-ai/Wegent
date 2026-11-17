@@ -83,7 +83,14 @@ app.whenReady().then(async()=>{
     }
     results.push({input,reference:snapshots[0],batch:snapshots[1]})
   }
-  require('fs').writeFileSync(${JSON.stringify(output)},JSON.stringify({results,calls}))
+  const nestedInputs=[]
+  await wc.executeJavaScript('new Promise(resolve=>{const frame=document.createElement("iframe");frame.onload=()=>{frame.contentDocument.querySelector("textarea").focus();resolve()};frame.srcdoc="<textarea></textarea>";document.body.append(frame)})')
+  await sendE2EText(wc,${JSON.stringify('frame first\nframe second')},focus,env)
+  nestedInputs.push(await wc.executeJavaScript('document.querySelector("iframe").contentDocument.querySelector("textarea").value'))
+  await wc.executeJavaScript('document.querySelector("iframe").remove();const host=document.createElement("div");host.id="shadow-input";const shadow=host.attachShadow({mode:"open"});shadow.innerHTML="<textarea></textarea>";document.body.append(host);shadow.querySelector("textarea").focus()')
+  await sendE2EText(wc,${JSON.stringify('shadow first\nshadow second')},focus,env)
+  nestedInputs.push(await wc.executeJavaScript('document.querySelector("#shadow-input").shadowRoot.querySelector("textarea").value'))
+  require('fs').writeFileSync(${JSON.stringify(output)},JSON.stringify({results,calls,nestedInputs}))
   window.destroy();app.exit(0)
 }).catch(error=>{console.error(error);app.exit(1)})`
     )
@@ -105,6 +112,10 @@ app.whenReady().then(async()=>{
     assert.equal(result.code, 0, JSON.stringify({ ...result, diagnostics }))
     const evidence = JSON.parse(await readFile(output, 'utf8'))
     assert.equal(evidence.calls, 5)
+    assert.deepEqual(evidence.nestedInputs, [
+      'frame first\nframe second',
+      'shadow first\nshadow second',
+    ])
     for (const row of evidence.results) {
       assert.deepEqual(row.batch, row.reference, row.input)
       assert.equal(row.batch.text, row.input.replace(/\r\n?/g, '\n').replaceAll('\n', ''))

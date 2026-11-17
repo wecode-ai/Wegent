@@ -9,12 +9,14 @@ const environment = {
 }
 
 function fixture() {
+  const executeJavaScript = vi.fn()
   const view = {
     isDestroyed: () => false,
     isFocused: vi.fn(() => false),
     focus: vi.fn(),
     insertText: vi.fn(),
-    executeJavaScript: vi.fn(),
+    executeJavaScript,
+    focusedFrame: { executeJavaScript },
     sendInputEvent: vi.fn(),
   }
   return { view, contents: view as unknown as WebContents, focusWindow: vi.fn() }
@@ -208,7 +210,7 @@ describe('isolated native keyboard verification', () => {
     expect(view.sendInputEvent).not.toHaveBeenCalled()
   })
 
-  test('waits for the editor frame before delivering the next native edit', async () => {
+  test('installs native acknowledgements before delivering input', async () => {
     const { view, contents, focusWindow } = fixture()
     let commit!: () => void
     view.executeJavaScript.mockReturnValueOnce(
@@ -218,7 +220,7 @@ describe('isolated native keyboard verification', () => {
     )
     const insertion = sendE2EText(contents, 'first\nsecond', focusWindow, environment)
     await vi.waitFor(() => expect(view.executeJavaScript).toHaveBeenCalledOnce())
-    expect(view.insertText).toHaveBeenCalledExactlyOnceWith('first')
+    expect(view.insertText).not.toHaveBeenCalled()
     expect(view.sendInputEvent).not.toHaveBeenCalled()
     commit()
     await insertion
@@ -288,8 +290,10 @@ test('records each native input phase without recording text content', async () 
     expect(stopped?.[3]).toMatchObject({
       completedLines: 2,
       lineCount: 2,
-      frameCount: 3,
-      frameWaitMs: 60,
+      enterCommitCount: 1,
+      enterCommitWaitMs: 20,
+      commitSetupMs: 20,
+      commitCleanupMs: 20,
       insertTextMs: 10,
       elapsedMs: 70,
     })
@@ -313,9 +317,46 @@ test('retains native input timing and the original insertion failure', async () 
     expect(journal.mock.calls.find(call => call[1] === 'native-text-stopped')?.[3]).toMatchObject({
       completedLines: 0,
       lineCount: 2,
-      frameCount: 0,
+      enterCommitCount: 0,
     })
   } finally {
     journal.mockRestore()
   }
 })
+
+test('does not deliver text when the native acknowledgement cannot be installed', async () => {
+  const { view, contents, focusWindow } = fixture()
+  const error = new Error('Native target setup failed')
+  view.executeJavaScript.mockRejectedValueOnce(error)
+  await expect(sendE2EText(contents, 'first\nsecond', focusWindow, environment)).rejects.toBe(error)
+  expect(view.insertText).not.toHaveBeenCalled()
+  expect(view.sendInputEvent).not.toHaveBeenCalled()
+})
+
+test.each([true, false])(
+  'retains failures when native listener cleanup fails: input failed=%s',
+  async inputFailed => {
+    const { view, contents, focusWindow } = fixture()
+    const insertionError = new Error('Native insertion failed')
+    const cleanupError = new Error('Native cleanup failed')
+    view.executeJavaScript.mockResolvedValueOnce(undefined)
+    if (inputFailed) view.insertText.mockRejectedValueOnce(insertionError)
+    else view.executeJavaScript.mockResolvedValueOnce(undefined)
+    view.executeJavaScript.mockRejectedValueOnce(cleanupError)
+    const journal = vi.spyOn(e2eErrorLog, 'record').mockImplementation(() => undefined)
+    try {
+      await expect(sendE2EText(contents, 'first\nsecond', focusWindow, environment)).rejects.toBe(
+        inputFailed ? insertionError : cleanupError
+      )
+      expect(journal.mock.calls).toContainEqual([
+        'main',
+        'native-text-cleanup-failed',
+        'error',
+        expect.objectContaining({ message: cleanupError.message }),
+      ])
+      expect(journal.mock.calls.some(call => call[1] === 'native-text-stopped')).toBe(true)
+    } finally {
+      journal.mockRestore()
+    }
+  }
+)

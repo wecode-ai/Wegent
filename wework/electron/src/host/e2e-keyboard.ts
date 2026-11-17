@@ -1,3 +1,4 @@
+import { createE2ENativeTextCommit } from './e2e-native-text-commit.js'
 import { randomUUID } from 'node:crypto'
 import { e2eErrorLog } from './e2e-error-log.js'
 import type { KeyboardInputEvent, WebContents } from 'electron'
@@ -111,8 +112,10 @@ export async function sendE2EText(
   const startedAt = performance.now()
   const timing = {
     completedLines: 0,
-    frameCount: 0,
-    frameWaitMs: 0,
+    enterCommitCount: 0,
+    enterCommitWaitMs: 0,
+    commitSetupMs: 0,
+    commitCleanupMs: 0,
     insertTextMs: 0,
     keyDispatchMs: 0,
   }
@@ -125,19 +128,18 @@ export async function sendE2EText(
       elapsedMs: performance.now() - startedAt,
       ...timing,
     })
-  const commitEdit = async () => {
-    const startedAt = performance.now()
-    try {
-      await contents.executeJavaScript(
-        'new Promise(resolve => requestAnimationFrame(() => resolve()))'
-      )
-    } finally {
-      timing.frameWaitMs += performance.now() - startedAt
-      timing.frameCount += 1
-    }
-  }
+  let commit: Awaited<ReturnType<typeof createE2ENativeTextCommit>> | undefined
+  let failure: { error: unknown } | undefined
   record('native-text-started')
   try {
+    if (lines.length > 1) {
+      const setupAt = performance.now()
+      try {
+        commit = await createE2ENativeTextCommit(contents, batchId)
+      } finally {
+        timing.commitSetupMs += performance.now() - setupAt
+      }
+    }
     for (const [index, line] of lines.entries()) {
       requireAvailableContents(contents)
       if (index > 0) {
@@ -147,8 +149,14 @@ export async function sendE2EText(
         } finally {
           timing.keyDispatchMs += performance.now() - startedAt
         }
-        // Enter must move the structured editor's selection before text insertion.
-        await commitEdit()
+        // Observe the target editor's trusted key-up after its native transaction.
+        const commitAt = performance.now()
+        try {
+          await commit!.wait(index)
+          timing.enterCommitCount += 1
+        } finally {
+          timing.enterCommitWaitMs += performance.now() - commitAt
+        }
       }
       if (line || lines.length === 1) {
         const startedAt = performance.now()
@@ -157,13 +165,26 @@ export async function sendE2EText(
         } finally {
           timing.insertTextMs += performance.now() - startedAt
         }
-        if (lines.length > 1) await commitEdit()
       }
       timing.completedLines = index + 1
       record('native-text-progress')
     }
+  } catch (error) {
+    failure = { error }
+  }
+  const cleanupAt = performance.now()
+  try {
+    if (commit && !contents.isDestroyed()) await commit.dispose()
+  } catch (error) {
+    e2eErrorLog.record('main', 'native-text-cleanup-failed', 'error', {
+      batchId,
+      message: error instanceof Error ? error.message : String(error),
+    })
+    failure ??= { error }
   } finally {
+    timing.commitCleanupMs += performance.now() - cleanupAt
     record('native-text-stopped')
   }
+  if (failure) throw failure.error
   return { backend: 'electron-insert-text', textLength: text.length }
 }

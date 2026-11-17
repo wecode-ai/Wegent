@@ -242,7 +242,7 @@ pnpm --filter wework ai:verify stop --session /path/to/session.json
 
 可用操作包括 `snapshot`、`text`、`click`、`fill`、`press`、`wait-for`、`status` 和 `stop`。命令返回结构化 JSON；WebView 不可用、元素不存在或断言超时时，命令以非零状态退出。
 
-富文本编辑器的 `fill` 先通过原生快捷键选择文本，再由宿主在一次调用中顺序输入各行及原生 Enter。每行输入后等待编辑器帧提交，renderer 确认全部 Enter 到达目标后才返回；保留空行、中文和换行格式转换。不要直接把多行字符串交给 Chromium `insertText`，它在结构化编辑器中可能只保留第一行。现有 Electron CI 中的 `editor-native-input.test.mjs` 使用真实描述编辑器，对比逐行输入与批量输入的 Markdown 和段落结构，覆盖 31 段文本；不放宽业务 E2E 的断言或超时。
+富文本编辑器的 `fill` 先通过原生快捷键选择文本，再由宿主在一次调用中顺序输入各行及原生 Enter。宿主在当前聚焦 frame 中安装一次确认器，并在插入下一行前等待目标编辑器的可信 Enter keyup 处理完成；保留原来每个按键 10 秒的期限，不按行等待绘制帧。确认器支持 iframe 和 Shadow DOM，结束时移除监听器；清理失败单独记录且不覆盖原始输入错误。保留空行、中文和换行格式转换。不要直接把多行字符串交给 Chromium `insertText`，它在结构化编辑器中可能只保留第一行。现有 Electron CI 中的 `editor-native-input.test.mjs` 使用真实描述编辑器，对比逐行输入与批量输入的 Markdown 和段落结构，覆盖 31 段文本和空段落组成的 61 块结构，并验证 iframe 和 Shadow DOM 的多行输入；不放宽业务 E2E 的断言或超时。描述编辑器在 React commit 阶段同步外部值，防止延后的受控值回传覆盖更新的原生编辑。原生输入日志分别记录确认器安装、Enter 确认、文本插入、按键派发和清理耗时，不包含输入文字。
 
 ## 安全边界
 
