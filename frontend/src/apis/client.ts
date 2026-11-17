@@ -90,6 +90,19 @@ class APIClient {
         detail = json.detail
         errorMsg = json.detail.message || json.detail.error_code || JSON.stringify(json.detail)
       }
+      if (Array.isArray(json?.errors) && json.errors.length > 0) {
+        const fieldErrors = (json.errors as Array<{ loc?: unknown[]; msg?: unknown }>)
+          .map(err => {
+            const field = Array.isArray(err.loc) ? err.loc.filter(p => p !== 'body').join('.') : ''
+            const message = typeof err.msg === 'string' ? err.msg : ''
+            return field ? `${field}: ${message}` : message
+          })
+          .filter(Boolean)
+          .join('; ')
+        if (fieldErrors) {
+          errorMsg = `${errorMsg} (${fieldErrors})`
+        }
+      }
       if (json && (typeof json.error_code === 'string' || typeof json.error_code === 'number')) {
         errorCode = json.error_code
       } else if (
