@@ -102,6 +102,34 @@ describe("IssueDetail browser due date boundary", () => {
     vi.unstubAllEnvs();
   });
 
+  it("keeps invited Issue management and discussion available without a project grant", () => {
+    const invited = { ...issue, invited_only: true, can_edit: true };
+    const editor = editorFrom(
+      IssueDetail({
+        api: {} as SharedWorkspaceApi,
+        issue: invited,
+        allIssues: [invited],
+        comments: [],
+        messages: collaborationMessages.en,
+        onClose: vi.fn(),
+        onRead: vi.fn(),
+        onChange: vi.fn(),
+        onCommentsChange: vi.fn(),
+        onConflict: vi.fn(),
+        onError: vi.fn(),
+      }),
+    );
+    expect(editor.props.project).toBeUndefined();
+    expect(editor.props.editable).toBe(true);
+    expect(editor.props.canAssign).toBe(true);
+    expect(editor.props.canStartWork).toBe(false);
+    const activity = editor.props.extensions.renderActivity({ tasks: [] });
+    expect(activity.type).toBe(IssueActivityPanel);
+    expect(activity.props.project).toBeUndefined();
+    expect(activity.props.canComment).toBe(true);
+    expect(activity.props.canAttach).toBe(true);
+  });
+
   it("routes activity read confirmations separately from content updates", () => {
     const onRead = vi.fn();
     const onChange = vi.fn();

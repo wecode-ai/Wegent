@@ -108,6 +108,32 @@ export async function settleRetainedPluginBaseline(target, retained, timeoutMs) 
   )
 }
 
+export async function settleReconcileBaselines(targets, retained, timeoutMs) {
+  return until(
+    async () => {
+      await Promise.all(targets.map(waitForSafeReconcileWindow))
+      const settled = await Promise.all(
+        targets.map(target => settleRetainedPluginBaseline(target, retained, timeoutMs))
+      )
+      // Filesystem reads and ACK settlement can outlive an earlier safe window.
+      // All targets must still be safe at the same fault-injection boundary.
+      const now = Date.now()
+      const scheduled = targets.map(
+        target => latestReconcileAt(target.observation, now) ?? target.baseline.registeredAt
+      )
+      if (scheduled.some(at => at + MIN_RECONCILE_DELAY_MS - now <= SETUP_RECONCILE_MARGIN_MS))
+        return null
+      for (const [index, target] of targets.entries()) {
+        target.baseline.scheduledAt = scheduled[index]
+      }
+      return settled
+    },
+    Boolean,
+    'Runtime baselines did not settle inside a shared safe reconcile window',
+    MAX_RECONCILE_DELAY_MS + timeoutMs
+  )
+}
+
 // Only the selected real Socket.IO change frame is withheld. MySQL, APIs,
 // Electron, IPC, Executor, package storage and the timer remain real.
 export async function createDesktopScenario({
@@ -483,10 +509,14 @@ export async function createDesktopScenario({
         retained: target.retainedBefore,
         capturedAt: Date.now(),
       }
-      target.baseline.scheduledAt = await waitForSafeReconcileWindow(target)
     }
-    for (const target of targets) {
-      const settled = await settleRetainedPluginBaseline(target, retained, workbenchReadyTimeoutMs)
+    const settledBaselines = await settleReconcileBaselines(
+      targets,
+      retained,
+      workbenchReadyTimeoutMs
+    )
+    for (const [index, target] of targets.entries()) {
+      const settled = settledBaselines[index]
       target.baseline.retained = settled.plugin
       evidence.push({
         case: 'retained-plugin-baseline-acknowledged-after-window-alignment',

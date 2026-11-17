@@ -100,6 +100,8 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 从侧栏的 **项目 → 新建项目 → 云端项目** 可在选择远程主机时添加设备，见[项目与工作区](./projects.md#add-device-from-project)。
 
+Issue 详情的 **参与者 → +** 支持搜索多选，负责人选择器也可搜索非项目成员；确认后仅授予该 Issue 的管理权限，见[项目成员与 Issue 协作](./projects.md#project-controls)。
+
 从 **项目设置 → AI 配置** 编辑智能体定义；项目 Maintainer 可以编辑项目内的非私有定义，共享源定义仍按原权限控制。导入和手动创建使用相同入口，分配设备冲突的排查步骤见[智能体配置](./projects.md#agent-capabilities)。
 
 在 **协作 exp → 任务 → 自己负责的云端任务 → 你的助理请求** 中，使用 **新建请求** 启动独立助理工作，或对原请求 **补充**、取消和重试。入口仅在服务端开放能力或已有请求记录时显示，且只向当前负责人展示。详见[助理独立请求](./collaboration-experience.md#assistant-requests)。
@@ -110,13 +112,15 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 任务首次加载或加载失败时，在桌面侧栏的 **任务** 标题下方查看状态；失败后可点击 **重试**。优先级视图中的提示位于列表上方，详见[左侧栏任务管理](./tasks.md#sidebar-task-management)。
 
+输入框上方的 Issue 摘要出现任务数读取失败时，使用摘要中的重试入口，见[将对话加入项目空间看板](./tasks.md#task-board-association)。
+
 ### 直接定位具体功能点
 
 | 功能关键词                                                                          | 具体操作说明                                                        |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | 发送快捷键、运行中追问、固定标签页、并发、隐私、外观、上下文、快照、电脑操控、Hooks | [设置页逐项操作](./settings.md#settings-controls)                   |
 | 浏览器完全控制、链接打开目标、历史、下载、缓存与 Cookie、设备模拟                   | [浏览器控件](./browser.md#browser-controls)及同页工具栏说明         |
-| 服务连接、模型搜索、单模型测试、手机版单独配置、模型能力和 Catalog                  | [模型页逐项操作](./user-guide/model-settings.md#model-controls)     |
+| 桌面端一步配置连接与模型、模型搜索、单模型测试、手机版单独配置、模型能力和 Catalog  | [模型页逐项操作](./user-guide/model-settings.md#model-controls)     |
 | 附件、绘图、计划模式、Goal、排队、任务视图、个人定时任务                            | [输入区与任务控制](./tasks.md#task-controls)                        |
 | 对话内操作、选择结果、补充表单或跳转功能                                            | [向 Codex 描述需要完成的操作](./tasks.md#conversation-interactions) |
 | 项目菜单、成员、转派、归档所有聊天、归档恢复、看板和执行环境                        | [项目操作](./projects.md#project-controls)                          |
@@ -176,7 +180,7 @@ Issue 默认助理的接单回执、未自动接单原因、等待设备及负�
 | 集成 → 浏览器       | 下载目录、浏览器数据与缓存                                                            | `/settings/browser`                     |
 | 编码 → 执行环境     | Node.js 等执行环境配置，见[设置与数据](./settings.md)                                 | `/settings/execution-environments`      |
 | 编码 → 编码工具     | OpenCode、Claude Code、Kimi Code；实验性功能                                          | `/settings/harnesses`                   |
-| 编码 → Hooks        | 配置工具与异步生命周期钩子；见[设置说明](./settings.md#hooks-controls) | `/settings/hooks` |
+| 编码 → Hooks        | 配置工具与异步生命周期钩子；见[设置说明](./settings.md#hooks-controls)                | `/settings/hooks`                       |
 | 编码 → 代码托管     | GitHub / GitLab 等连接；开发者模式的 Git 插件入口，见[Git 连接](./git-connections.md) | `/settings/git-hosting`                 |
 | 编码 → 工作树       | Worktree 位置、保留与清理；开发者模式的 Git 插件入口                                  | `/settings/worktrees`                   |
 | 已归档 → 已归档任务 | 搜索、恢复、删除归档对话                                                              | `/settings/archived-conversations`      |

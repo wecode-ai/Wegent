@@ -433,7 +433,7 @@ impl SocketRuntime {
         // `EventEmitter::new` requires the namespace to be registered, so this
         // runs after `handlers!` has exported every namespace.
         let emitters = Arc::new(
-            SocketEmitters::new(server)
+            SocketEmitters::new(server, Arc::downgrade(&state))
                 .map_err(|error| -> BoxError { format!("Socket.IO emitters: {error}").into() })?,
         );
         if self.emitters.set(Arc::clone(&emitters)).is_err() {

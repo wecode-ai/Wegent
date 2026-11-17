@@ -136,7 +136,11 @@ def _visible_ids(
         item.id
         for item in items
         if (
-            not has_permission(
+            any(
+                source.get("kind") == "issue_invitation"
+                for source in access_by_project[str(item.cloud_project_id)].sources
+            )
+            or not has_permission(
                 access_by_project[str(item.cloud_project_id)].role, BaseRole.Maintainer
             )
             and item_security(
@@ -154,7 +158,19 @@ def _visible_ids(
             LoopItem.id.in_(restricted_ids), related_item_filter(user_id)
         )
     }
-    return visible_ids | related_ids
+    scopes = {
+        str(access.project.id): source["issue_id"]
+        for access in access_by_project.values()
+        for source in access.sources
+        if source.get("kind") == "issue_invitation"
+    }
+    allowed = {
+        item.id
+        for item in items
+        if str(item.cloud_project_id) not in scopes
+        or scopes[str(item.cloud_project_id)] == item.id
+    }
+    return (visible_ids | related_ids) & allowed
 
 
 def _messages(
