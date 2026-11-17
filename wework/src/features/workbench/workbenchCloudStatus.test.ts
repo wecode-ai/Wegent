@@ -5,7 +5,7 @@ import {
   EMPTY_CLOUD_RUNTIME_STATE,
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
-  publishCloudRuntimeDevices,
+  updateCloudRuntimeDevices,
   readCachedDeviceList,
   resolveDeviceListWithCache,
   selectCloudWorkStatus,
@@ -471,7 +471,7 @@ describe('cloud runtime sync state', () => {
 
     expect(stale).toBe(second)
     expect(selectVisibleDevices([], stale)).toEqual([])
-    expect(publishCloudRuntimeDevices(second, first.inFlightRevision ?? 0, [device()])).toBe(second)
+    expect(updateCloudRuntimeDevices(second, first.inFlightRevision ?? 0, [device()])).toBe(second)
   })
 
   test('publishes authoritative empty devices without settling pending task inventory', () => {
@@ -480,13 +480,12 @@ describe('cloud runtime sync state', () => {
       devices: { status: 'fulfilled', value: [device()] },
     })
     const refreshing = startCloudRuntimeSync(ready, 'manual-refresh', ['devices', 'runtimeWork'])
-    const published = publishCloudRuntimeDevices(refreshing, refreshing.inFlightRevision ?? 0, [])
+    const published = updateCloudRuntimeDevices(refreshing, refreshing.inFlightRevision ?? 0, [])
 
     expect(selectVisibleDevices([], published)).toEqual([])
     expect(published.inFlightRevision).toBe(refreshing.inFlightRevision)
     expect(published.availability).toBe('syncing')
     expect(published.current?.runtimeWork).toBe(refreshing.current?.runtimeWork)
-    expect(published.current?.checks.devices.status).toBe('empty')
   })
 
   test('keeps unavailable cloud work status stable until a later refresh succeeds', () => {

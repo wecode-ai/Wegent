@@ -1,8 +1,10 @@
 import { updateRuntimeWorkProject, type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
-import { mergeDeviceLists } from '@/lib/workbench-device'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { Dispatch } from 'react'
 import { createModelLoadingTrace, logModelLoading } from '@/lib/model-loading-diagnostics'
+import type { ExecutorClient } from '@/api/executorAccess'
+import { stripAppBasePath } from '@/config/runtime'
 import type {
   DeviceInfo,
   RuntimeSupervisorState,
@@ -10,10 +12,12 @@ import type {
   RuntimeTaskPinRequest,
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
+  User,
 } from '@/types/api'
 import { isRemoteTaskDevice } from '@/lib/device-capabilities'
 import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
-import type { CloudRuntimeState, CloudWorkCheckKey } from '@/types/workbench'
+import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
+import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/types/workbench'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
   EMPTY_RUNTIME_WORK,
@@ -22,25 +26,28 @@ import {
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
   nowMs,
-  publishCloudRuntimeDevices,
   resolveDeviceListWithCache,
   selectCloudWorkStatus,
   selectRuntimeWorkView,
   selectVisibleDevices,
   startCloudRuntimeSync,
   timedWorkbenchBootstrapRequest,
+  updateCloudRuntimeDevices,
 } from './workbenchCloudStatus'
+import { isRuntimeProjectSelectionRemoved, type WorkbenchAction } from './workbenchReducer'
 import {
   findRuntimeTask,
   findRuntimeTaskForPinRequest,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
+  isSameRuntimeTaskAddress,
   removeRuntimeTasks,
   runtimeWorkContainsTask,
   updateRuntimeWorkTask,
   updateRuntimeWorkTaskPinned,
   updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
+import type { WorkbenchServices } from './workbenchServices'
 import type { RefreshWorkLists } from './workbenchContextTypes'
 import { RuntimeSupervisorSnapshots } from './runtimeSupervisorSnapshots'
 import {
@@ -53,9 +60,9 @@ import {
 import {
   type CloudBackgroundRequest,
   type CloudBackgroundRefreshOptions,
-  type UseWorkbenchDataRefreshOptions,
   queueWorkRefreshAfterInventory,
   createCloudRuntimeStateWithCache,
+  createRuntimeProjectRemoval,
   localDeviceSnapshot,
   mergeRuntimeTaskAddresses,
   loadDevicesForRefresh,
@@ -64,6 +71,16 @@ import {
   removeRuntimeTasksFromCloudState,
   resolveStandaloneDeviceIdForRefresh,
 } from './workbenchDataRefreshHelpers'
+
+interface UseWorkbenchDataRefreshOptions {
+  user: User
+  ownershipKey?: string
+  state: WorkbenchState
+  dispatch: Dispatch<WorkbenchAction>
+  executorClient: ExecutorClient
+  services: WorkbenchServices
+  canNavigate?: () => boolean
+}
 
 // Cloud synchronization is detached from the local workbench bootstrap. Give
 // authenticated intranet requests enough time to complete without turning a
@@ -77,6 +94,7 @@ export function useWorkbenchDataRefresh({
   dispatch,
   executorClient,
   services,
+  canNavigate = () => true,
 }: UseWorkbenchDataRefreshOptions) {
   const cacheScope = workbenchCacheScope(ownershipKey, user.id)
   const initialCachedRemoteRuntimeWork = useMemo(
@@ -114,6 +132,10 @@ export function useWorkbenchDataRefresh({
     userRef.current = user
   }, [user])
   const runtimeWorkRef = useRef(state.runtimeWork)
+  const selectionRef = useRef(state)
+  useLayoutEffect(() => {
+    selectionRef.current = state
+  }, [state])
   const localRuntimeWorkRef = useRef<RuntimeWorkListResponse | null>(null)
   const runtimeTaskTitleOverridesRef = useRef(
     new Map<string, { address: RuntimeTaskAddress; title: string }>()
@@ -369,11 +391,11 @@ export function useWorkbenchDataRefresh({
           devicesResult?.status === 'fulfilled'
         ) {
           updateCloudRuntimeState(
-            publishCloudRuntimeDevices(cloudRuntimeStateRef.current, revision, devicesResult.value)
+            updateCloudRuntimeDevices(cloudRuntimeStateRef.current, revision, devicesResult.value)
           )
           const devices = resolveDeviceListWithCache(
             cacheScope,
-            mergeDeviceLists(localDeviceSnapshot(baseDevices), devicesResult.value),
+            selectVisibleDevices(localDeviceSnapshot(baseDevices), cloudRuntimeStateRef.current),
             { useCacheFallback: false }
           )
           dispatch({
@@ -723,43 +745,64 @@ export function useWorkbenchDataRefresh({
   const markRuntimeProjectRemoved = useCallback(
     (projectId: number, workspace?: { deviceId: string; workspacePath: string }) => {
       if (cachedRemoteRuntimeWorkRef.current.ownershipKey !== cacheScope) return
+      const selection = selectionRef.current
       const normalizedWorkspace = workspace
         ? {
             deviceId: workspace.deviceId.trim(),
             workspacePath: normalizeRuntimeWorkspacePath(workspace.workspacePath),
           }
         : undefined
+      const removal = createRuntimeProjectRemoval(
+        selection.runtimeWork,
+        projectId,
+        normalizedWorkspace,
+        { devices: selection.devices }
+      )
+      const localRuntimeWork = localRuntimeWorkRef.current
+        ? removeRuntimeProject(localRuntimeWorkRef.current, removal)
+        : null
+      const cachedRuntimeWork = removeRuntimeProject(
+        cachedRemoteRuntimeWorkRef.current.runtimeWork,
+        removal
+      )
+      const cloudRuntimeState = removeRuntimeProjectFromCloudState(
+        cloudRuntimeStateRef.current,
+        removal
+      )
+      const visibleRuntimeWork = selection.runtimeWork
+        ? removeRuntimeProject(selection.runtimeWork, removal)
+        : null
+      const removesCurrentSelection = isRuntimeProjectSelectionRemoved(
+        selection,
+        projectId,
+        visibleRuntimeWork
+      )
+
       cloudBackgroundRequestRef.current?.controller.abort()
       cloudBackgroundRequestRef.current = null
       workListRefreshRevisionRef.current += 1
-      if (localRuntimeWorkRef.current) {
-        localRuntimeWorkRef.current = removeRuntimeProject(
-          localRuntimeWorkRef.current,
-          projectId,
-          normalizedWorkspace
-        )
-      }
+      localRuntimeWorkRef.current = localRuntimeWork
       cachedRemoteRuntimeWorkRef.current = {
         ...cachedRemoteRuntimeWorkRef.current,
-        runtimeWork: writeCachedRemoteRuntimeWork(
-          cacheScope,
-          removeRuntimeProject(
-            cachedRemoteRuntimeWorkRef.current.runtimeWork,
-            projectId,
-            normalizedWorkspace
-          ),
-          devicesRef.current
-        ),
+        runtimeWork: writeCachedRemoteRuntimeWork(cacheScope, cachedRuntimeWork, removal.devices),
       }
-      updateCloudRuntimeState(
-        removeRuntimeProjectFromCloudState(
-          cloudRuntimeStateRef.current,
-          projectId,
-          normalizedWorkspace
-        )
+      updateCloudRuntimeState(cloudRuntimeState)
+      runtimeWorkRef.current = visibleRuntimeWork
+      dispatch({ type: 'runtime_project_removed', removal })
+      const activeRoute = parseRuntimeTaskRoute(
+        stripAppBasePath(window.location.pathname),
+        window.location.search
       )
+      if (
+        removesCurrentSelection &&
+        canNavigate() &&
+        activeRoute &&
+        isSameRuntimeTaskAddress(selection.currentRuntimeTask, activeRoute)
+      ) {
+        navigateTo('/')
+      }
     },
-    [cacheScope, updateCloudRuntimeState]
+    [cacheScope, canNavigate, dispatch, updateCloudRuntimeState]
   )
 
   const refreshDevices = useCallback(

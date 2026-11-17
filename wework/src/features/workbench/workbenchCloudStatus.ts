@@ -222,27 +222,16 @@ export function startCloudRuntimeSync(
   }
 }
 
-export function publishCloudRuntimeDevices(
+export function updateCloudRuntimeDevices(
   state: CloudRuntimeState,
   revision: number,
   devices: DeviceInfo[]
 ): CloudRuntimeState {
   if (state.inFlightRevision !== revision) return state
-  const current = state.current ?? state.lastGood ?? createBaseCloudSnapshot(revision)
-  const deviceCheck = syncCheckResult(
-    { status: 'fulfilled', value: devices },
-    current.checks.devices,
-    '云端设备'
-  )
-  const updateSnapshot = (snapshot: CloudRuntimeSnapshot): CloudRuntimeSnapshot => ({
-    ...snapshot,
-    devices,
-    checks: { ...snapshot.checks, devices: deviceCheck },
-  })
   return {
     ...state,
-    current: updateSnapshot(current),
-    lastGood: updateSnapshot(state.lastGood ?? createBaseCloudSnapshot(revision)),
+    current: state.current ? { ...state.current, devices } : null,
+    lastGood: state.lastGood ? { ...state.lastGood, devices } : null,
   }
 }
 
