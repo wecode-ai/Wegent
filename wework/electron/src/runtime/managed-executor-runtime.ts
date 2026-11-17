@@ -487,9 +487,19 @@ export async function waitForEndpointAuthentication(
       if (signal.aborted) break
       lastError = error
     }
-    await abortableDelay(50, signal)
+    try {
+      await abortableDelay(50, signal)
+    } catch {
+      break
+    }
   }
-  throw new Error('Executor local endpoint did not become ready', {
+  const lastErrorDetail =
+    lastError instanceof Error
+      ? `: ${lastError.message}`
+      : lastError === undefined
+        ? ''
+        : `: ${String(lastError)}`
+  throw new Error(`Executor local endpoint did not become ready${lastErrorDetail}`, {
     cause: signal.reason ?? lastError,
   })
 }

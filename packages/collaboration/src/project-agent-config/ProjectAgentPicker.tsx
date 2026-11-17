@@ -53,7 +53,7 @@ export function ProjectAgentPicker({
   return (
     <div className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 px-5 pb-4 pt-1">
-        <label className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 text-text-muted keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/20 md:h-9">
+        <label className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 text-text-secondary keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/20 md:h-9">
           <Search aria-hidden="true" className="h-4 w-4 shrink-0" />
           <input
             ref={searchRef}
@@ -64,7 +64,7 @@ export function ProjectAgentPicker({
             value={query}
             onChange={event => setQuery(event.target.value)}
             disabled={busy}
-            className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+            className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary"
           />
         </label>
         {onCreate ? (
@@ -82,7 +82,7 @@ export function ProjectAgentPicker({
           </Button>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center justify-between px-5 pb-2 text-xs text-text-muted">
+      <div className="flex shrink-0 items-center justify-between px-5 pb-2 text-xs text-text-secondary">
         <span>
           {loading
             ? t('todo.agent_picker_loading', '正在加载智能体…')
@@ -91,7 +91,7 @@ export function ProjectAgentPicker({
         {!loading && !loadError ? <span>{visibleAgents.length}</span> : null}
       </div>
       <div
-        className="h-72 min-h-0 shrink overflow-y-auto overscroll-contain px-3 pb-3"
+        className="max-h-72 min-h-0 shrink overflow-y-auto overscroll-contain px-3 pb-3"
         data-testid="project-agent-picker-content"
         aria-busy={loading}
       >
@@ -118,11 +118,11 @@ export function ProjectAgentPicker({
             data-testid="project-agent-candidates-error"
             className="flex h-full flex-col items-center justify-center gap-2 px-5 text-center"
           >
-            <Bot aria-hidden="true" className="mb-1 h-6 w-6 text-text-muted" />
+            <Bot aria-hidden="true" className="mb-1 h-6 w-6 text-text-secondary" />
             <p className="text-sm font-medium text-text-primary">
               {t('todo.agent_picker_load_failed', '无法加载智能体')}
             </p>
-            <p className="max-w-full break-words text-xs text-text-muted">{loadError}</p>
+            <p className="max-w-full break-words text-xs text-text-secondary">{loadError}</p>
             <Button
               type="button"
               variant="outline"
@@ -168,7 +168,7 @@ export function ProjectAgentPicker({
                     </span>
                     <span
                       title={agent.owner_name}
-                      className="mt-0.5 block truncate text-xs text-text-muted"
+                      className="mt-0.5 block truncate text-xs text-text-secondary"
                     >
                       {agent.owner_type === 'workspace'
                         ? t('todo.agent_picker_shared', '分组共享')
@@ -177,7 +177,7 @@ export function ProjectAgentPicker({
                     </span>
                   </span>
                   {added ? (
-                    <span className="text-xs text-text-muted">
+                    <span className="text-xs text-text-secondary">
                       {t('todo.agent_picker_added', '已添加')}
                     </span>
                   ) : (
@@ -208,16 +208,16 @@ export function ProjectAgentPicker({
             className="flex h-full flex-col items-center justify-center gap-2 px-5 text-center"
           >
             {normalizedQuery ? (
-              <SearchX aria-hidden="true" className="mb-1 h-6 w-6 text-text-muted" />
+              <SearchX aria-hidden="true" className="mb-1 h-6 w-6 text-text-secondary" />
             ) : (
-              <Bot aria-hidden="true" className="mb-1 h-6 w-6 text-text-muted" />
+              <Bot aria-hidden="true" className="mb-1 h-6 w-6 text-text-secondary" />
             )}
             <p className="text-sm font-medium text-text-primary">
               {normalizedQuery
                 ? t('todo.agent_picker_no_match', '没有匹配的智能体')
                 : t('todo.agent_picker_empty', '还没有可添加的智能体')}
             </p>
-            <p className="text-xs text-text-muted">
+            <p className="text-xs text-text-secondary">
               {normalizedQuery
                 ? t('todo.agent_picker_try_search', '试试其他名称，或清除搜索。')
                 : onCreate
@@ -252,7 +252,7 @@ export function ProjectAgentPicker({
         </p>
       ) : null}
       <footer className="shrink-0 border-t border-border px-5 pb-4 pt-3">
-        <p className="mb-4 flex items-start gap-2 text-xs leading-5 text-text-muted">
+        <p className="mb-4 flex items-start gap-2 text-xs leading-5 text-text-secondary">
           <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             {scope === 'workspace'

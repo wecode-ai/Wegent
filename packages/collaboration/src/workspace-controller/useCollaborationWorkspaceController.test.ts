@@ -144,6 +144,20 @@ function createApi() {
 }
 
 describe("collaboration workspace controller", () => {
+  it("does not replace a newer Project version with a late settings refresh", () => {
+    const latest = { ...project, version: 3, name: "Latest configuration" };
+    const current = {
+      ...initialCollaborationWorkspaceControllerState,
+      projects: [latest],
+      project: latest,
+    };
+    const result = collaborationWorkspaceControllerReducer(current, {
+      type: "replace-project",
+      project: { ...project, version: 2 },
+    });
+    expect(result.project).toEqual(latest);
+    expect(result.projects).toEqual([latest]);
+  });
   let state: CollaborationWorkspaceControllerState;
   let actions: CollaborationWorkspaceControllerAction[];
 

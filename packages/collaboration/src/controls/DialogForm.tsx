@@ -24,8 +24,8 @@ export function DialogForm({
             event.altKey ||
             event.metaKey ||
             event.ctrlKey ||
-            event.target.closest('[role="dialog"]') !==
-              event.currentTarget.closest('[role="dialog"]'))
+            event.target.closest('dialog, [role="dialog"]') !==
+              event.currentTarget.closest('dialog, [role="dialog"]'))
         )
           event.preventDefault();
       }}

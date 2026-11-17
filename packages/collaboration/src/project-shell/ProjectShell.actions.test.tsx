@@ -37,9 +37,14 @@ test('accounts for host actions without oscillating when their labels collapse',
           hasCreateAction={false}
           sidebarCollapsed={false}
           title="Project"
+          compactTitle="Project Alpha"
           titleIcon={null}
           renderRightActions={({ showLabels }) => (
-            <button type="button" data-testid="test-host-action" aria-label="Host action">
+            <button
+              type="button"
+              data-testid="test-host-action"
+              aria-label="Host action"
+            >
               {showLabels ? 'Expanded host action' : '+'}
             </button>
           )}
@@ -63,6 +68,11 @@ test('accounts for host actions without oscillating when their labels collapse',
         ?.getAttribute('data-compact'),
     ).toBe('true')
     expect(container.querySelector('button')?.textContent).toBe('+')
+    const identity = container.querySelector(
+      '[data-testid="cloud-project-header-title"]',
+    )!
+    expect(identity.textContent).toBe('Project Alpha')
+    expect(identity.classList.contains('hidden')).toBe(false)
   } finally {
     act(() => root.unmount())
     clientWidth.mockRestore()

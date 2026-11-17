@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "turn-diff-logger",
+  "name": "Turn diff logger",
+  "description": "Records Git changes from asynchronous lifecycle hooks in local logs",
+  "version": "1.0.0"
+}

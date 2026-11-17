@@ -1,6 +1,10 @@
 // @vitest-environment node
 
 import { describe, expect, test } from 'vitest'
+import { Readable } from 'node:stream'
+import { gzipSync } from 'node:zlib'
+import { generateCollaborationGroupDraft } from '../src/features/collaboration/collaborationGroupDraftGeneration'
+import { handleProjectCreateGroupModel } from '../e2e/desktop/modules/project-create-group-model.mjs'
 import {
   createSse,
   delegatedTaskResultEvents,
@@ -18,6 +22,106 @@ import {
   selectTool,
   toolOutputText,
 } from '../e2e/desktop/modules/response-protocol.mjs'
+
+test('returns a real Responses stream accepted by the production group prompt and draft parser', async () => {
+  const input = {
+    projectName: 'Protocol generation',
+    projectDescription: 'Verify the model boundary',
+    generationInstructions: 'PROJECT_CREATE_GROUP_DRAFT_E2E generate responsibilities',
+    currentUser: { id: 91, name: 'Project owner' },
+    members: [],
+    agents: [
+      { id: 'team:protocol-alpha', name: 'Planner' },
+      { id: 'team:protocol-beta', name: 'Implementer' },
+    ],
+    modelSelection: { modelName: 'protocol-cloud-model', modelType: 'public' },
+  }
+  const progress = []
+  const draft = await generateCollaborationGroupDraft({
+    input,
+    onEvent: event => progress.push(event),
+    textGenerationApi: {
+      async generateText(data) {
+        expect(data.outputSchema.properties.events.type).toBe('array')
+        const payload = {
+          model: data.modelId,
+          stream: true,
+          text: { format: { type: 'json_schema', name: 'group_draft', schema: data.outputSchema } },
+          input: [{ role: 'user', content: [{ type: 'input_text', text: data.prompt }] }],
+        }
+        const request = Readable.from([gzipSync(Buffer.from(JSON.stringify(payload)))])
+        request.method = 'POST'
+        request.headers = { 'content-encoding': 'gzip' }
+        let wire = ''
+        const handled = await handleProjectCreateGroupModel(
+          request,
+          {
+            writeHead(status, headers) {
+              expect(status).toBe(200)
+              expect(headers['content-type']).toContain('text/event-stream')
+            },
+            end(chunk) {
+              wire += chunk
+            },
+          },
+          new URL('http://model-fixture/v1/responses')
+        )
+        expect(handled).toBe(true)
+        const events = wire
+          .trim()
+          .split('\n\n')
+          .map(frame =>
+            JSON.parse(
+              frame
+                .split('\n')
+                .find(line => line.startsWith('data: '))
+                .slice(6)
+            )
+          )
+        expect(events[0].type).toBe('response.created')
+        const completed = events.at(-1)
+        expect(completed.type).toBe('response.completed')
+        const text = completed.response.output[0].content[0].text
+        data.onDelta?.(text)
+        return text
+      },
+    },
+  })
+  expect(draft.leader.id).toBe(String(input.currentUser.id))
+  expect(draft.members.map(member => member.id)).toEqual(input.agents.map(agent => agent.id))
+  expect(draft.members.every(member => member.responsibility.length > 300)).toBe(true)
+  expect(draft.stages).toHaveLength(3)
+  expect(
+    progress
+      .filter(event => event.type === 'participant_started')
+      .map(({ kind, id }) => `${kind}:${id}`)
+  ).toEqual(['human:91', 'agent:team:protocol-alpha', 'agent:team:protocol-beta'])
+})
+
+test('leaves ordinary model requests and unrelated HTTP routes to the existing scenario handler', async () => {
+  for (const [path, content] of [
+    ['/v1/responses', 'PROJECT_CREATE_GROUP_DRAFT_E2E is mentioned by ordinary task history'],
+    ['/v1/chat/completions', '你是项目协作架构师。 PROJECT_CREATE_GROUP_DRAFT_E2E'],
+  ]) {
+    const request = Readable.from([
+      JSON.stringify({ model: 'ordinary-model', input: [{ role: 'user', content }] }),
+    ])
+    request.method = 'POST'
+    let replied = false
+    expect(
+      await handleProjectCreateGroupModel(
+        request,
+        {
+          end() {
+            replied = true
+          },
+        },
+        new URL(`http://model-fixture${path}`)
+      )
+    ).toBe(false)
+    expect(replied).toBe(false)
+  }
+})
 
 describe('native function selection', () => {
   test.each([

@@ -90,3 +90,17 @@ it('retains keyboard focus while pending and restores an actionable control afte
   expect(document.activeElement).toBe(button('confirm'))
   expect(button('confirm').disabled).toBe(false)
 })
+
+it('isolates background controls and restores their state and focus after closing', async () => {
+  const opener = document.createElement('button')
+  opener.textContent = 'Project navigation'
+  document.body.append(opener)
+  opener.focus()
+  await act(async () => root.render(dialog(async () => {}, vi.fn())))
+  expect(opener.hasAttribute('inert')).toBe(true)
+  expect(document.activeElement).toBe(button('cancel'))
+  await act(async () => root.render(null))
+  expect(opener.hasAttribute('inert')).toBe(false)
+  expect(document.activeElement).toBe(opener)
+  opener.remove()
+})
