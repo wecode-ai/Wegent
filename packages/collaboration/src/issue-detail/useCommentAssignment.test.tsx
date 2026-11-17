@@ -19,7 +19,7 @@ describe('comment assignment', () => {
   let draft: string
   let enabled: boolean
   let actions: CommentIssueActions | undefined
-  const assign = vi.fn<(id: string) => Promise<void>>()
+  const assign = vi.fn<(id: string) => Promise<void | boolean>>()
   const send = vi.fn<() => Promise<boolean>>()
   function Harness() {
     transfer = useCommentAssignment(draft, enabled ? { options, assign } : undefined, send, actions)
@@ -151,6 +151,19 @@ describe('comment assignment', () => {
     expect(send).toHaveBeenCalledTimes(1)
     expect(assign).toHaveBeenCalledTimes(2)
     expect(transfer.error).toBeNull()
+  })
+
+  it('preserves a cancelled invitation and retries without duplicating its saved comment', async () => {
+    assign.mockResolvedValueOnce(false).mockResolvedValueOnce(undefined)
+    render(mention(1))
+    act(() => transfer.acceptSuggestion())
+    await act(() => transfer.submit(draft))
+    expect(transfer.target).toBe('1')
+    expect(transfer.error).toBeNull()
+    await act(() => transfer.submit(draft))
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(assign).toHaveBeenCalledTimes(2)
+    expect(transfer.target).toBe('')
   })
 
   it('prevents duplicate submissions', async () => {

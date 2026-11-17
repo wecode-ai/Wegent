@@ -17,6 +17,31 @@ const labels = {
 }
 
 describe('Issue participant search', () => {
+  it('keeps directory email matches even when their display names do not match', async () => {
+    const user = userEvent.setup()
+    const search = vi.fn(async () => [
+      { id: 1, user_name: 'Existing member' },
+      { id: 2, user_name: 'Outside person' },
+    ])
+    render(
+      <IssueDetailCollaboratorPicker
+        {...labels}
+        busy={false}
+        members={[{ user_id: 1, user_name: 'Existing member' }]}
+        searchUsers={search}
+        onAdd={vi.fn()}
+      />
+    )
+    await user.type(screen.getByTestId('cloud-todo-collaborator-select'), 'example.com')
+    expect(await screen.findByTestId('cloud-todo-collaborator-option-1')).toBeVisible()
+    expect(await screen.findByTestId('cloud-todo-collaborator-option-2')).toHaveTextContent(
+      labels.outsideLabel
+    )
+    expect(screen.getByTestId('cloud-todo-collaborator-option-1')).not.toHaveTextContent(
+      labels.outsideLabel
+    )
+  })
+
   it('selects multiple people and requires confirmation for outsiders; cancellation writes nothing', async () => {
     const add = vi.fn(async () => {})
     const search = vi.fn(async () => [{ id: 2, user_name: 'Outside person' }])

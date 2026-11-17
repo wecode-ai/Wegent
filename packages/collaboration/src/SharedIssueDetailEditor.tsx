@@ -1020,6 +1020,10 @@ export function TodoEditor(props: TodoEditorProps) {
     id: number;
     user_name: string;
   } | null>(null);
+  const outsideAssigneeConfirmationRef = useRef<
+    ((approved: boolean) => void) | null
+  >(null);
+  useEffect(() => () => outsideAssigneeConfirmationRef.current?.(false), []);
   const [selectedOutsideUsers, setSelectedOutsideUsers] = useState<
     Array<{ id: number; user_name: string }>
   >([]);
@@ -1379,6 +1383,10 @@ export function TodoEditor(props: TodoEditorProps) {
     setTasks(initialTaskBindingsRef.current ?? []);
     setAttachments([]);
     setCollaborators([]);
+    outsideAssigneeConfirmationRef.current?.(false);
+    outsideAssigneeConfirmationRef.current = null;
+    setOutsideAssignee(null);
+    setSelectedOutsideUsers([]);
     setDownloadingAttachmentId(null);
     setAttachmentBusy(false);
     setAttachmentError(null);
@@ -1705,9 +1713,10 @@ export function TodoEditor(props: TodoEditorProps) {
       : null);
   const canAssign =
     props.canAssign ??
-    (project !== undefined &&
-      (item === null || item.can_view_detail !== false) &&
-      canAssignCollaborationIssue(project));
+    (item?.invited_only === true ||
+      (project !== undefined &&
+        (item === null || item.can_view_detail !== false) &&
+        canAssignCollaborationIssue(project)));
   const commentActions =
     item && project && editProps && (editable || canAssign)
       ? createIssueCommentActions({
@@ -2272,6 +2281,22 @@ export function TodoEditor(props: TodoEditorProps) {
       ].map((user) => [user.id, user]),
     ).values(),
   ];
+  function outsideTargetUser(target: IssueAssigneeTarget) {
+    return outsidePeople.find(
+      (user) =>
+        target === `user:${user.id}` &&
+        !projectMembers.some((member) => member.user_id === user.id),
+    );
+  }
+  function confirmOutsideTarget(target: IssueAssigneeTarget): Promise<boolean> {
+    const user = outsideTargetUser(target);
+    if (!user) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      outsideAssigneeConfirmationRef.current?.(false);
+      outsideAssigneeConfirmationRef.current = resolve;
+      setOutsideAssignee(user);
+    });
+  }
   const assigneeOptions: Array<{
     value: IssueAssigneeTarget;
     label: string;
@@ -2300,7 +2325,9 @@ export function TodoEditor(props: TodoEditorProps) {
     ...projectMembers
       .filter(
         (member) =>
-          member.can_be_assignee !== false && member.role !== "Viewer",
+          member.can_be_assignee !== false ||
+          ((project?.task_provider ?? "local") === "local" &&
+            member.role === "Viewer"),
       )
       .map((member) => ({
         value: `user:${member.user_id}` as IssueAssigneeTarget,
@@ -2316,6 +2343,9 @@ export function TodoEditor(props: TodoEditorProps) {
         label: user.user_name,
         group: t("todo.members", "成员"),
         description: outsideLabel,
+        searchText: assigneeSearch.users.some((result) => result.id === user.id)
+          ? assigneeQuery
+          : undefined,
       })),
     ...projectAgents.map((agent) => ({
       value: `agent:${agent.id}` as IssueAssigneeTarget,
@@ -2348,7 +2378,23 @@ export function TodoEditor(props: TodoEditorProps) {
               ? {
                   canAssignCurrent: canAssign,
                   ...(editable && editProps.project
-                    ? { createChild: createCommentChild }
+                    ? {
+                        createChild: async (
+                          input: import("./issue-detail/useCommentAssignment").CommentChildInput,
+                        ) => {
+                          const target =
+                            input.target.startsWith("user:") ||
+                            input.target.includes(":")
+                              ? (input.target as IssueAssigneeTarget)
+                              : (`user:${input.target}` as IssueAssigneeTarget);
+                          if (
+                            input.target &&
+                            !(await confirmOutsideTarget(target))
+                          )
+                            return false as const;
+                          return createCommentChild(input);
+                        },
+                      }
                     : {}),
                   options: assigneeOptions
                     .filter((option) => option.value !== "")
@@ -2370,6 +2416,7 @@ export function TodoEditor(props: TodoEditorProps) {
                       throw new Error("Assignee is no longer available");
                     if (!canAssign || saving)
                       throw new Error(t("todo.saving", "保存中…"));
+                    if (!(await confirmOutsideTarget(target))) return false;
                     const current = await editorPort.issues.get(item.id);
                     if (issueAssigneeTarget(current) === target) return;
                     const updated = await persistAssignee(
@@ -2457,13 +2504,13 @@ export function TodoEditor(props: TodoEditorProps) {
           ) : null
         }
         onChange={(value) => {
-          const user = outsidePeople.find(
-            (user) =>
-              value === `user:${user.id}` &&
-              !projectMembers.some((member) => member.user_id === user.id),
-          );
-          if (user) setOutsideAssignee(user);
-          else changeProperty("assigneeTarget", value);
+          if (!outsideTargetUser(value)) {
+            changeProperty("assigneeTarget", value);
+            return;
+          }
+          void confirmOutsideTarget(value).then((approved) => {
+            if (approved) changeProperty("assigneeTarget", value);
+          });
         }}
         disabled={!canAssign}
         className={cn(
@@ -2552,13 +2599,18 @@ export function TodoEditor(props: TodoEditorProps) {
             failed: t("todo.save_failed", "保存失败"),
           }}
           testIdPrefix="issue-outside-assignee"
-          onClose={() => setOutsideAssignee(null)}
+          onClose={() => {
+            outsideAssigneeConfirmationRef.current?.(false);
+            outsideAssigneeConfirmationRef.current = null;
+            setOutsideAssignee(null);
+          }}
           onConfirm={async () => {
             setSelectedOutsideUsers((current) => [
               ...current.filter((user) => user.id !== outsideAssignee.id),
               outsideAssignee,
             ]);
-            changeProperty("assigneeTarget", `user:${outsideAssignee.id}`);
+            outsideAssigneeConfirmationRef.current?.(true);
+            outsideAssigneeConfirmationRef.current = null;
           }}
         />
       )}

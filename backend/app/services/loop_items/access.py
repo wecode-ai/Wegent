@@ -5,7 +5,7 @@
 """Issue-level visibility for projects that isolate unrelated work."""
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import Integer, cast, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -16,7 +16,9 @@ from app.models.delivery import (
     ProjectChatAgent,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
+    project_parent_relationships,
 )
+from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.services.cloud_projects.access import (
@@ -135,49 +137,51 @@ def require_item_access(
     db: Session, item: LoopItem, user_id: int
 ) -> CloudProjectAccess:
     """Resolve current explicit Issue invitations without granting project access."""
+    access = None
     try:
-        return require_cloud_project_role(
+        access = require_cloud_project_role(
             db, item.cloud_project_id, user_id, BaseRole.Viewer
         )
     except HTTPException as cause:
         if cause.status_code != status.HTTP_404_NOT_FOUND:
             raise
-        if not loop_datetime_value_is_unset(item.deleted_at):
-            raise
-        project = db.get(CloudProject, str(item.cloud_project_id))
-        if (
-            project is None
-            or not loop_datetime_value_is_unset(project.deleted_at)
-            or project.task_provider != "local"
-        ):
-            raise
+    if access is not None and has_permission(access.role, BaseRole.Developer):
+        return access
+    parents = project_parent_relationships().subquery()
+    project = (
+        db.query(CloudProject)
+        .join(parents, parents.c.project_id == cast(CloudProject.id, Integer))
+        .join(Kind, Kind.id == parents.c.workspace_id)
+        .filter(
+            CloudProject.id == item.cloud_project_id,
+            CloudProject.status == "active",
+            loop_datetime_is_unset(CloudProject.deleted_at),
+            Kind.kind == "CollaborationWorkspace",
+            Kind.is_active.is_(True),
+            func.coalesce(
+                CloudProject.metadata_json["task_provider"].as_string(), "local"
+            )
+            == "local",
+        )
+        .first()
+    )
+    if project is not None:
         invited = (
             db.query(LoopItem.id)
-            .filter(LoopItem.id == item.id, explicitly_invited_item_filter(user_id))
+            .filter(
+                LoopItem.id == item.id,
+                loop_datetime_is_unset(LoopItem.deleted_at),
+                explicitly_invited_item_filter(user_id),
+            )
             .first()
         )
-        if invited is None:
-            raise
-        require_active_issue_user(db, user_id)
-        return CloudProjectAccess(
-            project=project,
-            role=BaseRole.Developer,
-            sources=({"kind": "issue_invitation", "issue_id": item.id},),
-        )
-
-
-def require_assignable_issue_user(
-    db: Session, project: CloudProject, user_id: int
-) -> User:
-    """Allow outside invitees while preserving explicit read-only project roles."""
-    user = require_active_issue_user(db, user_id)
-    from app.services.collaboration_permissions import collaboration_permission_service
-
-    decision = collaboration_permission_service.check(db, user_id, "read", project.id)
-    if decision.role is not None and not has_permission(
-        decision.role, BaseRole.Developer
-    ):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, "Project Viewers cannot be assignees"
-        )
-    return user
+        if invited is not None:
+            require_active_issue_user(db, user_id)
+            return CloudProjectAccess(
+                project=project,
+                role=BaseRole.Developer,
+                sources=({"kind": "issue_invitation", "issue_id": item.id},),
+            )
+    if access is not None:
+        return access
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud project not found")

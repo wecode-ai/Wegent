@@ -466,7 +466,9 @@ function reduceWorkspaceState(
         agents: state.projectAgents[action.project.id] ?? [],
         taskBindings: state.projectTaskBindings[action.project.id] ?? [],
         selectedIssue:
-          state.project?.id === action.project.id ? state.selectedIssue : null,
+          state.selectedIssue?.cloud_project_id === action.project.id
+            ? state.selectedIssue
+            : null,
         error: null,
         errorSource: null,
       };
@@ -1684,6 +1686,18 @@ export function useCollaborationWorkspaceController({
   const loadBoardOnLocation = location.view !== "manage";
   const loadProjectSnapshotOnLocation =
     loadProjectOnLocation && loadBoardOnLocation;
+  const projectRequestScope = useMemo(
+    () => ({}),
+    [
+      commands,
+      loadProjectOnLocation,
+      loadProjectSnapshotOnLocation,
+      location.projectId,
+      location.rootView,
+      myWorkEnabled,
+    ],
+  );
+  const loadedProjectScopeRef = useRef<object | null>(null);
   useEffect(() => {
     if (!commands) return;
     const revision = ++locationLoadRevisionRef.current;
@@ -1699,6 +1713,11 @@ export function useCollaborationWorkspaceController({
             return;
           }
         }
+        if (
+          loadedProjectScopeRef.current === projectRequestScope &&
+          (!loadProjectOnLocation || stateRef.current.project?.id === projectId)
+        )
+          return;
         if (loadProjectOnLocation) {
           await commands.loadProject(projectId, true, {
             isCurrent,
@@ -1707,6 +1726,7 @@ export function useCollaborationWorkspaceController({
         } else {
           await commands.loadProjectCatalog({ isCurrent });
         }
+        if (isCurrent()) loadedProjectScopeRef.current = projectRequestScope;
       };
       void loadProject();
       if (myWorkEnabled && location.rootView === "my-work")
@@ -1730,6 +1750,7 @@ export function useCollaborationWorkspaceController({
     location.rootView,
     myWorkEnabled,
     dispatch,
+    projectRequestScope,
   ]);
 
   useEffect(() => {

@@ -105,7 +105,6 @@ from app.services.loop_items.access import (
     item_security,
     related_item_filter,
     require_active_issue_user,
-    require_assignable_issue_user,
     require_item_access,
     visible_item_filter,
 )
@@ -2204,7 +2203,7 @@ class LoopItemService:
             and assignment.metadata.get("trigger") == "default"
         )
         project = db.get(CloudProject, str(item.cloud_project_id))
-        human = require_assignable_issue_user(db, project, target_user_id)
+        human = require_active_issue_user(db, target_user_id)
         if not notify:
             return
         from app.services.collaboration_human_assignments import (
@@ -2385,7 +2384,7 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "User assignee id must be numeric",
                 ) from exc
-            require_assignable_issue_user(db, project, target_user_id)
+            require_active_issue_user(db, target_user_id)
             from app.services.issue_assignments import issue_assignment_service
 
             _, assignment_created = issue_assignment_service.record(
@@ -2679,7 +2678,9 @@ class LoopItemService:
     def delete(self, db: Session, item_id: str, user_id: int) -> LoopItem:
         """Archive an editable TODO subtree; rows are kept for restoration."""
 
-        item = self.get(db, item_id, user_id)
+        from app.models.loop_item_execution import LoopItemExecution
+
+        item = self._get_item_row(db, item_id, for_update=True)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
         archived_at = self._now()
         pending_parent_ids = [item.id]
@@ -2692,6 +2693,8 @@ class LoopItemService:
                     LoopItem.parent_id.in_(pending_parent_ids),
                     loop_datetime_is_unset(LoopItem.deleted_at),
                 )
+                .order_by(LoopItem.id)
+                .with_for_update()
                 .all()
             )
             pending_parent_ids = [child.id for child in children]
@@ -2707,6 +2710,21 @@ class LoopItemService:
             item_ids=item_ids,
             user_id=user_id,
         )
+        active_runs = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.loop_item_id.in_(item_ids),
+                LoopItemExecution.status.in_(CANCELLABLE_EXECUTION_STATUSES),
+            )
+            .with_for_update()
+            .all()
+        )
+        execution_item_ids = {run.loop_item_id for run in active_runs}
+        for archived_item in archived_items:
+            if binding_targets or archived_item.id in execution_item_ids:
+                self._require_item_access(
+                    db, archived_item, user_id, action=IssueAction.EXECUTE
+                )
         for archived_item in archived_items:
             archived_item.deleted_at = archived_at
             archived_item.version += 1
@@ -2717,9 +2735,9 @@ class LoopItemService:
         # An archived Issue must not leave a Run owning a real process. Cancel
         # every cancellable Run of the archived subtree in the same transaction
         # so the recycle-bin rows never disagree with the execution queue.
-        cancelled_runs = self._cancel_runs_for_items(
+        cancelled_runs = self._cancel_runs(
             db,
-            item_ids=item_ids,
+            active=active_runs,
             note="Issue was archived while the Run was active",
         )
         binding_targets = uncovered_binding_cancellation_targets(
@@ -2736,23 +2754,9 @@ class LoopItemService:
         emit_runtime_cancellations(binding_targets)
         return item
 
-    def _cancel_runs_for_items(
-        self, db: Session, *, item_ids: list[str], note: str
-    ) -> list:
+    def _cancel_runs(self, db: Session, *, active: list, note: str) -> list:
         """Request cancellation for every cancellable Run of these TODOs."""
 
-        from app.models.loop_item_execution import LoopItemExecution
-
-        if not item_ids:
-            return []
-        active = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.loop_item_id.in_(item_ids),
-                LoopItemExecution.status.in_(CANCELLABLE_EXECUTION_STATUSES),
-            )
-            .all()
-        )
         cancelled_runs = []
         for execution in active:
             cancelled = loop_item_execution_service.cancel(

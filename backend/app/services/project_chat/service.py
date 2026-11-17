@@ -1185,6 +1185,7 @@ class ProjectChatService:
             task_id=request.task_id,
             required_role=BaseRole.Developer,
         )
+        self._require_task_execution(db, user_id, project, request.task_id)
         configured_agent = self._agent_row(
             db,
             project_id=request.project_id,
@@ -2457,13 +2458,14 @@ class ProjectChatService:
         user_id: int,
         request: ProjectChatAgentFailure,
     ) -> ProjectChatMessageView:
-        self._require_scope(
+        project = self._require_scope(
             db,
             user_id=user_id,
             project_id=request.project_id,
             task_id=request.task_id,
             required_role=BaseRole.Developer,
         )
+        self._require_task_execution(db, user_id, project, request.task_id)
         row = (
             db.query(ProjectChatMessage)
             .filter(
@@ -2510,6 +2512,22 @@ class ProjectChatService:
         db.refresh(row)
         return self.to_view(row, db=db)
 
+    @staticmethod
+    def _require_task_execution(
+        db: Session, user_id: int, project: LoopItem, task_id: str | None
+    ) -> None:
+        if task_id is None or project.task_provider in {"github", "gitlab"}:
+            return
+        from app.services.cloud_projects.access import IssueAction
+        from app.services.loop_items.service import loop_item_service
+
+        task = loop_item_service._get_item_row(db, task_id, for_update=True)
+        if str(task.cloud_project_id) != str(project.id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+        loop_item_service._require_item_access(
+            db, task, user_id, action=IssueAction.EXECUTE
+        )
+
     def _require_scope(
         self,
         db: Session,
@@ -2519,6 +2537,7 @@ class ProjectChatService:
         task_id: str | None,
         required_role: BaseRole,
     ) -> LoopItem:
+        task = None
         try:
             access = require_cloud_project_role(
                 db, project_id, user_id, BaseRole.Viewer
@@ -2554,20 +2573,21 @@ class ProjectChatService:
                     status.HTTP_403_FORBIDDEN, "Insufficient permission"
                 )
             return project
-        task = (
-            db.query(LoopItem)
-            .filter(
+        if task is None:
+            from app.services.loop_items.service import loop_item_service
+
+            query = db.query(LoopItem).filter(
                 LoopItem.id == task_id,
                 LoopItem.cloud_project_id == project_id,
                 LoopItem.resource_type == "task",
                 loop_datetime_is_unset(LoopItem.deleted_at),
             )
-            .first()
-        )
-        if task is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
-        if not can_view_item(db, access, task, user_id):
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+            if required_role != BaseRole.Viewer:
+                query = query.with_for_update()
+            task = query.first()
+            if task is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Project task not found")
+            access = loop_item_service._require_item_access(db, task, user_id)
         if not has_permission(access.role, required_role):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permission")
         return project

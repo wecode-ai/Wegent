@@ -15,8 +15,8 @@ export interface CommentSubmissionOptions {
 export interface CommentAssignment {
   options: IssueDetailSearchableSelectOption[]
   canAssignCurrent?: boolean
-  assign(target: string): Promise<void>
-  createChild?(input: CommentChildInput): Promise<import('../types').CollaborationIssue>
+  assign(target: string): Promise<void | boolean>
+  createChild?(input: CommentChildInput): Promise<import('../types').CollaborationIssue | false>
 }
 
 function firstAssignableMention(
@@ -139,7 +139,7 @@ export function useCommentAssignment(
           operation = { body, target, requestId: crypto.randomUUID() }
           setPendingChild(operation)
         }
-        await assignment.createChild(operation)
+        if ((await assignment.createChild(operation)) === false) return
         setPendingChild(null)
         setSelectedTarget('')
         setSentSuggestion('')
@@ -161,7 +161,7 @@ export function useCommentAssignment(
       }
       if (currentTarget && assignment) {
         // Only an explicitly selected target participates in submission.
-        await assignment.assign(currentTarget)
+        if ((await assignment.assign(currentTarget)) === false) return
         setSelectedTarget('')
         setSentSuggestion('')
       }

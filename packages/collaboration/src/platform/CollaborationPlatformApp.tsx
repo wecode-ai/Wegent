@@ -1691,6 +1691,48 @@ function CollaborationPlatformAppContent({
       },
     };
   }, [api, host.location.projectId, host.location.workspaceId]);
+  const routeProject = state.projects.find(
+    (project) => String(project.id) === host.location.projectId,
+  );
+  const routeProjectRef = useRef(routeProject);
+  routeProjectRef.current = routeProject;
+  const issuePageKey = isIssuePage
+    ? JSON.stringify([host.location.projectId, host.location.issueId])
+    : null;
+  const [invitedRoute, setInvitedRoute] = useState<{
+    key: string;
+    api: SharedWorkspaceApi;
+  } | null>(null);
+  const usesProjectRenderer = Boolean(renderProject);
+  const invitedRouteMatches =
+    invitedRoute?.key === issuePageKey && invitedRoute?.api === scopedApi;
+  useEffect(() => {
+    if (
+      !usesProjectRenderer ||
+      !issuePageKey ||
+      routeProject ||
+      invitedRouteMatches
+    )
+      return;
+    let active = true;
+    void scopedApi.issues.get(host.location.issueId!).then(
+      (issue) => {
+        if (active && !routeProjectRef.current && issue.invited_only)
+          setInvitedRoute({ key: issuePageKey, api: scopedApi });
+      },
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
+  }, [
+    usesProjectRenderer,
+    issuePageKey,
+    host.location.issueId,
+    routeProject?.id,
+    invitedRouteMatches,
+    scopedApi,
+  ]);
   const workspaceAgentConfigurationApi = useMemo(
     () =>
       host.location.workspaceId
@@ -2120,7 +2162,21 @@ function CollaborationPlatformAppContent({
         (project) => String(project.id) === host.location.projectId,
       ) ?? null;
     content =
-      selectedProject && renderProject ? (
+      renderProject &&
+      isIssuePage &&
+      !selectedProject &&
+      !invitedRouteMatches ? (
+        state.error ? (
+          <div className="collaboration-alert" role="alert">
+            {state.error}
+          </div>
+        ) : (
+          <ProjectLoadingSkeleton
+            label={translate("common.loading", "正在加载…")}
+            layout="board"
+          />
+        )
+      ) : selectedProject && renderProject && !invitedRouteMatches ? (
         renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp

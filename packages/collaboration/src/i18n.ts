@@ -1359,6 +1359,9 @@ const sharedMessages: Record<
       "Outside this project: manage this Issue only; project membership is unchanged.",
     "todo.confirm_outside_issue_person":
       "Confirm invitation outside the project",
+    "todo.issue_person_access":
+      "Manage this Issue only; project membership is unchanged.",
+    "todo.confirm_issue_invitation": "Confirm Issue invitation",
     "todo.collaborators_unavailable":
       "Editing participants is not available for this project yet",
     "todo.new_issue": "New issue",

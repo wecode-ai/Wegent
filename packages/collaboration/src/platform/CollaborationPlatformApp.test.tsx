@@ -6775,6 +6775,64 @@ describe("CollaborationPlatformApp real component flow", () => {
     },
   );
 
+  it("waits for host project metadata instead of mounting a temporary web editor", async () => {
+    const { api } = createApi();
+    const pending = deferred<CollaborationProject>();
+    api.projects.get = vi.fn(() => pending.promise);
+    api.projects.list = vi.fn(async () => []);
+    const renderProject = vi.fn(() => <input data-testid="host-issue-draft" />);
+    await render(
+      <PlatformHarness
+        api={api}
+        renderProject={renderProject}
+        start={{
+          ...initialLocation,
+          projectId: project.id,
+          issueId: issue.id,
+        }}
+      />,
+    );
+    expect(
+      container.querySelector('[data-testid="collaboration-issue-comment"]'),
+    ).toBeNull();
+    expect(renderProject).not.toHaveBeenCalled();
+    pending.resolve(project);
+    await flush();
+    const input = byTestId("host-issue-draft") as HTMLInputElement;
+    input.value = "Unsaved host draft";
+    await flush();
+    expect(byTestId("host-issue-draft")).toBe(input);
+    expect(input.value).toBe("Unsaved host draft");
+  });
+
+  it("uses the Issue editor for a confirmed invitation when a host renderer needs project access", async () => {
+    const invited = { ...issue, invited_only: true, can_edit: true };
+    const { api } = createApi({
+      initialWorkspaces: [],
+      initialProjects: [],
+      initialIssues: [invited],
+    });
+    api.issues.get = vi.fn().mockResolvedValue(invited);
+    api.issues.markRead = vi.fn().mockResolvedValue(invited);
+    api.projects.get = vi
+      .fn()
+      .mockRejectedValue(new Error("Project access denied"));
+    const renderProject = vi.fn(() => <div>Host project</div>);
+    await render(
+      <PlatformHarness
+        api={api}
+        renderProject={renderProject}
+        start={{
+          ...initialLocation,
+          projectId: project.id,
+          issueId: issue.id,
+        }}
+      />,
+    );
+    expect(byTestId("collaboration-issue-comment")).toBeTruthy();
+    expect(renderProject).not.toHaveBeenCalled();
+  });
+
   it.each([
     { role: "Viewer" as const, visibility: "public" as const },
     { role: "Viewer" as const, visibility: "private" as const },

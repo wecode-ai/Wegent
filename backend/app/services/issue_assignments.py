@@ -348,9 +348,9 @@ class IssueAssignmentService:
                     "Human member id must be numeric",
                 ) from exc
             if project.task_provider == "local":
-                from app.services.loop_items.access import require_assignable_issue_user
+                from app.services.loop_items.access import require_active_issue_user
 
-                require_assignable_issue_user(db, project, user_id)
+                require_active_issue_user(db, user_id)
             elif user_id not in project_participant_ids(
                 db, project, required_role=BaseRole.Developer
             ):

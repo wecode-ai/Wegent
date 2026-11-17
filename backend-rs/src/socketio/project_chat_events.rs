@@ -81,6 +81,7 @@ pub(crate) fn ack_error(code: &str, message: &str) -> Value {
 /// The source `HTTPException`/validation mapping for one scope failure.
 pub(super) enum ScopeError {
     NotFound(&'static str),
+    Unavailable(&'static str),
     Forbidden(&'static str),
     Invalid(String),
 }
@@ -89,6 +90,7 @@ impl ScopeError {
     pub(super) fn ack(&self) -> Value {
         match self {
             Self::NotFound(message) => ack_error("SCOPE_NOT_FOUND", message),
+            Self::Unavailable(message) => ack_error("SCOPE_UNAVAILABLE", message),
             Self::Forbidden(message) => ack_error("SCOPE_FORBIDDEN", message),
             Self::Invalid(message) => ack_error("INVALID_MESSAGE", message),
         }
@@ -111,7 +113,7 @@ pub(super) async fn require_scope(
         .await
         .map_err(|error| {
             tracing::error!(%error, project_id, "project chat scope read failed");
-            ScopeError::NotFound("Cloud project not found")
+            ScopeError::Unavailable("Project authorization is unavailable")
         })?
         .ok_or(ScopeError::NotFound("Cloud project not found"))?;
     if !has_permission(&access.role, "Viewer") {
@@ -166,8 +168,30 @@ async fn require_comment_scope(
     task_id: Option<&str>,
     developer: bool,
 ) -> Result<(ProjectAccess, Option<PageIssue>), ScopeError> {
-    let failure = match require_scope(state, user_id, project_id, task_id, developer).await {
-        Ok(scope) => return Ok(scope),
+    let failure = match require_scope(state, user_id, project_id, task_id, false).await {
+        Ok((mut access, external_issue)) => {
+            if let Some(issue_id) = task_id
+                && access.role == "Viewer"
+                && access.project.task_provider() == "local"
+                && crate::loop_tasks::issue_invitation::permits_read(
+                    &state.mysql,
+                    issue_id,
+                    user_id as i32,
+                )
+                .await
+                .map_err(|_| ScopeError::NotFound("Project task not found"))?
+            {
+                access.role = "IssueManager".into();
+                access.workspace_id = None;
+            }
+            if developer
+                && access.role != "IssueManager"
+                && !has_permission(&access.role, "Developer")
+            {
+                return Err(ScopeError::Forbidden("Insufficient permission"));
+            }
+            return Ok((access, external_issue));
+        }
         Err(failure) => failure,
     };
     if !matches!(failure, ScopeError::NotFound(_)) {
@@ -211,7 +235,7 @@ pub(crate) async fn subscribe(
         Ok(request) => request,
         Err(message) => return Ok(Reply::payload(ack_error("INVALID_MESSAGE", &message))),
     };
-    let (access, _) = match require_comment_scope(
+    let _access = match require_comment_scope(
         state,
         user_id,
         &request.project_id,
@@ -241,20 +265,21 @@ pub(crate) async fn subscribe(
         .and_then(Value::as_i64)
         .unwrap_or(request.after_sequence);
     let room = project_chat_room(&request.project_id, request.task_id.as_deref());
-    let reply = Reply::payload(json!({
+    if let Err(scope) = require_comment_scope(
+        state,
+        user_id,
+        &request.project_id,
+        request.task_id.as_deref(),
+        false,
+    )
+    .await
+    {
+        return Ok(Reply::payload(scope.ack()));
+    }
+    Ok(Reply::payload(json!({
         "ok": true,
-        "result": {
-            "messages": messages,
-            "currentUserId": user_id.to_string(),
-            "latestSequence": latest_sequence,
-        },
-    }))
-    .join(room.clone());
-    Ok(if access.role == "IssueManager" {
-        reply.join(invitation_room(&room, user_id))
-    } else {
-        reply.leave(invitation_room(&room, user_id))
-    })
+        "result": { "messages": messages, "currentUserId": user_id.to_string(), "latestSequence": latest_sequence },
+    })).join(room))
 }
 
 /// `ProjectChatSubscribe`.
@@ -279,7 +304,7 @@ impl SubscribeRequest {
 }
 
 /// `on_project_chat_unsubscribe`.
-pub(crate) async fn unsubscribe(user_id: i64, data: Value) -> Result<Reply<Value>, ClientError> {
+pub(crate) async fn unsubscribe(data: Value) -> Result<Reply<Value>, ClientError> {
     let payload = payload(&data);
     let (Ok(project_id), task_id) = (
         required_identifier(&payload, "project_id"),
@@ -288,9 +313,7 @@ pub(crate) async fn unsubscribe(user_id: i64, data: Value) -> Result<Reply<Value
         return Ok(Reply::payload(ack_error("INVALID_MESSAGE", "project_id")));
     };
     let room = project_chat_room(&project_id, task_id.as_deref());
-    Ok(Reply::payload(json!({"ok": true}))
-        .leave(invitation_room(&room, user_id))
-        .leave(room))
+    Ok(Reply::payload(json!({"ok": true})).leave(room))
 }
 
 /// `on_project_chat_message_send`.
@@ -979,11 +1002,6 @@ pub(crate) fn optional_i64(payload: &Map<String, Value>, key: &str) -> Option<i6
         Value::String(text) => text.trim().parse().ok(),
         _ => None,
     }
-}
-
-/// Mark guest subscriptions for revalidation before each outbound message.
-pub(crate) fn invitation_room(room: &str, user_id: i64) -> String {
-    format!("issue-invitation:{room}:{user_id}")
 }
 
 pub(crate) async fn permits_comment(

@@ -1,4 +1,4 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import {
   SharedIssueDetailEditor,
@@ -8,7 +8,7 @@ import {
   type SharedEditorProject,
 } from '@wegent/collaboration'
 
-function setup(canAssign = true, editable = true) {
+function setup(canAssign = true, editable = true, outside = false) {
   const item = {
     id: 'issue',
     cloud_project_id: 'project',
@@ -18,7 +18,8 @@ function setup(canAssign = true, editable = true) {
     priority: 'none',
     tags: [],
     version: 1,
-    assignee_user_id: null,
+    assignee_user_id: outside ? 5 : null,
+    assignee_name: outside ? 'Outside person' : null,
     created_at: '2026-11-03T00:00:00Z',
     updated_at: '2026-11-03T00:00:00Z',
   } as SharedEditorIssue
@@ -74,12 +75,43 @@ function setup(canAssign = true, editable = true) {
       }}
     />
   )
-  return { port, onUpdated, getAssignment: () => context.commentAssignment }
+  return { port, item, onUpdated, getAssignment: () => context.commentAssignment }
 }
 
 describe('Issue comment assignment persistence', () => {
+  it('requires confirmation when comment assignment selects a non-project person', async () => {
+    const { port, item, getAssignment } = setup(true, true, true)
+    port.issues.get.mockResolvedValue({ ...item, assignee_user_id: null, version: 7 })
+    await waitFor(() =>
+      expect(getAssignment()?.options.some(option => option.value === '5')).toBe(true)
+    )
+    let operation!: Promise<void | boolean>
+    act(() => {
+      operation = getAssignment()!.assign('5')
+    })
+    expect(await screen.findByTestId('issue-outside-assignee-cancel')).toBeVisible()
+    expect(port.issues.assign).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('issue-outside-assignee-cancel'))
+    expect(await operation).toBe(false)
+    expect(port.issues.assign).not.toHaveBeenCalled()
+    act(() => {
+      operation = getAssignment()!.assign('5')
+    })
+    fireEvent.click(await screen.findByTestId('issue-outside-assignee-confirm'))
+    await act(async () => {
+      await operation
+    })
+    expect(port.issues.assign).toHaveBeenCalledExactlyOnceWith('project', 'issue', {
+      version: 7,
+      assigneeType: 'user',
+      assigneeId: '5',
+      notifyAssignee: true,
+    })
+  })
+
   it.each([
     ['1', { assigneeType: 'user', assigneeId: '1', notifyAssignee: true }],
+    ['2', { assigneeType: 'user', assigneeId: '2', notifyAssignee: true }],
     ['agent:bot', { assigneeType: 'agent', assigneeId: 'bot' }],
     ['group:squad', null],
   ])(
@@ -90,6 +122,7 @@ describe('Issue comment assignment persistence', () => {
         expect(getAssignment()?.options.map(option => option.value)).toEqual([
           'group:squad',
           '1',
+          '2',
           'agent:bot',
         ])
       )
@@ -114,7 +147,7 @@ describe('Issue comment assignment persistence', () => {
 
   it('keeps parent assignment forbidden while allowing editable Issues to create children', async () => {
     const { port, getAssignment } = setup(false)
-    await waitFor(() => expect(getAssignment()?.options.length).toBe(3))
+    await waitFor(() => expect(getAssignment()?.options.length).toBe(4))
     expect(getAssignment()?.canAssignCurrent).toBe(false)
     expect(getAssignment()?.createChild).toBeTypeOf('function')
     await expect(getAssignment()!.assign('1')).rejects.toThrow()

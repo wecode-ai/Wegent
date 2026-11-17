@@ -54,15 +54,16 @@ export function IssueDetailCollaboratorPicker({
   const [selected, setSelected] = useState<Array<{ id: number; user_name: string }>>([])
   const [confirming, setConfirming] = useState(false)
   const search = useIssuePeopleSearch(query, searchUsers)
+  const matchingMembers = members.filter(member =>
+    member.user_name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+  )
   const users = [
-    ...members.map(member => ({
+    ...matchingMembers.map(member => ({
       id: member.user_id,
       user_name: member.user_name,
     })),
-    ...search.users.filter(user => !members.some(member => member.user_id === user.id)),
-  ]
-    .filter(user => !excludedUserIds?.has(user.id))
-    .filter(user => user.user_name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+    ...search.users.filter(user => !matchingMembers.some(member => member.user_id === user.id)),
+  ].filter(user => !excludedUserIds?.has(user.id))
   return (
     <div className={`min-w-0 ${className ?? ''}`}>
       <MemberSearchPicker

@@ -539,8 +539,31 @@ async fn assert_explicit_issue_invitation_scope(mysql: &MysqlService) {
         .execute("INSERT INTO users VALUES (700,1),(701,1)", ())
         .await
         .unwrap();
-    mysql.execute("INSERT INTO loop_items (id,resource_type,title,description,content_type,size_bytes,local_project_id,metadata,source_task_snapshot,deleted_at,created_at,updated_at) VALUES ('invite-project','project','','','',0,0,JSON_OBJECT(),JSON_OBJECT(),'1970-01-01 00:00:01',NOW(),NOW())", ()).await.unwrap();
-    mysql.execute("UPDATE loop_items SET cloud_project_id='invite-project', assignee_user_id=700 WHERE id='issue-1'",()).await.unwrap();
+    mysql
+        .execute(
+            "CREATE TABLE kinds (id BIGINT PRIMARY KEY, kind VARCHAR(64), is_active BOOLEAN)",
+            (),
+        )
+        .await
+        .unwrap();
+    mysql.execute("CREATE TABLE resource_members (resource_id BIGINT, resource_type VARCHAR(64), entity_id VARCHAR(64), entity_type VARCHAR(64), status VARCHAR(64))", ()).await.unwrap();
+    mysql
+        .execute(
+            "INSERT INTO kinds VALUES (42,'CollaborationWorkspace',1)",
+            (),
+        )
+        .await
+        .unwrap();
+    mysql.execute("INSERT INTO resource_members VALUES (900123,'CloudProject','42','workspace','approved')", ()).await.unwrap();
+    mysql.execute("INSERT INTO loop_items (id,resource_type,title,description,content_type,size_bytes,local_project_id,metadata,source_task_snapshot,deleted_at,created_at,updated_at) VALUES ('900123','project','','','',0,0,JSON_OBJECT(),JSON_OBJECT(),'1970-01-01 00:00:01',NOW(),NOW())", ()).await.unwrap();
+    mysql.execute("UPDATE loop_items SET cloud_project_id='900123', assignee_user_id=700 WHERE id='issue-1'",()).await.unwrap();
+    mysql
+        .execute(
+            "UPDATE loop_items SET status='active' WHERE id='900123'",
+            (),
+        )
+        .await
+        .unwrap();
     assert!(permits_read(mysql, "issue-1", 700).await.unwrap());
     assert!(!permits_read(mysql, "issue-1", 701).await.unwrap());
     assert!(!permits_read(mysql, "empty-issue", 700).await.unwrap());
@@ -563,11 +586,11 @@ async fn assert_explicit_issue_invitation_scope(mysql: &MysqlService) {
         .execute("UPDATE users SET is_active=1 WHERE id=700", ())
         .await
         .unwrap();
-    mysql.execute("UPDATE loop_items SET metadata=JSON_OBJECT('task_provider','github') WHERE id='invite-project'",()).await.unwrap();
+    mysql.execute("UPDATE loop_items SET metadata=JSON_OBJECT('task_provider','github') WHERE id='900123'",()).await.unwrap();
     assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
     mysql
         .execute(
-            "UPDATE loop_items SET metadata=JSON_OBJECT() WHERE id='invite-project'",
+            "UPDATE loop_items SET metadata=JSON_OBJECT() WHERE id='900123'",
             (),
         )
         .await
@@ -577,5 +600,40 @@ async fn assert_explicit_issue_invitation_scope(mysql: &MysqlService) {
         .await
         .unwrap();
     assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
+    mysql
+        .execute(
+            "UPDATE loop_items SET assignee_user_id=700 WHERE id='issue-1'",
+            (),
+        )
+        .await
+        .unwrap();
+    for (disable, restore) in [
+        (
+            "UPDATE loop_items SET status='archived' WHERE id='900123'",
+            "UPDATE loop_items SET status='active' WHERE id='900123'",
+        ),
+        (
+            "UPDATE kinds SET is_active=0 WHERE id=42",
+            "UPDATE kinds SET is_active=1 WHERE id=42",
+        ),
+        (
+            "DELETE FROM resource_members",
+            "INSERT INTO resource_members VALUES (900123,'CloudProject','42','workspace','approved')",
+        ),
+        (
+            "INSERT INTO resource_members VALUES (900123,'CloudProject','43','workspace','approved')",
+            "DELETE FROM resource_members WHERE entity_id='43'",
+        ),
+    ] {
+        mysql.execute(disable, ()).await.unwrap();
+        assert!(!permits_read(mysql, "issue-1", 700).await.unwrap());
+        mysql.execute(restore, ()).await.unwrap();
+        assert!(permits_read(mysql, "issue-1", 700).await.unwrap());
+    }
+    mysql
+        .execute("DROP TABLE resource_members", ())
+        .await
+        .unwrap();
+    mysql.execute("DROP TABLE kinds", ()).await.unwrap();
     mysql.execute("DROP TABLE users", ()).await.unwrap();
 }
