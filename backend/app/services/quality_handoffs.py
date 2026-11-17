@@ -555,14 +555,24 @@ def _process_issue(
         metadata["quality_handoff"] = handoff
         _persist_observation(item, metadata, event)
         return True
+    same_accepted_heads = handoff.get("accepted_heads") == {
+        url: heads[url]["head_sha"] for url in _linked_urls(item)
+    }
     role = "engineering" if reason else "qa"
+    if (
+        not reason
+        and same_accepted_heads
+        and not handoff.get("quality_blocked")
+        and handoff.get("waiting_assignee")
+        and handoff.get("required_assignee_role") in {"qa", "product", "ui"}
+    ):
+        role = handoff["required_assignee_role"]
     # Preserve completed substeps while the same accepted head stays healthy.
     if (
         not reason
         and not handoff.get("quality_blocked")
         and not handoff.get("waiting_assignee")
-        and handoff.get("accepted_heads")
-        == {url: heads[url]["head_sha"] for url in _linked_urls(item)}
+        and same_accepted_heads
     ):
         metadata["quality_handoff"] = handoff
         _persist_observation(item, metadata, event)
@@ -573,8 +583,21 @@ def _process_issue(
         else _role_targets(project, item, role)
     )
     user = _resolve_human(db, project, candidates)
+    if (
+        not reason
+        and same_accepted_heads
+        and handoff.get("waiting_assignee")
+        and handoff.get("required_assignee_role") == role
+        and user is None
+    ):
+        if previous.get("signature") == signature:
+            return False
+        metadata["quality_handoff"] = handoff
+        _persist_observation(item, metadata, event)
+        return True
     transition = {
         "heads": {url: heads[url]["head_sha"] for url in sorted(heads)},
+        "role": role,
         "reason": reason or "quality_ready",
         "assignee_user_id": user.id if user else None,
     }
@@ -727,6 +750,7 @@ def submit_quality_review(
     observed = _mapping(handoff.get("pr_heads"))
     if (
         not accepted
+        or set(accepted) != _linked_urls(item)
         or values.get("pr_head_sha") not in accepted.values()
         or any(
             _mapping(observed.get(url)).get("head_sha") != head

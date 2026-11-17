@@ -207,6 +207,83 @@ def test_qa_product_ui_review_handoffs_replay_without_side_effects(quality_scena
     assert s.item.metadata_json["workflow"]["current_stage_id"] == "quality"
 
 
+@pytest.mark.parametrize("waiting_role", ["product", "ui"])
+def test_waiting_substep_recovers_its_owner_without_returning_to_qa(
+    quality_scenario, waiting_role
+):
+    s = quality_scenario
+    process_quality_event(s.db, observation(s))
+    if waiting_role == "ui":
+        review(s, "qa", "qa-before-wait")
+    s.users[waiting_role].is_active = False
+    s.db.flush()
+    review(s, "qa" if waiting_role == "product" else "product", "start-wait")
+    assert s.item.assignee_user_id is None
+
+    s.db.flush()
+    waiting_before = (s.item.version, s.db.query(WeworkNotification).count())
+    assert process_quality_event(s.db, observation(s)) == 0
+    assert (
+        s.item.metadata_json["quality_handoff"]["required_assignee_role"]
+        == waiting_role
+    )
+    assert s.item.metadata_json["quality_handoff"]["waiting_assignee"] is True
+    assert s.item.assignee_user_id is None
+    assert waiting_before == (s.item.version, s.db.query(WeworkNotification).count())
+
+    s.users[waiting_role].is_active = True
+    s.db.flush()
+    process_quality_event(s.db, observation(s))
+    assert s.item.assignee_user_id == s.users[waiting_role].id
+    assert (
+        s.item.metadata_json["quality_handoff"]["required_assignee_role"]
+        == waiting_role
+    )
+    assert s.item.metadata_json["quality_handoff"]["waiting_assignee"] is False
+    assert s.item.metadata_json["workflow"]["current_stage_id"] == "quality"
+    s.db.flush()
+    before = (s.item.version, s.db.query(WeworkNotification).count())
+    assert process_quality_event(s.db, observation(s)) == 0
+    assert before == (s.item.version, s.db.query(WeworkNotification).count())
+    first = review(s, waiting_role, "recovered-review")
+    version = s.item.version
+    assert review(s, waiting_role, "recovered-review") == first
+    assert s.item.version == version
+
+
+def test_review_requires_every_current_pr_before_accepting_and_replays_once(
+    quality_scenario,
+):
+    s = quality_scenario
+    process_quality_event(s.db, observation(s))
+    second_url = "https://github.com/acme/app/pull/13"
+    metadata = deepcopy(s.item.metadata_json)
+    metadata["badges"].append({"icon": "git-pull-request", "url": second_url})
+    s.item.metadata_json = metadata
+    with pytest.raises(HTTPException) as error:
+        review(s, "qa", "all-prs-approval")
+    assert error.value.detail["reason_code"] == "quality_review_head_mismatch"
+    assert s.item.assignee_user_id == s.users["qa"].id
+
+    second = observation(s, head="other-head", complete=False)
+    second.payload["subject"]["url"] = second_url
+    second.payload["quality_snapshot"]["url"] = second_url
+    process_quality_event(s.db, second)
+    with pytest.raises(HTTPException) as error:
+        review(s, "qa", "all-prs-approval")
+    assert error.value.detail["reason_code"] == "quality_blocked"
+
+    second.payload["quality_snapshot"]["complete"] = True
+    process_quality_event(s.db, second)
+    result = review(s, "qa", "all-prs-approval")
+    assert result["pr_heads"] == {PR: "head-1", second_url: "other-head"}
+    assert s.item.assignee_user_id == s.users["product"].id
+    s.db.flush()
+    before = (s.item.version, s.db.query(WeworkNotification).count())
+    assert review(s, "qa", "all-prs-approval") == result
+    assert before == (s.item.version, s.db.query(WeworkNotification).count())
+
+
 @pytest.mark.parametrize(
     "changes, reason",
     [
