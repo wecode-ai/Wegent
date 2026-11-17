@@ -419,7 +419,6 @@ describe('Provider settings page', () => {
       discover = async () => ['MiniMax-M2.7']
       await reloadProviderConfiguration()
       const user = await openEditor()
-      await user.click(screen.getByTestId('provider-stage-models'))
       await user.click(screen.getByTestId('provider-discover'))
       expect(await screen.findByTestId('provider-discovered-MiniMax-M2.7')).toBeEnabled()
       expect(invoke).toHaveBeenCalledWith('modelConfiguration.discover', {
