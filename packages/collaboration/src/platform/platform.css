@@ -4970,7 +4970,8 @@ button.collaboration-project-offline:hover {
     height: 16px;
   }
 
-  .collaboration-platform-sidebar-settings .collaboration-navigation-content {
+  .collaboration-platform-sidebar-settings.collaboration-platform-sidebar-context
+    .collaboration-navigation-content {
     display: flex;
     max-height: min(50dvh, 320px);
     flex-direction: column;

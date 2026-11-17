@@ -262,6 +262,20 @@ async function verifyNarrowSettingsNavigation(control, scoped, projectId) {
     assert.ok(sidebar.height <= 64, 'Collapsed navigation must leave room for project maintenance')
     await control.command('click', toggle)
     assert.equal(await control.command('getAttribute', toggle, { value: 'aria-expanded' }), 'true')
+    const sidebarClass = await control.command(
+      'getAttribute',
+      find('collaboration-platform-sidebar'),
+      { value: 'class' }
+    )
+    if (sidebarClass.includes('collaboration-platform-sidebar-full')) {
+      const [content] = JSON.parse(
+        await control.command('getElementMetrics', find('collaboration-navigation-content'))
+      )
+      assert.ok(
+        content.height > content.viewportHeight / 2,
+        'Expanded full navigation must use the available window height instead of retaining a half-screen settings cap'
+      )
+    }
     const project = find(`collaboration-workspace-project-${projectId}`)
     await control.command('scrollIntoView', project)
     await control.command('waitFor', project, { visible: true })
