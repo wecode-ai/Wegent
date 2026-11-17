@@ -160,6 +160,8 @@ function GitEnvironmentSectionContent({
   const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
   const [commitProgressLabel, setCommitProgressLabel] = useState('')
   const [commitError, setCommitError] = useState<string | null>(null)
+  const commitFeedbackTimerRef = useRef<number | null>(null)
+  const commitFeedbackMountedRef = useRef(false)
   const commitButtonRef = useRef<HTMLButtonElement>(null)
   const commitFormRef = useRef<HTMLFormElement>(null)
   const gitRepositoryAvailable = info.isGitRepository !== false
@@ -173,6 +175,20 @@ function GitEnvironmentSectionContent({
     setCommitFormOpen(false)
     setCommitError(null)
   }, [])
+
+  const clearCommitFeedbackTimer = useCallback(() => {
+    if (commitFeedbackTimerRef.current === null) return
+    window.clearTimeout(commitFeedbackTimerRef.current)
+    commitFeedbackTimerRef.current = null
+  }, [])
+
+  useEffect(() => {
+    commitFeedbackMountedRef.current = true
+    return () => {
+      commitFeedbackMountedRef.current = false
+      clearCommitFeedbackTimer()
+    }
+  }, [clearCommitFeedbackTimer])
 
   useEffect(() => {
     if (!commitFormOpen) return
@@ -237,6 +253,7 @@ function GitEnvironmentSectionContent({
     if (action === 'commit-and-push' && !onCommitAndPushChanges) return
     if (action === 'push' && !onPushChanges) return
 
+    clearCommitFeedbackTimer()
     setCommitError(null)
     setCommitProgressLabel(getCommitProgressLabel(action, trimmedMessage))
     setCommitStatus('committing')
@@ -245,13 +262,16 @@ function GitEnvironmentSectionContent({
       if (action === 'push') await onPushChanges?.()
       else if (action === 'commit-and-push') await onCommitAndPushChanges?.(trimmedMessage)
       else await onCommitChanges?.(trimmedMessage)
+      if (!commitFeedbackMountedRef.current) return
       setCommitStatus('success')
       if (action !== 'push') setCommitMessage('')
-      window.setTimeout(() => {
+      commitFeedbackTimerRef.current = window.setTimeout(() => {
+        commitFeedbackTimerRef.current = null
         setCommitStatus('idle')
         setCommitProgressLabel('')
       }, 1600)
     } catch (error) {
+      if (!commitFeedbackMountedRef.current) return
       setCommitStatus('idle')
       setCommitProgressLabel('')
       setCommitError(getCommitErrorMessage(error))
