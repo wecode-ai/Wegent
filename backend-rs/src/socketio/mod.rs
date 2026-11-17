@@ -26,6 +26,7 @@ pub mod chat_session;
 pub(crate) mod chat_support;
 pub mod chat_task_join;
 mod chat_trigger;
+mod python_answer;
 pub mod device;
 pub mod device_auth_sync;
 pub mod device_disconnect;

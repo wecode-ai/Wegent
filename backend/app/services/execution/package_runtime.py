@@ -30,6 +30,9 @@ def mount_package_runtime(app: FastAPI) -> None:
         dependencies=[Depends(verify_internal_service_token)],
     )
     runtime.add_api_route(IMAGE_EXECUTION_ROUTE, execute_image, methods=["POST"])
+    from app.services.execution.web_answer_runtime import execute_web_answer
+
+    runtime.add_api_route("/v1/answer-execution", execute_web_answer, methods=["POST"])
     if settings.CHAT_SHELL_MODE == "package":
         from chat_shell.api.v1.response import router
 

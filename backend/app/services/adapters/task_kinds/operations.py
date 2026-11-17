@@ -1422,17 +1422,22 @@ class TaskOperationsMixin:
 
     @trace_async("task.cancel_chat_stream", tracer_name="backend.chat")
     async def _call_chat_shell_cancel(
-        self, subtask_id: int, generation_id: str | None
-    ) -> None:
+        self,
+        subtask_id: int,
+        generation_id: str | None,
+        *,
+        allowed_statuses: tuple[SubtaskStatus, ...] | None = None,
+    ) -> bool:
         """Publish under the captured row lock without blocking the event loop."""
         from app.services.chat.storage.db import run_sync_in_executor
 
         try:
-            await run_sync_in_executor(
+            return await run_sync_in_executor(
                 self._cancel_captured_chat_stream,
                 subtask_id,
                 generation_id,
                 asyncio.get_running_loop(),
+                allowed_statuses,
             )
         except Exception as exc:
             logger.error(
@@ -1440,13 +1445,15 @@ class TaskOperationsMixin:
                 subtask_id,
                 type(exc).__name__,
             )
+            return False
 
     def _cancel_captured_chat_stream(
         self,
         subtask_id: int,
         generation_id: str | None,
         loop: asyncio.AbstractEventLoop,
-    ) -> None:
+        allowed_statuses: tuple[SubtaskStatus, ...] | None = None,
+    ) -> bool:
         """Keep retry excluded until the existing cancellation signal is sent."""
         from app.db.session import SessionLocal
         from app.services.chat.storage import session_manager
@@ -1454,18 +1461,18 @@ class TaskOperationsMixin:
         with SessionLocal() as db:
             subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
             if not subtask:
-                return
+                return False
             db.refresh(subtask, with_for_update=True)
-            if (
-                subtask.answer_generation_id != generation_id
-                or subtask.status != SubtaskStatus.CANCELLED
+            if subtask.answer_generation_id != generation_id or subtask.status not in (
+                allowed_statuses or (SubtaskStatus.CANCELLED,)
             ):
-                return
+                return False
             success = session_manager.cancel_stream_from_sync(subtask_id, loop)
             if not success:
                 logger.warning(
                     "Chat cancel flag not confirmed: subtask_id=%s", subtask_id
                 )
+            return success
 
     def get_pipeline_stage_info(
         self,

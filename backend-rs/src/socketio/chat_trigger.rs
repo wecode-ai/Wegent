@@ -120,6 +120,9 @@ pub(crate) async fn after_commit(
     if turn.assistant_subtask_id == 0 {
         return Ok(());
     }
+    if super::python_answer::start(state, turn, user_id).await? {
+        return Ok(());
+    }
     let state = Arc::clone(state);
     let turn = turn.clone();
     tokio::spawn(async move {

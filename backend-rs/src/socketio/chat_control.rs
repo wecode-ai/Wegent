@@ -79,6 +79,20 @@ pub(crate) async fn cancel(
         .get("shell_type")
         .and_then(Value::as_str)
         .unwrap_or("Chat");
+    if device_id.is_none() && shell_type == "Chat" {
+        if let Some(reply) = super::python_answer::operation(
+            state,
+            &json!({
+                "action": "cancel", "task_id": info.task_id,
+                "answer_id": subtask_id, "actor_id": user_id
+            }),
+        )
+        .await
+        .map_err(|_| internal_error())?
+        {
+            return Ok(Reply::payload(reply));
+        }
+    }
     if device_id.is_none()
         && shell_type != "Chat"
         && let Some(ack) = access_denied(state, session, info.task_id, "chat:cancel").await?
