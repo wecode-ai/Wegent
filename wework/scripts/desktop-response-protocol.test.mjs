@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 import { gzipSync, zstdCompressSync } from 'node:zlib'
@@ -158,7 +159,7 @@ for (const [surface, createScenario] of [
         assert.equal(call.name, 'exec_command')
         command = JSON.parse(call.arguments)
       }
-      assert.equal(command.cmd, `touch '${workspacePath}/stand-in-approved.txt'`)
+      assert.equal(command.cmd, `touch '${join(workspacePath, 'stand-in-approved.txt')}'`)
       assert.equal(command.workdir, workspacePath)
       assert.equal(command.sandbox_permissions, 'require_escalated')
       assert.equal(command.justification, '确认后创建隔离测试工作区中的验证文件。')

@@ -2,7 +2,8 @@
 // The recovery reader, generated publisher, filesystem and IPC gates are real.
 const childProcess = require('node:child_process')
 const fs = require('node:fs/promises')
-const { createRequire, syncBuiltinESMExports } = require('node:module')
+const Module = require('node:module')
+const { syncBuiltinESMExports } = Module
 const path = require('node:path')
 const vm = require('node:vm')
 const { pathToFileURL } = require('node:url')
@@ -77,16 +78,10 @@ async function reader(mode, root, modulePath, evidence) {
   let child
   let childExited
   let released = false
-  const electronRequire = createRequire(
-    new URL('../../../electron/package.json', pathToFileURL(modulePath))
-  )
-  const electronModule = electronRequire.resolve('electron')
-  const previousElectron = require.cache[electronModule]
-  require.cache[electronModule] = {
-    id: electronModule,
-    filename: electronModule,
-    loaded: true,
-    exports: '/unused-electron',
+  const load = Module._load
+  Module._load = function (request, ...args) {
+    if (request === 'electron') return '/unused-electron'
+    return Reflect.apply(load, this, [request, ...args])
   }
   childProcess.execFile = (binary, args, _options, callback) => {
     if (binary !== '/unused-electron')
@@ -130,9 +125,9 @@ async function reader(mode, root, modulePath, evidence) {
     }
   }
   syncBuiltinESMExports()
-  const { verifyStartupRecovery } = await import(pathToFileURL(modulePath).href)
   const result = { events }
   try {
+    const { verifyStartupRecovery } = await import(pathToFileURL(modulePath).href)
     result.evidence = await verifyStartupRecovery({
       resultDir: root,
       electronRoot: root,
@@ -141,9 +136,8 @@ async function reader(mode, root, modulePath, evidence) {
   } catch (error) {
     result.failure = { name: error.name, message: error.message }
   } finally {
+    Module._load = load
     result.writerExitCode = await childExited
-    if (previousElectron) require.cache[electronModule] = previousElectron
-    else delete require.cache[electronModule]
   }
   process.stdout.write(JSON.stringify(result))
 }

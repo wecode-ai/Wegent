@@ -10,7 +10,8 @@ export function watchDevelopmentDirectory(
   notify,
   createWatcher = chokidar.watch
 ) {
-  const roots = [directory, realpathSync(directory)]
+  // Native realpath also expands Windows short names emitted by fs.watch.
+  const roots = [directory, realpathSync.native(directory)]
   const watcher = createWatcher(directory, {
     ignoreInitial: true,
     depth: recursive ? undefined : 0,

@@ -13,11 +13,13 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, expect, test } from 'vitest'
 
 const execute = promisify(execFile)
+const require = createRequire(import.meta.url)
 const roots = []
 
 afterEach(async () => {
@@ -35,9 +37,14 @@ test('builds and materializes one archive per DSH source while preserving role a
     mkdir(join(source, 'plugins'), { recursive: true }),
     mkdir(join(source, 'patches'), { recursive: true }),
     mkdir(commands),
-    symlink(resolve('node_modules'), join(root, 'node_modules'), 'junction'),
+    mkdir(join(root, 'node_modules')),
   ])
   await Promise.all([
+    symlink(
+      dirname(require.resolve('tar/package.json')),
+      join(root, 'node_modules', 'tar'),
+      'junction'
+    ),
     cp(
       resolve('scripts/prepare-harness-runtime.mjs'),
       join(scripts, 'prepare-harness-runtime.mjs')

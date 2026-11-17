@@ -45,12 +45,14 @@ async function expectMissing(path) {
 function gitBash() {
   if (process.platform !== 'win32') return 'bash'
   const executables = execFileSync('where.exe', ['git'], { encoding: 'utf8' }).trim().split(/\r?\n/)
-  for (const executable of executables) {
-    let directory = dirname(executable)
-    while (dirname(directory) !== directory) {
-      const bash = join(directory, 'bin', 'bash.exe')
-      if (existsSync(bash)) return bash
-      directory = dirname(directory)
+  for (const parts of [['usr', 'bin'], ['bin']]) {
+    for (const executable of executables) {
+      let directory = dirname(executable)
+      while (dirname(directory) !== directory) {
+        const bash = join(directory, ...parts, 'bash.exe')
+        if (existsSync(bash)) return bash
+        directory = dirname(directory)
+      }
     }
   }
   throw new Error('Git for Windows Bash is unavailable')

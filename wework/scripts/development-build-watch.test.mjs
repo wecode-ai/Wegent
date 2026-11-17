@@ -205,10 +205,11 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
       })
       await expect.poll(() => published).toBe('')
       await handle.writeFile('four')
-      await expect.poll(() => published).toBe('four')
     } finally {
+      // Windows can defer the final write notification until its handle closes.
       await handle.close()
     }
+    await expect.poll(() => published).toBe('four')
     expect(build).toHaveBeenCalledTimes(6)
     expect(snapshots).toEqual(['one', 'invalid', 'two', 'three', '', 'four'])
   }
