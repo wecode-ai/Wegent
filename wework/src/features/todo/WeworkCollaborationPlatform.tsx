@@ -1,4 +1,5 @@
 import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
+import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
 import { IndependentIssuesProvider } from './IndependentIssuesProvider'
 import { createPersonalIssuesApi } from '@/api/personalIssues'
 import { PersonalIssuesView } from './PersonalIssuesView'
@@ -604,6 +605,7 @@ export function WeworkSharedProject({
   )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
+      settingsPages: DesktopProjectSettingsPages,
       renderBoardToolbarAction: onOpenProjectConversation
         ? () => (
             <Tooltip label={t('workbench.project_space_chat.open')} side="bottom">
@@ -2116,6 +2118,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           onReady={handleReady}
           normalizePastedFiles={normalizeClipboardImageFiles}
           host={{
+            settingsPages: DesktopProjectSettingsPages,
             convertLocalProjectToCloud: project => {
               setMigrationError('')
               setMigrationProject(project)

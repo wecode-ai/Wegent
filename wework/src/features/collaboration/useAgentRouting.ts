@@ -49,6 +49,7 @@ export function useAgentRouting(
 ) {
   const [traceId] = useState(createModelLoadingTrace)
   const [activated, setActivated] = useState(!defer)
+  const [environmentPickerOpen, setEnvironmentPickerOpen] = useState(false)
   const activate = useCallback(() => setActivated(true), [])
   const [catalog, setCatalog] = useState<{
     api: RunnerCatalogApi
@@ -287,6 +288,8 @@ export function useAgentRouting(
     activate,
     hasProject: Boolean(projectId),
     environments,
+    environmentPickerOpen,
+    setEnvironmentPickerOpen,
     candidates,
     executionPolicy,
     setExecutionPolicy,

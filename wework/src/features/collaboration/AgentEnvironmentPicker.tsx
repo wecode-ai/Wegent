@@ -12,6 +12,8 @@ export function AgentEnvironmentPicker({
   loading,
   selectionOnly = false,
   projectScoped = false,
+  open,
+  onOpenChange,
 }: {
   value: string
   environments: RunnerEnvironment[]
@@ -21,6 +23,8 @@ export function AgentEnvironmentPicker({
   loading: boolean
   selectionOnly?: boolean
   projectScoped?: boolean
+  open?: boolean
+  onOpenChange?(open: boolean): void
 }) {
   const { t } = useTranslation('common')
   const [showOffline, setShowOffline] = useState(false)
@@ -66,6 +70,8 @@ export function AgentEnvironmentPicker({
 
   return (
     <IssueDetailSearchableSelect
+      open={open}
+      onOpenChange={onOpenChange}
       value={value}
       options={[...policies, ...deviceOptions]}
       testId={testId}

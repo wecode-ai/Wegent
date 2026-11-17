@@ -7,6 +7,7 @@ const focusableSelector =
 
 function isFocusable(element: HTMLElement) {
   if (
+    element.matches(':disabled') ||
     (element.tabIndex < 0 &&
       (!element.matches('[contenteditable="true"]') || element.hasAttribute('tabindex'))) ||
     element.closest('[hidden], [aria-hidden="true"], [inert]')
@@ -27,14 +28,19 @@ export function useDialogKeyboard<T extends HTMLElement>(
   restoreFocus?: string
 ) {
   const ref = useRef<T>(null)
+  const opener = useRef<Element | null>(null)
+  const wasOpen = useRef(false)
+  if (open && !wasOpen.current && typeof document !== 'undefined')
+    opener.current = document.activeElement
+  wasOpen.current = open
   useEscapeKey(onClose, open, ref)
 
   useEffect(() => {
     const dialog = ref.current
     if (!open || !dialog) return
-    const previousFocus = document.activeElement
+    const previousFocus = opener.current
     const focusContainer = dialog.closest('[role="dialog"]')
-    if (!dialog.contains(previousFocus)) {
+    if (!dialog.contains(document.activeElement)) {
       const preferred = Array.from(
         dialog.querySelectorAll<HTMLElement>(
           initialFocus ??
@@ -50,6 +56,8 @@ export function useDialogKeyboard<T extends HTMLElement>(
     const restoreBackground = isolateModalBackground(dialog, trapFocus)
     const handleTab = (event: KeyboardEvent) => {
       if (event.key !== 'Tab' || event.defaultPrevented) return
+      const boundary = document.activeElement?.closest('[role="dialog"], dialog[open]')
+      if (boundary && boundary !== dialog && !boundary.contains(dialog)) return
       const elements = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector)).filter(
         isFocusable
       )
@@ -73,22 +81,28 @@ export function useDialogKeyboard<T extends HTMLElement>(
     return () => {
       restoreBackground?.()
       dialog.removeEventListener('keydown', handleTab)
-      const returnTarget =
-        previousFocus instanceof HTMLElement &&
-        previousFocus !== document.body &&
-        previousFocus.isConnected &&
-        !previousFocus.closest('[hidden], [inert]')
-          ? previousFocus
-          : restoreFocus
-            ? focusContainer?.querySelector<HTMLElement>(restoreFocus)
-            : null
-      if (
-        returnTarget &&
-        (dialog.contains(document.activeElement) ||
-          document.activeElement === document.body ||
-          (restoreFocus && focusContainer?.contains(document.activeElement)))
-      )
-        returnTarget.focus()
+      const restoreOpener = () => {
+        const returnTarget =
+          previousFocus instanceof HTMLElement &&
+          previousFocus !== document.body &&
+          previousFocus.isConnected &&
+          !previousFocus.closest('[hidden], [inert]')
+            ? previousFocus
+            : restoreFocus
+              ? focusContainer?.querySelector<HTMLElement>(restoreFocus)
+              : null
+        if (
+          returnTarget &&
+          (dialog.contains(document.activeElement) ||
+            document.activeElement === document.body ||
+            (restoreFocus && focusContainer?.contains(document.activeElement)))
+        )
+          returnTarget.focus()
+      }
+      // Nested modal owners release inert during the same cleanup pass.
+      if (previousFocus instanceof HTMLElement && previousFocus.closest('[inert]'))
+        queueMicrotask(restoreOpener)
+      else restoreOpener()
     }
   }, [open, initialFocus, trapFocus, restoreFocus])
 

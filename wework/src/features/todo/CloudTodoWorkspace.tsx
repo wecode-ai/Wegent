@@ -71,7 +71,8 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import {
   CollaborationSettings,
   CollaborationProjectViewShell,
-  createProjectAiTeamSections,
+  createProjectParticipantSections,
+  projectAiSettingsGroup,
   mergeIssueReadConfirmation,
   runnerEnvironmentError,
   ProjectAutomaticProcessing,
@@ -92,6 +93,7 @@ import {
   type CollaborationProjectView,
 } from '@wegent/collaboration'
 import { ProjectSettingsShell } from '@wegent/collaboration/project-manage'
+import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
 import {
   createStandardCloudBoardColumns,
   createProjectBoardSortLabels,
@@ -4450,6 +4452,7 @@ export function CloudTodoWorkspace({
                   ) : null
                 }
                 sidebarCollapsed={sidebarCollapsed}
+                compactTitle={selectedProject.name}
                 title={
                   embedded && embeddedTitle === 'workspace'
                     ? t('workbench.workspace_tab_board', '协作')
@@ -4507,6 +4510,8 @@ export function CloudTodoWorkspace({
                     selectedProject.location === 'cloud' ? cloudWorkspaceApi : selectedProjectApi
                   ) ? (
                     <ProjectSettingsShell
+                      pageRenderer={DesktopProjectSettingsPages}
+                      scopeKey={`${selectedProject.location}:${selectedProject.id}`}
                       ariaLabel={t('todo.project_settings', '项目设置')}
                       selectedSectionId={projectSettingsSectionId}
                       onSectionChange={setProjectSettingsSectionId}
@@ -4542,7 +4547,7 @@ export function CloudTodoWorkspace({
                               />
                             ),
                         },
-                        ...createProjectAiTeamSections({
+                        ...createProjectParticipantSections({
                           translate: (key, fallback, options) =>
                             fallback === undefined ? t(key, options) : t(key, fallback, options),
                           membersContent: (
@@ -4659,6 +4664,7 @@ export function CloudTodoWorkspace({
                         }),
                         {
                           id: 'environments',
+                          group: projectAiSettingsGroup((key, fallback) => t(key, fallback ?? key)),
                           label: t('todo.project_execution_environments', '执行环境'),
                           testId: 'cloud-project-settings-environments',
                           content: (

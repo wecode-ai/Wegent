@@ -404,19 +404,27 @@ Open **Settings → Personal → Context**:
 | Default stand-in supervision principles | With experimental features enabled, edit and save; not a project permission policy                                             |
 | Wework instructions                     | Edit the text and save; unsaved text is not applied and instructions cannot override application permissions or security rules |
 
+<a id="hooks-controls"></a>
+
 ## Quick phrases, Runtime and Hooks
 
 <!-- ui-source: src/components/settings/QuickPhrasesSettingsPage.tsx -->
 <!-- ui-source: src/components/settings/RuntimeSettingsPage.tsx -->
 <!-- ui-source: src/features/hooks/HooksSettingsPage.tsx -->
 
-| Entry                                | Features and steps                                                                                                              | Limits                                                                      |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Settings → Personal → Quick phrases  | Create, edit, reorder or delete phrases; select one in the task composer, review and send                                       | Inserting a phrase does not execute a task                                  |
-| Settings → Personal → Runtime        | Create a named configuration with device and model; choose an existing Runtime for project defaults; delete with the row action | A reusable execution configuration, not a Node.js version                   |
-| Settings → Coding → Hooks → Add Hook | Set plugin ID, name, version, tool matcher, command, Windows command, timeout, asynchronous execution and status message; save  | Runs external commands; only configure trusted commands                     |
-| Settings → Coding → Hooks → Import   | Select a local Hook directory and inspect health after import                                                                   | Fix invalid configuration or missing commands first                         |
-| Hook row                             | Enable/disable, edit, delete, reveal its folder or test and inspect the last result                                             | Testing actually executes the command, rather than merely validating syntax |
+| Entry                                | Features and steps                                                                                                               | Limits                                                                      |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Settings → Personal → Quick phrases  | Create, edit, reorder or delete phrases; select one in the task composer, review and send                                        | Inserting a phrase does not execute a task                                  |
+| Settings → Personal → Runtime        | Create a named configuration with device and model; choose an existing Runtime for project defaults; delete with the row action  | A reusable execution configuration, not a Node.js version                   |
+| Settings → Coding → Hooks → Add Hook | Set plugin ID, name, version, event, matcher, command, Windows command, timeout, asynchronous execution and status message; save | Lifecycle events always run asynchronously; configure trusted commands      |
+| Settings → Coding → Hooks → Import   | Select a local Hook directory and inspect health after import                                                                    | Fix invalid configuration or missing commands first                         |
+| Hook row                             | Enable/disable, edit, delete, reveal its folder or test and inspect the last result                                              | Testing actually executes the command, rather than merely validating syntax |
+
+Choose `PostToolUse`, `TurnStarted`, `TurnCompleted` or `ExecutionCompleted`. Tool events match tool names; lifecycle events match status, with `.*` accepting every status. Lifecycle commands always run in the background without making the main agent wait.
+
+To record Git changes, import `executor/examples/hooks/turn-diff-logger`. Logs default to `~/.wegent/logs/turn-diff/records/<event-digest>/`: `record.json` contains metadata and checksums, `files.jsonl` contains file statistics, and `diff.patch` contains the complete difference. Change the destination in the plugin's `config.json`; it must be outside the repository. The test button validates lifecycle input without creating change logs.
+
+The script owns all Git capture. Its initial snapshot is an internal comparison baseline and never produces a full repository log. Asynchronous snapshot boundaries can miss early writes or combine adjacent turns. Child agents and Shell writes in the same workspace are included. Non-Git directories produce no capture logs.
 
 ## Appshots and computer use
 
