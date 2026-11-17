@@ -44,6 +44,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
   let activeWorkspace
   let writer
   let installed = false
+  const archiveTimeoutMs = Math.max(modelResponseTimeoutMs, 90_000)
   const marker = name => join(root, name)
   const waitMarker = name =>
     waitForValue(
@@ -253,7 +254,7 @@ console.log('HOOK_WRITES_COMPLETE')
               recordNames,
               names => names.length === 1,
               'No complete archive',
-              modelResponseTimeoutMs
+              archiveTimeoutMs
             )
             const directory = join(root, 'logs', 'records', recordName)
             const record = JSON.parse(await readFile(join(directory, 'record.json'), 'utf8'))

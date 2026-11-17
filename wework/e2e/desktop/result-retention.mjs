@@ -17,6 +17,7 @@ const CACHE_DIRECTORY_NAMES = new Set([
   'ShaderCache',
 ])
 const RETAINED_TOP_LEVEL_DIRECTORIES = new Set([
+  'async-hooks-failure',
   'electron-user-data',
   'backend-rs-logs',
   'electron-logs',

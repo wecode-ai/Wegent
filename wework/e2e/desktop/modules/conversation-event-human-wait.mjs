@@ -12,7 +12,13 @@ export const EVENT_HUMAN_ANSWER = 'CONTINUE_AFTER_REAL_EVENT_QUESTION'
 const BLOCKER = 'WEWORK_CONVERSATION_EVENT_CAPACITY_BLOCKER'
 
 /** Only model responses are held; native questions, source collection and scheduling remain real. */
-export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureScreenshot }) {
+export function createEventHumanWait({
+  captureScreenshot,
+  modelResponseTimeoutMs,
+  rpc,
+  uiTimeoutMs,
+  workspacePath,
+}) {
   const releases = new Map()
   let originalSettings
   let eventRequests = 0
@@ -22,7 +28,7 @@ export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureS
       async () => releases.has(key),
       Boolean,
       `Missing held model request ${key}`,
-      uiTimeoutMs
+      modelResponseTimeoutMs
     )
   const hold = (key, response) => {
     assert.equal(releases.has(key), false, `Duplicate ${key} model request`)
