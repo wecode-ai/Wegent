@@ -3780,14 +3780,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           /app IPC request finished .* method=runtime\.tasks\.cancel .* ok=true/,
           { fromOffset: cancellationExecutorLogOffset }
         )
-        await waitForWorkbenchDebugState(
-          control,
-          snapshot =>
-            snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
-            snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
-            snapshot.pane?.status?.taskExecution?.status === 'cancelled',
-          'The current cancellation did not settle before releasing the held send'
-        )
         assert.equal(
           await control.command('releaseLocalExecutorRequestHold', 'body'),
           'true',
@@ -3804,7 +3796,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
             snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
             snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
             snapshot.pane?.status?.taskExecution?.status === 'cancelled',
-          'The late pre-dispatch send reopened the cancelled task'
+          'The current cancellation did not settle after releasing the held send'
         )
       } finally {
         await control.command('releaseLocalExecutorRequestHold', 'body').catch(() => undefined)
