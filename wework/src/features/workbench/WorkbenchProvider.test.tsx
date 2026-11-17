@@ -348,6 +348,7 @@ function mockComposerDirectoryRoute(resolveRoute: () => string) {
       if (method === 'executor.codex_home.config.read')
         return { enabledPluginKeys: [], disabledPluginKeys: [] }
       if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+      if (method === 'runtime.connectors.status') return { apps: [] }
       if (method === 'executor.plugins.links.list') return []
       if (method === 'codex.app_server_request') {
         const request = params as { method?: string }
@@ -4214,7 +4215,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'codex.app_server_request') {
           const request = params as { method?: string }
           if (request.method === 'plugin/list') return { marketplaces: [] }
@@ -4329,7 +4330,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -4458,7 +4459,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         if (method === 'executor.plugins.device_route')
           return { device_id: 'local-device', device_route_id: 'runtime-record-70' }
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -4521,7 +4522,17 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() => expect(getComposerApps().map(app => app.id)).toContain('plugin:documents'))
     expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('runtime-record-70')
-    await waitFor(() => expect(listWegentInstalledConnectorApps).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
+        'runtime.connectors.status'
+      )
+    )
+    expect(listWegentInstalledConnectorApps).toHaveBeenCalled()
+    expect(
+      localExecutorMocks.requestLocalExecutor.mock.calls.some(
+        ([method]) => method === 'runtime.connectors.apps.sync'
+      )
+    ).toBe(false)
 
     act(() => {
       window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
@@ -4535,7 +4546,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -5643,7 +5654,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('applies device online events immediately when refresh falls back would be stale', async () => {
+  test('keeps confirmed offline status when an online event cannot be verified', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       streamHandlers = handlers
@@ -5673,8 +5684,49 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
 
-    expect(screen.getByTestId('device-status')).toHaveTextContent('online')
+    expect(screen.getByTestId('device-status')).toHaveTextContent('offline')
   })
+
+  test.each(['online', 'status'] as const)(
+    'confirms %s relay events before replacing discovered offline status',
+    async event => {
+      let streamHandlers: ChatStreamHandlers = {}
+      const discovery = deferred<DeviceInfo[]>()
+      const listDevices = vi
+        .fn()
+        .mockResolvedValueOnce([createDevice({ status: 'offline' })])
+        .mockReturnValueOnce(discovery.promise)
+        .mockResolvedValue([createDevice({ status: 'online' })])
+      const services = createWorkbenchServices({
+        deviceApi: { listDevices } as unknown as WorkbenchServices['deviceApi'],
+        chatStream: {
+          subscribe: (handlers: ChatStreamHandlers) => {
+            streamHandlers = handlers
+            return vi.fn()
+          },
+        } as unknown as WorkbenchServices['chatStream'],
+      })
+      renderWorkbench(<DeviceStatusProbe />, services)
+      await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('offline'))
+      const emit = () =>
+        event === 'online'
+          ? streamHandlers.onDeviceOnline?.({ device_id: 'device-1' })
+          : streamHandlers.onDeviceStatus?.({ device_id: 'device-1', status: 'online' })
+      await act(async () => {
+        emit()
+      })
+      await waitFor(() => expect(listDevices).toHaveBeenCalledTimes(2))
+      expect(screen.getByTestId('device-status')).toHaveTextContent('offline')
+      await act(async () => {
+        discovery.resolve([createDevice({ status: 'offline' })])
+      })
+      expect(screen.getByTestId('device-status')).toHaveTextContent('offline')
+      await act(async () => {
+        emit()
+      })
+      await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('online'))
+    }
+  )
 
   test('applies slot updates without refreshing the full device list', async () => {
     let streamHandlers: ChatStreamHandlers = {}

@@ -213,11 +213,11 @@ describe('Issue participation', () => {
   })
   it('identifies a running stand-in from its runtime origin, not human ownership', () => {
     const handle = {
-      origin: { initiatedBy: 'stand_in', roleName: '研发分身' }
+      origin: { initiatedBy: 'stand_in', roleName: '研发助理' }
     }
     expect(standInProcessingActor(handle, true)).toEqual({
       kind: 'stand_in',
-      name: '研发分身'
+      name: '研发助理'
     })
     expect(standInProcessingActor(handle, false)).toBeUndefined()
     expect(standInProcessingActor({ origin: { roleName: 'Not a stand-in' } }, true)).toBeUndefined()

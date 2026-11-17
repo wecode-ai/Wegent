@@ -616,7 +616,7 @@ impl RuntimeWorkRpcHandler {
         config["userId"] = json!(user);
         config["handlingPolicy"] = json!({"automatic":true,"askBeforeAct":false});
         let origin = json!({"runtimeTaskId":id,"type":"stand_in_coordinator","initiatedBy":"stand_in_coordinator","userId":user,"deviceId":self.device_id,"batchId":action["batchId"]});
-        let mut payload=self.prepare_background_stand_in_execution(json!({"taskId":id,"title":"分身后台统筹","message":action["arguments"]["instructions"],"origin":origin,"commandId":command,"clientUserMessageId":command,"automaticStandIn":true}),&config).await?;
+        let mut payload=self.prepare_background_stand_in_execution(json!({"taskId":id,"title":"助理后台统筹","message":action["arguments"]["instructions"],"origin":origin,"commandId":command,"clientUserMessageId":command,"automaticStandIn":true}),&config).await?;
         payload["executionRequest"]["origin"] = origin.clone();
         payload["executionRequest"]["runtime_permission_profile"] = json!(":read-only");
         let system = payload["executionRequest"]["system_prompt"]

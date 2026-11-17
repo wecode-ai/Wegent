@@ -17,7 +17,10 @@
 //! debounce expires entries after its window, so neither grows without limit.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
 use super::auth::Identity;
@@ -60,6 +63,8 @@ pub struct DeviceSession {
     auth_type: &'static str,
     client_ip: Option<String>,
     state: Mutex<DeviceSessionState>,
+    online_closed: AtomicBool,
+    online_gate: tokio::sync::Mutex<()>,
 }
 
 /// A read-only copy used so handlers never hold the session lock across I/O.
@@ -82,7 +87,30 @@ impl DeviceSession {
             auth_type: identity.auth_type,
             client_ip,
             state: Mutex::new(DeviceSessionState::default()),
+            online_closed: AtomicBool::new(false),
+            online_gate: tokio::sync::Mutex::new(()),
         }
+    }
+
+    /// Serialize online writes without retaining the synchronous state mutex.
+    pub(super) async fn online_write(&self) -> Option<tokio::sync::MutexGuard<'_, ()>> {
+        if self.online_closed.load(Ordering::Acquire) {
+            return None;
+        }
+        let guard = self.online_gate.lock().await;
+        if self.online_closed.load(Ordering::Acquire) {
+            None
+        } else {
+            Some(guard)
+        }
+    }
+
+    /// Fence queued writers immediately, then await the last admitted write.
+    pub(super) fn close_online_writes(
+        &self,
+    ) -> impl std::future::Future<Output = tokio::sync::MutexGuard<'_, ()>> {
+        self.online_closed.store(true, Ordering::Release);
+        self.online_gate.lock()
     }
 
     /// Copies the session fields for one handler invocation.
@@ -256,6 +284,7 @@ impl RegistrationDebounce {
 mod tests {
     use super::*;
     use crate::socketio::auth::Identity;
+    use std::future::Future as _;
 
     fn identity() -> Identity {
         Identity {
@@ -264,6 +293,42 @@ mod tests {
             auth_type: "jwt",
             email: None,
         }
+    }
+
+    #[tokio::test]
+    async fn closure_waits_for_prior_write_and_rejects_late_writers() {
+        let session = DeviceSession::new(&identity(), None);
+        let write = session.online_write().await.unwrap();
+        let close = session.close_online_writes();
+        tokio::pin!(close);
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(close.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        drop(write);
+        drop(close.await);
+        assert!(session.online_write().await.is_none());
+        let replacement = DeviceSession::new(&identity(), None);
+        assert!(replacement.online_write().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_writer_queued_before_disconnect_cannot_restore_online_state() {
+        let session = DeviceSession::new(&identity(), None);
+        let active = session.online_write().await.unwrap();
+        let late = session.online_write();
+        tokio::pin!(late);
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(late.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        let close = session.close_online_writes();
+        assert!(session.online_write().await.is_none());
+        drop(active);
+        assert!(late.await.is_none());
+        drop(close.await);
     }
 
     #[test]

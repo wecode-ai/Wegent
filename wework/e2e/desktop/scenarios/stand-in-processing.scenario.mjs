@@ -176,7 +176,7 @@ export function createDesktopScenario({
                 }
               : {
                   requestId: 'new-concrete-task',
-                  title: '主分身安排的具体工作',
+                  title: '主助理安排的具体工作',
                   message: 'PRIMARY_CONCRETE_WORK',
                 },
             searchCallId: `${callId}-search`,

@@ -27,7 +27,8 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await control.command('clickWhenEnabled', selector('template-use'))
       await control.command(
         'clickWhenEnabled',
-        `${selector('template-runtime-configuration')} > summary`
+        `${selector('template-runtime-configuration')} > summary`,
+        { timeoutMs: uiTimeoutMs }
       )
       const modelSelector = selector('template-model-codex')
       await control.command('waitFor', `${modelSelector}:enabled`)

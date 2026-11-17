@@ -3,6 +3,7 @@ export const conversationMessages: Record<
   Record<string, string>
 > = {
   "zh-CN": {
+    "conversation.connection_event_received": "已收到连接事件，继续处理",
     "conversation.tool_activity.command_done": "运行 {{name}}",
     "conversation.tool_activity.command_running": "正在运行 {{name}}",
     "conversation.tool_activity.command_error": "运行失败 {{name}}",
@@ -443,6 +444,7 @@ export const conversationMessages: Record<
     "conversation.file_changes.review_failed": "加载文件变更失败",
   },
   en: {
+    "conversation.connection_event_received": "Connection event received; continuing",
     "conversation.tool_activity.command_done": "Ran {{name}}",
     "conversation.tool_activity.command_running": "Running {{name}}",
     "conversation.tool_activity.command_error": "Command failed: {{name}}",

@@ -41,7 +41,16 @@ interface TeamEditDrawerProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  /** Team groups that authorize shared Skills when saving a member Bot */
   targetGroupNames?: string[]
+  /** Whether the Bot is cloned into a different namespace from its source Team */
+  crossNamespaceClone?: boolean
+  /** Whether the Team's target groups are still being resolved */
+  targetGroupsLoading?: boolean
+  /** Whether the Team's target groups failed to load */
+  targetGroupsError?: boolean
+  /** Retry loading the Team's target groups */
+  onRetryTargetGroups?: () => void
 }
 
 function PromptEdit({
@@ -373,6 +382,10 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
               groupName={groupName}
               teamId={editingTeam?.id}
               targetGroupNames={props.targetGroupNames}
+              crossNamespaceClone={props.crossNamespaceClone}
+              targetGroupsLoading={props.targetGroupsLoading}
+              targetGroupsError={props.targetGroupsError}
+              onRetryTargetGroups={props.onRetryTargetGroups}
             />
           )}
           {mode === 'prompt' && (

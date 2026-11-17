@@ -237,10 +237,48 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [marketplaceExampleConversations, setMarketplaceExampleConversations] = useState<
     MarketplaceExampleConversation[]
   >([])
+  const [agentBindingsLoading, setAgentBindingsLoading] = useState(false)
+  const [agentBindingsError, setAgentBindingsError] = useState(false)
+  const agentBindingsRequestIdRef = useRef(0)
+  const agentBindingsFetchFailedTitle = t('common:teams.bindings_fetch_failed')
 
   const publishTarget: CapabilityPublishTarget = isEditing
     ? editingPublishTarget
     : creatingPublishTarget
+  const retryAgentBindings = useCallback(async () => {
+    if (!open || !isEditing || !formTeam?.id) return
+
+    const requestId = ++agentBindingsRequestIdRef.current
+    setAgentBindingsLoading(true)
+    setAgentBindingsError(false)
+    try {
+      const bindings = await resourceLibraryApi.getAgentBindings(formTeam.id)
+      if (agentBindingsRequestIdRef.current !== requestId) return
+      setEditingGroupNames(bindings.group_names)
+      setInitialEditingGroupNames(bindings.group_names)
+      if (formTeam.publication_status !== 'published') {
+        setEditingPublishTarget(bindings.group_names.length > 0 ? 'team' : 'personal')
+      }
+    } catch {
+      if (agentBindingsRequestIdRef.current !== requestId) return
+      setAgentBindingsError(true)
+      toast({
+        variant: 'destructive',
+        title: agentBindingsFetchFailedTitle,
+      })
+    } finally {
+      if (agentBindingsRequestIdRef.current === requestId) {
+        setAgentBindingsLoading(false)
+      }
+    }
+  }, [
+    agentBindingsFetchFailedTitle,
+    formTeam?.id,
+    formTeam?.publication_status,
+    isEditing,
+    open,
+    toast,
+  ])
   const publishGroupNames = useMemo(
     () =>
       isEditing
@@ -531,7 +569,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }, [selectedSimpleShell])
 
   const modelLoadingFailedTitle = t('common:bot.errors.fetch_models_failed')
-  const agentBindingsFetchFailedTitle = t('common:teams.bindings_fetch_failed')
   const handleModelLoadError = useCallback(() => {
     toast({ variant: 'destructive', title: modelLoadingFailedTitle })
   }, [modelLoadingFailedTitle, toast])
@@ -719,41 +756,18 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
   useEffect(() => {
     if (!open || !isEditing || !formTeam?.id) {
+      setAgentBindingsLoading(false)
+      setAgentBindingsError(false)
       return
     }
 
-    let active = true
-    resourceLibraryApi
-      .getAgentBindings(formTeam.id)
-      .then(bindings => {
-        if (active) {
-          setEditingGroupNames(bindings.group_names)
-          setInitialEditingGroupNames(bindings.group_names)
-          if (formTeam.publication_status !== 'published') {
-            setEditingPublishTarget(bindings.group_names.length > 0 ? 'team' : 'personal')
-          }
-        }
-      })
-      .catch(() => {
-        if (active) {
-          toast({
-            variant: 'destructive',
-            title: agentBindingsFetchFailedTitle,
-          })
-        }
-      })
+    void retryAgentBindings()
 
     return () => {
-      active = false
+      // Invalidate initial loads and retries belonging to the closed session.
+      agentBindingsRequestIdRef.current += 1
     }
-  }, [
-    agentBindingsFetchFailedTitle,
-    formTeam?.id,
-    formTeam?.publication_status,
-    isEditing,
-    open,
-    toast,
-  ])
+  }, [formTeam?.id, isEditing, open, retryAgentBindings])
 
   useEffect(() => {
     if (!open || !isEditing || !formTeam?.id) return
@@ -1754,6 +1768,14 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         scope={scope}
         groupName={groupName}
         targetGroupNames={publishTarget === 'team' ? publishGroupNames : []}
+        crossNamespaceClone={
+          cloningBot !== null &&
+          (cloningBot.namespace || 'default') !==
+            (scope === 'group' && groupName ? groupName : 'default')
+        }
+        targetGroupsLoading={agentBindingsLoading}
+        targetGroupsError={agentBindingsError}
+        onRetryTargetGroups={() => void retryAgentBindings()}
       />
 
       {/* Mode change confirmation dialog */}

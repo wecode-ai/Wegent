@@ -43,9 +43,10 @@ async fn owned_request(
     client: impl McpRpc + 'static,
     payload: Value,
 ) -> Result<Value, AppIpcError> {
-    tokio::spawn(async move {
+    let (owner, mut cancellation) = tokio::sync::oneshot::channel::<()>();
+    let result = tokio::spawn(async move {
         let started = std::time::Instant::now();
-        let result = execute(&client, payload.clone()).await;
+        let result = execute(&client, payload.clone(), &mut cancellation).await;
         crate::logging::log_executor_event(
             "connection MCP operation finished",
             &[
@@ -74,7 +75,9 @@ async fn owned_request(
         result
     })
     .await
-    .map_err(|_| failure("connection_mcp_failed", "Background MCP worker failed"))?
+    .map_err(|_| failure("connection_mcp_failed", "Background MCP worker failed"))?;
+    drop(owner);
+    result
 }
 
 fn validate_request(payload: &Value) -> Result<(), AppIpcError> {
@@ -99,17 +102,38 @@ fn validate_request(payload: &Value) -> Result<(), AppIpcError> {
     Ok(())
 }
 
-async fn execute(client: &impl McpRpc, payload: Value) -> Result<Value, AppIpcError> {
-    let installed = client
-        .request("plugin/installed", json!({"cwds":[]}))
-        .await?;
+async fn cancellable<T, F: Future<Output = Result<T, AppIpcError>>>(
+    operation: impl FnOnce() -> F,
+    cancellation: &mut tokio::sync::oneshot::Receiver<()>,
+) -> Result<T, AppIpcError> {
+    tokio::select! {
+        biased;
+        _ = cancellation => Err(failure("request_cancelled", "Connection read cancelled")),
+        result = async { operation().await } => result,
+    }
+}
+
+async fn execute(
+    client: &impl McpRpc,
+    payload: Value,
+    cancellation: &mut tokio::sync::oneshot::Receiver<()>,
+) -> Result<Value, AppIpcError> {
+    let installed = cancellable(
+        || client.request("plugin/installed", json!({"cwds":[]})),
+        cancellation,
+    )
+    .await?;
     let target = installed_dependency(&installed, &payload)?;
-    let detail = client.request("plugin/read", json!({
+    let detail = cancellable(|| client.request("plugin/read", json!({
         "marketplacePath": target["marketplacePath"],
         "remoteMarketplaceName": if target["marketplacePath"].is_string() { Value::Null } else { payload["source"]["marketplaceId"].clone() },
         "pluginName":target["name"],
-    })).await?;
+    })), cancellation).await?;
     validate_detail(&detail, &payload)?;
+    if cancellation.try_recv() != Err(tokio::sync::oneshot::error::TryRecvError::Empty) {
+        return Err(failure("request_cancelled", "Connection read cancelled"));
+    }
+    // A dispatched thread creation must return its id so cleanup retains ownership.
     let started = client
         .request(
             "thread/start",
@@ -132,17 +156,20 @@ async fn execute(client: &impl McpRpc, payload: Value) -> Result<Value, AppIpcEr
                 "Codex did not return a background thread ID",
             )
         })?;
-    let result = tokio::time::timeout(
-        Duration::from_secs(45),
-        run_operation(client, id, &payload, &detail),
-    )
-    .await
-    .unwrap_or_else(|_| {
-        Err(failure(
-            "connection_mcp_timeout",
-            "Background MCP request timed out",
-        ))
-    });
+    let operation = async {
+        tokio::time::timeout(
+            Duration::from_secs(45),
+            run_operation(client, id, &payload, &detail),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(failure(
+                "connection_mcp_timeout",
+                "Background MCP request timed out",
+            ))
+        })
+    };
+    let result = cancellable(|| operation, cancellation).await;
     let cleanup = client
         .request("thread/unsubscribe", json!({"threadId":id}))
         .await;

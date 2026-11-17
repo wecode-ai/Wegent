@@ -116,6 +116,9 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
       assert.deepEqual(await rpc('runtime.stand_in.personal.get', { userId: USER_ID }), before)
       await control.command('clickWhenEnabled', selector('stand-in-create-role'))
+      await control.command('waitFor', `${selector('stand-in-role-name')}:not([disabled])`, {
+        visible: true,
+      })
       await control.command('fill', selector('stand-in-role-name'), {
         value: 'UI draft review role',
       })
