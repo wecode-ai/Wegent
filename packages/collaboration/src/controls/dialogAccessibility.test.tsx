@@ -6,6 +6,8 @@ import { createCollaborationTranslator } from '../i18n'
 import { DefaultModal } from '../project-create/ProjectCreatePrimitives'
 import { ModelSelector } from './ModelSelector'
 import { useDialogKeyboard } from './useDialogKeyboard'
+import { hideOthers } from 'aria-hidden'
+import { isolateModalBackground } from './dialogAccessibility'
 
 let container: HTMLDivElement
 let background: HTMLButtonElement
@@ -34,6 +36,37 @@ afterEach(() => {
 const get = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
 const model = { name: 'model', type: 'public' as const, displayName: 'Model' }
 const translate = createCollaborationTranslator('en')
+
+it.each(['popover-first', 'modal-first'] as const)(
+  'restores background attributes after overlapping Radix aria isolation (%s)',
+  order => {
+    background.removeAttribute('aria-hidden')
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    dialog.setAttribute('aria-modal', 'true')
+    container.append(dialog)
+    const restoreModal = isolateModalBackground(dialog)!
+    const popover = document.createElement('div')
+    document.body.append(popover)
+    const restorePopover = hideOthers(popover)
+    try {
+      expect(background.getAttribute('aria-hidden')).toBe('true')
+      expect(background.hasAttribute('inert')).toBe(true)
+      if (order === 'popover-first') {
+        restorePopover()
+        restoreModal()
+      } else {
+        restoreModal()
+        restorePopover()
+      }
+      expect(background.hasAttribute('inert')).toBe(false)
+      expect(background.hasAttribute('aria-hidden')).toBe(false)
+    } finally {
+      popover.remove()
+      dialog.remove()
+    }
+  }
+)
 
 it.each([false, true])(
   'isolates the main modal and real model portal, then restores prior background state (mobile=%s)',

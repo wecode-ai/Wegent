@@ -542,9 +542,6 @@ importers:
       '@wegent/chat-core':
         specifier: workspace:*
         version: link:../chat-core
-      aria-hidden:
-        specifier: 1.2.6
-        version: 1.2.6
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -633,6 +630,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.2.3
         version: 19.2.4(@types/react@19.2.17)
+      aria-hidden:
+        specifier: 1.2.6
+        version: 1.2.6
       mdast-util-from-markdown:
         specifier: 2.0.3
         version: 2.0.3
