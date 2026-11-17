@@ -743,38 +743,35 @@ export function useWorkbenchDataRefresh({
         ...getRuntimeProjectRemovalContext(runtimeWorkRef.current, projectId, normalizedWorkspace),
         devices: devicesRef.current,
       }
+      const localRuntimeWork = localRuntimeWorkRef.current
+        ? removeRuntimeProject(localRuntimeWorkRef.current, projectId, normalizedWorkspace, context)
+        : null
+      const cachedRuntimeWork = removeRuntimeProject(
+        cachedRemoteRuntimeWorkRef.current.runtimeWork,
+        projectId,
+        normalizedWorkspace,
+        context
+      )
+      const cloudRuntimeState = removeRuntimeProjectFromCloudState(
+        cloudRuntimeStateRef.current,
+        projectId,
+        normalizedWorkspace,
+        context
+      )
+
       cloudBackgroundRequestRef.current?.controller.abort()
       cloudBackgroundRequestRef.current = null
       workListRefreshRevisionRef.current += 1
-      if (localRuntimeWorkRef.current) {
-        localRuntimeWorkRef.current = removeRuntimeProject(
-          localRuntimeWorkRef.current,
-          projectId,
-          normalizedWorkspace,
-          context
-        )
-      }
+      localRuntimeWorkRef.current = localRuntimeWork
       cachedRemoteRuntimeWorkRef.current = {
         ...cachedRemoteRuntimeWorkRef.current,
         runtimeWork: writeCachedRemoteRuntimeWork(
           cacheScope,
-          removeRuntimeProject(
-            cachedRemoteRuntimeWorkRef.current.runtimeWork,
-            projectId,
-            normalizedWorkspace,
-            context
-          ),
+          cachedRuntimeWork,
           devicesRef.current
         ),
       }
-      updateCloudRuntimeState(
-        removeRuntimeProjectFromCloudState(
-          cloudRuntimeStateRef.current,
-          projectId,
-          normalizedWorkspace,
-          context
-        )
-      )
+      updateCloudRuntimeState(cloudRuntimeState)
     },
     [cacheScope, updateCloudRuntimeState]
   )
