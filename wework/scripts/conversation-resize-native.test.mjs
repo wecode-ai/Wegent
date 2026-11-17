@@ -11,7 +11,7 @@ const require = createRequire(new URL('../package.json', import.meta.url))
 const electronRequire = createRequire(new URL('../electron/package.json', import.meta.url))
 const { build } = createRequire(require.resolve('vite'))('esbuild')
 
-test('native conversation size compensation and scroll rendering preserve frame coverage', async () => {
+test('native conversation size compensation and scroll rendering preserve frame coverage', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-conversation-resize-'))
   try {
     const bundle = join(directory, 'fixture.js')
@@ -32,14 +32,22 @@ test('native conversation size compensation and scroll rendering preserve frame 
     await writeFile(
       main,
       `const {app,BrowserWindow}=require('electron')
+const startedAt=performance.now()
+const progress=stage=>console.log('[conversation-resize-contract]',JSON.stringify({stage,elapsedMs:performance.now()-startedAt}))
+progress('main-started')
 app.setPath('userData',${JSON.stringify(join(directory, 'profile'))})
 app.whenReady().then(async()=>{
+  progress('app-ready')
   const window=new BrowserWindow({show:false,webPreferences:{backgroundThrottling:false}})
+  window.webContents.on('render-process-gone',(_event,details)=>console.error('[conversation-resize-contract] renderer exited',JSON.stringify(details)))
   await window.loadURL('data:text/html,'+encodeURIComponent('<div id="root"></div>'))
   await window.webContents.executeJavaScript(${JSON.stringify(await readFile(bundle, 'utf8'))})
+  progress('fixture-loaded')
   const result=await window.webContents.executeJavaScript('window.runConversationResizeContract()')
+  progress('conversation-finished')
   result.navigation=await window.webContents.executeJavaScript('window.runTurnNavigationResizeContract()')
   require('fs').writeFileSync(${JSON.stringify(output)},JSON.stringify(result))
+  progress('navigation-finished')
   window.destroy()
   app.exit(0)
 }).catch(error=>{console.error(error);app.exit(1)})`
@@ -58,6 +66,7 @@ app.whenReady().then(async()=>{
       child.once('error', reject)
       child.once('close', (code, signal) => resolve({ code, signal }))
     })
+    t.diagnostic(diagnostics)
     assert.equal(result.code, 0, JSON.stringify({ ...result, diagnostics }))
     const evidence = JSON.parse(await readFile(output, 'utf8'))
     assert.deepEqual(evidence.errors, [])

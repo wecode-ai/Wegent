@@ -12,7 +12,7 @@ const electronRequire = createRequire(new URL('../electron/package.json', import
 const { build } = createRequire(require.resolve('vite'))('esbuild')
 const wework = fileURLToPath(new URL('..', import.meta.url))
 
-test('native multiline batches preserve structured editor paragraphs and acknowledge every Enter', async () => {
+test('native multiline batches preserve structured editor paragraphs and acknowledge every Enter', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-editor-native-'))
   try {
     const bundle = join(directory, 'fixture.js')
@@ -51,23 +51,32 @@ contextBridge.exposeInMainWorld('insertNativeText',text=>ipcRenderer.invoke('ins
       main,
       `const {app,BrowserWindow,ipcMain}=require('electron')
 const {sendE2EKey,sendE2EText}=require(${JSON.stringify(keyboard)})
+const startedAt=performance.now()
+const progress=(stage,details={})=>console.log('[native-editor-contract]',JSON.stringify({stage,elapsedMs:performance.now()-startedAt,...details}))
+progress('main-started')
 const env={VITE_WEWORK_E2E:'true',WEWORK_E2E_CONTROL_URL:'http://127.0.0.1:1'}
 app.setPath('userData',${JSON.stringify(join(directory, 'profile'))})
 app.whenReady().then(async()=>{
+  progress('app-ready')
   const window=new BrowserWindow({show:true,webPreferences:{backgroundThrottling:false,preload:${JSON.stringify(preload)}}})
+  progress('window-created')
   const wc=window.webContents,focus=()=>{window.focus();wc.focus()}
+  wc.on('render-process-gone',(_event,details)=>progress('renderer-exited',details))
   wc.on('console-message',event=>{if(event.level==='error')console.error(event.message)})
   let calls=0
   ipcMain.handle('insert-text',(_event,text)=>{calls++;return sendE2EText(wc,text,focus,env)})
   await wc.loadFile(${JSON.stringify(html)})
+  progress('loaded')
   await wc.executeJavaScript(${JSON.stringify(await readFile(bundle, 'utf8'))})
   await wc.executeJavaScript('window.editorReady()')
+  progress('editor-ready')
   const tick=()=>wc.executeJavaScript('window.editorTick()')
   const inputs=['first\\nsecond','first\\n\\nthird','中文第一段\\r\\n\\r\\n最后一段','\\nfirst\\n',Array.from({length:31},(_,i)=>'paragraph '+i).join('\\n\\n')]
   const results=[]
   for(const input of inputs){
     const snapshots=[]
     for(const mode of ['reference','batch']){
+      progress('input-started',{mode,lines:input.split('\\n').length})
       await wc.executeJavaScript('window.resetEditor()');await wc.executeJavaScript('window.editorReady()')
       await wc.executeJavaScript('document.querySelector("[data-testid=native-description]").focus()')
       wc.selectAll();await tick()
@@ -80,9 +89,11 @@ app.whenReady().then(async()=>{
         }
       }
       await tick();snapshots.push(await wc.executeJavaScript('window.editorSnapshot()'))
+      progress('input-finished',{mode,blocks:snapshots.at(-1).blocks})
     }
     results.push({input,reference:snapshots[0],batch:snapshots[1]})
   }
+  progress('nested-inputs-started')
   const nestedInputs=[]
   await wc.executeJavaScript('new Promise(resolve=>{const frame=document.createElement("iframe");frame.onload=()=>{frame.contentDocument.querySelector("textarea").focus();resolve()};frame.srcdoc="<textarea></textarea>";document.body.append(frame)})')
   await sendE2EText(wc,${JSON.stringify('frame first\nframe second')},focus,env)
@@ -91,6 +102,7 @@ app.whenReady().then(async()=>{
   await sendE2EText(wc,${JSON.stringify('shadow first\nshadow second')},focus,env)
   nestedInputs.push(await wc.executeJavaScript('document.querySelector("#shadow-input").shadowRoot.querySelector("textarea").value'))
   require('fs').writeFileSync(${JSON.stringify(output)},JSON.stringify({results,calls,nestedInputs}))
+  progress('finished')
   window.destroy();app.exit(0)
 }).catch(error=>{console.error(error);app.exit(1)})`
     )
@@ -109,6 +121,7 @@ app.whenReady().then(async()=>{
       child.once('error', reject)
       child.once('close', (code, signal) => resolve({ code, signal }))
     })
+    t.diagnostic(diagnostics)
     assert.equal(result.code, 0, JSON.stringify({ ...result, diagnostics }))
     const evidence = JSON.parse(await readFile(output, 'utf8'))
     assert.equal(evidence.calls, 5)
