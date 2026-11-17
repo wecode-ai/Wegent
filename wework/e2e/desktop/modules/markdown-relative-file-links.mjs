@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { until } from './plugin-regression-fixture.mjs'
 import { CLOUD_DEVICE_ID, DEFAULT_STEP_TIMEOUT_MS, IMAGE_ARTIFACT_BASE64 } from './shared.mjs'
 
 export async function verifyMarkdownRelativeFileLinks({ control, workspacePath }) {
@@ -49,9 +50,20 @@ export async function verifyMarkdownRelativeFileLinks({ control, workspacePath }
       expectedPath,
       'The relative link did not resolve against the Markdown document directory'
     )
-    await control.command('waitFor', `${panel} [data-testid="workspace-binary-file-preview"] img`, {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
+    await control.command(
+      'waitFor',
+      `${panel} [data-testid="workspace-file-preview-loading-indicator"]`,
+      {
+        visible: false,
+      }
+    )
+    const imageSelector = `${panel} [data-testid="workspace-binary-file-preview"] img`
+    await control.command('waitFor', imageSelector)
+    await until(
+      async () => JSON.parse(await control.command('getImageLoadState', imageSelector)),
+      images => images.length === 1 && images[0].complete && images[0].naturalWidth > 0,
+      `The linked image did not decode: ${expectedPath}`
+    )
   }
 
   try {

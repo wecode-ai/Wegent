@@ -298,3 +298,49 @@ test('conflict reload cancels navigation left by a failed save', async () => {
   ])
   expect(getWorkspaceCodeText()).toContain(typed)
 })
+
+test.each([
+  ['/report.md', './linked.md', '/linked.md'],
+  ['/repo/reports/report.md', '../linked.md', '/repo/linked.md'],
+])('opens Markdown links on the owning device from %s', async (path, link, expected) => {
+  const document = { ...initial, path, name: 'report.md', content: `[Linked file](${link})` }
+  const api = {
+    listWorkspaceEntries: vi.fn(async () => ({ path: target.path, entries: [] })),
+    readWorkspaceTextFile: vi.fn(async (_device: string, requested: string) =>
+      requested === path
+        ? document
+        : { ...document, path: requested, name: 'linked.md', content: 'Linked document content' }
+    ),
+  }
+  render(
+    <FileWorkspacePanel target={target} workspaceFileApi={api} openFileRequest={{ path, id: 1 }} />
+  )
+  fireEvent.click(await screen.findByTestId('assistant-markdown-link'))
+  expect(await screen.findByText('Linked document content')).toBeInTheDocument()
+  expect(api.readWorkspaceTextFile).toHaveBeenLastCalledWith(target.deviceId, expected, target.path)
+})
+
+test('shows a navigation error for an invalid Markdown path and recovers on retry', async () => {
+  const document = {
+    ...initial,
+    path: '/repo/report.md',
+    name: 'report.md',
+    content: '[Invalid link](../../image.png)',
+  }
+  const api = {
+    listWorkspaceEntries: vi.fn(async () => ({ path: target.path, entries: [] })),
+    readWorkspaceTextFile: vi.fn().mockResolvedValue(document),
+  }
+  render(
+    <FileWorkspacePanel
+      target={target}
+      workspaceFileApi={api}
+      openFileRequest={{ path: document.path, id: 1 }}
+    />
+  )
+  fireEvent.click(await screen.findByTestId('assistant-markdown-link'))
+  expect(await screen.findByTestId('workspace-file-preview-error')).toBeInTheDocument()
+  expect(api.readWorkspaceTextFile).toHaveBeenCalledTimes(1)
+  fireEvent.click(screen.getByTestId('workspace-file-preview-retry-button'))
+  expect(await screen.findByTestId('assistant-markdown-link')).toBeEnabled()
+})

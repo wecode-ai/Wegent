@@ -910,8 +910,15 @@ export function FileWorkspacePanel({
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <WorkspaceFilePreview
           onOpenFile={(path, options) => {
-            if (displayedPreview)
-              openFilePath(resolveMarkdownFilePath(displayedPreview.path, path), options)
+            if (!displayedPreview) return
+            try {
+              const resolvedPath = resolveMarkdownFilePath(displayedPreview.path, path)
+              const open = () => openFilePath(resolvedPath, options)
+              if (options?.lineStart !== undefined) navigateWithDirtyGuard(open)
+              else open()
+            } catch {
+              setPreviewError(t('workbench.workspace_file_preview_failed', '读取文件失败'))
+            }
           }}
           file={displayedPreview}
           binaryFile={binaryPreview}

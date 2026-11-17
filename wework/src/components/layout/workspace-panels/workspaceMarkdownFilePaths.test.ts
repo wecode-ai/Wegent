@@ -2,6 +2,8 @@ import { expect, test } from 'vitest'
 import { resolveMarkdownFilePath } from './workspaceFilePaths'
 
 test.each([
+  ['/report.md', './image.png', '/image.png'],
+  ['C:/report.md', './image.png', 'C:/image.png'],
   ['/workspace/reports/report.md', './截图.png', '/workspace/reports/截图.png'],
   [
     '/workspace/reports/report.md',
@@ -13,4 +15,8 @@ test.each([
   ['//server/share/reports/report.md', '../image.png', '//server/share/image.png'],
 ])('resolves %s link %s against the document directory', (document, link, expected) => {
   expect(resolveMarkdownFilePath(document, link)).toBe(expected)
+})
+
+test('rejects links that traverse above the filesystem root', () => {
+  expect(() => resolveMarkdownFilePath('/workspace/report.md', '../../image.png')).toThrow()
 })

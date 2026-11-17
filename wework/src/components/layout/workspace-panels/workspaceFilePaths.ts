@@ -12,7 +12,7 @@ export function resolveMarkdownFilePath(documentPath: string, linkPath: string):
   return normalizeAbsoluteWorkspacePath(
     isAbsoluteWorkspacePath(path, documentPath)
       ? path
-      : `${workspaceParentPath(documentPath)}/${path}`,
+      : `${workspaceParentPath(documentPath).replace(/\/+$/, '')}/${path}`,
     'Markdown file path must be absolute'
   )
 }
