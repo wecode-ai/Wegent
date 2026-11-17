@@ -19,6 +19,7 @@ import {
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
+import { WORKSPACE_NAVIGATION_EVENT, type WorkspaceNavigationDetail } from '@/lib/navigation'
 
 import {
   cloudRuntimePort,
@@ -28,6 +29,107 @@ import {
 } from './workbenchCloudProjectContextTestFixtures'
 
 describe('useWorkbenchCloudProjectContext', () => {
+  test('restores Issue navigation when its known context succeeds after the discovery deadline', async () => {
+    vi.useFakeTimers()
+    const targetProject = project('late-context-space', 'local')
+    const item = loopItem(targetProject.id)
+    const address = { deviceId: 'device-retained', taskId: 'retained-task' }
+    let finish!: (value: { project: CloudProject; loop_item: CloudLoopItem }) => void
+    const api = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [targetProject] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      findCloudContextForTask: vi.fn(() => new Promise(resolve => (finish = resolve))),
+    }
+    const navigation: WorkspaceNavigationDetail[] = []
+    const onNavigate = (event: Event) => {
+      event.preventDefault()
+      navigation.push((event as CustomEvent<WorkspaceNavigationDetail>).detail)
+    }
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+    rememberProjectSpaceTaskBinding(address, projectSpaceRef(targetProject))
+    try {
+      const { result } = renderHook(() =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask: address,
+          defaultProjectSpace: null,
+          paneKey: 'late-context-pane',
+          runtimeTaskTitle: item.title,
+          services: { projectSpaceApis: { local: api } } as unknown as WorkbenchServices,
+        })
+      )
+      await act(async () => vi.advanceTimersByTimeAsync(5_001))
+      expect(result.current.boundCloudItem).toBeNull()
+
+      await act(async () => finish({ project: targetProject, loop_item: item }))
+      expect(result.current.boundCloudProject).toEqual(targetProject)
+      expect(result.current.boundCloudItem).toEqual(item)
+      act(() => result.current.openBoundProjectSpaceTask())
+
+      expect(navigation).toEqual([
+        {
+          kind: 'board',
+          contentRoute: `/todo?projectStore=local&projectId=${targetProject.id}&itemId=${item.id}`,
+        },
+      ])
+      expect(api.findCloudContextForTask).toHaveBeenCalledOnce()
+    } finally {
+      window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, onNavigate)
+      vi.useRealTimers()
+    }
+  })
+
+  test('ignores a late successful context after switching to another task', async () => {
+    vi.useFakeTimers()
+    const previousProject = project('previous-context-space', 'local')
+    const nextProject = project('next-context-space', 'local')
+    const previousTask = { deviceId: 'device-retained', taskId: 'retained-task' }
+    const nextTask = { ...previousTask, taskId: 'different-task' }
+    let finish!: (value: { project: CloudProject; loop_item: CloudLoopItem }) => void
+    const api = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [previousProject, nextProject] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      findCloudContextForTask: vi.fn((task: RuntimeTaskAddress) =>
+        task.taskId === previousTask.taskId
+          ? new Promise(resolve => (finish = resolve))
+          : Promise.resolve({ project: nextProject, loop_item: loopItem(nextProject.id) })
+      ),
+    }
+    rememberProjectSpaceTaskBinding(previousTask, projectSpaceRef(previousProject))
+    rememberProjectSpaceTaskBinding(nextTask, projectSpaceRef(nextProject))
+    try {
+      const { result, rerender } = renderHook(
+        ({ task }) =>
+          useWorkbenchCloudProjectContext({
+            active: true,
+            currentRuntimeTask: task,
+            defaultProjectSpace: null,
+            paneKey: 'switch-context-pane',
+            runtimeTaskTitle: 'Current task',
+            services: { projectSpaceApis: { local: api } } as unknown as WorkbenchServices,
+          }),
+        { initialProps: { task: previousTask } }
+      )
+      await act(async () => vi.advanceTimersByTimeAsync(5_001))
+      await act(async () => rerender({ task: nextTask }))
+      expect(result.current.boundCloudProject).toEqual(nextProject)
+
+      await act(async () =>
+        finish({ project: previousProject, loop_item: loopItem(previousProject.id) })
+      )
+
+      expect(result.current.boundCloudProject).toEqual(nextProject)
+      expect(result.current.boundCloudItem).toEqual(loopItem(nextProject.id))
+      expect(projectSpaceForRuntimeTask(nextTask)).toEqual(projectSpaceRef(nextProject))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('keeps a late association in its owning task while another task is loading', async () => {
     const targetProject = project('late-association-space', 'local')
     const item = loopItem(targetProject.id)

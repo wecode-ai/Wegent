@@ -243,7 +243,12 @@ test('preserves an actual visibility failure after scrolling the correct Issue d
   )
 })
 
-function issueEditingControl({ panelReady = Promise.resolve(), saveError } = {}) {
+function issueEditingControl({
+  panelReady = Promise.resolve(),
+  titleScrollReady = Promise.resolve(),
+  titleScrollError,
+  saveError,
+} = {}) {
   const control = navigationControl({ snapshots: [boardSnapshot()] })
   const command = control.command.bind(control)
   const taskTab = '[data-testid="workspace-tab-select-fixed-task"]'
@@ -251,6 +256,7 @@ function issueEditingControl({ panelReady = Promise.resolve(), saveError } = {})
   const saveSelector = `${boardContent} [data-testid="cloud-todo-save"]`
   let surface = 'task'
   let detailsReady = false
+  let titleVisible = false
   let draftTitle
   control.persistedTitle = 'WEWORK_DESKTOP_E2E_TASK'
   control.command = async (action, selector, options) => {
@@ -264,6 +270,16 @@ function issueEditingControl({ panelReady = Promise.resolve(), saveError } = {})
     }
     if (selector === titleSelector) {
       assert.equal(surface, 'board', 'The Issue editor must belong to the focused board')
+      if (action === 'scrollIntoView') {
+        await titleScrollReady
+        if (titleScrollError) throw titleScrollError
+        titleVisible = true
+        control.calls.push({ action, selector, options })
+        return
+      }
+      if (action === 'waitFor' && options?.visible) {
+        assert.ok(titleVisible, 'Scrolling to Issue activity moves its title above the viewport')
+      }
       if (action === 'fill') draftTitle = options.value
       if (action === 'press') {
         assert.equal(options.key, 'Enter')
@@ -320,6 +336,50 @@ test('does not open a board or edit when the bound Issue detail fails', async ()
   )
   assert.ok(control.calls.every(call => call.action !== 'getAttribute'))
   assert.ok(control.calls.every(call => call.action !== 'fill'))
+})
+
+test('waits for the bound title scroll before editing above the Issue activity', async () => {
+  vi.useFakeTimers()
+  const titleScrollReady = Promise.withResolvers()
+  const control = issueEditingControl({ titleScrollReady: titleScrollReady.promise })
+  const title = 'WEWORK_DESKTOP_E2E_TASK additional Issue context'
+  let settled = false
+  const editing = enrichTrackedDefaultIssueTitle(
+    control,
+    'workspace-tab-select-fixed-task',
+    title
+  ).finally(() => {
+    settled = true
+  })
+  await vi.advanceTimersByTimeAsync(500)
+  assert.equal(settled, false)
+  assert.ok(!control.calls.some(call => call.action === 'fill'))
+  titleScrollReady.resolve()
+  await editing
+  assert.equal(control.persistedTitle, title)
+  assert.ok(
+    control.calls.some(
+      call => call.action === 'scrollIntoView' && call.selector === detailTitleSelector
+    )
+  )
+})
+
+test('preserves a bound title scroll failure without editing or returning to the task', async () => {
+  vi.useFakeTimers()
+  const failure = new Error('Issue title scroll failed')
+  const control = issueEditingControl({ titleScrollError: failure })
+  const outcome = enrichTrackedDefaultIssueTitle(
+    control,
+    'workspace-tab-select-fixed-task',
+    'Updated Issue'
+  ).then(
+    () => null,
+    error => error
+  )
+  await vi.advanceTimersByTimeAsync(500)
+  assert.equal(await outcome, failure)
+  assert.ok(!control.calls.some(call => call.action === 'fill'))
+  assert.ok(!control.calls.some(call => call.selector === ACTIVE_COMPOSER_SELECTOR))
 })
 
 test('preserves an Issue save failure without continuing in the task', async () => {

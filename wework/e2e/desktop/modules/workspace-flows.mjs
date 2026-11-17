@@ -1536,6 +1536,7 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
   const issuePanel = await openTrackedWorkItemDetails(control)
   const activeBoardContentSelector = await openTrackedWorkItemBoard(control, issuePanel)
   const titleSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-detail-title"]`
+  await control.command('scrollIntoView', titleSelector)
   await control.command('waitFor', titleSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1760,7 +1761,7 @@ async function verifyExistingTaskBoardAssociation(
   const createIssueSelector = `${activeBoardContentSelector} [data-testid="collaboration-issue-create"]`
   const createIssueDialog = `${activeBoardContentSelector} [data-testid="collaboration-issue-create-dialog"]`
   const createIssuePanel = `${createIssueDialog} [data-testid="cloud-todo-create-panel"]`
-  await control.command('click', createIssueSelector)
+  await control.command('clickWhenEnabled', createIssueSelector)
   await control.command('waitFor', createIssuePanel, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

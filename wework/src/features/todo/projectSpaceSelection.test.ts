@@ -159,8 +159,96 @@ describe('known project context lifecycle', () => {
     },
   })
   afterEach(() => {
+    vi.useRealTimers()
     const binding = projectSpaceForRuntimeTask(task)
     if (binding) forgetProjectSpaceTaskBinding(task, binding)
+  })
+
+  test.each([
+    { store: 'local', projectSession: undefined },
+    { store: 'backend', projectSession: undefined },
+    { store: 'backend', projectSession: { projectId: 'known-backend', issueId: 'ISSUE-1' } },
+  ] as const)(
+    'accepts a late successful $store context with projectSession=$projectSession',
+    async ({ store, projectSession }) => {
+      vi.useFakeTimers()
+      const apis = sources()
+      const expected = store === 'local' ? localProject : backendProject
+      const context = { project: expected, loop_item: null }
+      let finish!: (value: typeof context) => void
+      apis[store].findCloudContextForTask.mockReturnValue(
+        new Promise(resolve => (finish = resolve))
+      )
+      rememberProjectSpaceTaskBinding(task, projectSpaceRef(expected))
+      const lookup = findProjectSpaceContextForTaskInStores(
+        { ...task, ...(projectSession ? { projectSession } : {}) },
+        apis.local,
+        apis.backend
+      )
+      let settled = false
+      const result = lookup.then(
+        value => {
+          settled = true
+          return { value }
+        },
+        error => {
+          settled = true
+          return { error }
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(5_001)
+      expect(settled).toBe(false)
+      finish(context)
+
+      await expect(result).resolves.toEqual({ value: context })
+      expect(apis[store].findCloudContextForTask).toHaveBeenCalledOnce()
+      expect(
+        apis[store === 'local' ? 'backend' : 'local'].findCloudContextForTask
+      ).not.toHaveBeenCalled()
+      expect(projectSpaceForRuntimeTask(task)).toEqual(projectSpaceRef(expected))
+    }
+  )
+
+  test.each([401, 403])(
+    'preserves a late authorization failure %s from its known owner',
+    async status => {
+      vi.useFakeTimers()
+      const apis = sources()
+      const denied = new ApiError('Forbidden', status)
+      let deny!: (error: unknown) => void
+      apis.local.findCloudContextForTask.mockReturnValue(
+        new Promise((_, reject) => (deny = reject))
+      )
+      rememberProjectSpaceTaskBinding(task, projectSpaceRef(localProject))
+      const result = findProjectSpaceContextForTaskInStores(task, apis.local, apis.backend).catch(
+        error => error
+      )
+      await vi.advanceTimersByTimeAsync(5_001)
+      deny(denied)
+
+      expect(await result).toMatchObject({ errors: [denied] })
+      expect(apis.backend.findCloudContextForTask).not.toHaveBeenCalled()
+      expect(projectSpaceForRuntimeTask(task)).toEqual(projectSpaceRef(localProject))
+    }
+  )
+
+  test('retains the discovery deadline when multiple context sources are still unknown', async () => {
+    vi.useFakeTimers()
+    const apis = sources()
+    apis.local.findCloudContextForTask.mockReturnValue(new Promise(() => {}))
+    apis.backend.findCloudContextForTask.mockReturnValue(new Promise(() => {}))
+    const result = findProjectSpaceContextForTaskInStores(task, apis.local, apis.backend).catch(
+      error => error
+    )
+
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(await result).toMatchObject({
+      errors: [new Error('Project-space context lookup timed out after 5000ms')],
+    })
+    expect(apis.local.findCloudContextForTask).toHaveBeenCalledOnce()
+    expect(apis.backend.findCloudContextForTask).toHaveBeenCalledOnce()
   })
 
   test.each(['local', 'backend'] as const)(
