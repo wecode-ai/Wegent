@@ -152,7 +152,7 @@ const test = base.extend<{ memberSkills: MemberSkills }>({
       for (const botId of createdBots)
         expect((await api.delete('/api/bots/' + botId + '?force=true')).status).toBe(200)
       if (skillId !== undefined)
-        expect((await admin.delete('/api/v1/kinds/skills/' + skillId)).status).toBe(200)
+        expect((await admin.delete('/api/v1/kinds/skills/' + skillId)).status).toBe(204)
       for (const group of groups)
         expect([200, 204]).toContain((await admin.deleteGroup(group)).status)
       expect((await admin.adminDeleteUser(userId)).status).toBe(204)
@@ -332,7 +332,8 @@ for (const failure of ['pending', 'failed'] as const) {
         f.createdBots.push(((await response.json()) as { id: number }).id)
         await expect(drawer).toBeHidden()
         release()
-        await page.unroute(path, intercept)
+        // Drain the held abort before removing interception, which resumes pending requests.
+        await page.unrouteAll({ behavior: 'wait' })
 
         // Reopen in the same mounted library and prove retry recovers the target group.
         await dialog.getByRole('button', { name: /^(Cancel|取消)$/ }).click()
@@ -361,7 +362,7 @@ for (const failure of ['pending', 'failed'] as const) {
         expect(restored.request().postDataJSON().target_group_names).toEqual([agent.group])
       } finally {
         release()
-        await page.unroute(path)
+        await page.unrouteAll({ behavior: 'wait' })
       }
     }
   )
@@ -429,6 +430,6 @@ test('a late binding retry cannot overwrite another agent publication groups', a
     expect(persisted.data!.group_names).toEqual([agentB.group])
   } finally {
     release()
-    await page.unroute(path, intercept)
+    await page.unrouteAll({ behavior: 'wait' })
   }
 })
