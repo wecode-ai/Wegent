@@ -16,20 +16,48 @@ afterEach(() => vi.useRealTimers())
 const issuePanel = '[data-testid="work-item-context-panel"]'
 const boardContent = '[data-testid="workspace-tab-content-board-7"]'
 const activitySelector = `${boardContent} [data-testid="cloud-task-activity-WORK-3"]`
+const reviewCardSelector = `${boardContent} [data-testid="cloud-todo-column-in_review"] [data-testid="cloud-todo-card-WORK-3"]`
+const detailStatusSelector = `${boardContent} [data-testid="cloud-todo-detail-status"]`
+const detailTitleSelector = `${boardContent} [data-testid="cloud-todo-detail-title"]`
 
-function navigationControl({ activityTestId = 'cloud-task-activity-WORK-3', snapshots } = {}) {
+function navigationControl({
+  activityTestId = 'cloud-task-activity-WORK-3',
+  snapshots = [boardSnapshot()],
+  scopedSnapshots = [boardSnapshot()],
+  focused = true,
+  reviewCardCount = '1',
+  detailStatus = 'in_review',
+  detailTitle = 'WEWORK_DESKTOP_E2E_TASK',
+} = {}) {
   const calls = []
   let snapshotIndex = 0
+  let scopedSnapshotIndex = 0
   return {
     calls,
     async command(action, selector, options) {
       calls.push({ action, selector, options })
       if (action === 'getAttribute') {
+        if (selector === boardContent) {
+          assert.equal(options.value, 'aria-hidden')
+          return String(!focused)
+        }
         return selector.includes(issuePanel) ? activityTestId : 'workspace-tab-select-board-7'
       }
       if (action === 'snapshot') {
-        const snapshot = snapshots[Math.min(snapshotIndex++, snapshots.length - 1)]
+        assert.ok(selector === 'body' || selector === boardContent)
+        const snapshot =
+          selector === 'body'
+            ? snapshots[Math.min(snapshotIndex++, snapshots.length - 1)]
+            : scopedSnapshots[Math.min(scopedSnapshotIndex++, scopedSnapshots.length - 1)]
         return JSON.stringify(snapshot)
+      }
+      if (action === 'getElementCount') {
+        assert.equal(selector, reviewCardSelector)
+        return reviewCardCount
+      }
+      if (action === 'getValue') {
+        assert.ok(selector === detailStatusSelector || selector === detailTitleSelector)
+        return selector === detailStatusSelector ? detailStatus : detailTitle
       }
       if (action === 'click' || action === 'waitFor') return undefined
       throw new Error(`Unexpected control action: ${action}`)
@@ -41,18 +69,17 @@ function boardSnapshot(params = {}, overrides = {}) {
   const search = new URLSearchParams({
     projectStore: 'local',
     projectId: 'default-work-items',
-    itemId: 'WORK-3',
     ...params,
   })
   return {
     location: `http://127.0.0.1/wework/app/todo?${search}`,
     text: 'WEWORK_DESKTOP_E2E_TASK',
-    testIds: [],
+    testIds: ['cloud-todo-detail', 'cloud-task-activity-WORK-3'],
     ...overrides,
   }
 }
 
-test('opens the bound Issue in My Tasks and waits for its focused detail', async () => {
+test('verifies the bound Issue in its focused My Tasks tab after itemId is consumed', async () => {
   vi.useFakeTimers()
   const control = navigationControl({ snapshots: [boardSnapshot()] })
   const opening = openTrackedWorkItemBoard(control, issuePanel)
@@ -63,6 +90,12 @@ test('opens the bound Issue in My Tasks and waits for its focused detail', async
   assert.ok(identityRead.selector.startsWith(`${issuePanel} section[`))
   assert.deepEqual(identityRead.options, { value: 'data-testid' })
   assert.equal(control.calls[1].selector, '[data-testid="work-item-open-board"]')
+  assert.ok(
+    control.calls.some(call => call.action === 'snapshot' && call.selector === boardContent)
+  )
+  assert.ok(control.calls.some(call => call.selector === reviewCardSelector))
+  assert.ok(control.calls.some(call => call.selector === detailStatusSelector))
+  assert.ok(control.calls.some(call => call.selector === detailTitleSelector))
   assert.deepEqual(control.calls.at(-1), {
     action: 'waitFor',
     selector: activitySelector,
@@ -71,15 +104,35 @@ test('opens the bound Issue in My Tasks and waits for its focused detail', async
 })
 
 test.each([
-  ['another project store', boardSnapshot({ projectStore: 'cloud' })],
-  ['another project', boardSnapshot({ projectId: 'project-2' })],
-  ['another Issue', boardSnapshot({ itemId: 'WORK-4' })],
-  ['an unfocused board', boardSnapshot({ itemId: '' })],
-  ['loading board data', boardSnapshot({}, { testIds: ['cloud-todo-board-loading'] })],
-  ['missing tracked task data', boardSnapshot({}, { text: 'Another task' })],
-])('rejects %s instead of accepting an unrelated board', async (_label, invalidSnapshot) => {
+  [
+    'another project store',
+    { snapshots: [boardSnapshot(), boardSnapshot({ projectStore: 'cloud' })] },
+  ],
+  ['another project', { snapshots: [boardSnapshot(), boardSnapshot({ projectId: 'project-2' })] }],
+  [
+    'another Issue despite the expected activity elsewhere in the window',
+    {
+      scopedSnapshots: [
+        boardSnapshot({}, { testIds: ['cloud-todo-detail', 'cloud-task-activity-WORK-4'] }),
+      ],
+    },
+  ],
+  ['an unfocused board', { focused: false }],
+  [
+    'loading board data',
+    { scopedSnapshots: [boardSnapshot({}, { testIds: ['cloud-todo-board-loading'] })] },
+  ],
+  ['missing tracked task data', { scopedSnapshots: [boardSnapshot({}, { text: 'Another task' })] }],
+  [
+    'a missing focused detail',
+    { scopedSnapshots: [boardSnapshot({}, { testIds: ['cloud-task-activity-WORK-3'] })] },
+  ],
+  ['the tracked card outside the awaiting-confirmation column', { reviewCardCount: '0' }],
+  ['a tracked Issue still in progress', { detailStatus: 'in_progress' }],
+  ['an unrelated detail title', { detailTitle: 'Another task' }],
+])('rejects %s instead of accepting an unrelated board', async (_label, invalidState) => {
   vi.useFakeTimers()
-  const control = navigationControl({ snapshots: [boardSnapshot(), invalidSnapshot] })
+  const control = navigationControl(invalidState)
   const outcome = openTrackedWorkItemBoard(control, issuePanel).then(
     () => null,
     error => error
@@ -89,10 +142,13 @@ test.each([
   assert.ok(!control.calls.some(call => call.selector === activitySelector))
 })
 
-test('revalidates the route until the bound Issue replaces an earlier selection', async () => {
+test('revalidates scoped Issue identity until it replaces an earlier selection', async () => {
   vi.useFakeTimers()
   const control = navigationControl({
-    snapshots: [boardSnapshot(), boardSnapshot({ itemId: 'WORK-4' }), boardSnapshot()],
+    scopedSnapshots: [
+      boardSnapshot({}, { testIds: ['cloud-todo-detail', 'cloud-task-activity-WORK-4'] }),
+      boardSnapshot(),
+    ],
   })
   const opening = openTrackedWorkItemBoard(control, issuePanel)
   await vi.advanceTimersByTimeAsync(600)
@@ -188,7 +244,11 @@ test('enriches the bound Issue through its detail entry and returns to the uncha
   await editing
   assert.equal(control.persistedTitle, title)
   assert.equal(control.calls.at(-1).selector, ACTIVE_COMPOSER_SELECTOR)
-  assert.ok(control.calls.every(call => !call.selector.includes('cloud-todo-card-')))
+  assert.ok(
+    control.calls.every(
+      call => call.action !== 'click' || !call.selector.includes('cloud-todo-card-')
+    )
+  )
   assert.ok(control.calls.every(call => !call.selector.includes('work-item-open-board-menu')))
 })
 

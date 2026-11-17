@@ -718,7 +718,7 @@ async function waitForStableSnapshot(control, predicate, message) {
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     const snapshot = JSON.parse(await control.command('snapshot', 'body'))
     lastSnapshot = snapshot
-    if (predicate(snapshot)) {
+    if (await predicate(snapshot)) {
       stableSince ??= Date.now()
       if (Date.now() - stableSince >= 500) return snapshot
     } else {
@@ -1577,14 +1577,39 @@ export async function openTrackedWorkItemBoard(control, issuePanel) {
   )
   await waitForStableSnapshot(
     control,
-    snapshot => {
+    async snapshot => {
       const location = new URL(snapshot.location)
+      if (
+        location.searchParams.get('projectStore') !== 'local' ||
+        location.searchParams.get('projectId') !== 'default-work-items' ||
+        (await control.command('getAttribute', activeBoardContentSelector, {
+          value: 'aria-hidden',
+        })) !== 'false'
+      )
+        return false
+      // Opening the focused Issue consumes itemId from the route. Verify its
+      // rendered owner instead of requiring that one-shot navigation parameter.
+      const board = JSON.parse(await control.command('snapshot', activeBoardContentSelector))
+      if (
+        board.testIds.includes('cloud-todo-board-loading') ||
+        !board.testIds.includes('cloud-todo-detail') ||
+        !board.testIds.includes(activityTestId) ||
+        !board.text.includes('WEWORK_DESKTOP_E2E_TASK')
+      )
+        return false
+      const reviewCardSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"] [data-testid="cloud-todo-card-${itemId}"]`
       return (
-        location.searchParams.get('projectStore') === 'local' &&
-        location.searchParams.get('projectId') === 'default-work-items' &&
-        location.searchParams.get('itemId') === itemId &&
-        !snapshot.testIds.includes('cloud-todo-board-loading') &&
-        snapshot.text.includes('WEWORK_DESKTOP_E2E_TASK')
+        (await control.command('getElementCount', reviewCardSelector)) === '1' &&
+        (await control.command(
+          'getValue',
+          `${activeBoardContentSelector} [data-testid="cloud-todo-detail-status"]`
+        )) === 'in_review' &&
+        (
+          await control.command(
+            'getValue',
+            `${activeBoardContentSelector} [data-testid="cloud-todo-detail-title"]`
+          )
+        ).includes('WEWORK_DESKTOP_E2E_TASK')
       )
     },
     'The work-item board did not settle on the tracked task awaiting confirmation'
