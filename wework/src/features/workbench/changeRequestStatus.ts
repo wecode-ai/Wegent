@@ -1,5 +1,6 @@
 import type { PullRequestAutoRepairStatus } from '@/api/deliveries'
 import type { ChangeRequest } from '@/types/environment'
+import type { TFunction } from 'i18next'
 
 export type ChangeRequestVisualStatus =
   | 'draft'
@@ -56,16 +57,23 @@ export function stoppedTaskNeedsAttention(changeRequest: ChangeRequest | null): 
 export function buildChangeRequestRepairPrompt(
   changeRequest: ChangeRequest,
   taskTitle: string,
+  t: TFunction<'common'>,
   customPrompt = ''
 ): string {
   const status = changeRequestVisualStatus(changeRequest)
   const details = [
-    `继续当前任务“${taskTitle}”，修复 PR/MR #${changeRequest.number} 的合并问题。`,
-    `当前状态：${status}。`,
-    changeRequest.mergeQueueReason ? `Merge Queue 原因：${changeRequest.mergeQueueReason}。` : '',
-    `PR/MR 地址：${changeRequest.url}`,
-    '请读取最新的 PR/MR 检查与 Merge Queue 日志，从证据定位根因，修复后运行相关测试并推送到当前分支。',
-    '继续使用当前 PR/MR，不要创建重复 PR/MR。',
+    t('workbench.change_request_repair_intro', { title: taskTitle, number: changeRequest.number }),
+    t('workbench.change_request_repair_status', {
+      status: t(`workbench.change_request_status_${status}`),
+    }),
+    changeRequest.mergeQueueReason
+      ? t('workbench.change_request_repair_queue_reason', {
+          reason: changeRequest.mergeQueueReason,
+        })
+      : '',
+    t('workbench.change_request_repair_url', { url: changeRequest.url }),
+    t('workbench.change_request_repair_instructions'),
+    t('workbench.change_request_repair_reuse'),
     customPrompt.trim(),
   ]
   return details.filter(Boolean).join('\n')

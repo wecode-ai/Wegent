@@ -15,12 +15,6 @@ import {
   isTerminalDeviceUpgradeStatus,
 } from './workbenchProviderHelpers'
 import type { WorkbenchAction } from './workbenchReducer'
-import {
-  getDeviceEventId,
-  getDeviceEventName,
-  isDeviceStatus,
-  isRecord,
-} from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
 
 interface UseWorkbenchDeviceUpgradesOptions {
@@ -124,35 +118,8 @@ export function useWorkbenchDeviceUpgrades({
     const refreshDevicesAfterEvent = () => {
       void refreshDevices({ useCacheFallback: false }).catch(() => undefined)
     }
-    const handleDeviceOnline = (payload: unknown) => {
-      const deviceId = getDeviceEventId(payload)
-      if (deviceId) {
-        dispatch({
-          type: 'device_status_changed',
-          deviceId,
-          status: 'online',
-          name: getDeviceEventName(payload),
-        })
-      }
-      refreshDevicesAfterEvent()
-    }
-    const handleDeviceOffline = () => {
-      // A relay disconnect event can race with the executor reconnecting. Keep the
-      // last confirmed state until device discovery verifies that it is still offline.
-      refreshDevicesAfterEvent()
-    }
-    const handleDeviceStatus = (payload: unknown) => {
-      const deviceId = getDeviceEventId(payload)
-      const status = isRecord(payload) ? payload.status : undefined
-      if (deviceId && isDeviceStatus(status) && status !== 'offline') {
-        dispatch({
-          type: 'device_status_changed',
-          deviceId,
-          status,
-        })
-      }
-      refreshDevicesAfterEvent()
-    }
+    // Relay events can arrive after discovery has already observed a newer state.
+    // Confirm both online and offline transitions through device discovery.
     const handleDeviceUpgradeStatus = (payload: DeviceUpgradeStatusPayload) => {
       setDeviceUpgradeState(payload.device_id, {
         status: payload.status,
@@ -169,9 +136,9 @@ export function useWorkbenchDeviceUpgrades({
     }
 
     return services.chatStream.subscribe({
-      onDeviceOnline: handleDeviceOnline,
-      onDeviceOffline: handleDeviceOffline,
-      onDeviceStatus: handleDeviceStatus,
+      onDeviceOnline: refreshDevicesAfterEvent,
+      onDeviceOffline: refreshDevicesAfterEvent,
+      onDeviceStatus: refreshDevicesAfterEvent,
       onDeviceSlotUpdate: handleDeviceSlotUpdate,
       onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
     })

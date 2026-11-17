@@ -792,6 +792,8 @@ async def send_runtime_message(
     }
     if request.queue_if_busy:
         payload["queueIfBusy"] = True
+    if request.resource_event_keys is not None:
+        payload["resourceEventKeys"] = request.resource_event_keys
     _apply_runtime_user_message_identity(payload, request)
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
     if attachments:

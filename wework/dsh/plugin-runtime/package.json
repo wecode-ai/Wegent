@@ -16,7 +16,10 @@
       "default": "./connections.js"
     },
     "./connection-dependencies": "./connection-dependencies.js",
-    "./connection-tools": "./connection-tools.js"
+    "./connection-tools": "./connection-tools.js",
+    "./connection-runtime": "./connection-runtime.js",
+    "./connection-observations": "./connection-observations.js",
+    "./cloud-observations": "./cloud-observations.js"
   },
   "files": [
     "cordis.patch.yml",
@@ -26,6 +29,9 @@
     "connections.d.ts",
     "connection-dependencies.js",
     "connection-tools.js",
+    "connection-runtime.js",
+    "connection-observations.js",
+    "cloud-observations.js",
     "connection-schema.js"
   ],
   "dsh": {

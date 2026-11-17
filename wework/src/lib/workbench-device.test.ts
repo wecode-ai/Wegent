@@ -236,6 +236,27 @@ describe('workbench-device', () => {
     })
   })
 
+  test('uses the remote device name instead of its shared network endpoint', () => {
+    expect(
+      getWorkbenchDeviceUnavailableDisplayName(
+        createDevice({
+          device_type: 'remote',
+          name: 'Remote workspace',
+          client_ip: '127.0.0.1',
+        })
+      )
+    ).toBe('Remote workspace')
+    expect(
+      getWorkbenchDeviceUnavailableDisplayName(
+        createDevice({
+          device_type: 'remote',
+          name: '',
+          client_ip: '127.0.0.1',
+        })
+      )
+    ).toBe('127.0.0.1')
+  })
+
   test('uses the device IP for unavailable messages without exposing the device id', () => {
     const device = createDevice({
       device_id: '9562a3b4-61a3-4217-9655-0341b231eb06',

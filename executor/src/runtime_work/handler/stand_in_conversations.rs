@@ -231,7 +231,7 @@ impl RuntimeWorkRpcHandler {
         let title = role
             .and_then(|role| role["name"].as_str())
             .filter(|name| !name.is_empty())
-            .unwrap_or("我的分身");
+            .unwrap_or("我的助理");
         let instructions = "You are the user's persistent personal stand-in. Keep this conversation for communication, clarification, responsibilities and progress. Use wework_stand_in to inspect current responsibilities and propose configuration changes. Proposals are drafts: do not claim configuration is saved until the user confirms it in Wework. Ask follow-up questions when scope is ambiguous. Never grant broader access than requested. Read current state with tools instead of relying on stale conversation context.";
         let mut origin = json!({"runtimeTaskId":task_id,"type":"stand_in_identity","initiatedBy":"stand_in_identity","userId":user,"standInId":role_id,"deviceId":self.device_id,"askBeforeAct":true});
         if !scope.is_null() {

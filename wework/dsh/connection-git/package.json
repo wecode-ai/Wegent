@@ -21,6 +21,7 @@
       "providers": [
         {
           "id": "github",
+          "collectionPagination": "staged",
           "displayName": "GitHub",
           "uses": [],
           "collectionModes": [
@@ -75,7 +76,7 @@
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 100,
-                "description": "Optional explicit ongoing monitoring selection. Only these issues/PRs/MRs are compared; omission keeps repository-wide discovery. This filters collection, never read/write authorization. Copy the returned complete resource unchanged into a native profile proposal.",
+                "description": "Optional explicit ongoing monitoring selection. Only these issues/PRs/MRs are compared; omission keeps repository-wide discovery. This filters collection, never read/write authorization. Preserve the returned complete resource unchanged in a conversation event subscription or an assistant profile proposal.",
                 "items": {
                   "type": "object",
                   "properties": {
@@ -127,7 +128,8 @@
               "For CI logs, read_source supports {entityKind:\"job\",number:<exact job ID>,view:\"logs\"}; obtain the job identity from native CI evidence in this repository. GitHub returns failed-step logs only and GitLab returns the job trace. An empty log is not proof of success. Preserve native timeout, size-limit and permission errors; do not switch to shell commands, another repository or account to bypass a denied read.",
               "Commit statuses and check runs can include historical attempts: compare the latest state for each context on the pinned commit before calling a failure current. Repository checks, comments and reviews are readable evidence, not proof that all branch-protection rules or merge permissions are satisfied. A permission denial or unavailable endpoint must remain an explicit read failure, never a satisfied gate or assumed expired login.",
               "A git.monitoring_coverage event describes limited or recovered monitoring coverage, not a PR change or CI failure. Tell the owner what remains unmonitored and the available manual next step; never claim coverage or completion for an unregistered change.",
-              "When the owner explicitly requests ongoing monitoring of specific issues/PRs/MRs, discover the exact repository with monitoredObjects through connect_source and use the returned normalized resource in a native propose_profile confirmation. Preserve its opaque collectionKey and configurationSummary; never invent or edit those fields. Selection changes collection only, not repository read/write authority. read_source never creates a watch. Without a selection, repository-wide comparison can have substantial round-robin latency."
+              "When configuring an assistant connection profile for specific issues/PRs/MRs, discover the exact repository with monitoredObjects through connect_source and use the returned normalized resource in a native propose_profile confirmation. Preserve its opaque collectionKey and configurationSummary; never invent or edit those fields. Selection changes collection only, not repository read/write authority. read_source never creates a watch. Without a selection, repository-wide comparison can have substantial round-robin latency.",
+              "For a conversation event wait on a specific PR, discover its repository with monitoredObjects:[{entityKind:\"change_request\",number:<PR number>}]. To wake only when it can merge, subscribe_connection_events.match must include {\"/topicId\":\"<canonical PR URL>\",\"/external/eventType\":\"tracked.status\",\"/external/payload/state\":\"OPEN\",\"/external/payload/isDraft\":false,\"/external/payload/mergeable\":\"MERGEABLE\",\"/external/payload/mergeStateStatus\":\"CLEAN\"}. For all checks passing, also match \"/external/payload/statusCheckRollup/state\":\"SUCCESS\". These are aggregate native states for the observed head; a tracked.checks success is only one job. The host filters before waking; writing \"notify when ready\" in continuation alone does not filter. Do not arm an unfiltered wait and rearm after each check. Native state does not grant merge permission."
             ],
             "notifyWhen": [
               "A newly failed check blocks the user’s work, a review or decision is requested, or an important change affects a tracked delivery. Suppress unchanged failures and unrelated repository activity.",
@@ -273,6 +275,7 @@
         },
         {
           "id": "gitlab",
+          "collectionPagination": "staged",
           "displayName": "GitLab",
           "uses": [],
           "collectionModes": [
@@ -323,7 +326,7 @@
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 100,
-                "description": "Optional explicit ongoing monitoring selection. Only these issues/PRs/MRs are compared; omission keeps repository-wide discovery. This filters collection, never read/write authorization. Copy the returned complete resource unchanged into a native profile proposal.",
+                "description": "Optional explicit ongoing monitoring selection. Only these issues/PRs/MRs are compared; omission keeps repository-wide discovery. This filters collection, never read/write authorization. Preserve the returned complete resource unchanged in a conversation event subscription or an assistant profile proposal.",
                 "items": {
                   "type": "object",
                   "properties": {
@@ -375,7 +378,8 @@
               "For CI logs, read_source supports {entityKind:\"job\",number:<exact job ID>,view:\"logs\"}; obtain the job identity from native CI evidence in this repository. GitHub returns failed-step logs only and GitLab returns the job trace. An empty log is not proof of success. Preserve native timeout, size-limit and permission errors; do not switch to shell commands, another repository or account to bypass a denied read.",
               "Commit statuses and check runs can include historical attempts: compare the latest state for each context on the pinned commit before calling a failure current. Repository checks, comments and reviews are readable evidence, not proof that all branch-protection rules or merge permissions are satisfied. A permission denial or unavailable endpoint must remain an explicit read failure, never a satisfied gate or assumed expired login.",
               "A git.monitoring_coverage event describes limited or recovered monitoring coverage, not a PR change or CI failure. Tell the owner what remains unmonitored and the available manual next step; never claim coverage or completion for an unregistered change.",
-              "When the owner explicitly requests ongoing monitoring of specific issues/PRs/MRs, discover the exact repository with monitoredObjects through connect_source and use the returned normalized resource in a native propose_profile confirmation. Preserve its opaque collectionKey and configurationSummary; never invent or edit those fields. Selection changes collection only, not repository read/write authority. read_source never creates a watch. Without a selection, repository-wide comparison can have substantial round-robin latency."
+              "When configuring an assistant connection profile for specific issues/PRs/MRs, discover the exact repository with monitoredObjects through connect_source and use the returned normalized resource in a native propose_profile confirmation. Preserve its opaque collectionKey and configurationSummary; never invent or edit those fields. Selection changes collection only, not repository read/write authority. read_source never creates a watch. Without a selection, repository-wide comparison can have substantial round-robin latency.",
+              "For a conversation event wait on a specific MR, discover its repository with monitoredObjects:[{entityKind:\"change_request\",number:<MR number>}]. Use subscribe_connection_events.match on \"/topicId\" (canonical MR URL), \"/external/eventType\":\"tracked.status\" and the aggregate native payload. For merge readiness match \"/external/payload/state\":\"opened\", \"/external/payload/draft\":false, \"/external/payload/has_conflicts\":false and \"/external/payload/detailed_merge_status\":\"mergeable\". If checks must pass, also match \"/external/payload/head_pipeline/status\":\"success\"; head_pipeline is pinned to the observed MR head. A tracked.checks event is not proof of merge readiness. The host filters before waking; continuation is only the prompt after delivery. Do not silently replace a condition with every-change wakeups. Native state does not grant merge permission."
             ],
             "notifyWhen": [
               "A new pipeline failure blocks relevant work, a review or decision needs the user, or a material delivery risk changes. Keep unchanged pipeline failures and irrelevant project activity quiet.",

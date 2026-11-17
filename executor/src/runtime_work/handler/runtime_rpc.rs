@@ -5,6 +5,33 @@
 use super::*;
 
 impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
+    fn connection_service_owner<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<i64, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            let user = self
+                .runtime_http(reqwest::Method::GET, "/users/me", None)
+                .await?;
+            user["id"].as_i64().filter(|id| *id > 0).ok_or_else(|| {
+                AppIpcError::new("permission_denied", "Connected account identity is invalid")
+            })
+        })
+    }
+
+    fn handle_connection_read_rpc<'a>(
+        &'a self,
+        method: &'a str,
+        payload: Value,
+        grant: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(super::super::connection_reader::read(
+            &self.codex_app_server,
+            method,
+            payload,
+            grant,
+        ))
+    }
+
     fn reconcile_bound_task_statuses<'a>(
         &'a self,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
@@ -54,100 +81,109 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 None
             };
             let _restart_guard = codex_app_server_restart_gate().lock().await;
-            let params = data
-                .get("params")
-                .cloned()
-                .filter(Value::is_object)
-                .unwrap_or_else(|| json!({}));
-            if method == "app/list" {
-                log_executor_event(
-                    "codex app catalog read started",
-                    &[
-                        ("has_cursor", (!params["cursor"].is_null()).to_string()),
-                        (
-                            "force_refetch",
-                            (params["forceRefetch"] == true).to_string(),
-                        ),
-                    ],
-                );
-            }
-            if method == "plugin/list" {
-                log_executor_event(
-                    "codex plugin catalog read started",
-                    &[
-                        (
-                            "local_only",
-                            (params["marketplaceKinds"] == json!(["local"])).to_string(),
-                        ),
-                        (
-                            "force_refetch",
-                            (params["forceRefetch"] == true).to_string(),
-                        ),
-                    ],
-                );
-            }
-            let _activation = if method == "skills/config/write" {
-                Some(crate::services::capability_activation::activate().await)
-            } else {
-                None
-            };
-            if method == "plugin/uninstall" {
-                if let Some(id) = params["pluginId"].as_str() {
-                    super::super::connection_host::assert_dependency_unused(id)?;
-                }
-            }
-            let response = if let Some(activation) = &_activation {
-                self.codex_app_server
-                    .write_skill_configuration(params, activation)
-                    .await
-            } else {
-                self.codex_app_server.request(&method, params).await
-            }
-            .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))?;
-            if matches!(
-                method.as_str(),
-                "plugin/install"
-                    | "plugin/uninstall"
-                    | "marketplace/upgrade"
-                    | "config/value/write"
-            ) {
-                crate::services::capability_activation::notify_changed();
-            }
-            if matches!(
-                method.as_str(),
-                "marketplace/add" | "marketplace/remove" | "plugin/list" | "plugin/installed"
-            ) {
-                let marketplace_names = response
-                    .get("marketplaces")
-                    .and_then(Value::as_array)
-                    .map(|marketplaces| {
-                        marketplaces
-                            .iter()
-                            .filter_map(|marketplace| {
-                                marketplace
-                                    .get("name")
-                                    .and_then(Value::as_str)
-                                    .map(str::to_owned)
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                log_executor_event(
-                    "codex plugin app server request finished",
-                    &[
-                        ("method", method.clone()),
-                        ("marketplace_count", marketplace_names.len().to_string()),
-                        ("marketplaces", marketplace_names.join("|")),
-                    ],
-                );
-            }
-            let response = if method == "plugin/list" {
-                super::plugin_catalog::summarize_plugin_catalog(response)
-            } else {
-                response
-            };
-            Ok(response)
+            self.handle_codex_app_server_rpc_locked(method, data, &_restart_guard)
+                .await
         })
+    }
+}
+
+impl RuntimeWorkRpcHandler {
+    pub(super) async fn handle_codex_app_server_rpc_locked(
+        &self,
+        method: String,
+        data: Value,
+        _restart_guard: &tokio::sync::MutexGuard<'_, ()>,
+    ) -> Result<Value, AppIpcError> {
+        let params = data
+            .get("params")
+            .cloned()
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({}));
+        if method == "app/list" {
+            log_executor_event(
+                "codex app catalog read started",
+                &[
+                    ("has_cursor", (!params["cursor"].is_null()).to_string()),
+                    (
+                        "force_refetch",
+                        (params["forceRefetch"] == true).to_string(),
+                    ),
+                ],
+            );
+        }
+        if method == "plugin/list" {
+            log_executor_event(
+                "codex plugin catalog read started",
+                &[
+                    (
+                        "local_only",
+                        (params["marketplaceKinds"] == json!(["local"])).to_string(),
+                    ),
+                    (
+                        "force_refetch",
+                        (params["forceRefetch"] == true).to_string(),
+                    ),
+                ],
+            );
+        }
+        let _activation = if method == "skills/config/write" {
+            Some(crate::services::capability_activation::activate().await)
+        } else {
+            None
+        };
+        if method == "plugin/uninstall" {
+            if let Some(id) = params["pluginId"].as_str() {
+                super::super::connection_host::assert_dependency_unused(id)?;
+            }
+        }
+        let response = if let Some(activation) = &_activation {
+            self.codex_app_server
+                .write_skill_configuration(params, activation)
+                .await
+        } else {
+            self.codex_app_server.request(&method, params).await
+        }
+        .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))?;
+        if matches!(
+            method.as_str(),
+            "plugin/install" | "plugin/uninstall" | "marketplace/upgrade" | "config/value/write"
+        ) {
+            crate::services::capability_activation::notify_changed();
+        }
+        if matches!(
+            method.as_str(),
+            "marketplace/add" | "marketplace/remove" | "plugin/list" | "plugin/installed"
+        ) {
+            let marketplace_names = response
+                .get("marketplaces")
+                .and_then(Value::as_array)
+                .map(|marketplaces| {
+                    marketplaces
+                        .iter()
+                        .filter_map(|marketplace| {
+                            marketplace
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            log_executor_event(
+                "codex plugin app server request finished",
+                &[
+                    ("method", method.clone()),
+                    ("marketplace_count", marketplace_names.len().to_string()),
+                    ("marketplaces", marketplace_names.join("|")),
+                ],
+            );
+        }
+        let response = if method == "plugin/list" {
+            super::plugin_catalog::summarize_plugin_catalog(response)
+        } else {
+            response
+        };
+        Ok(response)
     }
 }
 

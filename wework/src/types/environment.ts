@@ -1,3 +1,5 @@
+import type { ResourceObservation } from '@/features/workbench/resourceObservation'
+
 export type ChangeRequestProvider = 'github' | 'gitlab'
 export type ChangeRequestState = 'open' | 'closed' | 'merged'
 export type ChangeRequestChecksState = 'unknown' | 'pending' | 'success' | 'failure'
@@ -31,6 +33,7 @@ export interface ChangeRequest {
   mergeQueue: ChangeRequestMergeQueueState
   mergeQueueReason?: string | null
   headBranch?: string | null
+  headSha?: string | null
   updatedAt?: string | null
 }
 
@@ -52,6 +55,7 @@ export interface EnvironmentInfo {
   branchName?: string
   createPullRequestUrl?: string
   changeRequest?: ChangeRequestLookup
+  changeRequestObservation?: ResourceObservation
   error?: string
   loading?: boolean
   branchLoading?: boolean

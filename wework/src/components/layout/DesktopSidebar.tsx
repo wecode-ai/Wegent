@@ -3042,7 +3042,7 @@ export function DesktopSidebar({
     storageScope,
     'expandedProjectIds'
   )
-  const storageScopeRef = useRef(storageScope)
+  const [restoredStorageScope, setRestoredStorageScope] = useState(storageScope)
   const [releaseNotesDialogOpen, setReleaseNotesDialogOpen] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
   const [archiveSectionMode, setArchiveSectionMode] = useState<'projects' | 'chats' | null>(null)
@@ -3741,6 +3741,10 @@ export function DesktopSidebar({
     standaloneWorkspacePath,
   ])
   const selectedRuntimeProjectId = selectedRuntimeProject?.id ?? null
+  const selectedRuntimeProjectPinned = Boolean(
+    selectedRuntimeProjectId !== null &&
+    runtimeWorkByProjectId.get(selectedRuntimeProjectId)?.project.pinned
+  )
   const selectedRuntimeProjectAutoExpandKey = selectedRuntimeProject?.autoExpandKey ?? null
   const selectedRuntimeChatVisible = useMemo(() => {
     if (!currentRuntimeTask) return false
@@ -3852,11 +3856,11 @@ export function DesktopSidebar({
     !collapsedReadTaskKeys.has(getRuntimeTaskReminderKey(currentRuntimeTask)) &&
     (currentRuntimeTaskPinned ||
       (selectedRuntimeProjectId !== null &&
-        displayedProjectsExpanded &&
+        (selectedRuntimeProjectPinned || displayedProjectsExpanded) &&
         displayedExpandedProjectIds.has(selectedRuntimeProjectId)) ||
       (selectedRuntimeChatVisible && displayedChatsExpanded))
   )
-  const autoExpandedProjectKeyRef = useRef<string | null>(null)
+  const [autoExpandedProjectKey, setAutoExpandedProjectKey] = useState<string | null>(null)
 
   const handleToggleProject = (projectId: number) => {
     const projectWork = runtimeWorkByProjectId.get(projectId)
@@ -3889,19 +3893,32 @@ export function DesktopSidebar({
     setChatsExpanded(expanded => hasCollapsedReadTasks || !expanded)
   }
 
-  useEffect(() => {
-    if (selectedRuntimeProjectId === null || !selectedRuntimeProjectAutoExpandKey) return
-
-    const scopedAutoExpandKey = `${storageScope}:${selectedRuntimeProjectAutoExpandKey}`
-    if (autoExpandedProjectKeyRef.current === scopedAutoExpandKey) return
-
-    autoExpandedProjectKeyRef.current = scopedAutoExpandKey
-    setProjectsExpanded(true)
-    setExpandedProjectIds(previous => {
-      if (previous.has(selectedRuntimeProjectId)) return previous
-      return new Set([...previous, selectedRuntimeProjectId])
-    })
-  }, [selectedRuntimeProjectAutoExpandKey, selectedRuntimeProjectId, storageScope])
+  const scopedAutoExpandKey = selectedRuntimeProjectAutoExpandKey
+    ? `${storageScope}:${selectedRuntimeProjectAutoExpandKey}`
+    : null
+  if (restoredStorageScope !== storageScope) {
+    setRestoredStorageScope(storageScope)
+    setProjectsExpanded(readStoredBoolean(projectsExpandedStorageKey, true))
+    setChatsExpanded(readStoredBoolean(chatsExpandedStorageKey, true))
+    setPriorityFilterActive(false)
+    setPrioritySession(null)
+    setPriorityShowPinned(readStoredBoolean(priorityPinnedStorageKey, false))
+    setShowOfflineDeviceItems(readStoredBoolean(showOfflineDeviceItemsStorageKey, true))
+    setExpandedProjectIds(readStoredNumberSet(expandedProjectIdsStorageKey))
+  } else if (
+    selectedRuntimeProjectId !== null &&
+    scopedAutoExpandKey &&
+    autoExpandedProjectKey !== scopedAutoExpandKey
+  ) {
+    setAutoExpandedProjectKey(scopedAutoExpandKey)
+    if (!currentRuntimeTaskPinned) {
+      if (!selectedRuntimeProjectPinned) setProjectsExpanded(true)
+      setExpandedProjectIds(previous => {
+        if (previous.has(selectedRuntimeProjectId)) return previous
+        return new Set([...previous, selectedRuntimeProjectId])
+      })
+    }
+  }
 
   const openProjectCreateDialog = (event: ReactMouseEvent<HTMLButtonElement>) => {
     // Pointer activation should not restore keyboard focus to the icon on dismissal.
@@ -3911,49 +3928,24 @@ export function DesktopSidebar({
   }
 
   useEffect(() => {
-    if (storageScopeRef.current !== storageScope) return
     writeStoredBoolean(projectsExpandedStorageKey, projectsExpanded)
-  }, [projectsExpanded, projectsExpandedStorageKey, storageScope])
+  }, [projectsExpanded, projectsExpandedStorageKey])
 
   useEffect(() => {
-    if (storageScopeRef.current !== storageScope) return
     writeStoredBoolean(chatsExpandedStorageKey, chatsExpanded)
-  }, [chatsExpanded, chatsExpandedStorageKey, storageScope])
+  }, [chatsExpanded, chatsExpandedStorageKey])
 
   useEffect(() => {
-    if (storageScopeRef.current !== storageScope) return
     writeStoredBoolean(priorityPinnedStorageKey, priorityShowPinned)
-  }, [priorityPinnedStorageKey, priorityShowPinned, storageScope])
+  }, [priorityPinnedStorageKey, priorityShowPinned])
 
   useEffect(() => {
-    if (storageScopeRef.current !== storageScope) return
     writeStoredBoolean(showOfflineDeviceItemsStorageKey, showOfflineDeviceItems)
-  }, [showOfflineDeviceItems, showOfflineDeviceItemsStorageKey, storageScope])
+  }, [showOfflineDeviceItems, showOfflineDeviceItemsStorageKey])
 
   useEffect(() => {
-    if (storageScopeRef.current !== storageScope) return
     writeStoredNumberSet(expandedProjectIdsStorageKey, expandedProjectIds)
-  }, [expandedProjectIds, expandedProjectIdsStorageKey, storageScope])
-
-  useEffect(() => {
-    if (storageScopeRef.current === storageScope) return
-
-    storageScopeRef.current = storageScope
-    setProjectsExpanded(readStoredBoolean(projectsExpandedStorageKey, true))
-    setChatsExpanded(readStoredBoolean(chatsExpandedStorageKey, true))
-    setPriorityFilterActive(false)
-    setPrioritySession(null)
-    setPriorityShowPinned(readStoredBoolean(priorityPinnedStorageKey, false))
-    setShowOfflineDeviceItems(readStoredBoolean(showOfflineDeviceItemsStorageKey, true))
-    setExpandedProjectIds(readStoredNumberSet(expandedProjectIdsStorageKey))
-  }, [
-    chatsExpandedStorageKey,
-    expandedProjectIdsStorageKey,
-    priorityPinnedStorageKey,
-    projectsExpandedStorageKey,
-    showOfflineDeviceItemsStorageKey,
-    storageScope,
-  ])
+  }, [expandedProjectIds, expandedProjectIdsStorageKey])
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {

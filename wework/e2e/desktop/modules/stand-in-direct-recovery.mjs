@@ -127,7 +127,7 @@ export function createDirectRecoveryVerification(options) {
               local_task_id: COORDINATOR,
               thread_id: null,
               workspace_path: options.workspacePath,
-              title: '分身后台统筹',
+              title: '助理后台统筹',
               runtime: 'codex',
               continuable: true,
               ephemeral: false,

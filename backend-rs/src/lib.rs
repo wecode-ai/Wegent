@@ -138,6 +138,7 @@ pub mod devices;
 mod dingtalk_wikispace;
 mod dsh_plugin_storage;
 mod executor_binding;
+mod runtime_observations;
 pub use wegent_directory::erp_provider;
 pub use wegent_directory::erp_types;
 use wegent_executor_manager::executor_manager;

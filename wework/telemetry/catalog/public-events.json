@@ -1241,7 +1241,7 @@
       "title": { "zh-CN": "确认设备插件安装结果", "en": "Confirm device plugin installation" }
     },
     {
-      "description": { "zh-CN": "打开分身", "en": "Open stand-in" },
+      "description": { "zh-CN": "打开助理", "en": "Open stand-in" },
       "eventSchemaVersion": 1,
       "key": "stand_in.opened",
       "kind": "observation",
@@ -1255,10 +1255,10 @@
         },
         { "name": "identity", "type": "enum", "values": ["primary", "role", "unknown"] }
       ],
-      "title": { "zh-CN": "打开分身", "en": "Open stand-in" }
+      "title": { "zh-CN": "打开助理", "en": "Open stand-in" }
     },
     {
-      "description": { "zh-CN": "分身执行开始", "en": "Stand-in execution started" },
+      "description": { "zh-CN": "助理执行开始", "en": "Stand-in execution started" },
       "eventSchemaVersion": 1,
       "key": "stand_in.execution_started",
       "kind": "observation",
@@ -1289,10 +1289,10 @@
           "values": ["local", "cloud", "remote", "unknown"]
         }
       ],
-      "title": { "zh-CN": "分身执行开始", "en": "Stand-in execution started" }
+      "title": { "zh-CN": "助理执行开始", "en": "Stand-in execution started" }
     },
     {
-      "description": { "zh-CN": "分身等待回复或确认", "en": "Stand-in execution waiting" },
+      "description": { "zh-CN": "助理等待回复或确认", "en": "Stand-in execution waiting" },
       "eventSchemaVersion": 1,
       "key": "stand_in.execution_waiting",
       "kind": "observation",
@@ -1323,10 +1323,10 @@
           "values": ["local", "cloud", "remote", "unknown"]
         }
       ],
-      "title": { "zh-CN": "分身等待回复或确认", "en": "Stand-in execution waiting" }
+      "title": { "zh-CN": "助理等待回复或确认", "en": "Stand-in execution waiting" }
     },
     {
-      "description": { "zh-CN": "分身执行结束", "en": "Stand-in execution completed" },
+      "description": { "zh-CN": "助理执行结束", "en": "Stand-in execution completed" },
       "eventSchemaVersion": 1,
       "key": "stand_in.execution_completed",
       "kind": "observation",
@@ -1359,10 +1359,10 @@
           "values": ["local", "cloud", "remote", "unknown"]
         }
       ],
-      "title": { "zh-CN": "分身执行结束", "en": "Stand-in execution completed" }
+      "title": { "zh-CN": "助理执行结束", "en": "Stand-in execution completed" }
     },
     {
-      "description": { "zh-CN": "保存分身配置", "en": "Save stand-in configuration" },
+      "description": { "zh-CN": "保存助理配置", "en": "Save stand-in configuration" },
       "eventSchemaVersion": 1,
       "key": "stand_in.configuration",
       "kind": "operation",
@@ -1400,10 +1400,10 @@
           "values": ["local", "cloud", "remote", "unknown"]
         }
       ],
-      "title": { "zh-CN": "保存分身配置", "en": "Save stand-in configuration" }
+      "title": { "zh-CN": "保存助理配置", "en": "Save stand-in configuration" }
     },
     {
-      "description": { "zh-CN": "保存分身配置", "en": "Save stand-in configuration" },
+      "description": { "zh-CN": "保存助理配置", "en": "Save stand-in configuration" },
       "eventSchemaVersion": 1,
       "failureStages": [
         "request",
@@ -1465,10 +1465,10 @@
           ]
         }
       ],
-      "title": { "zh-CN": "保存分身配置", "en": "Save stand-in configuration" }
+      "title": { "zh-CN": "保存助理配置", "en": "Save stand-in configuration" }
     },
     {
-      "description": { "zh-CN": "发送分身对话", "en": "Send stand-in message" },
+      "description": { "zh-CN": "发送助理对话", "en": "Send stand-in message" },
       "eventSchemaVersion": 1,
       "key": "stand_in.conversation",
       "kind": "operation",
@@ -1502,10 +1502,10 @@
           "values": ["local", "cloud", "remote", "unknown"]
         }
       ],
-      "title": { "zh-CN": "发送分身对话", "en": "Send stand-in message" }
+      "title": { "zh-CN": "发送助理对话", "en": "Send stand-in message" }
     },
     {
-      "description": { "zh-CN": "发送分身对话", "en": "Send stand-in message" },
+      "description": { "zh-CN": "发送助理对话", "en": "Send stand-in message" },
       "eventSchemaVersion": 1,
       "failureStages": [
         "request",
@@ -1563,10 +1563,10 @@
           ]
         }
       ],
-      "title": { "zh-CN": "发送分身对话", "en": "Send stand-in message" }
+      "title": { "zh-CN": "发送助理对话", "en": "Send stand-in message" }
     },
     {
-      "description": { "zh-CN": "处理分身配置提案", "en": "Resolve stand-in proposal" },
+      "description": { "zh-CN": "处理助理配置提案", "en": "Resolve stand-in proposal" },
       "eventSchemaVersion": 1,
       "key": "stand_in.proposal",
       "kind": "operation",
@@ -1600,10 +1600,10 @@
           "values": ["local", "cloud", "remote", "unknown"]
         }
       ],
-      "title": { "zh-CN": "处理分身配置提案", "en": "Resolve stand-in proposal" }
+      "title": { "zh-CN": "处理助理配置提案", "en": "Resolve stand-in proposal" }
     },
     {
-      "description": { "zh-CN": "处理分身配置提案", "en": "Resolve stand-in proposal" },
+      "description": { "zh-CN": "处理助理配置提案", "en": "Resolve stand-in proposal" },
       "eventSchemaVersion": 1,
       "failureStages": [
         "request",
@@ -1661,10 +1661,10 @@
           ]
         }
       ],
-      "title": { "zh-CN": "处理分身配置提案", "en": "Resolve stand-in proposal" }
+      "title": { "zh-CN": "处理助理配置提案", "en": "Resolve stand-in proposal" }
     },
     {
-      "description": { "zh-CN": "操作分身工作", "en": "Act on stand-in work" },
+      "description": { "zh-CN": "操作助理工作", "en": "Act on stand-in work" },
       "eventSchemaVersion": 1,
       "key": "stand_in.work_action",
       "kind": "operation",
@@ -1702,10 +1702,10 @@
           "values": ["local", "cloud", "remote", "unknown"]
         }
       ],
-      "title": { "zh-CN": "操作分身工作", "en": "Act on stand-in work" }
+      "title": { "zh-CN": "操作助理工作", "en": "Act on stand-in work" }
     },
     {
-      "description": { "zh-CN": "操作分身工作", "en": "Act on stand-in work" },
+      "description": { "zh-CN": "操作助理工作", "en": "Act on stand-in work" },
       "eventSchemaVersion": 1,
       "failureStages": [
         "request",
@@ -1767,10 +1767,10 @@
           ]
         }
       ],
-      "title": { "zh-CN": "操作分身工作", "en": "Act on stand-in work" }
+      "title": { "zh-CN": "操作助理工作", "en": "Act on stand-in work" }
     },
     {
-      "description": { "zh-CN": "派发分身工作", "en": "Dispatch stand-in work" },
+      "description": { "zh-CN": "派发助理工作", "en": "Dispatch stand-in work" },
       "eventSchemaVersion": 1,
       "key": "stand_in.dispatch",
       "kind": "operation",
@@ -1804,10 +1804,10 @@
           "values": ["local", "cloud", "remote", "unknown"]
         }
       ],
-      "title": { "zh-CN": "派发分身工作", "en": "Dispatch stand-in work" }
+      "title": { "zh-CN": "派发助理工作", "en": "Dispatch stand-in work" }
     },
     {
-      "description": { "zh-CN": "派发分身工作", "en": "Dispatch stand-in work" },
+      "description": { "zh-CN": "派发助理工作", "en": "Dispatch stand-in work" },
       "eventSchemaVersion": 1,
       "failureStages": [
         "request",
@@ -1865,7 +1865,7 @@
           ]
         }
       ],
-      "title": { "zh-CN": "派发分身工作", "en": "Dispatch stand-in work" }
+      "title": { "zh-CN": "派发助理工作", "en": "Dispatch stand-in work" }
     }
   ]
 }

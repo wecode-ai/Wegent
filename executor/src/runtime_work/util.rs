@@ -28,6 +28,12 @@ pub(crate) fn execution_request(payload: &Value) -> Option<ExecutionRequest> {
 }
 
 pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, payload: &Value) {
+    request.extra.remove("resource_event_keys");
+    if let Some(keys) = payload.get("resourceEventKeys") {
+        request
+            .extra
+            .insert("resource_event_keys".into(), keys.clone());
+    }
     // Conversation privacy belongs to this send, never to the task's immutable origin.
     request.extra.remove("conversationContext");
     if payload["conversationContext"] == "private_discussion" {
@@ -70,11 +76,14 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             .get("origin")
             .or_else(|| request.extra.get("origin"))
             .cloned();
-        let input = json!({"userId":request.extra.get("user_id"), "prompt":request.prompt,
+        let mut input = json!({"userId":request.extra.get("user_id"), "prompt":request.prompt,
             "message":payload.get("message"), "attachments":payload.get("attachments"),
             "workspace":payload.get("workspacePath"), "model":model,
             "origin":origin, "permissionProfile":request.extra.get("runtime_permission_profile"),
             "threadId":payload.get("threadId"), "runtimeSessionId":payload.get("runtimeSessionId")});
+        if let Some(keys) = payload.get("resourceEventKeys") {
+            input["resourceEventKeys"] = keys.clone();
+        }
         request
             .extra
             .insert("runtime_command_input".to_owned(), input);

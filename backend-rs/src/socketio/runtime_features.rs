@@ -69,10 +69,16 @@ fn parse(object: &Map<String, Value>) -> Option<Map<String, Value>> {
             Value::Object(project_editing(value)),
         );
     }
-    // `normalize_plugin_sync` drops a malformed advertisement instead of
+    // Optional protocols do not erase unrelated capabilities when malformed.
+    if let Some(value) = present(object, "connectionEvents", "connection_events")
+        && let Some(protocol) = protocol_feature(value)
+    {
+        document.insert("connectionEvents".to_owned(), Value::Object(protocol));
+    }
+    // `normalize_protocol_feature` drops a malformed advertisement instead of
     // erasing unrelated capabilities.
     if let Some(value) = present(object, "pluginSync", "plugin_sync")
-        && let Some(sync) = plugin_sync(value)
+        && let Some(sync) = protocol_feature(value)
     {
         document.insert("pluginSync".to_owned(), Value::Object(sync));
     }
@@ -97,7 +103,7 @@ fn parse(object: &Map<String, Value>) -> Option<Map<String, Value>> {
 }
 
 /// Top-level members of `RuntimeFeatures`, by alias and by field name.
-const DECLARED: [&str; 13] = [
+const DECLARED: [&str; 15] = [
     "schemaVersion",
     "schema_version",
     "runtimeTaskCreate",
@@ -111,6 +117,8 @@ const DECLARED: [&str; 13] = [
     "plugin_sync",
     "personalAssistantDispatch",
     "personal_assistant_dispatch",
+    "connectionEvents",
+    "connection_events",
 ];
 
 /// `_normalize_runtime_features`' recovery branch after a validation error.
@@ -237,8 +245,8 @@ fn project_editing(value: &Value) -> Map<String, Value> {
     document
 }
 
-/// `RuntimePluginSyncFeatures`: a malformed advertisement is dropped.
-fn plugin_sync(value: &Value) -> Option<Map<String, Value>> {
+/// `RuntimeProtocolFeatures`: a malformed advertisement is dropped.
+fn protocol_feature(value: &Value) -> Option<Map<String, Value>> {
     let object = value.as_object()?;
     let version = field(object, "protocolVersion", "protocol_version")?.as_i64()?;
     if version < 1 {
@@ -272,6 +280,30 @@ fn flag(object: &Map<String, Value>, alias: &str, name: &str, default: bool) -> 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn connection_event_protocol_survives_registration_and_malformed_optional_flags() {
+        let supported = normalize(&json!({"schema_version": 4, "connection_events": {"protocolVersion": 1, "unknown": true}})).unwrap();
+        assert_eq!(supported["connectionEvents"], json!({"protocolVersion": 1}));
+        assert!(supported.get("connection_events").is_none());
+        for advertisement in [
+            json!(null),
+            json!({}),
+            json!({"protocolVersion": "1"}),
+            json!({"protocolVersion": true}),
+            json!({"protocolVersion": 0}),
+        ] {
+            let normalized = normalize(&json!({"schemaVersion": 4, "connectionEvents": advertisement, "projectEditing": {"plugins": false}})).unwrap();
+            assert!(normalized.get("connectionEvents").is_none());
+            assert_eq!(normalized["projectEditing"]["plugins"], false);
+        }
+        assert!(
+            normalize(&json!({"schemaVersion": 4}))
+                .unwrap()
+                .get("connectionEvents")
+                .is_none()
+        );
+    }
 
     #[test]
     fn undeclared_worktree_members_are_dropped() {

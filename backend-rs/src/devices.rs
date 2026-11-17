@@ -194,7 +194,9 @@ pub struct RuntimeFeatures {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_editing: Option<RuntimeProjectEditingFeatures>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub plugin_sync: Option<RuntimePluginSyncFeatures>,
+    pub plugin_sync: Option<RuntimeProtocolFeatures>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_events: Option<RuntimeProtocolFeatures>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_task_access: Option<RuntimeRemoteTaskAccessFeatures>,
     #[serde(flatten)]
@@ -212,11 +214,11 @@ pub struct RuntimeProjectEditingFeatures {
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimePluginSyncFeatures {
+pub struct RuntimeProtocolFeatures {
     pub protocol_version: i64,
 }
 
-impl RuntimePluginSyncFeatures {
+impl RuntimeProtocolFeatures {
     /// Keep only an explicitly advertised positive integer protocol version.
     pub fn from_value(value: &serde_json::Value) -> Option<Self> {
         value
@@ -359,6 +361,8 @@ struct RuntimeFeatureInput {
     project_editing: Option<OpaqueJson>,
     #[serde(rename = "pluginSync")]
     plugin_sync: Option<OpaqueJson>,
+    #[serde(rename = "connectionEvents")]
+    connection_events: Option<OpaqueJson>,
     #[serde(rename = "remoteTaskAccess")]
     remote_task_access: Option<OpaqueJson>,
 }
@@ -807,7 +811,12 @@ fn project_runtime_features(info: &OnlineStateInput) -> Option<RuntimeFeatures> 
             .plugin_sync
             .as_ref()
             .filter(|_| valid_header)
-            .and_then(|value| RuntimePluginSyncFeatures::from_value(&value.to_value())),
+            .and_then(|value| RuntimeProtocolFeatures::from_value(&value.to_value())),
+        connection_events: features
+            .connection_events
+            .as_ref()
+            .filter(|_| valid_header)
+            .and_then(|value| RuntimeProtocolFeatures::from_value(&value.to_value())),
         extensions: serde_json::Map::new(),
         remote_task_access: features
             .remote_task_access
