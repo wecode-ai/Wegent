@@ -13,6 +13,7 @@ import {
 function controlReturning({
   waitForBehavior = 'settle-after',
   uiSnapshot,
+  elementMetrics = [],
   workbenchDebug,
   registeredClients,
 } = {}) {
@@ -35,6 +36,7 @@ function controlReturning({
       }
       if (waitForBehavior === 'hang') return new Promise(() => {})
     }
+    if (action === 'getElementMetrics') return JSON.stringify(elementMetrics)
     if (action === 'snapshot') return JSON.stringify(uiSnapshot ?? { testIds: [] })
     if (action === 'getWorkbenchDebugSnapshot') {
       return JSON.stringify(workbenchDebug ?? { workbench: {} })
@@ -460,6 +462,7 @@ test('routes the observation and capture to the failed condition control client'
         ['client', 'c2', 'waitFor'],
         ['client', 'c2', 'snapshot'],
         ['client', 'c2', 'getWorkbenchDebugSnapshot'],
+        ['client', 'c2', 'getElementMetrics'],
       ]
     )
     // clientId and action are metadata, not wait options.
@@ -493,6 +496,7 @@ test('a disconnected failed-window client degrades to an active-window state cap
       [
         ['active', 'snapshot'],
         ['active', 'getWorkbenchDebugSnapshot'],
+        ['active', 'getElementMetrics'],
       ]
     )
   } finally {
@@ -547,7 +551,7 @@ test('records the measured convergence time when the failed condition settles', 
     )
     assert.deepEqual(
       control.commands.map(command => command.action),
-      ['waitFor', 'snapshot', 'getWorkbenchDebugSnapshot']
+      ['waitFor', 'snapshot', 'getWorkbenchDebugSnapshot', 'getElementMetrics']
     )
     const stored = JSON.parse(await readFile(join(resultDir, 'failure-followup.json'), 'utf8'))
     assert.equal(stored.outcome, 'settled-after-failure')
@@ -645,7 +649,7 @@ test('a hanging wait command does not prevent the state capture from finishing',
     assert.equal(followup.observedForMs, 50)
     assert.deepEqual(
       control.commands.map(command => command.action),
-      ['waitFor', 'snapshot', 'getWorkbenchDebugSnapshot']
+      ['waitFor', 'snapshot', 'getWorkbenchDebugSnapshot', 'getElementMetrics']
     )
   } finally {
     t.mock.timers.reset()
@@ -725,7 +729,39 @@ test('captures plain state without a condition when the failure is not a wait ti
     assert.equal(followup.workbenchDebug.workbench.isBootstrapping, false)
     assert.deepEqual(
       control.commands.map(command => command.action),
-      ['snapshot', 'getWorkbenchDebugSnapshot']
+      ['snapshot', 'getWorkbenchDebugSnapshot', 'getElementMetrics']
+    )
+  } finally {
+    await rm(resultDir, { recursive: true, force: true })
+  }
+})
+
+test('observes a click presence timeout without replaying the click', () => {
+  const selector = '[data-testid="delayed-tab"]'
+  assert.deepEqual(
+    failedWaitCondition(new Error(`Timed out waiting for selector "${selector}"; matches=[]`), [
+      { action: 'click', selector, visible: false, enabled: true, text: 'ignored', stableMs: 100 },
+    ]),
+    { action: 'click', selector, enabled: false }
+  )
+})
+
+test('retains element geometry and scroll state in failure evidence without requesting text', async () => {
+  const resultDir = await mkdtemp(join(tmpdir(), 'wework-failure-followup-'))
+  const metrics = [{ attributes: { 'data-testid': 'title' }, top: -20, bottom: 10, scrollTop: 90 }]
+  try {
+    const control = controlReturning({ elementMetrics: metrics })
+    const followup = await captureFailureFollowup(control, resultDir, {
+      failedAt: Date.now(),
+      budgetMs: 1000,
+    })
+    assert.deepEqual(followup.elementMetrics, metrics)
+    const command = control.commands.find(c => c.action === 'getElementMetrics')
+    assert.equal(command.selector, '[data-testid]')
+    assert.deepEqual(JSON.parse(command.options.value), { attributeNames: ['data-testid'] })
+    assert.deepEqual(
+      JSON.parse(await readFile(join(resultDir, 'failure-followup.json'), 'utf8')).elementMetrics,
+      metrics
     )
   } finally {
     await rm(resultDir, { recursive: true, force: true })

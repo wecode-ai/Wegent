@@ -3447,30 +3447,33 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'sampleRapidMarkdownWindowing':
       return sampleRapidMarkdownWindowing(command)
     case 'click': {
-      const elements = findDesktopControlElementsWithin(command.selector, command.target)
-      const element = command.visible ? elements.find(desktopControlElementVisible) : elements[0]
-      if (!element)
-        throw new Error(
-          `Unable to find selector "${command.selector}"${
-            command.target ? ` within "${command.target}"` : ''
-          }`
-        )
-      if (!desktopControlElementEnabled(element)) {
-        throw new Error(`Selector "${command.selector}" is disabled`)
-      }
-      const startedAt = Date.now()
-      logRuntimeTaskCreateStage(
-        'desktop-control-click-started',
-        { commandId: command.id, selector: command.selector },
-        'debug'
+      return waitForDesktopControlElement(
+        {
+          ...command,
+          visible: command.visible === true ? true : undefined,
+          enabled: false,
+          text: undefined,
+          stableMs: undefined,
+        },
+        element => {
+          if (!desktopControlElementEnabled(element)) {
+            throw new Error(`Selector "${command.selector}" is disabled`)
+          }
+          const startedAt = Date.now()
+          logRuntimeTaskCreateStage(
+            'desktop-control-click-started',
+            { commandId: command.id, selector: command.selector },
+            'debug'
+          )
+          element.click()
+          logRuntimeTaskCreateStage(
+            'desktop-control-click-dispatched',
+            { commandId: command.id, elapsedMs: Date.now() - startedAt },
+            'debug'
+          )
+          return element.textContent?.trim() ?? ''
+        }
       )
-      element.click()
-      logRuntimeTaskCreateStage(
-        'desktop-control-click-dispatched',
-        { commandId: command.id, elapsedMs: Date.now() - startedAt },
-        'debug'
-      )
-      return element.textContent?.trim() ?? ''
     }
     case 'clickThenMacrotask': {
       const element = findDesktopControlElements(command.selector)[0]

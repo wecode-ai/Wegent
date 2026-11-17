@@ -25,6 +25,7 @@ const FOLLOWUP_COMMAND_TIMEOUT_MS = 5_000
 // command's selector, so attribution declines it to a plain state capture.
 const WAIT_LIKE_ACTIONS = new Set([
   'waitFor',
+  'click',
   'clickWhenEnabled',
   'chooseWhenEnabled',
   'setExpanded',
@@ -180,6 +181,13 @@ function conditionFromHistory(entry) {
   // override delivered ones of the same name, exactly as the renderer's
   // { ...command, enabled: true, … } spread does.
   Object.assign(condition, ENFORCED_WAIT_PREDICATES[entry.action])
+  if (entry.action === 'click') {
+    if (entry.visible === true) condition.visible = true
+    else delete condition.visible
+    condition.enabled = false
+    delete condition.text
+    delete condition.stableMs
+  }
   return condition
 }
 
@@ -252,10 +260,14 @@ export async function captureFailureFollowup(
     }
   }
   const observedForMs = Date.now() - observationStartedAt
-  const [snapshot, workbenchDebug] = await withDeadline(
+  const [snapshot, workbenchDebug, elementMetrics] = await withDeadline(
     Promise.all([
       sendCommand('snapshot', 'body', { timeoutMs: FOLLOWUP_COMMAND_TIMEOUT_MS }),
       sendCommand('getWorkbenchDebugSnapshot', 'body', {
+        timeoutMs: FOLLOWUP_COMMAND_TIMEOUT_MS,
+      }),
+      sendCommand('getElementMetrics', '[data-testid]', {
+        value: JSON.stringify({ attributeNames: ['data-testid'] }),
         timeoutMs: FOLLOWUP_COMMAND_TIMEOUT_MS,
       }),
     ]),
@@ -268,6 +280,7 @@ export async function captureFailureFollowup(
     budgetMs,
     observationBudgetMs,
     observedForMs,
+    elementMetrics: JSON.parse(elementMetrics),
     ...followupOutcome(
       settledAt,
       failedAt,

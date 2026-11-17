@@ -460,7 +460,25 @@ async function runParallelCheckpoints(checkpoints) {
     }
     process.exitCode = 1
   } finally {
-    await rm(sharedRuntimeDirectory, { recursive: true, force: true })
+    const startedAt = Date.now()
+    const logCleanup = event =>
+      console.log(
+        '[desktop-e2e-cleanup] ' +
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            event,
+            elapsedMs: Date.now() - startedAt,
+            activeResources: process.getActiveResourcesInfo(),
+          })
+      )
+    logCleanup('shared-runtime-removal-started')
+    try {
+      await rm(sharedRuntimeDirectory, { recursive: true, force: true })
+      logCleanup('shared-runtime-removal-completed')
+    } catch (error) {
+      logCleanup('shared-runtime-removal-failed')
+      throw error
+    }
   }
 }
 
