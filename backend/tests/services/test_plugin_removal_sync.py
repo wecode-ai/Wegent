@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -24,8 +25,12 @@ def sync_context(monkeypatch):
         yield Mock()
 
     monkeypatch.setattr(module, "get_db_session", session)
-    monkeypatch.setattr(module, "pending_removal_devices", lambda *_: {"device"})
     record = Mock()
+    monkeypatch.setattr(
+        module,
+        "pending_removal_devices",
+        lambda *_: set() if record.call_count else {"device"},
+    )
     dispatch = AsyncMock(
         return_value=DeviceCapabilitySyncResult(device_id="device", success=True)
     )
@@ -41,7 +46,8 @@ def sync_context(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_does_not_duplicate_inflight_cleanup(sync_context):
+async def test_heartbeat_does_not_duplicate_inflight_cleanup(sync_context, caplog):
+    caplog.set_level(logging.INFO, logger=module.__name__)
     dispatch, record = sync_context
     started, release = asyncio.Event(), asyncio.Event()
 
@@ -61,6 +67,8 @@ async def test_heartbeat_does_not_duplicate_inflight_cleanup(sync_context):
         await first
     record.assert_called_once()
     assert not module._inflight
+    assert "reason=inflight user_id=1 device_id=device" in caplog.text
+    assert "Plugin removal result recorded user_id=1 device_id=device" in caplog.text
 
 
 @pytest.mark.asyncio

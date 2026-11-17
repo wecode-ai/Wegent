@@ -5,25 +5,24 @@ import { runnerEnvironmentError } from './runnerEnvironmentError'
 describe('runnerEnvironmentError', () => {
   it.each([
     { errorCode: 'RUNNER_ENVIRONMENT_UNAVAILABLE' },
+    new Error('RUNNER_ENVIRONMENT_UNAVAILABLE: no authorized device'),
     { error_code: 'RUNNER_ENVIRONMENT_UNAVAILABLE' },
     { detail: { error_code: 'RUNNER_ENVIRONMENT_UNAVAILABLE' } },
-  ])('explains the authorization denial in both hosts', (error) => {
-    expect(
-      runnerEnvironmentError(error, createCollaborationTranslator('zh-CN')),
-    ).toContain('项目授权')
-    expect(
-      runnerEnvironmentError(error, createCollaborationTranslator('en')),
-    ).toContain('Project settings')
+  ])('explains the authorization denial in both hosts', error => {
+    expect(runnerEnvironmentError(error, createCollaborationTranslator('zh-CN'))).toContain(
+      '项目授权'
+    )
+    expect(runnerEnvironmentError(error, createCollaborationTranslator('en'))).toContain(
+      'Project settings'
+    )
   })
 
   it.each([
     null,
     new Error('Network failure'),
     { detail: { error_code: 'RUNNER_MODEL_REQUIRED' } },
-  ])('leaves unrelated errors to their existing handlers', (error) => {
-    expect(
-      runnerEnvironmentError(error, createCollaborationTranslator('en')),
-    ).toBeNull()
+  ])('leaves unrelated errors to their existing handlers', error => {
+    expect(runnerEnvironmentError(error, createCollaborationTranslator('en'))).toBeNull()
   })
 
   it('identifies the failing group member, bound device and policy device in both languages', () => {
@@ -40,10 +39,7 @@ describe('runnerEnvironmentError', () => {
       },
     }
     for (const locale of ['zh-CN', 'en'] as const) {
-      const message = runnerEnvironmentError(
-        error,
-        createCollaborationTranslator(locale),
-      )!
+      const message = runnerEnvironmentError(error, createCollaborationTranslator(locale))!
       for (const value of [
         'Development group',
         'Reviewer',
@@ -59,8 +55,8 @@ describe('runnerEnvironmentError', () => {
     expect(
       runnerEnvironmentError(
         { errorCode: 'ISSUE_RUNNER_CONFLICT' },
-        createCollaborationTranslator('zh-CN'),
-      ),
+        createCollaborationTranslator('zh-CN')
+      )
     ).toContain('项目设置')
   })
 })

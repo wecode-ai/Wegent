@@ -10,8 +10,23 @@ use super::{BackgroundJobRegistry, JobContext, with_lock_watchdog};
 use crate::{AppState, task_store_maintenance::MaintenanceScan};
 
 const JOB: &str = "device_heartbeat_monitor";
+pub(super) const RETENTION_JOB: &str = "device_registration_retention";
 
 pub(super) fn register(registry: &mut BackgroundJobRegistry, state: Arc<AppState>) -> Result<()> {
+    let retention_state = state.clone();
+    registry.register(RETENTION_JOB, move |context, _| {
+        let state = retention_state.clone();
+        async move {
+            Ok(with_lock_watchdog(&state.background_jobs, &context,
+                "wegent:lock:device_registration_retention", Duration::from_secs(300),
+                async { Ok(json!({"removed": crate::device_records::retention::prune(&state, &context).await?})) }
+            ).await?.unwrap_or_else(|| json!({"skipped":"lock_busy"})))
+        }
+    })?;
+    registry.max_failures(RETENTION_JOB, 1)?;
+    registry.timeout(RETENTION_JOB, None)?;
+    registry.startup(RETENTION_JOB, Duration::from_secs(60))?;
+    registry.interval(RETENTION_JOB, Duration::from_secs(3600), false)?;
     registry.register(JOB, move |context, _| {
         let state = state.clone();
         async move {

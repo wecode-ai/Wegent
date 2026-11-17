@@ -1,9 +1,10 @@
 // @vitest-environment node
 
-import { mkdtemp, mkdir, writeFile, readFile, realpath, rename, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, open, writeFile, readFile, realpath, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
+import { fstatSync, statSync } from 'node:fs'
 import chokidar from 'chokidar'
 import { test, expect, vi, onTestFinished } from 'vitest'
 import { watchDevelopmentBuild, watchDevelopmentDirectory } from './lib/development-build-watch.mjs'
@@ -51,8 +52,8 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
   async (checkout, input) => {
     const startedAt = Date.now()
     const phases = []
-    const record = phase => {
-      if (phases.length < 24) phases.push({ phase, elapsedMs: Date.now() - startedAt })
+    const record = (phase, ...details) => {
+      phases.push({ phase, elapsedMs: Date.now() - startedAt, details })
     }
     const temporary = await mkdtemp(path.join(tmpdir(), 'development-build-watch-'))
     const root = path.join(temporary, checkout)
@@ -68,15 +69,38 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
       await writeFile(staged, value)
       await rename(staged, source)
     }
+    let nativeWatcher
+    const restoreMethodObservers = []
+    const observeMethod = (owner, name) => {
+      const ownDescriptor = Object.getOwnPropertyDescriptor(owner, name)
+      const original = owner[name]
+      owner[name] = function (...args) {
+        record('native-method', name, args[0])
+        return Reflect.apply(original, this, args)
+      }
+      restoreMethodObservers.push(() => {
+        if (ownDescriptor) Object.defineProperty(owner, name, ownDescriptor)
+        else delete owner[name]
+      })
+    }
+    const sourceVersion = () => {
+      try {
+        const stat = statSync(source, { bigint: true })
+        return { ino: String(stat.ino), size: String(stat.size), mtimeNs: String(stat.mtimeNs) }
+      } catch (error) {
+        return { error: error.code }
+      }
+    }
     let published = ''
     const snapshots = []
     const failedBuild = Promise.withResolvers()
     const recoveredBuild = Promise.withResolvers()
     const onError = vi.fn(error => {
-      record('failure-callback')
+      record('failure-callback', { name: error.name, code: error.code, message: error.message })
       failedBuild.resolve(error)
     })
     const build = vi.fn(async () => {
+      record('build-start')
       const snapshot = await readFile(source, 'utf8')
       snapshots.push(snapshot)
       record(`build-read-${['one', 'invalid', 'two', ''].indexOf(snapshot)}`)
@@ -98,18 +122,54 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
           directory,
           options,
           (...event) => {
-            record('native-notification', ...event)
+            record('file-notification', ...event, sourceVersion())
             notify(...event)
           },
-          (directory, options) =>
-            chokidar.watch(directory, { ...options, useFsEvents: false, usePolling: false })
+          (directory, options) => {
+            nativeWatcher = chokidar.watch(directory, {
+              ...options,
+              interval: 20,
+              binaryInterval: 20,
+            })
+            observeMethod(nativeWatcher, '_remove')
+            observeMethod(nativeWatcher, '_closeFile')
+            observeMethod(nativeWatcher._nodeFsHandler, '_watchWithNodeFs')
+            nativeWatcher.on('error', error =>
+              record('native-error', { name: error.name, code: error.code, message: error.message })
+            )
+            nativeWatcher.on('raw', (event, filename, details) => {
+              record(
+                'native-raw',
+                event,
+                filename,
+                {
+                  watchedPath: details?.watchedPath,
+                  currentInode: details?.curr?.ino,
+                  previousInode: details?.prev?.ino,
+                },
+                sourceVersion()
+              )
+            })
+            nativeWatcher.on('all', (event, filename) =>
+              record('native-normalized', event, filename, sourceVersion())
+            )
+            return nativeWatcher
+          }
         ),
     })
-    record('watch-ready')
+    record('watch-ready', nativeWatcher.getWatched())
     onTestFinished(async () => {
-      await watcher.close()
+      record('watch-close-start')
+      try {
+        await watcher.close()
+      } finally {
+        for (const restore of restoreMethodObservers.reverse()) restore()
+      }
       await rm(temporary, { recursive: true, force: true })
-      console.info('[development-build-watch-phases]', { checkout, input, phases })
+      console.info(
+        '[development-build-watch-phases]',
+        JSON.stringify({ checkout, input, phases, snapshots })
+      )
     })
     expect(published).toBe('one')
     record('write-invalid')
@@ -129,6 +189,28 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
     expect(published).toBe('two')
     expect(build).toHaveBeenCalledTimes(3)
     expect(snapshots).toEqual(['one', 'invalid', 'two'])
+    await saveSource('three')
+    await expect.poll(() => published).toBe('three')
+    // Use one handle so completing the save does not truncate the file again.
+    const handle = await open(source, 'r+')
+    try {
+      const beforeTruncate = fstatSync(handle.fd)
+      record('truncate-start', { handleInode: beforeTruncate.ino, pathInode: statSync(source).ino })
+      await handle.truncate(0)
+      record('truncate-finished', {
+        handleInode: fstatSync(handle.fd).ino,
+        pathInode: statSync(source).ino,
+        size: statSync(source).size,
+        subscriptions: nativeWatcher.getWatched(),
+      })
+      await expect.poll(() => published).toBe('')
+      await handle.writeFile('four')
+      await expect.poll(() => published).toBe('four')
+    } finally {
+      await handle.close()
+    }
+    expect(build).toHaveBeenCalledTimes(6)
+    expect(snapshots).toEqual(['one', 'invalid', 'two', 'three', '', 'four'])
   }
 )
 

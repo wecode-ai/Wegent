@@ -1,5 +1,15 @@
 {
   "device_actions": "设备操作",
+  "ide": {
+    "open": "打开 IDE",
+    "opening": "正在打开 IDE…",
+    "device_offline": "设备已离线",
+    "device_restarting": "设备正在升级或重启",
+    "disabled_on_device": "该设备已关闭 IDE 会话",
+    "popup_blocked": "浏览器拦截了 IDE 标签页。请允许弹出窗口后重试。",
+    "invalid_url": "设备未返回有效的 IDE 地址，请重试。",
+    "start_failed": "无法打开设备 IDE，请重试。"
+  },
   "delete_confirm_title": "移除离线设备？",
   "delete_confirm_description": "确定从列表中移除 {{name}} 吗？历史对话和本地文件会保留。设备再次连接后会重新出现。",
   "delete_cancel": "取消",
@@ -147,6 +157,16 @@
   "actions": {
     "upgrade": "升级"
   },
+  "restart": {
+    "action": "重启设备",
+    "title": "重启云设备？",
+    "description": "{{name}} 将短暂离线，正在运行的任务和连接可能中断。",
+    "busy": "{{name}} 有正在运行的任务。重启会中断任务，并使设备短暂离线。",
+    "sending": "正在发送重启请求…",
+    "requested": "已请求重启。设备重新连接后即可使用。",
+    "failed": "重启请求发送失败，请重试。",
+    "unavailable": "当前后端不支持重启云设备。"
+  },
   "upgrade": {
     "started": "升级已开始",
     "failed": "升级失败",
@@ -166,6 +186,7 @@
     "current": "当前版本",
     "latest": "最新版本",
     "updateAvailable": "有新版本可用",
+    "clickToRestart": "重启设备",
     "clickToUpgrade": "点击升级",
     "openclawNotSupported": "OpenClaw 设备不支持自动升级"
   },

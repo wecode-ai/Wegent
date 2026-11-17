@@ -177,6 +177,7 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn install_local_plugin(&self, payload: Value) -> Result<Value, AppIpcError> {
         let target = resolve_local_plugin_install_target(&payload)
             .map_err(|error| AppIpcError::new("invalid_local_plugin_install", error))?;
+        let _configuration = self.bundled_plugin_marketplace_reconciliation.lock().await;
         let plugin_key = target.plugin_key.clone();
         let started_at = Instant::now();
         self.mutate_local_plugin_configuration("local_plugin_install_failed", move || {
@@ -203,6 +204,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let target = resolve_local_plugin_uninstall_target(&payload)
             .map_err(|error| AppIpcError::new("invalid_local_plugin_uninstall", error))?;
+        let _configuration = self.bundled_plugin_marketplace_reconciliation.lock().await;
         super::super::connection_host::assert_dependency_unused(&format!(
             "{}@{}",
             target.plugin_key, WEWORK_PERSONAL_MARKETPLACE
@@ -489,7 +491,93 @@ fn plugin_config_enabled(codex_home: &Path, plugin_key: &str) -> Result<bool, St
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::ScalarEnv;
     use super::*;
+
+    #[test]
+    fn local_plugin_demand_mutations_wait_for_native_config_transactions() {
+        let _lock = crate::test_env::lock();
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("codex");
+        let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+        let _codex = ScalarEnv::set("WEGENT_CODEX_HOME", home.to_str().unwrap());
+        let _workbench = ScalarEnv::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+        let capabilities = root.path().join("capabilities");
+        let _capabilities =
+            ScalarEnv::set("WEGENT_CAPABILITIES_HOME", capabilities.to_str().unwrap());
+        let marketplace = root.path().join("wework-personal");
+        let manifest = marketplace.join(".agents/plugins/marketplace.json");
+        fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        fs::write(&manifest, r#"{"name":"wework-personal","plugins":[{"name":"example","source":{"source":"local","path":"./plugins/example"}}]}"#).unwrap();
+        let source = marketplace.join("plugins/example");
+        write_plugin_fixture(&source, "Python package");
+        fs::write(source.join("script.py"), "print('unused')").unwrap();
+        let payload = json!({"marketplacePath":manifest,"pluginName":"example"});
+        let target = resolve_local_plugin_install_target(&payload).unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let handler = RuntimeWorkRpcHandler::new("local-plugin-config-gate", "/bin/false");
+                let transaction = handler
+                    .bundled_plugin_marketplace_reconciliation
+                    .lock()
+                    .await;
+                let installing = handler.install_local_plugin(payload.clone());
+                tokio::pin!(installing);
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(50), &mut installing)
+                        .await
+                        .is_err()
+                );
+                assert!(
+                    !target.cache_root.exists(),
+                    "Install entered an active native config transaction"
+                );
+                fs::create_dir_all(&home).unwrap();
+                let config_path = home.join("config.toml");
+                fs::write(
+                    &config_path,
+                    "[marketplaces.wework-personal]\nsource = 'native-source'\n",
+                )
+                .unwrap();
+                drop(transaction);
+                assert_eq!(installing.await.unwrap()["localCommitted"], true);
+                assert!(plugin_config_enabled(&home, &target.plugin_key).unwrap());
+                assert!(fs::read_to_string(&config_path)
+                    .unwrap()
+                    .contains("native-source"));
+                assert!(crate::python_runtime::prewarm::has_demand().await.unwrap());
+
+                let transaction = handler
+                    .bundled_plugin_marketplace_reconciliation
+                    .lock()
+                    .await;
+                let uninstalling = handler.uninstall_local_plugin(payload);
+                tokio::pin!(uninstalling);
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(50), &mut uninstalling)
+                        .await
+                        .is_err()
+                );
+                assert!(
+                    plugin_config_enabled(&home, &target.plugin_key).unwrap(),
+                    "Uninstall entered an active native config transaction"
+                );
+                let native_edit = fs::read_to_string(&config_path)
+                    .unwrap()
+                    .replace("native-source", "updated-native-source");
+                fs::write(&config_path, native_edit).unwrap();
+                drop(transaction);
+                assert_eq!(uninstalling.await.unwrap()["localCommitted"], true);
+                assert!(!plugin_config_enabled(&home, &target.plugin_key).unwrap());
+                assert!(fs::read_to_string(&config_path)
+                    .unwrap()
+                    .contains("updated-native-source"));
+                assert!(!crate::python_runtime::prewarm::has_demand().await.unwrap());
+            });
+    }
 
     #[tokio::test]
     async fn local_install_waits_for_marketplace_configuration_transaction() {

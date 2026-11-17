@@ -1097,6 +1097,23 @@
         "inherited": "继承",
         "direct": "直接授权"
       }
+    },
+    "deletion": {
+      "continue": "继续删除",
+      "externalWarning": "外部检索引擎清理失败。继续后，内容将从 Wegent 删除，外部索引可能残留。新的检索和原文读取不会返回该内容，已开始的操作可能继续完成。",
+      "residualWarning": "Wegent 内容已删除；外部索引清理未确认，可能仍有残留。",
+      "failed": "删除失败",
+      "serviceAuthFailed": "索引清理服务鉴权失败，请检查服务配置后重试。",
+      "batchTitle": "批量删除结果",
+      "batchSummary": "已删除 {{deleted}} 项，其中外部清理未确认 {{unconfirmed}} 项；未删除 {{failed}} 项。",
+      "batchContinueWarning": "仅继续删除以下 {{count}} 项外部引擎故障文档，其他失败项不会继续。外部索引可能残留。",
+      "batchRequestFailed": "本次请求结果未确认，不能继续删除。请刷新列表核对。",
+      "batchNotFound": "文档不存在或不可访问",
+      "batchRejected": "权限或内容规则不允许删除",
+      "batchCleanupFailed": "索引清理服务失败，不能继续删除",
+      "batchFailed": "删除未完成，请检查后重试",
+      "batchResidual": "内容已删除，外部索引清理未确认",
+      "batchExternalFailure": "外部索引清理失败，可确认继续"
     }
   },
   "add_repository": "添加仓库",

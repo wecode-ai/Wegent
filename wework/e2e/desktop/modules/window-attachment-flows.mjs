@@ -17,6 +17,7 @@ import {
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
 import { logDesktopE2eSignal } from '../process-lifecycle.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
+import { collectRuntimeQueueEvidence } from './runtime-queue-evidence.mjs'
 
 import {
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -34,6 +35,8 @@ import {
   PROVIDER_SWITCH_OFFICIAL_LABEL,
   PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
   PROVIDER_SWITCH_PROMPT,
+  PROVIDER_SWITCH_REASONING_COMPLETION,
+  PROVIDER_SWITCH_REASONING_PROMPT,
   PROVIDER_SWITCH_RESUME_COMPLETION,
   PROVIDER_SWITCH_RESUME_PROMPT,
   TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX,
@@ -191,7 +194,12 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   await control.command('waitFor', '[data-testid="model-selector-menu"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
+  await ensureModelOptionVisible(
+    control,
+    `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`,
+    ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
+    'openai'
+  )
   const modelPickerMetrics = await getSingleElementMetrics(
     control,
     '[data-testid="model-selector-menu"]',
@@ -241,7 +249,7 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     'The model flyout did not block interaction with the embedded browser'
   )
   await captureVerificationScreenshot(control, 'model-switch-browser-picker-open.png')
-  const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"]`
+  const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"][data-model-provider-id="openai"]`
   await control.command('waitFor', officialModelSelector, {
     text: PROVIDER_SWITCH_OFFICIAL_LABEL,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -277,10 +285,28 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     'The embedded browser remained blocked after the model switch dialog closed'
   )
   await captureVerificationScreenshot(control, 'model-switch-browser-dialog-closed.png')
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: PROVIDER_SWITCH_COMPLETION,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  try {
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: PROVIDER_SWITCH_COMPLETION,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  } catch (error) {
+    try {
+      const evidence = await collectRuntimeQueueEvidence(
+        control,
+        source.task.taskId,
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+      await writeFile(
+        join(resultDir, 'provider-switch-queue-evidence.json'),
+        `${JSON.stringify({ stage: 'completion-failed', ...evidence }, null, 2)}\n`,
+        'utf8'
+      )
+    } catch {
+      console.error('[desktop-e2e] Provider-switch queue evidence could not be written')
+    }
+    throw error
+  }
   assert.equal(
     control.scenarioRequests.get('provider_switch_retry')?.length,
     2,
@@ -324,6 +350,32 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   )
   assert.equal(resumedTask.success, true)
   assert.equal(resumedTask.task.threadId, source.task.threadId)
+
+  await selectE2EModel(
+    control,
+    PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+    PROVIDER_SWITCH_OFFICIAL_LABEL,
+    '',
+    'openai'
+  )
+  await sendPrompt(control, composerSelector, PROVIDER_SWITCH_REASONING_PROMPT)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PROVIDER_SWITCH_REASONING_COMPLETION,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    control.scenarioRequests.get('provider_switch_retry')?.length,
+    4,
+    'Switching the reasoned Luna thread to official GPT did not make exactly one additional request'
+  )
+  const reasoningTask = await requestExecutor(
+    control,
+    'runtime.tasks.get',
+    { taskId: source.task.taskId },
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.equal(reasoningTask.success, true)
+  assert.equal(reasoningTask.task.threadId, source.task.threadId)
 }
 
 async function verifyRuntimeTaskNotificationNavigation({

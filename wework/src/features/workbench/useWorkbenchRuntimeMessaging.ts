@@ -21,6 +21,7 @@ import {
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
+import { isSameModelSelection } from '@/lib/model-ui'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
@@ -68,6 +69,7 @@ import type {
   CreateTemporaryRuntimeTaskOptions,
   RuntimePaneActionOptions,
   RuntimePaneGuidanceResult,
+  RuntimeTaskModelSelectionControls,
   SendCurrentInputOptions,
 } from './workbenchContextTypes'
 import { DEVICE_STATUS_LABELS, normalizeGuidanceError } from './workbenchProviderHelpers'
@@ -220,6 +222,9 @@ interface UseWorkbenchRuntimeMessagingOptions {
   isOptionsLocked: boolean
   attachmentSelection: RuntimeMessagingAttachmentSelection
   modelSelection: RuntimeMessagingModelSelection
+  resolveRuntimeTaskModelSelection: (
+    address: RuntimeTaskAddress
+  ) => RuntimeTaskModelSelectionControls
   skillSelection: RuntimeMessagingSkillSelection
   refreshWorkLists: () => Promise<void>
 }
@@ -348,6 +353,7 @@ export function useWorkbenchRuntimeMessaging({
   isOptionsLocked,
   attachmentSelection,
   modelSelection,
+  resolveRuntimeTaskModelSelection,
   skillSelection,
   refreshWorkLists,
 }: UseWorkbenchRuntimeMessagingOptions) {
@@ -372,10 +378,45 @@ export function useWorkbenchRuntimeMessaging({
     [reportError]
   )
 
+  // Sends without explicit model fields (for example todo continuations)
+  // otherwise fall back to the saved task selection from runtime work, which
+  // may be a model the user already replaced in the pane. Prefer the pane's
+  // ready selection before the continuation resolves the saved one.
+  const applyReadyRuntimeTaskModel = useCallback(
+    (request: RuntimeSendRequest): RuntimeSendRequest => {
+      const userInputResponse =
+        request.requestUserInputResponse ?? request.request_user_input_response
+      if (userInputResponse || request.modelId || request.modelSelection?.modelName) {
+        return request
+      }
+      const selection = resolveRuntimeTaskModelSelection(request.address)
+      if (!selection.selectionReady || !selection.selectedModel) return request
+      const requestOptions = request.modelOptions ?? {}
+      // Downstream readers prefer the canonical key, and alias normalization
+      // does not rename keys, so promote an explicit request alias.
+      const requestModeAlias = requestOptions.collaboration_mode
+      const requestCollaborationMode: ModelOptions =
+        requestModeAlias && !requestOptions.collaborationMode
+          ? { collaborationMode: requestModeAlias }
+          : {}
+      return {
+        ...request,
+        ...selectedModelExecutionFields(selection.selectedModel, {
+          ...selection.selectedModelOptions,
+          ...requestOptions,
+          ...requestCollaborationMode,
+        }),
+      }
+    },
+    [resolveRuntimeTaskModelSelection]
+  )
+
   const prepareRuntimeSendRequest = useCallback(
     async (input: RuntimeSendRequest): Promise<RuntimeSendRequest> => {
-      const request = await prepareRuntimeContinuationModel(input, state.runtimeWork, () =>
-        executorClient.runtime.listRuntimeWork()
+      const request = await prepareRuntimeContinuationModel(
+        applyReadyRuntimeTaskModel(input),
+        state.runtimeWork,
+        () => executorClient.runtime.listRuntimeWork()
       )
       if (!request.attachments?.length) return request
       const prepared = await prepareRuntimeAttachmentsForDevice(
@@ -391,23 +432,45 @@ export function useWorkbenchRuntimeMessaging({
         attachments: prepared.attachments,
       }
     },
-    [executorClient, services.attachmentApi, state.devices, state.runtimeWork]
+    [
+      applyReadyRuntimeTaskModel,
+      executorClient,
+      services.attachmentApi,
+      state.devices,
+      state.runtimeWork,
+    ]
   )
 
   const blockRuntimeSendForUnavailableModel = useCallback(
     (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): boolean => {
-      const isCurrentTask =
-        state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
       if (
-        !isCurrentTask ||
-        (modelSelection.isSelectionReady !== false &&
-          modelSelection.isConfiguredModelUnavailable !== true) ||
         isAsyncRequestUserInputPayload(
           pendingRequestUserInputPayload(getRuntimeConversationMessages(address))
         )
       ) {
         // Async replies must not depend on composer discovery. Destination model
         // resolution and native validation still apply to the continuation.
+        return false
+      }
+      const taskSelection = resolveRuntimeTaskModelSelection(address)
+      // A ready per-task selection (including a replacement chosen in the pane)
+      // is authoritative. Otherwise keep the legacy active-scope guard below.
+      if (taskSelection.selectionReady) return false
+      const isCurrentTask =
+        state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
+      if (!isCurrentTask) return false
+      // Catalog-confirmed compatibility-disabled models are unusable even when
+      // the active-scope selection state does not track compatibility. Other
+      // not-ready states (catalog loading, stale catalogs) stay sendable.
+      const resolvedModel = taskSelection.selectedModel
+      const resolvedCatalogModel = resolvedModel
+        ? modelSelection.models.find(model => isSameModelSelection(model, resolvedModel))
+        : null
+      if (
+        !resolvedCatalogModel?.compatibilityDisabled &&
+        modelSelection.isSelectionReady !== false &&
+        modelSelection.isConfiguredModelUnavailable !== true
+      ) {
         return false
       }
       reportSendBlocked(
@@ -425,7 +488,9 @@ export function useWorkbenchRuntimeMessaging({
     [
       modelSelection.isConfiguredModelUnavailable,
       modelSelection.isSelectionReady,
+      modelSelection.models,
       reportSendBlocked,
+      resolveRuntimeTaskModelSelection,
       state.currentRuntimeTask,
     ]
   )

@@ -36,11 +36,14 @@
   background: rgb(var(--color-bg-subtle));
 }
 
-.collaboration-platform-sidebar > * {
+.collaboration-platform-sidebar > *,
+.collaboration-navigation-content > * {
   flex-shrink: 0;
 }
 
-.collaboration-platform-sidebar > .collaboration-projects-scroll {
+.collaboration-platform-sidebar
+  > .collaboration-navigation-content
+  > .collaboration-projects-scroll {
   flex: 1 1 0;
   min-height: 0;
   overflow-x: hidden;
@@ -55,6 +58,14 @@
   border-top: 1px solid rgb(var(--color-border));
   border-right: 0;
   background: transparent;
+}
+
+.collaboration-navigation-content {
+  display: contents;
+}
+
+.collaboration-mobile-navigation-toggle {
+  display: none;
 }
 
 .collaboration-platform-sidebar-footer {
@@ -204,13 +215,12 @@
 .collaboration-workspace-section-title {
   min-width: 0;
   overflow: hidden;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  opacity: 0.75;
 }
 
 .collaboration-workspace-section-toggle {
@@ -223,14 +233,13 @@
   padding: 0 64px 0 0;
   border: 0;
   border-radius: 6px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   background: transparent;
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;
   text-align: left;
   cursor: pointer;
-  opacity: 0.75;
 }
 
 .collaboration-workspace-section-toggle > span {
@@ -286,7 +295,7 @@
   padding: 0;
   border: 0;
   border-radius: 6px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   background: transparent;
   cursor: pointer;
 }
@@ -461,7 +470,7 @@
   padding: 0;
   border: 0;
   border-radius: 8px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   background: transparent;
   cursor: pointer;
 }
@@ -617,7 +626,7 @@
   justify-content: center;
   border: 0;
   border-radius: 6px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   background: transparent;
 }
 
@@ -698,6 +707,10 @@ button.collaboration-project-offline:hover {
 
 .collaboration-platform-main > .collaboration-app {
   height: 100%;
+}
+
+.collaboration-platform-main:has(> .collaboration-platform-page) {
+  overflow-y: auto;
 }
 
 .collaboration-platform-page {
@@ -863,7 +876,7 @@ button.collaboration-project-offline:hover {
 .collaboration-first-project-starter {
   display: flex;
   width: min(680px, 100%);
-  min-height: calc(100vh - 160px);
+  min-height: min(480px, 60vh);
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -871,6 +884,24 @@ button.collaboration-project-offline:hover {
   margin: 0 auto;
   padding: 40px 24px 72px;
   text-align: center;
+}
+
+.collaboration-first-issue-starter {
+  width: 100%;
+  min-height: 0;
+  align-items: flex-start;
+  margin: 0;
+  padding: 24px 0;
+  text-align: left;
+}
+
+.collaboration-first-issue-starter .collaboration-first-project-copy {
+  justify-items: start;
+}
+
+.collaboration-first-issue-starter .collaboration-first-project-guide {
+  justify-content: flex-start;
+  margin-top: 20px;
 }
 
 .collaboration-first-project-icon {
@@ -907,7 +938,7 @@ button.collaboration-project-offline:hover {
 .collaboration-first-project-starter p {
   max-width: 480px;
   margin: 0;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 14px;
   line-height: 1.5;
 }
@@ -4852,18 +4883,70 @@ button.collaboration-project-offline:hover {
   }
 
   .collaboration-platform-sidebar-full {
-    max-height: min(25dvh, 160px);
+    height: auto;
+    padding: 0;
     align-items: stretch;
+    overflow: hidden;
+  }
+
+  .collaboration-platform-sidebar-full .collaboration-mobile-navigation-toggle {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 16px;
+    color: rgb(var(--color-text-primary));
+    border-bottom: 1px solid rgb(var(--color-border));
+    text-align: left;
+  }
+
+  .collaboration-mobile-navigation-toggle svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .collaboration-mobile-navigation-toggle[aria-expanded="true"] svg {
+    transform: rotate(90deg);
+  }
+
+  .collaboration-platform-sidebar-full > .collaboration-navigation-content {
+    display: none;
+  }
+
+  .collaboration-platform-app:has(
+    > .collaboration-platform-sidebar-full.is-mobile-open
+  ) {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  [data-testid="collaboration-platform-root"]:has(
+      .collaboration-platform-sidebar-full.is-mobile-open
+    )
+    .collaboration-platform-main {
+    display: none;
+  }
+
+  .collaboration-platform-sidebar-full.is-mobile-open {
+    height: 100%;
+  }
+
+  .collaboration-platform-sidebar-full.is-mobile-open
+    > .collaboration-navigation-content {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
     overflow-y: auto;
+    padding: 8px 12px;
     overscroll-behavior: contain;
   }
 
-  .collaboration-platform-sidebar-full > * {
-    flex-shrink: 0;
-  }
-
-  .collaboration-platform-sidebar > .collaboration-projects-scroll {
+  .collaboration-platform-sidebar
+    > .collaboration-navigation-content
+    > .collaboration-projects-scroll {
     flex: 0 0 auto;
+    overflow: visible;
   }
 
   .collaboration-platform-brand {
@@ -5112,4 +5195,51 @@ button.collaboration-project-offline:hover {
 
 .collaboration-management + .collaboration-platform-sidebar-footer {
   margin-top: 0;
+}
+
+@media (max-width: 767px) {
+  .collaboration-platform-sidebar button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .collaboration-primary-navigation button,
+  .collaboration-workspace-section-heading,
+  .collaboration-workspace-section-toggle,
+  .collaboration-platform-sidebar .collaboration-workspace-row,
+  .collaboration-platform-sidebar .collaboration-workspace-identity,
+  .collaboration-platform-sidebar
+    .collaboration-workspace-project-list
+    .collaboration-workspace-project {
+    height: 44px;
+    min-height: 44px;
+  }
+  .collaboration-workspace-section-toggle {
+    padding-right: 100px;
+  }
+  .collaboration-workspace-section-toggle > svg {
+    opacity: 1;
+  }
+  .collaboration-platform-sidebar .collaboration-workspace-identity,
+  .collaboration-platform-sidebar
+    .collaboration-workspace-project-list
+    .collaboration-workspace-project {
+    padding-right: 100px;
+  }
+  .collaboration-workspace-section-actions > button,
+  .collaboration-workspace-action-trigger,
+  .collaboration-platform-sidebar .collaboration-workspace-toggle {
+    width: 44px;
+    height: 44px;
+  }
+  .collaboration-platform-sidebar .collaboration-workspace-toggle {
+    top: 0;
+  }
+  .collaboration-workspace-actions {
+    right: 48px;
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+    opacity: 1;
+    pointer-events: auto;
+  }
 }

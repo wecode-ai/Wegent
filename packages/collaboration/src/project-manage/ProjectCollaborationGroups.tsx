@@ -285,12 +285,7 @@ function ScopedProjectCollaborationGroups({
               drafts,
               locale,
               templateMessages[locale].partial,
-              templateRoutingResolver(
-                agentConfiguration,
-                location,
-                projectId,
-                locale,
-              ),
+              templateRoutingResolver(),
             );
             await reload();
             const latest = await api.projects.get(projectId);

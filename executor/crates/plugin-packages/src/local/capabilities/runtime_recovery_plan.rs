@@ -39,6 +39,8 @@ pub(super) fn metadata_matches(
         previous_states,
         false,
     )?;
+    #[cfg(test)]
+    after_metadata_plan(store, spec);
     for (path, expected) in files {
         let actual = fs::read(&path)?;
         if path
@@ -55,6 +57,39 @@ pub(super) fn metadata_matches(
         }
     }
     Ok(true)
+}
+
+#[cfg(test)]
+type MetadataProbe = Box<dyn FnOnce() + Send>;
+#[cfg(test)]
+type MetadataProbes = std::sync::Mutex<BTreeMap<(PathBuf, String), MetadataProbe>>;
+#[cfg(test)]
+static METADATA_PROBES: std::sync::OnceLock<MetadataProbes> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub(in crate::local::capabilities) fn set_metadata_probe_hook(
+    manifest: &Path,
+    plugin: &str,
+    hook: impl FnOnce() + Send + 'static,
+) {
+    let previous = METADATA_PROBES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .insert((manifest.to_owned(), plugin.to_owned()), Box::new(hook));
+    assert!(previous.is_none(), "Metadata probe hook already registered");
+}
+
+#[cfg(test)]
+fn after_metadata_plan(store: &GlobalCapabilityStore, spec: &PluginSyncSpec) {
+    let hook = METADATA_PROBES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .remove(&(store.manifest.path.clone(), spec.key.clone()));
+    if let Some(hook) = hook {
+        hook();
+    }
 }
 
 fn normalized_metadata(

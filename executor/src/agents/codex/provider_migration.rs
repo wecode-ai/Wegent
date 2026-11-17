@@ -88,6 +88,10 @@ fn plan_entry(path: PathBuf, before: &str) -> Result<Entry, String> {
     Ok(entry)
 }
 
+#[path = "provider_migration_readiness.rs"]
+mod readiness;
+pub(super) use readiness::is_current;
+
 #[path = "provider_migration_journal.rs"]
 mod journal;
 
@@ -219,6 +223,32 @@ fn migrate_owned(
         }
         apply(home, &journal, checkpoint)?;
     }
+    let (additions, present_threads) = scan_rollouts(home, &journal)?;
+    if !additions.is_empty() {
+        journal.pending_from = journal.entries.len();
+        journal.entries.extend(additions);
+        journal.complete = false;
+        record_index_routes(home, &mut journal, &present_threads)?;
+        // Persist the complete plan before changing any rollout or database.
+        save(&journal_path, &journal)?;
+        checkpoint(Phase::JournalPublished)?;
+        apply(home, &journal, checkpoint)?;
+    }
+    // Older Codex can continue migrated rollouts, but its resume writes the
+    // selected legacy provider back to SQLite without changing session_meta.
+    // Reconcile derived indexes even when the migration journal is complete.
+    if record_index_routes(home, &mut journal, &present_threads)? {
+        save(&journal_path, &journal)?;
+    }
+    reconcile_indexes(home, &present_threads)?;
+    if !journal.complete {
+        journal.complete = true;
+        save(&journal_path, &journal)?;
+    }
+    Ok(())
+}
+
+fn scan_rollouts(home: &Path, journal: &Journal) -> Result<(Vec<Entry>, BTreeSet<String>), String> {
     let mut paths = Vec::new();
     for root in ["sessions", "archived_sessions"] {
         collect(&home.join(root), &mut paths)?;
@@ -267,28 +297,7 @@ fn migrate_owned(
             &before,
         )?);
     }
-    if !additions.is_empty() {
-        journal.pending_from = journal.entries.len();
-        journal.entries.extend(additions);
-        journal.complete = false;
-        record_index_routes(home, &mut journal, &present_threads)?;
-        // Persist the complete plan before changing any rollout or database.
-        save(&journal_path, &journal)?;
-        checkpoint(Phase::JournalPublished)?;
-        apply(home, &journal, checkpoint)?;
-    }
-    // Older Codex can continue migrated rollouts, but its resume writes the
-    // selected legacy provider back to SQLite without changing session_meta.
-    // Reconcile derived indexes even when the migration journal is complete.
-    if record_index_routes(home, &mut journal, &present_threads)? {
-        save(&journal_path, &journal)?;
-    }
-    reconcile_indexes(home, &present_threads)?;
-    if !journal.complete {
-        journal.complete = true;
-        save(&journal_path, &journal)?;
-    }
-    Ok(())
+    Ok((additions, present_threads))
 }
 
 fn reconcile_indexes(home: &Path, threads: &BTreeSet<String>) -> Result<(), String> {
@@ -478,6 +487,10 @@ fn rewrite_metadata(before: &str) -> Result<String, String> {
 }
 
 fn databases(home: &Path) -> Result<Vec<Connection>, String> {
+    open_databases(home, OpenFlags::SQLITE_OPEN_READ_WRITE)
+}
+
+fn open_databases(home: &Path, flags: OpenFlags) -> Result<Vec<Connection>, String> {
     let mut databases = Vec::new();
     for entry in fs::read_dir(home).map_err(error)? {
         let path = entry.map_err(error)?.path();
@@ -500,8 +513,7 @@ fn databases(home: &Path) -> Result<Vec<Connection>, String> {
             sidecar.push(suffix);
             reject_link(Path::new(&sidecar))?;
         }
-        let connection =
-            Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(error)?;
+        let connection = Connection::open_with_flags(path, flags).map_err(error)?;
         let integrity: String = connection
             .query_row("PRAGMA quick_check", [], |row| row.get(0))
             .map_err(error)?;

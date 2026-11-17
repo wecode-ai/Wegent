@@ -56,7 +56,7 @@ impl RuntimeWorkRpcHandler {
                 {
                     state = Value::Null;
                 }
-                if collection_error_latched(&state, &settings["version"]) {
+                if collection_retry_pending(&state, &settings["version"]) {
                     continue;
                 }
                 let outcome = self
@@ -133,6 +133,7 @@ impl RuntimeWorkRpcHandler {
         state: &Value,
         settings_version: &Value,
     ) -> Result<Value, AppIpcError> {
+        let _stage = super::stand_in_diagnostics::CoordinationStage::start(user, "collect_source");
         let checkpoint = state.get("checkpoint").cloned().unwrap_or_else(|| {
             if source_provider(source) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
                 && state["after"].is_string()
@@ -346,33 +347,12 @@ fn concrete_connection_source(source: &Value, message: &Value) -> Result<Value, 
     Ok(result)
 }
 
-fn collection_error_latched(state: &Value, version: &Value) -> bool {
-    if !state["error"].is_object() || state["version"] != *version {
-        return false;
-    }
-    if state["error"]["retryable"] == true {
-        return state["retryAt"]
+fn collection_retry_pending(state: &Value, version: &Value) -> bool {
+    state["version"] == *version
+        && state["error"]["retryable"] == true
+        && state["retryAt"]
             .as_i64()
-            .is_some_and(|at| at > chrono::Utc::now().timestamp_millis());
-    }
-    // Previously persisted runtime timeouts must recover without changing settings
-    // or discarding the original collection checkpoint.
-    if super::super::connection_host::collection_runtime_retry_after_ms(
-        state["error"]["code"].as_str().unwrap_or_default(),
-    )
-    .is_some()
-    {
-        return false;
-    }
-    // The old CLI boundary serialized this exact synthetic envelope for generic
-    // request failures. Do not infer recovery from arbitrary provider messages.
-    if state["error"]["code"] == "connection_cli_request_failed"
-        && state["error"]["providerCode"].is_null()
-        && state["error"]["message"] == "Plugin tool request failed (request_failed)"
-    {
-        return false;
-    }
-    true
+            .is_some_and(|at| at > chrono::Utc::now().timestamp_millis())
 }
 
 fn save_collection_result(
@@ -393,7 +373,7 @@ fn save_collection_result(
             } else {
                 json!({})
             };
-            next["error"] = json!({"code":error.code,"message":error.message});
+            next["error"] = json!({"code":error.code,"message":error.message,"retryable":true});
             if let Some(code) = &error.provider_code {
                 next["error"]["providerCode"] = json!(code);
             }
@@ -406,7 +386,6 @@ fn save_collection_result(
                     .saturating_add(1)
                     .min(10);
                 next["failures"] = json!(failures);
-                next["error"]["retryable"] = json!(true);
                 // Apply the base delay on the first failure, then back off repeated failures.
                 next["retryAt"] = json!(
                     chrono::Utc::now().timestamp_millis()

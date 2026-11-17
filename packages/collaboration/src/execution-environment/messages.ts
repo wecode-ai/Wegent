@@ -46,7 +46,7 @@ export const executionEnvironmentMessages: Record<
       '目标设备无法启动 Git，请安装或修复 Git 后重试。',
     'common:workbench.git_access_invalid_url': '请使用不含凭据或查询参数的合法仓库地址。',
     'todo.runner_environment_not_authorized':
-      '机器人没有符合配置且获项目授权的执行环境。请在项目设置中检查执行环境授权，并检查机器人的环境选择。',
+      '任务未启动：尚未配置符合要求且获项目授权的运行环境。请到项目设置 → 执行环境添加或授权设备，并检查智能体的环境选择后重试。',
     'todo.device_catalog_local_failed': '本地设备加载失败',
     'todo.device_catalog_cloud_failed': '云端设备加载失败',
     'todo.device_catalog_loading_more': '正在加载其他设备…',
@@ -128,6 +128,8 @@ export const executionEnvironmentMessages: Record<
     'todo.no_available_execution_environments': '没有可添加的在线执行环境',
     'todo.select_workspace_execution_environment': '选择设备',
     'todo.select_execution_device': '选择设备',
+    'todo.select_project_environment': '选择要授权给此项目的设备。',
+    'todo.select_workspace_environment': '选择要共享给此分组的设备。',
     'todo.add_execution_environment': '添加设备',
     'todo.add_execution_device': '添加设备',
     'todo.execution_device_add_failed': '添加设备失败',
@@ -194,7 +196,7 @@ export const executionEnvironmentMessages: Record<
     'common:workbench.git_access_invalid_url':
       'Use a valid repository URL without credentials or query parameters.',
     'todo.runner_environment_not_authorized':
-      'No project-authorized execution environment matches this agent. Check execution environment authorization in Project settings and the agent’s environment selection.',
+      'The task has not started: no project-authorized execution environment matches this Agent. Add or authorize a device in Project settings → Execution environments, check the Agent’s environment selection, then retry.',
     'todo.device_catalog_local_failed': 'Failed to load local devices',
     'todo.device_catalog_cloud_failed': 'Failed to load cloud devices',
     'todo.device_catalog_loading_more': 'Loading more devices…',
@@ -281,6 +283,8 @@ export const executionEnvironmentMessages: Record<
     'todo.no_available_execution_environments': 'No online execution environments available to add',
     'todo.select_workspace_execution_environment': 'Select a device',
     'todo.select_execution_device': 'Select a device',
+    'todo.select_project_environment': 'Choose a device to authorize for this project.',
+    'todo.select_workspace_environment': 'Choose a device to share with this group.',
     'todo.add_execution_environment': 'Add device',
     'todo.add_execution_device': 'Add device',
     'todo.execution_device_add_failed': 'Failed to add device',

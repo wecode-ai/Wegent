@@ -1,3 +1,4 @@
+import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { IndependentIssuesProvider } from './IndependentIssuesProvider'
 import { createPersonalIssuesApi } from '@/api/personalIssues'
 import { PersonalIssuesView } from './PersonalIssuesView'
@@ -5,7 +6,6 @@ import { migrateLocalProject } from './localProjectMigration'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
 import { PersonalHomeTaskComposer } from './PersonalHomeTaskComposer'
-import { usePersonalHomeTaskDrafts } from './personalHomeTaskDrafts'
 import { issueRuntimePort } from './issueRuntimePort'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { requireIssueTaskAvailable } from './issueTaskAvailability'
@@ -141,7 +141,7 @@ import {
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
 import { WeworkCollaborationEmbeddedBrowserHost } from './WeworkCollaborationEmbeddedBrowserHost'
-import { updateIssueWhenPersonalTaskStarts, workItemComposerReference } from './workItemTaskInput'
+import { workItemComposerReference } from './workItemTaskInput'
 import {
   loadProjectSpaceCodeWorkspacePreference,
   saveProjectSpaceCodeWorkspacePreference,
@@ -325,6 +325,10 @@ export interface WeworkCollaborationPlatformProps {
   services: WorkbenchServices
   startupActive?: boolean
   workspaceActive?: boolean
+  homeDraft: Pick<
+    WorkbenchContextValue['projectChat'],
+    'inputByScope' | 'setInputForScope' | 'getInputRevisionForScope' | 'personalHomeTaskDraftStore'
+  >
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
@@ -1181,6 +1185,8 @@ export function WeworkSharedProject({
             port: runtimePort,
             project,
             address,
+            issues: scopedApi.issues,
+            onStatusError: error => notify(error || t('task_board_status_update_failed'), 'error'),
             issueId: taskComposer.issue.id,
             title: taskComposer.dispatch?.taskTitle ?? taskComposer.issue.title,
             dispatch: taskComposer.dispatch
@@ -1194,17 +1200,6 @@ export function WeworkSharedProject({
           })
         }
         onTaskCreated={async (address, localProject, deviceWorkspaceId) => {
-          const statusError = await updateIssueWhenPersonalTaskStarts(
-            scopedApi.issues,
-            taskComposer.issue.id,
-            {
-              projectStore: project.project_store,
-              dispatchRoundId:
-                taskComposer.dispatch?.roundId ?? taskComposer.humanTaskBinding?.dispatchRoundId,
-            }
-          )
-          if (statusError !== null)
-            notify(statusError || t('task_board_status_update_failed'), 'error')
           if (localProject) {
             saveProjectSpaceCodeWorkspacePreference(
               userId,
@@ -1230,6 +1225,7 @@ export function WeworkSharedProject({
 
   const renderIssueEditor = (
     {
+      commentBoard,
       api: issueApi,
       issue,
       allIssues,
@@ -1245,6 +1241,7 @@ export function WeworkSharedProject({
     closeDrawers: () => void
   ) => (
     <TodoEditor
+      commentBoard={commentBoard}
       key={issue.id}
       getRuntimeTranscript={services.runtimeWorkApi?.getRuntimeTranscript}
       mode="edit"
@@ -1611,7 +1608,13 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       cloudConnection.token,
     ]
   )
-  const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
+  const [cloudLoginIntent, setCloudLoginIntent] = useState<
+    'general' | 'issue' | 'resume-issue' | null
+  >(null)
+  if (cloudLoginIntent === 'resume-issue' && personalIssuesApi) {
+    setIndependentSelection({ scope: templateScope, selection: null })
+    setCloudLoginIntent(null)
+  }
   const [migrationProject, setMigrationProject] = useState<CollaborationProject>()
   const [migrationPending, setMigrationPending] = useState(false)
   const [migrationError, setMigrationError] = useState('')
@@ -1710,7 +1713,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       locale,
     ]
   )
-  const personalHomeTaskDrafts = usePersonalHomeTaskDrafts(templateScope, [
+  const personalHomeTaskDrafts = props.homeDraft.personalHomeTaskDraftStore.get(templateScope, [
     api,
     props.services.projectSpaceApis?.local,
   ])
@@ -2076,13 +2079,17 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           }
         }}
       />
-      {cloudLoginOpen && (
+      {cloudLoginIntent && cloudLoginIntent !== 'resume-issue' && (
         <CloudConnectionDialog
           open
+          intent={cloudLoginIntent === 'issue' ? 'independent-issue' : undefined}
           onlineCloudDeviceCount={0}
-          onClose={() => setCloudLoginOpen(false)}
+          onClose={() => setCloudLoginIntent(null)}
+          onConnected={() =>
+            setCloudLoginIntent(current => (current === 'issue' ? 'resume-issue' : null))
+          }
           onOpenSettings={() => {
-            setCloudLoginOpen(false)
+            setCloudLoginIntent(null)
             props.onOpenSettings?.({ settingsPage: 'connections' })
           }}
         />
@@ -2094,7 +2101,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         userId={Number(cloudConnection.user?.id ?? props.user.id)}
         selection={independentIssueSelection}
         onSelect={setIndependentIssueSelection}
-        onLogin={() => setCloudLoginOpen(true)}
+        onLogin={() => setCloudLoginIntent('issue')}
         onOpenProjectIssue={(projectId, issueId) => {
           const next = routeProjectLocation({ projectStore: 'backend', projectId }, issueId)
           if (next) navigatePlatform(next)
@@ -2111,13 +2118,27 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             convertLocalProjectToCloud: project => {
               setMigrationError('')
               setMigrationProject(project)
-              if (!cloudConnection.isConnected) setCloudLoginOpen(true)
+              if (!cloudConnection.isConnected) setCloudLoginIntent('general')
             },
             accountScope: templateScope,
+            issueHomeDraft: {
+              getRevision: () =>
+                props.homeDraft.getInputRevisionForScope(`collaboration-home:${templateScope}`),
+              projectId:
+                props.homeDraft.inputByScope[`collaboration-home-project:${templateScope}`] ?? null,
+              onSelectProject: projectId =>
+                props.homeDraft.setInputForScope(
+                  `collaboration-home-project:${templateScope}`,
+                  projectId
+                ),
+              value: props.homeDraft.inputByScope[`collaboration-home:${templateScope}`] ?? '',
+              onChange: value =>
+                props.homeDraft.setInputForScope(`collaboration-home:${templateScope}`, value),
+            },
             templateStore,
             templateNavigation: true,
             createIndependentIssue: () =>
-              personalIssuesApi ? setIndependentIssueSelection(null) : setCloudLoginOpen(true),
+              personalIssuesApi ? setIndependentIssueSelection(null) : setCloudLoginIntent('issue'),
             renderIssueList: list => (
               <PersonalIssuesView
                 key={list.scope}
@@ -2138,7 +2159,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                 active={props.workspaceActive ?? true}
               />
             ),
-            renderPersonalHome: home => (
+            renderPersonalHome: ({ contentVisible, ...home }) => (
               <WeworkPersonalHome
                 key={templateScope}
                 entryRequestKey={personalHomeEntryKey}
@@ -2146,7 +2167,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                 localUserIds={
                   props.services.localParticipationIdentity?.viewerUserIds ?? [LOCAL_USER.id]
                 }
-                active={props.workspaceActive ?? true}
+                active={(props.workspaceActive ?? true) && contentVisible}
                 {...home}
                 sources={navigationApis}
                 draftScope={personalHomeTaskDrafts}
@@ -2191,8 +2212,9 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             },
             cloudAccess: {
               authenticated: cloudConnection.isConnected,
-              requestLogin: () => setCloudLoginOpen(true),
+              requestLogin: () => setCloudLoginIntent('general'),
             },
+            renderExecutionEnvironmentPreferences: () => <DefaultRunnerSetting />,
             renderIssueComposer: composerProps => (
               <WeworkIssueHomeComposer
                 {...composerProps}

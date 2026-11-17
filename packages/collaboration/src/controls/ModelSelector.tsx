@@ -1,12 +1,15 @@
+import { ModelSelectorMobileControl } from "./ModelSelectorMobileControl";
 import { ModelSelectorEmptyState } from "./ModelSelectorEmptyState";
 import { Check, Cloud } from "lucide-react";
 import {
   useCallback,
+  useId,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import type { CollaborationTranslate } from "../i18n";
@@ -41,7 +44,8 @@ import { MobileModelSelector } from "./MobileModelSelector";
 import { defaultNewChatModel } from "./runtimeModelSelection";
 import {
   MODEL_SELECTOR_VIEWPORT_MARGIN,
-  MODEL_SELECTOR_VIEWPORT_TOP,
+  MODEL_SELECTOR_MAX_HEIGHT,
+  getDesktopModelSelectorVerticalLayout,
 } from "./model-selector-layout";
 import {
   isCloudModel,
@@ -52,33 +56,33 @@ import {
   isVisibleModelSelectorControl,
   modelCompatibilityDisabledMessage,
   modelPowerOptions,
-  selectedControlOption,
 } from "./model-selector-utils";
 import styles from "./ModelSelector.module.css";
-import { useEscapeKey } from "../markdown/useEscapeKey";
+import { useDesktopModelMenu } from "./useDesktopModelMenu";
 
 const MAIN_MENU_WIDTH = 320;
-const MAIN_MENU_TRIGGER_GAP = 8;
-const MAIN_MENU_MAX_HEIGHT = 608;
 const SIMPLE_MENU_FALLBACK_HEIGHT = 160;
 const ADVANCED_MENU_FALLBACK_HEIGHT = 316;
 type DesktopMenuView = "simple" | "advanced";
 
-export interface ModelSelectorHostProps {
+export type ModelSelectorHostProps = {
   translate: CollaborationTranslate;
   isMobile: boolean;
   shortcut?: string | null;
-  onOpenModelSettings: () => void;
   onOpenCloudConnections?: () => void;
   onFlyoutOpenChange?: (open: boolean) => void;
   getViewportRightBoundary?: (anchor: HTMLElement | null) => number;
-}
+} & (
+  | { onOpenModelSettings: () => void; emptyState?: ReactNode }
+  | { onOpenModelSettings?: undefined; emptyState: ReactNode }
+);
 
 export function ModelSelector({
   translate: t,
   isMobile,
   shortcut: modelSelectorShortcut,
   onOpenModelSettings,
+  emptyState,
   onOpenCloudConnections,
   onFlyoutOpenChange,
   getViewportRightBoundary,
@@ -101,9 +105,9 @@ export function ModelSelector({
   maxClosedWidth,
 }: ModelSelectorProps & ModelSelectorHostProps) {
   const portalTheme = useCollaborationPortalTheme();
+  const desktopMenuId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const desktopMenuWrapperRef = useRef<HTMLDivElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
   const simplePanelRef = useRef<HTMLDivElement>(null);
   const advancedPanelRef = useRef<HTMLDivElement>(null);
@@ -118,8 +122,9 @@ export function ModelSelector({
   );
   const [desktopMenuLeft, setDesktopMenuLeft] = useState(0);
   const [desktopMenuWidth, setDesktopMenuWidth] = useState(MAIN_MENU_WIDTH);
-  const [desktopMenuMaxHeight, setDesktopMenuMaxHeight] =
-    useState(MAIN_MENU_MAX_HEIGHT);
+  const [desktopMenuMaxHeight, setDesktopMenuMaxHeight] = useState(
+    MODEL_SELECTOR_MAX_HEIGHT,
+  );
   const [viewHeights, setViewHeights] = useState<
     Partial<Record<DesktopMenuView, number>>
   >({});
@@ -194,7 +199,7 @@ export function ModelSelector({
   );
   const openModelSettings = useCallback(() => {
     closeMenu();
-    onOpenModelSettings();
+    onOpenModelSettings?.();
   }, [closeMenu, onOpenModelSettings]);
   const openCloudConnectionSettings = useCallback(() => {
     closeMenu();
@@ -224,9 +229,6 @@ export function ModelSelector({
     const menuPanel = menuPanelRef.current;
     if (!button || !menuPanel) return;
 
-    const viewportTop = MODEL_SELECTOR_VIEWPORT_TOP;
-    const viewportBottom = window.innerHeight - MODEL_SELECTOR_VIEWPORT_MARGIN;
-    const maxAvailableHeight = Math.max(0, viewportBottom - viewportTop);
     const activePanelName =
       menuPanel.dataset.panel === "advanced" ? "advanced" : "simple";
     const activePanel = menuPanel.querySelector<HTMLElement>(
@@ -241,19 +243,12 @@ export function ModelSelector({
       (activePanelName === "simple"
         ? SIMPLE_MENU_FALLBACK_HEIGHT
         : ADVANCED_MENU_FALLBACK_HEIGHT);
-    const menuHeight = Math.min(
-      MAIN_MENU_MAX_HEIGHT,
-      maxAvailableHeight,
-      naturalHeight,
-    );
     const buttonRect = button.getBoundingClientRect();
-    const preferredTop =
-      menuPlacement === "below"
-        ? buttonRect.bottom + MAIN_MENU_TRIGGER_GAP
-        : buttonRect.top - MAIN_MENU_TRIGGER_GAP - menuHeight;
-    const maxTop = viewportBottom - menuHeight;
-    const clampedTop = Math.round(
-      Math.max(viewportTop, Math.min(preferredTop, maxTop)),
+    const verticalLayout = getDesktopModelSelectorVerticalLayout(
+      buttonRect,
+      window.innerHeight,
+      naturalHeight,
+      menuPlacement,
     );
     const viewportRight = Math.min(
       window.innerWidth,
@@ -273,16 +268,14 @@ export function ModelSelector({
       ),
     );
 
-    if (menuPlacement === "below") {
-      setDesktopMenuTop(clampedTop);
+    if (verticalLayout.top !== undefined) {
+      setDesktopMenuTop(verticalLayout.top);
       setDesktopMenuBottom(null);
     } else {
-      setDesktopMenuBottom(
-        Math.max(0, Math.round(window.innerHeight - clampedTop - menuHeight)),
-      );
+      setDesktopMenuBottom(verticalLayout.bottom ?? null);
     }
     setDesktopMenuLeft(clampedLeft);
-    setDesktopMenuMaxHeight(maxAvailableHeight);
+    setDesktopMenuMaxHeight(verticalLayout.maxHeight);
   }, [getViewportRightBoundary, menuPlacement, viewHeights]);
   const activateMobileFamily = useCallback(
     (familyId: string) => {
@@ -292,6 +285,9 @@ export function ModelSelector({
     },
     [setActiveFamilyId],
   );
+
+  const { ref: desktopMenuWrapperRef, ...desktopMenuKeyboard } =
+    useDesktopModelMenu(closeMenu, open && !isMobile);
 
   useEffect(() => {
     if (!open || isMobile) return;
@@ -313,9 +309,7 @@ export function ModelSelector({
 
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [closeMenu, isMobile, open]);
-
-  useEscapeKey(closeMenu, open && !isMobile, desktopMenuWrapperRef);
+  }, [closeMenu, desktopMenuWrapperRef, isMobile, open]);
 
   const emptyModelLabel = t("workbench.no_models", "No models available");
   const selectedModelLabel = selectedModel
@@ -434,8 +428,13 @@ export function ModelSelector({
   useLayoutEffect(() => {
     if (!open || isMobile) return;
     const measure = () => {
-      const simpleHeight = simplePanelRef.current?.offsetHeight;
-      const advancedHeight = advancedPanelRef.current?.offsetHeight;
+      const simpleHeight = simplePanelRef.current?.scrollHeight;
+      const advancedHeight = advancedPanelRef.current
+        ? Math.min(
+            advancedPanelRef.current.scrollHeight,
+            ADVANCED_MENU_FALLBACK_HEIGHT,
+          )
+        : undefined;
       setViewHeights((current) => {
         const next = {
           ...(simpleHeight ? { simple: simpleHeight } : {}),
@@ -525,8 +524,9 @@ export function ModelSelector({
           type="button"
           data-testid={`model-option-${getModelOptionId?.(model) ?? model.name}`}
           data-model-provider-id={codexProviderId(model)}
-          role="menuitemradio"
+          role="radio"
           aria-checked={selected}
+          tabIndex={selected ? 0 : -1}
           aria-disabled={modelDisabled}
           title={disabledMessage}
           onClick={() => {
@@ -597,8 +597,9 @@ export function ModelSelector({
                 : `model-option-preset-${preset.name}`
             }
             data-model-preset={preset.name}
-            role="menuitemradio"
+            role="radio"
             aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
             onClick={() => selectPowerPreset(preset)}
             className={`${styles.defaultItem} transition-colors hover:bg-muted focus-visible:bg-muted`}
           >
@@ -651,46 +652,13 @@ export function ModelSelector({
 
   function renderMobileControlSection(control: ModelControlConfig) {
     return (
-      <section key={control.id} className="space-y-2">
-        <h3 className="px-1 text-xs font-semibold text-text-muted">
-          {control.labelKey
-            ? t(control.labelKey, control.label)
-            : control.label}
-        </h3>
-        <div className="scrollbar-none flex gap-2 overflow-x-auto pb-1">
-          {control.options
-            .slice()
-            .sort((a, b) => a.order - b.order)
-            .map((option) => {
-              const selected =
-                selectedControlOption(control, selectedModelOptions)?.value ===
-                option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  data-testid={`model-control-${control.id}-${option.value}`}
-                  onClick={() =>
-                    handleSelectModelOption(control.id, option.value)
-                  }
-                  className={[
-                    "flex h-11 min-w-[44px] shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium",
-                    selected
-                      ? "border-text-primary bg-text-primary text-background"
-                      : "border-border bg-surface text-text-secondary",
-                  ].join(" ")}
-                >
-                  <span>
-                    {option.labelKey
-                      ? t(option.labelKey, option.label)
-                      : option.label}
-                  </span>
-                  {selected && <Check className="h-4 w-4" />}
-                </button>
-              );
-            })}
-        </div>
-      </section>
+      <ModelSelectorMobileControl
+        key={control.id}
+        control={control}
+        options={selectedModelOptions}
+        translate={t}
+        onSelectOption={handleSelectModelOption}
+      />
     );
   }
 
@@ -790,14 +758,18 @@ export function ModelSelector({
           handleSelectModel={selectExplicitModel}
           closeMenu={closeMenu}
           emptyState={
-            <ModelSelectorEmptyState
-              translate={t}
-              mobile
-              onOpenModelSettings={openModelSettings}
-              onOpenCloudConnections={
-                onOpenCloudConnections ? openCloudConnectionSettings : undefined
-              }
-            />
+            emptyState ?? (
+              <ModelSelectorEmptyState
+                translate={t}
+                mobile
+                onOpenModelSettings={openModelSettings}
+                onOpenCloudConnections={
+                  onOpenCloudConnections
+                    ? openCloudConnectionSettings
+                    : undefined
+                }
+              />
+            )
           }
         />
       )}
@@ -807,6 +779,12 @@ export function ModelSelector({
           <div
             {...portalTheme}
             ref={desktopMenuWrapperRef}
+            id={desktopMenuId}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("workbench.model_picker_title", "选择模型")}
+            tabIndex={-1}
+            {...desktopMenuKeyboard}
             style={{
               ...portalTheme.style,
               left: desktopMenuLeft,
@@ -828,23 +806,28 @@ export function ModelSelector({
               data-testid="model-selector-menu"
               data-panel={resolvedDesktopMenuView}
               data-enter-animation="main"
-              style={{ maxHeight: desktopMenuMaxHeight }}
+              style={{
+                maxHeight: desktopMenuMaxHeight,
+                transformOrigin:
+                  desktopMenuBottom === null ? "right top" : "right bottom",
+              }}
               className={cn(
                 "w-full shrink-0 overflow-hidden rounded-2xl bg-popover",
                 styles.mainMenu,
               )}
             >
-              {desktopModels.length === 0 && (
-                <ModelSelectorEmptyState
-                  translate={t}
-                  onOpenModelSettings={openModelSettings}
-                  onOpenCloudConnections={
-                    onOpenCloudConnections
-                      ? openCloudConnectionSettings
-                      : undefined
-                  }
-                />
-              )}
+              {desktopModels.length === 0 &&
+                (emptyState ?? (
+                  <ModelSelectorEmptyState
+                    translate={t}
+                    onOpenModelSettings={openModelSettings}
+                    onOpenCloudConnections={
+                      onOpenCloudConnections
+                        ? openCloudConnectionSettings
+                        : undefined
+                    }
+                  />
+                ))}
               {desktopModels.length > 0 ? (
                 <div
                   className={styles.viewContainer}
@@ -903,12 +886,24 @@ export function ModelSelector({
                     <div
                       ref={advancedPanelRef}
                       data-model-picker-panel="advanced"
-                      className={cn(styles.advancedPanel, "max-h-[316px]")}
+                      className={styles.advancedPanel}
+                      style={{
+                        maxHeight: Math.min(
+                          ADVANCED_MENU_FALLBACK_HEIGHT,
+                          desktopMenuMaxHeight,
+                        ),
+                      }}
                     >
                       <div className={styles.sectionLabel}>
                         {t("workbench.model_picker_title", "选择模型")}
                       </div>
-                      <div>
+                      <div
+                        role="radiogroup"
+                        aria-label={t(
+                          "workbench.model_picker_title",
+                          "选择模型",
+                        )}
+                      >
                         {renderAdvancedModelSource(
                           "model-source-local-chatgpt",
                           t(
@@ -941,6 +936,7 @@ export function ModelSelector({
         )}
       <ModelSelectorTrigger
         buttonRef={buttonRef}
+        popupId={isMobile ? undefined : desktopMenuId}
         open={open}
         disabled={disabled}
         isMobile={isMobile}

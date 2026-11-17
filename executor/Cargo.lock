@@ -2908,6 +2908,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uuid",
+ "wegent-protocol",
 ]
 
 [[package]]
@@ -3168,6 +3169,7 @@ dependencies = [
  "image",
  "libc",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

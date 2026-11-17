@@ -9,6 +9,7 @@ import {
 } from '@/components/topnav/TitlebarActionsPortal'
 import { AppearanceProvider } from '@/features/appearance'
 import { AuthContext } from '@/features/auth/useAuth'
+import { createPersonalHomeTaskDraftStore } from '@/features/todo/personalHomeTaskDrafts'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import {
   applyRuntimeConversationAction,
@@ -1093,6 +1094,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
     subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
     baseProps.projectChat.inputByScope = {}
+    baseProps.projectChat.personalHomeTaskDraftStore = createPersonalHomeTaskDraftStore()
     baseProps.projectChat.setInputForScope.mockReset()
     baseProps.projectChat.setInputForScope.mockImplementation((scope: string, value: string) => {
       if (value) baseProps.projectChat.inputByScope[scope] = value
@@ -1129,6 +1131,7 @@ describe('DesktopWorkbenchLayout', () => {
     onOpenPlugins: vi.fn(),
     projectChat: {
       inputByScope: {} as Record<string, string>,
+      personalHomeTaskDraftStore: createPersonalHomeTaskDraftStore(),
       setInputForScope: vi.fn(),
       models: [],
       skills: [],
@@ -1516,6 +1519,8 @@ describe('DesktopWorkbenchLayout', () => {
             address
           )
           return {
+            selectionResolved: Boolean(taskSelection),
+            selectionReady: true,
             taskSelection,
             selectedModel: taskModel,
             activeModel: taskModel,
@@ -2878,6 +2883,20 @@ describe('DesktopWorkbenchLayout', () => {
             models: [harnessTestModel],
             selectedModel,
             selectedModelOptions: { reasoning_effort: 'high' },
+            resolveRuntimeTaskModelSelection: () => ({
+              selectionResolved: true,
+              selectionReady: true,
+              taskSelection: selectedModel
+                ? {
+                    modelName: selectedModel.name,
+                    modelType: selectedModel.type,
+                    options: { reasoning_effort: 'high' },
+                  }
+                : null,
+              selectedModel,
+              activeModel: selectedModel,
+              selectedModelOptions: { reasoning_effort: 'high' },
+            }),
           }}
           onCancelRuntimePaneTask={onCancelRuntimePaneTask}
           onForkCurrentRuntimeTask={onForkCurrentRuntimeTask}

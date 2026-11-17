@@ -7,6 +7,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { DeleteKnowledgeBaseDialog } from '@/features/knowledge/document/components/DeleteKnowledgeBaseDialog'
 import type { KnowledgeBase } from '@/types/knowledge'
+import { ApiError } from '@/apis/client'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -30,6 +31,48 @@ const knowledgeBase: KnowledgeBase = {
 }
 
 describe('DeleteKnowledgeBaseDialog', () => {
+  it('offers continuation only after an explicit external cleanup failure', async () => {
+    const onConfirm = jest
+      .fn()
+      .mockRejectedValueOnce(
+        new ApiError('Cleanup failed', 502, 'external_engine_unavailable', {
+          code: 'external_engine_unavailable',
+          can_continue: true,
+        })
+      )
+      .mockResolvedValueOnce(undefined)
+    render(
+      <DeleteKnowledgeBaseDialog
+        open
+        onOpenChange={jest.fn()}
+        knowledgeBase={{ ...knowledgeBase, kb_type: 'notebook', document_count: 0 }}
+        onConfirm={onConfirm}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.delete' }))
+    const button = await screen.findByTestId('continue-delete-kb')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'knowledge:document.deletion.externalWarning'
+    )
+    fireEvent.click(button)
+    await waitFor(() => expect(onConfirm).toHaveBeenLastCalledWith(true))
+  })
+
+  it('does not offer continuation for a Runtime error', async () => {
+    render(
+      <DeleteKnowledgeBaseDialog
+        open
+        onOpenChange={jest.fn()}
+        knowledgeBase={knowledgeBase}
+        onConfirm={jest
+          .fn()
+          .mockRejectedValue(new ApiError('Runtime unavailable', 502, 'remote_transport_error'))}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.delete' }))
+    await screen.findByRole('alert')
+    expect(screen.queryByTestId('continue-delete-kb')).not.toBeInTheDocument()
+  })
   it('allows deleting a Code Wiki with generated pages', async () => {
     const onConfirm = jest.fn(async () => {})
 

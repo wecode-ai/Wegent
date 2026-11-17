@@ -86,24 +86,24 @@ window.__ModuleLoader__.load({
     }
 
     function setupComponent(ctx, OfficialPreparation, overlay) {
-      const title = ctx.wework.localization.translate(
-        { en: 'Voice input', 'zh-CN': '语音输入' },
-        'Voice input'
-      )
-      const close = ctx.wework.localization.translate({ en: 'Close', 'zh-CN': '关闭' }, 'Close')
-      const modelHelp = [
-        {
-          en: 'INT8 · Smaller download and lower memory use through 8-bit quantization. A good starting point for everyday dictation; recognition accuracy may be affected.',
-          'zh-CN':
-            'INT8 · 轻量版：用 8 位量化缩小模型，下载和内存占用更少。日常语音输入可先选它，识别准确率可能受量化影响。',
-        },
-        {
-          en: 'FP32 · Full 32-bit precision, with a larger download and higher memory use. If INT8 makes frequent errors, try FP32 and compare with the same recording.',
-          'zh-CN':
-            'FP32 · 完整精度版：保留 32 位浮点精度，下载和内存占用更大。如果 INT8 经常识别出错，可试用 FP32，用同一段录音对比效果。',
-        },
-      ].map(copy => ctx.wework.localization.translate(copy, copy.en))
       return function VoiceSettings(props) {
+        const title = ctx.wework.localization.translate(
+          { en: 'Voice input', 'zh-CN': '语音输入' },
+          'Voice input'
+        )
+        const close = ctx.wework.localization.translate({ en: 'Close', 'zh-CN': '关闭' }, 'Close')
+        const modelHelp = [
+          {
+            en: 'INT8 · Smaller download and lower memory use through 8-bit quantization. A good starting point for everyday dictation; recognition accuracy may be affected.',
+            'zh-CN':
+              'INT8 · 轻量版：用 8 位量化缩小模型，下载和内存占用更少。日常语音输入可先选它，识别准确率可能受量化影响。',
+          },
+          {
+            en: 'FP32 · Full 32-bit precision, with a larger download and higher memory use. If INT8 makes frequent errors, try FP32 and compare with the same recording.',
+            'zh-CN':
+              'FP32 · 完整精度版：保留 32 位浮点精度，下载和内存占用更大。如果 INT8 经常识别出错，可试用 FP32，用同一段录音对比效果。',
+          },
+        ].map(copy => ctx.wework.localization.translate(copy, copy.en))
         const [open, setOpen] = useState(false)
         useEffect(() => {
           if (!overlay) return
@@ -113,13 +113,16 @@ window.__ModuleLoader__.load({
         }, [])
         const preparation = h(
           'div',
-          { className: 'space-y-3' },
+          {
+            'data-testid': 'voice-input-preparation',
+            className: 'wework-voice-preparation space-y-3',
+          },
           h(OfficialPreparation, props),
           h(
             'div',
             {
               'data-testid': 'voice-input-model-help',
-              className: 'space-y-1 text-sm text-muted-foreground',
+              className: 'space-y-1 text-sm text-text-secondary',
             },
             ...modelHelp.map((text, index) => h('p', { key: index }, text))
           )
@@ -138,6 +141,8 @@ window.__ModuleLoader__.load({
             open,
             title,
             closeLabel: close,
+            className: 'wework-voice-setup-modal',
+            contentClassName: 'wework-voice-setup-content',
             onClose: () => setOpen(false),
             footer: h(
               Button,

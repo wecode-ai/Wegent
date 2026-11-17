@@ -280,6 +280,7 @@ def _resolve_routing(
     agent_id: str | None = None,
     session_environment_id: str | None = None,
     group_recovery: bool = False,
+    allow_hidden_models: bool = False,
 ) -> ResolvedRouting:
     if not config.get("model_policy"):
         raise routing_error(
@@ -336,16 +337,21 @@ def _resolve_routing(
         candidates,
         config["runtime"],
         automatic,
-        allow_native_default=ExecutionPolicy.model_validate(
-            config["execution_policy"]
-        ).mode
-        == "fixed",
+        allow_native_default=policy.mode == "fixed",
     )
     if model.source == "cloud":
         from app.services.runner_cloud_models import require_cloud_model
 
-        require_cloud_model(db, user_id, model)
-    elif model.source == "native" and config["execution_policy"]["mode"] != "fixed":
+        # A fixed agent model and a saved execution selection are persisted
+        # choices: they stay callable after an admin hides the model from new
+        # selections. New selections are validated before they are persisted.
+        require_cloud_model(
+            db,
+            user_id,
+            model,
+            allow_hidden=allow_hidden_models or model_policy.mode == "fixed",
+        )
+    elif model.source == "native" and policy.mode != "fixed":
         raise routing_error(
             "RUNNER_MODEL_UNAVAILABLE", "Local models require a fixed environment"
         )
@@ -595,7 +601,11 @@ def eligible_runner(db: Session, execution: Any, device: Kind) -> bool:
             if model.source == "cloud":
                 from app.services.runner_cloud_models import require_cloud_model
 
-                require_cloud_model(db, execution.assigner_user_id, model)
+                # The route is a persisted execution snapshot, not a fresh
+                # selection.
+                require_cloud_model(
+                    db, execution.assigner_user_id, model, allow_hidden=True
+                )
             if device.id not in {item.id for item in members} or not supports_model(
                 device, model
             ):
@@ -751,7 +761,8 @@ def validate_agent_policies(
         if model_policy.model.source == "cloud":
             from app.services.runner_cloud_models import require_cloud_model
 
-            require_cloud_model(db, user_id, model_policy.model)
+            # The agent's fixed model policy is a persisted choice.
+            require_cloud_model(db, user_id, model_policy.model, allow_hidden=True)
             if policy.mode != "fixed":
                 return
         if model_policy.model.source == "native" and policy.mode != "fixed":
@@ -775,6 +786,7 @@ def resolve_group_routing(
     selection: dict | None,
     automatic: bool = False,
     session_environment_id: str | None = None,
+    allow_hidden_models: bool = False,
 ) -> dict:
     """A collaboration group shares one Issue runner but keeps member models."""
     from app.models.delivery import ProjectChatAgent
@@ -832,6 +844,7 @@ def resolve_group_routing(
                 automatic=automatic,
                 session_environment_id=session_environment_id,
                 group_recovery=True,
+                allow_hidden_models=allow_hidden_models,
             )
         except HTTPException as error:
             if isinstance(error.detail, dict):

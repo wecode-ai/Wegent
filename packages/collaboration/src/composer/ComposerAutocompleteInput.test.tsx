@@ -75,6 +75,53 @@ describe('shared autocomplete controller in a browser host', () => {
     await act(async () => root.render(<Harness {...props} />))
   }
 
+  it.each([false, true])(
+    'routes native Escape only when the composer has not handled it (handled=%s)',
+    async handled => {
+      const onKeyDown = vi.fn(() => handled)
+      await mount({ onKeyDown })
+      const listener = vi.fn()
+      document.addEventListener('keydown', listener)
+      try {
+        const event = new KeyboardEvent('keydown', {
+          key: 'Escape',
+          keyCode: 27,
+          bubbles: true,
+          cancelable: true,
+        })
+        act(() => element('editor').dispatchEvent(event))
+        expect(onKeyDown).toHaveBeenCalledOnce()
+        expect(event.defaultPrevented).toBe(handled)
+        expect(listener).toHaveBeenCalledTimes(handled ? 0 : 1)
+      } finally {
+        document.removeEventListener('keydown', listener)
+      }
+    }
+  )
+
+  it('keeps native Escape inside a real autocomplete menu before the host can dismiss', async () => {
+    await mount({ onListLocalSkills: listSkills })
+    await type('$gmail')
+    expect(element('local-skill-option-gmail')).not.toBeNull()
+    const listener = vi.fn()
+    document.addEventListener('keydown', listener)
+    try {
+      const event = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        keyCode: 27,
+        bubbles: true,
+        cancelable: true,
+      })
+      act(() => element('editor').dispatchEvent(event))
+      expect(element('local-skill-autocomplete')).toBeNull()
+      expect(event.defaultPrevented).toBe(true)
+      expect(listener).not.toHaveBeenCalled()
+      expect(input.current!.getValue()).toBe('$gmail')
+    } finally {
+      document.removeEventListener('keydown', listener)
+    }
+  })
+
   it('accepts a suggestion into the draft by clicking its visible keyboard hint', async () => {
     const accepted = vi.fn()
     const submitted = vi.fn()

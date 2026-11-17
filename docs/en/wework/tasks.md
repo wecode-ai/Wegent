@@ -38,6 +38,8 @@ Click **Cancel automatic recovery** beside the composer countdown to stop recove
 
 ### Sidebar task management
 
+During the initial task load, the desktop sidebar shows **Loading tasks…** below the **Tasks** heading. A failed load shows an error and **Retry** in the same position. In priority view, the status appears above the priority list. Background refreshes do not show a loading indicator.
+
 | Feature                          | Steps and limits                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Search                           | Click the magnifying glass, enter keywords, select with arrow keys and Enter or click a result; close with X                                                                                                                                                                                                                                                                                                                                                              |
@@ -65,8 +67,8 @@ In the **Codex conversation composer**, describe an operation such as “Create 
 1. Open **left sidebar → Scheduled**, search existing schedules or create one.
 2. Enter a name and instructions. Choose a new task per run or an existing pinned task; enable a persistent goal only when intended and specify it.
 3. Choose local/cloud location, device, project, model and available reasoning effort. Directory, accounts and plugins belong to that device.
-4. Choose weekdays, daily, weekly, custom or once; set execution time and custom intervals. Notifications support every run, attention-only or none.
-5. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
+4. Choose Monday–Friday, daily, weekly, custom or once; set execution time and custom intervals. Recurring Cron schedules offer **Run only on mainland China statutory workdays**. It uses Beijing dates to exclude statutory days off and include make-up working weekends. Choose Daily to cover every make-up workday; Monday–Friday, weekly and custom Cron schedules retain their existing date constraints. Interval and once-only schedules do not offer this option. Notifications support every run, attention-only or none.
+5. The workday filter defaults to off, preserving existing Monday–Friday schedules. It works on local and cloud devices without changing execution location. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
 6. Disable to suspend future scheduling or delete after confirmation. Personal schedules, project-board automation and stand-in calendars are separate flows.
 
 Personal schedules using a cloud model revalidate model access and read the current cloud connection credentials on each trigger, including manual runs. Renewing your login token does not require recreating a schedule; both new tasks and existing-task continuations use current credentials. If login has expired, the model was removed or access was revoked, the run fails. Check your cloud connection and model access before retrying.
@@ -85,7 +87,7 @@ After you send a local image, Wework keeps its preview in the message. The image
 
 ### Voice input
 
-Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also prepare the model under **Settings → General → Voice input**.
+Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also open **bottom-left account menu → Settings → Personal → General** and prepare the model in **Voice input**, below the basic preferences. This section appears when the official voice plugin has loaded and does not require Experimental features. Opening the page does not download a model or start recording.
 
 Start with **INT8 (lightweight)** for everyday dictation to reduce download size and memory use. If it makes frequent recognition errors, try **FP32 (full precision)**, which retains full 32-bit floating-point precision with a larger download and higher memory use. Both the settings page and the first-use setup dialog explain these choices.
 
@@ -197,7 +199,7 @@ Wework remembers the model, selection mode, and reasoning effort separately for 
 
 After a conversation starts, you can still switch between official GPT/Codex models and third-party models. Wework asks for confirmation when the selected model changes, and the new model applies to the next message.
 
-If the existing context contains encrypted reasoning or compaction state produced by the previous provider, the executor removes those non-portable fields from the switch request so the target model does not return `invalid_encrypted_content`. Portable messages, tool results, and other context remain available.
+In Codex tasks using official OAuth, official GPT and third-party models share the same compatibility layer. On a switch, the executor clears encrypted reasoning or compaction state owned by the previous provider. If third-party history stores readable reasoning in `reasoning.content`, the request sent to official GPT promotes it to `summary_text` and clears the restricted `content` array. These changes apply only to the outgoing copy; the original thread history stays intact. Portable messages, tool results, and other context remain available, so switching models does not require a new conversation or a reference to the old one.
 
 ## Control a running task
 

@@ -4,6 +4,12 @@ sidebar_position: 42
 
 # Wework Stand-in
 
+## IM reply callback routing
+
+DingTalk private messages share a persistent stand-in conversation, but each incoming message registers its own reply card. Python registration and Rust Socket.IO forwarding must use the same callback address: `runtime:{device_id}:{task_id}:{sha256(callback_id)}`, with a lowercase hexadecimal digest of the original UTF-8 bytes. Sources without `callback_id` retain the task address without a digest. Progress, final replies and errors must use the same message address. Looking up only the persistent conversation leaves its card at the initial progress state.
+
+`backend-rs/src/socketio/im_callback_redis_tests.rs` uses real Redis to cover interleaved messages, progress and terminal delivery, stale-message rejection, late events and legacy addresses. The existing Backend Rust CI job explicitly runs these protocol integration tests. Only external DingTalk transport is substituted, all identifiers are synthetic, and compatibility with real DingTalk accounts or services remains unverified.
+
 ## Cross-conversation search and automatic recall
 
 `search_context` searches readable conversations on the current device using the existing `read_task` native history, pagination, long-message chunks and identity checks. This first stage adds no duplicate message database or external-history backfill. External messages absent from Wework conversations and history on other devices are outside its coverage.
@@ -98,6 +104,12 @@ Events persist in the selected Executor’s SQLite without creating work or invo
 Settings writes and dispatch serialize per user. Configuration changes cancel undispatched intents and invalidate stale batches; accepted assessment commands retain their original receipt and cannot be automatically replayed under another ID. Batch admission and dispatch revalidate current source, enablement cutoff, assignment, role scope and permission. Temporary cloud failures retain intake; explicit revocation cancels it. User questions and approvals remain in their original conversations and are never answered automatically. Failed or cancelled assessments require an explicit Check now action to reassess unfinished events. Unconfirmed execution links to the original task and blocks automatic replay. Status retains `runtime.stand_in.processing.status`, without global timing controls. The personal Router adds no Backend API.
 
 ### Plugin and host transaction boundary
+
+Scheduling selects executable actions in SQLite and reads this pass's evidence by event ID instead of deserializing all historical actions and events. Failed actions retain their event claims so polling cannot create another dispatch attempt. Existing manual work recovery and explicit assessment checks remain available. Snapshot, commit, event authorization, and action execution stages taking more than 250 milliseconds emit timing diagnostics without message bodies or credentials.
+
+An explicit check can also recover routing that failed before task creation. The host records one retry request and drains the latest failed creation intents for unresolved events in the existing batches of 100, retaining their original IDs and revalidating current authority and native command receipts. A request never retries its own failed result or falls through to older duplicate failures; later failures do not join an earlier request. Inputs held by another action, partially consumed inputs, and foreign-account inputs are not retried. Existing, waiting-user, archived, and uncertain-outcome work retains its original recovery checks.
+
+Background scheduling automatically prunes settled diagnostic records older than seven days, processing at most 1,000 actions, events, and routing receipts each per pass. A backlog continues on subsequent passes; completed maintenance is checked daily. Pending and sending actions, the current assessment batch, commands with uncertain outcomes, and the latest failed action for each unresolved event remain, along with their referenced evidence and receipts. Settled events become minimal persistent deduplication markers so provider redelivery cannot restart old work after payload cleanup. Original work conversations, source messages, arrangement executions, and native command recovery journals are unchanged.
 
 Executor advertises `runtime.coordination-v1`. The plugin calls `runtime.coordination.contexts`, `snapshot`, `commit`, `wake` and `status` through the existing executor-runtime client. Host snapshots bind the current user, device, configuration, wake revision and event revisions. A plugin decision can select only snapshot facts.
 

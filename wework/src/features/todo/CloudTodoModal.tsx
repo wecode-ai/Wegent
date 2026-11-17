@@ -9,6 +9,7 @@ interface CloudTodoModalProps {
   title: string
   children: ReactNode
   onClose: () => void
+  closeLabel?: string
   width?: 'default' | 'wide' | 'workflow' | 'workspace'
   onSubmit?: () => void | Promise<void>
   pending?: boolean
@@ -18,6 +19,7 @@ export function CloudTodoModal({
   title,
   children,
   onClose,
+  closeLabel = '关闭',
   width = 'default',
   onSubmit,
   pending = false,
@@ -70,7 +72,7 @@ export function CloudTodoModal({
             onClick={close}
             disabled={pending}
             className="-mr-1 flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
-            aria-label="关闭"
+            aria-label={closeLabel}
           >
             <X className="h-4 w-4" />
           </button>

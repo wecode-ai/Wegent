@@ -459,6 +459,32 @@ describe('DeviceMonitorPanel', () => {
     expect(mockUseTranslation).toHaveBeenCalledWith('admin')
   })
 
+  it('offers a confirmed restart as the cloud device action', async () => {
+    const cloudDevice: AdminDeviceInfo = {
+      ...offlineDevice,
+      device_type: 'cloud',
+      status: 'online',
+      executor_version: '2.0.14',
+      slot_used: 1,
+    }
+    mockedAdminApis.getDevices.mockResolvedValueOnce({ total: 1, items: [cloudDevice] })
+    mockedAdminApis.restartDevice.mockResolvedValue({ success: true, message: 'Accepted' })
+    render(<DeviceMonitorPanel />)
+
+    fireEvent.click(await screen.findByTestId(`restart-device-${cloudDevice.device_id}`))
+    expect(screen.queryByTestId(`upgrade-device-${cloudDevice.device_id}`)).toBeNull()
+    expect(mockedAdminApis.restartDevice).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('confirm-admin-device-restart'))
+
+    await waitFor(() =>
+      expect(mockedAdminApis.restartDevice).toHaveBeenCalledWith(
+        cloudDevice.device_id,
+        cloudDevice.user_id
+      )
+    )
+    expect(mockedAdminApis.upgradeDevice).not.toHaveBeenCalled()
+  })
+
   it('refreshes only the device list when search changes', async () => {
     jest.useFakeTimers()
     let unmount: (() => void) | undefined

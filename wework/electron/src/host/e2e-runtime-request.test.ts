@@ -5,6 +5,38 @@ const environment = { VITE_WEWORK_E2E: 'true', WEWORK_E2E_CONTROL_URL: 'http://1
 const url = 'http://127.0.0.1:3000/wework/executor/v1/rpc'
 
 describe('authenticated E2E Runtime requests', () => {
+  test('reports request stages without credentials or bodies and preserves the transport error', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const cause = new Error('Transport failed')
+    const request = vi.fn<typeof fetch>().mockRejectedValue(cause)
+    try {
+      await expect(
+        requestE2ERuntime(
+          environment,
+          { url, method: 'POST', body: '{"private":"private-body"}' },
+          async () => [{ name: 'dsh-auth-test', value: 'private-cookie' }],
+          request
+        )
+      ).rejects.toBe(cause)
+      expect(warning).toHaveBeenCalledWith(
+        '[desktop-e2e-runtime-request]',
+        expect.objectContaining({
+          path: '/wework/executor/v1/rpc',
+          failed: true,
+          eventLoopDelayMs: expect.any(Number),
+          stages: [
+            { stage: 'authentication', elapsedMs: expect.any(Number) },
+            { stage: 'request', elapsedMs: expect.any(Number) },
+          ],
+        })
+      )
+      expect(JSON.stringify(warning.mock.calls)).not.toMatch(
+        /private-body|private-cookie|dsh-auth-test/
+      )
+    } finally {
+      warning.mockRestore()
+    }
+  })
   test.each([{}, { VITE_WEWORK_E2E: 'true' }, { WEWORK_E2E_CONTROL_URL: 'http://localhost' }])(
     'requires both isolated verification settings: %j',
     async settings => {

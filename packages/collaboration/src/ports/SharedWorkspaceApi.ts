@@ -338,6 +338,7 @@ export interface WorkspaceAutomationRule {
   eventType: import("../automation/types").AutomationEventType | null;
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
+  workdayOnly?: boolean;
   timezone: string;
   runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
@@ -360,6 +361,7 @@ export interface WorkspaceAutomationInput {
   eventType: import("../automation/types").AutomationEventType | null;
   eventConfig: Record<string, unknown>;
   cronExpression: string | null;
+  workdayOnly?: boolean;
   timezone: string;
   runnerSelection?: import("../agent-form/runnerRouting").RunnerSelection;
   executionDeviceId: string | null;
@@ -443,6 +445,8 @@ export interface SharedWorkspaceAutomationExecutionCatalogApi {
 export interface WorkspaceProjectAgent extends CollaborationAgent {
   status?: string;
   systemPrompt?: string;
+  executionPolicy?: import("../agent-form/runnerRouting").AgentExecutionPolicy | null;
+  modelPolicy?: import("../agent-form/runnerRouting").AgentModelPolicy | null;
   [key: string]: unknown;
 }
 
@@ -926,6 +930,7 @@ export interface SharedWorkspaceRuntimeProfilesApi {
 }
 
 export interface SharedWorkspaceAgentsApi {
+  remove(projectId: string, agentId: string, version: number): Promise<void>;
   list(
     projectId: string,
     options?: { includeArchived?: boolean; forceRefresh?: boolean },

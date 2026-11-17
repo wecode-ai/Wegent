@@ -58,7 +58,7 @@ export function IssueAssignmentHistoryList({
           )}
           <span className="truncate">{toName ?? labels.unassigned}</span>
         </div>
-        <p className="mt-0.5 text-xs text-text-muted">
+        <p className="mt-0.5 text-xs text-text-secondary">
           {labels.actions[entry.action]} · {formatIssueTimestamp(entry.at)}
         </p>
       </div>
@@ -106,7 +106,9 @@ export function IssueStatusHistoryList({
           <span className="shrink-0 font-medium">{actor}</span>
           {isCreate ? (
             <>
-              <span className="shrink-0 text-text-muted">{labels.initial}</span>
+              <span className="shrink-0 text-text-secondary">
+                {labels.initial}
+              </span>
               <span className="min-w-0 truncate">{toName}</span>
             </>
           ) : (
@@ -120,7 +122,7 @@ export function IssueStatusHistoryList({
             </>
           )}
         </div>
-        <p className="mt-0.5 text-xs text-text-muted">
+        <p className="mt-0.5 text-xs text-text-secondary">
           {isAccept ? labels.accept : labels.action(entry.trigger)} ·{" "}
           {formatIssueTimestamp(entry.at)}
         </p>

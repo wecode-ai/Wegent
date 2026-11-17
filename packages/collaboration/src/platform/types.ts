@@ -67,7 +67,15 @@ export interface CollaborationPlatformHostAdapter {
   };
   templateStore?: import("../templates/store").CollaborationTemplateStore;
   templateNavigation?: boolean;
+  issueHomeDraft?: {
+    value: string;
+    getRevision(): number;
+    projectId: string | null;
+    onSelectProject(projectId: string): void;
+    onChange(value: string): void;
+  };
   renderPersonalHome?(props: {
+    contentVisible: boolean;
     projects: CollaborationProject[];
     createIssue: ReactNode;
     createdIssue?: {
@@ -123,6 +131,7 @@ export interface CollaborationPlatformHostAdapter {
     resourceId?: string,
     source?: "local" | "cloud",
   ): void;
+  renderExecutionEnvironmentPreferences?(): ReactNode;
   renderDeviceCreator?(input: {
     source: "local" | "cloud";
     workspaceId?: string;

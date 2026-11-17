@@ -3,6 +3,9 @@
 
 export const templateMessages = {
   'zh-CN': {
+    optionalRuntimeConfiguration: '运行环境（可选）',
+    deferredRuntimeHint: '可稍后在项目设置中配置。',
+    environmentOnline: '在线',
     title: '协作模板',
     destination: '选择模板使用位置',
     newProject: '创建新项目',
@@ -15,9 +18,8 @@ export const templateMessages = {
     configureProjectEnvironment: '配置项目执行设备（新标签页）',
     projectEnvironmentSetupHint:
       '还没有在线的项目执行设备。配置设备后，点击刷新即可继续，当前填写内容会保留。',
-    environmentAuthorizationHint:
-      '勾选后，创建时将把执行环境共享给所选分组并授权给新项目。包含智能体的模板需要勾选账号的默认执行环境。',
-    selectExecutionEnvironment: '请先选择要授权的默认执行环境；可在设备页面配置默认设备。',
+    environmentAuthorizationHint: '允许此项目使用所选设备，同时共享给所属分组。',
+    selectExecutionEnvironment: '暂无可用设备，可先创建项目。',
     description: '把成熟的分工与流程，带进你的下一个项目。',
     discover: '发现模板',
     available: '可用模板',
@@ -41,6 +43,12 @@ export const templateMessages = {
     deleteConnectionRequired: '请连接云端后删除已同步的模板。',
     createFromTemplate: '从模板创建',
     clearSelection: '移除模板',
+    configureSelection: '配置成员',
+    confirmConfiguration: '确认配置',
+    returnToProject: '返回项目',
+    returnToTemplates: '返回模板列表',
+    selectionSummary: '{groups} 个小组 · {roles} 个角色',
+    selectionIncomplete: '还有角色未安排成员，请配置后创建。',
     use: '使用此模板',
     download: '下载并使用',
     cloudAdd: '添加到我的能力',
@@ -91,7 +99,7 @@ export const templateMessages = {
     environmentHint: '模型和工具使用当前执行环境的配置。',
     agentModel: '智能体使用的模型',
     chooseModel: '请选择模型',
-    selectedModelHint: '请在下方确认智能体使用的模型，工具沿用当前设备的配置。',
+    selectedModelHint: '运行环境和模型可稍后配置。',
     modelUnavailable: '所选模型已不可用，请刷新模型列表并重新选择。',
     noModels: '暂无可用模型。请在设置中添加模型，然后刷新此列表。',
     modelLoadFailed: '模型列表加载失败，请刷新后重试。',
@@ -123,6 +131,9 @@ export const templateMessages = {
     partial: '部分智能体或小组已添加。请检查当前配置后再继续，避免重复创建。',
   },
   en: {
+    optionalRuntimeConfiguration: 'Runtime (optional)',
+    deferredRuntimeHint: 'You can configure this later in project settings.',
+    environmentOnline: 'Online',
     title: 'Collaboration templates',
     destination: 'Choose where to use this template',
     newProject: 'Create a new project',
@@ -136,9 +147,8 @@ export const templateMessages = {
     projectEnvironmentSetupHint:
       'No project device is online. Configure a device, then refresh to continue. Your current input is preserved.',
     environmentAuthorizationHint:
-      'Selected environments will be shared with the chosen group and authorized for the new project. Templates containing Agents require your account’s default executor.',
-    selectExecutionEnvironment:
-      'Select the default execution environment to authorize. You can set your default device on the Devices page.',
+      'Allow this project to use selected devices and share them with its group.',
+    selectExecutionEnvironment: 'No devices available. You can create the project first.',
     description: 'Bring proven roles and workflows into your next project.',
     discover: 'Discover',
     available: 'Available',
@@ -162,6 +172,12 @@ export const templateMessages = {
     deleteConnectionRequired: 'Connect to delete a synced template.',
     createFromTemplate: 'Create from template',
     clearSelection: 'Remove template',
+    configureSelection: 'Configure members',
+    confirmConfiguration: 'Confirm configuration',
+    returnToProject: 'Back to project',
+    returnToTemplates: 'Back to templates',
+    selectionSummary: 'Groups: {groups} · Roles: {roles}',
+    selectionIncomplete: 'Some roles need members. Configure them before creating the project.',
     use: 'Use template',
     download: 'Download and use',
     cloudAdd: 'Add to my capabilities',
@@ -206,12 +222,11 @@ export const templateMessages = {
     syncConflict: 'Template not synced. Resolve the conflict or save a copy.',
     embeddedAgents:
       'Template Agents are created and bound automatically. Models and tools follow the execution environment.',
-    agentsCount: '{count} Agents will be created and bound to roles.',
+    agentsCount: 'Agents to create and bind to roles: {count}.',
     environmentHint: 'Models and tools follow the execution environment.',
     agentModel: 'Model for Agents',
     chooseModel: 'Choose a model',
-    selectedModelHint:
-      'Confirm the Agent models below. Tools follow the current device configuration.',
+    selectedModelHint: 'Execution environments and models can be configured later.',
     modelUnavailable:
       'The selected model is no longer available. Refresh the model list and choose again.',
     noModels: 'No models available. Add a model in Settings, then refresh this list.',

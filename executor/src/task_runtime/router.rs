@@ -877,6 +877,16 @@ impl TaskRuntime {
             .archive_chat_agent(project_id, agent_id, version)
     }
 
+    pub fn delete_chat_agent(
+        &self,
+        project_id: &str,
+        agent_id: &str,
+        version: i64,
+    ) -> Result<(), TaskRuntimeError> {
+        self.local_store
+            .delete_chat_agent(project_id, agent_id, version)
+    }
+
     pub fn cancel_project_automation_run(
         &self,
         project_id: &str,
