@@ -25,6 +25,8 @@ describe('parseChatError', () => {
     ['content_filter', 'content_filter'],
     ['permission_denied', 'permission_denied'],
     ['model_unavailable', 'llm_error'],
+    ['server_overloaded', 'server_overloaded'],
+    ['serverOverloaded', 'server_overloaded'],
   ])('uses backend error type %s before keyword matching', (errorType, normalizedType) => {
     expect(parseChatError('raw backend message', errorType).type).toBe(normalizedType)
   })
@@ -38,14 +40,44 @@ describe('parseChatError', () => {
     expect(parsed.titleKey).toBe('assistant_error.types.payload_too_large.title')
   })
 
-  test('reports the model service endpoint when the local proxy cannot connect', () => {
+  test('distinguishes a proxy connection failure from the enclosing gateway status', () => {
     const parsed = parseChatError(
       'unexpected status 502 Bad Gateway: {"detail":"Local model proxy request failed: error sending request for url (https://model-gateway.example.internal/api/runtime-work/llm-responses-proxy/responses)"}'
     )
 
     expect(parsed.type).toBe('model_service_connection_error')
-    expect(parsed.endpoint).toBe(
-      'https://model-gateway.example.internal/api/runtime-work/llm-responses-proxy/responses'
-    )
+  })
+
+  test.each([180, 30])(
+    'classifies the %ss progress watchdog without blaming the provider',
+    seconds => {
+      const parsed = parseChatError(
+        `codex app-server turn made no model or tool progress for ${seconds}s; the shared app-server was restarted`
+      )
+      expect(parsed.type).toBe('timeout_error')
+      expect(parsed.timeoutSeconds).toBe(seconds)
+      expect(parsed.descriptionKey).toBe(
+        'assistant_error.types.timeout_error.description_with_seconds'
+      )
+    }
+  )
+
+  test.each([
+    [
+      '{"error":{"codexErrorInfo":"serverOverloaded","message":"connection interrupted"}}',
+      'server_overloaded',
+    ],
+    ['model is overloaded', 'server_overloaded'],
+    ['504 Gateway Timeout', 'timeout_error'],
+    ['502 Bad Gateway', 'provider_error'],
+    ['503 Service Unavailable', 'provider_error'],
+    ['connection reset', 'network_error'],
+    ['unknown error', 'generic_error'],
+  ])('distinguishes %s', (message, expected) => {
+    expect(parseChatError(message).type).toBe(expected)
+  })
+
+  test('keeps explicit terminal error types ahead of message heuristics', () => {
+    expect(parseChatError('connection reset', 'server_overloaded').type).toBe('server_overloaded')
   })
 })

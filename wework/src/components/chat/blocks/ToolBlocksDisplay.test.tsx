@@ -347,11 +347,11 @@ describe('ToolBlocksDisplay', () => {
           thinkingContent="Previous reasoning"
         />
       )
-      expect(screen.getByTestId('processing-summary-header')).toHaveTextContent('正在自动重试…')
+      expect(screen.getByTestId('processing-summary-header')).toHaveTextContent('正在重新连接…')
       const announcement = within(screen.getByTestId('processing-summary-header')).getByRole(
         'status'
       )
-      expect(announcement).toHaveTextContent('正在自动重试…')
+      expect(announcement).toHaveTextContent('正在重新连接…')
       expect(announcement).toHaveAttribute('aria-live', 'polite')
       expect(announcement).toHaveAttribute('aria-atomic', 'true')
       expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
@@ -364,12 +364,70 @@ describe('ToolBlocksDisplay', () => {
           forceExpanded={forceExpanded}
         />
       )
-      expect(screen.queryByText('正在自动重试…')).not.toBeInTheDocument()
+      expect(screen.queryByText('正在重新连接…')).not.toBeInTheDocument()
       expect(
         screen.queryByTestId('processing-summary-header')?.querySelector('[role="status"]')
       ).toBeFalsy()
     }
   )
+
+  test.each([
+    ['custom', 'overload', '服务器繁忙，正在重新连接…'],
+    ['codex-official', 'overload', '服务器繁忙，正在重新连接…'],
+    ['codex-official', 'rate_limit', '模型限流，等待自动重试…'],
+    ['codex-official', 'unknown', '正在自动重试…'],
+  ])('shows structured retry progress for %s / %s', (modelKind, reason, expected) => {
+    const retryBlock: ProcessingBlock = {
+      id: 'retry-classified',
+      type: 'tool',
+      toolName: 'runtime_reconnecting',
+      toolInput: {
+        model_kind: modelKind,
+        retry_reason: reason,
+        retry_attempt: 2,
+        retry_max_attempts: 5,
+      },
+      status: 'streaming',
+      createdAt: Date.now(),
+    }
+    const { rerender } = render(
+      <ToolBlocksDisplay blocks={[completedCommandBlock, retryBlock]} isStreaming forceExpanded />
+    )
+    expect(screen.getByTestId('processing-summary-header')).toHaveTextContent(`${expected}（2/5）`)
+    expect(screen.queryByTestId('runtime-reconnecting-open-proxy-settings')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
+    rerender(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock, { ...retryBlock, status: 'done' }]}
+        isStreaming
+        forceExpanded
+      />
+    )
+    expect(screen.queryByText(/（2\/5）/)).not.toBeInTheDocument()
+  })
+
+  test('uses native reconnect progress without exposing the raw error', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          completedCommandBlock,
+          {
+            id: 'native-retry',
+            type: 'tool',
+            toolName: 'runtime_reconnecting',
+            toolInput: { retry_reason: 'connection', message: 'Reconnecting... 3/5' },
+            status: 'streaming',
+            createdAt: Date.now(),
+          },
+        ]}
+        isStreaming
+      />
+    )
+    expect(screen.getByTestId('processing-summary-header')).toHaveTextContent(
+      '正在重新连接…（3/5）'
+    )
+    expect(screen.queryByText('Reconnecting... 3/5')).not.toBeInTheDocument()
+  })
 
   test('shows answered request user input blocks as summaries while hiding pending blocks', () => {
     const pendingBlock: ProcessingBlock = {

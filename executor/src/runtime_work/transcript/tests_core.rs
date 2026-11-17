@@ -5,6 +5,24 @@
 use super::super::*;
 
 #[test]
+fn transcript_preserves_structured_terminal_error_type_for_turns_and_messages() {
+    let projection = project_transcript(
+        &json!({"id": "thread", "turns": [{
+            "id": "turn", "status": "failed", "error": {
+                "message": "connection interrupted", "codexErrorInfo": "serverOverloaded"
+            }, "items": []
+        }]}),
+        "device",
+        true,
+    );
+    assert_eq!(projection.turns[0]["errorType"], "server_overloaded");
+    assert_eq!(
+        projection.messages.last().unwrap()["errorType"],
+        "server_overloaded"
+    );
+}
+
+#[test]
 fn visible_user_request_skips_nested_application_context_from_referenced_conversations() {
     let content = concat!(
         "<application_context>\n",

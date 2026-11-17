@@ -60,14 +60,18 @@ test('shows model overload countdown without proxy settings for a ChatGPT model'
     toolInput: {
       retry_reason: 'overload',
       retry_at: Date.now() + 10_000,
+      retry_attempt: 2,
+      retry_max_attempts: 4,
       model_kind: 'codex-official',
     },
   }
   const { rerender } = render(<ToolBlockItem block={block} />)
   expect(screen.getByTestId('runtime-overload-wait-status')).toHaveTextContent('10秒')
+  expect(screen.getByTestId('runtime-overload-wait-status')).toHaveTextContent('（2/4）')
   expect(screen.queryByTestId('runtime-reconnecting-open-proxy-settings')).not.toBeInTheDocument()
   act(() => vi.advanceTimersByTime(10_000))
   expect(screen.getByTestId('runtime-overload-wait-status')).toHaveTextContent('正在用原模型重试')
+  expect(screen.getByTestId('runtime-overload-wait-status')).toHaveTextContent('（2/4）')
   rerender(<ToolBlockItem block={{ ...block, status: 'done' }} />)
   expect(screen.queryByTestId('runtime-overload-wait-status')).not.toBeInTheDocument()
   expect(vi.getTimerCount()).toBe(0)

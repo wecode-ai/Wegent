@@ -128,6 +128,10 @@ describe("shared conversation cards without Electron", () => {
     expect(element("assistant-error-description").textContent).toContain(
       "Settings → Integrations → Git accounts",
     );
+    expect(
+      document.querySelector('[data-testid="assistant-error-details"]'),
+    ).toBeNull();
+    act(() => element("assistant-error-details-toggle").click());
     expect(element("assistant-error-details").textContent).not.toContain(
       "git-access:",
     );
@@ -139,6 +143,42 @@ describe("shared conversation cards without Electron", () => {
     act(() => element("assistant-error-retry").click());
     expect(retry).toHaveBeenCalledExactlyOnceWith(message);
   });
+
+  it.each([
+    ["server_overloaded", "connection interrupted", "Model service is busy"],
+    [
+      "timeout_error",
+      "codex app-server turn made no model or tool progress for 180s; the shared app-server was restarted",
+      "Timed out waiting for a response",
+    ],
+  ])(
+    "shows localized terminal %s separately from diagnostics",
+    (type, error, title) => {
+      render(
+        <AssistantErrorCard
+          error={error}
+          errorType={type}
+          message={{
+            id: "failed",
+            role: "assistant",
+            content: "",
+            status: "failed",
+            createdAt: "2026-11-17T09:00:00Z",
+          }}
+        />,
+      );
+      expect(element("assistant-error-title").textContent).toBe(title);
+      expect(
+        document.querySelector('[data-testid="assistant-error-details"]'),
+      ).toBeNull();
+      if (type === "timeout_error")
+        expect(element("assistant-error-description").textContent).toContain(
+          "within 180 seconds",
+        );
+      act(() => element("assistant-error-details-toggle").click());
+      expect(element("assistant-error-details").textContent).toBe(error);
+    },
+  );
 
   it("keeps revert confirmation themed and calls the host only after confirmation", async () => {
     const revert = vi

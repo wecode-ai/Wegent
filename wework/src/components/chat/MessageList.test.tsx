@@ -651,8 +651,10 @@ describe('MessageList', () => {
     )
 
     expect(screen.queryByTestId('assistant-message-content')).not.toBeInTheDocument()
-    expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(
-      'Error: raw provider failure'
+    expect(screen.queryByTestId('assistant-error-details')).not.toBeInTheDocument()
+    expect(screen.getByTestId('assistant-error-details-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'false'
     )
     expect(screen.getByText('最后一次诊断信息。')).toBeInTheDocument()
     expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
@@ -1630,7 +1632,7 @@ describe('MessageList', () => {
     expect(
       screen.getByText('ali-deepseek-v3.1 不支持当前运行协议。请切换兼容模型后重试。')
     ).toBeInTheDocument()
-    expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(rawError)
+    expect(screen.queryByTestId('assistant-error-details')).not.toBeInTheDocument()
   })
 
   test('expands raw error details from the compact details row', async () => {
@@ -1659,6 +1661,36 @@ describe('MessageList', () => {
       'true'
     )
     expect(screen.getByTestId('assistant-error-details')).toHaveClass('whitespace-pre-wrap')
+    expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(rawError)
+  })
+
+  test('shows progress timeout separately from app-server recovery diagnostics', async () => {
+    const user = userEvent.setup()
+    const rawError =
+      'codex app-server turn made no model or tool progress for 180s; the shared app-server was restarted'
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'watchdog',
+            role: 'assistant',
+            content: '',
+            status: 'failed',
+            error: rawError,
+            createdAt: '2026-11-17T09:05:25.000Z',
+          },
+        ]}
+      />
+    )
+    expect(screen.getByTestId('assistant-error-title')).toHaveTextContent('等待响应超时')
+    expect(screen.getByTestId('assistant-error-description')).toHaveTextContent(
+      '180 秒内未收到模型或工具进展'
+    )
+    expect(screen.queryByText(/app-server/)).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('assistant-error-details-toggle'))
+    expect(screen.getByTestId('assistant-error-details')).toHaveTextContent(rawError)
+    await user.click(screen.getByTestId('assistant-error-details-toggle'))
+    expect(screen.queryByTestId('assistant-error-details')).not.toBeInTheDocument()
   })
 
   test('calls retry and switch-model handlers from failed assistant actions', async () => {

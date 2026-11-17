@@ -262,6 +262,11 @@ export function createDesktopScenario({
       )
       await nativeGate.release()
       await gates.wait('live-recovery')
+      const recovery = await gates.read('live-recovery')
+      const retryInput = recovery.value.payload.data.block.tool_input
+      assert.equal(retryInput.retry_reason, 'overload')
+      assert.equal(retryInput.retry_attempt, 1)
+      assert.equal(retryInput.retry_max_attempts, 4)
       await gates.release('old-failed-history')
       const ordering = await gates.save(resultDir, 'overload-history-race.json', [
         'old-failed-history',
