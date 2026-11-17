@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import BigInteger, Column, MetaData, Table, create_engine, inspect
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
@@ -85,10 +85,21 @@ def verify(engine, url):
         User.__table__.create(engine)
         Kind.__table__.create(engine)
         create_legacy_share_links(engine)
+        # Later answer migrations consume these historical columns.
+        Table(
+            "subtasks",
+            MetaData(),
+            Column("id", BigInteger, primary_key=True),
+            Column("task_id", BigInteger, nullable=False),
+        ).create(engine)
         command.stamp(config, "f3a7c9e1b2d4")
         tables = set(inspect(engine).get_table_names())
         command.upgrade(config, "head")
-        assert set(inspect(engine).get_table_names()) == tables
+        # The answer-evidence migration adds its own table, never plugin state.
+        assert set(inspect(engine).get_table_names()) == tables | {
+            "knowledge_citations"
+        }
+        tables = set(inspect(engine).get_table_names())
         assert "plugin_local_sync_operations" not in tables
         assert "plugin_sync_outbox" not in tables
         verify_ordering(engine)
