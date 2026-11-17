@@ -114,12 +114,13 @@ fn apply_private_source_access(
             view["content"] = json!("");
         }
     }
-    if row.runtime_device_id.is_empty() || row.runtime_task_id.is_empty() {
+    let (runtime_device_id, runtime_task_id) = effective_runtime_source(row);
+    if runtime_device_id.is_empty() || runtime_task_id.is_empty() {
         return;
     }
     let identity = format!(
         "{}\0{}\0{}\0{}",
-        row.project_id, row.task_id, row.runtime_device_id, row.runtime_task_id
+        row.project_id, row.task_id, runtime_device_id, runtime_task_id
     );
     view["traceRef"] = json!(format!("{:x}", Sha256::digest(identity.as_bytes())));
     let runtime_visible = owner || runtime_shared;
@@ -130,10 +131,39 @@ fn apply_private_source_access(
     });
     if runtime_visible {
         view["runtimeAddress"] = json!({
-            "deviceId": row.runtime_device_id,
-            "taskId": row.runtime_task_id,
+            "deviceId": runtime_device_id,
+            "taskId": runtime_task_id,
         });
+    } else {
+        view["runtimeAddress"] = Value::Null;
     }
+}
+
+fn effective_runtime_source(row: &MessageRow) -> (String, String) {
+    if !row.runtime_device_id.is_empty() && !row.runtime_task_id.is_empty() {
+        return (row.runtime_device_id.clone(), row.runtime_task_id.clone());
+    }
+    let metadata = row.metadata();
+    let publication = metadata.get("assistant_publication");
+    if publication
+        .and_then(|value| value.get("verified"))
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return (String::new(), String::new());
+    }
+    (
+        publication
+            .and_then(|value| value.get("device_id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        publication
+            .and_then(|value| value.get("task_id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    )
 }
 
 pub(crate) fn shared_message_payload(view: &Value) -> Value {
@@ -356,6 +386,34 @@ mod tests {
         assert_eq!(view["generationSource"], "ai");
         assert_eq!(view["publicationSource"], "human");
         assert_eq!(view["confirmationState"], "authorized");
+    }
+
+    #[test]
+    fn verified_publication_keeps_the_source_only_for_its_owner() {
+        let mut published = row();
+        published.sender_type = "user".into();
+        published.sender_id = "7".into();
+        published.runtime_device_id.clear();
+        published.runtime_task_id.clear();
+        published.metadata = Some(brz_mysql::Json(json!({
+            "assistant_publication":{
+                "verified":true,
+                "published_by":"human",
+                "device_id":"private-device",
+                "task_id":"private-task"
+            }
+        })));
+
+        let mut owner = message_view(&published);
+        apply_private_source_access(&mut owner, &published, 7, Some(7), false);
+        assert_eq!(owner["runtimeAddress"]["deviceId"], "private-device");
+        assert_eq!(owner["runtimeAddress"]["taskId"], "private-task");
+        assert_eq!(owner["traceState"], "available");
+
+        let mut other = message_view(&published);
+        apply_private_source_access(&mut other, &published, 8, Some(7), false);
+        assert_eq!(other["runtimeAddress"], Value::Null);
+        assert_eq!(other["traceState"], "restricted");
     }
 
     #[test]

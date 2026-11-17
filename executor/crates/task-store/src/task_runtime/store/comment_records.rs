@@ -415,6 +415,12 @@ mod stand_in_reply_tests {
             published.metadata["assistant_publication"]["verified"],
             true
         );
+        assert_eq!(published.metadata["runtime_address"]["deviceId"], "mac");
+        assert_eq!(
+            published.metadata["runtime_address"]["taskId"],
+            "conversation"
+        );
+        assert!(published.trace_ref.is_some());
         assert!(published.metadata.get("assistant_source").is_none());
     }
 }

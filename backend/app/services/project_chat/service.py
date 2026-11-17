@@ -2845,22 +2845,42 @@ class ProjectChatService:
 
         from app.services.project_chat.message_provenance import message_provenance
 
+        metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        publication = metadata.get("assistant_publication")
+        publication = publication if isinstance(publication, dict) else {}
+        verified_publication = publication.get("verified") is True
+        publication_device_id = (
+            publication.get("device_id") if verified_publication else None
+        )
+        publication_task_id = (
+            publication.get("task_id") if verified_publication else None
+        )
+        runtime_device_id = (
+            row.runtime_device_id
+            or (publication_device_id if isinstance(publication_device_id, str) else "")
+            or ""
+        )
+        runtime_task_id = (
+            row.runtime_task_id
+            or (publication_task_id if isinstance(publication_task_id, str) else "")
+            or ""
+        )
         runtime_address = None
         provenance = message_provenance(db, row)
-        if row.runtime_device_id and row.runtime_task_id:
+        if runtime_device_id and runtime_task_id:
             runtime_address = {
-                "deviceId": row.runtime_device_id,
-                "taskId": row.runtime_task_id,
+                "deviceId": runtime_device_id,
+                "taskId": runtime_task_id,
             }
         trace_ref = None
         trace_state = "history-unavailable"
-        if row.runtime_device_id and row.runtime_task_id:
+        if runtime_device_id and runtime_task_id:
             identity = "\0".join(
                 (
                     row.project_id,
                     row.task_id or "",
-                    row.runtime_device_id,
-                    row.runtime_task_id,
+                    runtime_device_id,
+                    runtime_task_id,
                 )
             )
             trace_ref = hashlib.sha256(identity.encode()).hexdigest()

@@ -116,6 +116,43 @@ def test_verified_assistant_binding_marks_ai_generated_human_publication(
     assert result["confirmation_state"] == "authorized"
 
 
+def test_verified_publication_source_is_owner_only_and_traced(test_db, test_user):
+    row = ProjectChatMessage(
+        message_id="published",
+        project_id="project-one",
+        task_id="ISSUE-1",
+        sender_type="user",
+        sender_id=str(test_user.id),
+        sender_name=test_user.user_name,
+        metadata_json={
+            "assistant_publication": {
+                "verified": True,
+                "published_by": "human",
+                "device_id": "private-device",
+                "task_id": "private-task",
+            }
+        },
+        status="completed",
+    )
+    test_db.add(row)
+    test_db.flush()
+
+    owner = project_chat_service.to_shared_view(
+        row, db=test_db, viewer_user_id=test_user.id
+    )
+    assert owner.runtime_address == {
+        "deviceId": "private-device",
+        "taskId": "private-task",
+    }
+    assert owner.trace_ref
+    assert owner.trace_state == "available"
+
+    other = project_chat_service.to_shared_view(row, db=test_db, viewer_user_id=8)
+    assert other.runtime_address is None
+    assert other.trace_ref
+    assert other.trace_state == "restricted"
+
+
 def test_unverified_assistant_metadata_cannot_claim_generation(test_db, test_user):
     row = ProjectChatMessage(
         sender_type="user",

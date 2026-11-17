@@ -377,6 +377,10 @@ pub(super) fn normalize_assistant_publication(
             "task_id": task_id,
         }),
     );
+    metadata.insert(
+        "runtime_address".into(),
+        json!({"deviceId": device_id, "taskId": task_id}),
+    );
     Ok(Value::Object(metadata))
 }
 

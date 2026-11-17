@@ -177,6 +177,8 @@ def test_native_publication_derives_ai_generation_from_the_owned_runtime_binding
     assert published["generation_source"] == "ai"
     assert published["publication_source"] == "human"
     assert published["confirmation_state"] == "authorized"
+    assert published["trace_ref"]
+    assert published["trace_state"] == "available"
     retried = test_client.post(
         path,
         headers=headers,
