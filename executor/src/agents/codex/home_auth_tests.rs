@@ -38,9 +38,12 @@ fn named_home_readers_share_ownership_without_migrating_live_writers_or_auth() {
     fs::write(home.join("auth.json"), "synthetic-private-auth").unwrap();
     let first = auth::acquire_named_home(home).unwrap();
     let directory = home.join("thread-writer-locks");
-    let writer =
-        fs::File::create(directory.join("00000000-0000-4000-8000-000000000001.lock")).unwrap();
-    fs2::FileExt::try_lock_exclusive(&writer).unwrap();
+    let writer = crate::file_lease::FileLease(
+        fs::File::create(directory.join("00000000-0000-4000-8000-000000000001.lock")).unwrap(),
+    );
+    fs2::FileExt::try_lock_exclusive(&writer.0).unwrap();
+    // A concurrent fork can retain the descriptor beyond the fixture owner's lifetime.
+    let inherited_writer = writer.0.try_clone().unwrap();
     let second = auth::acquire_named_home(home).unwrap();
     assert!(auth::prepare_provider_migration(home, false).is_err());
     assert_eq!(
@@ -50,6 +53,8 @@ fn named_home_readers_share_ownership_without_migrating_live_writers_or_auth() {
     assert!(!home.join("config.toml").exists());
     drop((first, second, writer));
     auth::prepare_provider_migration(home, false).unwrap();
+    assert!(inherited_writer.metadata().unwrap().is_file());
+    drop(inherited_writer);
 }
 
 #[tokio::test]

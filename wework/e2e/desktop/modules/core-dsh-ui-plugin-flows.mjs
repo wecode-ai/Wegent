@@ -1,4 +1,5 @@
 import { fetchLocalRuntime } from './runtime-request.mjs'
+import { withNativePluginDecision } from './native-plugin-approval.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -829,12 +830,17 @@ async function waitForSlotState(control, predicate) {
 }
 
 async function invokeCoreDshPluginCapability(control, origin, capability, params = {}) {
-  const response = await fetchLocalRuntime(control, `${origin}${DESKTOP_HOST_INVOKE_PATH}`, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    method: 'POST',
-    headers: { accept: 'application/json', 'content-type': 'application/json' },
-    body: JSON.stringify({ capability, params }),
-  })
+  const invoke = () =>
+    fetchLocalRuntime(control, `${origin}${DESKTOP_HOST_INVOKE_PATH}`, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ capability, params }),
+    })
+  const response =
+    capability === 'runtime.installCoreDshPlugin'
+      ? await withNativePluginDecision(control, invoke)
+      : await invoke()
   const payload = await response.json()
   assert.equal(
     response.ok,

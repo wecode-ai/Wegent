@@ -959,23 +959,10 @@ test('exposes only the save dialog capability to contribution modules', async ()
   assert.equal('host' in runtime.host, false)
 })
 
-test('provides namespaced state, validated configuration, and secure values', async () => {
+test('provides namespaced state and validated configuration', async () => {
   const client = await loadClient()
   const values = new Map()
-  const secureCalls = []
   const runtime = client.exports.createExtensionRuntime({
-    secureStorage: {
-      get: async key => {
-        secureCalls.push(['get', key])
-        return 'secret'
-      },
-      set: async (key, value) => {
-        secureCalls.push(['set', key, value])
-      },
-      delete: async key => {
-        secureCalls.push(['delete', key])
-      },
-    },
     storage: {
       getItem: key => values.get(key) ?? null,
       setItem: (key, value) => values.set(key, value),
@@ -1009,19 +996,13 @@ test('provides namespaced state, validated configuration, and secure values', as
     () => runtime.service.configuration.update('quality', { threshold: -1 }),
     /Threshold is invalid/
   )
+})
 
-  const secrets = runtime.service.secrets.scope('quality')
-  assert.equal(await secrets.get('token'), 'secret')
-  await secrets.set('token', 'updated')
-  await secrets.delete('token')
-  assert.equal(
-    JSON.stringify(secureCalls),
-    JSON.stringify([
-      ['get', 'quality.token'],
-      ['set', 'quality.token', 'updated'],
-      ['delete', 'quality.token'],
-    ])
-  )
+test('does not expose a credential registry through either renderer SDK surface', async () => {
+  const client = await loadClient()
+  const runtime = client.exports.createExtensionRuntime()
+  assert.equal('secrets' in runtime.service, false)
+  assert.equal('secrets' in runtime.host, false)
 })
 
 test('mounts the Wework bundle with the active DSH context', async () => {

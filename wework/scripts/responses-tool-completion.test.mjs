@@ -95,23 +95,23 @@ async function createFixture(domError) {
     resultDir: workspace,
     modelResponseTimeoutMs: 30_000,
   })
-  for (const native of [false, true])
-    for (let probe = 0; probe < 2; probe++)
-      await request(scenario, {
-        model: `custom-responses-model${native ? '-native' : ''}`,
-        tools: [
-          {
-            type: native ? 'custom' : 'function',
-            name: native ? 'apply_patch' : 'wework_capability_probe',
-          },
-        ],
-        input: [],
-      })
   const submitted = Object.fromEntries([1, 2, 3].map(round => [round, deferred()]))
   const domWaits = []
   let round
   const control = {
     command: vi.fn(async (action, selector, options) => {
+      if (action === 'clickWhenEnabled' && selector === '[data-testid="provider-editor-test"]')
+        for (const native of [false, true])
+          await request(scenario, {
+            model: `custom-responses-model${native ? '-native' : ''}`,
+            tools: [
+              {
+                type: native ? 'custom' : 'function',
+                name: native ? 'apply_patch' : 'wework_capability_probe',
+              },
+            ],
+            input: [],
+          })
       if (action === 'getValue') return 'standard'
       if (action === 'fill' && selector === ACTIVE_COMPOSER_SELECTOR)
         round = Number(options.value.split(' ').at(-1))

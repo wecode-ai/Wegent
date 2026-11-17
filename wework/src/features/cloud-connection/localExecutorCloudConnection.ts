@@ -31,6 +31,24 @@ interface LocalExecutorCloudConnectionOptions {
 }
 
 const DEFAULT_RUNTIME_AUTH_TOKEN_EXPIRES_IN_SECONDS = 24 * 60 * 60
+let pendingConnectionWrite: Promise<void> = Promise.resolve()
+
+function commitConnection(
+  write: () => Promise<unknown>,
+  isCurrent: () => boolean
+): Promise<boolean> {
+  const committed = pendingConnectionWrite.then(async () => {
+    if (!isCurrent()) return false
+    await write()
+    return isCurrent()
+  })
+  // Keep subsequent writes ordered after failures; the caller still receives the rejection.
+  pendingConnectionWrite = committed.then(
+    () => undefined,
+    () => undefined
+  )
+  return committed
+}
 
 function normalizeExpiresIn(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
@@ -74,14 +92,18 @@ export async function applyLocalExecutorCloudConnection(
     }
     const runtimeToken = await issueRuntimeAuthToken(apiBaseUrl, token)
     if (!isCurrent()) return { connected: false }
-    await connectLocalExecutorToBackend({
-      backendUrl,
-      socketBaseUrl,
-      authToken: token,
-      runtimeAuthToken: runtimeToken.authToken,
-      deviceType: 'app',
-    })
-    if (!isCurrent()) return { connected: false }
+    const committed = await commitConnection(
+      () =>
+        connectLocalExecutorToBackend({
+          backendUrl,
+          socketBaseUrl,
+          authToken: token,
+          runtimeAuthToken: runtimeToken.authToken,
+          deviceType: 'app',
+        }),
+      isCurrent
+    )
+    if (!committed) return { connected: false }
     return {
       connected: true,
       runtimeAuthTokenExpiresIn: runtimeToken.expiresIn,
@@ -89,7 +111,6 @@ export async function applyLocalExecutorCloudConnection(
     }
   }
 
-  if (!isCurrent()) return { connected: false }
-  await disconnectLocalExecutorFromBackend()
+  await commitConnection(disconnectLocalExecutorFromBackend, isCurrent)
   return { connected: false }
 }

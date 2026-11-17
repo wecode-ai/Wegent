@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { ACTIVE_COMPOSER_SELECTOR, ACTIVE_WORKBENCH_SELECTOR } from './shared.mjs'
+import {
+  ACTIVE_COMPOSER_SELECTOR,
+  ACTIVE_WORKBENCH_SELECTOR,
+  selectE2EModel,
+} from './shared.mjs'
 import { testId } from './plugin-regression-fixture.mjs'
 import { assistantMessage, latestModelInputText } from './response-protocol.mjs'
 
@@ -132,6 +136,8 @@ export async function verifyConversationQrAuthorization({
     const state = authModel.begin(name, connectorSlug)
     await control.command('click', testId('new-chat-button'))
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+    // The authorization model fixture speaks Responses, independent of catalog arrival order.
+    await selectE2EModel(control)
     await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: state.prompt })
     const beforeSelection = await readEvents()
     await control.command('click', testId('composer-plugin-picker-button'))
@@ -201,6 +207,7 @@ export async function verifyConversationQrAuthorization({
       if (action === 'switch') {
         await control.command('click', testId('new-chat-button'))
         await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+        await selectE2EModel(control)
         await writeFile(qrApproval, 'approved')
       }
       await sendOrdinary()

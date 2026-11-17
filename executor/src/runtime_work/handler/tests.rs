@@ -1189,6 +1189,8 @@ pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandl
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.codex_app_server =
+        CodexAppServerClient::isolated_for_test("/bin/false", root.join("codex"));
     handler.transcript_test_workers = Some(Arc::new(tokio::sync::Semaphore::new(2)));
     handler.store = RuntimeWorkStore::new(runtime_work_dir.join("index.json"));
     handler.worktrees = WorktreeManager::new(runtime_work_dir.join("worktrees.json"));
