@@ -7,7 +7,7 @@ import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import type { StandInExecutorApi } from '@/api/standIn'
-import '@/i18n'
+import i18n from '@/i18n'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 
 vi.mock('@/components/layout/useProjectWorktreeAvailabilityProbe', () => ({
@@ -76,6 +76,158 @@ function fixture() {
     } as unknown as WorkbenchServices,
   }
 }
+
+it('distinguishes a pending save from a disabled unchanged save', () => {
+  const props = fixture()
+  const view = render(<StandInPrimaryProfile {...props} saving />)
+  const save = screen.getByTestId('stand-in-primary-save')
+  expect(save).toHaveTextContent('保存中')
+  expect(save).toHaveAttribute('aria-busy', 'true')
+  view.rerender(<StandInPrimaryProfile {...props} />)
+  expect(save).toHaveTextContent('保存设置')
+  expect(save).not.toHaveAttribute('aria-busy', 'true')
+  expect(save).toBeDisabled()
+})
+
+it('keeps the editor default scope without treating an unsaved default as configured', async () => {
+  const props = fixture()
+  props.settings.primary!.connections = []
+  const user = userEvent.setup({ delay: null })
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  expect(await screen.findByTestId('stand-in-connection-configured-filter')).toHaveTextContent('0')
+  await user.click(screen.getByTestId('stand-in-add-projects-connection'))
+  const all = screen.getByTestId('stand-in-all-projects')
+  expect(all).toBeChecked()
+  expect(all).toBeDisabled()
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  expect(all).toBeChecked()
+  expect(all).toBeDisabled()
+  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
+})
+
+it('does not persist a default source scope when saving only preferences', async () => {
+  const props = fixture()
+  const user = userEvent.setup({ delay: null })
+  render(<StandInPrimaryProfile {...props} />)
+  await user.type(screen.getByTestId('stand-in-preferences'), ' Additional preferences')
+  await user.click(screen.getByTestId('stand-in-primary-save'))
+  expect(props.onSave).toHaveBeenCalledWith(
+    expect.objectContaining({
+      primary: expect.objectContaining({ collaboration: undefined }),
+    })
+  )
+})
+
+it('protects an unfinished invalid project tag and permits saving after explicit recovery', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  await user.click(screen.getByTestId('stand-in-source-tags-toggle'))
+  const input = screen.getByTestId('stand-in-connection-tags-input')
+  const invalid = 'x'.repeat(33)
+  await user.type(input, invalid)
+  expect(await screen.findByRole('alert')).toHaveTextContent('标签名称不能超过 32 个字符')
+  expect(screen.getByTestId('stand-in-primary-save')).toBeVisible()
+  expect(screen.getByTestId('stand-in-primary-save')).toBeDisabled()
+  await user.click(screen.getByTestId('stand-in-primary-profile-close'))
+  await user.click(await screen.findByTestId('stand-in-project-tags-keep-editing'))
+  expect(input).toHaveValue(invalid)
+  expect(props.onClose).not.toHaveBeenCalled()
+  expect(props.onSave).not.toHaveBeenCalled()
+  await user.clear(input)
+  await waitFor(() => expect(screen.getByTestId('stand-in-primary-save')).toBeEnabled())
+  await user.click(screen.getByTestId('stand-in-primary-save'))
+  expect(props.onSave).toHaveBeenCalledWith(
+    expect.objectContaining({
+      primary: expect.objectContaining({
+        collaboration: expect.objectContaining({
+          tags: [],
+          allProjects: true,
+          policy: expect.objectContaining({ immediate: false }),
+        }),
+      }),
+    })
+  )
+})
+
+it('requires confirmation before disabling intake with an unfinished tag', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  await user.click(screen.getByTestId('stand-in-source-tags-toggle'))
+  const input = screen.getByTestId('stand-in-connection-tags-input')
+  await user.type(input, 'x'.repeat(33))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  expect(screen.getByTestId('stand-in-source-collaboration')).toHaveAttribute(
+    'aria-checked',
+    'true'
+  )
+  await user.click(await screen.findByTestId('stand-in-project-tags-discard'))
+  expect(screen.getByTestId('stand-in-source-collaboration')).toHaveAttribute(
+    'aria-checked',
+    'false'
+  )
+  expect(screen.getByTestId('stand-in-connection-tags-input')).toHaveValue('')
+  expect(screen.queryByText('标签名称不能超过 32 个字符')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-project-tags-draft-help')).not.toBeInTheDocument()
+})
+
+it('confirms closing a changed profile with an unfinished tag only once', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+  await user.click(await screen.findByTestId('stand-in-add-projects-connection'))
+  await user.click(screen.getByTestId('stand-in-source-collaboration'))
+  await user.click(screen.getByTestId('stand-in-source-tags-toggle'))
+  await user.type(screen.getByTestId('stand-in-connection-tags-input'), 'x'.repeat(33))
+  await user.click(screen.getByTestId('stand-in-primary-profile-close'))
+  await user.click(await screen.findByTestId('stand-in-project-tags-discard'))
+  expect(props.onClose).toHaveBeenCalledOnce()
+  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+  expect(props.onSave).not.toHaveBeenCalled()
+})
+
+it.each([false, true])(
+  'distinguishes an empty primary scope from a saved paused scope: %s',
+  async savedScope => {
+    const props = fixture()
+    props.settings.primary = {
+      ...props.settings.primary!,
+      connections: [],
+      ...(savedScope
+        ? {
+            collaboration: {
+              enabled: false,
+              allProjects: true,
+              projects: [],
+              excludedProjects: [],
+              tags: [],
+            },
+          }
+        : {}),
+    }
+    const user = userEvent.setup()
+    render(<StandInPrimaryProfile {...props} />)
+    await user.click(screen.getByTestId('stand-in-primary-connections-open'))
+    expect(await screen.findByTestId('stand-in-connection-configured-filter')).toHaveTextContent(
+      `已配置 ${savedScope ? 1 : 0}`
+    )
+    if (savedScope)
+      expect(screen.getByTestId('stand-in-add-projects-connection-status')).toHaveTextContent(
+        '未开启接收'
+      )
+    expect(props.onSave).not.toHaveBeenCalled()
+  }
+)
 
 it('explains an environment load failure and recovers without losing profile edits', async () => {
   const props = fixture()
@@ -264,6 +416,42 @@ it('persists real project and model selections and protects unsaved changes when
       }),
     })
   )
+})
+
+it.each([
+  ['zh-CN', '搜索项目'],
+  ['en', 'Search projects'],
+])('names the project search in %s', async (language, name) => {
+  const previous = i18n.language
+  await i18n.changeLanguage(language)
+  const view = render(<StandInPrimaryProfile {...fixture()} />)
+  try {
+    await userEvent.setup().click(screen.getByTestId('project-work-button'))
+    expect(await screen.findByRole('searchbox', { name })).toHaveFocus()
+  } finally {
+    view.unmount()
+    await i18n.changeLanguage(previous)
+  }
+})
+
+it('dismisses the project menu before asking to discard an unsaved workspace', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('project-work-button'))
+  await user.click(await screen.findByTestId('project-option-17'))
+  const trigger = screen.getByTestId('project-work-button')
+  await user.click(trigger)
+  await user.keyboard('{Escape}')
+  expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+  expect(trigger).toHaveFocus()
+  expect(trigger).toHaveTextContent('Repository')
+  expect(props.onClose).not.toHaveBeenCalled()
+  expect(props.onSave).not.toHaveBeenCalled()
+  await user.keyboard('{Escape}')
+  expect(await screen.findByTestId('stand-in-primary-discard')).toBeInTheDocument()
+  expect(props.onClose).not.toHaveBeenCalled()
 })
 
 it('shows existing local connection names on a remote device while limiting new selections', async () => {

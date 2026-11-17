@@ -247,14 +247,21 @@ pub(super) fn begin_model_request(
     }
 }
 
-pub(super) fn commit_model_request(token: &str, routing: &ModelRequestRouting) {
-    let Some(model_to_commit) = routing.model_to_commit.as_deref() else {
-        return;
-    };
+pub(super) fn commit_model_request(
+    token: &str,
+    routing: &ModelRequestRouting,
+    foreign_history_keys: &HashSet<String>,
+) {
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
     let Some(registered) = registry.routes.get_mut(token) else {
+        return;
+    };
+    registered
+        .foreign_history_keys
+        .extend(foreign_history_keys.iter().cloned());
+    let Some(model_to_commit) = routing.model_to_commit.as_deref() else {
         return;
     };
     let current_model = registered
@@ -334,7 +341,16 @@ pub(super) fn contains_model_switch_marker(request: &Value) -> bool {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|item| item.get("content").and_then(Value::as_array))
+        .any(item_contains_model_switch_marker)
+}
+
+pub(super) fn item_contains_model_switch_marker(item: &Value) -> bool {
+    if item.get("role").and_then(Value::as_str) != Some("developer") {
+        return false;
+    }
+    item.get("content")
+        .and_then(Value::as_array)
+        .into_iter()
         .flatten()
         .filter_map(|content| content.get("text").and_then(Value::as_str))
         .any(|text| text.contains("<model_switch>"))
