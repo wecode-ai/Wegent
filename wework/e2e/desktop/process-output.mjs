@@ -3,10 +3,23 @@ import { finished } from 'node:stream/promises'
 
 const outputs = new Map()
 
+function completionOf(stream, options = {}) {
+  return finished(stream, { cleanup: true, ...options }).then(
+    () => ({ status: 'fulfilled' }),
+    reason => ({ status: 'rejected', reason })
+  )
+}
+
 function outputFor(destination) {
   let output = outputs.get(destination)
   if (!output) {
-    output = { writer: createWriteStream(destination, { flags: 'a' }), sources: new Set() }
+    const writer = createWriteStream(destination, { flags: 'a' })
+    output = {
+      writer,
+      written: completionOf(writer),
+      sources: new Set(),
+      sourceCompletions: [],
+    }
     const sources = output.sources
     output.writer.on('error', error => {
       for (const source of sources) source.destroy(error)
@@ -20,6 +33,7 @@ export function appendProcessOutput(stream, destination) {
   if (!stream) return
   const output = outputFor(destination)
   output.sources.add(stream)
+  output.sourceCompletions.push(completionOf(stream, { readable: true, writable: false }))
   const complete = () => output.sources.delete(stream)
   stream.once('end', complete)
   stream.once('close', complete)
@@ -36,27 +50,20 @@ export async function flushProcessOutput() {
   const results = await Promise.allSettled(
     [...outputs].map(async ([destination, output]) => {
       try {
-        const sources = Promise.allSettled(
-          [...output.sources].map(source =>
-            finished(source, { cleanup: true, readable: true, writable: false })
-          )
-        )
-        const written = finished(output.writer, { cleanup: true })
-        const completion = await Promise.allSettled([
-          written,
-          sources.then(results => {
+        const [written, sources] = await Promise.all([
+          output.written,
+          Promise.all(output.sourceCompletions).then(results => {
             output.writer.end()
-            const failures = results.filter(result => result.status === 'rejected')
-            if (failures.length) {
-              throw new AggregateError(
-                failures.map(result => result.reason),
-                'Process output did not finish cleanly'
-              )
-            }
+            return results
           }),
         ])
-        for (const result of completion) {
-          if (result.status === 'rejected') throw result.reason
+        if (written.status === 'rejected') throw written.reason
+        const failures = sources.filter(result => result.status === 'rejected')
+        if (failures.length) {
+          throw new AggregateError(
+            failures.map(result => result.reason),
+            'Process output did not finish cleanly'
+          )
         }
       } finally {
         outputs.delete(destination)

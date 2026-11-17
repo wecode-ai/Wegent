@@ -56,7 +56,7 @@ function message(worker, type) {
   })
 }
 
-test.each([false, true])(
+test.each(['none', 'before-flush', 'during-flush'])(
   'serves control requests and drains held log I/O (source failure: %s)',
   async failSource => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-slow-log-'))
@@ -101,6 +101,10 @@ test.each([false, true])(
         } else if (command === 'fail-source') {
           let settled = false
           const messages = error => [error.message, ...(error.errors || []).flatMap(messages)]
+          if (workerData.failSource === 'before-flush') {
+            source.destroy(new Error('source failed'))
+            await new Promise(setImmediate)
+          }
           capture.flushProcessOutput().then(
             () => { settled = true; parentPort.postMessage({type: 'complete', errors: []}) },
             error => {
@@ -108,7 +112,7 @@ test.each([false, true])(
               parentPort.postMessage({type: 'complete', errors: messages(error)})
             },
           )
-          source.destroy(new Error('source failed'))
+          if (workerData.failSource === 'during-flush') source.destroy(new Error('source failed'))
           setImmediate(() => parentPort.postMessage({type: 'failed-source', settled}))
         } else {
           await capture.flushProcessOutput()
@@ -116,7 +120,7 @@ test.each([false, true])(
           parentPort.close()
         }
       })
-      if (workerData.failSource) source.write(Buffer.alloc(128 * 1024, 120))
+      if (workerData.failSource !== 'none') source.write(Buffer.alloc(128 * 1024, 120))
       else source.end(Buffer.alloc(128 * 1024, 120))
     })().catch(error => { throw error })
     `,
@@ -142,15 +146,15 @@ test.each([false, true])(
       worker.postMessage('ping')
       assert.deepEqual(await response, { type: 'pong', held: true, paused: true })
       const complete = message(worker, 'complete')
-      if (failSource) {
+      if (failSource !== 'none') {
         const failed = message(worker, 'failed-source')
         worker.postMessage('fail-source')
         assert.deepEqual(await failed, { type: 'failed-source', settled: false })
       }
       release()
-      if (!failSource) worker.postMessage('finish')
+      if (failSource === 'none') worker.postMessage('finish')
       const result = await complete
-      if (failSource) assert.ok(result.errors.includes('source failed'))
+      if (failSource !== 'none') assert.ok(result.errors.includes('source failed'))
       assert.deepEqual(await readFile(destination), Buffer.alloc(128 * 1024, 120))
     } finally {
       clearTimeout(watchdog)
@@ -162,40 +166,47 @@ test.each([false, true])(
   10_000
 )
 
-test('drains other logs before rejecting a failed destination', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'wework-log-error-'))
-  const healthy = new PassThrough()
-  let flushing
-  try {
-    const source = new PassThrough()
-    const failed = new Promise(resolve => source.once('close', resolve))
-    const destination = join(directory, 'healthy.log')
-    appendProcessOutput(healthy, destination)
-    healthy.write('before\n')
-    appendProcessOutput(source, join(directory, 'missing', 'process.log'))
-    source.write('required evidence')
-    let settled = false
-    flushing = flushProcessOutput().then(
-      () => {
-        settled = true
-        return null
-      },
-      error => {
-        settled = true
-        return error
+test.each([false, true])(
+  'drains other logs before rejecting a failed destination (error before flush: %s)',
+  async failBeforeFlush => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-log-error-'))
+    const healthy = new PassThrough()
+    let flushing
+    try {
+      const source = new PassThrough()
+      const failed = new Promise(resolve => source.once('close', resolve))
+      const destination = join(directory, 'healthy.log')
+      appendProcessOutput(healthy, destination)
+      healthy.write('before\n')
+      appendProcessOutput(source, join(directory, 'missing', 'process.log'))
+      source.write('required evidence')
+      if (failBeforeFlush) {
+        await failed
+        await setImmediate()
       }
-    )
-    await failed
-    await setImmediate()
-    assert.equal(settled, false, 'A failed destination must not abandon other pending logs')
-    healthy.end('after\n')
-    const error = await flushing
-    assert.ok(error instanceof AggregateError)
-    assert.ok(error.errors.some(item => item.code === 'ENOENT'))
-    assert.equal(await readFile(destination, 'utf8'), 'before\nafter\n')
-  } finally {
-    healthy.end()
-    await flushing
-    await rm(directory, { recursive: true, force: true })
+      let settled = false
+      flushing = flushProcessOutput().then(
+        () => {
+          settled = true
+          return null
+        },
+        error => {
+          settled = true
+          return error
+        }
+      )
+      await failed
+      await setImmediate()
+      assert.equal(settled, false, 'A failed destination must not abandon other pending logs')
+      healthy.end('after\n')
+      const error = await flushing
+      assert.ok(error instanceof AggregateError)
+      assert.ok(error.errors.some(item => item.code === 'ENOENT'))
+      assert.equal(await readFile(destination, 'utf8'), 'before\nafter\n')
+    } finally {
+      healthy.end()
+      await flushing
+      await rm(directory, { recursive: true, force: true })
+    }
   }
-})
+)
