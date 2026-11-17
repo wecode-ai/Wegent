@@ -18,8 +18,8 @@ export function IssueReplyContext({
   const { t } = useTranslation('common')
   const label = `${t(issueReplyCopy[kind].label, { name })}${content ? ` · ${content}` : ''}`
   return (
-    <div className="mx-3 border-b border-border/60 px-1 text-xs text-text-secondary">
-      <div className="flex min-h-8 items-center gap-2">
+    <div className="task-detail-comment-reply-context mx-3 border-b border-border/60 px-1 text-xs text-text-secondary">
+      <div className="task-detail-comment-reply-context-row flex min-h-8 items-center gap-2">
         <span className="min-w-0 flex-1 truncate" title={label}>
           {label}
         </span>

@@ -58,8 +58,8 @@ export function ChromeTitlebar({
       ref={titlebarRef}
       data-testid="chrome-titlebar"
       className={cn(
-        'relative z-titlebar flex h-12 shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none md:h-[38px]',
-        isDesktop && platform !== 'mac' && 'max-md:h-24 max-md:pb-12',
+        'relative z-titlebar flex h-12 shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none sm:max-md:h-11 md:h-[38px]',
+        isDesktop && platform !== 'mac' && 'max-sm:h-24 max-sm:pb-12',
         className
       )}
     >
@@ -76,7 +76,7 @@ export function ChromeTitlebar({
       {isDesktop && platform !== 'mac' && (
         <div
           data-testid="compact-titlebar-drag-region"
-          className="min-w-0 flex-1 self-stretch md:hidden"
+          className="min-w-0 flex-1 self-stretch sm:hidden"
         >
           <MacOSTitleBarDragRegion />
         </div>
@@ -95,7 +95,7 @@ export function ChromeTitlebar({
         availableKinds={availableWorkspaceTabKinds}
         className={
           isDesktop && platform !== 'mac'
-            ? 'max-md:absolute max-md:inset-x-0 max-md:bottom-0 max-md:h-12 max-md:w-full'
+            ? 'max-sm:absolute max-sm:inset-x-0 max-sm:bottom-0 max-sm:h-12 max-sm:w-full'
             : undefined
         }
       />

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { until } from './plugin-regression-fixture.mjs'
 import { verifyComposerLayout } from './issue-comment-workflow.mjs'
 import { setGoalDraftForTabTransfer } from './goal-draft-flows.mjs'
+import { waitForElementInsideScroller } from './conversation-layout.mjs'
 
 async function resizeHome(control, home, width, height, timeoutMs) {
   await control.command('setMainWindowSize', 'body', {
@@ -32,6 +33,76 @@ async function waitForNarrowIssue(control, home, timeoutMs) {
     'The narrow Issue header and working area must be in view',
     timeoutMs
   )
+}
+
+async function verifyEnglishParticipantExplanation(control, home, issueId, timeoutMs) {
+  const participating = await control.command(
+    'getAttribute',
+    `${home} [data-testid="personal-home-scope-participating"]`,
+    { value: 'aria-pressed' }
+  )
+  const openSettings = async () => {
+    await resizeHome(control, home, 1440, 900, timeoutMs)
+    await control.command('click', '[data-testid="settings-button"]')
+    await control.command('click', '[data-testid="settings-menu-button"]')
+    await control.command('waitFor', '[data-testid="general-language-en-button"]', {
+      visible: true,
+    })
+  }
+  const closeSettings = async () => {
+    await control.command('click', '[data-testid="settings-back-button"]')
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
+    await control.command('waitFor', home, { visible: true })
+  }
+  await openSettings()
+  const originalLanguage = await control.command(
+    'getAttribute',
+    '[data-testid^="general-language-"][aria-pressed="true"]',
+    { value: 'data-testid' }
+  )
+  assert.match(originalLanguage, /^general-language-(system|zh-CN|en)-button$/)
+  try {
+    await control.command('clickWhenEnabled', '[data-testid="general-language-en-button"]')
+    await control.command(
+      'waitFor',
+      '[data-testid="general-language-en-button"][aria-pressed="true"]:enabled'
+    )
+    await closeSettings()
+    await control.command('click', `${home} [data-testid="personal-home-scope-participating"]`)
+    await control.command(
+      'clickWhenEnabled',
+      `${home} [data-testid="personal-home-issue-${issueId}"]`
+    )
+    const explanation = `${home} [data-testid="issue-collaborators-unavailable"]`
+    await control.command('waitFor', explanation, {
+      text: 'Editing participants is not available for this project yet',
+      visible: true,
+    })
+    for (const width of [1100, 390]) {
+      await resizeHome(control, home, width, 900, timeoutMs)
+      await control.command('scrollIntoViewAsUser', explanation)
+      await waitForElementInsideScroller(
+        control,
+        explanation,
+        `${home} [data-testid="cloud-todo-detail-scroll"]`,
+        'The complete English participant explanation must remain readable at constrained widths',
+        timeoutMs,
+        { clipToViewport: true }
+      )
+    }
+  } finally {
+    await openSettings()
+    await control.command('clickWhenEnabled', `[data-testid="${originalLanguage}"]`)
+    await control.command(
+      'waitFor',
+      `[data-testid="${originalLanguage}"][aria-pressed="true"]:enabled`
+    )
+    await closeSettings()
+    await control.command(
+      'click',
+      `${home} [data-testid="personal-home-scope-${participating === 'true' ? 'participating' : 'assigned'}"]`
+    )
+  }
 }
 
 async function verifyTaskLabels(control, home) {
@@ -514,6 +585,7 @@ export async function verifyCollaborationHomeUsability(
       draft,
       'Inspecting an Issue must retain the assistant draft'
     )
+    await verifyEnglishParticipantExplanation(control, home, issueId, timeoutMs)
   } finally {
     await resizeHome(control, home, initial.viewportWidth, initial.viewportHeight, timeoutMs)
   }

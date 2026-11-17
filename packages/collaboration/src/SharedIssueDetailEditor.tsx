@@ -998,7 +998,7 @@ export function TodoEditor(props: TodoEditorProps) {
     <span
       id={collaboratorAvailabilityId}
       data-testid="issue-collaborators-unavailable"
-      className="text-xs text-text-secondary"
+      className="min-w-0 max-w-full whitespace-normal break-words text-xs text-text-secondary"
     >
       {t("todo.collaborators_unavailable", "此项目暂不支持编辑参与者")}
     </span>
