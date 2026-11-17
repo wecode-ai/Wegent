@@ -5,6 +5,7 @@ const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const MAX_EVENTS: i64 = 10_000;
 
 pub struct StandInRunObservation<'a> {
+    pub occurred_at: i64,
     pub user: i64,
     pub task: &'a str,
     pub turn: &'a str,
@@ -33,6 +34,32 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
          );",
     )?;
     Ok(())
+}
+
+// Older executors write the two-column policy table positionally. Keep its shape stable.
+// Existing profiles initialize this additive consent state only during a telemetry write.
+fn ensure_consent_cutoff_store(connection: &Connection) -> Result<(), TaskRuntimeError> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS stand_in_telemetry_cutoffs (
+            user_id INTEGER PRIMARY KEY, enabled_since INTEGER NOT NULL
+         );",
+    )?;
+    Ok(())
+}
+
+fn consent_allows(connection: &Connection, user: i64, at: i64) -> Result<bool, TaskRuntimeError> {
+    if !enabled(connection, user)? {
+        return Ok(false);
+    }
+    ensure_consent_cutoff_store(connection)?;
+    let since: Option<i64> = connection
+        .query_row(
+            "SELECT enabled_since FROM stand_in_telemetry_cutoffs WHERE user_id=?1",
+            [user],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(since.map_or(true, |since| at >= since))
 }
 
 fn enabled(connection: &Connection, user: i64) -> Result<bool, TaskRuntimeError> {
@@ -77,9 +104,19 @@ pub(super) fn append(
     properties: &Value,
     at: i64,
 ) -> Result<(), TaskRuntimeError> {
-    if !enabled(connection, user)? {
+    if !consent_allows(connection, user, at)? {
         return Ok(());
     }
+    append_allowed(connection, user, name, properties, at)
+}
+
+fn append_allowed(
+    connection: &Connection,
+    user: i64,
+    name: &str,
+    properties: &Value,
+    at: i64,
+) -> Result<(), TaskRuntimeError> {
     connection.execute(
         "INSERT INTO stand_in_telemetry_events(user_id,event_id,occurred_at,event_name,properties)
          VALUES(?1,?2,?3,?4,?5)",
@@ -142,7 +179,24 @@ impl LocalTaskStore {
     ) -> Result<(), TaskRuntimeError> {
         let mut guard = self.connection()?;
         let tx = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute("INSERT INTO stand_in_telemetry_policy VALUES(?1,?2) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled", params![user, allow])?;
+        let was_enabled: Option<bool> = tx
+            .query_row(
+                "SELECT enabled FROM stand_in_telemetry_policy WHERE user_id=?1",
+                [user],
+                |row| row.get(0),
+            )
+            .optional()?;
+        ensure_consent_cutoff_store(&tx)?;
+        let at = Utc::now().timestamp_millis();
+        let boundary = if !allow || was_enabled == Some(false) {
+            Some(at)
+        } else {
+            enabled_since.or_else(|| was_enabled.is_none().then_some(at))
+        };
+        if let Some(since) = boundary {
+            tx.execute("INSERT INTO stand_in_telemetry_cutoffs(user_id,enabled_since) VALUES(?1,?2) ON CONFLICT(user_id) DO UPDATE SET enabled_since=MAX(enabled_since,excluded.enabled_since)", params![user,since])?;
+        }
+        tx.execute("INSERT INTO stand_in_telemetry_policy(user_id,enabled) VALUES(?1,?2) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled", params![user, allow])?;
         if !allow {
             tx.execute(
                 "DELETE FROM stand_in_telemetry_events WHERE user_id=?1",
@@ -154,7 +208,14 @@ impl LocalTaskStore {
             )?;
         }
         if allow {
-            if let Some(since) = enabled_since {
+            let since: Option<i64> = tx
+                .query_row(
+                    "SELECT enabled_since FROM stand_in_telemetry_cutoffs WHERE user_id=?1",
+                    [user],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(since) = since {
                 tx.execute(
                     "DELETE FROM stand_in_telemetry_events WHERE user_id=?1 AND occurred_at<?2",
                     params![user, since],
@@ -172,9 +233,9 @@ impl LocalTaskStore {
 
     pub fn list_stand_in_telemetry(&self, user: i64) -> Result<Value, TaskRuntimeError> {
         let connection = self.connection()?;
-        prune(&connection, user, Utc::now().timestamp_millis())?;
-        let mut statement = connection.prepare("SELECT event_id,occurred_at,event_name,properties FROM stand_in_telemetry_events WHERE user_id=?1 ORDER BY sequence LIMIT 100")?;
-        let items = statement.query_map([user], |row| {
+        // Cleanup belongs to append/configure; polling the queue must remain read-only.
+        let mut statement = connection.prepare("SELECT event_id,occurred_at,event_name,properties FROM stand_in_telemetry_events WHERE user_id=?1 AND occurred_at>=?2 AND sequence IN (SELECT sequence FROM stand_in_telemetry_events WHERE user_id=?1 AND occurred_at>=?2 ORDER BY sequence DESC LIMIT ?3) ORDER BY sequence LIMIT 100")?;
+        let items = statement.query_map(params![user, Utc::now().timestamp_millis() - RETENTION_MS, MAX_EVENTS], |row| {
             let raw: String = row.get(3)?;
             let properties = serde_json::from_str::<Value>(&raw).map_err(|error| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(error)))?;
             Ok(json!({"id":row.get::<_,String>(0)?,"occurredAt":row.get::<_,i64>(1)?,"name":row.get::<_,String>(2)?,"properties":properties}))
@@ -205,14 +266,15 @@ impl LocalTaskStore {
         name: &str,
         properties: &Value,
     ) -> Result<(), TaskRuntimeError> {
-        let connection = self.connection()?;
-        append(
-            &connection,
-            user,
-            name,
-            properties,
-            Utc::now().timestamp_millis(),
-        )
+        let at = Utc::now().timestamp_millis();
+        let mut connection = self.connection()?;
+        if !enabled(&connection, user)? {
+            return Ok(());
+        }
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        append(&transaction, user, name, properties, at)?;
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn observe_stand_in_run(
@@ -220,6 +282,7 @@ impl LocalTaskStore {
         observation: StandInRunObservation<'_>,
     ) -> Result<(), TaskRuntimeError> {
         let StandInRunObservation {
+            occurred_at: at,
             user,
             task,
             turn,
@@ -229,11 +292,13 @@ impl LocalTaskStore {
             properties,
         } = observation;
         let mut guard = self.connection()?;
-        let tx = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if !enabled(&tx, user)? {
+        if !enabled(&guard, user)? {
             return Ok(());
         }
-        let at = Utc::now().timestamp_millis();
+        let tx = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if !consent_allows(&tx, user, at)? {
+            return Ok(());
+        }
         let previous: Option<(String,String,i64,bool)> = tx.query_row(
             "SELECT run_id,phase,started_at,waiting FROM stand_in_telemetry_runs WHERE user_id=?1 AND task_id=?2",
             params![user,task], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
@@ -246,7 +311,7 @@ impl LocalTaskStore {
                     || (!turn.is_empty() && !id.is_empty() && id != turn)
             });
         let (mut id, mut phase, started) = if fresh {
-            append(&tx, user, "stand_in_execution_started", properties, at)?;
+            append_allowed(&tx, user, "stand_in_execution_started", properties, at)?;
             (turn.to_owned(), "running".to_owned(), at)
         } else if let Some((id, phase, started, _)) = previous {
             (id, phase, started)
@@ -257,14 +322,14 @@ impl LocalTaskStore {
             id = turn.to_owned();
         }
         if waiting && !was_waiting {
-            append(&tx, user, "stand_in_execution_waiting", properties, at)?;
+            append_allowed(&tx, user, "stand_in_execution_waiting", properties, at)?;
         }
         if !running && phase != "completed" {
             if let Some(result) = result {
                 let mut end = properties.clone();
                 end["result"] = json!(result);
                 end["duration_ms"] = json!((at - started).clamp(0, RETENTION_MS));
-                append(&tx, user, "stand_in_execution_completed", &end, at)?;
+                append_allowed(&tx, user, "stand_in_execution_completed", &end, at)?;
                 phase = "completed".into();
             }
         }
@@ -439,6 +504,7 @@ mod tests {
         store.configure_stand_in_telemetry(7, true, None).unwrap();
         store
             .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis(),
                 user: 7,
                 task: "private-task",
                 turn: "turn",
@@ -452,6 +518,7 @@ mod tests {
         let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
         store
             .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis(),
                 user: 7,
                 task: "private-task",
                 turn: "turn",
@@ -484,6 +551,7 @@ mod tests {
         let observe = |turn, running, waiting, result| {
             store
                 .observe_stand_in_run(StandInRunObservation {
+                    occurred_at: Utc::now().timestamp_millis(),
                     user: 7,
                     task: "task",
                     turn,
@@ -534,6 +602,7 @@ mod tests {
         ] {
             store
                 .observe_stand_in_run(StandInRunObservation {
+                    occurred_at: Utc::now().timestamp_millis(),
                     user: 7,
                     task: "task",
                     turn: "turn",
@@ -649,6 +718,7 @@ mod retention_tests {
         let properties = origin_properties(&json!({"type":"stand_in_identity"}));
         store
             .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis(),
                 user: 7,
                 task: "task",
                 turn: "turn",
@@ -660,6 +730,7 @@ mod retention_tests {
             .unwrap();
         store
             .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis(),
                 user: 7,
                 task: "task",
                 turn: "turn",
@@ -680,6 +751,7 @@ mod retention_tests {
         }
         store
             .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis(),
                 user: 7,
                 task: "task",
                 turn: "turn",
@@ -690,6 +762,8 @@ mod retention_tests {
             })
             .unwrap();
         store.list_stand_in_telemetry(7).unwrap();
+        // Cleanup is a write operation, not a side effect of reading the queue.
+        store.configure_stand_in_telemetry(7, true, None).unwrap();
         let count: i64 = store
             .connection()
             .unwrap()
@@ -698,5 +772,229 @@ mod retention_tests {
             })
             .unwrap();
         assert_eq!(count, 0);
+    }
+}
+
+#[cfg(test)]
+mod read_isolation_tests {
+    use super::*;
+
+    #[test]
+    fn telemetry_reads_filter_expired_events_without_cleaning_the_database() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        store.configure_stand_in_telemetry(7, true, None).unwrap();
+        let connection = store.connection().unwrap();
+        connection.execute("INSERT INTO stand_in_telemetry_events(user_id,event_id,occurred_at,event_name,properties) VALUES(7,'expired',?1,'test','{}')", [Utc::now().timestamp_millis() - RETENTION_MS - 1]).unwrap();
+        drop(connection);
+        let mut writer = Connection::open(path).unwrap();
+        let transaction = writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        assert!(store.list_stand_in_telemetry(7).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let count: i64 = transaction
+            .query_row(
+                "SELECT count(*) FROM stand_in_telemetry_events",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "reading the queue must not delete expired records"
+        );
+        transaction.rollback().unwrap();
+        store.configure_stand_in_telemetry(7, true, None).unwrap();
+        let count: i64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM stand_in_telemetry_events",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+}
+
+#[cfg(test)]
+mod deferred_consent_tests {
+    use super::*;
+
+    #[test]
+    fn deferred_observations_respect_the_persisted_consent_cutoff() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let before = Utc::now().timestamp_millis() - 10_000;
+        let cutoff = before + 5_000;
+        store
+            .configure_stand_in_telemetry(7, true, Some(before))
+            .unwrap();
+        store
+            .configure_stand_in_telemetry(7, true, Some(cutoff))
+            .unwrap();
+        drop(store);
+        let store = LocalTaskStore::open(&path).unwrap();
+        let properties = json!({"domain":"stand_in"});
+        for (at, task, running, result) in [
+            (before + 1_000, "old", true, None),
+            (before + 2_000, "old", false, Some("success")),
+        ] {
+            store
+                .observe_stand_in_run(StandInRunObservation {
+                    occurred_at: at,
+                    user: 7,
+                    task,
+                    turn: "turn",
+                    running,
+                    waiting: false,
+                    result,
+                    properties: &properties,
+                })
+                .unwrap();
+        }
+        assert!(store.list_stand_in_telemetry(7).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        for (at, running, result) in [
+            (cutoff, true, None),
+            (cutoff + 4_000, false, Some("success")),
+        ] {
+            store
+                .observe_stand_in_run(StandInRunObservation {
+                    occurred_at: at,
+                    user: 7,
+                    task: "new",
+                    turn: "turn",
+                    running,
+                    waiting: false,
+                    result,
+                    properties: &properties,
+                })
+                .unwrap();
+        }
+        let events = store.list_stand_in_telemetry(7).unwrap();
+        assert_eq!(events["items"].as_array().unwrap().len(), 2);
+        assert_eq!(events["items"][0]["occurredAt"], cutoff);
+        assert_eq!(events["items"][1]["properties"]["duration_ms"], 4_000);
+    }
+    #[test]
+    fn consent_cutoff_initialization_never_gates_queue_reads() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let writer = Connection::open(&path).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(store.list_stand_in_telemetry(7).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let exists: bool = writer.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='stand_in_telemetry_cutoffs')",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert!(
+            !exists,
+            "reading an existing store must not initialize consent policy writes"
+        );
+        writer.execute_batch("ROLLBACK").unwrap();
+        store.configure_stand_in_telemetry(7, true, None).unwrap();
+        // The additional cutoff state does not change an older executor's policy writes.
+        writer
+            .execute(
+                "INSERT OR REPLACE INTO stand_in_telemetry_policy VALUES(7,1)",
+                [],
+            )
+            .unwrap();
+        store.configure_stand_in_telemetry(7, false, None).unwrap();
+        store.configure_stand_in_telemetry(7, true, None).unwrap();
+        store
+            .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis() - 1_000,
+                user: 7,
+                task: "old",
+                turn: "turn",
+                running: true,
+                waiting: false,
+                result: None,
+                properties: &json!({}),
+            })
+            .unwrap();
+        assert!(store.list_stand_in_telemetry(7).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+    #[test]
+    fn reenabled_consent_rejects_facts_captured_while_disabled() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let old_boundary = Utc::now().timestamp_millis() - 10_000;
+        store
+            .configure_stand_in_telemetry(7, true, Some(old_boundary))
+            .unwrap();
+        store.configure_stand_in_telemetry(7, false, None).unwrap();
+        let connection = Connection::open(&path).unwrap();
+        // Model a policy disabled before this delayed observation was captured.
+        connection
+            .execute(
+                "UPDATE stand_in_telemetry_cutoffs SET enabled_since=?1 WHERE user_id=7",
+                [old_boundary + 1_000],
+            )
+            .unwrap();
+        store
+            .configure_stand_in_telemetry(7, true, Some(old_boundary))
+            .unwrap();
+        store
+            .observe_stand_in_run(StandInRunObservation {
+                occurred_at: old_boundary + 2_000,
+                user: 7,
+                task: "disabled-interval",
+                turn: "turn",
+                running: true,
+                waiting: false,
+                result: None,
+                properties: &json!({}),
+            })
+            .unwrap();
+        assert!(store.list_stand_in_telemetry(7).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let cutoff: i64 = connection
+            .query_row(
+                "SELECT enabled_since FROM stand_in_telemetry_cutoffs WHERE user_id=7",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(cutoff > old_boundary + 2_000);
+        store
+            .observe_stand_in_run(StandInRunObservation {
+                occurred_at: cutoff,
+                user: 7,
+                task: "reenabled",
+                turn: "turn",
+                running: true,
+                waiting: false,
+                result: None,
+                properties: &json!({}),
+            })
+            .unwrap();
+        assert_eq!(
+            store.list_stand_in_telemetry(7).unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }
