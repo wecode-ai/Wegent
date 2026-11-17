@@ -186,6 +186,13 @@ export const deviceApis = {
     return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/upgrade`, options || {})
   },
 
+  async restartCloudDevice(deviceId: string): Promise<{ message: string }> {
+    // The registered device action delegates to the deployment's restart provider.
+    return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/upgrade`, {
+      force_stop_tasks: true,
+    })
+  },
+
   /**
    * Update a device's display name (alias).
    *

@@ -25,7 +25,8 @@ fn conversation() -> Value {
             "source":string(),"workspacePath":nullable(string()),"project_key":nullable(string()),
             "created_at":{"type":"integer"},"updated_at":{"type":"integer"},
             "model_selection":{"type":["object","null"]},"origin":{"type":["object","null"]},
-            "change_requests":nullable(array(string())),"goal":{"type":["object","null"]}}),
+            "change_requests":nullable(array(string())),"goal":{"type":["object","null"]},
+            "startup_failure":nullable(object(json!({"code":string(),"message":string(),"failedAt":{"type":"integer"}}), &["code","message","failedAt"]))}),
         &["conversation_id", "taskId"],
     )
 }

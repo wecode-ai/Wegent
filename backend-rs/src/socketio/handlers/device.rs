@@ -98,7 +98,7 @@ async fn upgrade_status(
 async fn runtime_event(
     data: Value,
     session: &DeviceSession,
-    app: &AppState,
+    app: &Arc<AppState>,
     runtime: &Arc<SocketRuntime>,
     turn: Turn,
 ) -> Result<Reply<Value>, ClientError> {

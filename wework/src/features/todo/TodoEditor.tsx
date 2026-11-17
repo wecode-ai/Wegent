@@ -4,7 +4,7 @@ import {
 } from './IssueAssignmentReceipts'
 import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { LockKeyhole, Send } from 'lucide-react'
+import { Send } from 'lucide-react'
 import {
   TodoEditor as SharedIssueDetailEditor,
   type CollaborationAssignment,
@@ -42,6 +42,8 @@ import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import { CloudFilePreviewDialog } from './CloudFilePreviewDialog'
 import { IssueWebLinkButton } from './IssueWebLinkButton'
+import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
+import type { WorkspaceAttachmentPreviewSource } from '@/types/workspace-files'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -148,12 +150,14 @@ function canCreatePersonalTask(props: TodoEditorProps): boolean {
 export function TodoEditor(props: TodoEditorProps) {
   const { t, i18n } = useTranslation('common')
   const taskOwnerUserId = props.project?.project_store === 'local' ? 0 : props.currentUserId
+  const collaboratorEditingSupported = props.project?.project_store !== 'local'
   const showPersonalTaskAction = canCreatePersonalTask(props)
   const [previewAttachment, setPreviewAttachment] = useState<{
-    id: string
     filename: string
     contentType: string | null
     sizeBytes: number
+    loadFile: () => Promise<Blob>
+    download: () => Promise<void>
   } | null>(null)
   const collaborationTranslate = useMemo(
     () => createCollaborationTranslator(i18n.language.startsWith('zh') ? 'zh-CN' : 'en'),
@@ -188,14 +192,6 @@ export function TodoEditor(props: TodoEditorProps) {
   )
   const attachmentProjectId = props.project ? String(props.project.id) : undefined
   const attachmentIssueId = props.mode === 'edit' ? props.item.id : undefined
-  const openResourceAttachment = useCallback((attachment: CollaborationAttachment) => {
-    setPreviewAttachment({
-      id: attachment.id,
-      filename: attachment.display_name,
-      contentType: attachment.content_type,
-      sizeBytes: attachment.size_bytes,
-    })
-  }, [])
   const attachmentContext = useMemo(
     () =>
       attachmentProjectId && attachmentIssueId
@@ -214,6 +210,10 @@ export function TodoEditor(props: TodoEditorProps) {
     )
     return {
       ...detailPort,
+      collaborators: {
+        ...detailPort.collaborators,
+        editingSupported: collaboratorEditingSupported,
+      },
       taskBindings: {
         async list(...args: Parameters<typeof detailPort.taskBindings.list>) {
           const tasks = await detailPort.taskBindings.list(...args)
@@ -224,13 +224,48 @@ export function TodoEditor(props: TodoEditorProps) {
         },
       },
     }
-  }, [workspaceApi, taskOwnerUserId, props.getRuntimeTranscript, attachmentContext])
-  const loadPreviewAttachment = useCallback(() => {
-    if (!previewAttachment) throw new Error('No Issue attachment is selected')
-    return attachmentContext
-      ? workspaceApi.attachments.read(previewAttachment.id, attachmentContext)
-      : workspaceApi.attachments.read(previewAttachment.id)
-  }, [workspaceApi.attachments, attachmentContext, previewAttachment])
+  }, [
+    workspaceApi,
+    taskOwnerUserId,
+    props.getRuntimeTranscript,
+    attachmentContext,
+    collaboratorEditingSupported,
+  ])
+  const openIssueAttachment = useCallback(
+    (id: string, filename: string, contentType: string | null, sizeBytes: number) => {
+      setPreviewAttachment({
+        filename,
+        contentType,
+        sizeBytes,
+        loadFile: () =>
+          attachmentContext
+            ? workspaceApi.attachments.read(id, attachmentContext)
+            : workspaceApi.attachments.read(id),
+        download: () => port.attachments.download(id, filename),
+      })
+    },
+    [workspaceApi.attachments, attachmentContext, port.attachments]
+  )
+  const openResourceAttachment = useCallback(
+    (attachment: CollaborationAttachment) => {
+      openIssueAttachment(
+        attachment.id,
+        attachment.display_name,
+        attachment.content_type,
+        attachment.size_bytes
+      )
+    },
+    [openIssueAttachment]
+  )
+  const openStagedAttachment = useCallback((source: WorkspaceAttachmentPreviewSource) => {
+    setPreviewAttachment({
+      ...source,
+      sizeBytes: 0,
+      download: async () => {
+        await saveBlobToDownloads(await source.loadFile(), source.filename)
+      },
+    })
+  }, [])
   const loadTeams = useCallback(
     () => props.teamApi?.listTeams() ?? Promise.resolve([]),
     [props.teamApi]
@@ -240,11 +275,13 @@ export function TodoEditor(props: TodoEditorProps) {
     normalizeDescription: normalizeTaskDescription,
     isExecutionActive: item => isLoopItemExecutionActive(item as CloudLoopItem),
     openAttachment: async (id, filename, contentType, sizeBytes) => {
-      setPreviewAttachment({ id, filename, contentType, sizeBytes })
+      openIssueAttachment(id, filename, contentType, sizeBytes)
     },
     renderDescriptionEditor: context => (
       <TaskDescriptionEditor
         value={context.value}
+        ariaLabel={t('todo.issue_description_label')}
+        placeholder={context.placeholder}
         onChange={context.onChange}
         onPasteFiles={context.onPasteFiles}
         readAttachment={context.readAttachment}
@@ -329,26 +366,20 @@ export function TodoEditor(props: TodoEditorProps) {
       showPersonalTaskAction && props.onCreateTask
         ? ({ onCreateTask }) => {
             return (
-              <section
+              <span
                 className="task-detail-personal-task"
                 data-testid="cloud-todo-personal-task-action"
               >
-                <span className="task-detail-personal-task-icon" aria-hidden="true">
-                  <LockKeyhole size={14} />
-                </span>
-                <span className="task-detail-personal-task-copy">
-                  <strong>{t('todo.personal_task_title')}</strong>
-                  <small>{t('todo.personal_task_description')}</small>
-                </span>
                 <button
                   type="button"
                   data-testid="cloud-todo-personal-task-start"
+                  title={`${t('todo.personal_task_title')} · ${t('todo.personal_task_description')}`}
                   onClick={onCreateTask}
                 >
                   <Send aria-hidden="true" size={14} />
                   {t('todo.create_personal_task')}
                 </button>
-              </section>
+              </span>
             )
           }
         : undefined,
@@ -448,29 +479,29 @@ export function TodoEditor(props: TodoEditorProps) {
     )
 
   return (
-    <IssueMarkdownProvider
-      attachments={workspaceApi.attachments}
-      issueId={attachmentIssueId}
-      projectId={attachmentProjectId}
-      onOpenAttachment={openResourceAttachment}
-    >
-      {editor}
-      {previewAttachment ? (
-        <CloudFilePreviewDialog
-          filename={previewAttachment.filename}
-          contentType={previewAttachment.contentType}
-          sizeLabel={
-            previewAttachment.sizeBytes > 0
-              ? formatIssueAttachmentSize(previewAttachment.sizeBytes)
-              : null
-          }
-          loadFile={loadPreviewAttachment}
-          onDownload={() =>
-            port.attachments.download(previewAttachment.id, previewAttachment.filename)
-          }
-          onClose={() => setPreviewAttachment(null)}
-        />
-      ) : null}
-    </IssueMarkdownProvider>
+    <AttachmentPreviewContext.Provider value={openStagedAttachment}>
+      <IssueMarkdownProvider
+        attachments={workspaceApi.attachments}
+        issueId={attachmentIssueId}
+        projectId={attachmentProjectId}
+        onOpenAttachment={openResourceAttachment}
+      >
+        {editor}
+        {previewAttachment ? (
+          <CloudFilePreviewDialog
+            filename={previewAttachment.filename}
+            contentType={previewAttachment.contentType}
+            sizeLabel={
+              previewAttachment.sizeBytes > 0
+                ? formatIssueAttachmentSize(previewAttachment.sizeBytes)
+                : null
+            }
+            loadFile={previewAttachment.loadFile}
+            onDownload={previewAttachment.download}
+            onClose={() => setPreviewAttachment(null)}
+          />
+        ) : null}
+      </IssueMarkdownProvider>
+    </AttachmentPreviewContext.Provider>
   )
 }

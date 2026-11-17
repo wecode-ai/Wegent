@@ -8,11 +8,13 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 ## 多实例调试
 
-使用 `pnpm --filter wework dev:mac` 启动日常 debug 应用时，默认直接使用正式版的 Executor Home，因此项目和任务会与本机正式版 Wework 共享；每个 Wework 进程仍通过自己子进程的 stdio 与 executor 通信，不会发生端点覆盖或误连其他 executor。需要临时隔离项目和任务时，使用 `pnpm --filter wework dev:mac -- --executor-isolation`。
+使用 `pnpm --filter wework dev:mac` 启动日常 debug 应用时，各 worktree 共享 `~/.wegent/development/workbench` 下的开发历史，与正式版数据隔离；窗口状态、日志、设备身份和 IPC 按 worktree 分开。`--executor-isolation` 是保留的参数，开发数据隔离始终启用。
+
+多个 dev 可同时启动并继续使用共享历史。启动准备按 Home 串行执行；如果迁移日志已完成、会话元数据与 SQLite 索引已就绪，后来的实例只读检查后继续启动，不争抢现有对话持有的写锁。若发现尚未完成的迁移、旧 provider 或索引不一致，仍需在写入者退出后完成受锁保护的迁移；不会绕过锁、改写活动会话或把失败当作就绪。
 
 `ai:verify` 和桌面 E2E 不使用上述共享默认值。它们会显式创建临时 Executor Home、项目目录、设备 ID 和唯一 Electron app-data namespace，使任务、项目、应用数据以及单实例锁都与正式版和其他验证会话隔离。
 
-开发环境默认让这些实例复用同一个 Cargo target 目录，以便 executor 源码变化后继续使用增量编译产物。需要排查共享构建缓存问题时，可以设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`，让当前启动过程使用项目内的默认 target 目录。
+Cargo target 按组件和 worktree 隔离，编译缓存通过 sccache 共享。`WEGENT_DISABLE_SHARED_CARGO_TARGET=1` 将产物放到当前 worktree 的 target 目录；目录规则见[调试实例上下文](./wework-debug-instance-context.md)。
 
 ## 启动耗时诊断
 

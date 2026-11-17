@@ -7,10 +7,11 @@ use brz_redis::{Redis, RedisResult};
 
 pub(crate) const ACCEPT_SCRIPT: &str = "\
 local current = redis.call('GET', KEYS[1])
-if redis.call('PTTL', KEYS[1]) <= 0 then return 0 end
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl <= 0 then return 0 end
 if current == ARGV[2] then return 1 end
 if current ~= ARGV[1] then return 0 end
-if redis.call('SET', KEYS[1], ARGV[2], 'XX', 'KEEPTTL') then return 1 end
+if redis.call('SET', KEYS[1], ARGV[2], 'XX', 'PX', ttl) then return 1 end
 return 0";
 pub(crate) const OBSERVE_SCRIPT: &str = "\
 local current = redis.call('GET', KEYS[1])

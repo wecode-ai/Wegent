@@ -678,22 +678,31 @@ Git 账号同步到该设备，否则克隆会因缺少凭据失败。
 
 ### `cloud-device-lifecycle`
 
-该 checkpoint 复用 CI 启动的真实云端 Executor，验证：
+该 checkpoint 将 CI 已启动的两个真实 Executor 进程配置到同一沙箱。公网 Backend 使用
+仅在测试中注册的沙箱提供方，由 runner 操作这两个进程。验证包括：
 
-1. 初始 Backend 状态为 `online`，设备具有 Executor 版本和 Runtime identity。
-2. Wework 展示版本升级入口、当前版本、目标版本和短暂离线提示。
-3. 管理型云环境中，重启操作命中 Sandbox identity；重启等待期间设备操作被禁用。
-4. 测试真实停止 Executor 进程，等待 Backend 变为 `offline`，再启动同一 Executor。
-5. Backend 恢复 `online`，Runtime identity 保持稳定，Wework 显示“重新在线”并恢复操作。
-6. 不支持管理型恢复的公共 Backend 分支必须明确显示重启失败，且不能把在线设备误标为离线。
+1. 两个 Executor 初始均在线，且各有独立的 Runtime identity。设备菜单和“有新版本”
+   徽标都能打开重启确认，徽标入口显示当前和最新版本。
+2. 目标设备空闲时，同沙箱另一台设备运行真实桌面任务，测试模型暂缓回复。所有者
+   的非强制升级请求因同沙箱忙碌被拒绝，其他已登录用户尝试强制重启也被拒绝。
+3. 从版本徽标确认后，向 Sandbox identity 发送一次强制重启。Wework 在重启等待和
+   离线期间禁用相关操作。
+4. 沙箱提供方真实停止两个 Executor。Backend 和 Wework 观测到离线后，用原先的
+   Executor 数据目录重新启动，Runtime identity 保持不变。即使仍有新版本可用，
+   Wework 也显示“重新在线”并恢复操作。
+
+公网 Backend 初始不注册重启提供方。先确认设备菜单发出的真实请求返回 501，界面
+显示失败且仍可重试、打开终端或使用设备菜单，设备仍在线。随后在同一 Backend
+进程中启用沙箱提供方，继续执行成功链路。
 
 证据截图：
 
 - `cloud-device-01-online.png`
-- `cloud-device-upgrade-confirmation.png`
+- `cloud-device-restart-unavailable.png`（仅公网未配置场景）
+- `cloud-device-restart-confirmation.png`
 - `cloud-device-restart-pending.png`
+- `cloud-device-restart-offline.png`
 - `cloud-device-restart-recovered.png`
-- `cloud-device-restart-unavailable.png`（仅公共 Backend 拒绝分支）
 
 ## CI checkpoint 映射
 

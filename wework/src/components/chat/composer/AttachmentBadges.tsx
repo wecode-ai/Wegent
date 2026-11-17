@@ -92,7 +92,7 @@ export function AttachmentBadges({
       return
     }
     try {
-      if (!openPreview) throw new Error('Attachment preview panel is unavailable')
+      if (!openPreview) throw new Error(t('todo.file_preview_failed', '预览失败'))
       openPreview(attachment)
     } catch (error) {
       setOpenError({
@@ -126,6 +126,7 @@ export function AttachmentBadges({
             : props.errors
         }
         labels={{
+          removeAttachment: t('workbench.task_activity_attachment_remove'),
           showText: t('workbench.show_text_attachment_in_composer'),
           addingText: t('workbench.adding_pasted_text_attachment'),
           dismissError: t('workbench.dismiss_attachment_error'),

@@ -25,6 +25,7 @@ import {
 import type { ProjectAgentConfigurationHost, ProjectAgentMode } from "./types";
 import styles from "./ProjectAgentConfiguration.module.css";
 import { ProjectAgentPicker } from "./ProjectAgentPicker";
+import { ConfirmationDialog } from "../controls/ConfirmationDialog";
 
 function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message ? cause.message : fallback;
@@ -109,6 +110,8 @@ export function ProjectAgentConfiguration({
   const [candidateRevision, setCandidateRevision] = useState(0);
   const [composerOpen, setComposerOpen] = useState(false);
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
+  const [pendingRemoval, setPendingRemoval] =
+    useState<ProjectAgentConfigurationRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -194,6 +197,7 @@ export function ProjectAgentConfiguration({
     setSelectedTeamId("");
     setComposerOpen(false);
     setEditingAgentId(null);
+    setPendingRemoval(null);
     setError(null);
     setLoadError(null);
     let active = true;
@@ -475,7 +479,7 @@ export function ProjectAgentConfiguration({
     }
   }
 
-  async function finishAgentEdit() {
+  async function finishAgentChange() {
     if (activeAgentScope.current !== agentScope) return;
     setEditingAgentId(null);
     onAgentsChange?.();
@@ -506,7 +510,7 @@ export function ProjectAgentConfiguration({
           ...(saved.name ? { name: saved.name } : {}),
         });
       }
-      await finishAgentEdit();
+      await finishAgentChange();
     } catch (cause) {
       setError(
         errorMessage(
@@ -831,6 +835,17 @@ export function ProjectAgentConfiguration({
                               : translate("todo.archive_project_agent", "停用")}
                         </button>
                       ) : null}
+                      {scope === "project" && agent.deletable && (
+                        <button
+                          type="button"
+                          className={styles.archiveButton}
+                          data-testid={`project-agent-delete-${agent.id}`}
+                          disabled={archivingId === agent.id}
+                          onClick={() => setPendingRemoval(agent)}
+                        >
+                          {translate("todo.delete_project_agent", "删除")}
+                        </button>
+                      )}
                     </div>
                   ) : null}
                 </div>
@@ -849,6 +864,63 @@ export function ProjectAgentConfiguration({
             </p>
           )}
 
+          {pendingRemoval && (
+            <ConfirmationDialog
+              key={pendingRemoval.id}
+              title={translate(
+                "todo.delete_project_agent_title",
+                "删除项目智能体？",
+              )}
+              subject={pendingRemoval.displayName}
+              description={translate(
+                "todo.delete_project_agent_hint",
+                "将删除此项目中的智能体配置。共享资源、已有任务和执行历史会保留。若协作小组仍在引用它，请先替换或移除成员。",
+              )}
+              labels={{
+                cancel: translate("common.cancel", "取消"),
+                confirm: translate("todo.delete_project_agent", "删除"),
+                pending: translate("common.saving", "处理中…"),
+                failed: translate(
+                  "todo.delete_project_agent_failed",
+                  "删除项目智能体失败",
+                ),
+              }}
+              testIdPrefix="project-agent-delete"
+              onClose={() => setPendingRemoval(null)}
+              onConfirm={async () => {
+                try {
+                  await api.agents.remove(
+                    project.id,
+                    pendingRemoval.id,
+                    pendingRemoval.version,
+                  );
+                  if (activeAgentScope.current === agentScope) {
+                    setAgents((current) =>
+                      current.filter((agent) => agent.id !== pendingRemoval.id),
+                    );
+                  }
+                  await finishAgentChange();
+                } catch (cause) {
+                  const message = errorMessage(cause, "");
+                  if (message.includes("PROJECT_AGENT_IN_USE"))
+                    throw new Error(
+                      translate(
+                        "todo.project_agent_in_use",
+                        "该智能体仍被协作小组引用，请先在小组中替换或移除，再删除。",
+                      ),
+                    );
+                  if (message.includes("PROJECT_AGENT_MANAGED"))
+                    throw new Error(
+                      translate(
+                        "todo.project_agent_managed",
+                        "当前设备智能体由系统管理，不能删除。",
+                      ),
+                    );
+                  throw cause;
+                }
+              }}
+            />
+          )}
           {composerOpen
             ? (customAgentCreator ??
               renderDialog(
@@ -887,7 +959,7 @@ export function ProjectAgentConfiguration({
                 projectId: agentProjectId,
                 resourceId: editingAgent.id,
                 onClose: () => setEditingAgentId(null),
-                onSaved: finishAgentEdit,
+                onSaved: finishAgentChange,
               })
             : editingAgent &&
                 editingAgent.definitionSource === "shared_agent" &&

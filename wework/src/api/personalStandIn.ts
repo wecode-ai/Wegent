@@ -142,6 +142,19 @@ export function newStandInRole(deviceId: string, id: string = crypto.randomUUID(
   }
 }
 
+/** Primary setup starts without a selected source until the user chooses its scope. */
+export function newStandInPrimaryRole(deviceId: string): StandInRole {
+  const role = newStandInRole(deviceId, '@primary')
+  return {
+    ...role,
+    collaboration: {
+      ...role.collaboration,
+      allProjects: false,
+      policy: { automatic: true, askBeforeAct: true, immediate: false },
+    },
+  }
+}
+
 export function roleIncludesProject(
   role: Pick<StandInRole, 'collaboration'>,
   project: StandInProjectRef

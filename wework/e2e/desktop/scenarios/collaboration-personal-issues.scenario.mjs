@@ -1,4 +1,12 @@
 import { verifyLocalProjectMigration } from '../modules/local-project-migration.mjs'
+import {
+  verifyIndependentIssueDraft,
+  verifyIssueConflictRecovery,
+  verifyIssueDeviceLayout,
+  verifyIssueAssociationRecovery,
+  chooseIssueProperty,
+  verifyEnglishLinkedIssueLayout,
+} from '../modules/independent-issue-draft.mjs'
 import assert from 'node:assert/strict'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -10,6 +18,7 @@ import {
 // Stories: start a private Issue without a project, invite a colleague, revoke access,
 // find work through the three lists, restore/delete, and associate a real project.
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
+  let deviceEnvironment
   let cloud,
     participant,
     outsider,
@@ -53,6 +62,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
     control.command('waitFor', selector, { timeoutMs: uiTimeoutMs, ...options })
   return {
     requiresCloudEnvironment: true,
+    setCloudEnvironment(value) {
+      deviceEnvironment = value
+    },
     async prepareCloud(environment) {
       cloud = environment
       await request('/api/admin/setup-complete', 'POST')
@@ -149,12 +161,36 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await click(control, 'workspace-tab-select-fixed-board')
       const before = await request('/api/v1/cloud-projects')
+      await verifyIssueConflictRecovery(control, {
+        request,
+        reopen: () => navigate(control, 'collaboration-primary-create-issue'),
+        captureScreenshot,
+      })
       await navigate(control, 'collaboration-primary-create-issue')
       await wait(control, '[data-testid="independent-issue-dialog"]')
+      await click(control, 'independent-issue-close')
+      await verifyIssueAssociationRecovery(control, {
+        request,
+        reopen: () => navigate(control, 'collaboration-primary-create-issue'),
+      })
+      await verifyIndependentIssueDraft(control, {
+        request,
+        opener: sidebar('collaboration-primary-create-issue'),
+        reopen: async () => {
+          const target = sidebar('collaboration-primary-create-issue')
+          await revealCollaborationSidebarElement(control, target)
+          await control.command('nativePress', target, { key: 'Enter', timeoutMs: uiTimeoutMs })
+        },
+        captureScreenshot,
+      })
       await control.command('fill', '[data-testid="independent-issue-title"]', { value: title })
       await control.command('fill', '[data-testid="independent-issue-description"]', {
         value: 'Discuss a company-wide improvement without creating a project.',
       })
+      // User story: runtime setup is available without blocking a draft or starting work.
+      await click(control, 'independent-issue-execution-settings')
+      await control.command('waitFor', '[data-testid="settings-default-runner"]', { visible: true })
+      await captureScreenshot(control, 'new-issue-optional-runtime.png')
       await click(control, 'independent-issue-save')
       await wait(control, '[data-testid="independent-issue-edit"]')
       const mine = await request('/api/v1/personal-issues?scope=created')
@@ -177,14 +213,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'independent-issue-edit')
       await click(control, 'issue-participant-add')
       await control.command('fill', '[data-testid="independent-issue-search-people"]', {
+        value: `  ${participant.user_name}  `,
+      })
+      await wait(control, `[data-testid="independent-issue-invite-${participant.id}"]`)
+      await control.command('fill', '[data-testid="independent-issue-search-people"]', {
         value: participant.user_name,
       })
       await wait(control, `[data-testid="independent-issue-invite-${participant.id}"]`)
       await click(control, `independent-issue-invite-${participant.id}`)
       await click(control, 'issue-participant-done')
-      await control.command('select', '[data-testid="independent-issue-assignee"]', {
-        value: `human:${participant.id}`,
-      })
+      await chooseIssueProperty(
+        control,
+        'independent-issue-assignee',
+        `human:${participant.id}`,
+        participant.user_name
+      )
       await click(control, 'independent-issue-save')
       await wait(control, '[data-testid="independent-issue-edit"]')
       const invited = await request(
@@ -254,21 +297,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await click(control, 'independent-issue-archive')
       await wait(control, '[data-testid="independent-issue-archive"]', { text: '归档' })
       await click(control, 'independent-issue-associate')
-      await waitForBoardValue(
-        async () =>
-          Number(
-            await control.command(
-              'getElementCount',
-              `[data-testid="independent-issue-project"] option[value="${project.id}"]`
-            )
-          ),
-        1,
-        'Project choices did not load',
-        uiTimeoutMs
+      await chooseIssueProperty(
+        control,
+        'independent-issue-project',
+        String(project.id),
+        project.name
       )
-      await control.command('select', '[data-testid="independent-issue-project"]', {
-        value: String(project.id),
-      })
       await click(control, 'independent-issue-project-confirm')
       await wait(control, '[data-testid="independent-issue-dialog"]', { visible: false })
       const moved = await request(`/api/v1/loop-items/${issue.id}`)
@@ -357,9 +391,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, `[data-testid="issue-participant-invite-group:${group.id}"]`)
       await click(control, `issue-participant-invite-group:${group.id}`)
       await click(control, 'issue-participant-done')
-      await control.command('select', '[data-testid="independent-issue-assignee"]', {
-        value: `agent:${agent.id}`,
-      })
+      await chooseIssueProperty(
+        control,
+        'independent-issue-assignee',
+        `agent:${agent.id}`,
+        agent.name
+      )
       await click(control, 'independent-issue-save')
       await wait(control, '[data-testid="independent-issue-edit"]')
       const typed = (await request('/api/v1/personal-issues?scope=created')).items.find(
@@ -381,14 +418,47 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         404
       )
       await click(control, 'independent-issue-close')
+      await verifyEnglishLinkedIssueLayout(control, {
+        project,
+        reopen: () => navigate(control, 'collaboration-primary-create-issue'),
+        captureScreenshot,
+      })
       await navigate(control, 'collaboration-primary-create-issue')
       await control.command('fill', '[data-testid="independent-issue-title"]', {
         value: `Project selection ${process.pid}`,
       })
-      await wait(control, `[data-testid="independent-issue-project"] option[value="${project.id}"]`)
-      await control.command('select', '[data-testid="independent-issue-project"]', {
-        value: String(project.id),
-      })
+      await chooseIssueProperty(
+        control,
+        'independent-issue-project',
+        String(project.id),
+        project.name
+      )
+      await click(control, 'independent-issue-execution-settings')
+      await click(control, 'issue-environment-picker-trigger')
+      await wait(control, '[data-testid="issue-environment-picker"]')
+      await wait(control, '[data-testid="collaboration-project-execution-environment-add"]')
+      const appDevice = await deviceEnvironment.waitForConnectedAppDevice()
+      const poolPath = `/api/v1/cloud-projects/${project.id}/execution-environments`
+      if (!(await request(poolPath)).items.some(row => row.device_id === appDevice.id)) {
+        await click(
+          control,
+          `collaboration-project-execution-environment-candidate-${appDevice.id}`
+        )
+      }
+      await waitForBoardValue(
+        async () => (await request(poolPath)).items.some(row => row.device_id === appDevice.id),
+        true,
+        'Adding a device from the Issue draft must persist its project authorization',
+        uiTimeoutMs
+      )
+      await verifyIssueDeviceLayout(control, appDevice.id)
+      await captureScreenshot(control, 'new-issue-project-devices.png')
+      await click(control, 'issue-environment-picker-trigger')
+      assert.equal(
+        await control.command('getValue', '[data-testid="independent-issue-title"]'),
+        `Project selection ${process.pid}`,
+        'Device setup must preserve the Issue draft'
+      )
       await click(control, 'independent-issue-save')
       await wait(control, '[data-testid="independent-issue-dialog"]', { visible: false })
       const selectedProjectIssues = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)

@@ -21,6 +21,7 @@ function fixture({ cardReady, title = ISSUE_NAME }) {
   let titleVerified = false
   let menuOpen = false
   let replyOpen = false
+  let replyVisible = false
   let submissions = 0
   const captures = []
   const control = {
@@ -35,6 +36,11 @@ function fixture({ cardReady, title = ISSUE_NAME }) {
       }
       if (action === 'getElementCount') return menuOpen ? '1' : '0'
       if (action === 'getText') return '@Project member'
+      if (action === 'scrollIntoView') {
+        assert.ok(selector.endsWith('[data-testid="cloud-task-activity-reply-toggle-comment-1"]'))
+        replyVisible = true
+        return
+      }
       if (action === 'snapshot') {
         const testIds = ['collaboration-issue-archive-open']
         if (cardReady) testIds.push('collaboration-issue-PRJ-1')
@@ -54,7 +60,10 @@ function fixture({ cardReady, title = ISSUE_NAME }) {
           assert.ok(menuOpen)
           menuOpen = false
         }
-        if (selector.includes('cloud-task-activity-reply-toggle-')) replyOpen = true
+        if (selector.includes('cloud-task-activity-reply-toggle-')) {
+          assert.ok(replyVisible, 'The posted reply action must be scrolled into the viewport')
+          replyOpen = true
+        }
         if (selector.includes('send-message-button')) {
           assert.ok(titleVerified)
           assert.ok(!menuOpen)

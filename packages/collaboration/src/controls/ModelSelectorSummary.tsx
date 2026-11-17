@@ -37,7 +37,7 @@ export function ModelSelectorSummary({
       <div className="flex min-h-7 items-center justify-between gap-2">
         <span
           data-testid="model-simple-source"
-          className="min-w-0 text-xs text-text-muted [overflow-wrap:anywhere]"
+          className="min-w-0 text-xs text-text-secondary [overflow-wrap:anywhere]"
         >
           {sourceLabel}
         </span>
@@ -98,7 +98,7 @@ export function ModelSelectorSummary({
             {modelName}
           </span>
           {reasoningLabel && (
-            <span className="shrink-0 whitespace-nowrap text-text-muted">
+            <span className="shrink-0 whitespace-nowrap text-text-secondary">
               {reasoningLabel}
             </span>
           )}

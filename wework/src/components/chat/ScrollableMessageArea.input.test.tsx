@@ -22,6 +22,35 @@ vi.mock('@/lib/runtime-environment', async importOriginal => ({
 describe('ScrollableMessageArea: input', () => {
   installScrollTestEnvironment()
 
+  test('pauses following on a forward wheel in history before the browser delivers scroll', () => {
+    render(
+      <ScrollableMessageArea
+        conversationKey="forward-wheel-before-scroll"
+        messages={parkedConversationMessages}
+      />
+    )
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 8_000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 2_900,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    // Native scroll delivery can follow a virtual row measurement, even after wheel input.
+    fireEvent.wheel(scroller, { deltaY: 120 })
+    scroller.scrollTop = 3_574
+    Object.defineProperty(scroller, 'scrollHeight', { value: 7_584, configurable: true })
+    act(() => flushObservedLayout())
+    expect(scroller.scrollTop).toBe(3_574)
+    fireEvent.scroll(scroller)
+    expect(screen.getByTestId('scroll-to-bottom-button')).toBeInTheDocument()
+  })
+
   test('does not pull a reader parked in history down when the assistant turn starts waiting', () => {
     const { rerender } = render(
       <ScrollableMessageArea

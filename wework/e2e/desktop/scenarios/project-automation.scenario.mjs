@@ -579,6 +579,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'click',
           scoped(`[data-testid="collaboration-group-remove-${workspaceGroup.id}"]`)
         )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-group-delete-dialog"]')
+        )
+        await control.command('click', scoped('[data-testid="collaboration-group-delete-cancel"]'))
+        assert.ok(
+          (await request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`)).items.some(
+            group => group.id === workspaceGroup.id
+          ),
+          'Cancelling removal must preserve the Project association'
+        )
+        await control.command(
+          'click',
+          scoped(`[data-testid="collaboration-group-remove-${workspaceGroup.id}"]`)
+        )
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-group-delete-confirm"]')
+        )
         await waitForApiValue(
           () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),
           response => !response.items?.some(candidate => candidate.id === workspaceGroup.id),
@@ -596,6 +615,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         await control.command(
           'click',
           scoped(`[data-testid="collaboration-group-remove-${projectGroup.id}"]`)
+        )
+        await control.command(
+          'waitFor',
+          scoped('[data-testid="collaboration-group-delete-dialog"]')
+        )
+        await control.command(
+          'clickWhenEnabled',
+          scoped('[data-testid="collaboration-group-delete-confirm"]')
         )
         await waitForApiValue(
           () => request(`/api/v1/cloud-projects/${project.id}/collaboration-groups`),

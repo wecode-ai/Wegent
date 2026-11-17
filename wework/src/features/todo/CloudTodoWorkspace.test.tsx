@@ -1938,7 +1938,15 @@ describe('CloudTodoWorkspace', () => {
     const workbench = {
       services: workbenchServices,
       state: { devices: [], runtimeWork: null },
-      projectChat: { requestCatalogs: vi.fn() },
+      projectChat: {
+        requestCatalogs: vi.fn(),
+        attachmentStateByScope: {},
+        handleFileSelectForScope: vi.fn(),
+        addExistingAttachmentForScope: vi.fn(),
+        removeAttachmentForScope: vi.fn(),
+        dismissAttachmentErrorForScope: vi.fn(),
+        resetAttachmentsForScope: vi.fn(),
+      },
       createProjectRuntimeTask: vi.fn(),
       cancelRuntimeTask: vi.fn(),
       sendRuntimePaneMessage: vi.fn(),
@@ -2610,6 +2618,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await screen.findByTestId('cloud-todo-card-WEG-1')
     await openIssueFromBoard()
+    await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
     await userEvent.click(screen.getByTestId('cloud-todo-detail-parent'))
     await userEvent.click(await screen.findByTestId('cloud-todo-detail-parent-option-WEG-2'))
 

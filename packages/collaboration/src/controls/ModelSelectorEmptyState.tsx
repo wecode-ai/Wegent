@@ -22,7 +22,7 @@ export function ModelSelectorEmptyState({
         <p className="text-sm font-medium text-text-primary">
           {t('workbench.no_models', 'No models available')}
         </p>
-        <p className="text-xs leading-5 text-text-muted">
+        <p className="text-xs leading-5 text-text-secondary">
           {t(
             onOpenCloudConnections
               ? 'workbench.no_models_guidance'

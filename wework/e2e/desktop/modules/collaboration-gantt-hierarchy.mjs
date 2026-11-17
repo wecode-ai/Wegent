@@ -149,7 +149,7 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   await selectCollaborationProjectView(control, CONTENT, 'board', timeoutMs)
   await click(`cloud-todo-card-${parent.id}`)
   await control.command('focusMainWindow', 'body')
-  await click('cloud-todo-more-properties')
+  await click('cloud-todo-issue-actions')
   await control.command('clickWhenEnabled', '[data-testid="cloud-todo-detail-delete"]', {
     timeoutMs,
   })
@@ -163,12 +163,12 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   await assertFocus('collaboration-issue-archive-cancel')
   await click('collaboration-issue-archive-cancel')
   await wait('collaboration-issue-archive-dialog', false)
-  await assertFocus('cloud-todo-more-properties')
+  await assertFocus('cloud-todo-issue-actions')
   assert.ok(
     (await rpc('todos.list', { project_id: project.id })).some(item => item.id === parent.id),
     'Cancelling archive must leave the task tree active'
   )
-  await click('cloud-todo-more-properties')
+  await click('cloud-todo-issue-actions')
   await control.command('clickWhenEnabled', '[data-testid="cloud-todo-detail-delete"]', {
     timeoutMs,
   })
