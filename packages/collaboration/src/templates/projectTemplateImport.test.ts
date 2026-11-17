@@ -14,8 +14,13 @@ import type {
 import { builtinCollaborationTemplates } from './builtins'
 import { bindTemplate } from './document'
 import { templateAgentBindings } from './agents'
-import { applyProjectTemplate, resumeProjectTemplateImport } from './projectConfiguration'
+import {
+  applyProjectTemplate,
+  restartProjectTemplateImport,
+  resumeProjectTemplateImport,
+} from './projectConfiguration'
 import { TemplateImportRetryError } from './projectTemplateImport'
+import { templateMessages } from './messages'
 import {
   canonicalTemplateImportJson,
   readProjectTemplateImportIntent,
@@ -241,6 +246,140 @@ describe('durable project template imports', () => {
     expect(f.currentProject().tags).toContain('later-user-edit')
     expect(f.currentProject().board_views!.views.map(view => view.id)).toContain('later')
     expect(rule.enabled).toBe(false)
+  })
+
+  it('requires an explicit new logical import to recreate deleted resources', async () => {
+    const f = fixture()
+    await apply(f.client(), f)
+    const original = await f.client().templateImports!.get('project', 'operation-1')
+    f.agents.clear()
+    f.groups.clear()
+    f.rules.clear()
+
+    await expect(apply(f.client(), f)).rejects.toBeInstanceOf(TemplateImportRetryError)
+    expect(f.operations.size).toBe(1)
+    expect(f.commits).toEqual({ agent: 6, group: 1, automation: 1, board: 1 })
+
+    const next = f.client()
+    const groups = await restartProjectTemplateImport(next, 'project', original.id, 'en')
+    expect(groups.map(group => group.id)).toEqual(['group-2'])
+    expect(f.operations.size).toBe(2)
+    expect(f.commits).toEqual({ agent: 12, group: 2, automation: 2, board: 2 })
+    expect(f.rules.values().next().value!.name).toContain('新任务')
+    const restarted = await next.templateImports!.get('project', 'operation-2')
+    expect(readProjectTemplateImportIntent(restarted).previousImportId).toBe(original.id)
+    expect((await next.templateImports!.get('project', original.id)).steps).toEqual(original.steps)
+
+    const late = f.client()
+    await expect(
+      resumeProjectTemplateImport(late, 'project', original.id, 'zh-CN')
+    ).rejects.toThrow('不一致')
+    expect(late.agents.create).not.toHaveBeenCalled()
+    expect(late.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(f.commits).toEqual({ agent: 12, group: 2, automation: 2, board: 2 })
+  })
+
+  it('joins one explicitly restarted operation across two independent clients', async () => {
+    const f = fixture()
+    await apply(f.client(), f)
+    f.agents.clear()
+    f.groups.clear()
+    f.rules.clear()
+
+    const [first, second] = await Promise.all([
+      restartProjectTemplateImport(f.client(), 'project', 'operation-1', 'zh-CN'),
+      restartProjectTemplateImport(f.client(), 'project', 'operation-1', 'en'),
+    ])
+    expect(first.map(group => group.id)).toEqual(second.map(group => group.id))
+    expect(f.operations.size).toBe(2)
+    expect(f.commits).toEqual({ agent: 12, group: 2, automation: 2, board: 2 })
+    const replay = f.client()
+    await restartProjectTemplateImport(replay, 'project', 'operation-1', 'zh-CN')
+    expect(replay.agents.create).not.toHaveBeenCalled()
+    expect(replay.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(f.operations.size).toBe(2)
+  })
+
+  it('restores restarted progress and replaces its predecessor only on another explicit restart', async () => {
+    const f = fixture()
+    await apply(f.client(), f)
+    f.agents.clear()
+    f.groups.clear()
+    f.rules.clear()
+    f.loseResponse.add('group')
+
+    const failure = await restartProjectTemplateImport(
+      f.client(),
+      'project',
+      'operation-1',
+      'zh-CN'
+    ).catch(error => error as TemplateImportRetryError)
+    expect(failure.operation!.id).toBe('operation-2')
+    expect(readProjectTemplateImportIntent(failure.operation!).previousImportId).toBe('operation-1')
+    const next = f.client()
+    await resumeProjectTemplateImport(next, 'project', failure.operation!.id, 'en')
+    expect(next.templateImports!.begin).not.toHaveBeenCalled()
+    expect(next.agents.create).not.toHaveBeenCalled()
+    expect(next.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(f.operations.size).toBe(2)
+    expect(f.commits).toEqual({ agent: 12, group: 2, automation: 2, board: 2 })
+
+    f.agents.clear()
+    f.groups.clear()
+    f.rules.clear()
+    await restartProjectTemplateImport(f.client(), 'project', 'operation-2', 'zh-CN')
+    const chained = await f.client().templateImports!.get('project', 'operation-3')
+    expect(readProjectTemplateImportIntent(chained).previousImportId).toBe('operation-2')
+    expect(f.operations.size).toBe(3)
+    expect(f.commits).toEqual({ agent: 18, group: 3, automation: 3, board: 3 })
+  })
+
+  it('rejects a pending predecessor before beginning another import', async () => {
+    const f = fixture()
+    f.rejectWrite.set('agent', Object.assign(new Error('Unavailable'), { status: 503 }))
+    await expect(apply(f.client(), f)).rejects.toBeInstanceOf(TemplateImportRetryError)
+    const next = f.client()
+    await expect(
+      restartProjectTemplateImport(next, 'project', 'operation-1', 'zh-CN')
+    ).rejects.toThrow('不一致')
+    expect(next.templateImports!.begin).not.toHaveBeenCalled()
+    expect(next.agents.create).not.toHaveBeenCalled()
+    expect(f.operations.size).toBe(1)
+    expect(f.commits).toEqual({ agent: 0, group: 0, automation: 0, board: 0 })
+  })
+
+  it('rejects an existing group name before creating agents for an explicit restart', async () => {
+    const f = fixture()
+    await apply(f.client(), f)
+    const next = f.client()
+    const refreshed = vi.fn()
+    await expect(
+      restartProjectTemplateImport(next, 'project', 'operation-1', 'zh-CN', refreshed)
+    ).rejects.toThrow(templateMessages['zh-CN'].duplicateGroup)
+    expect(next.agents.create).not.toHaveBeenCalled()
+    expect(next.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(refreshed).toHaveBeenCalledWith([...f.groups.values()])
+    expect(f.commits).toEqual({ agent: 6, group: 1, automation: 1, board: 1 })
+  })
+
+  it('does not write restart resources when the group conflict check cannot be read', async () => {
+    const f = fixture()
+    await apply(f.client(), f)
+    const next = f.client()
+    const cause = new TypeError('Failed to fetch')
+    vi.mocked(next.projects.listCollaborationGroups!).mockRejectedValue(cause)
+    const failure = await restartProjectTemplateImport(
+      next,
+      'project',
+      'operation-1',
+      'zh-CN'
+    ).catch(error => error as TemplateImportRetryError)
+    expect(failure.cause).toBe(cause)
+    expect(next.agents.create).not.toHaveBeenCalled()
+    expect(next.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(next.automations!.create).not.toHaveBeenCalled()
+    expect(next.projects.update).not.toHaveBeenCalled()
+    expect(f.commits).toEqual({ agent: 6, group: 1, automation: 1, board: 1 })
   })
 
   it('ignores only its own saved automation when resuming a failed board step', async () => {

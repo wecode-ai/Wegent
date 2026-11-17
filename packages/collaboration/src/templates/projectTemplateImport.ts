@@ -171,6 +171,19 @@ async function executeImport(
   if (!api.projects.createCollaborationGroup || !api.projects.listCollaborationGroups)
     throw templateImportStateError(session.locale)
   if (session.operation.status !== 'completed') {
+    if (intent.previousImportId) {
+      const existing = await api.projects.listCollaborationGroups(projectId)
+      await session.refresh()
+      const ownGroups = new Set(
+        session.operation.steps
+          .filter(step => step.kind === 'group')
+          .map(step => step.resourceId)
+          .filter(Boolean)
+      )
+      const names = new Set(intent.drafts.map(group => group.name.trim()))
+      if (existing.some(group => names.has(group.name) && !ownGroups.has(group.id)))
+        throw new TemplateConfigurationError(templateMessages[session.locale].duplicateGroup)
+    }
     const preflightApi = api.automations
       ? {
           ...api,
@@ -340,6 +353,40 @@ export function resumeDurableProjectTemplate(
       const operation = await api.templateImports.get(projectId, operationId)
       if (operation.id !== operationId) throw templateImportStateError(locale)
       const intent = readProjectTemplateImportIntent(operation, locale)
+      return { intent, operation }
+    },
+    onGroupsRefreshed
+  )
+}
+
+/** Only an explicit user action starts another logical import of unchanged configuration. */
+export function restartDurableProjectTemplate(
+  api: SharedWorkspaceApi,
+  projectId: string,
+  completedOperationId: string,
+  locale: CollaborationLocale,
+  onGroupsRefreshed: ((groups: CollaborationGroup[]) => void) | undefined,
+  hooks: ConfigurationHooks
+) {
+  return runImport(
+    api,
+    projectId,
+    locale,
+    templateMessages[locale].partial,
+    hooks,
+    async () => {
+      if (!api.templateImports || !((await api.templateImports.supports?.(projectId)) ?? true))
+        throw templateImportStateError(locale)
+      const previous = await api.templateImports.get(projectId, completedOperationId)
+      const savedIntent = readProjectTemplateImportIntent(previous, locale)
+      assertOperation(previous, projectId, projectTemplateImportRequest(savedIntent), locale)
+      if (previous.id !== completedOperationId || previous.status !== 'completed')
+        throw templateImportStateError(locale)
+      const intent = { ...savedIntent, previousImportId: previous.id }
+      const operation = await api.templateImports.begin(
+        projectId,
+        projectTemplateImportRequest(intent)
+      )
       return { intent, operation }
     },
     onGroupsRefreshed

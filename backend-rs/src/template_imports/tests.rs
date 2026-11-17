@@ -61,12 +61,42 @@ fn validates_version_object_and_exact_unique_step_manifest() {
         })
         .collect();
     assert!(invalid.validate().is_err());
+    for previous in [json!(null), json!(1), json!(""), json!("x".repeat(65))] {
+        assert!(
+            input(
+                json!({"previousImportId":previous}),
+                json!([{"key":"group:delivery","kind":"group"}])
+            )
+            .validate()
+            .is_err()
+        );
+    }
     assert!(
         serde_json::from_value::<Begin>(
             json!({"protocolVersion":1,"intent":{},"steps":[{"key":"x","kind":"unknown"}]})
         )
         .is_err()
     );
+}
+
+#[test]
+fn explicit_reimport_identity_is_bound_to_the_completed_predecessor() {
+    let original = input(
+        json!({"name":"Delivery"}),
+        json!([{"key":"group:delivery","kind":"group"}]),
+    );
+    let mut repeated = input(
+        json!({"name":"Delivery","previousImportId":"original"}),
+        json!([{"key":"group:delivery","kind":"group"}]),
+    );
+    assert!(repeated.validate().is_ok());
+    assert_ne!(
+        digest(&original.intent, &original.steps).unwrap(),
+        digest(&repeated.intent, &repeated.steps).unwrap()
+    );
+    let previous = digest(&repeated.intent, &repeated.steps).unwrap();
+    repeated.intent["previousImportId"] = json!("another-generation");
+    assert_ne!(previous, digest(&repeated.intent, &repeated.steps).unwrap());
 }
 
 #[test]

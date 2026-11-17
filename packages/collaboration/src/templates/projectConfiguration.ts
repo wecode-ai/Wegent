@@ -11,7 +11,11 @@ import { materializeTemplateAgents, templateAgentId, templateAgentReferences } f
 import { applyTemplateGroups, TemplateConfigurationError } from './apply'
 import { reconcileProjectTemplateFailure } from './projectApplyRecovery'
 import type { TemplateProjectConfigurationOptions } from './projectTemplateImportTypes'
-import { applyDurableProjectTemplate, resumeDurableProjectTemplate } from './projectTemplateImport'
+import {
+  applyDurableProjectTemplate,
+  resumeDurableProjectTemplate,
+  restartDurableProjectTemplate,
+} from './projectTemplateImport'
 
 export async function prepareTemplateProject(
   api: SharedWorkspaceApi,
@@ -238,4 +242,24 @@ export async function resumeProjectTemplateImport(
     prepare: prepareTemplateProject,
     configure: configureTemplateProject,
   })
+}
+
+export async function restartProjectTemplateImport(
+  api: SharedWorkspaceApi,
+  projectId: string,
+  completedOperationId: string,
+  locale: CollaborationLocale,
+  onGroupsRefreshed?: (groups: CollaborationGroup[]) => void
+) {
+  return restartDurableProjectTemplate(
+    api,
+    projectId,
+    completedOperationId,
+    locale,
+    onGroupsRefreshed,
+    {
+      prepare: prepareTemplateProject,
+      configure: configureTemplateProject,
+    }
+  )
 }

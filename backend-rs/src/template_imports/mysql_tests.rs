@@ -66,6 +66,77 @@ fn input(name: &str) -> Begin {
     .unwrap()
 }
 
+fn repeat(name: &str, previous: &str) -> Begin {
+    let mut body = input(name);
+    body.intent["previousImportId"] = json!(previous);
+    body
+}
+
+async fn verify_explicit_repeat(state: &AppState, original: &str) -> Result<()> {
+    let (first, second) = tokio::join!(
+        begin_import(state, actor(8), "1001", repeat("Another group", original)),
+        begin_import(state, actor(8), "1001", repeat("Another group", original))
+    );
+    let first = first.unwrap();
+    assert_eq!(first, second.unwrap());
+    assert_ne!(first["id"], original);
+    assert_eq!(first["status"], "pending");
+    assert_eq!(first["intent"]["previousImportId"], original);
+    assert!(
+        first["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|step| step.get("resourceId").is_none())
+    );
+    assert_eq!(
+        import_status(state, actor(8), "1001", original)
+            .await
+            .unwrap()["status"],
+        "completed"
+    );
+    let pending = first["id"].as_str().unwrap();
+    assert_eq!(
+        begin_import(
+            state,
+            actor(8),
+            "1001",
+            repeat("Pending predecessor", pending)
+        )
+        .await
+        .unwrap_err()
+        .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        begin_import(state, actor(7), "1001", repeat("Other actor", original))
+            .await
+            .unwrap_err()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        begin_import(state, actor(8), "1002", repeat("Other project", original))
+            .await
+            .unwrap_err()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        begin_import(
+            state,
+            actor(8),
+            "1001",
+            repeat("Missing predecessor", "missing")
+        )
+        .await
+        .unwrap_err()
+        .status(),
+        StatusCode::NOT_FOUND
+    );
+    Ok(())
+}
+
 async fn seed(mysql: &MysqlService) -> Result<()> {
     mysql.execute("INSERT INTO users (id,user_name,password_hash,is_active,role,auth_source,preferences) VALUES (7,'Owner','',1,'user','password',''),(8,'Maintainer','',1,'user','password',''),(9,'Viewer','',1,'user','password','')",()).await?;
     mysql.execute("INSERT INTO kinds (id,user_id,name,kind,namespace,is_active,json) VALUES (2001,7,'Space','CollaborationWorkspace','default',true,JSON_OBJECT())",()).await?;
@@ -306,6 +377,7 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
         complete
     );
     verify_atomic_receipt(&state, &writer).await?;
+    verify_explicit_repeat(&state, id).await?;
     mysql.execute("UPDATE resource_members SET status='rejected' WHERE resource_type='Workspace' AND entity_id='8'",()).await?;
     assert_eq!(
         import_status(&state, actor(8), "1001", id)

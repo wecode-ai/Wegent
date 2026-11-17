@@ -10,6 +10,7 @@ import type { CollaborationGroup, CollaborationProject } from '../types'
 import { ProjectCollaborationGroups } from '../project-manage/ProjectCollaborationGroups'
 import { ProjectTemplateApplyDialog } from './ProjectTemplateApplyDialog'
 import { ProjectTemplateImportRecovery } from './ProjectTemplateImportRecovery'
+import { templateMessages } from './messages'
 import { builtinCollaborationTemplates } from './builtins'
 import { bindTemplate } from './document'
 import { templateAgentBindings } from './agents'
@@ -281,9 +282,69 @@ it('offers immediate explicit recovery after its own group name enters the refre
   expect(server.commits.agent).toBe(6)
   expect(server.commits.group).toBe(1)
   await chooseImport([...server.operations.keys()][0])
+  expect(container.querySelector('[data-testid="template-import-recovery-restart"]')).toBeNull()
   await click('template-import-recovery-resume')
   expect(server.commits).toEqual({ agent: 6, group: 1, automation: 1, board: 1 })
   expect(applied).toHaveBeenCalledOnce()
+})
+
+it('requires an explicit new import after reviewing a completed configuration whose resources were removed', async () => {
+  const server = durableServer()
+  await renderDialog(server.client(), server)
+  await click('template-bindings-apply')
+  const previousId = [...server.operations.keys()][0]
+  for (const resources of Object.values(server.resources)) resources.clear()
+
+  const api = server.client()
+  const applied = await renderDialog(api, server)
+  await click('template-bindings-apply')
+  expect(server.operations.size).toBe(1)
+  expect(server.commits).toEqual({ agent: 6, group: 1, automation: 1, board: 1 })
+  expect(container.querySelector('[data-testid="template-import-recovery-restart"]')).toBeNull()
+
+  await chooseImport(previousId)
+  expect(
+    container.querySelector('[data-testid="template-import-recovery-preview"]')!.textContent
+  ).toContain(server.drafts[0].name)
+  const restart = container.querySelector<HTMLButtonElement>(
+    '[data-testid="template-import-recovery-restart"]'
+  )
+  expect(restart).not.toBeNull()
+  expect(restart!.textContent).toBe('开始新的导入')
+  expect(api.templateImports!.begin).toHaveBeenCalledOnce()
+  await click('template-import-recovery-resume')
+  expect(container.querySelector('[data-testid="template-import-recovery-restart"]')).not.toBeNull()
+  expect(server.operations.size).toBe(1)
+  expect(server.commits).toEqual({ agent: 6, group: 1, automation: 1, board: 1 })
+
+  await click('template-import-recovery-restart')
+  expect(server.operations.size).toBe(2)
+  const next = [...server.operations.values()].find(operation => operation.id !== previousId)!
+  expect(next.intent!.previousImportId).toBe(previousId)
+  expect(server.commits).toEqual({ agent: 12, group: 2, automation: 2, board: 2 })
+  expect(applied).toHaveBeenCalledOnce()
+})
+
+it('does not create more agents when a completed import only failed to read its existing resources', async () => {
+  const server = durableServer()
+  const api = server.client()
+  const get = vi.mocked(api.projects.get).getMockImplementation()!
+  let rejected = false
+  vi.mocked(api.projects.get).mockImplementation(async id => {
+    if (server.commits.board && !rejected) {
+      rejected = true
+      throw Object.assign(new Error('Internal error'), { status: 500 })
+    }
+    return get(id)
+  })
+  const applied = await renderDialog(api, server)
+  await click('template-bindings-apply')
+  expect(applied).not.toHaveBeenCalled()
+  await chooseImport([...server.operations.keys()][0])
+  await click('template-import-recovery-restart')
+  expect(server.commits).toEqual({ agent: 6, group: 1, automation: 1, board: 1 })
+  expect(container.textContent).toContain(templateMessages['zh-CN'].duplicateGroup)
+  expect(applied).not.toHaveBeenCalled()
 })
 
 it('keeps the editable draft usable when pending discovery fails and retries only the read', async () => {
@@ -372,16 +433,28 @@ it.each(['api', 'project', 'locale', 'unmount'] as const)(
   }
 )
 
-it.each(['api', 'project', 'locale', 'unmount'] as const)(
-  'does not publish a resumed old operation after a %s scope change',
-  async change => {
+it.each([
+  ['api', false],
+  ['project', false],
+  ['locale', false],
+  ['unmount', false],
+  ['project', true],
+] as const)(
+  'does not publish an old operation after a %s scope change (new import: %s)',
+  async (change, restart) => {
     const server = durableServer()
     const api = server.client()
     const intent = await freezeProjectTemplateImportIntent(server.document, server.drafts, 'zh-CN')
-    const operation = await api.templateImports!.begin(
+    let operation = await api.templateImports!.begin(
       'project',
       projectTemplateImportRequest(intent)
     )
+    if (restart) {
+      await renderDialog(api, server)
+      await click('template-bindings-apply')
+      operation = await api.templateImports!.get('project', operation.id)
+      for (const resources of Object.values(server.resources)) resources.clear()
+    }
     const resumed = vi.fn(async () => {})
     const refreshed = vi.fn()
     const draw = (
@@ -395,6 +468,7 @@ it.each(['api', 'project', 'locale', 'unmount'] as const)(
             api={value}
             projectId={projectId}
             locale={locale}
+            operation={restart && value === api ? operation : undefined}
             onResumed={resumed}
             onGroupsRefreshed={refreshed}
           />
@@ -408,10 +482,10 @@ it.each(['api', 'project', 'locale', 'unmount'] as const)(
     const get = vi.mocked(api.projects.get).getMockImplementation()!
     vi.mocked(api.projects.get).mockImplementation(async id => {
       const project = await get(id)
-      if (server.commits.board) completed.resolve(project)
+      if (server.commits.board > (restart ? 1 : 0)) completed.resolve(project)
       return project
     })
-    await click('template-import-recovery-resume')
+    await click(restart ? 'template-import-recovery-restart' : 'template-import-recovery-resume')
     if (change === 'unmount') await act(async () => root.render(null))
     else if (change === 'locale') await draw(api, 'project', 'en')
     else
@@ -423,7 +497,13 @@ it.each(['api', 'project', 'locale', 'unmount'] as const)(
       pending.resolve(operation)
       await completed.promise
     })
-    expect(server.commits).toEqual({ agent: 6, group: 1, automation: 1, board: 1 })
+    const generations = restart ? 2 : 1
+    expect(server.commits).toEqual({
+      agent: 6 * generations,
+      group: generations,
+      automation: generations,
+      board: generations,
+    })
     expect(resumed).not.toHaveBeenCalled()
     expect(refreshed).not.toHaveBeenCalled()
     expect(container.querySelector('[data-testid="template-import-recovery-preview"]')).toBeNull()

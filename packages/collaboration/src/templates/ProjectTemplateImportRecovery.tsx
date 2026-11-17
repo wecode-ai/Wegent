@@ -6,7 +6,8 @@ import type { CollaborationLocale } from '../i18n'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup } from '../types'
 import { templateFailureMessage } from './messages'
-import { resumeProjectTemplateImport } from './projectConfiguration'
+import { restartProjectTemplateImport, resumeProjectTemplateImport } from './projectConfiguration'
+import { TemplateImportRetryError } from './projectTemplateImport'
 import {
   readProjectTemplateImportIntent,
   templateImportStateError,
@@ -29,6 +30,13 @@ const messages = {
     refresh: '刷新导入进度',
     resume: '继续导入',
     resuming: '正在继续导入…',
+    completedTitle: '模板导入记录',
+    completedOpen: '查看导入记录',
+    completedHide: '收起导入记录',
+    completed: '上次导入已完成。开始新的导入会根据以上配置创建新的小组和所需智能体。',
+    restart: '开始新的导入',
+    restarting: '正在开始新的导入…',
+    review: '核对导入结果',
   },
   en: {
     title: 'Unfinished template imports',
@@ -44,6 +52,14 @@ const messages = {
     refresh: 'Refresh import progress',
     resume: 'Continue import',
     resuming: 'Continuing import…',
+    completedTitle: 'Template import records',
+    completedOpen: 'View import records',
+    completedHide: 'Hide import records',
+    completed:
+      'The previous import is complete. Starting a new import creates new groups and any agents required by the saved configuration.',
+    restart: 'Start a new import',
+    restarting: 'Starting a new import…',
+    review: 'Check import results',
   },
 }
 
@@ -95,19 +111,25 @@ export function ProjectTemplateImportRecovery({
   const [detail, setDetail] = useState<{
     scope: typeof scope
     id: string
+    status?: TemplateImportOperation['status']
     intent?: ProjectTemplateImportIntent
     error?: unknown
   } | null>(null)
-  const [resuming, setResuming] = useState(false)
+  const [execution, setExecution] = useState<'resume' | 'restart' | null>(null)
   const [resumeError, setResumeError] = useState<unknown>(null)
+  const [failedImport, setFailedImport] = useState<{
+    scope: typeof scope
+    operation: TemplateImportOperation
+  } | null>(null)
 
   useEffect(() => {
     scope.active = true
     setOpened(false)
     setSelection(null)
     setDetail(null)
-    setResuming(false)
+    setExecution(null)
     setResumeError(null)
+    setFailedImport(null)
     return () => {
       scope.active = false
     }
@@ -169,7 +191,7 @@ export function ProjectTemplateImportRecovery({
           )
             throw templateImportStateError(scope.locale)
           const intent = readProjectTemplateImportIntent(selected, scope.locale)
-          setDetail({ scope, id: selectedId, intent })
+          setDetail({ scope, id: selectedId, intent, status: selected.status })
         } catch (error) {
           setDetail({ scope, id: selectedId, error })
         }
@@ -186,18 +208,56 @@ export function ProjectTemplateImportRecovery({
   const state = list?.scope === scope ? list : null
   const selected = detail?.scope === scope && detail.id === selectedId ? detail : null
   const operations = [...(state?.operations ?? [])]
-  if (
-    operation?.projectId === projectId &&
-    operation.protocolVersion === 1 &&
-    !operations.some(item => item.id === operation.id)
+  const failedOperations = [
+    operation,
+    failedImport?.scope === scope ? failedImport.operation : undefined,
+  ].filter(
+    (item): item is TemplateImportOperation =>
+      !!item && item.projectId === projectId && item.protocolVersion === 1
   )
-    operations.push(operation)
+  for (const failed of failedOperations) {
+    if (!operations.some(item => item.id === failed.id)) operations.push(failed)
+  }
   if (!api.templateImports || state?.supported === false) return null
   if (!state?.loading && !state?.error && !operations.length && !selectedId) return null
-  const busy = disabled || resuming
+  const busy = disabled || !!execution
+  const completed = failedOperations.some(item => item.status === 'completed')
+  const canRestart =
+    selected?.status === 'completed' &&
+    failedOperations.some(item => item.id === selectedId && item.status === 'completed')
+  const runImport = async (restart: boolean) => {
+    if (!isCurrent() || !selectedId || execution || (restart && !canRestart)) return
+    setExecution(restart ? 'restart' : 'resume')
+    setResumeError(null)
+    onBusyChange?.(true)
+    try {
+      const apply = restart ? restartProjectTemplateImport : resumeProjectTemplateImport
+      const groups = await apply(api, projectId, selectedId, locale, groups => {
+        if (isCurrent()) onGroupsRefreshed?.(groups)
+      })
+      if (!isCurrent()) return
+      await onResumed(groups)
+      if (isCurrent()) setSelection(null)
+    } catch (error) {
+      if (isCurrent()) {
+        setResumeError(error)
+        if (error instanceof TemplateImportRetryError && error.operation)
+          setFailedImport({ scope, operation: error.operation })
+      }
+    } finally {
+      if (isCurrent()) {
+        setExecution(null)
+        onBusyChange?.(false)
+        setRevision(value => value + 1)
+      }
+    }
+  }
 
   return (
-    <section aria-label={m.title} data-testid="template-import-recovery">
+    <section
+      aria-label={completed ? m.completedTitle : m.title}
+      data-testid="template-import-recovery"
+    >
       {state?.loading && (
         <p role="status" className="collaboration-template-muted">
           {m.loading}
@@ -221,7 +281,7 @@ export function ProjectTemplateImportRecovery({
           aria-expanded={opened}
           onClick={() => setOpened(value => !value)}
         >
-          {opened ? m.hide : m.open}
+          {completed ? (opened ? m.completedHide : m.completedOpen) : opened ? m.hide : m.open}
         </button>
       )}
       {(!!state?.error || opened) && (
@@ -272,7 +332,9 @@ export function ProjectTemplateImportRecovery({
           )}
           {selected?.intent && (
             <div data-testid="template-import-recovery-preview">
-              <p className="collaboration-template-muted">{m.saved}</p>
+              <p className="collaboration-template-muted">
+                {selected.status === 'completed' ? m.completed : m.saved}
+              </p>
               <ul>
                 {selected.intent.drafts.map((draft, index) => (
                   <li key={index}>
@@ -295,37 +357,25 @@ export function ProjectTemplateImportRecovery({
                 className="collaboration-template-choice"
                 data-testid="template-import-recovery-resume"
                 disabled={busy}
-                onClick={async () => {
-                  if (!isCurrent() || !selectedId) return
-                  setResuming(true)
-                  setResumeError(null)
-                  onBusyChange?.(true)
-                  try {
-                    const groups = await resumeProjectTemplateImport(
-                      api,
-                      projectId,
-                      selectedId,
-                      locale,
-                      groups => {
-                        if (isCurrent()) onGroupsRefreshed?.(groups)
-                      }
-                    )
-                    if (!isCurrent()) return
-                    await onResumed(groups)
-                    if (isCurrent()) setSelection(null)
-                  } catch (error) {
-                    if (isCurrent()) setResumeError(error)
-                  } finally {
-                    if (isCurrent()) {
-                      setResuming(false)
-                      onBusyChange?.(false)
-                      setRevision(value => value + 1)
-                    }
-                  }
-                }}
+                onClick={() => runImport(false)}
               >
-                {resuming ? m.resuming : m.resume}
+                {execution === 'resume'
+                  ? m.resuming
+                  : selected.status === 'completed'
+                    ? m.review
+                    : m.resume}
               </button>
+              {canRestart && (
+                <button
+                  type="button"
+                  className="collaboration-template-choice"
+                  data-testid="template-import-recovery-restart"
+                  disabled={busy}
+                  onClick={() => runImport(true)}
+                >
+                  {execution === 'restart' ? m.restarting : m.restart}
+                </button>
+              )}
             </div>
           )}
           {!!resumeError && (

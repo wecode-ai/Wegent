@@ -117,6 +117,11 @@ impl Begin {
         let mut keys = HashSet::new();
         if self.protocol_version != 1
             || !self.intent.is_object()
+            || self.intent.get("previousImportId").is_some_and(|previous| {
+                previous
+                    .as_str()
+                    .is_none_or(|id| id.is_empty() || id.chars().count() > 64)
+            })
             || self.steps.is_empty()
             || self.steps.len() > 200
             || self.steps.iter().any(|step| {
@@ -125,7 +130,7 @@ impl Begin {
         {
             return Err(FastApiError::detail(
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "Import requires protocolVersion 1, an intent object and 1 to 200 uniquely keyed steps",
+                "Import requires protocolVersion 1, an intent object, 1 to 200 uniquely keyed steps and a valid previousImportId when supplied",
             ));
         }
         Ok(())
@@ -159,6 +164,24 @@ async fn receipts(
         (operation,),
     )
     .await
+}
+
+async fn predecessor_complete(
+    tx: &mut impl MysqlTransaction,
+    project: &str,
+    actor: i32,
+    previous: &str,
+) -> brz_mysql::MysqlResult<Option<bool>> {
+    let operation:Option<SummaryOperation>=tx.fetch_optional("SELECT id,project_id,protocol_version,manifest FROM template_import_operations WHERE id=? AND actor_user_id=? AND project_id=? AND protocol_version=1 FOR UPDATE",(previous,actor,project)).await?;
+    let Some(operation) = operation else {
+        return Ok(None);
+    };
+    let receipt = receipts(tx, previous).await?;
+    Ok(Some(
+        step_views(&operation.manifest.0, &receipt)
+            .iter()
+            .all(|step| step.get("resourceId").is_some()),
+    ))
 }
 
 fn step_views(manifest: &[Step], receipts: &[Receipt]) -> Vec<Value> {
@@ -231,17 +254,23 @@ async fn begin_import(
         .mysql
         .with_transaction(async |tx| {
             if !can_maintain(tx, project, user.0.id).await? {
-                return Ok(None);
+                return Ok(Err(missing()));
+            }
+            if let Some(previous)=body.intent.get("previousImportId").and_then(Value::as_str) {
+                match predecessor_complete(tx,&project_id,user.0.id,previous).await? {
+                    None=>return Ok(Err(missing())),
+                    Some(false)=>return Ok(Err(FastApiError::detail(StatusCode::CONFLICT,"The previous template import is incomplete; resume it before importing again"))),
+                    Some(true)=>{},
+                }
             }
             // The unique configuration identity serializes concurrent clients without a lease.
             tx.execute("INSERT INTO template_import_operations (id,project_id,actor_user_id,protocol_version,intent_sha256,intent_encrypted,manifest,created_at,updated_at) VALUES (?,?,?,1,?,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE id=template_import_operations.id",(id.as_str(),project_id.as_str(),user.0.id,checksum.as_str(),encrypted.as_str(),Json(&body.steps))).await?;
             let operation:Operation=tx.fetch_one("SELECT id,project_id,protocol_version,intent_sha256,intent_encrypted,manifest FROM template_import_operations WHERE actor_user_id=? AND project_id=? AND protocol_version=1 AND intent_sha256=? FOR UPDATE",(user.0.id,project_id.as_str(),checksum.as_str())).await?;
             let receipt = receipts(tx, &operation.id).await?;
-            Ok(Some((operation, receipt)))
+            Ok(Ok((operation, receipt)))
         })
         .await
-        .map_err(storage)?
-        .ok_or_else(missing)?;
+        .map_err(storage)??;
     view(result.0, result.1)
 }
 

@@ -19,6 +19,7 @@ export interface ProjectTemplateImportIntent {
   drafts: ProjectCreateCollaborationGroupDraft[]
   routings: Partial<Record<'codex' | 'claude_code', TemplateAgentRouting>>
   executionLocale: CollaborationLocale
+  previousImportId?: string
 }
 
 export const templateImportAutomationStep = 'automation:task-assignment'
@@ -95,6 +96,8 @@ export function readProjectTemplateImportIntent(
     !value.routings ||
     typeof value.routings !== 'object' ||
     Array.isArray(value.routings) ||
+    (value.previousImportId !== undefined &&
+      (typeof value.previousImportId !== 'string' || !value.previousImportId.trim())) ||
     (value.executionLocale !== 'zh-CN' && value.executionLocale !== 'en')
   )
     throw templateImportStateError(locale)
