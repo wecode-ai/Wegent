@@ -3,6 +3,10 @@ use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::stand_in_telemetry::origin_properties;
 
+#[cfg(test)]
+#[path = "stand_in_telemetry_tests.rs"]
+mod tests;
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn stand_in_telemetry_rpc(
         &self,
