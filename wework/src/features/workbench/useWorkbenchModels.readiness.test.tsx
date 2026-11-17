@@ -4,7 +4,11 @@ import { expect, test, vi } from 'vitest'
 import { useWorkbenchModels } from './useWorkbenchModels'
 
 test('keeps a restored native provider through catalog refresh and clears it on model change', async () => {
-  const model: UnifiedModel = { name: 'native-codex', type: 'runtime' }
+  const model: UnifiedModel = {
+    name: 'native-codex',
+    type: 'runtime',
+    runtime: { family: 'codex', provider: 'native-provider' },
+  }
   const replacement: UnifiedModel = { name: 'other-codex', type: 'runtime' }
   const api = { listModels: vi.fn().mockResolvedValue({ data: [model, replacement] }) }
   const { result } = renderHook(() =>

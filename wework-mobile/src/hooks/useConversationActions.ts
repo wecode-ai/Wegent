@@ -66,7 +66,7 @@ export function useConversationActions({
 
   const archiveConversation = useCallback(
     async (address: RuntimeTaskAddress) => {
-      const { cleanupError } = await archiveMobileConversation(api, work, address)
+      const { cleanupError } = await archiveMobileConversation(api, address)
       if (
         currentAddress.current?.deviceId === address.deviceId &&
         currentAddress.current.taskId === address.taskId

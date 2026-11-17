@@ -340,6 +340,40 @@ impl WorktreeManager {
         )
     }
 
+    pub fn list_branches(&self, source_path: &Path) -> Result<Vec<String>, String> {
+        let output = git_output(
+            source_path,
+            &crate::local::command::GIT_BRANCH_LIST_ARGV[1..],
+            None,
+        )?;
+        Ok(output
+            .lines()
+            .map(str::trim)
+            .filter(|branch| !branch.is_empty())
+            .map(str::to_owned)
+            .collect())
+    }
+
+    pub fn current_branch(&self, source_path: &Path) -> Result<Option<String>, String> {
+        let output = git_workspace_command(
+            source_path,
+            &crate::local::command::GIT_CURRENT_BRANCH_ARGV[1..],
+            None,
+        )
+        .output()
+        .map_err(|error| error.to_string())?;
+        if output.status.code() == Some(1) {
+            return Ok(None);
+        }
+        command_result(output).map(|branch| {
+            if branch.is_empty() {
+                None
+            } else {
+                Some(branch)
+            }
+        })
+    }
+
     pub fn plan(
         &self,
         source_path: &Path,
@@ -1244,6 +1278,13 @@ fn git_command() -> Command {
 }
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
+    let output = git_workspace_command(path, args, envs)
+        .output()
+        .map_err(|error| error.to_string())?;
+    command_result(output)
+}
+
+fn git_workspace_command(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Command {
     let mut command = git_command();
     configure_git_common_dir(&mut command, path);
     command
@@ -1256,8 +1297,7 @@ fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Resu
     if let Some(envs) = envs {
         command.envs(envs.iter().copied());
     }
-    let output = command.output().map_err(|error| error.to_string())?;
-    command_result(output)
+    command
 }
 
 fn configure_git_common_dir(command: &mut Command, _path: &Path) {

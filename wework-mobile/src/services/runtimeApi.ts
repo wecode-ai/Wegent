@@ -1,4 +1,20 @@
+import type {
+  RuntimeLocalProjectUpsertRequest,
+  RuntimeLocalProjectUpsertResponse,
+  RuntimeWorkspaceRenameRequest,
+  RuntimeWorkspaceRemoveRequest,
+  RuntimeProjectPinRequest,
+  ArchivedConversationsListRequest,
+  ArchivedConversationsListResponse,
+  RuntimeTaskArchiveRequest,
+} from '../../../packages/chat-core/src/runtime-management-types'
 import type { RuntimeSessionConfig } from './backendConfig'
+import { listWorkspaceBranches } from '../../../packages/chat-core/src/workspace-branches'
+import type {
+  RuntimeWorktreeCapabilitiesRequest,
+  RuntimeWorktreeCapabilitiesResponse,
+  RuntimeWorktreePreflightRequest,
+} from '../../../packages/chat-core/src/worktree-types'
 import type {
   RuntimeWorktreeDeleteRequest,
   RuntimeWorktreeMutationResponse,
@@ -184,12 +200,22 @@ export class RuntimeApi {
     return { models: row.models, catalog_error: row.catalog_error }
   }
 
-  preflightWorkspace(input: {
-    deviceId: string
-    sourcePath: string
-  }): Promise<RuntimeWorktreePreflightResponse> {
+  getWorktreeCapabilities(
+    input: RuntimeWorktreeCapabilitiesRequest
+  ): Promise<RuntimeWorktreeCapabilitiesResponse> {
     if (this.local?.runtime.ownsDevice(input.deviceId))
-      return this.local.runtime.request('runtime.worktrees.preflight', input)
+      return this.local.runtime.request('runtime.worktrees.capabilities', { ...input })
+    return this.request('/runtime-work/worktrees/capabilities', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  }
+
+  preflightWorkspace(
+    input: RuntimeWorktreePreflightRequest
+  ): Promise<RuntimeWorktreePreflightResponse> {
+    if (this.local?.runtime.ownsDevice(input.deviceId))
+      return this.local.runtime.request('runtime.worktrees.preflight', { ...input })
     return this.request('/runtime-work/worktrees/preflight', {
       method: 'POST',
       body: JSON.stringify(input),
@@ -247,6 +273,13 @@ export class RuntimeApi {
 
   getWorkspaceGitBranch(deviceId: string, path: string, signal?: AbortSignal): Promise<string> {
     return this.readWorkspaceGitCommand(deviceId, path, 'git_branch', { signal })
+  }
+
+  listWorkspaceGitBranches(deviceId: string, path: string): Promise<string[]> {
+    return listWorkspaceBranches(input => this.preflightWorkspace(input), {
+      deviceId,
+      sourcePath: path,
+    })
   }
 
   async getWorkspaceGitDiff(
@@ -625,17 +658,44 @@ export class RuntimeApi {
     })
   }
 
-  renameWorkspace(input: {
-    deviceId: string
-    workspacePath: string
-    name: string
-  }): Promise<RuntimeWorkspaceOpenResponse> {
-    if (this.local?.runtime.ownsDevice(input.deviceId))
-      return this.local.runtime.request('runtime.workspaces.rename', { ...input, runtime: 'codex' })
-    return this.request('/runtime-work/workspaces/rename', {
-      method: 'POST',
-      body: JSON.stringify({ ...input, runtime: 'codex' }),
-    })
+  upsertLocalProject(
+    input: RuntimeLocalProjectUpsertRequest
+  ): Promise<RuntimeLocalProjectUpsertResponse> {
+    return this.requestRuntime('runtime.projects.upsert_local', { ...input }, input.deviceId)
+  }
+
+  renameWorkspace(input: RuntimeWorkspaceRenameRequest): Promise<RuntimeWorkspaceOpenResponse> {
+    return this.requestRuntime('runtime.workspaces.rename', { ...input }, input.deviceId)
+  }
+
+  removeWorkspace(input: RuntimeWorkspaceRemoveRequest): Promise<RuntimeWorkspaceOpenResponse> {
+    return this.requestRuntime('runtime.workspaces.remove', { ...input }, input.deviceId)
+  }
+
+  setProjectPinned(input: RuntimeProjectPinRequest): Promise<RuntimeSidebarMutationResponse> {
+    return this.requestRuntime('runtime.sidebar.projects.pin', { ...input }, input.deviceId)
+  }
+
+  listArchivedConversations(
+    input: ArchivedConversationsListRequest & { deviceId: string }
+  ): Promise<ArchivedConversationsListResponse> {
+    return this.requestRuntime('runtime.archived_conversations.list', { ...input }, input.deviceId)
+  }
+
+  unarchiveConversation(address: RuntimeTaskArchiveRequest): Promise<RuntimeTaskArchiveResponse> {
+    return this.requestRuntime(
+      'runtime.archived_conversations.unarchive',
+      { ...address },
+      address.deviceId
+    )
+  }
+
+  deleteArchivedConversation(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+    return this.requestRuntime(
+      'runtime.archived_conversations.delete',
+      { ...address },
+      address.deviceId
+    )
   }
 
   setRuntimeTaskPinned(input: RuntimeTaskPinRequest): Promise<RuntimeSidebarMutationResponse> {
@@ -646,7 +706,7 @@ export class RuntimeApi {
     return this.requestRuntime('runtime.tasks.rename', { ...input }, input.address.deviceId)
   }
 
-  archiveConversation(address: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
+  archiveConversation(address: RuntimeTaskArchiveRequest): Promise<RuntimeTaskArchiveResponse> {
     return this.requestRuntime('runtime.tasks.archive', { ...address }, address.deviceId)
   }
 

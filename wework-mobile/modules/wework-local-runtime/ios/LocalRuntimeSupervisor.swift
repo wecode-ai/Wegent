@@ -22,6 +22,7 @@ struct RuntimeFailure: Error {
 
 final class LocalRuntimeSupervisor {
   private struct PendingRequest {
+    let method: String
     let rawResponse: Bool
     let completion: (Result<Any, RuntimeFailure>) -> Void
   }
@@ -56,6 +57,7 @@ final class LocalRuntimeSupervisor {
   private var supported: Bool { ww_runtime_available() != 0 && resources != nil }
 
   private init() {
+    ww_runtime_set_diagnostics_enabled(RuntimeDiagnostics.shared.isEnabled ? 1 : 0)
     network.pathUpdateHandler = { [weak self] _ in self?.refreshDNS() }
     network.start(queue: DispatchQueue(label: "io.wecode.wework.local.network"))
     foregroundObserver = NotificationCenter.default.addObserver(
@@ -87,6 +89,7 @@ final class LocalRuntimeSupervisor {
   private func refreshDNS() {
     queue.async {
       guard self.state == "running" else { return }
+      self.logTransportDiagnostics("network-or-foreground")
       let generation = self.generation
       self.lifecycle.async {
         let result = ww_runtime_refresh_dns()
@@ -99,6 +102,12 @@ final class LocalRuntimeSupervisor {
         }
       }
     }
+  }
+
+  private func logTransportDiagnostics(_ trigger: String) {
+    guard RuntimeDiagnostics.shared.isEnabled else { return }
+    let value = ww_runtime_transport_diagnostics(process)
+    if RuntimeDiagnostics.shared.isEnabled { logger.notice("IPC diagnostics trigger=\(trigger, privacy: .public) generation=\(self.generation, privacy: .public) accepts=\(value.accept_calls, privacy: .public) acceptFailures=\(value.accept_failures, privacy: .public) hostErrno=\(value.accept_host_error, privacy: .public) guestPid=\(value.accepting_pid, privacy: .public) listenersRestored=\(value.listeners_restored, privacy: .public) listenerFailures=\(value.listener_failures, privacy: .public) listenerErrno=\(value.listener_host_error, privacy: .public) inputBytes=\(value.input_bytes, privacy: .public) outputBytes=\(value.output_bytes, privacy: .public)") }
   }
 
   func subscribe(_ listener: @escaping (String, [String: Any]) -> Void) -> UUID {
@@ -124,7 +133,12 @@ final class LocalRuntimeSupervisor {
   func events(_ options: [String: Any], promise: Promise) {
     queue.async {
       guard self.checkScope(options, promise: promise) else { return }
-      promise.resolve(self.journal.read(after: options["afterSequence"] as? Int ?? 0))
+      do {
+        let cursor = try RuntimeBridgeOptions.integer(options["afterSequence"], default: 0, minimum: 0)
+        promise.resolve(self.journal.read(after: cursor))
+      } catch {
+        RuntimeFailure("invalid_request", "事件读取位置必须是非负整数").reject(promise)
+      }
     }
   }
   private func checkScope(_ options: [String: Any], promise: Promise) -> Bool {
@@ -144,7 +158,10 @@ final class LocalRuntimeSupervisor {
     else if !supported { value["error"] = "此安装包未包含本机执行组件" }
     return value
   }
-  private func publishStatus() { emit("onRuntimeStatus", snapshot()) }
+  private func publishStatus() {
+    if RuntimeDiagnostics.shared.isEnabled { logger.notice("Runtime status state=\(self.state, privacy: .public) generation=\(self.generation, privacy: .public) background=\(self.backgroundState, privacy: .public) pending=\(self.pending.count, privacy: .public) sequence=\(self.journal.sequence, privacy: .public)") }
+    emit("onRuntimeStatus", snapshot())
+  }
   private func emit(_ name: String, _ body: [String: Any]) {
     for listener in listeners.values { listener(name, body) }
   }
@@ -172,18 +189,18 @@ final class LocalRuntimeSupervisor {
       defaults.set(self.generation, forKey: "wework.local.generation")
       let generation = self.generation
       let device = self.deviceId!
-      self.logger.info("Startup requested generation=\(generation, privacy: .public)")
+      if RuntimeDiagnostics.shared.isEnabled { self.logger.info("Startup requested generation=\(generation, privacy: .public)") }
       self.state = "starting"; self.failure = nil; self.startup = promise
       self.backgroundState = "notRequested"; self.publishStatus()
       self.lifecycle.async {
         do {
           let directory = try self.prepare(scope: scope)
-          self.logger.info("Runtime resources prepared generation=\(generation, privacy: .public)")
+          if RuntimeDiagnostics.shared.isEnabled { self.logger.info("Runtime resources prepared generation=\(generation, privacy: .public)") }
           var process: OpaquePointer?
           let result = directory.appendingPathComponent("guest/data").path.withCString { data in
             device.withCString { ww_runtime_start(data, $0, &process) }
           }
-          self.logger.info("Runtime launch returned generation=\(generation, privacy: .public) code=\(result, privacy: .public)")
+          if RuntimeDiagnostics.shared.isEnabled { self.logger.info("Runtime launch returned generation=\(generation, privacy: .public) code=\(result, privacy: .public)") }
           guard result == 0, let process else {
             if let process {
               self.disposeUnclaimed(process, generation: generation)
@@ -200,8 +217,6 @@ final class LocalRuntimeSupervisor {
             self.process = process
             self.input = FileHandle(fileDescriptor: ww_runtime_input(process), closeOnDealloc: true)
             self.readOutput(process, generation: generation)
-            do { try self.journal.open(directory) }
-            catch { self.failed("事件存储不可用：\(error.localizedDescription)"); self.stop(nil); return }
             self.queue.asyncAfter(deadline: .now() + 45) {
               if self.state == "starting" && generation == self.generation {
                 self.failed("执行器启动超时"); self.stop(nil)
@@ -244,6 +259,13 @@ final class LocalRuntimeSupervisor {
       .appendingPathComponent(scope, isDirectory: true)
     let attributes: [FileAttributeKey: Any] = [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: attributes)
+    do {
+      let cache = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask,
+        appropriateFor: nil, create: false)
+      try RuntimeLegacyDiagnostics.clean(profile: root, cache: cache)
+    } catch {
+      if RuntimeDiagnostics.shared.isEnabled { logger.error("Obsolete diagnostic cleanup failed") }
+    }
     let guest = root.appendingPathComponent("guest")
     let stamp = root.appendingPathComponent("runtime-version")
     if FileManager.default.fileExists(atPath: guest.path) {
@@ -281,19 +303,19 @@ final class LocalRuntimeSupervisor {
       defer { try? output.close() }
       var frameCount = 0
       var receivedBytes = 0
-      self.logger.info("IPC reader started generation=\(generation, privacy: .public)")
+      if RuntimeDiagnostics.shared.isEnabled { self.logger.info("IPC reader started generation=\(generation, privacy: .public)") }
       do {
         try RuntimePipeReader.readLines(from: output.fileDescriptor) { line in
           frameCount += 1; receivedBytes += line.count
           if frameCount == 1 {
-            self.logger.info("IPC first frame generation=\(generation, privacy: .public) bytes=\(line.count, privacy: .public)")
+            if RuntimeDiagnostics.shared.isEnabled { self.logger.info("IPC first frame generation=\(generation, privacy: .public) bytes=\(line.count, privacy: .public)") }
           }
           guard let frame = try JSONSerialization.jsonObject(with: line) as? [String: Any] else {
             throw RuntimeFailure("runtime_protocol", "执行器返回无效消息")
           }
           self.queue.async { if generation == self.generation { self.receive(frame) } }
         }
-        self.logger.info("IPC EOF generation=\(generation, privacy: .public) frames=\(frameCount, privacy: .public) bytes=\(receivedBytes, privacy: .public)")
+        if RuntimeDiagnostics.shared.isEnabled { self.logger.info("IPC EOF generation=\(generation, privacy: .public) frames=\(frameCount, privacy: .public) bytes=\(receivedBytes, privacy: .public)") }
         self.queue.async {
           if generation == self.generation && ["starting", "running"].contains(self.state) {
             self.failed("执行器通道已关闭"); self.stop(nil)
@@ -301,7 +323,7 @@ final class LocalRuntimeSupervisor {
         }
       } catch {
         let failure = error as NSError
-        self.logger.error("IPC read failed generation=\(generation, privacy: .public) frames=\(frameCount, privacy: .public) domain=\(failure.domain, privacy: .public) code=\(failure.code, privacy: .public)")
+        if RuntimeDiagnostics.shared.isEnabled { self.logger.error("IPC read failed generation=\(generation, privacy: .public) frames=\(frameCount, privacy: .public) domain=\(failure.domain, privacy: .public) code=\(failure.code, privacy: .public)") }
         self.queue.async {
           if generation == self.generation && ["starting", "running"].contains(self.state) {
             self.failed("执行器通道中断"); self.stop(nil)
@@ -309,13 +331,22 @@ final class LocalRuntimeSupervisor {
         }
       }
     }
-    // Drain diagnostics without persisting potentially sensitive model/auth data.
+    // Only fixed startup checkpoints cross the diagnostic boundary; fields are discarded.
     DispatchQueue.global(qos: .utility).async {
       defer { try? error.close() }
-      do { try RuntimePipeReader.readChunks(from: error.fileDescriptor) { _ in } }
+      var diagnostics: RuntimeStartupDiagnostics?
+      do {
+        try RuntimePipeReader.readChunks(from: error.fileDescriptor) { chunk in
+          guard RuntimeDiagnostics.shared.isEnabled else { diagnostics = nil; return }
+          if diagnostics == nil { diagnostics = RuntimeStartupDiagnostics() }
+          diagnostics?.consume(chunk) { stage in
+            if RuntimeDiagnostics.shared.isEnabled { self.logger.notice("Executor checkpoint generation=\(generation, privacy: .public) stage=\(stage, privacy: .public)") }
+          }
+        }
+      }
       catch {
         let failure = error as NSError
-        self.logger.error("Diagnostic drain failed generation=\(generation, privacy: .public) domain=\(failure.domain, privacy: .public) code=\(failure.code, privacy: .public)")
+        if RuntimeDiagnostics.shared.isEnabled { self.logger.error("Diagnostic drain failed generation=\(generation, privacy: .public) domain=\(failure.domain, privacy: .public) code=\(failure.code, privacy: .public)") }
       }
     }
     observeExit(process, generation: generation)
@@ -326,6 +357,7 @@ final class LocalRuntimeSupervisor {
       var status: Int32 = 0
       let result = ww_runtime_wait(process, &status)
       self.queue.async {
+        if RuntimeDiagnostics.shared.isEnabled { self.logger.notice("Executor exit generation=\(generation, privacy: .public) result=\(result, privacy: .public) status=\(status, privacy: .public)") }
         if self.releaseAfterWait.remove(process) != nil { ww_runtime_release(process) }
         else { self.completedWaiters.insert(process) }
         guard generation == self.generation else { return }
@@ -345,6 +377,19 @@ final class LocalRuntimeSupervisor {
       guard let callback = pending.removeValue(forKey: id) else {
         return
       }
+      if callback.method == "runtime.codex.app_server.restart", RuntimeDiagnostics.shared.isEnabled {
+        let result = frame["result"] as? [String: Any] ?? [:]
+        let succeeded = frame["ok"] as? Bool == true
+        let restarted = result["restarted"] as? Bool == true
+        logger.notice("Codex restart response generation=\(self.generation, privacy: .public) ok=\(succeeded, privacy: .public) restarted=\(restarted, privacy: .public)")
+      }
+      if callback.method == "runtime.tasks.transcript", RuntimeDiagnostics.shared.isEnabled {
+        let result = frame["result"] as? [String: Any] ?? [:]
+        let turns = (result["turns"] as? [Any])?.count ?? -1
+        let messages = (result["messages"] as? [Any])?.count ?? -1
+        let succeeded = frame["ok"] as? Bool == true
+        logger.notice("Transcript response generation=\(self.generation, privacy: .public) ok=\(succeeded, privacy: .public) turns=\(turns, privacy: .public) messages=\(messages, privacy: .public)")
+      }
       if callback.rawResponse { callback.completion(.success(frame)); return }
       if frame["ok"] as? Bool == true { callback.completion(.success(frame["result"] ?? NSNull())) }
       else {
@@ -361,7 +406,7 @@ final class LocalRuntimeSupervisor {
       guard payload["device_id"] as? String == deviceId, payload["ready"] as? Bool == true else {
         failed("执行器设备标识不匹配"); stop(nil); return
       }
-      logger.info("Executor ready generation=\(self.generation, privacy: .public)")
+      if RuntimeDiagnostics.shared.isEnabled { logger.info("Executor ready generation=\(self.generation, privacy: .public)") }
       state = "running"; publishStatus(); startup?.resolve(snapshot()); startup = nil
     }
     if let taskId = payload["taskId"] as? String {
@@ -375,7 +420,7 @@ final class LocalRuntimeSupervisor {
     do {
       let entry = try journal.append(frame, generation: generation)
       emit("onRuntimeEvent", entry)
-    } catch { failed("本机事件存储写入失败"); stop(nil) }
+    } catch { failed("本机事件无法编码"); stop(nil) }
   }
 
   func request(_ options: [String: Any], promise: Promise) {
@@ -394,7 +439,13 @@ final class LocalRuntimeSupervisor {
           return
         }
       }
-      let timeout = options["timeoutMs"] as? Int ?? 75000
+      let timeout: Int
+      do {
+        timeout = try RuntimeBridgeOptions.integer(options["timeoutMs"], default: 75000, minimum: 1,
+                                                  maximum: Int.max / 1_000_000)
+      } catch {
+        RuntimeFailure("invalid_request", "请求超时必须是正整数毫秒").reject(promise); return
+      }
       let complete: (Result<Any, RuntimeFailure>) -> Void = { result in
         switch result { case .success(let value): promise.resolve(value)
         case .failure(let error): error.reject(promise) }
@@ -424,10 +475,14 @@ final class LocalRuntimeSupervisor {
       var data = try JSONSerialization.data(withJSONObject: ["type": "request", "id": id,
         "method": method, "params": params])
       data.append(10)
-      pending[id] = PendingRequest(rawResponse: rawResponse, completion: completion)
+      pending[id] = PendingRequest(method: method, rawResponse: rawResponse, completion: completion)
       if let workTask { workRequests[id] = workTask }
+      if RuntimeDiagnostics.shared.isEnabled { logger.notice("IPC request queued method=\(method, privacy: .public) generation=\(requestGeneration, privacy: .public) pending=\(self.pending.count, privacy: .public)") }
       writer.async {
-        do { try input.write(contentsOf: data) }
+        do {
+          try input.write(contentsOf: data)
+          if RuntimeDiagnostics.shared.isEnabled { self.logger.notice("IPC request written method=\(method, privacy: .public) generation=\(requestGeneration, privacy: .public)") }
+        }
         catch {
           self.queue.async {
             guard self.generation == requestGeneration else { return }
@@ -437,12 +492,16 @@ final class LocalRuntimeSupervisor {
         }
       }
       queue.asyncAfter(deadline: .now() + .milliseconds(max(1, timeout))) {
-        self.pending.removeValue(forKey: id)?.completion(.failure(RuntimeFailure("runtime_timeout", "执行器请求超时")))
+        guard let request = self.pending.removeValue(forKey: id) else { return }
+        if RuntimeDiagnostics.shared.isEnabled { self.logger.error("IPC request timeout method=\(method, privacy: .public) generation=\(requestGeneration, privacy: .public) state=\(self.state, privacy: .public) sequence=\(self.journal.sequence, privacy: .public) pending=\(self.pending.count, privacy: .public)") }
+        self.logTransportDiagnostics("request-timeout")
+        request.completion(.failure(RuntimeFailure("runtime_timeout", "执行器请求超时")))
       }
     } catch { completion(.failure(RuntimeFailure("invalid_request", "请求无法序列化"))) }
   }
 
   private func failed(_ message: String) {
+    if RuntimeDiagnostics.shared.isEnabled { logger.error("Runtime failed previousState=\(self.state, privacy: .public) generation=\(self.generation, privacy: .public) pending=\(self.pending.count, privacy: .public) sequence=\(self.journal.sequence, privacy: .public)") }
     state = "failed"; failure = message
     startup.map { RuntimeFailure("runtime_start", message).reject($0) }; startup = nil
     let callbacks = pending.values; pending.removeAll()

@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy'
 
 import type { DeviceInfo, RuntimeWorkListResponse, UnifiedModel } from '@/types/runtime'
+import { beginMobileDiagnostic } from './mobileDiagnostics'
 
 const CACHE_VERSION = 2
 const CACHE_DIRECTORY = 'wegent-mobile/runtime'
@@ -44,9 +45,21 @@ export class MobileRuntimeCache {
   }
 
   async read(): Promise<RuntimeCacheSnapshot> {
+    const diagnostic = beginMobileDiagnostic('cache-read', this.localScope ? 'phone' : 'cloud')
     const path = this.path()
-    if (!path || !(await FileSystem.getInfoAsync(path)).exists) return EMPTY_SNAPSHOT
+    diagnostic.step('read-cache-file-info')
+    const exists = path
+      ? await FileSystem.getInfoAsync(path).catch(cause => {
+          diagnostic.fail(cause)
+          throw cause
+        })
+      : null
+    if (!path || !exists?.exists) {
+      diagnostic.complete({ exists: 0 })
+      return EMPTY_SNAPSHOT
+    }
     try {
+      diagnostic.step('read-and-parse-cache-file')
       const envelope = parseEnvelope(JSON.parse(await FileSystem.readAsStringAsync(path)))
       if (
         !envelope ||
@@ -54,10 +67,13 @@ export class MobileRuntimeCache {
         envelope.userId !== this.userId ||
         envelope.localScope !== this.localScope
       ) {
+        diagnostic.complete({ accepted: 0 })
         return EMPTY_SNAPSHOT
       }
+      diagnostic.complete({ accepted: 1, devices: envelope.devices.length })
       return snapshotFrom(envelope)
-    } catch {
+    } catch (cause) {
+      diagnostic.fail(cause)
       return EMPTY_SNAPSHOT
     }
   }
