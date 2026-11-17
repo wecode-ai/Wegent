@@ -46,9 +46,11 @@ async fn explicit_check_recovers_an_assessment_that_failed_before_command_accept
 }
 
 #[tokio::test]
-async fn failed_routing_is_not_replanned_but_new_events_still_reach_the_router() {
+async fn failed_routing_is_not_replanned_but_new_direct_events_still_reach_the_router() {
     let root = tempfile::tempdir().unwrap();
-    let (handler, store, settings) = fixture(root.path());
+    let (handler, store, mut settings) = fixture(root.path());
+    settings["roles"][0]["connections"][0]["policy"]["immediate"] = json!(true);
+    let settings = store.save_personal_stand_in(7, "mac", settings).unwrap();
     let failed = store
         .enqueue_stand_in_event(7, json!("failed-event"), connection_event())
         .unwrap();
