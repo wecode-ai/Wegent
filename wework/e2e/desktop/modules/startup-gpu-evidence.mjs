@@ -20,7 +20,9 @@ export function createStartupGpuLaunch(
   return {
     evidencePath,
     nonce,
-    argument: `--gpu-launcher=${launcherCommand}`,
+    // GPU GetZygote checks the GPU-specific switch, not global --no-sandbox.
+    // A zygote ForkRequest bypasses LaunchProcess and its launcher wrapper.
+    arguments: ['--disable-gpu-sandbox', `--gpu-launcher=${launcherCommand}`],
     env: {
       WEWORK_E2E_GPU_LAUNCHER: scriptPath,
       WEWORK_E2E_GPU_EVIDENCE_PATH: evidencePath,

@@ -2,11 +2,15 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { resolveElectronLaunchArguments } from '../e2e/desktop/modules/electron-launch-arguments.mjs'
+import { inspectBeforeStart } from '../e2e/desktop/modules/inspect-before-start.mjs'
+import { spawnStartupGdbProbe } from '../e2e/desktop/modules/startup-gdb-probe.mjs'
 import {
   assertStartupGpuEvidence,
   createStartupGpuLaunch,
@@ -15,6 +19,15 @@ import {
 } from '../e2e/desktop/modules/startup-gpu-evidence.mjs'
 
 const shellTests = { skip: process.platform === 'win32', timeout: 5_000 }
+const require = createRequire(new URL('../electron/package.json', import.meta.url))
+const fixtureDirectory = fileURLToPath(new URL('../e2e/desktop/modules/', import.meta.url))
+
+function gpuLauncherArgument(launch) {
+  assert.equal(launch.arguments[0], '--disable-gpu-sandbox')
+  assert.equal(launch.arguments.length, 2)
+  assert.match(launch.arguments[1], /^--gpu-launcher=/)
+  return launch.arguments[1]
+}
 
 async function startGpu(t, mode = 'normal') {
   const root = await mkdtemp(join(tmpdir(), 'startup GPU "quoted" '))
@@ -30,7 +43,9 @@ async function startGpu(t, mode = 'normal') {
   })
   // This bootstrap has no spaces inside its shell-code token. Chromium's
   // PrependWrapper keeps its quotes, unlike a shell command-line parser.
-  const [program, ...prefix] = launch.argument.slice('--gpu-launcher='.length).split(' ')
+  const [program, ...prefix] = gpuLauncherArgument(launch)
+    .slice('--gpu-launcher='.length)
+    .split(' ')
   const source = `
     const fs = require('node:fs');
     if (fs.readFileSync(7, 'utf8') !== 'mojo-fd-seven') process.exit(91);
@@ -189,3 +204,124 @@ test('adds no launcher on other platforms or for a non-root Linux host', () => {
   }
   assert.equal(createStartupGpuLaunch('/unused', { platform: 'linux', getuid: () => 1000 }), null)
 })
+
+async function verifyNativeGpuLaunch(root, disableGpuSandbox) {
+  const scriptPath = join(root, "GPU launcher 'with spaces'.sh")
+  await copyFile(
+    fileURLToPath(new URL('../e2e/desktop/modules/startup-gpu-launcher.sh', import.meta.url)),
+    scriptPath
+  )
+  // The unit runner is unprivileged. Exercise the root launch arguments without
+  // claiming that this fixture certifies the container's root/recovery flow.
+  const launch = createStartupGpuLaunch(join(root, 'GPU "quoted" evidence.jsonl'), {
+    platform: 'linux',
+    getuid: () => 0,
+    scriptPath,
+  })
+  const argument = gpuLauncherArgument(launch)
+  const resultPath = join(root, 'result.json')
+  const environment = {
+    ...process.env,
+    ...launch.env,
+    WEWORK_E2E_GPU_SMOKE_ROOT: root,
+    WEWORK_E2E_GPU_SMOKE_RESULT: resultPath,
+    WEWORK_E2E_GPU_LAUNCHER_VALUE: argument.slice('--gpu-launcher='.length),
+  }
+  delete environment.ELECTRON_RUN_AS_NODE
+  const args = resolveElectronLaunchArguments({
+    platform: 'linux',
+    getuid: () => 0,
+    isolatedXvfb: 'true',
+    extraArguments: [
+      '--inspect-brk=127.0.0.1:0',
+      ...launch.arguments.filter(value => disableGpuSandbox || value !== '--disable-gpu-sandbox'),
+    ],
+  })
+  const probe = spawnStartupGdbProbe(require('electron'), [...args, 'startup-gpu-smoke.mjs'], {
+    cwd: fixtureDirectory,
+    env: environment,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const ended = once(probe.child, 'exit')
+  let timer
+  try {
+    await inspectBeforeStart(
+      probe.child,
+      `(() => {
+        const fs = process.getBuiltinModule('fs')
+        const stat = fs.readFileSync('/proc/self/stat', 'utf8')
+        const fields = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\\s+/)
+        console.info('[startup-gdb-inferior]', JSON.stringify({
+          pid:process.pid,ppid:process.ppid,pgid:Number(fields[2])
+        }))
+      })()`
+    )
+    const deadline = Date.now() + 15_000
+    const [code, signal] = await Promise.race([
+      ended,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Native GPU launch contract timed out')), 15_000)
+      }),
+    ])
+    assert.deepEqual({ code, signal }, { code: 0, signal: null }, probe.output)
+    const proof = disableGpuSandbox ? await waitForStartupGpuExit(launch, deadline) : null
+    await probe.assertNormalExit({ code, signal })
+    const result = JSON.parse(await readFile(resultPath, 'utf8'))
+    assert.equal(result.error, undefined, result.error)
+    assert.equal(result.switches.gpuLauncher, argument.slice('--gpu-launcher='.length))
+    assert.equal(result.switches.disableGpuSandbox, disableGpuSandbox)
+    assert.equal(result.gpu.quitObserved, true)
+    assert.deepEqual(result.gpu.reopened, result.gpu.initial, 'The fixture GPU restarted')
+    assert.deepEqual(result.gpuParents.reopened, result.gpuParents.initial)
+    if (disableGpuSandbox) {
+      assertStartupGpuEvidence(result, proof, probe.output)
+      assert.equal(result.gpuParents.initial.pid, result.profilePaths.nativePid)
+      assert.equal(result.gpuParents.initial.isZygote, false)
+      console.log(
+        '[startup-gpu-contract] wrapped',
+        JSON.stringify({ ...proof, metrics: result.gpu })
+      )
+    } else {
+      await assert.rejects(readFile(launch.evidencePath), { code: 'ENOENT' })
+      assert.equal(result.gpuParents.initial.isZygote, true, 'The old GPU did not use a zygote')
+      assert.notEqual(result.gpuParents.initial.pid, result.profilePaths.nativePid)
+      console.log('[startup-gpu-contract] zygote', JSON.stringify(result))
+    }
+  } catch (error) {
+    const snapshots = await Promise.allSettled([
+      readFile(resultPath, 'utf8'),
+      readFile(launch.evidencePath, 'utf8'),
+    ])
+    console.error(
+      '[startup-gpu-contract] failure',
+      JSON.stringify({
+        disableGpuSandbox,
+        snapshots: snapshots.map(value =>
+          value.status === 'fulfilled' ? value.value : { error: value.reason.code }
+        ),
+      })
+    )
+    await probe.captureFailure()
+    throw error
+  } finally {
+    clearTimeout(timer)
+    await probe.cleanup()
+  }
+}
+
+test(
+  'real Linux Electron preserves the GPU launcher value and proves zygote/wrapped startup contracts',
+  { skip: process.platform !== 'linux', timeout: 60_000 },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'startup native GPU "quoted" '))
+    try {
+      for (const disableGpuSandbox of [false, true]) {
+        const directory = await mkdtemp(join(root, disableGpuSandbox ? 'wrapped-' : 'zygote-'))
+        await verifyNativeGpuLaunch(directory, disableGpuSandbox)
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)

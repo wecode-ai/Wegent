@@ -83,10 +83,10 @@ async function verifyStartupFault({
   const original = fault === 'invalid-release' ? '{broken-release' : validDescriptor
   await writeFile(descriptorPath, original)
   const evidencePath = join(resultDir, `startup-fault-${name}.json`)
-  const gpuLaunch = createStartupGpuLaunch(join(root, 'gpu-process.jsonl'))
+  const gpuLaunch = createStartupGpuLaunch(join(resultDir, `startup-fault-${name}-gpu.jsonl`))
   const startedAt = Date.now()
   const launchArguments = resolveElectronLaunchArguments({
-    extraArguments: ['--inspect-brk=127.0.0.1:0', ...(gpuLaunch ? [gpuLaunch.argument] : [])],
+    extraArguments: ['--inspect-brk=127.0.0.1:0', ...(gpuLaunch?.arguments ?? [])],
   })
   const launchOptions = {
     env: {
@@ -135,7 +135,7 @@ async function verifyStartupFault({
   let primaryError
   try {
     console.info('[recovery-probe] case-start', JSON.stringify(identity))
-    await inspectBeforeStart(child, recoveryWindowAssertion(evidencePath, Boolean(gpuLaunch)))
+    await inspectBeforeStart(child, recoveryWindowAssertion(evidencePath, gpuLaunch))
     const exitDeadline = Date.now() + 15_000
     const exit = await Promise.race([
       ended,
@@ -168,6 +168,7 @@ async function verifyStartupFault({
     assert.ok(result.state.error)
     if (gpuLaunch) {
       assertStartupGpuEvidence(result, gpuProof, output)
+      assert.deepEqual(result.gpu.started, gpuProof.started, 'The GPU startup identity changed')
       console.info(
         '[recovery-probe] gpu-exit',
         JSON.stringify({ fault, iteration, ...gpuProof, metrics: result.gpu })
@@ -198,7 +199,16 @@ async function verifyStartupFault({
   }
 }
 
-function recoveryWindowAssertion(evidencePath, requireGpuEvidence) {
+function recoveryWindowAssertion(evidencePath, gpuLaunch) {
+  const requiredGpuLaunch = gpuLaunch
+    ? {
+        evidencePath: gpuLaunch.evidencePath,
+        nonce: gpuLaunch.nonce,
+        launcher: gpuLaunch.arguments
+          .find(argument => argument.startsWith('--gpu-launcher='))
+          .slice('--gpu-launcher='.length),
+      }
+    : null
   return `(() => {
     const require = process.getBuiltinModule('module').createRequire(process.execPath)
     const { app, BrowserWindow } = require('electron')
@@ -210,7 +220,8 @@ function recoveryWindowAssertion(evidencePath, requireGpuEvidence) {
       console.info('[startup-gdb-inferior]', JSON.stringify({pid:process.pid,ppid:process.ppid,pgid}))
     }
     const record = (event, details = {}) => console.info('[recovery-probe]', JSON.stringify({event,...details,at:Date.now()}))
-    const gpu = ${JSON.stringify(requireGpuEvidence)} ? {
+    const gpuLaunch = ${JSON.stringify(requiredGpuLaunch)}
+    const gpu = gpuLaunch ? {
       required:true,nativeHostPid:process.pid,initial:null,reopened:null,childProcessGone:[],quitObserved:false
     } : null
     let result = null
@@ -278,6 +289,23 @@ function recoveryWindowAssertion(evidencePath, requireGpuEvidence) {
           return
         }
         if (gpu) {
+          const launcher = app.commandLine.getSwitchValue('gpu-launcher')
+          const disableGpuSandbox = app.commandLine.hasSwitch('disable-gpu-sandbox')
+          gpu.switches = {launcher,disableGpuSandbox}
+          if (launcher !== gpuLaunch.launcher || !disableGpuSandbox) {
+            throw new Error('The recovery GPU launcher switches did not reach Chromium')
+          }
+          let started
+          try {
+            const text = fs.readFileSync(gpuLaunch.evidencePath, 'utf8')
+            if (text.endsWith('\\n')) started = JSON.parse(text.split('\\n')[0])
+          } catch (error) {
+            if (error.code !== 'ENOENT') throw error
+          }
+          if (!started) {
+            if (Date.now() > deadline) throw new Error('The GPU launcher did not provide its startup identity')
+            return
+          }
           const metrics = app.getAppMetrics().filter(metric => metric.type === 'GPU')
           if (!metrics.length) {
             if (Date.now() > deadline) throw new Error('No external GPU process became available')
@@ -288,13 +316,19 @@ function recoveryWindowAssertion(evidencePath, requireGpuEvidence) {
           if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid || !Number.isFinite(creationTime) || creationTime <= 0) {
             throw new Error('The external GPU process has no usable identity')
           }
+          if (started.event !== 'started' || started.nonce !== gpuLaunch.nonce ||
+              started.casePath !== gpuLaunch.evidencePath || started.parentPid !== process.pid ||
+              started.launcherPid !== pid) {
+            throw new Error('The GPU startup identity does not belong to this host and launcher')
+          }
+          gpu.started = started
           const metric = {pid,type,creationTime}
           if (!reopenRequested) gpu.initial = metric
           else {
             gpu.reopened = metric
             if (pid !== gpu.initial.pid || creationTime !== gpu.initial.creationTime) throw new Error('The GPU process restarted while recovery reopened')
           }
-          record('gpu-process', {stage:reopenRequested ? 'reopened' : 'initial',...metric})
+          record('gpu-process', {stage:reopenRequested ? 'reopened' : 'initial',...metric,started,switches:gpu.switches})
         }
         if (!reopenRequested) {
           const { join } = require('node:path')
