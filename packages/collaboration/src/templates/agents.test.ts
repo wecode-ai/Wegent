@@ -143,7 +143,33 @@ describe('self-contained template Agents', () => {
     ).rejects.toMatchObject({ outcome: 'partial', retryBlocked: true })
   })
 
-  it('rechecks Agents after losing the first creation response before allowing another import', async () => {
+  it('preserves confirmed Agent writes without claiming a concurrent group after HTTP 409', async () => {
+    const { document, drafts, api, create } = fixture()
+    delete document.spec.resources.collaboration.project.taskAssignment
+    delete document.spec.resources.collaboration.project.board
+    const concurrent = { id: 'concurrent-group', name: drafts[0].name } as CollaborationGroup
+    const cause = Object.assign(new Error('duplicate'), { status: 409 })
+    api.projects = {
+      listCollaborationGroups: vi.fn().mockResolvedValueOnce([]).mockResolvedValue([concurrent]),
+      createCollaborationGroup: vi.fn().mockRejectedValue(cause),
+    } as unknown as SharedWorkspaceApi['projects']
+    const failure = await applyProjectTemplate(
+      api,
+      'project',
+      document,
+      drafts,
+      'zh-CN',
+      'partial',
+      routing
+    ).catch(error => error)
+    expect(failure).toMatchObject({ cause, outcome: 'partial', retryBlocked: true })
+    expect(failure.message).toContain('部分智能体或小组已添加')
+    expect(failure.message).not.toContain('已创建小组')
+    expect(create).toHaveBeenCalledTimes(6)
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  })
+
+  it('keeps newly observed Agents unconfirmed after losing the first creation response', async () => {
     const { document, drafts, api, create } = fixture()
     delete document.spec.resources.collaboration.project.taskAssignment
     delete document.spec.resources.collaboration.project.board
@@ -171,7 +197,9 @@ describe('self-contained template Agents', () => {
       routing
     ).catch(cause => cause)
     expect(error).toMatchObject({ outcome: 'unknown', retryBlocked: true })
-    expect(await error.recheck()).toMatchObject({ outcome: 'partial', retryBlocked: true })
+    const observed = await error.recheck()
+    expect(observed).toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    expect(observed.message).toContain('尚不能确认是否由本次请求创建')
     expect(create).toHaveBeenCalledOnce()
     expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
     expect(api.agents.list).toHaveBeenLastCalledWith('project', { forceRefresh: true })
@@ -221,7 +249,9 @@ describe('self-contained template Agents', () => {
     expect(await failure.recheck()).toMatchObject({ outcome: 'unknown', retryBlocked: true })
     persisted.resolve()
     await commit
-    expect(await failure.recheck()).toMatchObject({ cause, outcome: 'partial', retryBlocked: true })
+    const observed = await failure.recheck()
+    expect(observed).toMatchObject({ cause, outcome: 'unknown', retryBlocked: true })
+    expect(observed.message).toContain('尚不能确认是否由本次请求创建')
     expect(create).toHaveBeenCalledOnce()
     expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
     expect(api.agents.list).toHaveBeenLastCalledWith('project', { forceRefresh: true })

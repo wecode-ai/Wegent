@@ -232,6 +232,79 @@ describe('template failure reconciliation', () => {
     ).rejects.toMatchObject({ cause, outcome: 'unchanged', retryBlocked: false })
   })
 
+  it('does not attribute a concurrently created same-name group to a rejected request', async () => {
+    const { api, document, drafts, group } = fixture()
+    const request = deferred<CollaborationGroup>()
+    const started = deferred<void>()
+    const concurrent = { ...group, id: 'concurrent-group' }
+    let groups: CollaborationGroup[] = []
+    vi.mocked(api.projects.listCollaborationGroups!).mockImplementation(async () => groups)
+    vi.mocked(api.projects.createCollaborationGroup!).mockImplementationOnce(() => {
+      started.resolve()
+      return request.promise
+    })
+    const refreshed = vi.fn()
+    const application = applyProjectTemplate(
+      api,
+      'project-1',
+      document,
+      drafts,
+      'zh-CN',
+      'Partial',
+      undefined,
+      refreshed
+    ).catch(error => error as TemplateApplyRecoveryError)
+    await started.promise
+    groups = [concurrent]
+    const cause = Object.assign(new Error('duplicate'), {
+      status: 409,
+      detail: 'Collaboration group name already exists in this owner scope',
+    })
+    request.reject(cause)
+    const failure = await application
+    expect(failure).toMatchObject({ cause, outcome: 'unchanged', retryBlocked: false })
+    expect(failure.message).toContain('小组名称')
+    expect(failure.message).not.toContain('已创建小组')
+    expect(failure.message).not.toContain('未发现本次新增')
+    expect(refreshed).toHaveBeenCalledWith([concurrent])
+    expect(await failure.recheck()).toMatchObject({ outcome: 'unchanged', retryBlocked: false })
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  })
+
+  it('reports only confirmed groups when a later request loses a same-name race', async () => {
+    const { api, document, drafts, group } = fixture()
+    const second = { ...drafts[0], name: 'Concurrent second group' }
+    const request = deferred<CollaborationGroup>()
+    const started = deferred<void>()
+    let groups: CollaborationGroup[] = []
+    vi.mocked(api.projects.listCollaborationGroups!).mockImplementation(async () => groups)
+    vi.mocked(api.projects.createCollaborationGroup!)
+      .mockResolvedValueOnce(group)
+      .mockImplementationOnce(() => {
+        started.resolve()
+        return request.promise
+      })
+    const application = applyProjectTemplate(
+      api,
+      'project-1',
+      document,
+      [...drafts, second],
+      'zh-CN',
+      'Partial'
+    ).catch(error => error as TemplateApplyRecoveryError)
+    await started.promise
+    groups = [group, { ...group, id: 'concurrent-group', name: second.name }]
+    const cause = Object.assign(new Error('duplicate'), { status: 409 })
+    request.reject(cause)
+    const failure = await application
+    expect(failure).toMatchObject({ outcome: 'partial', retryBlocked: true })
+    expect((failure.cause as Error).cause).toBe(cause)
+    expect(failure.message).toContain(`已创建小组：${group.name}。`)
+    expect(failure.message).not.toContain(second.name)
+    expect(await failure.recheck()).toMatchObject({ outcome: 'partial', retryBlocked: true })
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledTimes(2)
+  })
+
   it.each([400, 401, 403, 409, 422])(
     'keeps a rejected HTTP %i retryable when reconciliation reads fail',
     async status => {
@@ -255,7 +328,7 @@ describe('template failure reconciliation', () => {
     }
   )
 
-  it('finds a persisted group after losing its creation response', async () => {
+  it('observes a matching group without claiming ownership after losing its response', async () => {
     const { api, document, drafts, group } = fixture()
     const cause = new TypeError('Failed to fetch')
     vi.mocked(api.projects.createCollaborationGroup!).mockRejectedValue(cause)
@@ -270,8 +343,10 @@ describe('template failure reconciliation', () => {
       'zh-CN',
       'Partial'
     ).catch(error => error as TemplateApplyRecoveryError)
-    expect(failure).toMatchObject({ cause, outcome: 'partial', retryBlocked: true })
+    expect(failure).toMatchObject({ cause, outcome: 'unknown', retryBlocked: true })
     expect(failure.message).toContain(drafts[0].name)
+    expect(failure.message).toContain('尚不能确认是否由本次请求创建')
+    expect(failure.message).not.toContain('已创建小组')
     expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
   })
 
@@ -332,11 +407,13 @@ describe('template failure reconciliation', () => {
     expect(await failure.recheck()).toMatchObject({ outcome: 'unknown', retryBlocked: true })
     persisted.resolve(group)
     await commit
-    const confirmed = await failure.recheck()
-    expect(confirmed).toMatchObject({ cause, outcome: 'partial', retryBlocked: true })
-    expect(confirmed.message).toContain(group.name)
+    const observed = await failure.recheck()
+    expect(observed).toMatchObject({ cause, outcome: 'unknown', retryBlocked: true })
+    expect(observed.message).toContain(group.name)
+    expect(observed.message).toContain('尚不能确认是否由本次请求创建')
+    expect(observed.message).not.toContain('已创建小组')
     groups = []
-    expect(await confirmed.recheck()).toMatchObject({ outcome: 'partial', retryBlocked: true })
+    expect(await observed.recheck()).toMatchObject({ outcome: 'unknown', retryBlocked: true })
     expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
   })
 

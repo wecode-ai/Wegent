@@ -7,6 +7,7 @@ import type { CollaborationGroup } from '../types'
 import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 import { templateFailureMessage, templateMessages } from './messages'
 
+// Outcomes describe this attempt, independently of concurrent project changes.
 export type TemplateApplyOutcome = 'unchanged' | 'partial' | 'unknown'
 
 interface ProjectApplyRecovery {
@@ -78,7 +79,7 @@ function mutationWasRejected(cause: unknown): boolean {
   )
 }
 
-/** Reconcile writes using persisted identities, including a lost POST response. */
+/** Distinguish acknowledged writes from list changes that may belong to another request. */
 export async function reconcileProjectTemplateFailure(
   cause: unknown,
   recovery: ProjectApplyRecovery
@@ -93,10 +94,11 @@ export async function reconcileProjectTemplateFailure(
   } catch {
     // The original mutation error remains the cause when reconciliation also fails.
   }
+  let observedAgents = false
   if (recovery.unconfirmedAgentCreation && !rejected && recovery.baselineAgentIds) {
     try {
       const agents = await recovery.api.agents.list(recovery.projectId, { forceRefresh: true })
-      recovery.createdAgents ||= agents.some(
+      observedAgents = agents.some(
         agent =>
           !recovery.baselineAgentIds!.has(String(agent.team_id ?? agent.id)) &&
           recovery.agentNames.includes(agent.name)
@@ -112,10 +114,8 @@ export async function reconcileProjectTemplateFailure(
           group => !previousIds.has(group.id) && recovery.groupNames.includes(group.name)
         )
       : []
-  const created = [
-    ...new Map([...recovery.createdGroups, ...observed].map(group => [group.id, group])).values(),
-  ]
-  recovery.createdGroups = created
+  // A new ID and matching name do not establish which request created the resource.
+  const created = recovery.createdGroups
   const hasPartialWork =
     created.length > 0 || recovery.createdAgents || cause instanceof PartialTemplateApplyError
   // Empty reads cannot prove that a failed request has stopped processing on the server.
@@ -131,13 +131,15 @@ export async function reconcileProjectTemplateFailure(
       ? m.partial
       : !recovery.mutationStarted
         ? m.groupsNotStarted
-        : outcome === 'unknown'
-          ? recovery.unconfirmedAgentCreation
-            ? m.agentsUnknown
-            : m.groupsUnknown
-          : refreshed && recovery.baselineGroups
-            ? m.groupsUnchanged
-            : m.groupsRejected
+        : rejected
+          ? m.groupsRejected
+          : observed.length
+            ? m.groupsObserved.replace('{names}', observed.map(group => group.name).join('、'))
+            : observedAgents
+              ? m.agentsObserved
+              : recovery.unconfirmedAgentCreation
+                ? m.agentsUnknown
+                : m.groupsUnknown
   const refreshMessage =
     !refreshed && recovery.mutationStarted && hasPartialWork ? ` ${m.groupsRefreshFailed}` : ''
   return new TemplateApplyRecoveryError(

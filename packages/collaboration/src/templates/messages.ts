@@ -98,9 +98,12 @@ export const templateMessages = {
     serverFailed: '服务端处理失败，请稍后重试；如仍失败，请联系项目维护者。',
     resourceUnavailable: '项目或绑定资源已不可用，请刷新项目并检查访问权限。',
     groupsNotStarted: '模板尚未开始创建，当前配置已保留。',
-    groupsUnchanged: '已刷新协作小组列表，未发现本次新增的小组，当前配置已保留。',
     groupsRejected: '创建请求已被拒绝，当前配置已保留，可调整后重试。',
     groupsCreated: '已创建小组：{names}。请在项目设置中检查未完成的配置，避免重复导入。',
+    groupsObserved:
+      '发现同名的新小组：{names}。尚不能确认是否由本次请求创建；请检查项目设置，避免重复导入。',
+    agentsObserved:
+      '发现与模板同名的新智能体，尚不能确认是否由本次请求创建。请检查项目设置，避免重复导入。',
     groupsUnknown:
       '尚不能确认创建请求是否已完成；请求可能仍在处理。请刷新状态或检查项目设置，避免重复导入。',
     groupsRefreshFailed:
@@ -248,11 +251,13 @@ export const templateMessages = {
     resourceUnavailable:
       'The project or a bound resource is unavailable. Refresh the project and check access.',
     groupsNotStarted: 'Template creation has not started. Your configuration is preserved.',
-    groupsUnchanged:
-      'Collaboration groups refreshed; no new groups were found. Your configuration is preserved.',
     groupsRejected: 'Creation was rejected. Your configuration is preserved; adjust it and retry.',
     groupsCreated:
       'Groups were created: {names}. Check unfinished configuration in project settings before importing again.',
+    groupsObserved:
+      'New groups with matching names were found: {names}. We cannot confirm which request created them. Check project settings before importing again.',
+    agentsObserved:
+      'New Agents with template names were found. We cannot confirm which request created them. Check project settings before importing again.',
     groupsUnknown:
       'Creation has not been confirmed and the request may still be processing. Refresh status or check project settings before importing again to avoid duplicates.',
     groupsRefreshFailed:

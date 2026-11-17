@@ -545,7 +545,7 @@ it('preserves the draft and member binding after a rejected member configuration
   expect(container.querySelector('[role="alert"]')!.textContent).toContain('已有这个小组名称')
 })
 
-it('keeps unknown writes blocked across empty rechecks and reports a later saved group', async () => {
+it('keeps unknown writes blocked across empty rechecks and reports a later observed group', async () => {
   const { api, render } = fixture()
   api.projects.createCollaborationGroup.mockRejectedValue(new TypeError('Failed to fetch'))
   api.projects.listCollaborationGroups
@@ -572,14 +572,18 @@ it('keeps unknown writes blocked across empty rechecks and reports a later saved
     container.querySelector<HTMLButtonElement>('[data-testid="template-bindings-recheck"]')!.click()
   )
   expect(container.querySelector('[role="alert"]')!.textContent).toContain(
-    '已创建小组：Retained draft'
+    '发现同名的新小组：Retained draft'
   )
+  expect(container.querySelector('[role="alert"]')!.textContent).toContain(
+    '尚不能确认是否由本次请求创建'
+  )
+  expect(container.querySelector('[role="alert"]')!.textContent).not.toContain('已创建小组')
   expect(applyButton().disabled).toBe(true)
-  expect(container.querySelector('[data-testid="template-bindings-recheck"]')).toBeNull()
+  expect(container.querySelector('[data-testid="template-bindings-recheck"]')).not.toBeNull()
   expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
 })
 
-it('identifies persisted groups after a lost response and prevents another import', async () => {
+it('keeps a same-name observation unconfirmed after a lost response and prevents another import', async () => {
   const { api, render } = fixture()
   api.projects.createCollaborationGroup.mockRejectedValue(new TypeError('Failed to fetch'))
   api.projects.listCollaborationGroups
@@ -589,8 +593,13 @@ it('identifies persisted groups after a lost response and prevents another impor
   await render()
   await act(async () => applyButton().click())
   expect(container.querySelector('[role="alert"]')!.textContent).toContain(
-    '已创建小组：产品全流程小组'
+    '发现同名的新小组：产品全流程小组'
   )
+  expect(container.querySelector('[role="alert"]')!.textContent).toContain(
+    '尚不能确认是否由本次请求创建'
+  )
+  expect(container.querySelector('[role="alert"]')!.textContent).not.toContain('已创建小组')
+  expect(container.querySelector('[data-testid="template-bindings-recheck"]')).not.toBeNull()
   expect(applyButton().disabled).toBe(true)
   await act(async () => applyButton().click())
   expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
