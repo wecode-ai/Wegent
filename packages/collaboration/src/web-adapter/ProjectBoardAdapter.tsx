@@ -676,13 +676,15 @@ export function ProjectBoardAdapter({
           ) : null
         }
         renderExternalGroupPicker={() => null}
-        renderStatus={() => (
-          <BaseBoardStatusMigrationNotice
-            error={baseBoardMigration.error}
-            retry={baseBoardMigration.retry}
-            translate={translate}
-          />
-        )}
+        renderStatus={() =>
+          baseBoardMigration.error ? (
+            <BaseBoardStatusMigrationNotice
+              error={baseBoardMigration.error}
+              retry={baseBoardMigration.retry}
+              translate={translate}
+            />
+          ) : null
+        }
         renderGroupPicker={(value, onChange) =>
           baseBoardStatusGrouping ? null : (
             <ProjectBoardGroupPicker

@@ -1,8 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, type Locator, type Page } from '@playwright/test'
+import { expect, type BrowserContext, type Locator, type Page } from '@playwright/test'
 import type { CollaborationView } from '@wegent/collaboration'
+
+/** Exercise legacy personal grouping only in the owning test context. */
+export async function enableLegacyBoardGrouping(context: BrowserContext): Promise<void> {
+  await context.addInitScript(
+    ({ origin, key }) => {
+      if (location.origin === origin) localStorage.setItem(key, 'false')
+    },
+    {
+      origin: new URL(process.env.E2E_BASE_URL || 'http://localhost:3000').origin,
+      key: 'collab.baseBoardStatusGrouping.v1',
+    }
+  )
+}
 
 export async function dragCollaborationIssue(
   page: Page,

@@ -76,7 +76,7 @@ export async function verifyBaseBoardStatusGrouping({
   let issue
   try {
     await control.command('removeLocalStorageItem', 'body', { value: FLAG })
-    const seeded = await request(path, 'PUT', {
+    const seeded = await request(path, 'PATCH', {
       version: original.version,
       board_config: { ...original.board_config, group_by: 'tag' },
       board_views: views,
@@ -157,7 +157,7 @@ export async function verifyBaseBoardStatusGrouping({
       await request(`/api/v1/loop-items/${issue.id}?version=${latestIssue.version}`, 'DELETE')
     }
     const latest = await request(path)
-    await request(path, 'PUT', {
+    await request(path, 'PATCH', {
       version: latest.version,
       board_config: original.board_config,
       board_views: original.board_views ?? { schema_version: 1, views: [] },
