@@ -1,3 +1,4 @@
+import type { RuntimeTaskArchiveRequest } from '../../../../packages/chat-core/src/runtime-management-types'
 import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
@@ -1364,7 +1365,7 @@ export function createHybridWorkbenchServices(
         rememberedCloudArchives.get(requestCacheKey(request)) ?? emptyArchiveList()
       return mergeArchiveLists(localResult, cloudResult)
     },
-    archiveConversation(address: RuntimeTaskAddress) {
+    archiveConversation(address: RuntimeTaskArchiveRequest) {
       const request = routeByAddress(address).archiveConversation(address)
       if (isLocalDeviceId(address.deviceId)) return request
       return request.then(response => {

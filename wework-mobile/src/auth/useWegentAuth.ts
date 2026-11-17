@@ -23,6 +23,7 @@ import {
   type RuntimeSessionConfig,
 } from '@/services/backendConfig'
 import { loadBackendAddress, saveBackendAddress } from '@/services/backendAddressStore'
+import { beginMobileDiagnostic } from '@/services/mobileDiagnostics'
 
 export type AuthStatus =
   'initializing' | 'unauthenticated' | 'authorizing' | 'authenticated' | 'error'
@@ -118,9 +119,11 @@ export function useWegentAuth(): WegentAuthState {
 
   useEffect(() => {
     const generation = activeGeneration.current
+    const diagnostic = beginMobileDiagnostic('auth-restore', 'cloud')
     void (async () => {
       let cachedSession: CachedAuthSession | null = null
       try {
+        diagnostic.step('read-backend-address-and-session')
         const [storedBackendUrl, storedSession] = await Promise.all([
           loadBackendAddress(),
           loadAuthSession(),
@@ -131,6 +134,7 @@ export function useWegentAuth(): WegentAuthState {
         setBackendInput(backendUrl ?? '')
         if (!backendUrl) {
           setStatus('unauthenticated')
+          diagnostic.complete()
           return
         }
         cachedSession =
@@ -138,34 +142,46 @@ export function useWegentAuth(): WegentAuthState {
             ? storedSession
             : null
         if (cachedSession) {
+          diagnostic.step('restore-cached-session')
           setBackend(cachedSession.backend)
           setAccessToken(cachedSession.accessToken)
           setAccessTokenExpiresAt(cachedSession.accessTokenExpiresAt)
           setUser(cachedSession.user)
           setStatus('authenticated')
         }
+        diagnostic.step('resolve-backend-config')
         const config = await resolveBackendConfig(backendUrl)
+        diagnostic.step('check-backend-health')
         await checkBackendHealth(config)
         if (activeGeneration.current !== generation) return
         setBackend(config)
+        diagnostic.step('read-refresh-credential')
         if (!(await credentials.hasRefreshCredential(config.apiBaseUrl))) {
           if (!cachedSession) setStatus('unauthenticated')
+          diagnostic.complete()
           return
         }
+        diagnostic.step('refresh-session')
         const result = await credentials.refreshAccessToken(config.apiBaseUrl)
         if (activeGeneration.current !== generation) return
+        diagnostic.step('fetch-user-and-persist-session')
         await applyToken(
           config,
           result.accessToken,
           generation,
           result.expiresIn > 0 ? Date.now() + result.expiresIn * 1000 : undefined
         )
+        diagnostic.complete()
       } catch (cause) {
+        diagnostic.fail(cause)
         if (activeGeneration.current !== generation) return
         setError(messageFrom(cause))
         if (!cachedSession) setStatus('error')
+      } finally {
+        diagnostic.cancel()
       }
     })()
+    return () => diagnostic.cancel()
   }, [applyToken])
 
   const setBackendUrl = useCallback((value: string): void => {

@@ -12,6 +12,8 @@ Mobile files: **Conversation → top-right More → Files / Changes (更多 → 
 available when an accessible workspace is selected. Reply file links, attachments, and expanded change
 paths also open previews. See [Mobile file previews](./mobile-file-preview.md) for controls and limits.
 
+Mobile project and conversation management: **Wework ▾ → New project / Archived conversations**; project row **… → Pin, Rename, Archive all chats, Remove**; conversation row **swipe left → Archive** and **long-press → Pin, Rename, Copy ID, Archive**. Removing a project preserves files and conversations. Permanent deletion requires confirmation in Archived conversations. See [Wework Mobile](./mobile.md).
+
 ## Know the interface
 
 | Area                | Location                               | Purpose                                                                                                       |

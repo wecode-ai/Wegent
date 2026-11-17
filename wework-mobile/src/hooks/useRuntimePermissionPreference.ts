@@ -1,3 +1,4 @@
+import { recordMobileDiagnosticFailure } from '@/services/mobileDiagnostics'
 import { useCallback, useEffect, useState } from 'react'
 import {
   DEFAULT_RUNTIME_PERMISSION_MODE,
@@ -16,7 +17,9 @@ export function useRuntimePermissionPreference() {
       .then(stored => {
         if (active) setPermissionMode(stored)
       })
-      .catch(cause => console.warn('Failed to load runtime permission preference', cause))
+      .catch(cause =>
+        recordMobileDiagnosticFailure('Failed to load runtime permission preference', cause)
+      )
     return () => {
       active = false
     }
@@ -24,7 +27,7 @@ export function useRuntimePermissionPreference() {
   const selectPermissionMode = useCallback((mode: RuntimePermissionMode) => {
     setPermissionMode(mode)
     void saveRuntimePermissionMode(mode).catch(cause =>
-      console.warn('Failed to save runtime permission preference', cause)
+      recordMobileDiagnosticFailure('Failed to save runtime permission preference', cause)
     )
   }, [])
   return { permissionMode, selectPermissionMode }

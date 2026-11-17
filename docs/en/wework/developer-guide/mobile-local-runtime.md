@@ -74,6 +74,76 @@ flowchart TD
   previews and reading positions. Each cache scope must finish hydration before writes are enabled,
   preventing empty startup state from overwriting offline history.
 
+## Screen lock and foreground recovery
+
+Running status alone does not establish request-channel health. Native diagnostics on foreground /
+network changes and request timeouts read pipe byte counts, guest accept calls and failures, the
+last host errno, guest PID, listener restoration success/failure counts, and restoration errno. They never consume pipe data or record request / response
+contents. Physical-device requests and incremental output must verify recovery; running status or
+a successful TCP connection is insufficient.
+
+Screen lock suspends the app's periodic memory sampler. When a guest allocation finds a sample
+older than two seconds, admission synchronously reads actual host memory before applying the
+existing pressure, headroom, and hysteresis rules. A paused timer is not evidence of memory
+exhaustion. Failed or invalid host reads, real pressure, and allocations exceeding the total
+allowance still fail closed. The synchronous provider must not log or acquire guest locks: its
+caller may already hold a memory or syslog lock.
+
+iOS can reclaim TCP listening endpoints during suspension. Device diagnostics show repeated
+host `EAGAIN` from accept while all RPC methods time out without pipe backlog. Host fault injection
+with the same executor establishes that combining listener `POLLHUP` with accept `EAGAIN` makes
+Tokio retain closed readiness and spin the accept future, starving request handling. Injecting
+`EAGAIN` or `ECONNABORTED` alone does not reproduce the complete stall.
+
+Physical iOS readiness also depends on the requested mask: the same failed listener returns no
+events for `POLLIN`, but returns `POLLHUP` for `POLLIN | POLLOUT | POLLPRI`. Restoration and guest
+readiness must consume the same full-mask sample, rather than checking a narrow mask before an
+independent broader query. Accept uses the full mask as well. Successful restoration discards old
+endpoint events and lets the refreshed reactor wait for connections on the new endpoint.
+
+The embedding enables TCP listener restoration before exposing host closure to the guest reactor
+or accepting. It recreates the saved address, actual port, backlog, successful socket options and
+file flags while preserving the guest open-file identity and host descriptor number. A descriptor
+generation change re-registers each poll/epoll backend and clears stale edge state; fired ONESHOT
+registrations still require explicit guest rearm. Successful explicit guest shutdown disables
+restoration. Restoration failure retains the actual error without unbounded retries. This platform
+adaptation preserves PC RPC, task identity and event contracts without restarting the environment.
+
+`regress_listener_recovery.c` fault-injects host reclamation for IPv4/IPv6, two consecutive cycles,
+multiple poll sets, dup registrations, ONESHOT, retained ports/options/flags, actual connections
+after restoration and observable failures. This test and the real executor/HTTP recovery probe are
+host verification, not a substitute for physical iPhone screen-lock and streaming acceptance.
+
+Recovery registers a thread once per blocking call and unregisters it unconditionally on return.
+It must not count sockets in the poll set: another thread can add or remove descriptors through
+epoll_ctl or close while the wait releases the set lock. Traversing different before/after sets
+leaves released tasks in the recovery list, causing a loop under the recovery lock that blocks
+all RPC. `regress_poll_waiters.c` synchronizes two real threads at the host wait boundary to cover
+membership addition, removal and replacement. It fails deterministically on the old kernel and
+requires registration cleanup before a waiting task is released.
+
+Guest process lifetime must not depend on inactivity. Codex app-server may wait indefinitely for
+stdin, and suspension advances monotonic time without guest progress. The old iSH poll timeout
+branch called `do_exit_group(0)` after 60 idle seconds while still holding the poll mutex, leaving
+the last worker blocked in descriptor cleanup on a departed owner's lock. Remove that idle-exit
+policy while preserving explicit exit and signal handling. `regress_idle_poll.c` ages a real
+guest's progress timestamp by 120 seconds and verifies bounded wait, process survival, subsequent
+event delivery and explicit close. It fails deterministically with the old library and passes
+with the corrected library.
+
+Failed history reads remain distinct from successful empty history. Failure updates only the
+sidebar avatar retry badge and preserves visible messages. An unsuccessful initial read shows
+neither new-conversation onboarding nor an empty-history claim; only a successful empty read
+shows the empty state.
+
+On foreground entry, wait for any ongoing native shutdown, ensure the environment previously
+requested to run is started, and then reconcile the event journal and active transcript. Recovery
+does not resubmit user messages or refresh project or conversation lists. Explicit stop revokes
+running intent; disposing an old JS instance during environment selection cancels its pending
+startup. Startup and shutdown failures remain visible and never become fabricated readiness.
+The startup barrier follows PC `wework/src/desktop/localExecutor.ts` and
+`wework/src/api/local/localServices.runtimeReadiness.test.ts`.
+
 ## Shutdown and explicit phone environment switching
 
 Wegent logout revokes only the cloud connection. The drain sequence below applies to stopping
@@ -194,6 +264,27 @@ and must not be committed.
 
 ## Focused validation
 
+Initial phone reads are independent of Backend connection and discovery. Pull-to-refresh reads
+only the selected work list; the all-device view reads visible devices concurrently, keeping phone
+access while disconnected. The separate device-discovery action does not chain model reads,
+transcripts or executor restarts. Late disk-cache hydration publishes from the merged authoritative device
+snapshot, preserving fresh phone data. Read failures remain at the sidebar avatar retry badge;
+this does not introduce automatic list refreshes.
+
+When the diagnostic logs setting is enabled, startup diagnostics extract only fixed, allowlisted checkpoint codes from executor stderr for
+model catalog preparation, Codex startup, and conversation reads. The system log associates them
+with the runtime generation. The parser retains at most 128 bytes per line and discards all fields
+and unknown logs; raw stderr, authentication data and message bodies are not persisted. Checkpoints
+do not change requests, retries or runtime lifecycle behavior. Disabled diagnostics still drain stderr to avoid pipe backpressure, without parsing checkpoints.
+
+### Diagnostics, storage, and performance
+
+The native iOS / Android switch in Settings → Diagnostics defaults off and persists its value; a failed change retains the previous preference. It controls app layout, connection, native supervisor, and iSH host log output. The kernel retains its bounded 1 MiB in-memory ring and memory safety sampling remains active. Codex and the OS may still retain error logs; the switch does not disable all third-party disk writes.
+
+Event replay uses memory only, retaining at most 2048 events and 8 MiB of serialized data. It evicts the oldest events; oversized events remain live-deliverable but are not cached. Gaps explicitly return `truncated` for the existing transcript recovery flow. This is not a bound on total process heap usage. The executor still persists complete conversations; the supervisor no longer writes a duplicate `events.jsonl`, and layout diagnostics no longer rewrite a periodic file.
+
+Local startup removes obsolete generated diagnostic files. After all guest processes have exited and before launching a new one, guest fakefs APIs reclaim only canonical UUID-v4 model catalog files generated by `ProcessCatalog`. Directories, symlinks, custom catalogs, credentials, and conversations are preserved. Cleanup failures produce diagnostics without blocking app startup. Projects, dependencies, conversation history, and third-party caches can still grow with use. Local Codex computation, memory safety checks, and event transport still consume resources.
+
 `native/tests` contains 22 guest C assertions covering parent-thread death notifications,
 fork/exec/identity-change semantics, blocked pipe shutdown, `EINTR` and `SA_RESTART` on both
 read paths, and `/proc/<pid>/stat` for retained zombies and live workers. An additional host
@@ -241,6 +332,9 @@ It loads the real shared model and execution builders and uses the real executor
 two create/send rounds, checking thread identity, message IDs, and state. Only model SSE is
 mocked. Syntax, lint, module loading, and CI classification were checked; the new E2E scenario
 was not executed during this development and does not constitute device coverage.
+
+
+Validate JavaScript numbers at the JS/native boundary. Expo SDK 57 represents numbers in untyped dictionaries as Swift `Double`; do not read `afterSequence` or `timeoutMs` with `as? Int ?? default`. That resets nonzero replay cursors to zero, repeats the first page after 256 events, and leaves subsequent live events buffered behind failed recovery. Defaults apply only to omitted values. Reject fractional or non-finite numbers, negative cursors, and unrepresentable timeouts. Native regressions cover multi-page replay, foreground resume cursors, and timeouts.
 
 ## iOS background execution and distribution
 

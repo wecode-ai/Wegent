@@ -16,7 +16,6 @@ import type {
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeGoalSetRequest,
-  RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
   RuntimeTranscriptRequest,
@@ -302,35 +301,6 @@ export function useWorkbenchRuntimeTasks({
     [clearCurrentRuntimeTaskView]
   )
 
-  const removeArchivedWorktrees = useCallback(
-    async (worktreeTargets: RuntimeTaskWorktreeTarget[]) => {
-      let succeeded = true
-      for (const target of uniqueRuntimeTaskWorktreeTargets(worktreeTargets)) {
-        try {
-          if (!services.runtimeWorkApi) throw new Error('Runtime work API is unavailable')
-          await services.runtimeWorkApi.deleteWorktree({
-            deviceId: target.deviceId,
-            path: target.path,
-            preserveSnapshot: true,
-          })
-        } catch (error) {
-          succeeded = false
-          dispatch({
-            type: 'error_set',
-            error:
-              error instanceof Error
-                ? t('workbench.archive_runtime_task_remove_failed_detail', {
-                    message: error.message,
-                  })
-                : t('workbench.archive_runtime_task_remove_failed'),
-          })
-        }
-      }
-      return succeeded
-    },
-    [dispatch, services.runtimeWorkApi, t]
-  )
-
   const archiveRuntimeConversations = useCallback(
     async (
       addresses: RuntimeTaskAddress[],
@@ -353,7 +323,7 @@ export function useWorkbenchRuntimeTasks({
         logRuntimeQueueStage(address, 'queue-archive-requested', { localOnly: false })
       )
       const archiveResults = await archiveRuntimeTaskAddresses(persistedTargets, address =>
-        executorClient.runtime.archiveConversation(address)
+        executorClient.runtime.archiveConversation({ ...address, cleanupWorktree: true })
       )
       localFailedTargets.forEach(address =>
         logRuntimeQueueStage(address, 'queue-archive-result', {
@@ -377,12 +347,18 @@ export function useWorkbenchRuntimeTasks({
         archivedAddresses.forEach(archiveRuntimeConversation)
         archivedAddresses.forEach(address => logRuntimeQueueStage(address, 'queue-archive-evicted'))
         markRuntimeTasksArchived(archivedAddresses)
-        const worktreeCleanupSucceeded = await removeArchivedWorktrees(
-          findRuntimeTaskWorktrees(state.runtimeWork, archivedAddresses)
-        )
+        const cleanupFailures = archiveResults.filter(result => result.response?.cleanupError)
+        for (const result of cleanupFailures) {
+          dispatch({
+            type: 'error_set',
+            error: t('workbench.archive_runtime_task_remove_failed_detail', {
+              message: result.response!.cleanupError!,
+            }),
+          })
+        }
         clearCurrentRuntimeTaskIfArchived(archivedAddresses)
         await refreshWorkLists({ syncCloud: false })
-        if (!worktreeCleanupSucceeded) {
+        if (cleanupFailures.length > 0) {
           track('operation_failed', { operation: 'worktree_archive_cleanup' })
         }
       }
@@ -406,7 +382,6 @@ export function useWorkbenchRuntimeTasks({
       executorClient,
       markRuntimeTasksArchived,
       refreshWorkLists,
-      removeArchivedWorktrees,
       state.runtimeWork,
     ]
   )
@@ -701,73 +676,11 @@ function taskAddressWithMetadata(
   }
 }
 
-type RuntimeTaskWorktreeTarget = { deviceId: string; path: string }
-
 function uniqueRuntimeTaskAddresses(addresses: RuntimeTaskAddress[]): RuntimeTaskAddress[] {
   const uniqueAddresses = new Map(
     addresses.map(address => [getRuntimeTaskRouteKey(address), address])
   )
   return [...uniqueAddresses.values()]
-}
-
-function findRuntimeTaskWorktree(
-  runtimeWork: WorkbenchState['runtimeWork'],
-  address: RuntimeTaskAddress
-): RuntimeTaskWorktreeTarget | null {
-  if (!runtimeWork) return null
-  const workspaces = [
-    ...runtimeWork.chats,
-    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
-  ]
-
-  for (const workspace of workspaces) {
-    if (workspace.deviceId !== address.deviceId) continue
-    const task = workspace.tasks.find(item => item.taskId === address.taskId)
-    if (!task || !isRuntimeTaskWorktree(workspace, task)) continue
-    const path = getRuntimeTaskWorkspacePath(workspace, task)
-    if (address.workspacePath?.trim() && path !== address.workspacePath.trim()) continue
-    return {
-      deviceId: workspace.deviceId,
-      path,
-    }
-  }
-
-  return null
-}
-
-function findRuntimeTaskWorktrees(
-  runtimeWork: WorkbenchState['runtimeWork'],
-  addresses: RuntimeTaskAddress[]
-): RuntimeTaskWorktreeTarget[] {
-  return addresses
-    .map(address => findRuntimeTaskWorktree(runtimeWork, address))
-    .filter((target): target is RuntimeTaskWorktreeTarget => Boolean(target))
-}
-
-function uniqueRuntimeTaskWorktreeTargets(
-  targets: RuntimeTaskWorktreeTarget[]
-): RuntimeTaskWorktreeTarget[] {
-  const seen = new Set<string>()
-  const uniqueTargets: RuntimeTaskWorktreeTarget[] = []
-  for (const target of targets) {
-    const key = `${target.deviceId}:${target.path}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    uniqueTargets.push(target)
-  }
-  return uniqueTargets
-}
-
-function isRuntimeTaskWorktree(
-  workspace: RuntimeDeviceWorkspace,
-  task: RuntimeTaskSummary
-): boolean {
-  return (
-    workspace.workspaceKind === 'worktree' ||
-    Boolean(workspace.worktreeId) ||
-    task.workspaceKind === 'worktree' ||
-    Boolean(task.worktreeId)
-  )
 }
 
 export type WorkbenchRuntimeTasks = ReturnType<typeof useWorkbenchRuntimeTasks>
