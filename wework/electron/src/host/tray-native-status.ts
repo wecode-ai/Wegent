@@ -81,6 +81,17 @@ export class TrayNativeStatusController {
     return this.refreshPromise
   }
 
+  handlePreferencesChanged(patch: Record<string, unknown>): Promise<void> {
+    const changesStatus = [
+      'language',
+      'trayRunningEnabled',
+      'trayUsageEnabled',
+      'trayWegentUsageEnabled',
+      'localCodexSubscriptionEnabled',
+    ].some(key => Object.hasOwn(patch, key))
+    return changesStatus ? this.refresh() : Promise.resolve()
+  }
+
   handleExecutorEvent(event: string): void {
     if (
       event === 'response.created' ||

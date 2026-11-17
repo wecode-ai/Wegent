@@ -200,3 +200,28 @@ describe('tray native status', () => {
     })
   })
 })
+
+test('refreshes native quota for its settings without coupling to unrelated UI state', async () => {
+  const requestExecutor = vi.fn(async () => ({}))
+  const controller = new TrayNativeStatusController({
+    preferences: { read: vi.fn(async () => ({})) } as unknown as PreferencesStore,
+    requestExecutor,
+    apply: vi.fn(),
+    codexSubscriptionActiveAtStartup: true,
+  })
+  for (let i = 0; i < 100; i++) {
+    await controller.handlePreferencesChanged({ appearanceMode: 'dark', composerWidth: i })
+  }
+  expect(requestExecutor).not.toHaveBeenCalled()
+  for (const key of [
+    'language',
+    'trayRunningEnabled',
+    'trayUsageEnabled',
+    'trayWegentUsageEnabled',
+    'localCodexSubscriptionEnabled',
+  ]) {
+    requestExecutor.mockClear()
+    await controller.handlePreferencesChanged({ [key]: true })
+    expect(requestExecutor).toHaveBeenCalledWith('runtime.codex.rate_limits.read')
+  }
+})

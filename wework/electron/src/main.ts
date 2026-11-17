@@ -1516,6 +1516,7 @@ async function updateDesktopPreferences(
     patch = { ...patch, appearanceThemeSnapshot: snapshot }
   }
   const updated = await desktopPreferences.update(patch, expectedTelemetryConsentRevision)
+  void trayNativeStatus?.handlePreferencesChanged(patch)
   if (Object.hasOwn(patch, 'appearanceMode') || Object.hasOwn(patch, 'appearanceThemeSnapshot')) {
     desktopAppearance.update(updated)
   }
@@ -2749,7 +2750,6 @@ async function configureDesktopRuntime(): Promise<void> {
           traySetState: state => {
             trayManager?.setState(state)
             syncDockBadge(app.dock, state.unreadCount, developmentDockIdentity?.badge)
-            void trayNativeStatus?.refresh()
           },
           traySnapshot: () => {
             const snapshot = trayManager?.snapshot()
