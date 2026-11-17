@@ -49,3 +49,5 @@ sidebar_position: 57
 
 `WEWORK_PROJECT_ADMIN_TOOLS_V1` 控制 `wework.projectAdminTools.v1`。关闭时，目录隐藏
 新增写能力并保留读取和页面管理；已经持久化的配置保持可读。回滚不删除项目配置。
+通用 `update_space` 同样拒绝新增配置字段，返回 `feature_disabled`；既有名称、描述和标签
+更新仍可使用版本锁、幂等键和预检，不受新增能力开关影响。

@@ -58,3 +58,6 @@ operations never fall back to desktop automation or permission bypasses.
 `WEWORK_PROJECT_ADMIN_TOOLS_V1` controls `wework.projectAdminTools.v1`. Disabling it hides the new
 write capabilities from the catalog while preserving reads and page management. Persisted
 configuration remains readable; rollback does not remove project configuration.
+The generic `update_space` entry point also rejects expanded configuration fields with
+`feature_disabled`. Existing name, description, and tag updates retain version checks,
+idempotency, and dry runs independently of the new capability flag.
