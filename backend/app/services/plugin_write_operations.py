@@ -17,14 +17,39 @@ from shared.telemetry.decorators import trace_sync
 T = TypeVar("T")
 
 
-async def run_plugin_operation(operation: Callable[..., T], **kwargs: Any) -> T:
+async def run_plugin_operation(
+    operation: Callable[..., T],
+    *,
+    retry_busy: bool = False,
+    retry_conflicts: bool = False,
+    **kwargs: Any,
+) -> T:
     """Keep a transaction's session, Redis waits and cleanup in one worker."""
-    return await asyncio.to_thread(partial(_run_plugin_operation, operation, kwargs))
+    return await asyncio.to_thread(
+        partial(
+            _run_plugin_operation,
+            operation,
+            kwargs,
+            retry_busy=retry_busy,
+            retry_conflicts=retry_conflicts,
+        )
+    )
 
 
 @trace_sync("plugin_write.operation", "backend.plugins")
-def _run_plugin_operation(operation: Callable[..., T], kwargs: dict[str, Any]) -> T:
-    return run_plugin_transaction(lambda db: operation(db=db, **kwargs), get_db_session)
+def _run_plugin_operation(
+    operation: Callable[..., T],
+    kwargs: dict[str, Any],
+    *,
+    retry_busy: bool = False,
+    retry_conflicts: bool = False,
+) -> T:
+    return run_plugin_transaction(
+        lambda db: operation(db=db, **kwargs),
+        get_db_session,
+        retry_busy=retry_busy,
+        retry_conflicts=retry_conflicts,
+    )
 
 
 def run_plugin_transaction(

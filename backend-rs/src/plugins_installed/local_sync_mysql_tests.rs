@@ -13,11 +13,11 @@ struct StoredKind {
 }
 
 fn http_client() -> brz_http::Client {
-    // The default 400ms socket budget is shorter than the valid 3s lease wait.
+    // Completion may use its shared 20-second contention budget.
     brz_http::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
-        .read_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(25))
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .unwrap()
 }

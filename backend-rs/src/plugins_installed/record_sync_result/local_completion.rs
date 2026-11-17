@@ -14,6 +14,13 @@ pub(in crate::plugins_installed) async fn record_local_completion<Q: PluginQuery
     state: &PluginSyncState,
     guard: &dyn crate::device_identity::LeaseCheck,
 ) -> MysqlResult<()> {
+    // Source confirmation owns alias cleanup even when no other devices need
+    // background preparation. The caller already fenced the current intent.
+    crate::device_identity::reconcile_plugin_device_rows_for_installs_on::<
+        _,
+        PluginDeviceInstallationRow,
+    >(query, user_id, Some(guard), Some(&[installed.id]))
+    .await?;
     let mut flush = PendingFlush::default();
     if installed.is_active {
         record_installation_result(

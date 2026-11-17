@@ -35,7 +35,25 @@ pub(super) async fn confirm(
             }
         }),
     )
-    .await?;
+    .await
+    .map_err(|failure| {
+        if matches!(
+            failure.code.as_str(),
+            "plugin_write_busy"
+                | "plugin_write_conflict"
+                | "plugin_write_unavailable"
+                | "plugin_write_lease_lost"
+                | "plugin_local_http_unavailable"
+        ) {
+            crate::logging::write_executor_error_line(&format!(
+                "Local plugin materialized; confirmation remains pending: code={}",
+                failure.code
+            ));
+            error("plugin_local_confirmation_pending")
+        } else {
+            failure
+        }
+    })?;
     if !response["recorded"].is_array() || !response["superseded"].is_array() {
         return Err(error("plugin_local_invalid_response"));
     }

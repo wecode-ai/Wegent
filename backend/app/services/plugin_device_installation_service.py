@@ -69,6 +69,8 @@ class PluginDeviceInstallationService:
             ]
         # Enumeration must not leave a request transaction open during the write.
         db.close()
+        if not device_ids:
+            return
         await run_plugin_operation(
             partial(
                 self._ensure_pending_for_devices,
@@ -77,7 +79,9 @@ class PluginDeviceInstallationService:
                 desired_release_id=desired_release_id,
                 device_ids=device_ids,
                 reset_failures=reset_failures,
-            )
+            ),
+            retry_busy=True,
+            retry_conflicts=True,
         )
 
     def _ensure_pending_for_devices(
@@ -91,7 +95,9 @@ class PluginDeviceInstallationService:
         reset_failures: bool,
     ) -> None:
         """Revalidate and materialize desired state inside one worker transaction."""
+        started = time.monotonic()
         acquire_plugin_write_lock(db, user_id, installed_id=installed_kind_id)
+        acquired = time.monotonic()
         installed = (
             db.query(Kind)
             .filter_by(
@@ -112,6 +118,7 @@ class PluginDeviceInstallationService:
             db.commit()
             return
         reconcile_plugin_device_rows(db, user_id, installed_ids=[installed_kind_id])
+        reconciled = time.monotonic()
         seen_device_ids: set[str] = set()
         for submitted_device_id in device_ids:
             device_id = plugin_device_id(db, user_id, submitted_device_id)
@@ -142,7 +149,19 @@ class PluginDeviceInstallationService:
                 row.state = "pending"
                 row.error_code = ""
                 row.error_message = ""
+        prepared = time.monotonic()
         db.commit()
+        logger.info(
+            "plugin_sync.pending user_id=%s installed_id=%s targets=%s "
+            "wait_ms=%.0f reconcile_ms=%.0f prepare_ms=%.0f commit_ms=%.0f",
+            user_id,
+            installed_kind_id,
+            len(seen_device_ids),
+            (acquired - started) * 1000,
+            (reconciled - acquired) * 1000,
+            (prepared - reconciled) * 1000,
+            (time.monotonic() - prepared) * 1000,
+        )
 
     def mark_uninstalling(
         self, db: Session, *, user_id: int, installed_kind_id: int, commit: bool = True

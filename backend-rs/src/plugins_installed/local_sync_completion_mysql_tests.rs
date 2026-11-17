@@ -3,6 +3,8 @@ use super::*;
 
 #[path = "record_sync_result_mysql_tests.rs"]
 mod ack_fence_tests;
+#[path = "registration_write_mysql_tests.rs"]
+mod registration_write_tests;
 
 pub(super) async fn verify(
     mysql: &brz_mysql::MysqlService,
@@ -150,6 +152,131 @@ pub(super) async fn verify(
         "Old install restored an uninstalled plugin"
     );
     ack_fence_tests::verify(&context, state).await?;
+    verify_alias_cleanup(&context).await?;
+    registration_write_tests::verify(&context, state).await?;
+    verify_contention(&context, state).await?;
+    Ok(())
+}
+
+async fn verify_alias_cleanup(context: &Context<'_>) -> anyhow::Result<()> {
+    #[derive(FromMysqlRow)]
+    struct DeviceRowCount {
+        n: i64,
+    }
+    context.set_intent(90, true).await?;
+    context.mysql.execute("INSERT INTO plugin_device_installations (user_id,installed_kind_id,device_id,state,desired_release_id,actual_release_id,last_sync_at,updated_at) VALUES (81001,?,'completion-device','pending',42,0,NOW()-INTERVAL 1 DAY,NOW()-INTERVAL 1 DAY)", (context.id,)).await?;
+    let plan = context.plan().await?;
+    assert_eq!(
+        context.complete(&plan, "synced", 81001).await?["recorded"],
+        json!([context.id])
+    );
+    let count = context.mysql.fetch_one::<_,_,DeviceRowCount>("SELECT COUNT(*) AS n FROM plugin_device_installations WHERE user_id=81001 AND installed_kind_id=?", (context.id,)).await?;
+    assert_eq!(
+        count.n, 1,
+        "Local-only confirmation retained a duplicate legacy alias"
+    );
+    assert_eq!(context.state().await?.as_deref(), Some("installed"));
+    context.set_intent(91, false).await?;
+    let removal = context.plan().await?;
+    assert_eq!(
+        context.complete(&removal, "removed", 81001).await?["recorded"],
+        json!([context.id])
+    );
+    let count = context.mysql.fetch_one::<_,_,DeviceRowCount>("SELECT COUNT(*) AS n FROM plugin_device_installations WHERE user_id=81001 AND installed_kind_id=?", (context.id,)).await?;
+    assert_eq!(count.n, 0, "Local uninstall retained a legacy device row");
+    Ok(())
+}
+
+async fn verify_contention(
+    context: &Context<'_>,
+    state: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    use crate::plugins_installed::write_coordination::PluginWriteLease;
+    use std::time::Duration;
+    context.set_intent(100, true).await?;
+    let plan = context.plan().await?;
+    context.mysql.execute("INSERT INTO kinds (user_id,kind,namespace,name,json,is_active,created_at,updated_at) SELECT user_id,kind,namespace,'independent-completion',json,1,NOW(),NOW() FROM kinds WHERE id=?", (context.id,)).await?;
+    let row: StoredKind = context.mysql.fetch_one("SELECT id,json FROM kinds WHERE user_id=81001 AND kind='InstalledPlugin' AND namespace='default' AND name='independent-completion'", ()).await?;
+    let other = Context {
+        mysql: context.mysql,
+        address: context.address,
+        id: row.id,
+        device: context.device.clone(),
+    };
+    let other_plan = other.plan().await?;
+    crate::plugins_installed::plugin_sync_protocol::register_plugin_snapshot_intent(
+        state,
+        81001,
+        &context.device,
+        &plan["payload"],
+    )
+    .await?;
+    let lease = PluginWriteLease::acquire_installed(
+        context.mysql,
+        state.redis.as_ref(),
+        81001,
+        Some(&[context.id]),
+    )
+    .await?;
+    let start = tokio::time::Instant::now();
+    let mut registration = crate::plugins_installed::record_sync_result::SyncResult::from_ack(
+        &context.device,
+        &json!({"success":true,"plugin_sync":plan["payload"]["plugin_sync"],"plugins":[{"id":context.id,"status":"synced"}]}),
+    );
+    registration.desired_plugin_snapshot = Some(plan["payload"].clone());
+    let (receipt, registered, independent) = tokio::join!(
+        context.complete(&plan, "synced", 81001),
+        crate::plugins_installed::registration_sync::record_registration_sync_result_until(
+            state,
+            81001,
+            &registration,
+            start + Duration::from_secs(20),
+        ),
+        async {
+            let receipt = other.complete(&other_plan, "synced", 81001).await?;
+            assert_eq!(receipt["recorded"], json!([other.id]));
+            assert_eq!(other.state().await?.as_deref(), Some("installed"));
+            // Deterministically exceed the original 3-second acquisition limit.
+            tokio::time::sleep_until(start + Duration::from_secs(6)).await;
+            lease.release().await;
+            Ok::<_, anyhow::Error>(())
+        }
+    );
+    independent?;
+    registered?;
+    assert_eq!(receipt?["recorded"], json!([context.id]));
+    assert!(start.elapsed() >= Duration::from_secs(6));
+    assert_eq!(context.state().await?.as_deref(), Some("installed"));
+
+    context.set_intent(101, true).await?;
+    let obsolete = context.plan().await?;
+    let lease = PluginWriteLease::acquire_installed(
+        context.mysql,
+        state.redis.as_ref(),
+        81001,
+        Some(&[context.id]),
+    )
+    .await?;
+    let (receipt, changed) = tokio::join!(context.complete(&obsolete, "synced", 81001), async {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        context.set_intent(102, false).await?;
+        context.seed_removal().await?;
+        lease.release().await;
+        Ok::<_, anyhow::Error>(())
+    });
+    changed?;
+    assert_eq!(receipt?["superseded"], json!([context.id]));
+    assert_eq!(context.state().await?.as_deref(), Some("uninstalling"));
+    // The completed request relinquished its lease rather than leaking it.
+    PluginWriteLease::acquire_installed(
+        context.mysql,
+        state.redis.as_ref(),
+        81001,
+        Some(&[context.id]),
+    )
+    .await?
+    .release()
+    .await;
     Ok(())
 }
 
@@ -161,6 +288,22 @@ struct Context<'a> {
 }
 
 impl Context<'_> {
+    async fn independent_mysql(&self) -> anyhow::Result<brz_mysql::MysqlService> {
+        #[derive(FromMysqlRow)]
+        struct Database {
+            name: String,
+        }
+        let database: Database = self
+            .mysql
+            .fetch_one("SELECT DATABASE() AS name", ())
+            .await?;
+        let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")?;
+        Ok(crate::migrations::connect(&format!(
+            "mysql://root@{address}/{}?ssl-mode=disabled",
+            database.name,
+        ))?)
+    }
+
     async fn post(&self, user: i64, path: &str, body: Value) -> anyhow::Result<brz_http::Response> {
         let token = jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),

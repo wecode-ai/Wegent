@@ -35,50 +35,11 @@ const PLUGIN_SYNC_STATE_NAMESPACE: &str = "plugin-sync";
 /// `PLUGIN_SYNC_STATE_NAME`.
 const PLUGIN_SYNC_STATE_NAME: &str = "account";
 
-pub(super) async fn with_sync_write_budget<T, E>(
-    write: impl std::future::Future<Output = Result<T, E>>,
-) -> Result<T, E>
-where
-    E: From<brz_mysql::MysqlError>,
-{
-    tokio::time::timeout(std::time::Duration::from_secs(20), write)
-        .await
-        .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy").into()))
-}
-
-/// Replay only optimistic database work, within one shared time budget.
-pub(super) async fn retry_sync_write<F, Fut, T>(mut write: F) -> MysqlResult<T>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = MysqlResult<T>>,
-{
-    with_sync_write_budget(async {
-        let mut backoff = 10;
-        loop {
-            let outcome = write().await;
-            if wait_on_metadata_conflict(outcome.as_ref().err(), &mut backoff).await {
-                continue;
-            }
-            return outcome;
-        }
-    })
-    .await
-}
-
-/// Back off after rollback, without holding a connection or a plugin lease.
-async fn wait_on_metadata_conflict(
-    error: Option<&brz_mysql::MysqlError>,
-    backoff_ms: &mut u64,
-) -> bool {
-    if !error.is_some_and(|error| {
-        super::write_coordination::plugin_write_error_code(error) == Some("plugin_write_conflict")
-    }) {
-        return false;
-    }
-    tokio::time::sleep(std::time::Duration::from_millis(*backoff_ms)).await;
-    *backoff_ms = (*backoff_ms + 10).min(250);
-    true
-}
+mod retry;
+use retry::wait_on_metadata_conflict;
+pub(super) use retry::{
+    WRITE_BUDGET, retry_plugin_receipt, retry_sync_write, with_sync_write_budget,
+};
 
 /// `_sync_state`'s optimistic read over one active account state row.
 fn sync_state_statement() -> String {

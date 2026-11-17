@@ -626,6 +626,8 @@ impl LocalBackendConnectionController {
                 && journal["confirmedDeviceRevision"]
                     != completion::identity(&source_device, &snapshot);
             if needs_confirmation {
+                journal["reconcilePending"] = json!(true);
+                persist(path, &journal)?;
                 drop(lease.take());
                 completion::confirm(
                     connection,
@@ -644,6 +646,7 @@ impl LocalBackendConnectionController {
                 }
                 journal["confirmedDeviceRevision"] =
                     completion::identity(&source_device, &snapshot);
+                journal["reconcilePending"] = json!(false);
                 persist(path, &journal)?;
             }
             // Device-state repair must also refresh the marketplace projection.
@@ -688,6 +691,11 @@ impl LocalBackendConnectionController {
                     .all(|item| matches!(item["status"].as_str(), Some("synced" | "removed")))
             });
         if completed {
+            // Preserve actual application separately from the server receipt.
+            // A failed confirmation must leave recoverable, truthful evidence.
+            journal["lastResult"] = result.clone();
+            journal["confirmedDeviceRevision"] = Value::Null;
+            persist(path, &journal)?;
             drop(lease.take());
             completion::confirm(
                 connection,

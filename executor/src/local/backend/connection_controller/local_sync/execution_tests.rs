@@ -12,7 +12,7 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Condvar, Mutex,
     },
 };
@@ -174,6 +174,10 @@ struct Fixture {
     submissions: Arc<Mutex<Vec<HashMap<String, String>>>>,
     completions: Arc<Mutex<Vec<Value>>>,
     completion_failures: Arc<AtomicUsize>,
+    completion_error: Arc<Mutex<String>>,
+    completion_hold: Arc<AtomicBool>,
+    completion_entered: Arc<Notify>,
+    completion_release: Arc<Notify>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -214,6 +218,10 @@ impl Fixture {
         let submissions = Arc::new(Mutex::new(Vec::new()));
         let completions = Arc::new(Mutex::new(Vec::new()));
         let completion_failures = Arc::new(AtomicUsize::new(0));
+        let completion_error = Arc::new(Mutex::new("completion_unavailable".to_string()));
+        let completion_hold = Arc::new(AtomicBool::new(false));
+        let completion_entered = Arc::new(Notify::new());
+        let completion_release = Arc::new(Notify::new());
         let removals = Arc::new(Mutex::new(HashMap::<String, bool>::new()));
         let accept_intent = {
             let removals = removals.clone();
@@ -291,15 +299,29 @@ impl Fixture {
             .route("/api/plugins/local-sync/complete", post({
                 let completions = completions.clone();
                 let failures = completion_failures.clone();
+                let failure_code = completion_error.clone();
+                let hold = completion_hold.clone();
+                let entered = completion_entered.clone();
+                let release = completion_release.clone();
                 move |Json(body): Json<Value>| {
                     let completions = completions.clone();
+                    let failure_code = failure_code.clone();
                     let failures = failures.clone();
+                    let hold = hold.clone();
+                    let entered = entered.clone();
+                    let release = release.clone();
                     async move {
+                        let recorded: Vec<Value> = body["completion"]["result"]["plugins"].as_array().unwrap().iter().map(|item| item["id"].clone()).collect();
                         completions.lock().unwrap().push(body);
-                        if failures.swap(0, Ordering::SeqCst) != 0 {
-                            return (axum::http::StatusCode::SERVICE_UNAVAILABLE, Json(json!({"detail":"completion_unavailable"}))).into_response();
+                        let fail = failures.swap(0, Ordering::SeqCst) != 0;
+                        if hold.swap(false, Ordering::SeqCst) {
+                            entered.notify_one();
+                            release.notified().await;
                         }
-                        Json(json!({"recorded":[8],"superseded":[]})).into_response()
+                        if fail {
+                            return (axum::http::StatusCode::SERVICE_UNAVAILABLE, Json(json!({"detail":*failure_code.lock().unwrap()}))).into_response();
+                        }
+                        Json(json!({"recorded":recorded,"superseded":[]})).into_response()
                     }
                 }
             }))
@@ -373,6 +395,10 @@ impl Fixture {
             submissions,
             completions,
             completion_failures,
+            completion_error,
+            completion_hold,
+            completion_entered,
+            completion_release,
             server,
         }
     }
