@@ -161,7 +161,7 @@ export function ProviderEditor({
       const models = await invokeDesktopHost<string[]>('modelConfiguration.discover', {
         providerId: initial.id,
         provider: {
-          base_url: profile.modelsBaseUrl ?? draft.base_url.trim(),
+          base_url: draft.base_url.trim(),
           api_key: draft.api_key,
           api_format: draft.api_format,
           models_path: draft.models_path,

@@ -201,9 +201,20 @@ export function useWorkbenchModels({
       ) {
         return selectionConfig
       }
+    } else if (selectedModel) {
+      // Defaults initialize a scope; a later source must not replace its valid choice.
+      const currentModel = models.find(model => isSameModelSelection(model, selectedModel))
+      if (currentModel) return toSelectionConfig(currentModel, selectedModelOptions)
     }
     return defaultSelectionConfig?.(models) ?? selectionConfig ?? null
-  }, [defaultSelectionConfig, fallbackWhenConfiguredModelUnavailable, models, selectionConfig])
+  }, [
+    defaultSelectionConfig,
+    fallbackWhenConfiguredModelUnavailable,
+    models,
+    selectedModel,
+    selectedModelOptions,
+    selectionConfig,
+  ])
   const selectionKey = useMemo(
     () => getSelectionKey(effectiveSelectionConfig),
     [effectiveSelectionConfig]
@@ -501,6 +512,12 @@ export function useWorkbenchModels({
     void loadModels()
   }, [api, enabled, loadModels])
 
+  const invalidateLocalModels = useCallback(() => {
+    if (!enabled) return
+    api.refresh?.({ invalidateLocal: true })
+    void loadModels()
+  }, [api, enabled, loadModels])
+
   useEffect(() => {
     if (!enabled) return
     let cancelled = false
@@ -508,7 +525,7 @@ export function useWorkbenchModels({
     queueMicrotask(() => {
       if (!cancelled) void loadModels()
     })
-    window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
+    window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, invalidateLocalModels)
     // A transient lookup can fail while the desktop is offline. Retry when
     // connectivity returns instead of leaving readiness pending forever.
     window.addEventListener('online', loadModels)
@@ -516,10 +533,10 @@ export function useWorkbenchModels({
       cancelled = true
       modelLoadRevisionRef.current += 1
       unsubscribe?.()
-      window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
+      window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, invalidateLocalModels)
       window.removeEventListener('online', loadModels)
     }
-  }, [api, enabled, loadModels])
+  }, [api, enabled, invalidateLocalModels, loadModels])
 
   useEffect(() => {
     if (!enabled || !selectionReady) {
