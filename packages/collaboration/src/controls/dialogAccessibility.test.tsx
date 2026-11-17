@@ -11,12 +11,15 @@ let container: HTMLDivElement
 let background: HTMLButtonElement
 let preserved: HTMLDivElement
 let root: Root
+const isolationBoundary = '[inert], [aria-hidden="true"]'
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   background = document.createElement('button')
   background.textContent = 'Background action'
+  background.setAttribute('aria-hidden', 'false')
   preserved = document.createElement('div')
   preserved.setAttribute('aria-hidden', 'true')
+  preserved.setAttribute('inert', '')
   container = document.createElement('div')
   document.body.append(background, preserved, container)
   background.focus()
@@ -40,6 +43,9 @@ it.each([false, true])(
       return open ? (
         <DefaultModal title="Create project" closeLabel="Close" onClose={() => setOpen(false)}>
           <input data-testid="project-name" />
+          <p role="status" aria-live="polite">
+            Generation status
+          </p>
           <ModelSelector
             translate={translate}
             isMobile={isMobile}
@@ -55,8 +61,8 @@ it.each([false, true])(
     }
     act(() => root.render(<Host />))
     const main = get('collaboration-project-create-dialog')
-    expect(background.closest('[aria-hidden="true"]')).not.toBeNull()
-    expect(main.closest('[aria-hidden="true"]')).toBeNull()
+    expect(background.closest(isolationBoundary)).not.toBeNull()
+    expect(main.closest(isolationBoundary)).toBeNull()
     expect(main.contains(document.activeElement)).toBe(true)
     const trigger = get('model-selector-button')
     act(() => {
@@ -64,8 +70,8 @@ it.each([false, true])(
       trigger.click()
     })
     const picker = get('model-selector-menu').closest<HTMLElement>('[role="dialog"]')!
-    expect(picker.closest('[aria-hidden="true"]')).toBeNull()
-    expect(main.closest('[aria-hidden="true"]')).not.toBeNull()
+    expect(picker.closest(isolationBoundary)).toBeNull()
+    expect(main.closest(isolationBoundary)).not.toBeNull()
     expect(picker.contains(document.activeElement)).toBe(true)
     act(() =>
       picker.dispatchEvent(
@@ -74,12 +80,14 @@ it.each([false, true])(
     )
     expect(document.querySelector('[data-testid="model-selector-menu"]')).toBeNull()
     expect(main.isConnected).toBe(true)
-    expect(main.closest('[aria-hidden="true"]')).toBeNull()
-    expect(background.closest('[aria-hidden="true"]')).not.toBeNull()
+    expect(main.closest(isolationBoundary)).toBeNull()
+    expect(background.closest(isolationBoundary)).not.toBeNull()
     expect(document.activeElement).toBe(trigger)
     act(() => get('collaboration-project-create-close').click())
-    expect(background.hasAttribute('aria-hidden')).toBe(false)
+    expect(background.getAttribute('aria-hidden')).toBe('false')
+    expect(background.hasAttribute('inert')).toBe(false)
     expect(preserved.getAttribute('aria-hidden')).toBe('true')
+    expect(preserved.getAttribute('inert')).toBe('')
     expect(document.activeElement).toBe(background)
   }
 )
@@ -99,6 +107,7 @@ it.each([
       )
     }
     act(() => root.render(<Configuration />))
-    expect(background.hasAttribute('aria-hidden')).toBe(false)
+    expect(background.getAttribute('aria-hidden')).toBe('false')
+    expect(background.hasAttribute('inert')).toBe(false)
   }
 )

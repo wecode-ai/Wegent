@@ -1,5 +1,5 @@
 import { useEffect, type KeyboardEvent, type RefObject } from "react";
-import { hideModalBackground } from "./dialogAccessibility";
+import { isolateModalBackground } from "./dialogAccessibility";
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
@@ -17,7 +17,7 @@ export function useMobileModelSelectorFocus(
         ? document.activeElement
         : null;
     closeButtonRef.current?.focus();
-    const restoreBackground = hideModalBackground(
+    const restoreBackground = isolateModalBackground(
       closeButtonRef.current?.closest<HTMLElement>('[role="dialog"]') ?? null,
     );
     return () => {

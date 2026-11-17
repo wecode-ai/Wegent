@@ -660,6 +660,10 @@ export function StandInOverviewPage({
             userId={props.userId}
             deviceId={deviceId}
             onRefresh={inbox.refresh}
+            onNavigate={navigate => {
+              setReview(null)
+              navigate()
+            }}
             onOpenTask={
               onOpenTask
                 ? async address => {
