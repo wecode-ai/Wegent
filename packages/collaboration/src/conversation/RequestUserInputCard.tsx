@@ -134,7 +134,7 @@ function RequestUserInputForm({
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(
     () =>
       Object.keys(draftOptionAnswers ?? {})[0] ??
-      initialActiveQuestionId(questions, draftAnswers),
+      initialActiveQuestionId(questions, draftAnswers, draftAttachments),
   )
   const selectCustomQuestion = useCallback(
     (id: string) => {
@@ -739,9 +739,14 @@ function initialAnswers(
 function initialActiveQuestionId(
   questions: ReturnType<typeof normalizeQuestions>,
   draftAnswers?: Record<string, string>,
+  draftAttachments?: Record<string, Attachment[]>,
 ): string | null {
   return (
     customDraftQuestionId(questions, draftAnswers) ??
+    questions.find(
+      (question) =>
+        question.allowCustom && draftAttachments?.[question.id]?.length,
+    )?.id ??
     implementationPlanOptionQuestion(questions)?.id ??
     questions[0]?.id ??
     null

@@ -230,6 +230,37 @@ describe('question answer recovery', () => {
     )
   })
 
+  test('restores attachment-only plan feedback before selecting the implementation default', async () => {
+    const send = vi.fn().mockResolvedValue(false)
+    render(
+      <RequestUserInputCard
+        payload={{
+          ...payload,
+          questions: [
+            {
+              id: 'implement',
+              question: 'Implement?',
+              is_other: false,
+              options: [{ label: 'Implement' }],
+            },
+            { id: 'details', question: 'Feedback?', is_other: true },
+          ],
+        }}
+        draftAttachments={{ details: [file] }}
+        onSubmit={send}
+      />
+    )
+    await waitFor(() => expect(submit()).toBeEnabled())
+    fireEvent.click(submit())
+    await waitFor(() =>
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          answers: { details: { answers: [''], attachments: [file] } },
+        })
+      )
+    )
+  })
+
   test('preserves both question attachment drafts when uploads finish together', async () => {
     const finish = new Map<string, (file: Attachment) => void>()
     const drafts = vi.fn()

@@ -1451,7 +1451,10 @@ export function TemporaryChatPanel({
                       const keys = (
                         focusedRequest
                           ? [pendingRequest]
-                          : pendingRequestUserInputPayloads(messages, hiddenRequestUserInputIds)
+                          : pendingRequestUserInputPayloads(
+                              presentation.messages,
+                              hiddenRequestUserInputIds
+                            )
                       )
                         .filter(isAsyncRequestUserInputPayload)
                         .map(requestUserInputPayloadKey)

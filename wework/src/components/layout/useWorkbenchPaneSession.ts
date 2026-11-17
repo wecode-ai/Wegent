@@ -205,6 +205,7 @@ interface RuntimeMessageSendResult {
   accepted: boolean
   queued: boolean
   queuePosition?: number | null
+  guidanceTurnId?: string
 }
 
 interface LoadedTranscriptRange {
@@ -1238,6 +1239,9 @@ export function useWorkbenchPaneSession({
           address: currentRuntimeTask,
           message: message.content,
           clientUserMessageId: message.id,
+          ...(message.requestUserInputResponse
+            ? { requestUserInputResponse: message.requestUserInputResponse }
+            : {}),
           ...(message.modelId ? { modelId: message.modelId, modelType: message.modelType } : {}),
           ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
@@ -1573,7 +1577,7 @@ export function useWorkbenchPaneSession({
       if (queuedMessage.status === 'sending') return false
 
       setError(null)
-      if (!readCurrentPaneBusy() && !forceActiveTurn) {
+      if (queuedMessage.requestUserInputResponse || (!readCurrentPaneBusy() && !forceActiveTurn)) {
         setQueuedMessages(messages =>
           messages.map(message =>
             message.id === id
@@ -1583,6 +1587,23 @@ export function useWorkbenchPaneSession({
         )
         try {
           const result = await sendRuntimeMessage(queuedMessage)
+          if (result.accepted && result.guidanceTurnId) {
+            setQueuedMessages(messages =>
+              messages.map(message =>
+                message.id === id
+                  ? {
+                      ...message,
+                      status: 'sending',
+                      deliveryMode: 'guidance',
+                      awaitingGuidanceAcceptance: undefined,
+                      error: undefined,
+                      notice: '正在引导当前对话',
+                    }
+                  : message
+              )
+            )
+            return true
+          }
           if (result.queued) {
             retainRuntimeQueuedMessage(queuedMessage, result.queuePosition)
             return true
@@ -1759,7 +1780,7 @@ export function useWorkbenchPaneSession({
           )
         )
         const answerIsUserMessage = options.appendUserMessage || asyncQuestion
-        if (answerIsUserMessage && !asyncQuestion) {
+        if (answerIsUserMessage) {
           const answerMessage: RuntimePaneQueuedMessage = {
             id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
             content: message,
@@ -1768,6 +1789,9 @@ export function useWorkbenchPaneSession({
               : {}),
             status: 'queued',
             createdAt: new Date().toISOString(),
+            ...(asyncQuestion
+              ? { requestUserInputResponse: { ...response, delivery: 'async' as const } }
+              : {}),
             ...getRuntimeModelFields(runtimeModelOverride),
           }
           setQueuedMessages(messages => [...messages, answerMessage])
@@ -1777,7 +1801,7 @@ export function useWorkbenchPaneSession({
           const sent = await sendRuntimePaneMessage({
             address: currentRuntimeTask,
             message,
-            requestUserInputResponse: asyncQuestion ? { ...response, delivery: 'async' } : response,
+            requestUserInputResponse: response,
             ...(attachments.length ? { attachments } : {}),
             ...(additionalContext ? { additionalContext } : {}),
           })

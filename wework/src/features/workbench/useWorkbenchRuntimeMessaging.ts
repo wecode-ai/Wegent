@@ -612,12 +612,14 @@ export function useWorkbenchRuntimeMessaging({
             applyRequestUserInputResponseToBlock(block, userInputResponse)
           )
           lifecycleStore.userInputResponded(outboundRequest.address)
+          if (response.status === 'queued') options?.onQueued?.(response)
         } else if (response.status === 'queued') {
           lifecycleStore.sendQueued(outboundRequest.address, response.queuePosition)
           options?.onQueued?.(response)
         } else {
           lifecycleStore.sendAccepted(outboundRequest.address)
         }
+        options?.onAccepted?.(response)
         void refreshWorkLists().catch(error => {
           console.warn('[Wework] Runtime send accepted but work list refresh failed', {
             taskId: response.taskId ?? outboundRequest.address.taskId,

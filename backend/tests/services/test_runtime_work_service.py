@@ -2269,6 +2269,30 @@ async def test_send_runtime_message_preserves_executor_queue_status(
     assert payload.get("queueIfBusy", False) is queue_if_busy
 
 
+@pytest.mark.parametrize("snake_case", [False, True])
+def test_runtime_send_response_preserves_async_guidance_receipts(snake_case):
+    from app.services.runtime_work_service import _runtime_send_response
+
+    result = {
+        "success": True,
+        "accepted": True,
+        "taskId": "task-1",
+        "turn_id" if snake_case else "turnId": "turn-1",
+        "guidance_id" if snake_case else "guidanceId": "answer-1",
+    }
+    response = _runtime_send_response(result, "task-1").model_dump(by_alias=True)
+    assert response["accepted"] is True
+    assert response["turnId"] == "turn-1"
+    assert response["guidanceId"] == "answer-1"
+
+    rejected = _runtime_send_response(
+        {"success": False, "code": "stale_request_user_input", "error": "Answered"},
+        "task-1",
+    ).model_dump(by_alias=True)
+    assert rejected["accepted"] is False
+    assert rejected["code"] == "stale_request_user_input"
+
+
 @pytest.mark.asyncio
 async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_rows(
     test_db,

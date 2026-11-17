@@ -580,6 +580,55 @@ describe('unified human response', () => {
     expect(context!.history).toEqual([])
   })
 
+  it('does not dispatch an old-account answer after its attachment upload finishes', async () => {
+    const rendered = view()
+    let finish!: (value: { id: number; filename: string; status: 'ready' }) => void
+    const upload = vi.fn(
+      () =>
+        new Promise<{ id: number; filename: string; status: 'ready' }>(resolve => {
+          finish = resolve
+        })
+    )
+    const source = {
+      ...rendered.taskSource,
+      devices: [{ device_id: 'device', device_type: 'cloud' }] as NonNullable<
+        typeof rendered.taskSource.devices
+      >,
+      services: {
+        ...rendered.taskSource.services!,
+        attachmentApi: { uploadLocalAttachmentToCloud: upload },
+      } as typeof rendered.taskSource.services,
+    }
+    rendered.rerenderSource(source)
+    await waitFor(() => expect(context!.pending).toHaveLength(1))
+    const item = context!.pending[0]
+    let reply!: Promise<boolean>
+    act(() => {
+      reply = context!.respond(item, '', {
+        response: {
+          itemId: item.payload.itemId,
+          answers: {
+            compatibility: {
+              answers: [''],
+              attachments: [
+                { id: -1, filename: 'brief.txt', local_path: '/tmp/brief.txt', status: 'ready' },
+              ],
+            },
+          },
+        },
+      })
+    })
+    await waitFor(() => expect(upload).toHaveBeenCalledOnce())
+    rendered.rerenderSource({ ...source, items: [] }, 'test:2')
+    await act(async () => {
+      finish({ id: 42, filename: 'brief.txt', status: 'ready' })
+      expect(await reply).toBe(false)
+    })
+    expect(harness.send).not.toHaveBeenCalled()
+    expect(context!.drafts).toEqual({})
+    expect(context!.history).toEqual([])
+  })
+
   it('keeps an accepted old-account reply out of the new account state', async () => {
     let accept!: (result: { accepted: boolean }) => void
     harness.send.mockImplementation(

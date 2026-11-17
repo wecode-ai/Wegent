@@ -767,6 +767,7 @@ function RuntimeInteractionsState({
                 sourceRef.current?.devices ?? [],
                 sourceRef.current?.services?.attachmentApi?.uploadLocalAttachmentToCloud
               )
+          if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
           const previousClient = clientIds.current.get(item.id)
           const id =
             options?.clientMessageId ??
@@ -774,6 +775,26 @@ function RuntimeInteractionsState({
           clientIds.current.set(item.id, { answer, id })
           const message = requestUserInputResponseText(response)
           const attachments = requestUserInputResponseAttachments(response)
+          const runtimePayload =
+            !options?.send && !live.project
+              ? await prepareRuntimeContinuationModel(
+                  {
+                    address: live.task.address,
+                    message,
+                    ...(attachments.length ? { attachments } : {}),
+                    ...(asyncInput ? { queueIfBusy: true } : {}),
+                    requestUserInputResponse: response,
+                    clientUserMessageId: id,
+                  },
+                  {
+                    projects: [],
+                    chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
+                    totalTasks: 1,
+                  },
+                  () => api.listRuntimeWork()
+                )
+              : undefined
+          if (!mounted.current || sourceRef.current?.services?.runtimeWorkApi !== api) return false
           const result = options?.send
             ? { accepted: await options.send(), error: undefined }
             : live.project
@@ -785,24 +806,7 @@ function RuntimeInteractionsState({
                   t('interactions.failed'),
                   attachments
                 ).then(() => ({ accepted: true, error: undefined }))
-              : await api.sendRuntimeMessage(
-                  await prepareRuntimeContinuationModel(
-                    {
-                      address: live.task.address,
-                      message,
-                      ...(attachments.length ? { attachments } : {}),
-                      ...(asyncInput ? { queueIfBusy: true } : {}),
-                      requestUserInputResponse: response,
-                      clientUserMessageId: id,
-                    },
-                    {
-                      projects: [],
-                      chats: [{ ...live.task.workspace, tasks: [live.task.task] }],
-                      totalTasks: 1,
-                    },
-                    () => api.listRuntimeWork()
-                  )
-                )
+              : await api.sendRuntimeMessage(runtimePayload!)
           const accepted = result.accepted ?? ('success' in result && result.success)
           if (!accepted) throw new Error(result.error || t('notifications.failed'))
           saveInteractionState(acceptancePrefix + item.id, true)

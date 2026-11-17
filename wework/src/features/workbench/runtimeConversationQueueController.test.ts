@@ -118,6 +118,43 @@ function settleTurn(
 }
 
 describe('RuntimeConversationQueueController', () => {
+  test('a retried question retains its identity when the executor accepts guidance', async () => {
+    const store = idleStore(taskA)
+    const item: RuntimePaneQueuedMessage = {
+      ...message('question-retry'),
+      status: 'failed',
+      requestUserInputResponse: {
+        itemId: 'question',
+        interactionScope: 'active-turn',
+        delivery: 'async',
+        answers: { q: { answers: ['Proceed'] } },
+      },
+    }
+    const send = vi.fn<SendRuntimePaneMessage>(async (request, options) => {
+      store.turnStarted(taskA, 'active-turn')
+      options?.onAccepted?.({
+        accepted: true,
+        taskId: taskA.taskId,
+        turnId: 'active-turn',
+        guidanceId: request.clientUserMessageId,
+      })
+      return true
+    })
+    cacheRuntimeConversationQueuedMessages(taskA, [item])
+    const { controller } = attach(taskA, store, send)
+    await controller.send(item)
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestUserInputResponse: item.requestUserInputResponse,
+        clientUserMessageId: item.id,
+      }),
+      expect.any(Object)
+    )
+    expect(getRuntimeConversationQueuedMessages(taskA)).toEqual([
+      expect.objectContaining({ ...item, status: 'sending', deliveryMode: 'guidance' }),
+    ])
+  })
+
   beforeEach(() => {
     vi.spyOn(console, 'info').mockImplementation(() => {})
   })

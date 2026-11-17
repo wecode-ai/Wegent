@@ -660,6 +660,9 @@ export async function createDesktopScenario({
       })
       await capture(control, 'change-request-status-07-settings-disabled.png', 'body')
 
+      // Restore the provider before collection resumes. Reopening the environment
+      // shares the sidebar's observer lease; it does not force a fresh collection.
+      await writeFile(statePath, 'merged\n')
       await control.command('click', '[data-testid="change-request-status-switch"]')
       await waitForAttribute(
         control,
@@ -673,7 +676,6 @@ export async function createDesktopScenario({
       await control.command('click', ENVIRONMENT_BUTTON)
       await control.command('waitFor', '[data-testid="environment-info-popover"]')
 
-      await writeFile(statePath, 'merged\n')
       await refreshEnvironment(control)
       await control.command('waitFor', CHANGE_REQUEST_BUTTON, {
         text: '#2631',

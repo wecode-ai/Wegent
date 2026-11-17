@@ -3195,6 +3195,59 @@ describe('TemporaryChatPanel', () => {
     expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
   })
 
+  it('skips only async questions in the displayed historical turn', async () => {
+    mocks.conversationTurns = ['first', 'second'].map(id => ({
+      id,
+      clientUserMessageId: `${id}-user`,
+      status: 'done',
+      items: [
+        {
+          id: `${id}-user`,
+          type: 'user_message',
+          message: { id: `${id}-user`, role: 'user', content: `${id} context`, status: 'done' },
+        },
+        {
+          id: `${id}-question`,
+          type: 'block',
+          block: {
+            id: `${id}-question`,
+            type: 'tool',
+            toolName: 'request_user_input_async',
+            status: 'done',
+            createdAt: 1,
+            renderPayload: {
+              kind: 'request_user_input',
+              itemId: `${id}-question`,
+              delivery: 'async',
+              interactionScope: id,
+              questions: [{ id, question: `${id} decision?`, is_other: true }],
+            },
+          },
+        },
+      ],
+    })) as typeof mocks.conversationTurns
+    mocks.conversationMessages = projectRuntimeConversationTurns(mocks.conversationTurns)
+    const panel = (id: string) => (
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="skip-history"
+        historySource={{ turnId: id, userMessageIds: [`${id}-user`] }}
+      />
+    )
+    const view = render(panel('first'))
+    expect(screen.getByTestId('request-user-input-custom-first')).toBeVisible()
+    await userEvent.click(screen.getByTestId('request-user-input-skip-button'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('request-user-input-card')).not.toBeInTheDocument()
+    )
+    view.rerender(panel('second'))
+    expect(screen.getByTestId('request-user-input-custom-second')).toBeVisible()
+    expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+    expect(mocks.cancelRuntimePaneTask).not.toHaveBeenCalled()
+  })
+
   it('shows the selected older question and targets its original turn instead of the latest request', async () => {
     const older = {
       kind: 'request_user_input' as const,

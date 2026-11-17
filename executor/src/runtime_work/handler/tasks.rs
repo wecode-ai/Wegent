@@ -1143,6 +1143,29 @@ impl RuntimeWorkRpcHandler {
 
     async fn send_message_with_activity_checks(
         &self,
+        payload: Value,
+        activity: bool,
+    ) -> Result<Value, AppIpcError> {
+        // All callers hold the task send gate until acceptance is recorded.
+        let question = self.unanswered_async_question_reply(&payload)?;
+        let result = self
+            .dispatch_message_with_activity_checks(payload, activity)
+            .await;
+        if let (Some((task_id, key)), Ok(receipt)) = (question, &result) {
+            if receipt["accepted"] == true {
+                self.store.update_task(&task_id, |link| {
+                    if !link.runtime_handle["answeredAsyncQuestions"].is_object() {
+                        link.runtime_handle["answeredAsyncQuestions"] = json!({});
+                    }
+                    link.runtime_handle["answeredAsyncQuestions"][key] = json!(true);
+                });
+            }
+        }
+        result
+    }
+
+    async fn dispatch_message_with_activity_checks(
+        &self,
         mut payload: Value,
         activity: bool,
     ) -> Result<Value, AppIpcError> {

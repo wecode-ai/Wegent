@@ -139,7 +139,9 @@ export function ComposerTextInput({
   const events = useComposerInputEvents({
     editorRef,
     valueRef,
-    onSubmit,
+    onSubmit: (value, options) => {
+      if (transferReady) onSubmit(value, options)
+    },
     onBlur,
     onCompositionStart,
     onCompositionEnd,

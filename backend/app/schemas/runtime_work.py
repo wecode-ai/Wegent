@@ -699,6 +699,9 @@ class RuntimeSendResponse(BaseModel):
     local_task_id: str = Field(..., alias="taskId")
     status: Optional[Literal["queued", "running"]] = None
     queue_position: Optional[int] = Field(default=None, alias="queuePosition")
+    turn_id: Optional[str] = Field(default=None, alias="turnId")
+    guidance_id: Optional[str] = Field(default=None, alias="guidanceId")
+    code: Optional[str] = None
     error: Optional[str] = None
 
 

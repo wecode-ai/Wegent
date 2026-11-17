@@ -5,6 +5,34 @@ use std::sync::OnceLock;
 static ISSUE_QUESTION_PUBLICATIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn unanswered_async_question_reply(
+        &self,
+        payload: &Value,
+    ) -> Result<Option<(String, String)>, AppIpcError> {
+        let Some(response) =
+            request_user_input_response(payload).filter(|response| response["delivery"] == "async")
+        else {
+            return Ok(None);
+        };
+        let task_id = runtime_task_id(payload)
+            .map(|id| self.canonical_local_task_id(&id))
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let link = self.local_task_link(&task_id);
+        let key = json!([
+            link.as_ref().and_then(runtime_session_id_from_link),
+            response["interactionScope"],
+            response["itemId"]
+        ])
+        .to_string();
+        if link.is_some_and(|link| link.runtime_handle["answeredAsyncQuestions"][&key] == true) {
+            return Err(AppIpcError::new(
+                "stale_request_user_input",
+                "This question already has an accepted answer",
+            ));
+        }
+        Ok(Some((task_id, key)))
+    }
+
     pub(super) async fn prepare_async_question_reply(
         &self,
         task_id: &str,

@@ -1359,8 +1359,17 @@ describe('pane continuation without composer submission', () => {
     'updates async question waiting state only after an accepted reply (running=$running, accepted=$accepted)',
     async ({ running, accepted }) => {
       const { result } = await renderSession()
-      mocks.send.mockResolvedValue(accepted)
-      mocks.guide.mockResolvedValue({ sent: accepted, turnId: 'answer-turn' })
+      mocks.send.mockImplementation(async (request, options) => {
+        if (accepted)
+          options?.onAccepted?.({
+            accepted: true,
+            taskId: address.taskId,
+            ...(running
+              ? { turnId: 'question-turn', guidanceId: request.clientUserMessageId }
+              : {}),
+          })
+        return accepted
+      })
       act(() => {
         reconcileRuntimeConversationSnapshot(address, [
           {
@@ -1411,8 +1420,37 @@ describe('pane continuation without composer submission', () => {
             delivery: 'async',
             answers: { direction: { answers: ['Continue'] } },
           },
-        })
+        }),
+        expect.any(Object)
       )
+      if (running && accepted) {
+        expect(result.current.queuedMessages).toContainEqual(
+          expect.objectContaining({
+            content: 'Continue',
+            status: 'sending',
+            deliveryMode: 'guidance',
+          })
+        )
+        expect(result.current.messages).toContainEqual(
+          expect.objectContaining({
+            role: 'user',
+            content: 'Continue',
+            runtimeGuidance: true,
+          })
+        )
+      }
+      if (!accepted) {
+        expect(result.current.queuedMessages).toContainEqual(
+          expect.objectContaining({
+            status: 'failed',
+            requestUserInputResponse: {
+              requestId: 'async-question',
+              delivery: 'async',
+              answers: { direction: { answers: ['Continue'] } },
+            },
+          })
+        )
+      }
       expect(mocks.guide).not.toHaveBeenCalled()
       expectDraftPreserved(result.current)
     }
@@ -2029,7 +2067,8 @@ test.each([true, false])(
     expect(mocks.send).toHaveBeenCalledWith(
       expect.objectContaining({
         requestUserInputResponse: { ...response, delivery: 'async' },
-      })
+      }),
+      expect.objectContaining({ onAccepted: expect.any(Function) })
     )
     expect(mocks.guide).not.toHaveBeenCalled()
     expect(result.current.answeredRequestUserInputIds.has('item:first')).toBe(accepted)
