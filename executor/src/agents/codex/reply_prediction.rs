@@ -428,7 +428,9 @@ while IFS= read -r line; do
       elif [ '__MODE__' = 'goal-error' ]; then
         printf '{"id":%s,"error":{"code":-32603,"message":"goal read failed"}}\n' "$id"
       else printf '{"id":%s,"result":{"goal":null}}\n' "$id"; fi ;;
-    *'"method":"thread/resume"'*) printf '{"id":%s,"result":{"thread":{"id":"source"},"model":"parent-model","modelProvider":"openai"}}\n' "$id" ;;
+    *'"method":"thread/resume"'*)
+      provider=$(printf '%s' "$line" | sed -n 's/.*"modelProvider":"\([^"]*\)".*/\1/p')
+      printf '{"id":%s,"result":{"thread":{"id":"source"},"model":"parent-model","modelProvider":"%s"}}\n' "$id" "${provider:-openai}" ;;
     *'"method":"thread/turns/list"'*)
       if [ '__MODE__' = 'interrupted' ]; then
         printf '{"id":%s,"result":{"data":[{"id":"latest","status":"interrupted"}]}}\n' "$id"
