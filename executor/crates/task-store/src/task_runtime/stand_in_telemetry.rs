@@ -179,13 +179,19 @@ impl LocalTaskStore {
     ) -> Result<(), TaskRuntimeError> {
         let mut guard = self.connection()?;
         let tx = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let was_enabled = enabled(&tx, user)?;
+        let was_enabled: Option<bool> = tx
+            .query_row(
+                "SELECT enabled FROM stand_in_telemetry_policy WHERE user_id=?1",
+                [user],
+                |row| row.get(0),
+            )
+            .optional()?;
         ensure_consent_cutoff_store(&tx)?;
         let at = Utc::now().timestamp_millis();
-        let boundary = if !allow {
+        let boundary = if !allow || was_enabled == Some(false) {
             Some(at)
         } else {
-            enabled_since.or_else(|| (!was_enabled).then_some(at))
+            enabled_since.or_else(|| was_enabled.is_none().then_some(at))
         };
         if let Some(since) = boundary {
             tx.execute("INSERT INTO stand_in_telemetry_cutoffs(user_id,enabled_since) VALUES(?1,?2) ON CONFLICT(user_id) DO UPDATE SET enabled_since=MAX(enabled_since,excluded.enabled_since)", params![user,since])?;
@@ -925,5 +931,70 @@ mod deferred_consent_tests {
             .as_array()
             .unwrap()
             .is_empty());
+    }
+    #[test]
+    fn reenabled_consent_rejects_facts_captured_while_disabled() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        let old_boundary = Utc::now().timestamp_millis() - 10_000;
+        store
+            .configure_stand_in_telemetry(7, true, Some(old_boundary))
+            .unwrap();
+        store.configure_stand_in_telemetry(7, false, None).unwrap();
+        let connection = Connection::open(&path).unwrap();
+        // Model a policy disabled before this delayed observation was captured.
+        connection
+            .execute(
+                "UPDATE stand_in_telemetry_cutoffs SET enabled_since=?1 WHERE user_id=7",
+                [old_boundary + 1_000],
+            )
+            .unwrap();
+        store
+            .configure_stand_in_telemetry(7, true, Some(old_boundary))
+            .unwrap();
+        store
+            .observe_stand_in_run(StandInRunObservation {
+                occurred_at: old_boundary + 2_000,
+                user: 7,
+                task: "disabled-interval",
+                turn: "turn",
+                running: true,
+                waiting: false,
+                result: None,
+                properties: &json!({}),
+            })
+            .unwrap();
+        assert!(store.list_stand_in_telemetry(7).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let cutoff: i64 = connection
+            .query_row(
+                "SELECT enabled_since FROM stand_in_telemetry_cutoffs WHERE user_id=7",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(cutoff > old_boundary + 2_000);
+        store
+            .observe_stand_in_run(StandInRunObservation {
+                occurred_at: cutoff,
+                user: 7,
+                task: "reenabled",
+                turn: "turn",
+                running: true,
+                waiting: false,
+                result: None,
+                properties: &json!({}),
+            })
+            .unwrap();
+        assert_eq!(
+            store.list_stand_in_telemetry(7).unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }
