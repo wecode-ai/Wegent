@@ -13,6 +13,46 @@ import {
 } from './plugin-development-manager.js'
 
 describe('PluginDevelopmentManager', () => {
+  test.each(['missing', 'cancelled', 'failed'])(
+    'a %s native decision cannot launch or replace a development session',
+    async decision => {
+      const root = await mkdtemp(join(tmpdir(), 'development-approval-'))
+      const confirmInstall =
+        decision === 'missing'
+          ? undefined
+          : vi.fn(async () => {
+              if (decision === 'failed') throw new Error('Native approval unavailable')
+              return false
+            })
+      const manager = new PluginDevelopmentManager({
+        command: process.execPath,
+        args: [],
+        environment: {},
+        userDataDirectory: join(root, 'user-data'),
+        confirmInstall,
+      })
+      const stop = vi.spyOn(manager, 'stop')
+      try {
+        const plugin = await manager.initialize(join(root, 'source'))
+        await expect(manager.start(plugin.sourceRoot)).rejects.toThrow(
+          decision === 'failed' ? 'Native approval unavailable' : 'installation was cancelled'
+        )
+        if (confirmInstall)
+          expect(confirmInstall).toHaveBeenCalledWith({
+            action: 'install',
+            spec: `link:${plugin.sourceRoot}`,
+          })
+        expect(stop).not.toHaveBeenCalled()
+        expect(await manager.list()).toEqual([])
+        await expect(
+          readFile(join(root, 'user-data', 'app-preferences.json'))
+        ).rejects.toMatchObject({ code: 'ENOENT' })
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   test('state polling cannot undo stopping or reopen login recovery', async () => {
     const root = await mkdtemp(join(tmpdir(), 'development-stop-login-'))
     const pendingStop = Promise.withResolvers<void>()

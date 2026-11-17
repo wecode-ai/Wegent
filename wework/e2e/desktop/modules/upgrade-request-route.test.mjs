@@ -316,7 +316,7 @@ test(
       assert.notEqual(stalePid, pid)
       const controller = applicationPid => ({
         async command(name, selector) {
-          assert.equal(name, 'getOwnedProcessSnapshot')
+          assert.equal(name, 'getProcessExplorerWindowSnapshot')
           assert.equal(selector, 'body')
           return JSON.stringify({ applicationPid })
         },

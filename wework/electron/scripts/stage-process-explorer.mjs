@@ -20,11 +20,12 @@ for (const entry of ['contract.ts', 'core', 'host']) {
   })
 }
 
-// Share the existing authenticated Runtime transport with native app owners.
+// Share pure chat-core implementations with native app owners.
 const chatSource = resolve(electronRoot, '../../packages/chat-core/src')
 const chatTarget = resolve(electronRoot, 'src/vendor/chat-core')
 await mkdir(chatTarget, { recursive: true })
 for (const entry of [
+  'model-connection-probe.ts',
   'runtime-ipc.ts',
   'runtime-transcript-transport.ts',
   'socket/authenticatedSocketClient.ts',

@@ -1,8 +1,12 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CloudCredentialError, CloudCredentialService } from './cloud-credential-service.js'
+import { createTestSecretProtection } from '../../test/secret-protection.js'
+import { protectedCredentialDirectory } from './credential-storage-paths.js'
+
+const protection = createTestSecretProtection()
 
 const roots: string[] = []
 
@@ -15,8 +19,170 @@ afterEach(async () => {
 })
 
 describe('CloudCredentialService', () => {
+  test('invalid legacy credentials stay repairable without publishing an import marker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-invalid-'))
+    roots.push(root)
+    const path = join(root, 'cloud-credentials.json')
+    const value = {
+      version: 2,
+      apiBaseUrl: 'https://cloud.example/api',
+      publicKey: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+      privateKey: 'legacy-key',
+    }
+    const source = JSON.stringify(value)
+    await writeFile(path, source)
+    const service = new CloudCredentialService(root, vi.fn(), protection)
+    await expect(service.prepareAuthorization(value.apiBaseUrl)).rejects.toMatchObject({
+      code: 'credentials_unavailable',
+    })
+    expect(await readFile(path, 'utf8')).toBe(source)
+    await expect(
+      readFile(join(protectedCredentialDirectory(root), 'cloud-credentials.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await writeFile(path, JSON.stringify({ ...value, refreshToken: 'repaired-token' }))
+    await expect(service.prepareAuthorization(value.apiBaseUrl)).resolves.toMatchObject({
+      publicKey: value.publicKey,
+    })
+  })
+
+  test('rotates cloud ciphertext and preserves it when replacement encryption fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-rotation-'))
+    roots.push(root)
+    const value = {
+      version: 2,
+      apiBaseUrl: 'https://cloud.example/api',
+      publicKey: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+      privateKey: 'key',
+      refreshToken: 'token',
+    }
+    await mkdir(protectedCredentialDirectory(root))
+    const path = join(protectedCredentialDirectory(root), 'cloud-credentials.json')
+    const source = JSON.stringify({
+      version: 3,
+      ciphertext: await protection.encrypt(JSON.stringify(value)),
+    })
+    await writeFile(path, source)
+    const decrypt = async (ciphertext: string) => ({
+      ...(await protection.decrypt(ciphertext)),
+      shouldReEncrypt: true,
+    })
+    const failing = new CloudCredentialService(root, vi.fn(), {
+      decrypt,
+      encrypt: async () => {
+        throw new Error('Rotation unavailable')
+      },
+    })
+    await expect(failing.prepareAuthorization(value.apiBaseUrl)).rejects.toThrow(
+      'Rotation unavailable'
+    )
+    expect(await readFile(path, 'utf8')).toBe(source)
+    const next = createTestSecretProtection()
+    await new CloudCredentialService(root, vi.fn(), {
+      decrypt,
+      encrypt: next.encrypt,
+    }).prepareAuthorization(value.apiBaseUrl)
+    const envelope = JSON.parse(await readFile(path, 'utf8'))
+    expect(JSON.parse((await next.decrypt(envelope.ciphertext)).result)).toEqual(value)
+    await expect(protection.decrypt(envelope.ciphertext)).rejects.toThrow()
+  })
+
+  test('explicit disconnect repairs a damaged protected credential before a new sign-in', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-repair-'))
+    roots.push(root)
+    await mkdir(protectedCredentialDirectory(root))
+    const path = join(protectedCredentialDirectory(root), 'cloud-credentials.json')
+    const damaged = JSON.stringify({ version: 3, ciphertext: 'damaged-ciphertext' })
+    await writeFile(path, damaged)
+    const service = new CloudCredentialService(root, vi.fn(), protection)
+    await expect(service.prepareAuthorization('https://cloud.example/api')).rejects.toThrow()
+    expect(await readFile(path, 'utf8')).toBe(damaged)
+    await service.clear()
+    await expect(service.prepareAuthorization('https://cloud.example/api')).resolves.toMatchObject({
+      publicKey: { kty: 'EC' },
+    })
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ version: 3, ciphertext: null })
+  })
+  test('clears credentials without OS access while retaining v3 for compatible rollback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
+    roots.push(root)
+    await mkdir(protectedCredentialDirectory(root))
+    const path = join(protectedCredentialDirectory(root), 'cloud-credentials.json')
+    await writeFile(
+      path,
+      JSON.stringify({ version: 3, ciphertext: await protection.encrypt('null') })
+    )
+    const unavailable = {
+      encrypt: vi.fn().mockRejectedValue(new Error('OS storage unavailable')),
+      decrypt: vi.fn().mockRejectedValue(new Error('OS storage unavailable')),
+    }
+    const service = new CloudCredentialService(root, vi.fn(), unavailable)
+    await service.clear()
+    const envelope = JSON.parse(await readFile(path, 'utf8'))
+    expect(envelope.version).toBe(3)
+    expect(envelope.ciphertext).toBeNull()
+    await expect(
+      service.prepareAuthorization('https://cloud.example.com/api')
+    ).resolves.toMatchObject({
+      publicKey: { kty: 'EC', crv: 'P-256' },
+    })
+    expect(unavailable.encrypt).not.toHaveBeenCalled()
+    expect(unavailable.decrypt).not.toHaveBeenCalled()
+  })
+
   beforeEach(() => {
     electronMocks.netFetch.mockReset()
+  })
+
+  test('imports a legacy credential once without changing the rollback file', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
+    roots.push(root)
+    const source = JSON.stringify({
+      version: 2,
+      apiBaseUrl: 'https://cloud.example.com/api',
+      publicKey: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+      privateKey: 'legacy-private-key',
+      refreshToken: 'legacy-refresh-token',
+      ownerUserId: 7,
+    })
+    const path = join(root, 'cloud-credentials.json')
+    await writeFile(path, source)
+    const request = vi.fn<typeof fetch>()
+    const unavailable = new CloudCredentialService(root, request, {
+      ...protection,
+      encrypt: async () => {
+        throw new Error('OS storage unavailable')
+      },
+    })
+    await expect(unavailable.prepareAuthorization('https://cloud.example.com/api')).rejects.toThrow(
+      'OS storage unavailable'
+    )
+    expect(await readFile(path, 'utf8')).toBe(source)
+    await new CloudCredentialService(root, request, protection).prepareAuthorization(
+      'https://cloud.example.com/api'
+    )
+    const protectedPath = join(protectedCredentialDirectory(root), 'cloud-credentials.json')
+    const raw = await readFile(protectedPath, 'utf8')
+    expect(await readFile(path, 'utf8')).toBe(source)
+    expect(raw).not.toContain('legacy-private-key')
+    expect(raw).not.toContain('legacy-refresh-token')
+    const envelope = JSON.parse(raw)
+    expect(envelope.version).toBe(3)
+    expect((await protection.decrypt(envelope.ciphertext)).result).toBe(source)
+    await writeFile(path, 'unreadable legacy credential')
+    await expect(
+      new CloudCredentialService(root, request, protection).prepareAuthorization(
+        'https://cloud.example.com/api'
+      )
+    ).resolves.toMatchObject({ publicKey: { x: 'x', y: 'y' } })
+    await new CloudCredentialService(root, request, protection).clear()
+    await writeFile(path, source)
+    await expect(
+      new CloudCredentialService(root, request, protection).refreshAccessToken(
+        'https://cloud.example.com/api',
+        7
+      )
+    ).rejects.toMatchObject({ code: 'credentials_unavailable' })
+    expect(request).not.toHaveBeenCalled()
   })
 
   test('polls the authorization session through the Chromium network stack', async () => {
@@ -26,7 +192,7 @@ describe('CloudCredentialService', () => {
       new Response(JSON.stringify({ status: 'pending' }), { status: 200 })
     )
 
-    const service = new CloudCredentialService(root)
+    const service = new CloudCredentialService(root, undefined, protection)
     const prepared = await service.prepareAuthorization('https://cloud.example.com/api')
     const claimed = await service.claimAuthorization({
       authorizationId: prepared.authorizationId,
@@ -59,7 +225,7 @@ describe('CloudCredentialService', () => {
         )
       )
       .mockRejectedValueOnce(new DOMException('The operation was aborted', 'TimeoutError'))
-    const service = new CloudCredentialService(root, request)
+    const service = new CloudCredentialService(root, request, protection)
 
     const prepared = await service.prepareAuthorization('https://cloud.example.com/api/')
     await service.claimAuthorization({
@@ -120,7 +286,7 @@ describe('CloudCredentialService', () => {
           { status: 200 }
         )
       )
-    const service = new CloudCredentialService(root, request)
+    const service = new CloudCredentialService(root, request, protection)
 
     const prepared = await service.prepareAuthorization('https://cloud.example.com/api/')
     const publicKey = prepared.publicKey
@@ -144,8 +310,13 @@ describe('CloudCredentialService', () => {
     const refreshRequest = JSON.parse(String(request.mock.calls[1][1]?.body))
     expect(refreshRequest.refresh_token).toBe('refresh-secret')
     expect(refreshRequest.proof.split('.')).toHaveLength(3)
-    const credentialPath = join(root, 'cloud-credentials.json')
-    const stored = JSON.parse(await readFile(credentialPath, 'utf8'))
+    const credentialPath = join(protectedCredentialDirectory(root), 'cloud-credentials.json')
+    const raw = await readFile(credentialPath, 'utf8')
+    expect(raw).not.toContain('refresh-secret')
+    expect(raw).not.toContain('PRIVATE KEY')
+    const envelope = JSON.parse(raw)
+    expect(envelope.version).toBe(3)
+    const stored = JSON.parse((await protection.decrypt(envelope.ciphertext)).result)
     expect(stored).toMatchObject({
       version: 2,
       apiBaseUrl: 'https://cloud.example.com/api',
@@ -172,7 +343,7 @@ describe('CloudCredentialService', () => {
       { mode: 0o600 }
     )
     const request = vi.fn<typeof fetch>()
-    const service = new CloudCredentialService(root, request)
+    const service = new CloudCredentialService(root, request, protection)
 
     await expect(
       service.refreshAccessToken('https://cloud.example.com/api', 7)
@@ -196,7 +367,7 @@ describe('CloudCredentialService', () => {
         { status: 200 }
       )
     )
-    const service = new CloudCredentialService(root, request)
+    const service = new CloudCredentialService(root, request, protection)
 
     const prepared = await service.prepareAuthorization('https://legacy.example.com/api')
     const claimed = await service.claimAuthorization({
@@ -245,7 +416,7 @@ describe('CloudCredentialService', () => {
           )
         )
       )
-    const service = new CloudCredentialService(root, request)
+    const service = new CloudCredentialService(root, request, protection)
     const prepared = await service.prepareAuthorization('https://cloud.example.com/api')
     await service.claimAuthorization({
       authorizationId: prepared.authorizationId,
@@ -280,7 +451,7 @@ describe('CloudCredentialService', () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ detail: 'Desktop login has expired' }), { status: 401 })
       )
-    const service = new CloudCredentialService(root, request)
+    const service = new CloudCredentialService(root, request, protection)
     const prepared = await service.prepareAuthorization('https://cloud.example.com/api')
     await service.claimAuthorization({
       authorizationId: prepared.authorizationId,
@@ -313,7 +484,7 @@ describe('Native plugin session proof', () => {
         { status: 200 }
       )
     )
-    const service = new CloudCredentialService(root, request)
+    const service = new CloudCredentialService(root, request, protection)
     const prepared = await service.prepareAuthorization('https://cloud.example.com/api')
     await service.claimAuthorization({
       authorizationId: prepared.authorizationId,

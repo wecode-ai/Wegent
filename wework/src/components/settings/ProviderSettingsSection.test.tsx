@@ -417,7 +417,7 @@ describe('Provider settings page', () => {
         'modelConfiguration.discover',
         expect.objectContaining({
           provider: expect.objectContaining({
-            base_url: profile.modelsBaseUrl ?? profile.baseUrl,
+            base_url: profile.baseUrl,
             api_format: profile.apiFormat,
             models_path: profile.modelsPath,
             models_api_key_header: profile.modelsApiKeyHeader,
@@ -436,6 +436,37 @@ describe('Provider settings page', () => {
           }),
         ],
       })
+    }
+  )
+
+  test.each(['minimax', 'minimax-global'])(
+    'discovers saved %s models without replacing its credential ownership endpoint',
+    async preset => {
+      const profile = findLocalModelProviderProfile(preset)
+      snapshot.providers[0] = {
+        ...snapshot.providers[0],
+        base_url: profile.baseUrl,
+        api_format: profile.apiFormat,
+        request_path: profile.requestPath,
+        models_path: profile.modelsPath,
+        models_api_key_header: profile.modelsApiKeyHeader,
+      }
+      discover = async () => ['MiniMax-M2.7']
+      await reloadProviderConfiguration()
+      const user = await openEditor()
+      await user.click(screen.getByTestId('provider-discover'))
+      expect(await screen.findByTestId('provider-discovered-MiniMax-M2.7')).toBeEnabled()
+      expect(invoke).toHaveBeenCalledWith('modelConfiguration.discover', {
+        providerId: 'relay',
+        provider: {
+          base_url: profile.baseUrl,
+          api_key: undefined,
+          api_format: profile.apiFormat,
+          models_path: profile.modelsPath,
+          models_api_key_header: profile.modelsApiKeyHeader,
+        },
+      })
+      expect(screen.getByTestId('provider-api-key')).toHaveValue('')
     }
   )
 

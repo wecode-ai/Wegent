@@ -1,81 +1,176 @@
 // @vitest-environment node
 
+import assert from 'node:assert/strict'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
+import { createRequire } from 'node:module'
+import { runInNewContext } from 'node:vm'
 import { afterEach, expect, test, vi } from 'vitest'
 import { nativeCloudAuthorizationFixture } from '../e2e/desktop/modules/native-cloud-authorization-client.mjs'
 
-const transport = vi.hoisted(() => ({ calls: [], failure: null, output: null }))
-vi.mock('node:child_process', async importOriginal => ({
-  ...(await importOriginal()),
-  execFile(binary, args, options, callback) {
-    return {
-      stdin: {
-        end(input) {
-          const body = JSON.parse(input)
-          transport.calls.push({ binary, args, options, body })
-          queueMicrotask(() =>
-            callback(
-              body.clear ? null : transport.failure,
-              transport.output ?? (body.clear ? 'cleared' : 'authorized')
-            )
-          )
-        },
-      },
-    }
+const transport = vi.hoisted(() => ({ evaluate: null, calls: [] }))
+vi.mock('../e2e/desktop/modules/inspect-before-start.mjs', () => ({
+  inspectRunningApp(port, pid, expression) {
+    transport.calls.push({ port, pid })
+    return transport.evaluate(expression)
   },
 }))
 
+const roots = []
 const cloud = { backendUrl: 'http://127.0.0.1:8000', authToken: 'synthetic-user-token' }
-const binary = '/fixture/shared-packaged-electron'
+const control = { nativeInspectorPort: 9234, applicationProcessId: 123 }
+const require = createRequire(import.meta.url)
 
-afterEach(() => {
+async function fixture() {
+  const root = await mkdtemp(join(tmpdir(), 'native-cloud-login-'))
+  roots.push(root)
+  const protectedRoot = join(root, 'protected-credentials')
+  const calls = []
+  let failure
+  let ready = true
+  let profile = root
+  class Credentials {
+    constructor(directory) {
+      assert.equal(directory, root)
+    }
+    async prepareAuthorization() {
+      calls.push('prepare')
+      return { authorizationId: 'candidate', publicKey: { kty: 'EC' } }
+    }
+    async claimAuthorization(input) {
+      assert.equal(input.authorizationId, 'candidate')
+      assert.equal(input.sessionId, 'session')
+      assert.equal(input.pollToken, 'synthetic-poll')
+      calls.push('claim')
+      return {
+        status: 'success',
+        credentialMode: 'desktop_refresh',
+        accessToken: 'synthetic-access',
+      }
+    }
+    async commitAuthorization(id, user) {
+      assert.equal(id, 'candidate')
+      assert.equal(user, 52)
+      calls.push('commit')
+      await writeFile(
+        join(protectedRoot, 'cloud-credentials.json'),
+        'temporary-protected-credential'
+      )
+      if (failure) throw failure
+    }
+    async refreshAccessToken() {
+      calls.push('refresh')
+      return { accessToken: 'synthetic-refreshed' }
+    }
+  }
+  const request = async (url, options) => {
+    if (url.endsWith('/sessions'))
+      return {
+        ok: true,
+        json: async () => ({ session_id: 'session', poll_token: 'synthetic-poll' }),
+      }
+    if (url.endsWith('/approve')) {
+      assert.equal(options.headers.Authorization, `Bearer ${cloud.authToken}`)
+      calls.push('approve')
+      return { ok: true }
+    }
+    assert.equal(options.headers.Authorization, 'Bearer synthetic-access')
+    return { ok: true, json: async () => ({ id: 52 }) }
+  }
+  const nativeRequire = name => {
+    if (name === 'electron') return { app: { getPath: () => profile, isReady: () => ready } }
+    if (basename(name) === 'credential-storage-paths.js')
+      return { protectedCredentialDirectory: directory => join(directory, 'protected-credentials') }
+    if (basename(name) === 'cloud-credential-service.js')
+      return { CloudCredentialService: Credentials }
+    return require(name)
+  }
+  transport.evaluate = expression =>
+    runInNewContext(expression, {
+      process: {
+        execPath: '/fixture/WeWork',
+        resourcesPath: '/fixture/resources',
+        getBuiltinModule: () => ({ createRequire: () => nativeRequire }),
+      },
+      fetch: request,
+    })
+  return {
+    root,
+    protectedRoot,
+    calls,
+    auth: nativeCloudAuthorizationFixture(cloud, root, control),
+    fail: error => {
+      failure = error
+    },
+    setProfile: value => {
+      profile = value
+    },
+    setReady: value => {
+      ready = value
+    },
+  }
+}
+
+afterEach(async () => {
   transport.calls = []
-  transport.failure = null
-  transport.output = null
+  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-test('real native login and cleanup use the same isolated profile and opaque snapshot', async () => {
-  const fixture = nativeCloudAuthorizationFixture(cloud, '/fixture/profile', binary)
-  await fixture.authorize()
-  await fixture.restore()
-  expect(transport.calls).toHaveLength(2)
-  const [login, cleanup] = transport.calls
-  expect(login.binary).toBe(binary)
-  expect(login.args).toHaveLength(1)
-  expect(login.args[0]).toMatch(/native-cloud-authorization\.mjs$/)
-  expect(login.options.timeout).toBe(10_000)
-  expect(login.options.env.ELECTRON_RUN_AS_NODE).toBe('1')
-  expect(login.body).toEqual({
-    apiBaseUrl: `${cloud.backendUrl}/api`,
-    authToken: cloud.authToken,
-    userDataDirectory: '/fixture/profile',
-    snapshotId: expect.stringMatching(/^[a-f0-9-]{36}$/),
-    clear: false,
+test('uses the connected native host and preserves independent legacy and protected credentials', async () => {
+  const f = await fixture()
+  await writeFile(join(f.root, 'cloud-credentials.json'), 'legacy-rollback-credential')
+  await f.auth.authorize()
+  expect(f.calls).toEqual(['prepare', 'approve', 'claim', 'commit', 'refresh'])
+  expect(transport.calls).toEqual([
+    { port: 9234, pid: 123 },
+    { port: 9234, pid: 123 },
+  ])
+  await f.auth.restore()
+  await expect(readFile(join(f.protectedRoot, 'cloud-credentials.json'))).rejects.toMatchObject({
+    code: 'ENOENT',
   })
-  expect(cleanup.body).toEqual({ ...login.body, clear: true })
-  expect(JSON.stringify([login.args, login.options])).not.toContain(cloud.authToken)
+  expect(await readFile(join(f.root, 'cloud-credentials.json'), 'utf8')).toBe(
+    'legacy-rollback-credential'
+  )
 })
 
-test('cleanup remains available after a partially failed authorization', async () => {
-  const fixture = nativeCloudAuthorizationFixture(cloud, '/fixture/profile', binary)
-  transport.failure = new Error('Native session could not be claimed')
-  await expect(fixture.authorize()).rejects.toThrow('Native session could not be claimed')
-  await fixture.restore()
-  expect(transport.calls.map(call => call.body.clear)).toEqual([false, true])
-  expect(transport.calls[1].body.snapshotId).toBe(transport.calls[0].body.snapshotId)
+test('restores an existing protected credential after a partial committed login failure', async () => {
+  const f = await fixture()
+  const { mkdir } = await import('node:fs/promises')
+  await mkdir(f.protectedRoot)
+  await writeFile(join(f.protectedRoot, 'cloud-credentials.json'), 'original-protected-credential')
+  f.fail(new Error('Native commit failed'))
+  await expect(f.auth.authorize()).rejects.toThrow('Native commit failed')
+  await f.auth.restore()
+  expect(await readFile(join(f.protectedRoot, 'cloud-credentials.json'), 'utf8')).toBe(
+    'original-protected-credential'
+  )
 })
 
-test('an invalid acknowledgement fails without exposing subprocess output', async () => {
-  transport.output = `invalid-${cloud.authToken}`
-  const fixture = nativeCloudAuthorizationFixture(cloud, '/fixture/profile', binary)
-  await expect(fixture.authorize()).rejects.toThrow('Native cloud authorization did not complete')
+test('refuses a different native profile before accessing credentials', async () => {
+  const f = await fixture()
+  f.setProfile('/unrelated/profile')
+  await expect(f.auth.authorize()).rejects.toThrow('escaped its isolated profile')
+  await f.auth.restore()
+  expect(f.calls).toEqual([])
 })
 
-test("concurrent scenario fixtures cannot restore each other's native credentials", async () => {
-  const first = nativeCloudAuthorizationFixture(cloud, '/fixture/first', binary)
-  const second = nativeCloudAuthorizationFixture(cloud, '/fixture/second', binary)
-  await Promise.all([first.authorize(), second.authorize()])
-  expect(transport.calls[0].body.snapshotId).not.toBe(transport.calls[1].body.snapshotId)
-  await first.restore()
-  expect(transport.calls[2].body.userDataDirectory).toBe('/fixture/first')
-  expect(transport.calls[2].body.snapshotId).toBe(transport.calls[0].body.snapshotId)
+test('refuses an unready host instead of substituting Node mode or an unprotected store', async () => {
+  const f = await fixture()
+  f.setReady(false)
+  await expect(f.auth.authorize()).rejects.toThrow('requires a ready Electron host')
+  expect(f.calls).toEqual([])
+})
+
+test('cleanup remains possible after the host stops', async () => {
+  const f = await fixture()
+  await f.auth.authorize()
+  transport.evaluate = () => {
+    throw new Error('Host stopped')
+  }
+  await f.auth.restore()
+  await expect(readFile(join(f.protectedRoot, 'cloud-credentials.json'))).rejects.toMatchObject({
+    code: 'ENOENT',
+  })
 })

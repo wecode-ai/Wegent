@@ -40,7 +40,7 @@ import {
 } from '../modules/issue-activity-timeline.mjs'
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 import { verifyMultiTagBoardDrag } from '../modules/collaboration-board-tag-drag.mjs'
-import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import { REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
 import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
@@ -972,6 +972,12 @@ export function createDesktopScenario({
 
         const taskComposer = scoped(
           '[data-testid="work-item-new-task-chat-panel"] [data-testid="chat-message-input"]'
+        )
+        await selectE2EModel(
+          control,
+          undefined,
+          undefined,
+          scoped('[data-testid="work-item-new-task-chat-panel"]')
         )
         linkedIssueTaskModel = boardReplyModel.holdLinkedIssueTask(project.id, issue)
         await control.command('press', taskComposer, { key: 'Enter' })
