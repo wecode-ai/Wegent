@@ -142,6 +142,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 - 云端执行同样覆盖本机自定义模型、Codex 内置模型和云端 Model CRD 的三种协议，共 9 个完整文本与工具链路。
 - 第一个“本机自定义模型 → 云端设备”组合会验证同步确认框、目标 Executor 模型目录写入和云端 Codex 重启；随后三个本机模型协议都必须完成文本与 `apply_patch` 工具链路。
 
+原生 Skill 读取会在 `model-matrix-*.result.json` 的 `defer.skillReadEvidence` 中记录读取前后的文件字节数与 SHA-256、返回文本字节数和校验标记是否出现；文件观察失败时保留错误代码。证据不会注入模型上下文，也不改变原生读取命令。即使命令成功退出，只要模型未收到预期内容，原断言仍失败；这些记录用于区分文件准备问题与输出链路问题，不能单独证明原生执行器内部的丢失位置。
+
 矩阵提交等待上限为 10 秒。如果编辑器已经显示提交错误，runner 会立即抛出该错误；否则在协议阶段未按时推进时输出当前阶段和已捕获请求，避免失败后长时间无反馈。
 
 `e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Electron renderer、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态。场景先让同一个 assistant item 以 `final_answer` 开始流式输出、再以 `commentary` 完成，验证 Executor 通过 `response.block.created.replacesItemId` 通知前端把已显示正文原子迁移到过程块，页面只保留一份过程文本且最终回答区为空。随后场景验证流式推理显示“正在思考 · 摘要”，并在响应完成后移除推理摘要及其占位，再启动长命令，确认工具行耗时在切换任务后连续递增，同时工具分组标题不显示整轮累计耗时。场景还会构造超过虚拟化阈值的多轮长对话，验证“正在思考”位置、用户滚动锚点、流式增长和任务重开后的视口稳定性。它通过 `scrollFromBottomAsUser` 模拟用户从底部上划固定距离，并使用 `startScrollStabilitySampling` / `getScrollStabilitySample` 在流式分片期间联合记录锚点几何位置、DOM 变化和真实 `scroll` 事件；门禁要求锚点没有往返位移，且用户停住后不再发生程序化滚动事件。响应完成后，场景还会确认等待状态消失。该场景会保存阶段改判、推理、工具计时、就绪、流式和完成阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
