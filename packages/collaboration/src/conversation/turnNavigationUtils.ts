@@ -356,7 +356,7 @@ export function getScrollMetrics(scroller: HTMLElement, anchor?: HTMLElement | n
 }
 
 export function logTurnNavigation(event: string, details: Record<string, unknown>) {
-  console.warn(`[Wework] Message turn navigation ${event}`, details)
+  console.warn(`[Wework] Message turn navigation ${event}`, JSON.stringify(details))
 }
 
 export function getMessageAnchorById(content: HTMLElement) {
