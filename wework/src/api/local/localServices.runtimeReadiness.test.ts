@@ -195,3 +195,38 @@ describe('local transcript startup ordering', () => {
     expect(request).not.toHaveBeenCalled()
   })
 })
+
+test('model picker reads do not wait for runtime preparation or restart the app server', async () => {
+  localStorage.clear()
+  clearLocalModelConfigs()
+  resetLocalRuntimeChatStreamsForTests()
+  saveLocalModelConfig({
+    id: 'startup-read',
+    displayName: 'Startup read',
+    modelId: 'startup-read',
+    baseUrl: 'https://models.example.com/v1',
+    catalogEntry: createDefaultLocalModelCatalogEntry({
+      id: 'startup-read',
+      displayName: 'Startup read',
+      toolProfile: 'custom',
+    }),
+    catalogReady: false,
+  })
+  const ensure = vi.fn(() => new Promise<typeof status>(() => {}))
+  const request = vi.fn().mockResolvedValue({ data: [], models: [] })
+  const services = createLocalAppServices({
+    available: async () => status,
+    ensure,
+    request,
+    subscribe: vi.fn(),
+  })
+  const models = await services.modelApi.listModels()
+  expect(models.data.length).toBeGreaterThan(0)
+  expect(ensure).not.toHaveBeenCalled()
+  expect(request.mock.calls.map(([method]) => method)).not.toContain(
+    'runtime.codex.catalog.custom.write'
+  )
+  expect(request.mock.calls.map(([method]) => method)).not.toContain(
+    'runtime.codex.app_server.restart'
+  )
+})

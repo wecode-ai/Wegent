@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { verifyStartupDatabaseLock } from '../modules/startup-database-lock.mjs'
 import { access, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -76,6 +77,7 @@ async function verifyInitialStorageWriteFailure({ control, data, pid, resultDir,
 
 export async function createDesktopScenario({
   resultDir,
+  executorHome,
   electronUserDataDirectory,
   workbenchReadyTimeoutMs,
 }) {
@@ -133,6 +135,7 @@ export async function createDesktopScenario({
         join(resultDir, 'startup-preferences-unavailable-result.json'),
         JSON.stringify({ workbenchVisible: true, startupSplashClosed: true })
       )
+      await verifyStartupDatabaseLock({ control, executorHome, timeoutMs: workbenchReadyTimeoutMs })
       await verifyStartupFaultIsolation({
         appBinary,
         environment,

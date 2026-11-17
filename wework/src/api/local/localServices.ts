@@ -4080,11 +4080,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       // whole list and leaving the model selector empty.
       let localCodexSubscriptionEnabled: boolean
       try {
-        // Always reconcile pending local model catalogs (custom model
-        // interfaces) so they appear in the picker even when the Codex
-        // subscription is off.
-        await traceModelLoading(traceId, 'catalog.ensure_status', ensureStatus)
-        await runtimeWorkApi.prepareRuntimeModel({ deviceId: await getLocalDeviceId() })
+        // Reading the picker must not write catalogs or restart a running provider.
+        // Task preparation owns reconciliation before model execution.
+        await traceModelLoading(traceId, 'catalog.ensure_status', availableStatus)
         localCodexSubscriptionEnabled = (await getAppPreferences()).localCodexSubscriptionEnabled
       } catch (error) {
         console.warn('[Wework] Failed to read the local model environment', error)

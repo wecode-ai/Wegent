@@ -172,9 +172,9 @@ impl LocalTaskStore {
 
     pub fn list_stand_in_telemetry(&self, user: i64) -> Result<Value, TaskRuntimeError> {
         let connection = self.connection()?;
-        prune(&connection, user, Utc::now().timestamp_millis())?;
-        let mut statement = connection.prepare("SELECT event_id,occurred_at,event_name,properties FROM stand_in_telemetry_events WHERE user_id=?1 ORDER BY sequence LIMIT 100")?;
-        let items = statement.query_map([user], |row| {
+        // Cleanup belongs to append/configure; polling the queue must remain read-only.
+        let mut statement = connection.prepare("SELECT event_id,occurred_at,event_name,properties FROM stand_in_telemetry_events WHERE user_id=?1 AND occurred_at>=?2 AND sequence IN (SELECT sequence FROM stand_in_telemetry_events WHERE user_id=?1 AND occurred_at>=?2 ORDER BY sequence DESC LIMIT ?3) ORDER BY sequence LIMIT 100")?;
+        let items = statement.query_map(params![user, Utc::now().timestamp_millis() - RETENTION_MS, MAX_EVENTS], |row| {
             let raw: String = row.get(3)?;
             let properties = serde_json::from_str::<Value>(&raw).map_err(|error| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(error)))?;
             Ok(json!({"id":row.get::<_,String>(0)?,"occurredAt":row.get::<_,i64>(1)?,"name":row.get::<_,String>(2)?,"properties":properties}))
@@ -690,12 +690,61 @@ mod retention_tests {
             })
             .unwrap();
         store.list_stand_in_telemetry(7).unwrap();
+        // Cleanup is a write operation, not a side effect of reading the queue.
+        store.configure_stand_in_telemetry(7, true, None).unwrap();
         let count: i64 = store
             .connection()
             .unwrap()
             .query_row("SELECT count(*) FROM stand_in_telemetry_runs", [], |row| {
                 row.get(0)
             })
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+}
+
+#[cfg(test)]
+mod read_isolation_tests {
+    use super::*;
+
+    #[test]
+    fn telemetry_reads_filter_expired_events_without_cleaning_the_database() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tasks.sqlite");
+        let store = LocalTaskStore::open(&path).unwrap();
+        store.configure_stand_in_telemetry(7, true, None).unwrap();
+        let connection = store.connection().unwrap();
+        connection.execute("INSERT INTO stand_in_telemetry_events(user_id,event_id,occurred_at,event_name,properties) VALUES(7,'expired',?1,'test','{}')", [Utc::now().timestamp_millis() - RETENTION_MS - 1]).unwrap();
+        drop(connection);
+        let mut writer = Connection::open(path).unwrap();
+        let transaction = writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        assert!(store.list_stand_in_telemetry(7).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let count: i64 = transaction
+            .query_row(
+                "SELECT count(*) FROM stand_in_telemetry_events",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "reading the queue must not delete expired records"
+        );
+        transaction.rollback().unwrap();
+        store.configure_stand_in_telemetry(7, true, None).unwrap();
+        let count: i64 = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM stand_in_telemetry_events",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(count, 0);
     }

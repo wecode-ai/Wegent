@@ -5,19 +5,16 @@
 use std::{
     cmp::Reverse,
     collections::HashMap,
-    fs::{self, OpenOptions},
-    io::{self, Write},
+    fs, io,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use wegent_filesystem::atomic_file::replace_file;
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::local_execution::PersistedLocalExecution;
 use super::response::{RuntimeTaskLink, RuntimeWorkspaceLink};
@@ -60,12 +57,11 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "conversationSessions",
     "connectionEventSubscriptions",
 ];
-static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub(crate) struct RuntimeWorkStore {
     index_path: PathBuf,
-    telemetry_path: Arc<Mutex<Option<PathBuf>>>,
+    telemetry: Arc<telemetry::Telemetry>,
     index: Arc<Mutex<RuntimeWorkIndex>>,
     index_signature: Arc<Mutex<Option<IndexFileSignature>>>,
     write_lock: Arc<Mutex<()>>,
@@ -430,7 +426,7 @@ impl RuntimeWorkStore {
             .then(|| serialize_index(&index).ok())
             .flatten();
         let store = Self {
-            telemetry_path: Arc::new(Mutex::new(None)),
+            telemetry: Arc::default(),
             index_path,
             index: Arc::new(Mutex::new(index)),
             index_signature: Arc::new(Mutex::new(index_signature)),
@@ -451,20 +447,6 @@ impl RuntimeWorkStore {
         let store = Self::new(default_index_path());
         store.set_telemetry_path(crate::task_runtime::LocalTaskStore::default_path());
         store
-    }
-
-    pub fn set_telemetry_path(&self, path: PathBuf) {
-        if let Ok(mut target) = self.telemetry_path.lock() {
-            *target = Some(path);
-        }
-    }
-
-    fn observe_stand_in(&self, task: &RuntimeTaskLink) {
-        if let Ok(path) = self.telemetry_path.lock() {
-            if let Some(path) = path.as_ref() {
-                super::stand_in_telemetry::observe(path, task);
-            }
-        }
     }
 
     pub fn list_task_summaries(&self, include_archived: bool) -> Vec<RuntimeTaskLink> {
@@ -582,10 +564,11 @@ impl RuntimeWorkStore {
         } else if link.snapshot_revision.is_none() {
             link.snapshot_revision = Some(next_snapshot_revision(None));
         }
-        self.observe_stand_in(&link);
+        self.enqueue_stand_in(super::stand_in_telemetry::snapshot(&link));
         index.tasks.insert(link.local_task_id.clone(), link);
         drop(index);
         self.persist_current_index();
+        self.flush_stand_in();
     }
 
     pub fn update_task(
@@ -702,15 +685,17 @@ impl RuntimeWorkStore {
                 }
             }
         }
-        if lifecycle_changed {
-            self.observe_stand_in(task);
-        }
+        let observation = lifecycle_changed
+            .then(|| super::stand_in_telemetry::snapshot(task))
+            .flatten();
+        self.enqueue_stand_in(observation);
         let updated = snapshot(task);
         let should_persist = persist && metadata_changed;
         drop(index);
         if should_persist {
             self.persist_current_index();
         }
+        self.observe_stand_in(observation);
         Some(updated)
     }
 
@@ -767,6 +752,16 @@ impl RuntimeWorkStore {
     }
 
     pub(super) fn refresh_index_from_disk_if_changed(&self) {
+        // An unchanged index needs no persistence lock on a startup read.
+        let signature = index_file_signature(&self.index_path);
+        if self
+            .index_signature
+            .lock()
+            .ok()
+            .is_some_and(|saved| *saved == signature)
+        {
+            return;
+        }
         let Ok(_write_guard) = self.write_lock.lock() else {
             return;
         };
@@ -925,111 +920,6 @@ fn prune_deleted_archived_task_ids(ids: &mut HashMap<String, i64>, now_ms: i64) 
     *ids = newest.into_iter().collect();
 }
 
-fn temporary_index_path(index_path: &Path) -> PathBuf {
-    let file_name = index_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("index.json");
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    index_path.with_file_name(format!(
-        ".{file_name}.{}.{}.{}.tmp",
-        std::process::id(),
-        nanos,
-        sequence
-    ))
-}
-
-pub(crate) fn atomic_write_file(index_path: &Path, payload: &[u8]) -> io::Result<()> {
-    let parent = index_parent(index_path);
-    fs::create_dir_all(parent)
-        .map_err(|error| io_error_with_context("create index parent directory", parent, error))?;
-
-    let temp_path = temporary_index_path(index_path);
-    let mut temp_file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp_path)
-        .map_err(|error| io_error_with_context("create temporary index", &temp_path, error))?;
-
-    let write_result = temp_file
-        .write_all(payload)
-        .and_then(|_| temp_file.sync_all());
-    drop(temp_file);
-    if let Err(error) = write_result {
-        return Err(clean_up_temp_file(
-            &temp_path,
-            io_error_with_context("write and sync temporary index", &temp_path, error),
-        ));
-    }
-
-    if let Err(error) = replace_file(&temp_path, index_path) {
-        crate::logging::log_executor_event(
-            "runtime work index replacement failed",
-            &[
-                ("source", temp_path.display().to_string()),
-                ("destination", index_path.display().to_string()),
-                ("os_error", format!("{:?}", error.raw_os_error())),
-                (
-                    "destination_readonly",
-                    format!(
-                        "{:?}",
-                        fs::metadata(index_path).map(|metadata| metadata.permissions().readonly())
-                    ),
-                ),
-            ],
-        );
-        return Err(clean_up_temp_file(
-            &temp_path,
-            io_error_with_context("replace runtime work index", index_path, error),
-        ));
-    }
-
-    sync_parent_directory(parent)
-        .map_err(|error| io_error_with_context("sync index parent directory", parent, error))
-}
-
-fn index_parent(index_path: &Path) -> &Path {
-    index_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
-}
-
-#[cfg(unix)]
-fn sync_parent_directory(parent: &Path) -> io::Result<()> {
-    fs::File::open(parent)?.sync_all()
-}
-
-#[cfg(not(unix))]
-fn sync_parent_directory(_parent: &Path) -> io::Result<()> {
-    Ok(())
-}
-
-fn clean_up_temp_file(temp_path: &Path, original_error: io::Error) -> io::Error {
-    match fs::remove_file(temp_path) {
-        Ok(()) => original_error,
-        Err(cleanup_error) if cleanup_error.kind() == io::ErrorKind::NotFound => original_error,
-        Err(cleanup_error) => io::Error::new(
-            original_error.kind(),
-            format!(
-                "{original_error}; failed to clean up temporary index {}: {cleanup_error}",
-                temp_path.display()
-            ),
-        ),
-    }
-}
-
-fn io_error_with_context(action: &str, path: &Path, error: io::Error) -> io::Error {
-    io::Error::new(
-        error.kind(),
-        format!("{action} {}: {error}", path.display()),
-    )
-}
-
 fn default_index_path() -> PathBuf {
     runtime_work_dir().join("index.json")
 }
@@ -1048,3 +938,8 @@ mod tests;
 mod issue_conversations;
 mod task_materialization;
 use issue_conversations::snapshot_deleted_issue_wakeups;
+
+mod telemetry;
+
+mod persistence;
+pub(crate) use persistence::atomic_write_file;

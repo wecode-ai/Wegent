@@ -501,31 +501,11 @@ impl LocalTaskStore {
         Ok(())
     }
 
-    /// Transactionally migrate stored settings and bind them to their owning Executor identity.
+    /// Normalize settings for this Executor without making a read acquire a write lock.
     pub fn personal_stand_in(&self, user: i64, device: &str) -> Result<Value, TaskRuntimeError> {
-        let mut guard = self.connection()?;
-        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(row) = get_item_from(&connection, &personal_key(user), "personal_stand_in")? {
-            let mut personal = row.metadata;
-            // Device-owned settings follow their Executor, not a stale desktop identity.
-            let migrated = migrate_personal_settings(&mut personal)?;
-            if bind_personal_device(&mut personal, device) || migrated {
-                write_personal(&connection, &personal)?;
-            }
-            connection.commit()?;
-            return Ok(personal);
-        }
+        let connection = self.connection()?;
         let mut personal = read_personal(&connection, user, device)?;
         bind_personal_device(&mut personal, device);
-        // Migrate old rows atomically, without changing their enable timestamps or versions.
-        if personal["roles"].as_array().is_some_and(|roles| {
-            roles
-                .iter()
-                .any(|role| role["version"].as_i64().unwrap_or(0) > 0)
-        }) {
-            write_personal(&connection, &personal)?;
-        }
-        connection.commit()?;
         Ok(personal)
     }
 

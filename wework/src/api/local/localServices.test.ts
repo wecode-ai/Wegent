@@ -1952,6 +1952,7 @@ describe('createLocalAppServices', () => {
       subscribe: vi.fn(),
     })
 
+    await services.runtimeWorkApi!.prepareRuntimeModel({ deviceId: 'local-device' })
     const models = await services.modelApi.listModels()
 
     expect(restartCount).toBe(2)
@@ -2173,9 +2174,7 @@ describe('createLocalAppServices', () => {
 
     const models = await services.modelApi.listModels()
 
-    expect(request.mock.calls).toEqual([
-      ['runtime.models.sync_creation_profiles', { deviceId: 'local-device', profiles: [] }],
-    ])
+    expect(request).not.toHaveBeenCalled()
     expect(
       models.data.some(
         model =>

@@ -86,3 +86,25 @@ may still need recovery:
 lifecycle is driven by archived tasks and the Worktree retention settings, with
 a Git snapshot saved before deletion. The storage maintenance thread does not
 delete these directories directly.
+
+## Isolating startup reads from writes
+
+Opening an initialized `data/tasks.sqlite` checks the current schema and default task project
+without waiting for the task-store initialization mutex or resetting WAL mode. First creation,
+schema migration and default-project repair remain serialized when they modify data.
+
+Reading assistant settings normalizes legacy values and binds the current device in memory;
+it neither starts a SQLite write transaction nor treats a read as a save. Explicit saves retain
+transactional version, permission and device validation and persist normalized settings.
+Refreshing an existing code project reads its existence and archive state without filling in
+execution metadata; importing a new project remains a write. Reading the model picker does not
+write custom catalogs, synchronize creation profiles or wait for a Codex restart. Execution
+preparation still reconciles catalogs before using a model.
+
+Electron singleton protection, coherent file snapshots, connection mutexes and actual write
+transactions continue to guard their owning operations. They must not be bypassed to claim
+readiness. The desktop `startup-fault-isolation` checkpoint additionally reloads the workbench
+while a real database write transaction remains open, checks project, task and assistant reads,
+and verifies saving after release. It never modifies a personal database.
+
+Task updates publish their index state before recording telemetry outside the index lock. SQLite waits cannot hold the task-list index mutex. Telemetry reads filter retention and queue limits in SQL; append and configuration writes own cleanup.
