@@ -109,16 +109,15 @@ export function createDesktopScenario({
   const authorizations = []
   let evidence
   let cloud
-  let appBinary
   let activeTranscriptId = null
   let firstCommitResponseDropped = false
   let restartDesktopApp = null
   let modelSequence = 0
-  async function authorizeUserData(directory) {
+  async function authorizeUserData(directory, control) {
     const fixture = nativeCloudAuthorizationFixture(
       { backendUrl: evidence.proxy.url, authToken: cloud.authToken },
       directory,
-      appBinary
+      control
     )
     authorizations.push(fixture)
     await fixture.authorize()
@@ -143,11 +142,11 @@ export function createDesktopScenario({
 
   return {
     appEnvironment,
+    requiresNativeCloudInspector: true,
     setCloudEnvironment(environment) {
       cloud = environment
     },
-    async prepareApp({ appBinary: binary, appEnvironment: environment }) {
-      appBinary = binary
+    async prepareApp({ appEnvironment: environment }) {
       evidence = await new TranscriptBackendEvidence(cloud).start()
       evidence.transcripts = transcripts
       evidence.objects = objects
@@ -156,7 +155,6 @@ export function createDesktopScenario({
       evidence.leases = leases
       environment.WEWORK_BACKEND_URL = evidence.proxy.url + '/api'
       environment.WEWORK_E2E_CLOUD_BACKEND_URL = evidence.proxy.url
-      await authorizeUserData(electronUserDataDirectory)
     },
     async cleanup() {
       try {
@@ -198,6 +196,7 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      await authorizeUserData(electronUserDataDirectory, control)
       const transcriptRequestCount = () =>
         requestLog.filter(value => value.includes('/api/wework-transcripts')).length
       const enableTranscriptSync = async ({ verifyExperimentalGate = false } = {}) => {
@@ -367,7 +366,6 @@ export function createDesktopScenario({
             mkdir(deviceBCodexSqliteHome, { recursive: true }),
           ])
           await writeFile(join(deviceBHome, '.zshrc'), '# Wework simulated device B shell\n')
-          await authorizeUserData(deviceBUserDataDirectory)
         },
         appEnvironmentOverrides: {
           CODEX_SQLITE_HOME: deviceBCodexSqliteHome,
@@ -381,6 +379,7 @@ export function createDesktopScenario({
         },
         expectNewDeviceIdentity: true,
       })
+      await authorizeUserData(deviceBUserDataDirectory, control)
       await control.command('waitFor', '[data-testid="telemetry-consent-overlay"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -503,7 +502,6 @@ export function createDesktopScenario({
             mkdir(deviceCCodexSqliteHome, { recursive: true }),
           ])
           await writeFile(join(deviceCHome, '.zshrc'), '# Wework simulated device C shell\n')
-          await authorizeUserData(deviceCUserDataDirectory)
         },
         appEnvironmentOverrides: {
           CODEX_SQLITE_HOME: deviceCCodexSqliteHome,
@@ -517,6 +515,7 @@ export function createDesktopScenario({
         },
         expectNewDeviceIdentity: true,
       })
+      await authorizeUserData(deviceCUserDataDirectory, control)
       await control.command('waitFor', '[data-testid="telemetry-consent-overlay"]', {
         timeoutMs: uiTimeoutMs,
       })

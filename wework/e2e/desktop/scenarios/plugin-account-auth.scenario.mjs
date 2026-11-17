@@ -194,6 +194,7 @@ export async function createDesktopScenario({
   return {
     externalServiceProtocols: githubProtocol ? ['git-hosting'] : [],
     requiresCloudEnvironment: true,
+    requiresNativeCloudAuthorization: true,
     requiresPackagedHarnessRuntime: checkpoint === 'plugin-account-auth-password',
     prepareApp: context => githubProtocol?.prepareApp(context),
     cleanup: () => githubProtocol?.cleanup(),

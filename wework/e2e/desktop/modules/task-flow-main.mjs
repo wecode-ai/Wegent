@@ -1609,7 +1609,10 @@ async function main() {
 
     await desktopScenario?.prepareUserDataLaunch?.()
     const usesNativeCloudInspector =
-      cloudEnvironment && (!desktopScenario || desktopScenario.requiresNativeCloudAuthorization)
+      cloudEnvironment &&
+      (!desktopScenario ||
+        desktopScenario.requiresNativeCloudAuthorization ||
+        desktopScenario.requiresNativeCloudInspector)
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
         ...(usesNativeCloudInspector ? ['--inspect=127.0.0.1:0'] : []),
@@ -1781,7 +1784,7 @@ async function main() {
       /^https?:/,
       'The Electron desktop controller did not connect from its local renderer origin'
     )
-    if (usesNativeCloudInspector) {
+    if (usesNativeCloudInspector && !desktopScenario?.requiresNativeCloudInspector) {
       assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
       nativeCloudLogin = nativeCloudAuthorizationFixture(
         cloudEnvironment,
