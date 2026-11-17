@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useDialogKeyboard } from './useDialogKeyboard'
 
 export function ConfirmationDialog({
   title,
@@ -17,18 +18,21 @@ export function ConfirmationDialog({
   onConfirm(): Promise<void>
   onClose(): void
 }) {
-  const dialog = useRef<HTMLDivElement>(null)
   const lock = useRef(false)
+  const dialog = useDialogKeyboard<HTMLDivElement>(
+    () => {
+      if (!lock.current) onClose()
+    },
+    true,
+    `[data-testid="${testIdPrefix}-cancel"]`
+  )
   const mounted = useRef(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     mounted.current = true
-    const previous = document.activeElement
-    dialog.current?.querySelector<HTMLButtonElement>('button')?.focus()
     return () => {
       mounted.current = false
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
     }
   }, [])
   useEffect(() => {
@@ -69,29 +73,6 @@ export function ConfirmationDialog({
         tabIndex={-1}
         data-testid={`${testIdPrefix}-dialog`}
         className="w-full max-w-md rounded-2xl border border-border bg-background p-6 text-text-primary shadow-lg"
-        onKeyDown={event => {
-          if (event.key === 'Escape') {
-            event.stopPropagation()
-            if (!lock.current) onClose()
-          }
-          if (event.key !== 'Tab') return
-          const buttons = Array.from(
-            dialog.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []
-          )
-          if (!buttons.length) {
-            event.preventDefault()
-            return
-          }
-          const first = buttons[0],
-            last = buttons[buttons.length - 1]
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault()
-            last.focus()
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault()
-            first.focus()
-          }
-        }}
       >
         <h2 className="text-lg font-medium">{title}</h2>
         <p className="mt-3 break-words font-medium">{subject}</p>

@@ -10,6 +10,7 @@ import { CollaborationTemplateStore } from './store'
 import { builtinCollaborationTemplates } from './builtins'
 import type { CollaborationTemplateRemote, TemplateRecord } from './types'
 import { TemplateBindings } from './TemplateBindings'
+import { TemplateDialog } from './TemplateDialog'
 
 let root: Root
 let container: HTMLDivElement
@@ -54,11 +55,91 @@ function remote(): CollaborationTemplateRemote {
   }
 }
 
+it('cancels only the nested template dialog and restores its trigger', async () => {
+  const parentClosed = vi.fn()
+  const childClosed = vi.fn()
+  const render = (nested: boolean) => (
+    <TemplateDialog title="Template library" closeLabel="Close" onClose={parentClosed}>
+      <button data-testid="import-trigger">Import YAML</button>
+      {nested && (
+        <TemplateDialog title="Import YAML" closeLabel="Close" onClose={childClosed}>
+          <textarea aria-label="YAML" />
+        </TemplateDialog>
+      )}
+    </TemplateDialog>
+  )
+  await act(async () => root.render(render(false)))
+  const trigger = container.querySelector<HTMLButtonElement>('[data-testid="import-trigger"]')!
+  trigger.focus()
+  await act(async () => root.render(render(true)))
+  const nested = container.querySelectorAll('dialog')[1]
+  await act(async () => nested.dispatchEvent(new Event('cancel', { cancelable: true })))
+  expect(childClosed).toHaveBeenCalledOnce()
+  expect(parentClosed).not.toHaveBeenCalled()
+  await act(async () => root.render(render(false)))
+  expect(document.activeElement).toBe(trigger)
+  expect(container.querySelector('dialog')!.open).toBe(true)
+})
+
 async function click(testId: string) {
   const target = container.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)
   expect(target).not.toBeNull()
   await act(async () => target!.click())
 }
+
+it('browses template details within the existing picker dialog and returns without losing the library', async () => {
+  let detail: { title: string; onBack(): void } | null = null
+  const store = new CollaborationTemplateStore({
+    scope: 'local:7',
+    ownerId: 7,
+    persistence: { read: async () => [], write: async () => undefined },
+  })
+  await act(async () =>
+    root.render(
+      <TemplateDialog title="Choose template" closeLabel="Close" onClose={vi.fn()}>
+        <CollaborationTemplatePage
+          embedded
+          store={store}
+          locale="en"
+          onUse={vi.fn()}
+          onDetailChange={value => {
+            detail = value
+          }}
+        />
+      </TemplateDialog>
+    )
+  )
+  await click('template-details-product-lifecycle')
+  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+  expect(container.querySelector('[data-testid="template-inline-detail"]')).not.toBeNull()
+  expect(container.querySelector('[data-testid="template-detail-cancel"]')).toBeNull()
+  await act(async () => detail?.onBack())
+  expect(container.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
+  expect(container.querySelector('[data-testid="template-search"]')).not.toBeNull()
+  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+})
+
+it('retains its own Back action when the inline picker has no host navigation', async () => {
+  const store = new CollaborationTemplateStore({
+    scope: 'local:7',
+    ownerId: 7,
+    persistence: { read: async () => [], write: async () => undefined },
+  })
+  await act(async () =>
+    root.render(
+      <TemplateDialog title="Choose template" closeLabel="Close" onClose={vi.fn()}>
+        <CollaborationTemplatePage embedded store={store} locale="en" onUse={vi.fn()} />
+      </TemplateDialog>
+    )
+  )
+  await click('template-details-product-lifecycle')
+  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+  expect(container.querySelector('[data-testid="template-inline-detail"]')).not.toBeNull()
+  await click('template-detail-cancel')
+  expect(container.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
+  expect(container.querySelector('[data-testid="template-search"]')).not.toBeNull()
+  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+})
 
 function pendingRemoteDetail() {
   const backend = remote()
@@ -134,7 +215,8 @@ it('prevents overlapping import and remote detail panels while a detail request 
     expect(importBlocked).toBe(true)
     expect(importedWhilePending).toBe(false)
     expect(container.querySelector('[data-testid="template-import-file"]')).toBeNull()
-    expect(footer.querySelectorAll('button')).toHaveLength(1)
+    expect(footer.querySelectorAll('button')).toHaveLength(2)
+    expect(footer.querySelector('[data-testid="template-detail-cancel"]')).not.toBeNull()
     expect(footer.querySelector('[data-testid="template-use"]')).not.toBeNull()
     expect(footer.querySelector('[data-testid="template-import-save"]')).toBeNull()
   } finally {
@@ -361,6 +443,13 @@ it('preconfigures a new Agent coordinator instead of requiring an existing Agent
       />
     )
   )
+  expect(container.querySelector('[data-testid="template-role-main-role-0"]')).toBeNull()
+  const customize = container.querySelector<HTMLDetailsElement>('details')!
+  await act(async () => {
+    customize.open = true
+    customize.dispatchEvent(new Event('toggle'))
+  })
+  expect(container.querySelector('[data-testid="template-roster-main"]')).toBeNull()
   expect(
     container.querySelector<HTMLSelectElement>('[data-testid="template-role-main-role-0"]')!.value
   ).toBe('agent:template-agent:main-role-0')
