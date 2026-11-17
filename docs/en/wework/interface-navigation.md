@@ -106,6 +106,8 @@ Project settings in narrow windows collapse the sidebar into **Collaboration nav
 
 For an initial task load or load failure, check the status below **Tasks** in the desktop sidebar; use **Retry** after a failure. In priority view, the status appears above the list. See [Sidebar task management](./tasks.md#sidebar-task-management).
 
+If the Issue summary above the composer cannot read its task count, use its retry action. See [Add a conversation to a project-space board](./tasks.md#task-board-association).
+
 ### Jump to individual feature controls
 
 | Search terms                                                                                                              | Detailed steps                                                                          |
