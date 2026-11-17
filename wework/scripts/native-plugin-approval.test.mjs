@@ -323,6 +323,17 @@ test('retains Windows native failure stages and the unchanged deadline without e
     expect(options.timeout).toBe(12_000)
     const script = Buffer.from(args.at(-1), 'base64').toString('utf16le')
     expect(script).toContain('::ProcessIdProperty, 123')
+    expect(script).toContain("::ClassNameProperty, '#32770'")
+    expect(script).toContain(
+      '::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window'
+    )
+    expect(script).toContain(
+      '::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button'
+    )
+    expect(script).toContain(
+      '$ownerWindow.FindAll([System.Windows.Automation.TreeScope]::Subtree, $dialogCondition)'
+    )
+    expect(script).toContain('if ($decisions.Count -gt 1)')
     expect(script).toContain('UtcNow.AddSeconds(10)')
     expect(log).toHaveBeenCalledWith(
       '[native-plugin-decision-failed]',

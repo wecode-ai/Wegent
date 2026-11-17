@@ -84,22 +84,42 @@ Write-DecisionStage 'client-loaded'
 Add-Type -AssemblyName UIAutomationTypes
 Write-DecisionStage 'types-loaded'
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, ${pid})
+$dialogCondition = [System.Windows.Automation.AndCondition]::new([System.Windows.Automation.Condition[]]@(
+  $condition,
+  [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32770'),
+  [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window)
+))
+$buttonCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
 while ([DateTime]::UtcNow -lt $deadline) {
   Write-DecisionStage 'search-started'
   $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
   Write-DecisionStage 'search-completed'
-  foreach ($window in $windows) {
+  $decisions = [System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
+  foreach ($ownerWindow in $windows) {
     Write-DecisionStage 'owned-window-present'
-    $decisionTitle = $window.Current.Name
-    Write-DecisionStage 'title-read'
-    if ($window.Current.ClassName -eq '#32770') { Write-DecisionStage 'owned-dialog-present' }
-    if ($decisionTitle -notin @(${TITLES.map(title => `'${title}'`).join(', ')})) {
-      Write-DecisionStage 'title-unmatched'
-      continue
+    Write-DecisionStage 'owned-dialog-search-started'
+    $dialogs = $ownerWindow.FindAll([System.Windows.Automation.TreeScope]::Subtree, $dialogCondition)
+    Write-DecisionStage 'owned-dialog-search-completed'
+    foreach ($window in $dialogs) {
+      Write-DecisionStage 'owned-dialog-present'
+      $decisionTitle = $window.Current.Name
+      Write-DecisionStage 'title-read'
+      if ($decisionTitle -notin @(${TITLES.map(title => `'${title}'`).join(', ')})) {
+        Write-DecisionStage 'title-unmatched'
+        continue
+      }
+      $decisions.Add($window)
     }
+  }
+  if ($decisions.Count -gt 1) {
+    Write-DecisionStage 'dialog-ambiguous'
+    throw 'The isolated app displayed ambiguous native Core plugin decisions'
+  }
+  if ($decisions.Count -eq 1) {
+    $window = $decisions[0]
     Write-DecisionStage 'dialog-matched'
-    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     foreach ($button in $buttons) {
       if ($button.Current.Name -in @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
         Write-DecisionStage 'button-matched'
@@ -130,10 +150,13 @@ throw 'The isolated app did not display its native Core plugin decision'
         'search-started',
         'search-completed',
         'owned-window-present',
+        'owned-dialog-search-started',
+        'owned-dialog-search-completed',
         'title-read',
         'owned-dialog-present',
         'title-unmatched',
         'dialog-matched',
+        'dialog-ambiguous',
         'button-matched',
       ])
       if (!signal.aborted)
