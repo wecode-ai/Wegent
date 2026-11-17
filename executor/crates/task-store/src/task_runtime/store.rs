@@ -105,6 +105,9 @@ mod stand_in_processing_queries;
 #[path = "stand_in_retention.rs"]
 mod stand_in_retention;
 
+#[path = "stand_in_history_index.rs"]
+mod stand_in_history_index;
+
 #[path = "coordination_store.rs"]
 mod coordination_store;
 
