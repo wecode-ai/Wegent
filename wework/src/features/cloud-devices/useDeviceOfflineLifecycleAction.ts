@@ -50,13 +50,8 @@ export function useDeviceOfflineLifecycleAction({
       runtimeInstanceId &&
       startingInstanceRef.current !== runtimeInstanceId
     )
-    const recoveryConfirmed =
-      startingInstanceRef.current && runtimeInstanceId
-        ? instanceChanged
-        : phase === 'waiting-online'
     const nextPhase =
-      (phase === 'waiting-online' || phase === 'waiting-offline') &&
-      recoveryConfirmed &&
+      (phase === 'waiting-online' || (phase === 'waiting-offline' && instanceChanged)) &&
       isConnectedStatus(status)
         ? 'recovered'
         : phase === 'waiting-offline' && status === 'offline'

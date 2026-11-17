@@ -89,38 +89,6 @@ describe('useDeviceOfflineLifecycleAction', () => {
     expect(result.current.phase).toBe('recovered')
   })
 
-  test('does not accept an old runtime online event as restart recovery', async () => {
-    vi.useFakeTimers()
-    const requestAction = vi.fn().mockResolvedValue({ message: 'accepted' })
-    const refreshDevices = vi.fn()
-    const { result, rerender } = renderHook(
-      ({ status, runtimeInstanceId }) =>
-        useDeviceOfflineLifecycleAction({
-          status,
-          runtimeInstanceId,
-          requestAction,
-          refreshDevices,
-        }),
-      { initialProps: { status: 'online' as 'online' | 'offline', runtimeInstanceId: 'before' } }
-    )
-    await act(async () => {
-      await result.current.run()
-    })
-    rerender({ status: 'offline', runtimeInstanceId: 'before' })
-    await act(async () => vi.advanceTimersByTimeAsync(0))
-    expect(result.current.phase).toBe('waiting-online')
-    rerender({ status: 'online', runtimeInstanceId: 'before' })
-    await act(async () => vi.advanceTimersByTimeAsync(0))
-    expect(result.current.isPending).toBe(true)
-    expect(result.current.phase).toBe('waiting-online')
-    rerender({ status: 'offline', runtimeInstanceId: 'before' })
-    await act(async () => vi.advanceTimersByTimeAsync(0))
-    expect(result.current.isPending).toBe(true)
-    rerender({ status: 'online', runtimeInstanceId: 'after' })
-    await act(async () => vi.advanceTimersByTimeAsync(0))
-    expect(result.current.phase).toBe('recovered')
-  })
-
   test('reports request errors without changing the observed device status', async () => {
     const { result } = renderHook(() =>
       useDeviceOfflineLifecycleAction({

@@ -5643,7 +5643,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('applies device online events immediately when refresh falls back would be stale', async () => {
+  test('keeps confirmed offline status when an online event cannot be verified', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       streamHandlers = handlers
@@ -5673,8 +5673,49 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
 
-    expect(screen.getByTestId('device-status')).toHaveTextContent('online')
+    expect(screen.getByTestId('device-status')).toHaveTextContent('offline')
   })
+
+  test.each(['online', 'status'] as const)(
+    'confirms %s relay events before replacing discovered offline status',
+    async event => {
+      let streamHandlers: ChatStreamHandlers = {}
+      const discovery = deferred<DeviceInfo[]>()
+      const listDevices = vi
+        .fn()
+        .mockResolvedValueOnce([createDevice({ status: 'offline' })])
+        .mockReturnValueOnce(discovery.promise)
+        .mockResolvedValue([createDevice({ status: 'online' })])
+      const services = createWorkbenchServices({
+        deviceApi: { listDevices } as unknown as WorkbenchServices['deviceApi'],
+        chatStream: {
+          subscribe: (handlers: ChatStreamHandlers) => {
+            streamHandlers = handlers
+            return vi.fn()
+          },
+        } as unknown as WorkbenchServices['chatStream'],
+      })
+      renderWorkbench(<DeviceStatusProbe />, services)
+      await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('offline'))
+      const emit = () =>
+        event === 'online'
+          ? streamHandlers.onDeviceOnline?.({ device_id: 'device-1' })
+          : streamHandlers.onDeviceStatus?.({ device_id: 'device-1', status: 'online' })
+      await act(async () => {
+        emit()
+      })
+      await waitFor(() => expect(listDevices).toHaveBeenCalledTimes(2))
+      expect(screen.getByTestId('device-status')).toHaveTextContent('offline')
+      await act(async () => {
+        discovery.resolve([createDevice({ status: 'offline' })])
+      })
+      expect(screen.getByTestId('device-status')).toHaveTextContent('offline')
+      await act(async () => {
+        emit()
+      })
+      await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('online'))
+    }
+  )
 
   test('applies slot updates without refreshing the full device list', async () => {
     let streamHandlers: ChatStreamHandlers = {}
