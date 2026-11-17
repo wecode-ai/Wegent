@@ -112,7 +112,15 @@ describe('full shared message list in a browser host', () => {
           : {}),
       })
       const replies = screen.getAllByTestId('message-assistant')
-      if (status === 'failed') expect(screen.getByText('Connection lost')).toBeInTheDocument()
+      if (status === 'failed') {
+        expect(screen.getByTestId('assistant-error-title')).toBeInTheDocument()
+        expect(screen.queryByText('Connection lost')).not.toBeInTheDocument()
+        expect(screen.queryByTestId('assistant-error-details')).not.toBeInTheDocument()
+        fireEvent.click(screen.getByTestId('assistant-error-details-toggle'))
+        expect(screen.getByTestId('assistant-error-details')).toHaveTextContent('Connection lost')
+        fireEvent.click(screen.getByTestId('assistant-error-details-toggle'))
+        expect(screen.queryByText('Connection lost')).not.toBeInTheDocument()
+      }
       if (surface === 'stand-in') {
         expect(replies).toHaveLength(2)
         expect(replies[0]).toHaveTextContent('I will check in the background.')
