@@ -28,7 +28,7 @@ fn runtime_state(
                         && report["origin"]["humanAssignmentId"] == origin["humanAssignmentId"]
                 })
                 .filter_map(|(_, report)| report["messageId"].as_str())
-                .last();
+                .next_back();
             match result {
                 Some(id) => ("completed", "public_result_published", Some(id.to_owned())),
                 None => ("waiting_user", "awaiting_publication", None),
