@@ -209,6 +209,8 @@ MCP App 目录失败保留任务与线程标识、来源读取状态、是否执
 
 模型替身中的协议无关文本回复必须复用 `writeLocalAssistantMessage`，按当前请求的 Responses、Chat Completions 或 Anthropic 协议发送完整结束事件。不要通过重置用户模型选择来迁就固定协议的替身，也不要将替身返回错误 SSE 格式造成的断流归因于官方 runtime。
 
+嵌套 Goal 场景必须逐层传递共享 runner 提供的模型请求上下文；恢复会话后的文本回复仍按当前请求协议发送。需要暂停或中断的文本流复用 `modelTextStream`，保留 Responses 的 commentary 阶段、原有释放条件和中断时不完成响应的语义，不调整业务断言或用户模型选择。
+
 自定义场景的 `handleHttp` 第四个参数提供共享 `modelRequest`（协议名与 `reply(text)`）；非模型请求为 `null`。纯文本场景应使用该入口复用协议路由与回复，避免遗漏当前有效模型的请求路径。
 
 模型目录覆盖等会被 Codex 缓存的配置必须在场景的 `prepareApp` 中写入，先于应用和共享 app-server 启动。`human-interactions` 在此阶段声明 `request_user_input_async`；不要等到 `verify` 才改配置或删除磁盘缓存，已经运行的进程可能仍使用旧目录。

@@ -201,6 +201,8 @@ Custom scenarios requiring native cloud credentials declare `requiresNativeCloud
 
 Protocol-independent text replies in model fixtures must reuse `writeLocalAssistantMessage` to emit complete Responses, Chat Completions, or Anthropic termination events for the current request. Do not reset the selected model to accommodate a fixture with a fixed protocol or attribute stream failures caused by malformed fixture SSE to the official runtime.
 
+Nested Goal scenarios must forward the shared runner's model request context through every layer. Text replies after restoring a conversation still use the current request protocol. Held or interrupted text streams reuse `modelTextStream`, preserving the Responses commentary phase, existing release conditions, and incomplete responses on interruption without changing business assertions or user model selection.
+
 The fourth `handleHttp` argument provides the shared `modelRequest` (protocol name and `reply(text)`), or `null` for non-model requests. Text-only custom scenarios reuse this routing and writer so they do not miss request paths for a valid selected model.
 
 Write configuration that Codex caches, including model catalog overrides, in the scenario's `prepareApp` before launching the app and shared app-server. `human-interactions` declares `request_user_input_async` at this stage. Updating the configuration or deleting the disk cache in `verify` can leave the running process using the old catalog.

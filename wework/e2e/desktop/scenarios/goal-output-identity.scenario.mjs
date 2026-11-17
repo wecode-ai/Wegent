@@ -4,17 +4,13 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createGoalStateSync } from './goal-state-sync.scenario.mjs'
+import { modelTextStream } from '../modules/model-text-stream.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
 } from '../modules/shared.mjs'
-import {
-  createSse,
-  handleEmptyReplyPrediction,
-  readRequestBody,
-  streamingTextEvents,
-} from '../modules/response-protocol.mjs'
+import { handleEmptyReplyPrediction, readRequestBody } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import {
   activeTranscriptSelector,
@@ -125,9 +121,9 @@ export function createDesktopScenario(options) {
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
     },
-    async handleHttp(request, response, url) {
-      if (!active) return existing.handleHttp(request, response, url)
-      if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname)) {
+    async handleHttp(request, response, url, modelRequest) {
+      if (!active) return existing.handleHttp(request, response, url, modelRequest)
+      if (!modelRequest) {
         return false
       }
       const body = await readRequestBody(request)
@@ -156,28 +152,18 @@ export function createDesktopScenario(options) {
         RESTORED_FINAL,
       ][current]
       assert.notEqual(text, undefined, `Unexpected model request ${current}`)
-      const stream = streamingTextEvents(
+      const stream = modelTextStream(
+        modelRequest.protocol,
         `output-identity-${current}`,
         text,
-        current === 2 ? 'commentary' : 'final_answer'
+        [text],
+        { phase: current === 2 ? 'commentary' : 'final_answer' }
       )
       response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
-      response.write(createSse(stream.start))
-      response.write(
-        createSse([
-          {
-            type: 'response.output_text.delta',
-            item_id: stream.itemId,
-            output_index: 0,
-            content_index: 0,
-            delta: text,
-          },
-        ])
-      )
+      response.write(stream.start)
+      for (const frame of stream.chunks) response.write(frame)
       if (current === 2) {
-        response.write(
-          createSse(stream.finish.filter(event => event.type !== 'response.completed'))
-        )
+        response.write(stream.finishContent)
         await new Promise(resolve => response.once('close', resolve))
         return true
       }
@@ -188,7 +174,7 @@ export function createDesktopScenario(options) {
         ])
         if (response.destroyed) return true
       }
-      response.end(createSse(stream.finish))
+      response.end(stream.finish)
       return true
     },
     async verify(control) {

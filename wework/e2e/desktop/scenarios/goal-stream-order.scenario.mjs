@@ -72,8 +72,8 @@ export function createDesktopScenario(options) {
 
   return {
     setRestartDesktopApp: restart => existing.setRestartDesktopApp(restart),
-    async handleHttp(request, response, url) {
-      if (!active) return existing.handleHttp(request, response, url)
+    async handleHttp(request, response, url, modelRequest) {
+      if (!active) return existing.handleHttp(request, response, url, modelRequest)
       if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname)) {
         return false
       }

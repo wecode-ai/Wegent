@@ -4,8 +4,8 @@ const data = value => `data: ${JSON.stringify(value)}\n\n`
 const event = value => `event: ${value.type}\n${data(value)}`
 
 /** Share text framing between complete replies and deliberately paced fixture streams. */
-export function modelTextStream(protocol, id, text, chunks) {
-  const stream = streamingTextEvents(id, text)
+export function modelTextStream(protocol, id, text, chunks, { phase = 'final_answer' } = {}) {
+  const stream = streamingTextEvents(id, text, phase)
   const deltas = chunks ?? stream.chunks
   if (protocol === 'responses') {
     let offset = 0
@@ -26,6 +26,7 @@ export function modelTextStream(protocol, id, text, chunks) {
         return frame
       }),
       finish: createSse(stream.finish),
+      finishContent: createSse(stream.finish.filter(event => event.type !== 'response.completed')),
     }
   }
   if (protocol === 'chat') {
@@ -41,6 +42,7 @@ export function modelTextStream(protocol, id, text, chunks) {
         chunk({ ...(index === 0 ? { role: 'assistant' } : {}), content })
       ),
       finish: chunk({}, 'stop') + 'data: [DONE]\n\n',
+      finishContent: '',
     }
   }
   if (protocol !== 'anthropic') throw new Error(`Unsupported model text protocol: ${protocol}`)
@@ -74,5 +76,6 @@ export function modelTextStream(protocol, id, text, chunks) {
         usage: { output_tokens: text ? 1 : 0 },
       }) +
       event({ type: 'message_stop' }),
+    finishContent: event({ type: 'content_block_stop', index: 0 }),
   }
 }
