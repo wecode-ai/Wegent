@@ -85,7 +85,11 @@ export function createExecutorBatchToolsRegression({ uiTimeoutMs }) {
     })),
   })
   const receiptDenied = result =>
-    assert.equal(result, 'Backend MCP operation failed', 'Revocation exposed a successful receipt')
+    assert.deepEqual(
+      JSON.parse(result),
+      { code: 'not_found', message: 'Target is unavailable', retryable: false },
+      'Revocation must expose only the sanitized authorization error, without a receipt'
+    )
 
   return {
     steps,
