@@ -78,6 +78,7 @@ export interface ProjectChatClient {
     mentions?: ProjectChatMention[]
     replyToMessageId?: string | null
     model?: string | null
+    assistantSource?: { deviceId: string; taskId: string }
     /** Bound local code project chosen by the user for this comment's run. */
     localProjectId?: number | null
   }) => Promise<ProjectChatMessage>

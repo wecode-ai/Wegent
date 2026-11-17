@@ -5,7 +5,6 @@ import {
   createAssistantConversation,
   createAssistantInteraction,
   createRuntimeAssistantTransport,
-  localWeworkEndpoint,
   type CollaborationIssue,
   type CollaborationProject,
   type IssueParticipationViewer,
@@ -21,6 +20,7 @@ import type { ExperiencePrivateConversation } from '../model'
 import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
 import { useConclusionPublication } from './useConclusionPublication'
 import { useExperienceDraftInput } from '../useExperienceDraftInput'
+import { experienceAssistantEndpoint } from '../model/assistantEndpoint'
 import './PrivateExperience.css'
 
 export interface PrivateDiscussionPaneProps {
@@ -141,8 +141,9 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
   const address = useMemo(() => ({ ...conversation.address }), [conversation.address])
   const assistantInteraction = useMemo(() => {
     const runtime = services.runtimeWorkApi
-    if (!runtime) return null
-    const endpoint = localWeworkEndpoint({
+    if (!runtime || !conversation.address.deviceId.trim() || !conversation.address.taskId.trim())
+      return null
+    const endpoint = experienceAssistantEndpoint(state.devices, conversation.address.deviceId, {
       ownerUserId: conversation.ownerUserId,
       roleId: 'issue-private',
       displayName: conversation.title ?? 'Assistant',
@@ -178,7 +179,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
         transcript: target => runtime.getRuntimeTranscript(target),
       })
     )
-  }, [conversation, issue.id, project.id, services.runtimeWorkApi])
+  }, [conversation, issue.id, project.id, services.runtimeWorkApi, state.devices])
   const draft = {
     value: conclusionDraft.value,
     revision: conclusionDraft.revision,

@@ -1,4 +1,4 @@
-use super::record_rows::enrich_comment_actor;
+use super::record_rows::{enrich_comment_actor, normalize_assistant_publication};
 use super::*;
 
 impl LocalTaskStore {
@@ -115,7 +115,9 @@ impl LocalTaskStore {
     ) -> Result<LocalComment, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let comment = insert_comment(&transaction, create, "completed")?;
+        let mut create = create.clone();
+        create.metadata = normalize_assistant_publication(&transaction, &create)?;
+        let comment = insert_comment(&transaction, &create, "completed")?;
         transaction.commit()?;
         Ok(comment)
     }
@@ -360,5 +362,59 @@ mod stand_in_reply_tests {
                 .len(),
             4
         );
+    }
+
+    #[test]
+    fn local_assistant_publication_requires_the_owned_issue_binding() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Room"})).unwrap())
+            .unwrap();
+        let issue = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Issue","assignee_user_id":7})).unwrap(),
+            )
+            .unwrap();
+        store
+            .bind_task(
+                &project.id,
+                Some(&issue.id),
+                None,
+                serde_json::from_value(json!({"deviceId":"mac","taskId":"conversation"})).unwrap(),
+                None,
+            )
+            .unwrap();
+        let create = |device_id: &str| LocalCommentCreate {
+            project_id: project.id.clone(),
+            task_id: issue.id.clone(),
+            client_message_id: Some("publication".into()),
+            sender_type: "user".into(),
+            sender_id: "7".into(),
+            sender_name: "jiangyang7".into(),
+            content: "Verified assistant result".into(),
+            metadata: json!({
+                "assistant_source":{"deviceId":device_id,"taskId":"conversation"}
+            }),
+            reply_to_message_id: None,
+        };
+
+        assert!(store.create_comment(&create("foreign")).is_err());
+        let mut forged = create("mac");
+        forged.client_message_id = Some("forged-publication".into());
+        forged.metadata = json!({"assistant_publication":{"verified":true,"published_by":"ai"}});
+        let forged = store.create_comment(&forged).unwrap();
+        assert_eq!(forged.generation_source, "human");
+        assert!(forged.metadata.get("assistant_publication").is_none());
+        let published = store.create_comment(&create("mac")).unwrap();
+        assert_eq!(published.generation_source, "ai");
+        assert_eq!(published.publication_source, "human");
+        assert_eq!(published.confirmation_state, "authorized");
+        assert_eq!(
+            published.metadata["assistant_publication"]["verified"],
+            true
+        );
+        assert!(published.metadata.get("assistant_source").is_none());
     }
 }

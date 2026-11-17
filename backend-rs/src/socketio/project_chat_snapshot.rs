@@ -20,6 +20,7 @@ use crate::runtime_work_transcript_access::require_project_chat_scope;
 
 use super::device_reconcile::apply_snapshot;
 use super::execution_aggregate::ExecutionRow;
+use super::project_chat_messages::shared_message_payload;
 use super::runtime_projection::{execution_for_runtime, owned_identity_ids, reload_execution};
 
 /// Snapshot turn statuses accepted by the schema.
@@ -941,9 +942,10 @@ pub(crate) async fn handle(
             .unwrap_or_default();
         let task_id = message.get("taskId").and_then(Value::as_str);
         let room = project_chat_room(project_id, task_id);
+        let shared = shared_message_payload(message);
         if let Err(error) = runtime
             .emitters()
-            .project_chat_message(&room, false, message)
+            .project_chat_message(&room, false, &shared)
             .await
         {
             tracing::warn!(%error, room, "project chat snapshot local delivery failed");
@@ -951,7 +953,7 @@ pub(crate) async fn handle(
         super::device_lifecycle::publish_room_event(
             state,
             super::device_runtime_event::PROJECT_CHAT_CREATED_EVENT,
-            message,
+            &shared,
             super::device_runtime_event::RUNTIME_NAMESPACE,
             &room,
         )

@@ -126,6 +126,8 @@ def publish_stand_in_reply(
     auto_publish = (
         metadata.get("assistant_dispatch_role") == "member"
         and owner_matches
+        and metadata.get("assistant_owner_user_id") == user_id
+        and item.assignee_user_id == user_id
         and metadata.get("awaiting_public_summary") is True
         and metadata.get("publish_policy") == "summary_only"
         and metadata.get("risk_level") == "low"
@@ -140,6 +142,8 @@ def publish_stand_in_reply(
     dispatch_review = (
         metadata.get("assistant_dispatch_role") == "member"
         and owner_matches
+        and metadata.get("assistant_owner_user_id") == user_id
+        and item.assignee_user_id == user_id
         and metadata.get("awaiting_public_summary") is True
         and metadata.get("publish_policy") == "summary_only"
         and identity.status == "completed"

@@ -50,18 +50,9 @@ def push_project_chat_message(message: dict[str, Any]) -> None:
             WEWORK_RUNTIME_NAMESPACE,
             project_chat_room,
         )
-        from app.services.project_chat.message_provenance import (
-            shared_message_metadata,
-        )
+        from app.services.project_chat.message_provenance import shared_message_payload
 
-        shared = dict(message)
-        if "metadata" in shared:
-            shared["metadata"] = shared_message_metadata(shared["metadata"])
-        if "runtimeAddress" in shared:
-            shared["runtimeAddress"] = None
-            shared["traceState"] = (
-                "restricted" if shared.get("traceRef") else "history-unavailable"
-            )
+        shared = shared_message_payload(message)
         project_id = str(shared["projectId"])
         task_id = shared.get("taskId")
         _publish_manager().emit(

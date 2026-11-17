@@ -75,12 +75,20 @@ export function TaskTimeline(props: Props) {
     items: CollaborationAttachment[]
     error: string | null
   }>({ items: [], error: null })
-  const participationKey = `${issue.id}:${props.revision}`
+  const participationScopeKey = JSON.stringify([
+    props.data.project.project_store,
+    props.data.project.id,
+    issue.id,
+    props.data.participationViewer,
+  ])
+  const participationRequestKey = JSON.stringify([participationScopeKey, props.revision])
+  const [participationRetry, setParticipationRetry] = useState(0)
+  const participationReadRequest = useRef(0)
   const [participationState, setParticipationState] = useState<{
     key: string
     items: AssistantParticipation[]
     error: string | null
-  }>({ key: participationKey, items: [], error: null })
+  }>({ key: participationScopeKey, items: [], error: null })
   useEffect(() => {
     if (!props.active) return
     let cancelled = false
@@ -102,27 +110,43 @@ export function TaskTimeline(props: Props) {
     let cancelled = false
     void list(issue.id).then(
       items => {
-        if (!cancelled) setParticipationState({ key: participationKey, items, error: null })
+        if (!cancelled) setParticipationState({ key: participationScopeKey, items, error: null })
       },
       cause => {
         if (!cancelled)
-          setParticipationState({
-            key: participationKey,
-            items: [],
+          setParticipationState(current => ({
+            key: participationScopeKey,
+            items: current.key === participationScopeKey ? current.items : [],
             error: cause instanceof Error ? cause.message : String(cause),
-          })
+          }))
       }
     )
     return () => {
       cancelled = true
     }
-  }, [issue.id, participationKey, props.active, props.api])
-  const participations = participationState.key === participationKey ? participationState : null
+  }, [
+    issue.id,
+    participationRequestKey,
+    participationRetry,
+    participationScopeKey,
+    props.active,
+    props.api,
+  ])
+  useEffect(
+    () => () => {
+      participationReadRequest.current += 1
+    },
+    [issue.id, props.active]
+  )
+  const participations =
+    participationState.key === participationScopeKey ? participationState : null
   const openParticipation = async (participation: AssistantParticipation) => {
     const read = props.api.issues?.readAssistantParticipation
     if (participation.historyState !== 'unverified' || !read) return
+    const request = ++participationReadRequest.current
     try {
       const workroom = await read(issue.id, participation.id)
+      if (request !== participationReadRequest.current) return
       if (workroom.runtimeAddress) props.onExecution(workroom.runtimeAddress)
     } catch {
       // The source access state remains authoritative and unchanged on a failed read.
@@ -273,7 +297,18 @@ export function TaskTimeline(props: Props) {
                   ) : null}
                 </div>
               ))}
-              {participations.error ? <p role="alert">{participations.error}</p> : null}
+              {participations.error ? (
+                <p role="alert">
+                  {participations.error}{' '}
+                  <Button
+                    variant="ghost"
+                    data-testid="collaboration-exp-assistant-participations-retry"
+                    onClick={() => setParticipationRetry(current => current + 1)}
+                  >
+                    {t('retry')}
+                  </Button>
+                </p>
+              ) : null}
             </section>
           ) : null}
           {timeline.state === 'ready' && !nodes.length ? (

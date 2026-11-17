@@ -22,6 +22,7 @@ use crate::json_compat::{
     python_json_compact, python_json_value, python_str, python_strip, python_truthy,
 };
 use crate::socketio::device_lifecycle::publish_room_event;
+use crate::socketio::project_chat_messages::shared_message_payload;
 use crate::socketio::runtime::SocketRuntime;
 use crate::socketio::runtime_projection::{self, Projected, RuntimeIdentity};
 use crate::state::AppState;
@@ -260,14 +261,15 @@ pub(super) async fn emit_project_chat(
     } else {
         PROJECT_CHAT_CREATED_EVENT
     };
+    let shared = shared_message_payload(message);
     if let Err(error) = runtime
         .emitters()
-        .project_chat_message(&room, projected.delta, message)
+        .project_chat_message(&room, projected.delta, &shared)
         .await
     {
         tracing::warn!(%error, room, "project chat local delivery failed");
     }
-    publish_room_event(state, event, message, RUNTIME_NAMESPACE, &room).await;
+    publish_room_event(state, event, &shared, RUNTIME_NAMESPACE, &room).await;
 }
 
 /// `publish_runtime_event`: the Task-addressed live channel publish.

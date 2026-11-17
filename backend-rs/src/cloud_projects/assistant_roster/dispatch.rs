@@ -209,9 +209,7 @@ async fn create_assistant_dispatch(
             .map(|(assignment, _)| assignment.user_id)
             .unwrap_or_else(|| i64::from(user.id)),
     };
-    let manager_roster_entry = roster
-        .iter()
-        .find(|entry| entry.user_id == manager && entry.enabled);
+    let manager_roster_entry = select_manager_entry(&selected, &roster, manager);
     if !users.contains(&manager)
         && manager != i64::from(user.id)
         && !has_permission(
@@ -356,16 +354,7 @@ async fn create_assistant_dispatch(
                 .await?
                 .ok_or(brz_mysql::MysqlError::RowNotFound)?;
             let mut pending = Vec::new();
-            let manager_entry = selected
-                .iter()
-                .find(|(assignment, _)| assignment.user_id == manager)
-                .map(|(_, entry)| *entry)
-                .or_else(|| {
-                    roster
-                        .iter()
-                        .find(|entry| entry.user_id == manager && entry.enabled)
-                });
-            if let Some(manager_entry) = manager_entry.filter(|entry| {
+            if let Some(manager_entry) = manager_roster_entry.filter(|entry| {
                 entry.endpoint_kind == "wegent_agent" && automatic_for(entry, &request.risk_level)
             })
             {
@@ -616,6 +605,22 @@ fn dispatch_tags(base: &[&str], capabilities: &[String]) -> Vec<String> {
     tags
 }
 
+fn select_manager_entry<'a>(
+    selected: &[(&DispatchAssignment, &'a ProjectAssistantRosterEntry)],
+    roster: &'a [ProjectAssistantRosterEntry],
+    manager: i64,
+) -> Option<&'a ProjectAssistantRosterEntry> {
+    selected
+        .iter()
+        .find(|(assignment, _)| assignment.user_id == manager)
+        .map(|(_, entry)| *entry)
+        .or_else(|| {
+            roster
+                .iter()
+                .find(|entry| entry.user_id == manager && entry.enabled)
+        })
+}
+
 struct WegentEnqueue<'a> {
     project: &'a store::Node,
     issue: &'a store::Node,
@@ -737,7 +742,9 @@ pub(super) fn dispatch_from_metadata(
 
 #[cfg(test)]
 mod tests {
-    use super::dispatch_tags;
+    use super::{DispatchAssignment, dispatch_tags, select_manager_entry};
+    use crate::cloud_projects::assistant_roster::ProjectAssistantRosterEntry;
+    use serde_json::json;
 
     #[test]
     fn dispatch_tags_carry_role_filters_without_duplicates() {
@@ -752,6 +759,39 @@ mod tests {
                 "review",
                 "security"
             ]
+        );
+    }
+
+    #[test]
+    fn selected_manager_endpoint_wins_over_another_role_for_the_same_member() {
+        let entry = |id: &str, role: &str| ProjectAssistantRosterEntry {
+            id: id.into(),
+            project_id: "project".into(),
+            user_id: 7,
+            user_name: "jiangyang7".into(),
+            role_id: role.into(),
+            endpoint_ref: format!("local_wework:7:{role}"),
+            endpoint_kind: "local_wework".into(),
+            display_name: role.into(),
+            enabled: true,
+            capability_tags: Vec::new(),
+            autonomy_policy: json!({"automatic":true}),
+            availability: "online".into(),
+            version: 1,
+        };
+        let first = entry("a-first", "review");
+        let selected = entry("z-selected", "implement");
+        let assignment = DispatchAssignment {
+            roster_entry_id: Some(selected.id.clone()),
+            user_id: 7,
+            brief: "Implement".into(),
+        };
+        let fetched = vec![first.clone(), selected.clone()];
+
+        assert_eq!(
+            select_manager_entry(&[(&assignment, &selected)], &fetched, 7)
+                .map(|value| value.id.as_str()),
+            Some("z-selected")
         );
     }
 }

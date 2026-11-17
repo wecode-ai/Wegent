@@ -3175,9 +3175,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     message.get("messageId"),
                     message.get("status"),
                 )
+                from app.services.project_chat.message_provenance import (
+                    shared_message_payload,
+                )
+
                 await get_sio().emit(
                     PROJECT_CHAT_CREATED_EVENT,
-                    message,
+                    shared_message_payload(message),
                     room=project_chat_room(
                         project_id, str(project_task_id) if project_task_id else None
                     ),
@@ -3302,9 +3306,13 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 if projected["mode"] == "delta"
                 else PROJECT_CHAT_CREATED_EVENT
             )
+            from app.services.project_chat.message_provenance import (
+                shared_message_payload,
+            )
+
             await get_sio().emit(
                 event_name,
-                message,
+                shared_message_payload(message),
                 room=project_chat_room(project_id, str(task_id) if task_id else None),
                 namespace=WEWORK_RUNTIME_NAMESPACE,
             )

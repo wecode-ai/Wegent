@@ -50,3 +50,26 @@ def test_project_chat_push_is_best_effort(monkeypatch, caplog) -> None:
     push.push_project_chat_message({"messageId": "message-1", "projectId": "project-1"})
 
     assert "Server message push failed" in caplog.text
+
+
+def test_project_chat_push_never_broadcasts_private_source_fields(monkeypatch) -> None:
+    manager = _Manager()
+    monkeypatch.setattr(push, "_publish_manager", lambda: manager)
+    push.push_project_chat_message(
+        {
+            "messageId": "message-1",
+            "projectId": "project-1",
+            "taskId": "TASK-1",
+            "type": "agent_chunk",
+            "content": "private tool output",
+            "runtimeAddress": {"deviceId": "device", "taskId": "task"},
+            "traceRef": "trace",
+            "metadata": {"private_prompt": "not shared", "run_status": "running"},
+        }
+    )
+
+    payload = manager.calls[0]["data"]
+    assert payload["runtimeAddress"] is None
+    assert payload["traceState"] == "restricted"
+    assert payload["content"] == ""
+    assert payload["metadata"] == {"run_status": "running"}

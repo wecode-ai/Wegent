@@ -126,6 +126,16 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('private discussion pane', () => {
+  it('renders an unavailable interaction when the runtime address is incomplete', () => {
+    const { props } = fixture()
+    props.conversation.address = { deviceId: 'device-1', taskId: '' }
+    expect(() => render(<PrivateDiscussionPane {...props} />)).not.toThrow()
+    expect(screen.getByTestId('collaboration-exp-private-unavailable')).toHaveTextContent(
+      'private.sourceUnavailable'
+    )
+    expect(mocks.panel).not.toHaveBeenCalled()
+  })
+
   it('sends the bound Issue discussion through the shared assistant interaction contract', async () => {
     const { props } = fixture()
     render(<PrivateDiscussionPane {...props} />)

@@ -14,6 +14,7 @@ struct AuthorshipRow {
     actor_user_id: Option<i64>,
     actor_display_name: Option<String>,
     runtime_owner_user_id: Option<i64>,
+    runtime_shared: i64,
 }
 
 pub(crate) async fn message_views(
@@ -27,7 +28,12 @@ pub(crate) async fn message_views(
     let placeholders = vec!["?"; rows.len()].join(",");
     let sql = format!(
         "SELECT m.message_id, u.id AS actor_user_id, u.user_name AS actor_display_name, \
-                o.id AS runtime_owner_user_id \
+                o.id AS runtime_owner_user_id, \
+                CASE WHEN m.sender_type='agent' \
+                  AND JSON_EXTRACT(m.metadata,'$.stand_in') IS NULL \
+                  AND a.id IS NOT NULL \
+                  AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(a.metadata,'$.visibility')),'') <> 'private' \
+                THEN 1 ELSE 0 END AS runtime_shared \
          FROM project_chat_messages m \
          LEFT JOIN project_chat_messages t ON t.message_id=m.trigger_message_id \
            AND t.project_id=m.project_id AND t.task_id=m.task_id AND t.sender_type='user' \
@@ -73,6 +79,7 @@ pub(crate) async fn message_views(
                 row,
                 viewer_user_id,
                 author.and_then(|value| value.runtime_owner_user_id),
+                author.is_some_and(|value| value.runtime_shared == 1),
             );
             view
         })
@@ -98,6 +105,7 @@ fn apply_private_source_access(
     row: &MessageRow,
     viewer: i64,
     runtime_owner_user_id: Option<i64>,
+    runtime_shared: bool,
 ) {
     let owner = runtime_owner_user_id == Some(viewer);
     if !owner {
@@ -114,8 +122,13 @@ fn apply_private_source_access(
         row.project_id, row.task_id, row.runtime_device_id, row.runtime_task_id
     );
     view["traceRef"] = json!(format!("{:x}", Sha256::digest(identity.as_bytes())));
-    view["traceState"] = json!(if owner { "available" } else { "restricted" });
-    if owner {
+    let runtime_visible = owner || runtime_shared;
+    view["traceState"] = json!(if runtime_visible {
+        "available"
+    } else {
+        "restricted"
+    });
+    if runtime_visible {
         view["runtimeAddress"] = json!({
             "deviceId": row.runtime_device_id,
             "taskId": row.runtime_task_id,
@@ -210,7 +223,7 @@ mod tests {
     fn another_member_receives_an_opaque_trace_without_runtime_parameters() {
         let mut view = message_view(&row());
         view["actorUserId"] = json!("7");
-        apply_private_source_access(&mut view, &row(), 8, Some(7));
+        apply_private_source_access(&mut view, &row(), 8, Some(7), false);
         assert_eq!(view["runtimeAddress"], Value::Null);
         assert_eq!(view["traceState"], "restricted");
         assert!(
@@ -226,7 +239,7 @@ mod tests {
     fn the_owner_can_resume_the_exact_runtime_task() {
         let mut view = message_view(&row());
         view["actorUserId"] = json!("7");
-        apply_private_source_access(&mut view, &row(), 7, Some(7));
+        apply_private_source_access(&mut view, &row(), 7, Some(7), false);
         assert_eq!(view["runtimeAddress"]["deviceId"], "device");
         assert_eq!(view["runtimeAddress"]["taskId"], "task");
         assert_eq!(view["traceState"], "available");
@@ -239,7 +252,7 @@ mod tests {
         process.content = "private tool output".into();
         let mut view = message_view(&process);
         view["actorUserId"] = json!("7");
-        apply_private_source_access(&mut view, &process, 8, Some(7));
+        apply_private_source_access(&mut view, &process, 8, Some(7), false);
         assert_eq!(view["content"], "");
     }
 
@@ -247,13 +260,29 @@ mod tests {
     fn runtime_address_follows_the_agent_owner_not_the_trigger_author() {
         let mut view = message_view(&row());
         view["actorUserId"] = json!("8");
-        apply_private_source_access(&mut view, &row(), 8, Some(7));
+        apply_private_source_access(&mut view, &row(), 8, Some(7), false);
         assert_eq!(view["runtimeAddress"], Value::Null);
 
         let mut owner_view = message_view(&row());
         owner_view["actorUserId"] = json!("8");
-        apply_private_source_access(&mut owner_view, &row(), 7, Some(7));
+        apply_private_source_access(&mut owner_view, &row(), 7, Some(7), false);
         assert_eq!(owner_view["runtimeAddress"]["deviceId"], "device");
+    }
+
+    #[test]
+    fn a_shared_agent_runtime_remains_available_with_sanitized_metadata() {
+        let mut shared = row();
+        shared.metadata = Some(brz_mysql::Json(json!({
+            "private_prompt":"not shared",
+            "summary":"Public result"
+        })));
+        let mut view = message_view(&shared);
+        apply_private_source_access(&mut view, &shared, 8, Some(7), true);
+
+        assert_eq!(view["runtimeAddress"]["deviceId"], "device");
+        assert_eq!(view["traceState"], "available");
+        assert!(view["metadata"].get("private_prompt").is_none());
+        assert_eq!(view["metadata"]["summary"], "Public result");
     }
 
     #[test]

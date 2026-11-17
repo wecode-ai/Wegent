@@ -36,6 +36,7 @@ export function createProjectChatComments(
           taskId: issueId,
           clientMessageId: options?.clientMessageId ?? crypto.randomUUID(),
           text: body,
+          ...(options?.assistantSource ? { assistantSource: options.assistantSource } : {}),
         })
       )
     },

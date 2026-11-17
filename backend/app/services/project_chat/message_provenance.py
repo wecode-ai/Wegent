@@ -1,5 +1,7 @@
 """Derive public authorship from persisted identities, never message text."""
 
+from typing import Any
+
 from sqlalchemy.orm import Session
 
 from app.models.delivery import ProjectChatAgent
@@ -30,6 +32,22 @@ def shared_message_metadata(metadata: object) -> dict[str, object]:
     if not isinstance(metadata, dict):
         return {}
     return {key: metadata[key] for key in SHARED_METADATA_KEYS if key in metadata}
+
+
+def shared_message_payload(message: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize a room broadcast that is not scoped to one viewer."""
+
+    shared = dict(message)
+    if "metadata" in shared:
+        shared["metadata"] = shared_message_metadata(shared["metadata"])
+    if shared.get("type") in {"agent_status", "agent_chunk"}:
+        shared["content"] = ""
+    if "runtimeAddress" in shared:
+        shared["runtimeAddress"] = None
+        shared["traceState"] = (
+            "restricted" if shared.get("traceRef") else "history-unavailable"
+        )
+    return shared
 
 
 def message_actor_id(db: Session, row: ProjectChatMessage) -> int | None:
@@ -98,6 +116,27 @@ def message_runtime_owner_id(db: Session, row: ProjectChatMessage) -> int | None
         if trigger is not None and trigger.sender_id.isdecimal():
             return int(trigger.sender_id)
     return None
+
+
+def message_runtime_is_shared(db: Session, row: ProjectChatMessage) -> bool:
+    """Whether a project-visible Agent owns this shared Runtime source."""
+
+    if row.sender_type != "agent" or not row.agent_id:
+        return False
+    metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    if "stand_in" in metadata:
+        return False
+    agent = (
+        db.query(ProjectChatAgent)
+        .filter_by(id=row.agent_id, cloud_project_id=row.project_id)
+        .first()
+    )
+    if agent is None:
+        return False
+    agent_metadata = (
+        agent.metadata_json if isinstance(agent.metadata_json, dict) else {}
+    )
+    return agent_metadata.get("visibility") != "private"
 
 
 def message_provenance(db: Session, row: ProjectChatMessage) -> dict[str, object]:

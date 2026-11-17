@@ -243,8 +243,16 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
         || metadata
             .get("imported_from")
             .is_some_and(|value| !value.is_null());
+    let assistant_publication = metadata
+        .get("assistant_publication")
+        .filter(|value| value.get("verified").and_then(Value::as_bool) == Some(true));
+    let published_by = assistant_publication
+        .and_then(|value| value.get("published_by"))
+        .and_then(Value::as_str);
     let source = if historical {
         "human"
+    } else if assistant_publication.is_some() {
+        "ai"
     } else {
         match sender_type.as_str() {
             "user" => "human",
@@ -259,6 +267,13 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
             .as_i64()
             .map(|id| id.to_string())
     };
+    let runtime_owner_user_id = if sender_type == "user" {
+        Some(row.get::<_, String>(6)?)
+    } else {
+        metadata["stand_in"]["user_id"]
+            .as_i64()
+            .map(|id| id.to_string())
+    };
     Ok(LocalComment {
         actor_user_id,
         actor_display_name: if sender_type == "user" {
@@ -266,10 +281,23 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
         } else {
             None
         },
+        runtime_owner_user_id,
+        runtime_shared: false,
         generation_source: source.into(),
-        publication_source: source.into(),
+        publication_source: if published_by == Some("ai") {
+            "ai"
+        } else if assistant_publication.is_some() {
+            "human"
+        } else {
+            source
+        }
+        .into(),
         confirmation_state: if historical {
             "unknown"
+        } else if published_by == Some("ai") {
+            "not_required"
+        } else if assistant_publication.is_some() {
+            "authorized"
         } else if source == "ai" {
             "pending"
         } else {
@@ -304,6 +332,54 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
     })
 }
 
+/// Replace a local assistant-source claim with server/store-verified publication metadata.
+pub(super) fn normalize_assistant_publication(
+    connection: &Connection,
+    create: &LocalCommentCreate,
+) -> Result<Value, TaskRuntimeError> {
+    let Value::Object(mut metadata) = create.metadata.clone() else {
+        return Ok(create.metadata.clone());
+    };
+    metadata.remove("assistant_publication");
+    let Some(Value::Object(mut source)) = metadata.remove("assistant_source") else {
+        return Ok(Value::Object(metadata));
+    };
+    let device_id = source
+        .remove("deviceId")
+        .or_else(|| source.remove("device_id"))
+        .and_then(|value| value.as_str().map(str::to_owned));
+    let task_id = source
+        .remove("taskId")
+        .or_else(|| source.remove("task_id"))
+        .and_then(|value| value.as_str().map(str::to_owned));
+    let (Some(device_id), Some(task_id)) = (device_id, task_id) else {
+        return Err(TaskRuntimeError::Invalid(
+            "Assistant publication source is incomplete".into(),
+        ));
+    };
+    let binding = get_binding_by_kind(connection, &device_id, &task_id, false)?
+        .filter(|binding| {
+            binding.cloud_project_id == create.project_id
+                && binding.loop_item_id.as_deref() == Some(create.task_id.as_str())
+                && (binding.task_user_id == 0
+                    || binding.task_user_id.to_string() == create.sender_id)
+        })
+        .ok_or_else(|| {
+            TaskRuntimeError::Invalid("Assistant publication source is unavailable".into())
+        })?;
+    metadata.insert(
+        "assistant_publication".into(),
+        json!({
+            "verified": true,
+            "published_by": "human",
+            "binding_id": binding.id,
+            "device_id": device_id,
+            "task_id": task_id,
+        }),
+    );
+    Ok(Value::Object(metadata))
+}
+
 /// Resolve an AI comment's public actor from stored trigger and robot records.
 pub(super) fn enrich_comment_actor(
     connection: &Connection,
@@ -311,6 +387,29 @@ pub(super) fn enrich_comment_actor(
 ) -> rusqlite::Result<()> {
     if comment.sender_type != "agent" {
         return Ok(());
+    }
+    let agent = if comment.metadata.get("stand_in").is_some() {
+        None
+    } else {
+        connection
+            .query_row(
+                "SELECT created_by_user_id, \
+                    NULLIF(JSON_EXTRACT(metadata,'$.visibility'),'null') \
+                 FROM loop_items \
+                 WHERE id=?1 AND cloud_project_id=?2 AND resource_type='chat_agent'",
+                params![comment.sender_id, comment.project_id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<i64>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .optional()?
+    };
+    if let Some((Some(owner_user_id), visibility)) = &agent {
+        comment.runtime_owner_user_id = Some(owner_user_id.to_string());
+        comment.runtime_shared = visibility.as_deref() != Some("private");
     }
     let trigger = comment
         .trigger_message_id
@@ -356,15 +455,9 @@ pub(super) fn enrich_comment_actor(
         }
     }
     if comment.actor_user_id.is_none() {
-        comment.actor_user_id = connection
-            .query_row(
-                "SELECT created_by_user_id FROM loop_items
-                 WHERE id=?1 AND cloud_project_id=?2 AND resource_type='chat_agent'
-                   AND created_by_user_id>0",
-                params![comment.sender_id, comment.project_id],
-                |row| row.get::<_, i64>(0).map(|id| id.to_string()),
-            )
-            .optional()?;
+        comment.actor_user_id = agent
+            .as_ref()
+            .and_then(|(owner_user_id, _)| owner_user_id.map(|id| id.to_string()));
     }
     Ok(())
 }

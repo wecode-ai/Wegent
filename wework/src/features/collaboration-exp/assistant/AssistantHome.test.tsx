@@ -1059,6 +1059,85 @@ describe('AssistantHome', () => {
     )
   })
 
+  it('registers a cloud-device role with the matching endpoint identity', async () => {
+    setupWorkbench()
+    ;(mocks.workbench.state as Record<string, unknown>).devices = [
+      {
+        id: 1,
+        device_id: 'cloud-1',
+        name: 'Cloud assistant',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ]
+    const role = {
+      ...newStandInRole('cloud-1', 'reviewer'),
+      name: 'Reviewer',
+      collaboration: {
+        enabled: true,
+        allProjects: false,
+        projects: [{ id: 'first-shared-project', store: 'cloud' as const }],
+        excludedProjects: [],
+        tags: ['review'],
+      },
+    }
+    mocks.source.settings = { ...settings, roles: [role] }
+    const rosterSave = vi.fn().mockResolvedValue({})
+    const stale = {
+      id: 'stale-reviewer',
+      projectId: 'first-shared-project',
+      userId: 7,
+      userName: 'Owner',
+      roleId: 'reviewer',
+      endpointRef: 'local_wework:7:reviewer',
+      endpointKind: 'local_wework' as const,
+      displayName: 'Reviewer',
+      enabled: true,
+      capabilityTags: ['review'],
+      autonomyPolicy: { automatic: true, askBeforeAct: false },
+      availability: 'online' as const,
+      version: 3,
+    }
+    ;(
+      mocks.workbench.services as {
+        sharedWorkspaceApi: { projects: Record<string, unknown> }
+      }
+    ).sharedWorkspaceApi.projects = {
+      listAssistantRoster: vi.fn().mockResolvedValue([stale]),
+      saveAssistantRosterEntry: rosterSave,
+    }
+    render(
+      <AssistantHome
+        active
+        projects={[
+          {
+            project: experienceProjectFixture({
+              id: 'first-shared-project',
+              project_store: 'backend',
+            }),
+            issues: [],
+          },
+        ]}
+      />
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-team-toggle'))
+    fireEvent.click(
+      screen.getByTestId('collaboration-exp-assistant-register-reviewer-first-shared-project')
+    )
+    await waitFor(() => expect(rosterSave).toHaveBeenCalledTimes(2))
+    expect(rosterSave.mock.calls[0][1]).toMatchObject({
+      endpointRef: stale.endpointRef,
+      enabled: false,
+      version: stale.version,
+    })
+    expect(rosterSave.mock.calls[1][1]).toMatchObject({
+      endpointRef: 'cloud_device:7:reviewer',
+      availability: 'online',
+    })
+  })
+
   it('restores the ordinary-question draft after remounting without creating a conversation', () => {
     const { api } = setupWorkbench()
     const props = { active: true, settings, onCreated: vi.fn() }

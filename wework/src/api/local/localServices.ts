@@ -4151,6 +4151,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
   const localProjectChatClient = createLocalProjectChatClient(request, {
     currentUser: localParticipationIdentity.currentUser,
+    viewerUserIds: localParticipationIdentity.viewerUserIds,
     async prepareExecution({ projectId, taskId, agentId, text, runnerSelection }) {
       const [projects, task, agents] = await Promise.all([
         deliveryApi.listCloudProjects(),

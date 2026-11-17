@@ -24,6 +24,7 @@ use crate::socketio::device_lifecycle::publish_room_event;
 use crate::socketio::device_runtime_event::{
     PROJECT_CHAT_CREATED_EVENT, RUNTIME_NAMESPACE, project_chat_room,
 };
+use crate::socketio::project_chat_messages::shared_message_payload;
 use crate::socketio::runtime::SocketRuntime;
 use crate::socketio::runtime_projection::{self, RuntimeIdentity};
 use crate::socketio::session::SessionSnapshot;
@@ -347,9 +348,10 @@ async fn emit_project_message(state: &AppState, runtime: &Arc<SocketRuntime>, me
         .unwrap_or_default();
     let task_id = message.get("taskId").and_then(Value::as_str);
     let room = project_chat_room(project_id, task_id);
+    let shared = shared_message_payload(message);
     if let Err(error) = runtime
         .emitters()
-        .project_chat_message(&room, false, message)
+        .project_chat_message(&room, false, &shared)
         .await
     {
         tracing::warn!(%error, room, "project chat terminal local delivery failed");
@@ -357,7 +359,7 @@ async fn emit_project_message(state: &AppState, runtime: &Arc<SocketRuntime>, me
     publish_room_event(
         state,
         PROJECT_CHAT_CREATED_EVENT,
-        message,
+        &shared,
         RUNTIME_NAMESPACE,
         &room,
     )

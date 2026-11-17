@@ -10,6 +10,8 @@ type LocalChatRequest = <T>(method: string, params?: Record<string, unknown>) =>
 export interface LocalCommentRecord {
   actor_user_id?: string | null
   actor_display_name?: string | null
+  runtime_owner_user_id?: string | null
+  runtime_shared?: boolean
   generation_source?: ProjectChatMessage['generationSource']
   publication_source?: ProjectChatMessage['publicationSource']
   confirmation_state?: ProjectChatMessage['confirmationState']
@@ -50,9 +52,13 @@ const SHARED_METADATA_KEYS = new Set([
   'publish_policy',
   'imported_from',
   'history_import',
+  'member_assistant_result',
 ])
 
-function commentToMessage(record: LocalCommentRecord, currentUserId: string): ProjectChatMessage {
+function commentToMessage(
+  record: LocalCommentRecord,
+  viewerUserIds: ReadonlySet<string>
+): ProjectChatMessage {
   const senderType: ProjectChatMessage['sender']['type'] =
     record.sender_type === 'user' || record.sender_type === 'agent' ? record.sender_type : 'system'
   const status: ProjectChatMessage['status'] =
@@ -64,17 +70,14 @@ function commentToMessage(record: LocalCommentRecord, currentUserId: string): Pr
       ? record.status
       : 'completed'
   const owner =
-    record.actor_user_id != null
-      ? record.actor_user_id === currentUserId
-      : record.sender_type === 'user'
-        ? record.sender_id === currentUserId
-        : false
+    record.runtime_owner_user_id != null ? viewerUserIds.has(record.runtime_owner_user_id) : false
+  const runtimeVisible = owner || record.runtime_shared === true
   const metadata = owner
     ? (record.metadata ?? {})
     : Object.fromEntries(
         Object.entries(record.metadata ?? {}).filter(([key]) => SHARED_METADATA_KEYS.has(key))
       )
-  const runtimeAddressRecord = owner ? metadata.runtime_address : undefined
+  const runtimeAddressRecord = runtimeVisible ? (record.metadata ?? {}).runtime_address : undefined
   const runtimeAddress =
     runtimeAddressRecord &&
     typeof runtimeAddressRecord === 'object' &&
@@ -98,7 +101,12 @@ function commentToMessage(record: LocalCommentRecord, currentUserId: string): Pr
     projectId: record.project_id,
     taskId: record.task_id,
     sender: { type: senderType, id: record.sender_id, name: record.sender_name },
-    type: record.message_type === 'agent_status' ? 'agent_status' : 'text',
+    type:
+      record.message_type === 'agent_status' || record.message_type === 'agent_chunk'
+        ? record.message_type
+        : record.message_type === 'system'
+          ? 'system'
+          : 'text',
     content:
       !owner && (record.message_type === 'agent_status' || record.message_type === 'agent_chunk')
         ? ''
@@ -108,8 +116,11 @@ function commentToMessage(record: LocalCommentRecord, currentUserId: string): Pr
     rootMessageId: record.thread_root_message_id ?? null,
     runtimeAddress,
     status,
-    traceState:
-      record.trace_state ?? (runtimeAddress ? (owner ? 'available' : 'restricted') : undefined),
+    traceState: runtimeVisible
+      ? 'available'
+      : record.trace_ref
+        ? 'restricted'
+        : 'history-unavailable',
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   }
@@ -119,6 +130,7 @@ export function createLocalProjectChatClient(
   request: LocalChatRequest,
   options: {
     currentUser: Pick<User, 'id' | 'user_name'>
+    viewerUserIds?: readonly number[]
     prepareExecution?: (input: {
       projectId: string
       taskId: string
@@ -129,6 +141,9 @@ export function createLocalProjectChatClient(
   }
 ): ProjectChatClient {
   const currentUserId = String(options.currentUser.id)
+  const viewerUserIds = new Set(
+    [options.currentUser.id, ...(options.viewerUserIds ?? [])].map(String)
+  )
   const currentUserName = options.currentUser.user_name
   const activeUnsubscribers = new Set<() => void>()
 
@@ -153,7 +168,7 @@ export function createLocalProjectChatClient(
           after_sequence: 0,
         })
         for (const record of records) {
-          const message = commentToMessage(record, currentUserId)
+          const message = commentToMessage(record, viewerUserIds)
           latestSequence = Math.max(latestSequence, message.sequenceNumber)
           const previous = knownMessages.get(message.messageId)
           knownMessages.set(message.messageId, message)
@@ -214,11 +229,12 @@ export function createLocalProjectChatClient(
         metadata: {
           mentions,
           ...(input.localProjectId != null ? { local_project_id: input.localProjectId } : {}),
+          ...(input.assistantSource ? { assistant_source: input.assistantSource } : {}),
         },
         reply_to_message_id: input.replyToMessageId ?? null,
       },
     })
-    return commentToMessage(created, currentUserId)
+    return commentToMessage(created, viewerUserIds)
   }
 
   const executeTaskComment: ProjectChatClient['executeTaskComment'] = async input => {
@@ -271,7 +287,7 @@ export function createLocalProjectChatClient(
       task_id: input.taskId,
       after_sequence: trigger.sequence_number,
     })
-    return updated.map(record => commentToMessage(record, currentUserId))
+    return updated.map(record => commentToMessage(record, viewerUserIds))
   }
 
   const startAgentResponse: ProjectChatClient['startAgentResponse'] = async input => {
@@ -285,7 +301,7 @@ export function createLocalProjectChatClient(
       prompt: input.prompt ?? null,
       model: input.model ?? null,
     })
-    return commentToMessage(created, currentUserId)
+    return commentToMessage(created, viewerUserIds)
   }
 
   const failAgentResponse: ProjectChatClient['failAgentResponse'] = async input => {
@@ -295,7 +311,7 @@ export function createLocalProjectChatClient(
       message_id: input.messageId,
       error: input.error ?? '执行失败',
     })
-    return commentToMessage(failed, currentUserId)
+    return commentToMessage(failed, viewerUserIds)
   }
 
   return {

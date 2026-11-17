@@ -154,8 +154,10 @@ def test_dispatched_reply_follows_the_member_autonomy_policy(
     test_db, test_user, scope, automatic, risk_level, expected_status, published
 ):
     issue = scope[1]
+    issue.assignee_user_id = test_user.id
     issue.metadata_json = {
         "assistant_dispatch_role": "member",
+        "assistant_owner_user_id": test_user.id,
         "assistant_endpoint_ref": f"local_wework:{test_user.id}:review",
         "risk_level": risk_level,
         "awaiting_public_summary": True,
@@ -197,6 +199,7 @@ def test_late_dispatch_result_does_not_reopen_a_completed_issue(
     test_db, test_user, scope
 ):
     issue = scope[1]
+    issue.assignee_user_id = test_user.id
     issue.metadata_json = {
         "assistant_dispatch_role": "member",
         "assistant_owner_user_id": test_user.id,
@@ -229,11 +232,46 @@ def test_late_dispatch_result_does_not_reopen_a_completed_issue(
     assert issue.status == "completed"
 
 
+def test_reassigned_dispatch_result_cannot_complete_the_issue(
+    test_db, test_user, test_admin_user, scope
+):
+    issue = scope[1]
+    issue.assignee_user_id = test_admin_user.id
+    issue.metadata_json = {
+        "assistant_dispatch_role": "member",
+        "assistant_owner_user_id": test_user.id,
+        "assistant_endpoint_ref": f"local_wework:{test_user.id}:review",
+        "risk_level": "low",
+        "awaiting_public_summary": True,
+        "publish_policy": "summary_only",
+        "assistant_autonomy_policy": {
+            "automatic": True,
+            "ask_before_act": False,
+            "risk_ceiling": "low",
+        },
+    }
+    test_db.commit()
+
+    result = publish(
+        test_db,
+        test_user,
+        scope,
+        scope[-1].model_copy(update={"message_id": "reassigned-result"}),
+        "Late summary",
+    )
+    test_db.refresh(issue)
+
+    assert result.content == "Late summary"
+    assert issue.status == "pending"
+    assert issue.metadata_json["awaiting_public_summary"] is True
+
+
 def test_dispatch_result_does_not_override_a_user_review_state(
     test_db, test_user, scope
 ):
     issue = scope[1]
     issue.status = "in_review"
+    issue.assignee_user_id = test_user.id
     issue.metadata_json = {
         "assistant_dispatch_role": "member",
         "assistant_owner_user_id": test_user.id,

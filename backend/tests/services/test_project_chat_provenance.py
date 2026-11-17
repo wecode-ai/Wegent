@@ -4,7 +4,10 @@ import pytest
 
 from app.models.delivery import ProjectChatAgent
 from app.models.project_chat_message import ProjectChatMessage
-from app.services.project_chat.message_provenance import message_provenance
+from app.services.project_chat.message_provenance import (
+    message_provenance,
+    shared_message_payload,
+)
 from app.services.project_chat.service import project_chat_service
 
 
@@ -185,7 +188,7 @@ def test_shared_view_removes_process_output_from_another_member(test_db, test_us
     assert shared.content == ""
 
 
-def test_runtime_address_follows_agent_owner_not_trigger_author(test_db, test_user):
+def test_private_agent_runtime_address_follows_the_agent_owner(test_db, test_user):
     trigger = ProjectChatMessage(
         message_id="trigger",
         project_id="project-one",
@@ -201,7 +204,7 @@ def test_runtime_address_follows_agent_owner_not_trigger_author(test_db, test_us
         title="Shared agent",
         name="Shared agent",
         created_by_user_id=999,
-        metadata_json={},
+        metadata_json={"visibility": "private"},
     )
     row = message(
         message_id="agent-result",
@@ -228,3 +231,55 @@ def test_runtime_address_follows_agent_owner_not_trigger_author(test_db, test_us
         "taskId": "owner-task",
     }
     assert owner_view.trace_state == "available"
+
+
+def test_shared_agent_runtime_is_available_without_private_metadata(test_db, test_user):
+    agent = ProjectChatAgent(
+        id="shared-agent",
+        cloud_project_id="project-one",
+        title="Shared agent",
+        name="Shared agent",
+        created_by_user_id=999,
+        metadata_json={"visibility": "public"},
+    )
+    row = message(
+        message_id="shared-agent-result",
+        agent_id=agent.id,
+        metadata_json={
+            "private_prompt": "not shared",
+            "summary": "Public result",
+        },
+        runtime_device_id="owner-device",
+        runtime_task_id="owner-task",
+        status="completed",
+    )
+    test_db.add_all([agent, row])
+    test_db.flush()
+
+    member_view = project_chat_service.to_shared_view(
+        row, db=test_db, viewer_user_id=test_user.id
+    )
+    assert member_view.runtime_address == {
+        "deviceId": "owner-device",
+        "taskId": "owner-task",
+    }
+    assert member_view.trace_state == "available"
+    assert "private_prompt" not in member_view.metadata
+    assert member_view.metadata["summary"] == "Public result"
+
+
+def test_shared_room_payload_never_contains_a_runtime_address_or_process_body():
+    payload = shared_message_payload(
+        {
+            "type": "agent_chunk",
+            "content": "private tool output",
+            "runtimeAddress": {"deviceId": "device", "taskId": "task"},
+            "traceRef": "trace",
+            "metadata": {"private_prompt": "not shared", "run_status": "running"},
+        }
+    )
+
+    assert payload["runtimeAddress"] is None
+    assert payload["traceState"] == "restricted"
+    assert payload["content"] == ""
+    assert payload["metadata"] == {"run_status": "running"}

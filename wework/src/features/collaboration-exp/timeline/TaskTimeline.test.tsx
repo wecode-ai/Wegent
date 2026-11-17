@@ -298,6 +298,108 @@ it('opens only an authorized participation source from the historical source ind
   expect(onExecution).toHaveBeenCalledWith({ deviceId: 'device-1', taskId: 'task-1' })
 })
 
+it('ignores a participation source that resolves after the timeline is left', async () => {
+  const props = fixture()
+  const participation = {
+    id: 'participation-1',
+    projectId: props.data.project.id,
+    issueId: props.data.issue.id,
+    ownerUserId: 7,
+    ownerDisplayName: 'jiangyang7',
+    roleId: 'review',
+    endpointRef: 'runtime:7:review',
+    conversationId: null,
+    source: { kind: 'binding', id: 'binding-1' },
+    workroomRef: null,
+    traceRef: 'trace-1',
+    historyState: 'unverified' as const,
+    auditSource: 'recorded',
+  }
+  let resolveRead!: (value: unknown) => void
+  const readAssistantParticipation = vi.fn(() => new Promise(resolve => (resolveRead = resolve)))
+  props.api.issues = {
+    listAssistantParticipations: vi.fn().mockResolvedValue([participation]),
+    readAssistantParticipation,
+  } as unknown as SharedWorkspaceApi['issues']
+  const onExecution = vi.fn()
+  const view = render(
+    <TaskTimeline
+      {...props}
+      active
+      revision={0}
+      onDiscuss={vi.fn()}
+      onAttachment={vi.fn()}
+      onExecution={onExecution}
+      onRetry={vi.fn()}
+    />
+  )
+  await view.findByTestId('collaboration-exp-open-assistant-participation-participation-1')
+  fireEvent.click(
+    view.getByTestId('collaboration-exp-open-assistant-participation-participation-1')
+  )
+  view.unmount()
+  resolveRead({
+    participation,
+    runtimeAddress: { deviceId: 'device-1', taskId: 'task-1' },
+  })
+  await Promise.resolve()
+  expect(onExecution).not.toHaveBeenCalled()
+})
+
+it('retains scoped participation data and exposes retry after a refresh failure', async () => {
+  const props = fixture()
+  const participation = {
+    id: 'participation-1',
+    projectId: props.data.project.id,
+    issueId: props.data.issue.id,
+    ownerUserId: 7,
+    ownerDisplayName: 'jiangyang7',
+    roleId: 'review',
+    endpointRef: 'runtime:7:review',
+    conversationId: null,
+    source: { kind: 'binding', id: 'binding-1' },
+    workroomRef: null,
+    traceRef: 'trace-1',
+    historyState: 'unverified' as const,
+    auditSource: 'recorded',
+  }
+  const listAssistantParticipations = vi
+    .fn()
+    .mockResolvedValueOnce([participation])
+    .mockRejectedValueOnce(new Error('temporary failure'))
+    .mockResolvedValueOnce([participation])
+  props.api.issues = {
+    listAssistantParticipations,
+  } as unknown as SharedWorkspaceApi['issues']
+  const renderTimeline = (revision: number) => (
+    <TaskTimeline
+      {...props}
+      active
+      revision={revision}
+      onDiscuss={vi.fn()}
+      onAttachment={vi.fn()}
+      onExecution={vi.fn()}
+      onRetry={vi.fn()}
+    />
+  )
+  const view = render(renderTimeline(0))
+  await waitFor(() =>
+    expect(
+      view.getByTestId('collaboration-exp-assistant-participation-participation-1')
+    ).toBeVisible()
+  )
+
+  view.rerender(renderTimeline(1))
+  await waitFor(() =>
+    expect(view.getByTestId('collaboration-exp-assistant-participations-retry')).toBeVisible()
+  )
+  expect(
+    view.getByTestId('collaboration-exp-assistant-participation-participation-1')
+  ).toBeVisible()
+  fireEvent.click(view.getByTestId('collaboration-exp-assistant-participations-retry'))
+  await waitFor(() => expect(listAssistantParticipations).toHaveBeenCalledTimes(3))
+})
+
 it('filters shared conclusions and retains filter state when a status refresh arrives', async () => {
   const props = fixture()
   const callbacks = {

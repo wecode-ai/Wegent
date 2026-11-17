@@ -2883,13 +2883,21 @@ class ProjectChatService:
         """Render one member-specific shared view over the internal projection."""
 
         from app.services.project_chat.message_provenance import (
+            message_runtime_is_shared,
             message_runtime_owner_id,
             shared_message_metadata,
         )
 
         view = cls.to_view(row, db=db)
-        if message_runtime_owner_id(db, row) == viewer_user_id:
+        owner = message_runtime_owner_id(db, row) == viewer_user_id
+        if owner:
             return view
+        runtime_shared = message_runtime_is_shared(db, row)
+        trace_state = (
+            "available"
+            if runtime_shared
+            else ("restricted" if view.trace_ref is not None else "history-unavailable")
+        )
         return view.model_copy(
             update={
                 "content": (
@@ -2898,12 +2906,8 @@ class ProjectChatService:
                     else view.content
                 ),
                 "metadata": shared_message_metadata(row.metadata_json),
-                "runtime_address": None,
-                "trace_state": (
-                    "restricted"
-                    if view.trace_ref is not None
-                    else "history-unavailable"
-                ),
+                "runtime_address": view.runtime_address if runtime_shared else None,
+                "trace_state": trace_state,
             }
         )
 
