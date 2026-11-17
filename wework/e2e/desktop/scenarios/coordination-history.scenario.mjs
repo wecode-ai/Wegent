@@ -22,8 +22,26 @@ function seedHistory(database) {
   const insert = database.prepare(
     'INSERT INTO loop_items(id,resource_type,metadata,created_at,updated_at) VALUES (?,?,?,?,?)'
   )
-  const record = (kind, value, at = current) =>
+  const facts = database.prepare(
+    'INSERT INTO stand_in_history(id,resource_type,user_id,status,kind,batch_id,event_created_at) VALUES (?,?,?,?,?,?,?)'
+  )
+  const reference = database.prepare(
+    'INSERT INTO stand_in_history_refs(owner_id,event_id) VALUES (?,?)'
+  )
+  const record = (kind, value, at = current, indexed = true) => {
     insert.run(value.id, kind, JSON.stringify({ userId: USER, ...value }), at, at)
+    if (!indexed) return
+    facts.run(
+      value.id,
+      kind,
+      USER,
+      value.status ?? null,
+      value.kind ?? null,
+      value.batchId ?? value.result?.snapshotId ?? null,
+      value.createdAt ?? null
+    )
+    for (const event of value.arguments?.eventIds ?? []) reference.run(value.id, event)
+  }
   database.exec('BEGIN IMMEDIATE')
   try {
     record(
@@ -86,11 +104,10 @@ function seedHistory(database) {
       },
       old
     )
-    database
-      .prepare(
-        "UPDATE loop_items SET metadata=json_set(metadata,'$.nextCheckAt',0) WHERE resource_type='stand_in_retention' AND json_extract(metadata,'$.userId')=?"
-      )
-      .run(USER)
+    for (const kind of ['stand_in_event', 'stand_in_action', 'stand_in_route']) {
+      record(kind, { id: `history-legacy-expired-${kind}` }, old, false)
+      record(kind, { id: `history-legacy-recent-${kind}` }, current, false)
+    }
     database.exec('COMMIT')
   } catch (error) {
     database.exec('ROLLBACK')
@@ -215,6 +232,24 @@ export function createDesktopScenario({
             )
             .get().count,
           0
+        )
+        assert.equal(
+          database
+            .prepare(
+              "SELECT count(*) AS count FROM loop_items WHERE id LIKE 'history-legacy-expired-%'"
+            )
+            .get().count,
+          0,
+          'Unindexed legacy records expire without payload backfill'
+        )
+        assert.equal(
+          database
+            .prepare(
+              "SELECT count(*) AS count FROM loop_items WHERE id LIKE 'history-legacy-recent-%'"
+            )
+            .get().count,
+          3,
+          'Recent unindexed legacy records remain available'
         )
         assert.equal(
           JSON.parse(
