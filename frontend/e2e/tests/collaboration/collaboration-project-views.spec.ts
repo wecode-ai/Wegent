@@ -35,17 +35,17 @@ projectTest(
       body: { version: issue.version, status: 'completed' },
     })
     type Metrics = {
-      definition_version: number
+      definition_version: string
       as_of: string
       window: { start: string; end: string }
       completion: { completed: number; denominator: number; unknown: number; per_member: number }
-      timing: { ai_active_seconds: number; agent_run_seconds: number }
+      activity: { ai_active_seconds: number; ai_active_hours: number }
     }
     const metrics = await webApi<Metrics>(
       page,
       `/api/v1/cloud-projects/${projectId}/collaboration-metrics`
     )
-    expect(metrics.definition_version).toBe(1)
+    expect(metrics.definition_version).toBe('collab-v2')
     expect(metrics.completion).toMatchObject({
       completed: 1,
       denominator: 2,
@@ -56,8 +56,8 @@ projectTest(
       7 * 24 * 3600 * 1000
     )
     expect(metrics.window.end).toBe(metrics.as_of)
-    expect(metrics.timing.ai_active_seconds).toBe(0)
-    expect(metrics.timing.agent_run_seconds).toBe(0)
+    expect(metrics.activity.ai_active_seconds).toBe(0)
+    expect(metrics.activity.ai_active_hours).toBe(0)
     const personal = await webApi<{ projects: Array<{ project_id: string; completed: number }> }>(
       page,
       '/api/v1/collaboration-metrics/me'

@@ -185,6 +185,7 @@ describe('createProjectChatClient', () => {
         {
           projectId: 'project-1',
           taskId: undefined,
+          messageId: 'message-7',
           afterSequence: 6,
           limit: 1,
         },
@@ -193,6 +194,135 @@ describe('createProjectChatClient', () => {
       expect(room.runtimeAddress).toBeNull()
     },
   )
+
+  it.each(['created', 'chunk'] as const)(
+    'resolves the first persisted source from a %s event with newer history present',
+    async (event) => {
+      const room: ProjectChatMessage = {
+        ...message,
+        sequenceNumber: 1,
+        messageId: 'first',
+        type: 'agent_chunk',
+        traceRef: 'first-source',
+        traceState: 'restricted',
+        runtimeAddress: null,
+      }
+      const resolved: ProjectChatMessage = {
+        ...room,
+        traceState: 'available',
+        runtimeAddress: { deviceId: 'project-device', taskId: 'project-task' },
+      }
+      socket.emit.mockImplementation((_event, payload, ack) => {
+        ack({
+          ok: true,
+          result: {
+            messages: payload.messageId === 'first' ? [resolved] : [message],
+            latestSequence: 7,
+            currentUserId: '1',
+          },
+        })
+      })
+      const onMessage = vi.fn()
+      const onChunk = vi.fn()
+      const client = createProjectChatClient({
+        socketBaseUrl: 'https://cloud.example.com',
+        socketPath: '/socket.io',
+        getToken: () => 'token',
+      })
+      await client.subscribe('project-1', undefined, 0, onMessage, onChunk)
+      const receive = socket.on.mock.calls.find(
+        ([name]) =>
+          name ===
+          (event === 'created'
+            ? 'wework:project_chat:message:created'
+            : 'wework:project_chat:agent:chunk'),
+      )![1]
+      receive(room)
+      await vi.waitFor(() =>
+        expect(onMessage).toHaveBeenLastCalledWith(resolved),
+      )
+      expect(socket.emit).toHaveBeenLastCalledWith(
+        'wework:project_chat:subscribe',
+        expect.objectContaining({
+          messageId: 'first',
+          afterSequence: 0,
+          limit: 1,
+        }),
+        expect.any(Function),
+      )
+      if (event === 'chunk') {
+        const calls = socket.emit.mock.calls.length
+        receive({ ...room, content: 'next delta' })
+        expect(onChunk).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            content: 'next delta',
+            runtimeAddress: resolved.runtimeAddress,
+          }),
+        )
+        expect(socket.emit).toHaveBeenCalledTimes(calls)
+      }
+    },
+  )
+
+  it('keeps newer streamed content when the source lookup returns an older row', async () => {
+    let resolve: ((ack: unknown) => void) | undefined
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      if (payload.limit === 1) resolve = ack
+      else
+        ack({
+          ok: true,
+          result: { messages: [], latestSequence: 0, currentUserId: '1' },
+        })
+    })
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+    const onMessage = vi.fn()
+    await client.subscribe('project-1', undefined, 0, onMessage, vi.fn())
+    const created = socket.on.mock.calls.find(
+      ([event]) => event === 'wework:project_chat:message:created',
+    )![1]
+    const chunk = socket.on.mock.calls.find(
+      ([event]) => event === 'wework:project_chat:agent:chunk',
+    )![1]
+    const room = {
+      ...message,
+      traceRef: 'opaque',
+      traceState: 'restricted',
+      runtimeAddress: null,
+    }
+    created(room)
+    await vi.waitFor(() => expect(resolve).toBeTypeOf('function'))
+    chunk({ ...room, content: 'newer ', status: 'streaming' })
+    chunk({ ...room, content: 'streamed content', status: 'streaming' })
+    resolve!({
+      ok: true,
+      result: {
+        messages: [
+          {
+            ...room,
+            content: 'older persisted content',
+            traceState: 'available',
+            runtimeAddress: { deviceId: 'device', taskId: 'run' },
+          },
+        ],
+        latestSequence: 7,
+        currentUserId: '1',
+      },
+    })
+    await vi.waitFor(() =>
+      expect(onMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          content: `${room.content}newer streamed content`,
+          status: 'streaming',
+          traceState: 'available',
+          runtimeAddress: { deviceId: 'device', taskId: 'run' },
+        }),
+      ),
+    )
+  })
 
   it.each(['unsubscribe', 'newer-message', 'newer-subscription'])(
     'discards late source reads after %s',

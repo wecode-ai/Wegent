@@ -331,7 +331,7 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
     })
 }
 
-/// Replace a local assistant-source claim with server/store-verified publication metadata.
+/// Resolve authorship and Runtime visibility from persisted project identities.
 pub(super) fn enrich_comment_actor(
     connection: &Connection,
     comment: &mut LocalComment,

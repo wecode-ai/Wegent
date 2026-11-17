@@ -5,7 +5,9 @@
 export * from "./automation";
 export * from "./assistant-interaction";
 export type {
-  CollaborationIssueTiming,
+  CollaborationMetricEvidence,
+  CollaborationMetricReceipt,
+  MetricFact,
   CollaborationMetrics,
   CollaborationMetricsApi,
 } from "./metrics/types";

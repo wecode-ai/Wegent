@@ -378,21 +378,32 @@ Milestones reuse `loop_items` nodes with `resource_type=milestone`; Issue refere
 
 Archived completed Issues remain in both total and completed counts, and archived unfinished Issues remain in the remaining count. Archiving and restoration do not change delivery progress. The UI identifies the archived count and links milestone details to the existing archive.
 
-## Collaboration metric time boundaries
+## Collaboration metrics collab-v2
 
-The Rust project and personal collaboration metric APIs share one UTC `as_of` and a half-open trailing seven-day window. Project authority, Issue visibility and root-Issue scope constrain the data first. Completion counts and lifecycle ends use the precise latest completion event; older records without a parseable event use their persisted completion time. Reopened Issues do not count as completed.
+Project `GET /api/v1/cloud-projects/{project_id}/collaboration-metrics` and personal `GET /api/v1/collaboration-metrics/me` return aggregates and evidence with `definition_version=collab-v2`. Each read resolves current authority, effective members, visible root Issues and evidence in one REPEATABLE READ transaction. All metrics share UTC `as_of` and `[as_of-7days, as_of)`; Shanghai time is presentation only. Historical asOf queries are deliberately unavailable because current membership, authority and status cannot represent historical snapshots. W-0064 owns metric UI integration.
 
-MySQL can round fractional seconds in second-precision `completed_at` into the next second. That column only selects candidates with a one-second margin at each boundary, including records with missing completion times; precise event times then determine actual window membership. The response's `as_of` and window never expand: future completions and completions before the start remain excluded. AI timing still unions overlapping execution intervals, and personal metrics reuse the project calculation. W-0064 owns metric UI integration.
+Completion uses the precise latest effective completion event. Reopened unfinished, cancelled, deleted and child Issues do not count. Second-precision MySQL `completed_at` selects candidates with a one-second margin at both boundaries; precise event timestamps decide membership, and the response window remains exactly seven days. A project counts each completed root once. Valid published deliveries, completed stages and formal reviews identify participants, each counted once per Issue across roles and assistants. Assistants attribute work to their authorized human; unknown mappings remain unknown. Comments, mentions and mutable assignees are not participation evidence. Former members retain historical participation, while the project per-member numerator includes only current effective members and its denominator includes zero-contribution members. The response includes the roster snapshot.
+
+Published deliveries come directly from actual delivery rows, scoped through their visible Issue without reading delivery bodies or private transcripts. Activity intervals, fixed business-unit acceptance, capacity calendars, handoffs and supplementary formal contributions enter through `POST /api/v1/cloud-projects/{project_id}/collaboration-metrics/evidence`. Typed receipts contain controlled facts and source-record IDs belonging to the same visible Issue. Current Developers or administrators submit them; storage records the reporter, server timestamp and receipt ID. This is a provenance-bearing collection API: legacy Run wall time is never inferred as AI activity. Without activity receipts, `sample=0, partial=true`. Producers must report actual activity and explicit queue, approval, offline and parent-wait intervals without uploading private process text.
+
+Receipts reuse Issue activity storage. `issue_id + key` is stable identity; identical revision/content replay returns the original receipt. Updates require the next revision and the original reporter or a project administrator. Fixed units require `key=unit_id` and must not be split per Run or subagent. Revisions cannot replace identity or activity start time. Deleting the latest receipt never resurrects an older version. Reads recheck source availability and current Issue permissions. Withdrawn evidence exposes only missing counts, suppresses affected definite ratios and marks partial data.
+
+Activity intervals are clipped to the window, grouped by Issue and stable run_id to remove each Run’s explicit waits, unioned per Agent, then summed across distinct Agents. Actual work before failure or cancellation remains included; open intervals end at asOf and are partial. Capacity retains each person's calendar, available time and effective membership interval. Missing, overlapping or insufficiently precise clipped calendars and zero denominators produce no ratio. 400h/40h=10 describes runtime scale, never efficiency or saved human time.
+
+Fixed units count only when `accepted_version=content_version` and acceptedAt is in the window. Necessary approval or acceptance preserves AI classification; substantive human edits must be classified mixed. Unknown classification or unavailable evidence suppresses a definite AI-independent share. Delivery P50/P90 retain full elapsed time including nights and weekends. Handoffs run from materials-ready/dependencies-cleared readyAt to actual startedAt; acceptance does not end queue time. Unstarted backlog and longest wait remain separate, with queue, judgment and external wait types retained.
 
 ```mermaid
 flowchart LR
-    Scope[Project authority and visible root Issues] --> Candidates[Second-precision indexed candidates]
-    Candidates --> Active{In progress or in review}
-    Active -->|Yes| Timing[Lifecycle and execution interval union]
-    Active -->|No| Event[Precise latest completion event]
-    Event --> Window[Actual half-open seven-day window]
-    Window --> Completion[Completions and completion owner]
-    Window --> Timing
-    Completion --> Personal[Personal cross-project totals]
-    Timing --> Personal
+    Access[Current authority and effective members] --> Snapshot[One database read snapshot]
+    Issues[Visible root Issues and completion events] --> Snapshot
+    Delivery[Actual published deliveries] --> Snapshot
+    Receipt[Versioned structured source receipts] --> Snapshot
+    Snapshot --> Completion[Completions and multiple contributors]
+    Snapshot --> Activity[Per-Agent activity union and capacity]
+    Snapshot --> Accepted[Version-bound fixed-unit acceptance]
+    Snapshot --> Handoff[Full cycles and actual-start waiting]
+    Completion --> Response[One asOf with aggregates and replayable evidence]
+    Activity --> Response
+    Accepted --> Response
+    Handoff --> Response
 ```

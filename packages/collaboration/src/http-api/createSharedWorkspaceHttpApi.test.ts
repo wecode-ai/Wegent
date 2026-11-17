@@ -34,7 +34,7 @@ describe("createSharedWorkspaceHttpApi", () => {
   it("keeps project and personal metrics fresh and scoped to their endpoints", async () => {
     const { transport, get } = createTransport();
     const api = createSharedWorkspaceHttpApi(transport);
-    get.mockResolvedValue({ definition_version: 1 });
+    get.mockResolvedValue({ definition_version: "collab-v2" });
     await api.metrics.project("project/one");
     await api.metrics.project("project/one");
     await api.metrics.personal();
@@ -43,6 +43,28 @@ describe("createSharedWorkspaceHttpApi", () => {
       "/v1/cloud-projects/project%2Fone/collaboration-metrics",
       "/v1/collaboration-metrics/me",
     ]);
+  });
+  it("publishes a versioned metric receipt only to its explicit project", async () => {
+    const { transport, post } = createTransport();
+    const api = createSharedWorkspaceHttpApi(transport);
+    const record = {
+      key: "review",
+      revision: 1,
+      issue_id: "issue",
+      references: ["issue"],
+      fact: {
+        kind: "contribution" as const,
+        user_id: 7,
+        basis: "formal_review" as const,
+        effective_at: "2026-11-17T00:00:00Z",
+        revoked: false,
+      },
+    };
+    await api.metrics.recordEvidence("project/one", record);
+    expect(post).toHaveBeenCalledExactlyOnceWith(
+      "/v1/cloud-projects/project%2Fone/collaboration-metrics/evidence",
+      record,
+    );
   });
   it("round-trips opaque MCP server names and options through project Agent editing", async () => {
     const { transport, get, patch } = createTransport();
@@ -302,7 +324,10 @@ describe("createSharedWorkspaceHttpApi", () => {
     expect(get).toHaveBeenCalledWith("/v1/resources?include_readiness=false");
     await expect(
       api.workspaces.addMember("workspace/1", { userId: 8 }),
-    ).resolves.toMatchObject({ user_id: 8, user_name: "王芳" });
+    ).resolves.toMatchObject({
+      user_id: 8,
+      user_name: "王芳",
+    });
     await api.workspaces.removeExecutionEnvironment("workspace/1", 22);
 
     expect(get).toHaveBeenNthCalledWith(
@@ -438,7 +463,10 @@ describe("createSharedWorkspaceHttpApi", () => {
     );
     expect(patch).toHaveBeenCalledWith(
       "/v1/cloud-projects/project%2F1/chat-agents/agent%2F2",
-      { version: 1, status: "archived" },
+      {
+        version: 1,
+        status: "archived",
+      },
     );
   });
 

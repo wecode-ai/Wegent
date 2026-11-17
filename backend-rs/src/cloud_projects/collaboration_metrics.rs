@@ -1,14 +1,16 @@
 //! Observed collaboration metrics computed from authoritative Issue and run events.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use brz_http_server::StatusCode;
-use brz_mysql::{FromMysqlRow, Json, MysqlService};
+#[cfg(test)]
+use brz_mysql::MysqlService;
+use brz_mysql::{FromMysqlRow, Json, MysqlIsolationLevel, MysqlTransactionOptions};
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use serde_json::{Value, json};
 
-use crate::board_snapshot::repository::{BoardSnapshotRepository, has_permission};
 use crate::http_compat::FastApiError;
 use crate::loop_tasks::{auth::FlexibleUser, loop_repository::visible_item_filter_sql};
+use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
 
 const LIVE: &str =
@@ -18,6 +20,9 @@ const LIVE: &str =
 #[path = "collaboration_metrics_mysql_tests.rs"]
 mod mysql_tests;
 
+#[path = "collaboration_metrics_v2/mod.rs"]
+mod v2;
+
 #[derive(Debug, FromMysqlRow)]
 struct Issue {
     id: String,
@@ -25,15 +30,6 @@ struct Issue {
     created_at: NaiveDateTime,
     completed_at: Option<NaiveDateTime>,
     metadata: Json<Value>,
-}
-
-#[derive(Debug, FromMysqlRow)]
-struct Run {
-    loop_item_id: String,
-    executor_owner_user_id: i32,
-    status: String,
-    started_at: NaiveDateTime,
-    completed_at: NaiveDateTime,
 }
 
 fn timestamp(value: &Value) -> Option<NaiveDateTime> {
@@ -75,26 +71,6 @@ fn completed_in_window(issue: &Issue, as_of: NaiveDateTime) -> bool {
             .is_some_and(|time| time >= as_of - Duration::days(7) && time < as_of)
 }
 
-fn completion_owner(issue: &Issue) -> Option<i64> {
-    // A snapshot is authoritative; never infer ownership from today's assignee.
-    if let Some(event) = completion_event(issue) {
-        if let Some(owner) = event.get("completion_owner_user_id") {
-            return owner.as_i64().filter(|id| *id > 0);
-        }
-        // Historical human transitions have an actor. Automation initiators are
-        // not completion owners, even when the rule was created by a human.
-        if matches!(event["trigger"].as_str(), Some("user_update" | "create"))
-            && event.get("automation").is_none()
-        {
-            return event["by_user_id"].as_i64().filter(|id| *id > 0);
-        }
-        return None;
-    }
-    issue.metadata.0["completion_owner_user_id"]
-        .as_i64()
-        .filter(|id| *id > 0)
-}
-
 fn issue_start(issue: &Issue) -> NaiveDateTime {
     history(issue)
         .iter()
@@ -102,111 +78,6 @@ fn issue_start(issue: &Issue) -> NaiveDateTime {
         .filter_map(|event| timestamp(&event["at"]))
         .min()
         .unwrap_or(issue.created_at)
-}
-
-fn union_seconds(intervals: &mut [(NaiveDateTime, NaiveDateTime)]) -> f64 {
-    intervals.sort_unstable();
-    let mut covered = 0_i64;
-    let mut current: Option<(NaiveDateTime, NaiveDateTime)> = None;
-    for &(start, end) in intervals.iter() {
-        match current {
-            Some((left, right)) if start <= right => current = Some((left, right.max(end))),
-            Some((left, right)) => {
-                covered += (right - left).num_milliseconds();
-                current = Some((start, end));
-            }
-            None => current = Some((start, end)),
-        }
-    }
-    if let Some((start, end)) = current {
-        covered += (end - start).num_milliseconds();
-    }
-    covered as f64 / 1000.0
-}
-
-fn timing(issue: &Issue, runs: &[&Run], as_of: NaiveDateTime) -> Value {
-    let start = issue_start(issue).min(as_of);
-    let authoritative_end = completion_time(issue);
-    let end = if issue.status == "completed" {
-        authoritative_end.unwrap_or(as_of)
-    } else {
-        as_of
-    }
-    .min(as_of)
-    .max(start);
-    let wall = (end - start).num_milliseconds() as f64 / 1000.0;
-    let mut partial = issue.status != "completed"
-        || authoritative_end.is_none()
-        || authoritative_end.is_some_and(|end| end < start)
-        || issue.created_at > as_of;
-    let mut intervals = Vec::new();
-    let mut by_owner = BTreeMap::<String, Vec<_>>::new();
-    let mut owner_work = BTreeMap::<String, f64>::new();
-    let mut run_seconds = 0.0;
-    let mut unknown_terminal_runs = 0;
-    let mut run_statuses = BTreeMap::<&str, usize>::new();
-    for run in runs {
-        *run_statuses.entry(&run.status).or_default() += 1;
-        if !valid_time(run.started_at) {
-            continue;
-        }
-        let completed = valid_time(run.completed_at);
-        if !completed {
-            partial = true;
-            if matches!(run.status.as_str(), "completed" | "failed" | "cancelled") {
-                unknown_terminal_runs += 1;
-                continue;
-            }
-        }
-        let left = run.started_at.max(start);
-        let right = if completed { run.completed_at } else { as_of }.min(end);
-        if right <= left {
-            continue;
-        }
-        run_seconds += (right - left).num_milliseconds() as f64 / 1000.0;
-        intervals.push((left, right));
-        let owner = if run.executor_owner_user_id > 0 {
-            run.executor_owner_user_id.to_string()
-        } else {
-            "unknown".into()
-        };
-        *owner_work.entry(owner.clone()).or_default() +=
-            (right - left).num_milliseconds() as f64 / 1000.0;
-        by_owner.entry(owner).or_default().push((left, right));
-    }
-    let ai = union_seconds(&mut intervals);
-    let owners: BTreeMap<_, _> = by_owner.into_iter().map(|(owner, mut ranges)| {
-        let seconds = union_seconds(&mut ranges);
-        let work = owner_work.get(&owner).copied().unwrap_or_default();
-        (owner, json!({"ai_active_seconds": seconds, "agent_run_seconds":work, "denominator": wall, "share": (wall > 0.0).then(|| seconds / wall)}))
-    }).collect();
-    json!({
-        "issue_id": issue.id, "start": start.and_utc(), "end": end.and_utc(),
-        "wall_seconds": wall, "ai_active_seconds": ai, "non_ai_seconds": wall - ai,
-        "agent_run_seconds": run_seconds, "observed_ai_share": (wall > 0.0).then(|| ai / wall),
-        "per_person": owners, "partial": partial, "unknown_terminal_runs": unknown_terminal_runs,
-        "run_statuses":run_statuses,
-    })
-}
-
-fn completion(issues: &[Issue], member_count: usize, as_of: NaiveDateTime) -> Value {
-    let mut owners = BTreeMap::<String, usize>::new();
-    let mut count = 0;
-    for issue in issues {
-        if !completed_in_window(issue, as_of) {
-            continue;
-        }
-        count += 1;
-        let owner = completion_owner(issue)
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "unknown".into());
-        *owners.entry(owner).or_default() += 1;
-    }
-    json!({
-        "completed": count, "denominator": member_count, "sample": count,
-        "per_member": (member_count > 0).then(|| count as f64 / member_count as f64),
-        "per_person": owners, "unknown": owners.get("unknown").copied().unwrap_or_default(),
-    })
 }
 
 fn candidate_window(as_of: NaiveDateTime) -> (NaiveDateTime, NaiveDateTime) {
@@ -225,117 +96,120 @@ fn metric_cohort(visibility: &str) -> String {
     )
 }
 
-async fn load_issues(
-    mysql: &MysqlService,
+async fn load_issues_on(
+    query: &mut impl PluginQuery,
     project_id: &str,
     visibility: &str,
     as_of: NaiveDateTime,
 ) -> Result<Vec<Issue>, brz_mysql::MysqlError> {
     let (start, end) = candidate_window(as_of);
     let cohort = metric_cohort(visibility);
-    mysql.fetch_all(format!(
+    query.fetch_all(format!(
         "SELECT id,status,created_at,completed_at,COALESCE(metadata,JSON_OBJECT()) AS metadata FROM loop_items \
          WHERE {cohort}"
     ), (project_id, start, end)).await
 }
 
-async fn project_metrics(
-    state: &AppState,
+#[cfg(test)]
+async fn load_issues(
+    mut mysql: &MysqlService,
+    project: &str,
+    visibility: &str,
+    as_of: NaiveDateTime,
+) -> Result<Vec<Issue>, brz_mysql::MysqlError> {
+    load_issues_on(&mut mysql, project, visibility, as_of).await
+}
+
+struct ProjectData {
+    id: String,
+    issues: Vec<Issue>,
+    facts: Vec<v2::Evidence>,
+    unavailable: Vec<v2::Evidence>,
+    members: BTreeSet<i32>,
+}
+
+async fn project_data_on(
+    query: &mut impl PluginQuery,
     project_id: i64,
     user_id: i32,
-    as_of: NaiveDateTime,
-) -> Result<Value, FastApiError> {
-    let access = BoardSnapshotRepository::new(&state.mysql)
-        .require_cloud_project_role(project_id, user_id)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Cloud project not found"))?;
-    if !has_permission(&access.role, "Viewer") {
+    window: v2::Window,
+) -> Result<ProjectData, FastApiError> {
+    let access =
+        super::collaboration_access::authorized_projects_on(query, user_id, Some(project_id), None)
+            .await
+            .map_err(internal)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                FastApiError::detail(StatusCode::NOT_FOUND, "Cloud project not found")
+            })?;
+    if access.priority > 4 {
         return Err(FastApiError::forbidden("Insufficient permission"));
     }
-    if access.project.task_provider() != "local" {
+    let metadata = access
+        .project
+        .metadata
+        .as_ref()
+        .and_then(|m| m.0.value.as_ref());
+    if metadata
+        .and_then(|m| m.task_provider.as_deref())
+        .unwrap_or("local")
+        != "local"
+    {
         return Err(FastApiError::detail(
             StatusCode::CONFLICT,
             "Metrics require authoritative project Issue history",
         ));
     }
-    let members = super::members::list_project_members(
-        &state.mysql,
+    let members = super::members::list_project_members_on(
+        query,
         project_id,
-        access.workspace_id,
-        access.project.membership_mode(),
-        &access.project.member_capabilities(),
+        Some(super::parse_project_id(&access.workspace.id)?),
+        metadata.map_or("inherit", |m| m.membership_mode()),
+        &metadata
+            .map(|m| m.member_capabilities())
+            .unwrap_or_default(),
         user_id,
     )
     .await
-    .map_err(internal)?;
-    let visibility = if has_permission(&access.role, "Maintainer") {
+    .map_err(internal)?
+    .into_iter()
+    .map(|member| member.user_id)
+    .collect();
+    let visibility = if access.priority <= 1 {
         String::new()
     } else {
-        visible_item_filter_sql(user_id, access.project.default_issue_security())
+        visible_item_filter_sql(
+            user_id,
+            metadata
+                .and_then(|m| m.default_issue_security.as_deref())
+                .filter(|value| matches!(*value, "open" | "related"))
+                .unwrap_or("open"),
+        )
     };
     let id = project_id.to_string();
-    let (start, candidate_end) = candidate_window(as_of);
-    let cohort = metric_cohort(&visibility);
-    let mut issues = load_issues(&state.mysql, &id, &visibility, as_of)
+    let mut issues = load_issues_on(query, &id, &visibility, window.as_of.naive_utc())
         .await
         .map_err(internal)?;
-    // created_at is database-generated in the session timezone; lifecycle and
-    // execution timestamps are explicitly persisted as naive UTC by their owners.
     for issue in &mut issues {
         issue.created_at = crate::socketio::project_chat_messages::utc_timestamp(issue.created_at);
     }
-    let runs: Vec<Run> = state.mysql.fetch_all(format!(
-        "SELECT loop_item_id,executor_owner_user_id,status,started_at,completed_at FROM loop_item_executions \
-         WHERE cloud_project_id=? AND loop_item_id IN (SELECT id FROM loop_items WHERE {cohort}) \
-         AND started_at > '1970-01-01 00:00:01' AND started_at < ?"),
-        (id.as_str(), id.as_str(), start, candidate_end, as_of),
-    ).await.map_err(internal)?;
-    let mut grouped = BTreeMap::<&str, Vec<&Run>>::new();
-    for run in &runs {
-        grouped.entry(&run.loop_item_id).or_default().push(run);
-    }
-    // Keep the metric cohort explicit: completed in the window or currently active.
-    let timings: Vec<_> = issues
-        .iter()
-        .filter(|issue| {
-            matches!(issue.status.as_str(), "in_progress" | "in_review")
-                || completed_in_window(issue, as_of)
-        })
-        .map(|issue| {
-            timing(
-                issue,
-                grouped
-                    .get(issue.id.as_str())
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
-                as_of,
-            )
-        })
-        .collect();
-    let total = |key: &str| {
-        timings
-            .iter()
-            .filter_map(|row| row[key].as_f64())
-            .sum::<f64>()
-    };
-    let wall = total("wall_seconds");
-    let ai = total("ai_active_seconds");
-    let active_members: BTreeSet<_> = members.iter().map(|member| member.user_id).collect();
-    Ok(json!({
-        "definition_version": 1, "project_id": id, "as_of": as_of.and_utc(),
-        "window": {"start": start.and_utc(), "end": as_of.and_utc(), "days": 7},
-        "denominator_definition": "current_effective_members",
-        "completion": completion(&issues, active_members.len(), as_of),
-        "timing": {"wall_seconds": wall, "ai_active_seconds": ai, "non_ai_seconds": wall-ai,
-            "agent_run_seconds": total("agent_run_seconds"), "denominator": wall,
-            "observed_ai_share": (wall > 0.0).then(|| ai/wall), "sample": timings.len(),
-            "partial": timings.iter().any(|row| row["partial"] == true), "issues": timings},
-    }))
+    let facts = v2::repository::load(query, &id, &visibility, window).await?;
+    Ok(ProjectData {
+        id,
+        issues,
+        facts: facts.records,
+        unavailable: facts.unavailable,
+        members,
+    })
+}
+
+fn snapshot_options() -> MysqlTransactionOptions {
+    MysqlTransactionOptions::default().with_isolation_level(MysqlIsolationLevel::RepeatableRead)
 }
 
 fn internal(error: impl std::fmt::Display) -> FastApiError {
-    tracing::error!(%error, "Collaboration metrics read failed");
+    tracing::error!(%error,"Collaboration metrics read failed");
     FastApiError::detail(
         StatusCode::INTERNAL_SERVER_ERROR,
         "Collaboration metrics unavailable",
@@ -348,13 +222,19 @@ async fn read_project_metrics(
     project_id: &str,
     #[auth] user: FlexibleUser,
 ) -> Result<Value, FastApiError> {
-    project_metrics(
-        state,
-        super::parse_project_id(project_id)?,
-        user.id,
-        Utc::now().naive_utc(),
-    )
-    .await
+    let window = v2::Window { as_of: Utc::now() };
+    let id = super::parse_project_id(project_id)?;
+    let data = state
+        .mysql
+        .with_transaction_options(snapshot_options(), async |mut tx| {
+            Ok(project_data_on(&mut tx, id, user.id, window).await)
+        })
+        .await
+        .map_err(internal)??;
+    let mut response = v2::aggregate(&data.issues, &data.facts, &data.members, window, None);
+    v2::mark_unavailable(&mut response, &data.unavailable, None);
+    response["project_id"] = json!(data.id);
+    Ok(response)
 }
 
 #[brz_http_server::get("/api/v1/collaboration-metrics/me")]
@@ -362,64 +242,71 @@ async fn read_personal_metrics(
     #[inject(state)] state: &AppState,
     #[auth] user: FlexibleUser,
 ) -> Result<Value, FastApiError> {
-    let as_of = Utc::now().naive_utc();
-    let projects =
-        super::collaboration_access::authorized_projects(&state.mysql, user.id, None, None)
-            .await
-            .map_err(internal)?;
-    let mut rows = Vec::new();
-    let mut wall = 0.0;
-    let mut ai = 0.0;
-    let mut work = 0.0;
-    let mut sample = 0;
-    let mut partial = false;
-    let owner = user.id.to_string();
+    let window = v2::Window { as_of: Utc::now() };
+    state
+        .mysql
+        .with_transaction_options(snapshot_options(), async |mut tx| {
+            Ok(personal_metrics_on(&mut tx, user.id, window).await)
+        })
+        .await
+        .map_err(internal)?
+}
+
+async fn personal_metrics_on(
+    query: &mut impl PluginQuery,
+    user_id: i32,
+    window: v2::Window,
+) -> Result<Value, FastApiError> {
+    let projects = super::collaboration_access::authorized_projects_on(query, user_id, None, None)
+        .await
+        .map_err(internal)?;
+    let mut issues = Vec::new();
+    let mut facts = Vec::new();
+    let mut unavailable = Vec::new();
+    let mut breakdown = Vec::new();
     for project in projects {
-        // External-provider Issues are not authoritative local events.
         let local = project
             .project
             .metadata
             .as_ref()
-            .and_then(|value| value.0.value.as_ref())
-            .and_then(|metadata| metadata.task_provider.as_deref())
+            .and_then(|m| m.0.value.as_ref())
+            .and_then(|m| m.task_provider.as_deref())
             .unwrap_or("local")
             == "local";
         if !local {
             continue;
         }
-        let metrics = project_metrics(
-            state,
+        let data = project_data_on(
+            query,
             super::parse_project_id(&project.project.id)?,
-            user.id,
-            as_of,
+            user_id,
+            window,
         )
         .await?;
-        let completed = metrics["completion"]["per_person"][&owner]
-            .as_u64()
-            .unwrap_or_default();
-        for issue in metrics["timing"]["issues"].as_array().into_iter().flatten() {
-            if let Some(person) = issue["per_person"].get(&owner) {
-                wall += person["denominator"].as_f64().unwrap_or_default();
-                ai += person["ai_active_seconds"].as_f64().unwrap_or_default();
-                work += person["agent_run_seconds"].as_f64().unwrap_or_default();
-                sample += 1;
-                partial |= issue["partial"] == true;
-            }
-        }
-        rows.push(json!({"project_id": project.project.id, "completed": completed}));
+        let metrics = v2::aggregate(
+            &data.issues,
+            &data.facts,
+            &data.members,
+            window,
+            Some(user_id),
+        );
+        breakdown
+            .push(json!({"project_id":data.id,"completed":metrics["completion"]["completed"]}));
+        issues.extend(data.issues);
+        facts.extend(data.facts);
+        unavailable.extend(data.unavailable);
     }
-    let completed: u64 = rows
-        .iter()
-        .filter_map(|row| row["completed"].as_u64())
-        .sum();
-    Ok(json!({"definition_version":1, "user_id":user.id,
-        "completion":{"completed":completed,"sample":completed,"denominator":1,"per_member":completed,
-            "unknown":0,"per_person":{owner:completed}},
-        "timing":{"wall_seconds":wall,"ai_active_seconds":ai,"non_ai_seconds":wall-ai,
-            "agent_run_seconds":work,"denominator":wall,"sample":sample,"partial":partial,
-            "observed_ai_share":(wall > 0.0).then(|| ai/wall)},
-        "as_of":as_of.and_utc(),
-        "window":{"start":(as_of-Duration::days(7)).and_utc(),"end":as_of.and_utc(),"days":7}, "projects":rows}))
+    let mut response = v2::aggregate(
+        &issues,
+        &facts,
+        &BTreeSet::from([user_id]),
+        window,
+        Some(user_id),
+    );
+    v2::mark_unavailable(&mut response, &unavailable, Some(user_id));
+    response["user_id"] = json!(user_id);
+    response["projects"] = json!(breakdown);
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -430,142 +317,19 @@ mod tests {
             .unwrap()
             .naive_utc()
     }
-    fn issue() -> Issue {
-        Issue {
-            id: "one".into(),
-            status: "completed".into(),
-            created_at: at(0),
-            completed_at: Some(at(2)),
-            metadata: Json(
-                json!({"status_history":[{"to_status":"completed","trigger":"user_update","by_user_id":7}]}),
-            ),
-        }
-    }
-    fn run(owner: i32, start: i64, end: i64) -> Run {
-        Run {
-            loop_item_id: "one".into(),
-            executor_owner_user_id: owner,
-            status: "completed".into(),
-            started_at: at(start),
-            completed_at: at(end),
-        }
+    #[test]
+    fn query_window_never_includes_the_database_candidate_margin() {
+        let now = Utc::now();
+        let result = v2::Window { as_of: now }.view();
+        assert_eq!(
+            timestamp(&result["end"]).unwrap() - timestamp(&result["start"]).unwrap(),
+            Duration::days(7)
+        );
+        let (left, right) = candidate_window(now.naive_utc());
+        assert_eq!(right - left, Duration::days(7) + Duration::seconds(2));
     }
     #[test]
-    fn overlapping_runs_use_union_and_keep_serial_work_and_people_separate() {
-        let runs = [run(7, -1, 2), run(8, 1, 3)];
-        let result = timing(&issue(), &runs.iter().collect::<Vec<_>>(), at(4));
-        assert_eq!(result["wall_seconds"], 7200.0);
-        assert_eq!(result["ai_active_seconds"], 7200.0);
-        assert_eq!(result["agent_run_seconds"], 10800.0);
-        assert_eq!(result["per_person"]["7"]["share"], 1.0);
-        assert_eq!(result["per_person"]["8"]["share"], 0.5);
-    }
-    #[test]
-    fn rolling_window_is_half_open_and_reopened_issues_do_not_count() {
-        let mut issues = vec![issue(), issue(), issue(), issue()];
-        issues[0].completed_at = Some(at(0));
-        issues[1].completed_at = Some(at(168));
-        issues[2].status = "in_progress".into();
-        issues[3].metadata = Json(json!({}));
-        let result = completion(&issues, 5, at(168));
-        assert_eq!(result["completed"], 2);
-        assert_eq!(result["per_member"], 0.4);
-        assert_eq!(result["unknown"], 1);
-        assert!(completion(&issues, 0, at(168))["per_member"].is_null());
-    }
-    #[test]
-    fn precise_completion_events_override_mysql_second_rounding_at_both_window_edges() {
-        let as_of = at(168) + Duration::milliseconds(900);
-        let mut recent = issue();
-        recent.completed_at = Some(at(168) + Duration::seconds(1));
-        let actual = at(168) + Duration::milliseconds(800);
-        recent.metadata = Json(json!({"status_history":[{
-            "to_status":"completed", "at":actual.and_utc(),
-            "trigger":"user_update", "by_user_id":7
-        }]}));
-        assert_eq!(completion(&[recent], 2, as_of)["completed"], 1);
-
-        let mut outside = issue();
-        outside.completed_at = Some(at(0) + Duration::seconds(1));
-        outside.metadata = Json(json!({"status_history":[{
-            "to_status":"completed", "at":(at(0)+Duration::milliseconds(800)).and_utc()
-        }]}));
-        assert_eq!(completion(&[outside], 2, as_of)["completed"], 0);
-
-        let mut boundary = issue();
-        boundary.completed_at = Some(at(168));
-        boundary.metadata = Json(json!({"status_history":[{
-            "to_status":"completed", "at":as_of.and_utc()
-        }]}));
-        assert_eq!(completion(&[boundary], 2, as_of)["completed"], 0);
-    }
-
-    #[test]
-    fn lifecycle_timing_uses_the_current_completion_event_without_rounding() {
-        let mut issue = issue();
-        issue.completed_at = Some(at(2) + Duration::seconds(1));
-        let end = at(2) + Duration::milliseconds(800);
-        issue.metadata = Json(json!({"status_history":[
-            {"to_status":"completed", "at":at(1).and_utc()},
-            {"to_status":"in_progress", "at":at(1).and_utc()},
-            {"to_status":"completed", "at":end.and_utc()}
-        ]}));
-        let result = timing(&issue, &[], at(4));
-        assert_eq!(result["end"], json!(end.and_utc()));
-        assert_eq!(result["wall_seconds"], 3600.8);
-        assert_eq!(result["partial"], false);
-        issue.completed_at = None;
-        assert_eq!(completion(&[issue], 1, at(4))["completed"], 1);
-    }
-    #[test]
-    fn missing_terminal_end_is_unknown_and_running_end_is_clipped() {
-        let mut issue = issue();
-        issue.status = "in_progress".into();
-        issue.completed_at = None;
-        let mut running = run(7, 0, 1);
-        running.completed_at = at(-500_000);
-        running.status = "running".into();
-        let mut failed = run(8, 0, 1);
-        failed.completed_at = running.completed_at;
-        failed.status = "failed".into();
-        let result = timing(&issue, &[&running, &failed], at(2));
-        assert_eq!(result["partial"], true);
-        assert_eq!(result["ai_active_seconds"], 7200.0);
-        assert_eq!(result["unknown_terminal_runs"], 1);
-    }
-    #[test]
-    fn failed_and_cancelled_intervals_stop_at_their_end_and_never_count_waiting() {
-        let mut failed = run(0, 0, 1);
-        failed.status = "failed".into();
-        let mut cancelled = run(8, 0, 1);
-        cancelled.status = "cancelled".into();
-        let result = timing(&issue(), &[&failed, &cancelled], at(4));
-        assert_eq!(result["ai_active_seconds"], 3600.0);
-        assert_eq!(result["non_ai_seconds"], 3600.0);
-        assert_eq!(result["per_person"]["unknown"]["ai_active_seconds"], 3600.0);
-    }
-
-    #[test]
-    fn explicit_unknown_completion_owner_never_falls_back_to_the_actor() {
-        let mut issue = issue();
-        issue.metadata = Json(json!({"completion_owner_user_id":9,"status_history":[
-            {"to_status":"completed","trigger":"user_update","by_user_id":7,"completion_owner_user_id":null}
-        ]}));
-        assert_eq!(completion_owner(&issue), None);
-        issue.metadata = Json(json!({"status_history":[
-            {"to_status":"completed","trigger":"automation","by_user_id":7},
-            {"to_status":"completed","trigger":"assistant_publication","by_user_id":9,"completion_owner_user_id":9}
-        ]}));
-        assert_eq!(completion_owner(&issue), Some(9));
-    }
-
-    #[test]
-    fn zero_duration_has_no_share_and_history_offsets_are_normalized() {
-        let mut issue = issue();
-        issue.completed_at = Some(issue.created_at);
-        let result = timing(&issue, &[], at(4));
-        assert_eq!(result["wall_seconds"], 0.0);
-        assert!(result["observed_ai_share"].is_null());
+    fn offsets_are_normalized() {
         assert_eq!(
             timestamp(&json!("2026-11-17T08:00:00+08:00")),
             timestamp(&json!("2026-11-17T00:00:00"))

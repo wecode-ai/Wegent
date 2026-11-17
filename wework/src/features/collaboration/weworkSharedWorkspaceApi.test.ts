@@ -1054,7 +1054,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     )
     expect(WEWORK_SHARED_WORKSPACE_MISSING_METHODS).toEqual([])
 
-    const metrics = { definition_version: 1 }
+    const metrics = { definition_version: 'collab-v2' }
     client.get.mockResolvedValueOnce(metrics)
     await expect(api.metrics.project('project/1')).resolves.toEqual(metrics)
     expect(client.get).toHaveBeenLastCalledWith(

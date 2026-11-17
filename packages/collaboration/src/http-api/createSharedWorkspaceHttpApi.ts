@@ -271,6 +271,11 @@ export function createSharedWorkspaceHttpApi(
           `/v1/cloud-projects/${encoded(projectId)}/collaboration-metrics`,
         ),
       personal: () => transport.get("/v1/collaboration-metrics/me"),
+      recordEvidence: (projectId, record) =>
+        transport.post(
+          `/v1/cloud-projects/${encoded(projectId)}/collaboration-metrics/evidence`,
+          record,
+        ),
     },
     workspaces: {
       async transferOwnership(workspaceId, input) {
@@ -546,7 +551,9 @@ export function createSharedWorkspaceHttpApi(
           items: AssistantParticipation[];
         }>(
           `/v1/loop-items/${encoded(issueId)}/assistant-participations/backfill`,
-          { dryRun: input?.dryRun ?? true },
+          {
+            dryRun: input?.dryRun ?? true,
+          },
         );
       },
     },
@@ -598,7 +605,9 @@ export function createSharedWorkspaceHttpApi(
           items: AssistantParticipation[];
         }>(
           `/v1/cloud-projects/${encoded(projectId)}/assistant-participations/backfill`,
-          { dryRun: input?.dryRun ?? true },
+          {
+            dryRun: input?.dryRun ?? true,
+          },
         );
       },
       async listCollaborationGroups(projectId) {
@@ -668,7 +677,9 @@ export function createSharedWorkspaceHttpApi(
         }
         return transport.post<CollaborationComment>(
           `/v1/loop-items/${encoded(issueId)}/comments`,
-          { body },
+          {
+            body,
+          },
         );
       },
       createAssistantPublication(issueId, body, options) {

@@ -95,12 +95,13 @@ pub(super) const MESSAGE_COLUMNS: &str = "id, message_id, client_message_id, pro
 
 /// `subscribe`'s message query (`after_sequence` order, limit, task filter).
 pub(crate) async fn load_messages(
-    state: &AppState,
+    mysql: &impl brz_mysql::Mysql,
     viewer_user_id: i64,
     project_id: &str,
     task_id: Option<&str>,
     after_sequence: i64,
     limit: i64,
+    message_id: Option<&str>,
 ) -> Result<Vec<Value>, Value> {
     let task_filter = if task_id.is_some() {
         "project_chat_messages.task_id = ?"
@@ -111,13 +112,19 @@ pub(crate) async fn load_messages(
     if let Some(task_id) = task_id {
         arguments.push(StatementArg::Str(task_id.to_string()));
     }
+    let exact_message = if let Some(message) = message_id {
+        arguments.push(StatementArg::Str(message.to_owned()));
+        " AND project_chat_messages.message_id = ?"
+    } else {
+        ""
+    };
     let sql = if after_sequence > 0 {
         format!(
             "SELECT {MESSAGE_COLUMNS} FROM project_chat_messages \
              WHERE project_chat_messages.project_id = ? \
              AND (project_chat_messages.deleted_at IS NULL OR project_chat_messages.deleted_at \
              IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-             AND {task_filter} AND project_chat_messages.id > ? \
+             AND {task_filter}{exact_message} AND project_chat_messages.id > ? \
              ORDER BY project_chat_messages.id ASC LIMIT ?"
         )
     } else {
@@ -126,7 +133,7 @@ pub(crate) async fn load_messages(
              WHERE project_chat_messages.project_id = ? \
              AND (project_chat_messages.deleted_at IS NULL OR project_chat_messages.deleted_at \
              IN ('1970-01-01 00:00:00', '1970-01-01 00:00:01')) \
-             AND {task_filter} \
+             AND {task_filter}{exact_message} \
              ORDER BY project_chat_messages.id DESC LIMIT ?"
         )
     };
@@ -134,8 +141,7 @@ pub(crate) async fn load_messages(
         arguments.push(StatementArg::Int(after_sequence));
     }
     arguments.push(StatementArg::Int(limit));
-    let handle = &state.mysql;
-    let rows: Vec<MessageRow> = handle.fetch_all(&sql, arguments).await.map_err(|error| {
+    let rows: Vec<MessageRow> = mysql.fetch_all(&sql, arguments).await.map_err(|error| {
         tracing::error!(%error, project_id, "project chat message read failed");
         ack_error("INVALID_MESSAGE", "database query failed")
     })?;
@@ -143,7 +149,7 @@ pub(crate) async fn load_messages(
     if after_sequence <= 0 {
         rows.reverse();
     }
-    authorship::message_views(state, viewer_user_id, &rows).await
+    authorship::message_views(mysql, viewer_user_id, &rows).await
 }
 
 /// One message by primary key (`db.refresh`).
@@ -609,6 +615,7 @@ pub(crate) fn message_view(row: &MessageRow) -> Value {
         == Some(true);
     let published_by = metadata
         .get("assistant_publication")
+        .filter(|_| verified_publication)
         .and_then(|value| value.get("published_by"))
         .and_then(Value::as_str);
     let source = if historical {
@@ -749,4 +756,63 @@ pub(crate) fn uuid4() -> String {
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+pub(crate) async fn verify_source_resolution(mysql: &impl brz_mysql::Mysql) -> anyhow::Result<()> {
+    let execution = mysql.execute("INSERT INTO loop_item_executions(loop_item_id,cloud_project_id,agent_id,executor_owner_user_id,status,runtime_device_id,runtime_task_id,execution_payload,error_message) VALUES ('timestamp-issue','timestamp-project',NULL,1,'claimed','native-device','native-task','{}','')",()).await?.last_insert_id;
+    for id in ["first-source", "newer-source"] {
+        mysql.execute("INSERT INTO project_chat_messages(message_id,project_id,task_id,sender_type,sender_id,sender_name,message_type,content,metadata,agent_id,runtime_device_id,runtime_task_id,status) VALUES (?,'timestamp-project','timestamp-issue','agent','group','Group','agent_status','private output',?,'','native-device','native-task','completed')",
+            (id,Json(json!({"execution_id":execution,"runtime_event_sequence":"7","private_prompt":"private"})))).await?;
+    }
+    let messages = load_messages(
+        mysql,
+        99,
+        "timestamp-project",
+        Some("timestamp-issue"),
+        0,
+        1,
+        Some("first-source"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["messageId"], "first-source");
+    assert_eq!(
+        messages[0]["traceState"], "available",
+        "A canonical group execution has a nullable agent ID"
+    );
+    assert_eq!(messages[0]["runtimeAddress"]["taskId"], "native-task");
+    assert_eq!(messages[0]["content"], "");
+    assert!(messages[0]["metadata"].get("private_prompt").is_none());
+    assert_eq!(messages[0]["metadata"]["runtime_event_sequence"], "7");
+    assert!(
+        load_messages(
+            mysql,
+            99,
+            "timestamp-project",
+            Some("another-issue"),
+            0,
+            1,
+            Some("first-source")
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    mysql.execute("UPDATE loop_items SET metadata=JSON_SET(COALESCE(metadata,JSON_OBJECT()),'$.assistant_dispatch_role','owner_assistant') WHERE id='timestamp-issue'",()).await?;
+    let private = load_messages(
+        mysql,
+        99,
+        "timestamp-project",
+        Some("timestamp-issue"),
+        0,
+        1,
+        Some("first-source"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(private[0]["traceState"], "restricted");
+    assert!(private[0]["runtimeAddress"].is_null());
+    Ok(())
 }

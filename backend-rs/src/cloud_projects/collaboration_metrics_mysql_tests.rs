@@ -64,7 +64,7 @@ async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
                     deleted,
                     Json(
                         json!({"status_history":[{"to_status":"completed","at":actual.and_utc(),
-                 "completion_owner_user_id":7}]}),
+                 "trigger":"user_update","by_user_id":7}]}),
                     ),
                 ),
             )
@@ -75,8 +75,30 @@ async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
         .await?;
     assert_eq!(rounded, edge + Duration::seconds(1));
     let issues = load_issues(mysql, "project", "", as_of).await?;
-    assert_eq!(completion(&issues, 2, as_of)["completed"], 3);
-    assert_eq!(completion(&issues, 2, as_of)["per_person"]["7"], 3);
+    assert_eq!(
+        v2::aggregate(
+            &issues,
+            &[],
+            &BTreeSet::from([7, 8]),
+            v2::Window {
+                as_of: as_of.and_utc()
+            },
+            None
+        )["completion"]["completed"],
+        3
+    );
+    assert_eq!(
+        v2::aggregate(
+            &issues,
+            &[],
+            &BTreeSet::from([7, 8]),
+            v2::Window {
+                as_of: as_of.and_utc()
+            },
+            None
+        )["completion"]["per_person"]["7"],
+        3
+    );
     let ids: BTreeSet<_> = issues
         .iter()
         .filter(|issue| completed_in_window(issue, as_of))
@@ -85,3 +107,6 @@ async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
     assert_eq!(ids, BTreeSet::from(["recent", "missing", "sentinel"]));
     Ok(())
 }
+
+#[path = "collaboration_metrics_receipts_mysql_tests.rs"]
+mod receipts;

@@ -46,6 +46,28 @@ export interface ProjectChatMessage {
   updatedAt: string
 }
 
+function runtimeSequence(message: ProjectChatMessage): bigint {
+  const sequence = message.metadata.runtime_event_sequence
+  return typeof sequence === 'string' && /^[1-9]\d{0,19}$/.test(sequence)
+    ? BigInt(sequence)
+    : BigInt(0)
+}
+
+export function acceptsProjectChatMessage(
+  previous: ProjectChatMessage,
+  incoming: ProjectChatMessage,
+  isDelta = false,
+): boolean {
+  const previousSequence = runtimeSequence(previous)
+  const incomingSequence = runtimeSequence(incoming)
+  if (previousSequence !== incomingSequence)
+    return previousSequence < incomingSequence
+  return (
+    (!isDelta || incomingSequence === BigInt(0)) &&
+    previous.updatedAt <= incoming.updatedAt
+  )
+}
+
 export interface ProjectChatSubscription {
   messages: ProjectChatMessage[]
   latestSequence: number
@@ -211,7 +233,9 @@ export function createProjectChatClient(
       return emitWithAck<ProjectChatMessage[]>(
         client,
         'wework:project_chat:execution:snapshot',
-        { ...snapshot },
+        {
+          ...snapshot,
+        },
       )
     },
     async subscribe(projectId, taskId, afterSequence, onMessage, onChunk) {
@@ -223,35 +247,51 @@ export function createProjectChatClient(
       let subscribed = false
       let active = true
       const revisions = new Map<string, number>()
-      const handler = (message: ProjectChatMessage) => {
-        if (message.projectId !== projectId) return
-        if (taskId && message.taskId !== taskId) return
-        if (!taskId && message.taskId) return
-        const revision = (revisions.get(message.messageId) ?? 0) + 1
-        revisions.set(message.messageId, revision)
-        onMessage(message)
+      const latestMessages = new Map<string, ProjectChatMessage>()
+      const resolvedSources = new Map<
+        string,
+        Pick<ProjectChatMessage, 'traceRef' | 'traceState' | 'runtimeAddress'>
+      >()
+      const sourceReads = new Map<string, Promise<void>>()
+      const resolveSource = (message: ProjectChatMessage, revision: number) => {
         if (!message.traceRef || message.traceState !== 'restricted') return
-        // Room projections contain no private source. Resolve this viewer's
-        // view through the existing permission-checked history read.
-        void emitWithAck<ProjectChatSubscription>(client, SUBSCRIBE_EVENT, {
-          projectId,
-          taskId,
-          afterSequence: message.sequenceNumber - 1,
-          limit: 1,
-        })
+        // Resolve this viewer's exact persisted source; the first message's
+        // sequence zero cursor otherwise selects the newest history page.
+        const read = emitWithAck<ProjectChatSubscription>(
+          client,
+          SUBSCRIBE_EVENT,
+          {
+            projectId,
+            taskId,
+            messageId: message.messageId,
+            afterSequence: message.sequenceNumber - 1,
+            limit: 1,
+          },
+        )
           .then((snapshot) => {
             if (!active) {
               leaveUnusedRoom(projectId, taskId)
               return
             }
-            if (revisions.get(message.messageId) !== revision) return
+            if ((revisions.get(message.messageId) ?? 0) !== revision) return
             const resolved = snapshot.messages.find(
               (row) =>
                 row.messageId === message.messageId &&
                 row.projectId === projectId &&
                 (row.taskId ?? undefined) === taskId,
             )
-            if (resolved) onMessage(resolved)
+            const latest = latestMessages.get(message.messageId)
+            if (resolved && latest && latest.traceRef === message.traceRef) {
+              resolvedSources.set(message.messageId, {
+                traceRef: resolved.traceRef,
+                traceState: resolved.traceState,
+                runtimeAddress: resolved.runtimeAddress,
+              })
+              onMessage({
+                ...latest,
+                ...resolvedSources.get(message.messageId),
+              })
+            }
           })
           .catch((error) => {
             if (active)
@@ -260,12 +300,52 @@ export function createProjectChatClient(
                 error,
               )
           })
+          .finally(() => {
+            if (sourceReads.get(message.messageId) === read)
+              sourceReads.delete(message.messageId)
+          })
+        sourceReads.set(message.messageId, read)
+      }
+      const inScope = (message: ProjectChatMessage) =>
+        message.projectId === projectId &&
+        (message.taskId ?? undefined) === taskId
+      const handler = (message: ProjectChatMessage) => {
+        if (!inScope(message)) return
+        const previous = latestMessages.get(message.messageId)
+        if (previous && !acceptsProjectChatMessage(previous, message)) return
+        const revision = (revisions.get(message.messageId) ?? 0) + 1
+        revisions.set(message.messageId, revision)
+        resolvedSources.delete(message.messageId)
+        latestMessages.set(message.messageId, message)
+        onMessage(message)
+        resolveSource(message, revision)
       }
       const chunkHandler = (message: ProjectChatMessage) => {
-        if (message.projectId !== projectId) return
-        if (taskId && message.taskId !== taskId) return
-        if (!taskId && message.taskId) return
-        onChunk?.(message)
+        if (!inScope(message)) return
+        const source = resolvedSources.get(message.messageId)
+        const latest =
+          source?.traceRef === message.traceRef
+            ? { ...message, ...source }
+            : message
+        const previous = latestMessages.get(message.messageId)
+        const isDelta = message.metadata.contentMode !== 'snapshot'
+        if (previous && !acceptsProjectChatMessage(previous, message, isDelta))
+          return
+        latestMessages.set(message.messageId, {
+          ...latest,
+          content: isDelta
+            ? `${previous?.content ?? ''}${latest.content}`
+            : latest.content,
+        })
+        onChunk?.(latest)
+        // Streaming can be the first event carrying a Runtime binding. One
+        // lookup per source avoids issuing a database read for every token.
+        if (
+          message.traceRef &&
+          source?.traceRef !== message.traceRef &&
+          !sourceReads.has(message.messageId)
+        )
+          resolveSource(message, revisions.get(message.messageId) ?? 0)
       }
       const reconnectHandler = () => {
         if (!subscribed) return
@@ -274,9 +354,7 @@ export function createProjectChatClient(
           taskId,
           afterSequence: 0,
         })
-          .then((snapshot) =>
-            snapshot.messages.forEach((message) => onMessage(message)),
-          )
+          .then((snapshot) => snapshot.messages.forEach(handler))
           .catch((error) => {
             console.warn(
               '[Wework] Failed to refresh project chat after reconnect',
@@ -298,6 +376,11 @@ export function createProjectChatClient(
           },
         )
         subscribed = true
+        for (const message of snapshot.messages) {
+          const previous = latestMessages.get(message.messageId)
+          if (!previous || acceptsProjectChatMessage(previous, message))
+            latestMessages.set(message.messageId, message)
+        }
         return {
           snapshot,
           unsubscribe: () => {
@@ -431,7 +514,10 @@ async function emitWithAck<T>(
         reject(
           Object.assign(
             new Error(ack?.error?.message || 'Project chat request failed'),
-            { detail: ack?.error?.detail, code: ack?.error?.code },
+            {
+              detail: ack?.error?.detail,
+              code: ack?.error?.code,
+            },
           ),
         )
         return

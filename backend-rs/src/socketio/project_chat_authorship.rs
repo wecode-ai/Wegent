@@ -17,7 +17,7 @@ struct AuthorshipRow {
 }
 
 pub(crate) async fn message_views(
-    state: &AppState,
+    mysql: &impl brz_mysql::Mysql,
     viewer_user_id: i64,
     rows: &[MessageRow],
 ) -> Result<Vec<Value>, Value> {
@@ -40,7 +40,7 @@ pub(crate) async fn message_views(
            AND a.resource_type='chat_agent' \
          LEFT JOIN loop_items i ON i.id=m.task_id AND i.cloud_project_id=m.project_id AND i.resource_type='task' \
          LEFT JOIN loop_item_executions e ON e.id=CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.execution_id')) AS UNSIGNED) \
-           AND e.cloud_project_id=m.project_id AND e.loop_item_id=m.task_id AND e.agent_id=m.agent_id \
+           AND e.cloud_project_id=m.project_id AND e.loop_item_id=m.task_id AND COALESCE(e.agent_id,'')=m.agent_id \
          LEFT JOIN users u ON u.id=CASE \
            WHEN m.sender_type='user' THEN CAST(m.sender_id AS UNSIGNED) \
            WHEN m.sender_type='agent' THEN COALESCE( \
@@ -59,7 +59,7 @@ pub(crate) async fn message_views(
         .iter()
         .map(|row| StatementArg::Str(row.message_id.clone()))
         .collect();
-    let authors: Vec<AuthorshipRow> = state.mysql.fetch_all(sql, args).await.map_err(|error| {
+    let authors: Vec<AuthorshipRow> = mysql.fetch_all(sql, args).await.map_err(|error| {
         tracing::error!(%error, "project message authorship lookup failed");
         ack_error("INVALID_MESSAGE", "database query failed")
     })?;
@@ -93,7 +93,7 @@ pub(crate) async fn message_view_with_actor(
     viewer_user_id: i64,
     row: &MessageRow,
 ) -> Result<Value, Value> {
-    let views = message_views(state, viewer_user_id, std::slice::from_ref(row)).await?;
+    let views = message_views(&state.mysql, viewer_user_id, std::slice::from_ref(row)).await?;
     views
         .into_iter()
         .next()
@@ -178,6 +178,7 @@ fn shared_metadata(metadata: &Value, include_runtime: bool) -> serde_json::Map<S
         "imported_from",
         "history_import",
         "member_assistant_result",
+        "runtime_event_sequence",
     ];
     const RUNTIME_KEYS: &[&str] = &[
         "run_id",
@@ -280,6 +281,35 @@ mod tests {
         );
         assert!(view["metadata"].get("private_prompt").is_none());
         assert_eq!(view["metadata"]["summary"], "Public summary");
+    }
+
+    #[test]
+    fn verified_publications_resolve_complete_sources_without_mixing_pairs() {
+        let mut published = row();
+        published.sender_type = "user".into();
+        published.runtime_device_id = "incomplete-column-device".into();
+        published.runtime_task_id.clear();
+        published.metadata = Some(brz_mysql::Json(json!({"assistant_publication": {
+            "verified": true, "published_by": "human", "device_id": "bound-device", "task_id": "bound-task"
+        }})));
+        let mut view = message_view(&published);
+        apply_private_source_access(&mut view, &published, 7, Some(7), false);
+        assert_eq!(
+            view["runtimeAddress"],
+            json!({"deviceId":"bound-device","taskId":"bound-task"})
+        );
+        assert_eq!(view["confirmationState"], "authorized");
+        assert!(view["traceRef"].is_string());
+        let room = shared_message_payload(&view);
+        assert!(room["runtimeAddress"].is_null());
+        assert_eq!(room["traceState"], "restricted");
+        published.metadata = Some(brz_mysql::Json(json!({"assistant_publication": {
+            "verified": false, "published_by": "ai", "device_id": "forged-device", "task_id": "forged-task"
+        }})));
+        let forged = message_view(&published);
+        assert!(forged["traceRef"].is_null());
+        assert_eq!(forged["generationSource"], "human");
+        assert_eq!(forged["publicationSource"], "human");
     }
 
     #[test]

@@ -1055,6 +1055,10 @@ methods = ["GET"]
 path = "/api/v1/cloud-projects/:project_id/collaboration-metrics"
 
 [[routes]]
+methods = ["POST"]
+path = "/api/v1/cloud-projects/:project_id/collaboration-metrics/evidence"
+
+[[routes]]
 methods = ["GET"]
 path = "/api/v1/collaboration-metrics/me"
 [[routes]]

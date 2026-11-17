@@ -59,6 +59,7 @@ fn payload(data: &Value) -> Map<String, Value> {
         ("replyToMessageId", "reply_to_message_id"),
         ("triggerMessageId", "trigger_message_id"),
         ("afterSequence", "after_sequence"),
+        ("messageId", "message_id"),
     ];
     let mut out = Map::new();
     let Some(object) = data.as_object() else {
@@ -181,12 +182,13 @@ pub(crate) async fn subscribe(
         return Ok(Reply::payload(scope.ack()));
     }
     let messages = match load_messages(
-        state,
+        &state.mysql,
         user_id,
         &request.project_id,
         request.task_id.as_deref(),
         request.after_sequence,
         request.limit,
+        request.message_id.as_deref(),
     )
     .await
     {
@@ -216,6 +218,7 @@ struct SubscribeRequest {
     task_id: Option<String>,
     after_sequence: i64,
     limit: i64,
+    message_id: Option<String>,
 }
 
 impl SubscribeRequest {
@@ -224,6 +227,7 @@ impl SubscribeRequest {
             project_id: required_identifier(payload, "project_id")?,
             task_id: optional_identifier(payload, "task_id")?,
             after_sequence: optional_i64(payload, "after_sequence").unwrap_or(0).max(0),
+            message_id: optional_identifier(payload, "message_id")?,
             limit: optional_i64(payload, "limit")
                 .unwrap_or(DEFAULT_LIMIT)
                 .clamp(1, LIMIT_MAX),

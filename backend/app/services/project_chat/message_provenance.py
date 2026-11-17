@@ -24,6 +24,7 @@ SHARED_METADATA_KEYS = frozenset(
         "imported_from",
         "history_import",
         "member_assistant_result",
+        "runtime_event_sequence",
     }
 )
 
