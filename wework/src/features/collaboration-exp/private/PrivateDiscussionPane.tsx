@@ -5,7 +5,6 @@ import {
   createAssistantConversation,
   createAssistantInteraction,
   createRuntimeAssistantTransport,
-  localWeworkEndpoint,
   type CollaborationIssue,
   type CollaborationProject,
   type IssueParticipationViewer,
@@ -21,6 +20,7 @@ import type { ExperiencePrivateConversation } from '../model'
 import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
 import { useConclusionPublication } from './useConclusionPublication'
 import { useExperienceDraftInput } from '../useExperienceDraftInput'
+import { experienceAssistantEndpoint } from '../model/assistantEndpoint'
 import './PrivateExperience.css'
 
 export interface PrivateDiscussionPaneProps {
@@ -141,13 +141,15 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
   const address = useMemo(() => ({ ...conversation.address }), [conversation.address])
   const assistantInteraction = useMemo(() => {
     const runtime = services.runtimeWorkApi
-    if (!runtime) return null
-    const endpoint = localWeworkEndpoint({
+    if (!runtime || !conversation.address.deviceId.trim() || !conversation.address.taskId.trim())
+      return null
+    const endpoint = experienceAssistantEndpoint(state.devices, conversation.address.deviceId, {
       ownerUserId: conversation.ownerUserId,
       roleId: 'issue-private',
       displayName: conversation.title ?? 'Assistant',
       capabilities: { attachments: true, cancel: true, trace: true },
     })
+    if (!endpoint) return null
     const scopedConversation = createAssistantConversation(endpoint, {
       id: conversation.address.taskId,
       projectId: project.id,
@@ -178,7 +180,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
         transcript: target => runtime.getRuntimeTranscript(target),
       })
     )
-  }, [conversation, issue.id, project.id, services.runtimeWorkApi])
+  }, [conversation, issue.id, project.id, services.runtimeWorkApi, state.devices])
   const draft = {
     value: conclusionDraft.value,
     revision: conclusionDraft.revision,
@@ -306,7 +308,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                 assistantInteraction && actorId !== undefined
                   ? async input => {
                       try {
-                        await assistantInteraction.send({
+                        const result = await assistantInteraction.send({
                           requestId: input.clientUserMessageId,
                           idempotencyKey: input.clientUserMessageId,
                           projectId: project.id,
@@ -319,7 +321,10 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                           interruptWhenBusy: input.interruptWhenBusy,
                           runtimeOptions: input.runtimeOptions,
                         })
-                        return { sent: true }
+                        return {
+                          sent: true,
+                          ...(result.queued === true ? { queued: true } : {}),
+                        }
                       } catch (cause) {
                         return {
                           sent: false,

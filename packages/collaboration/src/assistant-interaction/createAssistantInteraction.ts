@@ -5,8 +5,10 @@ import type {
 import type {
   AssistantConversation,
   AssistantEndpoint,
+  AssistantInteractionEvent,
   AssistantInteractionRequest,
 } from "./types";
+import { projectAssistantInteractionEvents } from "./events";
 
 export interface AssistantInteractionTransport {
   sendRuntimeMessage(input: {
@@ -18,7 +20,14 @@ export interface AssistantInteractionTransport {
     runtimeOptions?: AssistantInteractionRequest["runtimeOptions"];
     conversationContext: "private_discussion";
     queueIfBusy: boolean;
-  }): Promise<{ accepted: boolean; taskId: string; error?: string | null }>;
+  }): Promise<{
+    accepted: boolean;
+    taskId: string;
+    status?: "queued" | "running";
+    queuePosition?: number | null;
+    turnId?: string;
+    error?: string | null;
+  }>;
   cancelRuntimeTask(
     address: RuntimeTaskAddress,
   ): Promise<{ accepted: boolean; error?: string | null }>;
@@ -32,6 +41,7 @@ export class AssistantInteractionError extends Error {
     | "scope_mismatch"
     | "unsupported_attachments"
     | "unsupported_cancel"
+    | "unsupported_trace"
     | "history_unavailable"
     | "request_rejected";
 
@@ -40,6 +50,7 @@ export class AssistantInteractionError extends Error {
       | "scope_mismatch"
       | "unsupported_attachments"
       | "unsupported_cancel"
+      | "unsupported_trace"
       | "history_unavailable"
       | "request_rejected",
     message: string,
@@ -65,6 +76,21 @@ export function createAssistantInteraction(
       "Endpoint does not own this conversation",
     );
 
+  let lastRequest: AssistantInteractionRequest | null = null;
+
+  async function historyResult() {
+    const result = await transport.getRuntimeTranscript(conversation.address);
+    if (
+      result.historyUnavailable ||
+      (result.taskId && result.taskId !== conversation.address.taskId)
+    )
+      throw new AssistantInteractionError(
+        "history_unavailable",
+        "Original conversation history is unavailable",
+      );
+    return result;
+  }
+
   async function send(request: AssistantInteractionRequest) {
     if (
       request.projectId !== conversation.projectId ||
@@ -88,6 +114,7 @@ export function createAssistantInteraction(
         "unsupported_attachments",
         "Endpoint does not support attachments",
       );
+    lastRequest = request;
     const result = await transport.sendRuntimeMessage({
       address: conversation.address,
       message: request.message,
@@ -109,6 +136,7 @@ export function createAssistantInteraction(
       conversationId: conversation.id,
       requestId: request.requestId,
       state: "accepted" as const,
+      ...(result.status === "queued" ? { queued: true } : {}),
     };
   }
 
@@ -132,16 +160,28 @@ export function createAssistantInteraction(
       return { conversationId: conversation.id, state: "cancelled" as const };
     },
     async history() {
-      const result = await transport.getRuntimeTranscript(conversation.address);
-      if (
-        result.historyUnavailable ||
-        (result.taskId && result.taskId !== conversation.address.taskId)
-      )
+      return historyResult();
+    },
+    async events(
+      requestId?: string,
+      traceRef?: string | null,
+    ): Promise<AssistantInteractionEvent[]> {
+      if (!lastRequest || (requestId && requestId !== lastRequest.requestId))
         throw new AssistantInteractionError(
-          "history_unavailable",
-          "Original conversation history is unavailable",
+          "request_rejected",
+          "No matching assistant request is available",
         );
-      return result;
+      if (traceRef && !endpoint.capabilities.trace)
+        throw new AssistantInteractionError(
+          "unsupported_trace",
+          "Endpoint does not support execution traces",
+        );
+      return projectAssistantInteractionEvents(
+        conversation.id,
+        lastRequest,
+        await historyResult(),
+        traceRef,
+      );
     },
   };
 }

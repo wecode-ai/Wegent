@@ -2899,22 +2899,33 @@ class ProjectChatService:
 
         from app.services.project_chat.message_provenance import message_provenance
 
+        metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+        publication = metadata.get("assistant_publication")
+        runtime_device_id, runtime_task_id = row.runtime_device_id, row.runtime_task_id
+        if not (runtime_device_id and runtime_task_id):
+            runtime_device_id, runtime_task_id = None, None
+            if isinstance(publication, dict) and publication.get("verified") is True:
+                device_id, task_id = publication.get("device_id"), publication.get(
+                    "task_id"
+                )
+                if isinstance(device_id, str) and isinstance(task_id, str):
+                    runtime_device_id, runtime_task_id = device_id, task_id
         runtime_address = None
         provenance = message_provenance(db, row)
-        if row.runtime_device_id and row.runtime_task_id:
+        if runtime_device_id and runtime_task_id:
             runtime_address = {
-                "deviceId": row.runtime_device_id,
-                "taskId": row.runtime_task_id,
+                "deviceId": runtime_device_id,
+                "taskId": runtime_task_id,
             }
         trace_ref = None
         trace_state = "history-unavailable"
-        if row.runtime_device_id and row.runtime_task_id:
+        if runtime_device_id and runtime_task_id:
             identity = "\0".join(
                 (
                     row.project_id,
                     row.task_id or "",
-                    row.runtime_device_id,
-                    row.runtime_task_id,
+                    runtime_device_id,
+                    runtime_task_id,
                 )
             )
             trace_ref = hashlib.sha256(identity.encode()).hexdigest()
@@ -2954,6 +2965,7 @@ class ProjectChatService:
 
         from app.services.project_chat.message_provenance import (
             is_private_execution_message,
+            message_runtime_is_shared,
             message_runtime_owner_id,
             shared_message_metadata,
         )
@@ -2961,6 +2973,7 @@ class ProjectChatService:
         view = cls.to_view(row, db=db)
         if message_runtime_owner_id(db, row) == viewer_user_id:
             return view
+        runtime_shared = message_runtime_is_shared(db, row)
         private_execution = is_private_execution_message(
             row.message_type, row.metadata_json
         )
@@ -2972,12 +2985,18 @@ class ProjectChatService:
                     if private_execution and view.type == "text"
                     else view.type
                 ),
-                "metadata": shared_message_metadata(row.metadata_json),
-                "runtime_address": None,
+                "metadata": shared_message_metadata(
+                    row.metadata_json, include_runtime=runtime_shared
+                ),
+                "runtime_address": view.runtime_address if runtime_shared else None,
                 "trace_state": (
-                    "restricted"
-                    if view.trace_ref is not None
-                    else "history-unavailable"
+                    "available"
+                    if runtime_shared and view.runtime_address is not None
+                    else (
+                        "restricted"
+                        if view.trace_ref is not None
+                        else "history-unavailable"
+                    )
                 ),
             }
         )

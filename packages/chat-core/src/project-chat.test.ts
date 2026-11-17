@@ -290,6 +290,27 @@ describe('createProjectChatClient', () => {
     ).resolves.toEqual(message)
   })
 
+  it('rejects assistant provenance on the unverified room transport', async () => {
+    const client = createProjectChatClient({
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      getToken: () => 'token',
+    })
+
+    await expect(
+      client.send({
+        projectId: 'project-1',
+        taskId: 'task-1',
+        clientMessageId: 'client-1',
+        text: 'hello',
+        assistantSource: { deviceId: 'device', taskId: 'task' },
+      }),
+    ).rejects.toThrow(
+      'Assistant publication provenance requires the activity transport',
+    )
+    expect(socket.emit).not.toHaveBeenCalled()
+  })
+
   it('subscribes to loop-item invalidation events on the authenticated user socket', async () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
     const onChange = vi.fn()

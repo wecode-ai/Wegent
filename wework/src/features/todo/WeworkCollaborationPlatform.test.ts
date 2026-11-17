@@ -14,7 +14,7 @@ import type {
   ProjectSpaceDetailServices,
 } from '@/features/workbench/workbenchServices'
 import i18n from '@/i18n'
-import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeTaskAddress, RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import type {
   CollaborationApp,
@@ -1089,6 +1089,7 @@ describe('Wework collaboration workspace API', () => {
 
   it.each([
     'active',
+    'activity',
     'archived',
     'foreign',
     'unlinked',
@@ -1118,6 +1119,9 @@ describe('Wework collaboration workspace API', () => {
         linkedAt: '2026-10-20T00:00:00Z',
       }
       const pendingRead = deferred<{ success: boolean; code?: string }>()
+      const listBindings = vi
+        .fn()
+        .mockResolvedValue(status === 'unlinked' || status === 'activity' ? [] : [binding])
       const delayed =
         status === 'superseded' || status === 'superseded-error' || status === 'dismissed'
       const laterBinding = { ...binding, id: 'later', taskId: 'later-task' }
@@ -1134,7 +1138,10 @@ describe('Wework collaboration workspace API', () => {
             projects: { list: vi.fn().mockResolvedValue([project]) },
             issues: {},
             taskBindings: {
-              list: vi.fn().mockResolvedValue(status === 'unlinked' ? [] : [binding, laterBinding]),
+              list:
+                status === 'activity'
+                  ? listBindings
+                  : vi.fn().mockResolvedValue(status === 'unlinked' ? [] : [binding, laterBinding]),
             },
           } as unknown as SharedWorkspaceApi,
           localProjects: [],
@@ -1183,6 +1190,24 @@ describe('Wework collaboration workspace API', () => {
         }
       const editor = detail().props.children(vi.fn())
       expect(editor.props.existingTaskSource?.port.bindTask).toBeTypeOf('function')
+      if (status === 'activity') {
+        expect(editor.props.onOpenRuntimeTask).toBeTypeOf('function')
+        await act(async () => {
+          editor.props.onOpenRuntimeTask?.({ deviceId: 'device', taskId: 'task' })
+        })
+        const conversation = detail().props.conversation as {
+          props: { initialAddress: RuntimeTaskAddress }
+        }
+        expect(conversation.props.initialAddress).toMatchObject({
+          deviceId: 'device',
+          taskId: 'task',
+          projectSession: { projectId: project.id, issueId: issue.id },
+          issueExecution: { projectId: project.id, issueId: issue.id },
+        })
+        expect(listBindings).not.toHaveBeenCalled()
+        expect(readTask).not.toHaveBeenCalled()
+        return
+      }
       await act(async () => {
         editor.props.onOpenTaskConversation?.(toWeworkIssueTaskBinding(binding))
       })

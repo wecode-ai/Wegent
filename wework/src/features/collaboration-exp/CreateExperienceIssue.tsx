@@ -448,11 +448,16 @@ function CreateIssueForm({
                         data-testid={`collaboration-exp-create-assistant-${entry.id}`}
                         onChange={() => {
                           setDispatchIntent(null)
-                          setSelectedAssistants(current =>
-                            selected
-                              ? current.filter(id => id !== entry.id)
-                              : [...current, entry.id]
-                          )
+                          setSelectedAssistants(current => {
+                            if (selected) return current.filter(id => id !== entry.id)
+                            return [
+                              ...current.filter(id => {
+                                const candidate = assistantRoster.find(item => item.id === id)
+                                return candidate?.userId !== entry.userId
+                              }),
+                              entry.id,
+                            ]
+                          })
                         }}
                       />
                       <span>

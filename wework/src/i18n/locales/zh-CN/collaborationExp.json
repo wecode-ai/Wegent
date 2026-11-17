@@ -252,6 +252,7 @@
     "paused": "已暂停",
     "unavailable": "助理团信息尚不可用。",
     "managementUnavailable": "助理配置尚不可用，请重试加载后再管理。",
+    "deviceUnavailable": "配置的执行设备当前不可用，请刷新设备后重试。",
     "state": {
       "waiting": "待确认",
       "running": "推进中",

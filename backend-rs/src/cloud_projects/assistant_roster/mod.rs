@@ -13,7 +13,7 @@ use crate::http_compat::FastApiError;
 mod dispatch;
 mod roster;
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ProjectAssistantRosterEntry {
     pub(super) id: String,

@@ -69,4 +69,5 @@ export interface AssistantInteractionEvent {
   state: AssistantInteractionState;
   summary?: string;
   error?: string;
+  traceRef?: string | null;
 }

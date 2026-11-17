@@ -569,17 +569,33 @@ pub(crate) async fn update_message(
         })
 }
 
+/// Resolve a complete persisted source pair; never combine unrelated sources.
+pub(super) fn runtime_source(row: &MessageRow) -> (String, String) {
+    if !row.runtime_device_id.is_empty() && !row.runtime_task_id.is_empty() {
+        return (row.runtime_device_id.clone(), row.runtime_task_id.clone());
+    }
+    let metadata = row.metadata();
+    let publication = &metadata["assistant_publication"];
+    if publication["verified"] != true {
+        return (String::new(), String::new());
+    }
+    (
+        publication["device_id"].as_str().unwrap_or_default().into(),
+        publication["task_id"].as_str().unwrap_or_default().into(),
+    )
+}
+
 /// `ProjectChatMessageView`.
 pub(crate) fn message_view(row: &MessageRow) -> Value {
     let metadata = row.metadata();
-    let trace_ref =
-        (!row.runtime_device_id.is_empty() && !row.runtime_task_id.is_empty()).then(|| {
-            let identity = format!(
-                "{}\0{}\0{}\0{}",
-                row.project_id, row.task_id, row.runtime_device_id, row.runtime_task_id
-            );
-            format!("{:x}", Sha256::digest(identity.as_bytes()))
-        });
+    let (device_id, task_id) = runtime_source(row);
+    let trace_ref = (!device_id.is_empty() && !task_id.is_empty()).then(|| {
+        let identity = format!(
+            "{}\0{}\0{}\0{}",
+            row.project_id, row.task_id, device_id, task_id
+        );
+        format!("{:x}", Sha256::digest(identity.as_bytes()))
+    });
     let historical = metadata
         .get("history_import")
         .is_some_and(|value| !value.is_null())

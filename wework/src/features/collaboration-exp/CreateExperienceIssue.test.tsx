@@ -319,6 +319,28 @@ describe('CreateExperienceIssue', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('keeps one assistant role per member in a dispatch', async () => {
+    const f = setup('backend')
+    f.listAssistantRoster.mockResolvedValue([
+      rosterEntry(),
+      {
+        ...rosterEntry(),
+        id: 'roster-colleague-second',
+        roleId: 'implement',
+        endpointRef: 'local_wework:8:implement',
+        displayName: 'Implementation assistant',
+      },
+    ])
+    render(<CreateExperienceIssue {...f.props} />)
+    chooseProject(f)
+    const first = await screen.findByTestId('collaboration-exp-create-assistant-roster-colleague')
+    const second = screen.getByTestId('collaboration-exp-create-assistant-roster-colleague-second')
+    fireEvent.click(first)
+    fireEvent.click(second)
+    expect(first).not.toBeChecked()
+    expect(second).toBeChecked()
+  })
+
   it('retries a failed roster load without discarding the Issue form', async () => {
     const f = setup('backend')
     f.listAssistantRoster

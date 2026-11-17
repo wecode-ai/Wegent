@@ -354,6 +354,10 @@ pub struct LocalComment {
     #[serde(default)]
     pub actor_display_name: Option<String>,
     #[serde(default)]
+    pub runtime_owner_user_id: Option<String>,
+    #[serde(default)]
+    pub runtime_shared: bool,
+    #[serde(default)]
     pub generation_source: String,
     #[serde(default)]
     pub publication_source: String,

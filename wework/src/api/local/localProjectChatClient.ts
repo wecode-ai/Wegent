@@ -9,8 +9,9 @@ type LocalChatRequest = <T>(method: string, params?: Record<string, unknown>) =>
 
 export interface LocalCommentRecord {
   actor_user_id?: string | null
-  runtime_owner_user_id?: string | null
   actor_display_name?: string | null
+  runtime_owner_user_id?: string | null
+  runtime_shared?: boolean
   generation_source?: ProjectChatMessage['generationSource']
   publication_source?: ProjectChatMessage['publicationSource']
   confirmation_state?: ProjectChatMessage['confirmationState']
@@ -40,11 +41,18 @@ const LOCAL_COMMENT_POLL_INTERVAL_MS = 3000
 const SHARED_METADATA_KEYS = new Set([
   'mentions',
   'stand_in_reply_to',
+  'stand_in',
   'execution_dispatch',
   'activity_type',
   'dispatch_role',
   'manager_display_name',
   'run_status',
+  'activity_at',
+  'conversation_only',
+  'kind',
+  'dispatch_id',
+  'coordination_round_id',
+  'dispatch_assignments',
   'summary',
   'evidence_refs',
   'next_action',
@@ -52,8 +60,18 @@ const SHARED_METADATA_KEYS = new Set([
   'imported_from',
   'history_import',
   'member_assistant_result',
-  'workflow_task_title',
+])
+const SHARED_RUNTIME_METADATA_KEYS = new Set([
+  'run_id',
   'execution_id',
+  'executor_type',
+  'backend_task_id',
+  'execution_url',
+  'model',
+  'runtime_event_sequence',
+  'contentMode',
+  'runtime_turn_id',
+  'workflow_task_title',
 ])
 
 function commentToMessage(
@@ -76,13 +94,18 @@ function commentToMessage(
       : record.sender_type === 'user'
         ? viewerUserIds.has(record.sender_id)
         : false
+  const runtimeVisible = owner || record.runtime_shared === true
   const metadata = owner
     ? (record.metadata ?? {})
     : Object.fromEntries(
-        Object.entries(record.metadata ?? {}).filter(([key]) => SHARED_METADATA_KEYS.has(key))
+        Object.entries(record.metadata ?? {}).filter(
+          ([key]) =>
+            SHARED_METADATA_KEYS.has(key) ||
+            (runtimeVisible && SHARED_RUNTIME_METADATA_KEYS.has(key))
+        )
       )
   const subagentProcess = record.metadata?.kind === 'task_ai_subagent'
-  const runtimeAddressRecord = owner ? metadata.runtime_address : undefined
+  const runtimeAddressRecord = runtimeVisible ? (record.metadata ?? {}).runtime_address : undefined
   const runtimeAddress =
     runtimeAddressRecord &&
     typeof runtimeAddressRecord === 'object' &&
@@ -110,7 +133,9 @@ function commentToMessage(
       ? 'agent_chunk'
       : record.message_type === 'agent_status' || record.message_type === 'agent_chunk'
         ? record.message_type
-        : 'text',
+        : record.message_type === 'system'
+          ? 'system'
+          : 'text',
     content:
       !owner &&
       (subagentProcess ||
@@ -124,8 +149,8 @@ function commentToMessage(
     triggerMessageId: record.trigger_message_id ?? null,
     runtimeAddress,
     status,
-    traceState: owner
-      ? (record.trace_state ?? (runtimeAddress ? 'available' : undefined))
+    traceState: runtimeAddress
+      ? 'available'
       : record.trace_ref
         ? 'restricted'
         : 'history-unavailable',
@@ -235,6 +260,7 @@ export function createLocalProjectChatClient(
         metadata: {
           mentions,
           ...(input.localProjectId != null ? { local_project_id: input.localProjectId } : {}),
+          ...(input.assistantSource ? { assistant_source: input.assistantSource } : {}),
         },
         reply_to_message_id: input.replyToMessageId ?? null,
       },

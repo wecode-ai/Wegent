@@ -1,10 +1,6 @@
 import { useState } from 'react'
 import { ArrowRight, Check, Circle, CircleHelp, LoaderCircle } from 'lucide-react'
-import {
-  issueNeedsUser,
-  localWeworkEndpoint,
-  pendingIssueHumanRequests,
-} from '@wegent/collaboration'
+import { issueNeedsUser, pendingIssueHumanRequests } from '@wegent/collaboration'
 import { standInPolicy, type StandInRole } from '@/api/personalStandIn'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
@@ -26,6 +22,7 @@ import { useExperienceTeamState } from './useExperienceTeamState'
 import { TeamRelay } from './TeamRelay'
 import { AssistantWorkSnapshot } from './AssistantWorkSnapshot'
 import { selectAssistantConversations } from './assistantConversationIdentity'
+import { experienceAssistantEndpoint } from '../model/assistantEndpoint'
 import type { AssistantHomePanel, AssistantHomeProps } from './types'
 import './AssistantExperience.css'
 
@@ -164,17 +161,44 @@ export function AssistantHome({
     const shared = services.sharedWorkspaceApi
     if (!shared?.projects.saveAssistantRosterEntry) return false
     const configuredRole = source.settings?.roles.find(role => role.id === roleId)
-    const endpoint = localWeworkEndpoint({
-      ownerUserId: ownerId,
-      roleId: roleId ?? '@primary',
-      displayName: roleName,
-      availability: 'online',
-      capabilities: { attachments: true, cancel: true, trace: true },
-    })
+    const endpoint = experienceAssistantEndpoint(
+      state.devices,
+      configuredRole?.executionDeviceId ?? source.settings?.executionDeviceId ?? source.deviceId,
+      {
+        ownerUserId: ownerId,
+        roleId: roleId ?? '@primary',
+        displayName: roleName,
+        capabilities: { attachments: true, cancel: true, trace: true },
+      }
+    )
+    if (!endpoint) {
+      setError(t('assistant.deviceUnavailable'))
+      return false
+    }
     try {
       const current = shared.projects.listAssistantRoster
         ? await shared.projects.listAssistantRoster(project.id)
         : []
+      const stale = current.filter(
+        entry =>
+          entry.userId === ownerId &&
+          entry.roleId === (roleId ?? '@primary') &&
+          entry.endpointRef !== endpoint.id &&
+          entry.enabled
+      )
+      for (const entry of stale) {
+        await shared.projects.saveAssistantRosterEntry(project.id, {
+          userId: entry.userId,
+          roleId: entry.roleId,
+          endpointRef: entry.endpointRef,
+          displayName: entry.displayName,
+          enabled: false,
+          capabilityTags: entry.capabilityTags,
+          autonomyPolicy: entry.autonomyPolicy,
+          availability: entry.availability,
+          version: entry.version,
+        })
+      }
       const saved = current.find(entry => entry.endpointRef === endpoint.id)
       await shared.projects.saveAssistantRosterEntry(project.id, {
         userId: ownerId,
@@ -184,7 +208,7 @@ export function AssistantHome({
         enabled: true,
         capabilityTags: configuredRole?.collaboration.tags ?? [],
         autonomyPolicy: policy as unknown as Record<string, unknown>,
-        availability: 'online',
+        availability: endpoint.availability,
         ...(saved ? { version: saved.version } : {}),
       })
       setError(null)
@@ -205,24 +229,18 @@ export function AssistantHome({
       return false
     try {
       const shared = services.sharedWorkspaceApi
-      const endpoint = localWeworkEndpoint({
-        ownerUserId: ownerId,
-        roleId: role.id,
-        displayName: role.name,
-      })
       const entries = (
         await Promise.all(
           projects
             .filter(({ project }) => project.project_store !== 'local')
             .map(async ({ project }) => {
-              if (!shared?.projects.listAssistantRoster) return null
-              const entry = (await shared.projects.listAssistantRoster(project.id)).find(
-                candidate => candidate.endpointRef === endpoint.id
+              if (!shared?.projects.listAssistantRoster) return []
+              return (await shared.projects.listAssistantRoster(project.id)).filter(
+                candidate => candidate.userId === ownerId && candidate.roleId === role.id
               )
-              return entry ?? null
             })
         )
-      ).flatMap(entry => (entry ? [entry] : []))
+      ).flat()
       const disability = await Promise.allSettled(
         entries.map(async entry => {
           if (!shared?.projects.saveAssistantRosterEntry)

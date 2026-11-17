@@ -28,7 +28,8 @@ pub(crate) async fn message_views(
     let sql = format!(
         "SELECT m.message_id, u.id AS actor_user_id, u.user_name AS actor_display_name, \
                 o.id AS runtime_owner_user_id, \
-                CASE WHEN e.id IS NOT NULL \
+                CASE WHEN (e.id IS NOT NULL OR (a.id IS NOT NULL AND \
+                  COALESCE(JSON_UNQUOTE(JSON_EXTRACT(a.metadata,'$.visibility')),'project')<>'private')) \
                   AND JSON_EXTRACT(i.metadata,'$.assistant_dispatch_role') IS NULL \
                   AND JSON_EXTRACT(m.metadata,'$.stand_in') IS NULL \
                   THEN 1 ELSE 0 END AS project_execution \
@@ -110,7 +111,7 @@ fn apply_private_source_access(
 ) {
     let owner = runtime_owner_user_id == Some(viewer);
     if !owner {
-        view["metadata"] = json!(shared_metadata(&row.metadata()));
+        view["metadata"] = json!(shared_metadata(&row.metadata(), project_execution));
         if private_execution_message(&row.message_type, &row.metadata()) {
             view["content"] = json!("");
             if row.message_type == "text" {
@@ -118,7 +119,8 @@ fn apply_private_source_access(
             }
         }
     }
-    if row.runtime_device_id.is_empty() || row.runtime_task_id.is_empty() {
+    let (device_id, task_id) = super::runtime_source(row);
+    if device_id.is_empty() || task_id.is_empty() {
         return;
     }
     view["traceState"] = json!(if owner || project_execution {
@@ -128,8 +130,8 @@ fn apply_private_source_access(
     });
     if owner || project_execution {
         view["runtimeAddress"] = json!({
-            "deviceId": row.runtime_device_id,
-            "taskId": row.runtime_task_id,
+            "deviceId": device_id,
+            "taskId": task_id,
         });
     }
 }
@@ -137,7 +139,7 @@ fn apply_private_source_access(
 pub(crate) fn shared_message_payload(view: &Value) -> Value {
     let mut shared = view.clone();
     if let Some(metadata) = view.get("metadata") {
-        shared["metadata"] = json!(shared_metadata(metadata));
+        shared["metadata"] = json!(shared_metadata(metadata, false));
     }
     if private_execution_message(view["type"].as_str().unwrap_or_default(), &view["metadata"]) {
         shared["content"] = json!("");
@@ -160,7 +162,7 @@ fn private_execution_message(message_type: &str, metadata: &Value) -> bool {
     matches!(message_type, "agent_status" | "agent_chunk") || metadata["kind"] == "task_ai_subagent"
 }
 
-fn shared_metadata(metadata: &Value) -> serde_json::Map<String, Value> {
+fn shared_metadata(metadata: &Value, include_runtime: bool) -> serde_json::Map<String, Value> {
     const SHARED_KEYS: &[&str] = &[
         "mentions",
         "stand_in_reply_to",
@@ -176,11 +178,26 @@ fn shared_metadata(metadata: &Value) -> serde_json::Map<String, Value> {
         "imported_from",
         "history_import",
         "member_assistant_result",
-        "workflow_task_title",
+    ];
+    const RUNTIME_KEYS: &[&str] = &[
+        "run_id",
         "execution_id",
+        "executor_type",
+        "backend_task_id",
+        "execution_url",
+        "model",
+        "runtime_event_sequence",
+        "contentMode",
+        "runtime_turn_id",
+        "workflow_task_title",
     ];
     SHARED_KEYS
         .iter()
+        .chain(if include_runtime {
+            RUNTIME_KEYS.iter()
+        } else {
+            [].iter()
+        })
         .filter_map(|key| {
             metadata
                 .get(*key)

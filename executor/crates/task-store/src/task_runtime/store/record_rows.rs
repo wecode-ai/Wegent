@@ -243,10 +243,15 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
         || metadata
             .get("imported_from")
             .is_some_and(|value| !value.is_null());
-    let verified_publication = metadata["assistant_publication"]["verified"] == true;
+    let assistant_publication = metadata
+        .get("assistant_publication")
+        .filter(|value| value.get("verified").and_then(Value::as_bool) == Some(true));
+    let published_by = assistant_publication
+        .and_then(|value| value.get("published_by"))
+        .and_then(Value::as_str);
     let source = if historical {
         "human"
-    } else if verified_publication {
+    } else if assistant_publication.is_some() {
         "ai"
     } else {
         match sender_type.as_str() {
@@ -263,7 +268,7 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
             .map(|id| id.to_string())
     };
     Ok(LocalComment {
-        runtime_owner_user_id: if verified_publication {
+        runtime_owner_user_id: if assistant_publication.is_some() {
             metadata["assistant_publication"]["runtime_owner_user_id"]
                 .as_i64()
                 .map(|id| id.to_string())
@@ -276,8 +281,11 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
         } else {
             None
         },
+        runtime_shared: false,
         generation_source: source.into(),
-        publication_source: if verified_publication {
+        publication_source: if published_by == Some("ai") {
+            "ai"
+        } else if assistant_publication.is_some() {
             "human"
         } else {
             source
@@ -285,7 +293,9 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
         .into(),
         confirmation_state: if historical {
             "unknown"
-        } else if verified_publication {
+        } else if published_by == Some("ai") {
+            "not_required"
+        } else if assistant_publication.is_some() {
             "authorized"
         } else if source == "ai" {
             "pending"
@@ -321,7 +331,7 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
     })
 }
 
-/// Resolve an AI comment's public actor from stored trigger and robot records.
+/// Replace a local assistant-source claim with server/store-verified publication metadata.
 pub(super) fn enrich_comment_actor(
     connection: &Connection,
     comment: &mut LocalComment,
@@ -329,17 +339,28 @@ pub(super) fn enrich_comment_actor(
     if comment.sender_type != "agent" {
         return Ok(());
     }
-    if comment.runtime_owner_user_id.is_none() {
-        comment.runtime_owner_user_id = connection
+    let agent = if comment.metadata.get("stand_in").is_some() {
+        None
+    } else {
+        connection
             .query_row(
-                "SELECT created_by_user_id FROM loop_items
+                "SELECT created_by_user_id, \
+                    NULLIF(JSON_EXTRACT(metadata,'$.visibility'),'null') \
+                 FROM loop_items \
                  WHERE id=?1 AND cloud_project_id=?2 AND resource_type='chat_agent'",
                 params![comment.sender_id, comment.project_id],
-                |row| row.get::<_, Option<i64>>(0),
+                |row| {
+                    Ok((
+                        row.get::<_, Option<i64>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
             )
             .optional()?
-            .flatten()
-            .map(|id| id.to_string());
+    };
+    if let Some((Some(owner_user_id), visibility)) = &agent {
+        comment.runtime_owner_user_id = Some(owner_user_id.to_string());
+        comment.runtime_shared = visibility.as_deref() != Some("private");
     }
     let trigger = comment
         .trigger_message_id
@@ -385,15 +406,9 @@ pub(super) fn enrich_comment_actor(
         }
     }
     if comment.actor_user_id.is_none() {
-        comment.actor_user_id = connection
-            .query_row(
-                "SELECT created_by_user_id FROM loop_items
-                 WHERE id=?1 AND cloud_project_id=?2 AND resource_type='chat_agent'
-                   AND created_by_user_id>0",
-                params![comment.sender_id, comment.project_id],
-                |row| row.get::<_, i64>(0).map(|id| id.to_string()),
-            )
-            .optional()?;
+        comment.actor_user_id = agent
+            .as_ref()
+            .and_then(|(owner_user_id, _)| owner_user_id.map(|id| id.to_string()));
     }
     Ok(())
 }

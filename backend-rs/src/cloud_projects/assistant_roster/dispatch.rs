@@ -792,4 +792,37 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn selected_manager_endpoint_wins_over_another_role_for_the_same_member() {
+        let entry = |id: &str, role: &str| ProjectAssistantRosterEntry {
+            id: id.into(),
+            project_id: "project".into(),
+            user_id: 7,
+            user_name: "jiangyang7".into(),
+            role_id: role.into(),
+            endpoint_ref: format!("local_wework:7:{role}"),
+            endpoint_kind: "local_wework".into(),
+            display_name: role.into(),
+            enabled: true,
+            capability_tags: Vec::new(),
+            autonomy_policy: json!({"automatic":true}),
+            availability: "online".into(),
+            version: 1,
+        };
+        let first = entry("a-first", "review");
+        let selected = entry("z-selected", "implement");
+        let assignment = DispatchAssignment {
+            roster_entry_id: Some(selected.id.clone()),
+            user_id: 7,
+            brief: "Implement".into(),
+        };
+        let fetched = vec![first.clone(), selected.clone()];
+
+        assert_eq!(
+            coordinator_entry(7, &[(&assignment, &selected)], &fetched)
+                .map(|value| value.id.as_str()),
+            Some("z-selected")
+        );
+    }
 }

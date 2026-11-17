@@ -137,7 +137,7 @@ interface TemporaryChatPanelProps {
     attachmentIds?: number[]
     interruptWhenBusy?: boolean
     runtimeOptions?: AssistantInteractionRequest['runtimeOptions']
-  }) => Promise<{ sent: boolean; error?: string | null }>
+  }) => Promise<{ sent: boolean; queued?: boolean; error?: string | null }>
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
   runtimeContext?: Pick<
     RuntimeSendRequest,
@@ -583,10 +583,7 @@ export function TemporaryChatPanel({
     const syncMessages = () => {
       const nextMessages = getRuntimeConversationMessages(address)
       setTurns(getRuntimeConversationTurns(address))
-      if (nextMessages.length > 0) {
-        setMessages(nextMessages)
-        setError(null)
-      }
+      if (nextMessages.length > 0) setMessages(nextMessages)
     }
     syncMessages()
     return subscribeRuntimeConversation(address, syncMessages)
@@ -935,6 +932,7 @@ export function TemporaryChatPanel({
                 attachmentIds: remoteAttachmentIds(currentAttachments),
               })
             : null
+          const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
           const result =
             guidanceResult ??
             (assistantSend
@@ -977,6 +975,16 @@ export function TemporaryChatPanel({
                 address,
                 guidanceResult.turnId,
                 queuedMessage
+              )
+            )
+          }
+          if (assistantSend && !guidanceResult && !('queued' in result && result.queued)) {
+            setMessages(
+              appendAcceptedRuntimeConversationMessage(
+                address,
+                createRuntimeUserMessage(message, currentAttachments, { id: queuedMessage.id }),
+                lifecycleStore.getTask(address)?.turn.id ?? null,
+                turnIdsBeforeSend
               )
             )
           }

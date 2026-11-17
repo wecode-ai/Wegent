@@ -643,6 +643,10 @@ export function createSharedWorkspaceHttpApi(
         );
       },
       create(issueId, body, options) {
+        if (options?.assistantSource && !options.projectId)
+          throw new Error(
+            "Assistant publication requires an exact project scope",
+          );
         if (options?.projectId) {
           return transport.post<CollaborationComment>(
             `/v1/cloud-projects/${encoded(options.projectId)}/loop-items/${encoded(issueId)}/activity-comments`,

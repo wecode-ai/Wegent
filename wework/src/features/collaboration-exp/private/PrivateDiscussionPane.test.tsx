@@ -22,7 +22,20 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
-    state: { user: { id: mocks.userId } },
+    state: {
+      user: { id: mocks.userId },
+      devices: [
+        {
+          id: 1,
+          device_id: 'device-1',
+          name: 'Local device',
+          status: 'online',
+          is_default: true,
+          device_type: 'local',
+          bind_shell: 'claudecode',
+        },
+      ],
+    },
     services: {
       runtimeWorkApi: {
         sendRuntimeMessage: mocks.runtimeApiSend,
@@ -131,6 +144,16 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('private discussion pane', () => {
+  it('renders an unavailable interaction when the runtime address is incomplete', () => {
+    const { props } = fixture()
+    props.conversation.address = { deviceId: 'device-1', taskId: '' }
+    expect(() => render(<PrivateDiscussionPane {...props} />)).not.toThrow()
+    expect(screen.getByTestId('collaboration-exp-private-unavailable')).toHaveTextContent(
+      'private.sourceUnavailable'
+    )
+    expect(mocks.panel).not.toHaveBeenCalled()
+  })
+
   it('sends the bound Issue discussion through the shared assistant interaction contract', async () => {
     const { props } = fixture()
     render(<PrivateDiscussionPane {...props} />)
@@ -152,6 +175,27 @@ describe('private discussion pane', () => {
     })
   })
 
+  it('sends as the verified local conversation owner instead of the signed-in profile', async () => {
+    const localProject = project({ project_store: 'local', current_user_id: 7 })
+    const { props } = fixture({ project: localProject, participationViewer: [0, 7] })
+    props.conversation.ownerUserId = 0
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+    await expect(
+      panelProps.assistantSend({
+        message: 'Continue the verified local turn',
+        clientUserMessageId: 'local-owner-request',
+      })
+    ).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiSend).toHaveBeenCalledWith({
+      address: props.conversation.address,
+      message: 'Continue the verified local turn',
+      clientUserMessageId: 'local-owner-request',
+      conversationContext: 'private_discussion',
+      queueIfBusy: true,
+    })
+  })
+
   it('forwards interrupt intent to the Runtime interrupt-and-send operation', async () => {
     const { props } = fixture()
     render(<PrivateDiscussionPane {...props} />)
@@ -167,6 +211,24 @@ describe('private discussion pane', () => {
       expect.objectContaining({ message: 'Replace the current direction' })
     )
     expect(mocks.runtimeApiSend).not.toHaveBeenCalled()
+  })
+
+  it('reports queued acceptance to the native composer', async () => {
+    mocks.runtimeApiSend.mockResolvedValue({
+      accepted: true,
+      taskId: 'task-1',
+      status: 'queued',
+    })
+    const { props } = fixture()
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+
+    await expect(
+      panelProps.assistantSend({
+        message: 'Queue this follow-up',
+        clientUserMessageId: 'queued-request',
+      })
+    ).resolves.toEqual({ sent: true, queued: true })
   })
 
   it('uses task context and the original source history without a second embedded pane heading', () => {

@@ -96,6 +96,111 @@ describe.each(['local_wework', 'cloud_device', 'wegent_agent'] as const)(
       })
     })
 
+    it('reports queued acceptance without claiming the turn has started', async () => {
+      const f = fixture(kind)
+      f.sendRuntimeMessage.mockResolvedValueOnce({
+        accepted: true,
+        taskId: 'original-task',
+        status: 'queued',
+      })
+      const interaction = createAssistantInteraction(f.endpoint, f.conversation, f.transport)
+
+      await expect(interaction.send(f.request)).resolves.toMatchObject({
+        state: 'accepted',
+        queued: true,
+      })
+    })
+
+    it('projects one ordered asynchronous envelope after acceptance', async () => {
+      const f = fixture(kind)
+      f.getRuntimeTranscript.mockResolvedValue({
+        taskId: 'original-task',
+        runtime: 'codex',
+        workspacePath: '',
+        running: true,
+        acceptedClientUserMessageIds: ['durable-request-key'],
+        messages: [
+          {
+            id: 'request',
+            role: 'user',
+            content: 'Continue investigation',
+            clientUserMessageId: 'durable-request-key',
+            turnId: 'turn-1',
+            blocks: [
+              {
+                id: 'question',
+                type: 'text',
+                renderPayload: { interactionStatus: 'pending' },
+              },
+              { id: 'tool', type: 'tool', tool_name: 'read_file' },
+            ],
+          },
+        ],
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'running',
+            items: [
+              {
+                id: 'answer',
+                type: 'assistant_text',
+                content: 'Draft answer',
+              },
+            ],
+          },
+        ],
+      })
+      const interaction = createAssistantInteraction(f.endpoint, f.conversation, f.transport)
+
+      await interaction.send(f.request)
+      await expect(interaction.events(f.request.requestId, 'trace-ref')).resolves.toEqual([
+        expect.objectContaining({ state: 'request', sequence: 1 }),
+        expect.objectContaining({ state: 'accepted', sequence: 2 }),
+        expect.objectContaining({ state: 'needs_input', sequence: 3 }),
+        expect.objectContaining({ state: 'draft', summary: 'Draft answer', sequence: 4 }),
+        expect.objectContaining({ state: 'evidence', sequence: 5 }),
+        expect.objectContaining({ state: 'trace', traceRef: 'trace-ref', sequence: 6 }),
+      ])
+    })
+
+    it('never projects a missing request onto the latest unrelated turn', async () => {
+      const f = fixture(kind)
+      f.getRuntimeTranscript.mockResolvedValue({
+        taskId: 'original-task',
+        runtime: 'codex',
+        workspacePath: '',
+        acceptedClientUserMessageIds: [],
+        messages: [
+          {
+            id: 'other-request',
+            role: 'user',
+            content: 'Another request',
+            clientUserMessageId: 'another-key',
+            turnId: 'other-turn',
+          },
+        ],
+        turns: [
+          {
+            id: 'other-turn',
+            status: 'completed',
+            items: [
+              {
+                id: 'other-answer',
+                type: 'assistant_text',
+                content: 'Unrelated answer',
+              },
+            ],
+          },
+        ],
+      })
+      const interaction = createAssistantInteraction(f.endpoint, f.conversation, f.transport)
+
+      await interaction.send(f.request)
+      await expect(interaction.events(f.request.requestId)).resolves.toEqual([
+        expect.objectContaining({ state: 'request', sequence: 1 }),
+      ])
+    })
+
     it('retains identity after routing to another device', async () => {
       const f = fixture(kind)
       const moved = {
@@ -134,12 +239,17 @@ describe.each(['local_wework', 'cloud_device', 'wegent_agent'] as const)(
       const f = fixture(kind)
       f.endpoint.capabilities.attachments = false
       f.endpoint.capabilities.cancel = false
+      f.endpoint.capabilities.trace = false
       const interaction = createAssistantInteraction(f.endpoint, f.conversation, f.transport)
       await expect(interaction.send({ ...f.request, attachmentIds: [1] })).rejects.toMatchObject({
         code: 'unsupported_attachments',
       })
       await expect(interaction.cancel()).rejects.toMatchObject({ code: 'unsupported_cancel' })
-      expect(f.sendRuntimeMessage).not.toHaveBeenCalled()
+      await interaction.send(f.request)
+      await expect(interaction.events(f.request.requestId, 'trace-ref')).rejects.toMatchObject({
+        code: 'unsupported_trace',
+      })
+      expect(f.sendRuntimeMessage).toHaveBeenCalledOnce()
       expect(f.cancelRuntimeTask).not.toHaveBeenCalled()
     })
 
@@ -227,6 +337,36 @@ describe('assistant endpoint adapters', () => {
     expect(send).toHaveBeenCalledOnce()
     expect(cancel).toHaveBeenCalledOnce()
     expect(transcript).toHaveBeenCalledWith(address)
+  })
+
+  it('rejects an incomplete Runtime address before creating a conversation', () => {
+    const endpoint = localWeworkEndpoint({
+      ownerUserId: 7,
+      roleId: 'review',
+      displayName: 'Review assistant',
+    })
+    expect(() =>
+      createAssistantConversation(endpoint, {
+        id: 'conversation',
+        projectId: 'project',
+        issueId: 'ISSUE-1',
+        deviceId: 'device',
+        taskId: '',
+      })
+    ).toThrow('Assistant conversation scope is required')
+  })
+
+  it('rejects endpoint references that claim another owner or role', () => {
+    const input = { ownerUserId: 7, roleId: 'review', displayName: 'Reviewer' }
+    expect(() => localWeworkEndpoint({ ...input, endpointRef: 'local_wework:8:review' })).toThrow(
+      'does not match its owner and role'
+    )
+    expect(() =>
+      wegentAgentEndpoint({
+        ...input,
+        endpointRef: 'wegent_agent:7:agent-1:other',
+      })
+    ).toThrow('does not match its owner and role')
   })
 
   it('projects a roster record into the shared endpoint capability contract', () => {

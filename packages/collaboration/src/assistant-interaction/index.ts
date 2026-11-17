@@ -1,5 +1,6 @@
 export * from "./types";
 export * from "./createAssistantInteraction";
+export * from "./events";
 export * from "./endpoint";
 export * from "./conversation";
 export * from "./runtimeTransport";

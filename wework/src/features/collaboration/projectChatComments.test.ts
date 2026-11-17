@@ -117,4 +117,24 @@ describe('canonical project chat comments adapter', () => {
       assistantSource: { deviceId: 'device-1', taskId: 'task-1' },
     })
   })
+
+  it('forwards assistant provenance to a local activity transport', async () => {
+    const message = experienceMessageFixture({ content: 'Public conclusion' })
+    const send = vi.fn().mockResolvedValue(message)
+    const comments = createProjectChatComments(
+      { send } as unknown as ProjectChatClient,
+      async () => 'project-1'
+    )
+    await comments.create('EXP-1', 'Public conclusion', {
+      clientMessageId: 'publication-1',
+      assistantSource: { deviceId: 'device-1', taskId: 'task-1' },
+    })
+    expect(send).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      taskId: 'EXP-1',
+      clientMessageId: 'publication-1',
+      text: 'Public conclusion',
+      assistantSource: { deviceId: 'device-1', taskId: 'task-1' },
+    })
+  })
 })

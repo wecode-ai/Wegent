@@ -254,6 +254,7 @@
     "paused": "Paused",
     "unavailable": "Assistant team is not available yet.",
     "managementUnavailable": "Assistant configuration is unavailable. Retry loading it before managing the team.",
+    "deviceUnavailable": "The configured assistant device is unavailable. Refresh devices and retry.",
     "state": {
       "waiting": "Awaiting confirmation",
       "running": "In progress",

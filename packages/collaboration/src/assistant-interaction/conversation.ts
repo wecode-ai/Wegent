@@ -9,7 +9,13 @@ export function createAssistantConversation(
     issueId: string;
   },
 ): AssistantConversation {
-  if (!input.id.trim() || !input.projectId.trim() || !input.issueId.trim())
+  if (
+    !input.id.trim() ||
+    !input.projectId.trim() ||
+    !input.issueId.trim() ||
+    !input.deviceId.trim() ||
+    !input.taskId.trim()
+  )
     throw new TypeError("Assistant conversation scope is required");
   const { id, projectId, issueId, ...address } = input;
   return {

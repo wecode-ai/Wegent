@@ -355,9 +355,6 @@ async fn source_owner_ids<M: Mysql>(
              SELECT DISTINCT executor_owner_user_id FROM loop_item_executions \
                WHERE cloud_project_id=? AND loop_item_id=? AND executor_owner_user_id>0 \
              UNION \
-             SELECT DISTINCT CAST(sender_id AS UNSIGNED) FROM project_chat_messages \
-               WHERE project_id=? AND task_id=? AND sender_type='user' AND sender_id REGEXP '^[0-9]+$' \
-             UNION \
              SELECT DISTINCT COALESCE( \
                CASE WHEN JSON_TYPE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id'))='INTEGER' \
                  THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id')) AS UNSIGNED) END, \
@@ -373,7 +370,7 @@ async fn source_owner_ids<M: Mysql>(
                      THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id')) AS UNSIGNED) END, \
                    a.created_by_user_id, CAST(t.sender_id AS UNSIGNED), 0) > 0 \
              ORDER BY owner_user_id",
-            (project, issue, project, issue, project, issue, project, issue),
+            (project, issue, project, issue, project, issue),
         )
         .await?;
     Ok(rows.into_iter().map(|row| row.owner_user_id).collect())
@@ -456,11 +453,10 @@ async fn participation_sources<M: Mysql>(
                  AND a.resource_type='chat_agent' \
              WHERE m.project_id=? AND m.task_id=? \
                AND (m.deleted_at IS NULL OR m.deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) \
-               AND ((m.sender_type='user' AND m.sender_id=CAST(? AS CHAR)) OR \
-                 (m.sender_type='agent' AND COALESCE( \
+               AND m.sender_type='agent' AND COALESCE( \
                    CASE WHEN JSON_TYPE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id'))='INTEGER' \
                      THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id')) AS UNSIGNED) END, \
-                   a.created_by_user_id, CAST(t.sender_id AS UNSIGNED))=?))",
+                   a.created_by_user_id, CAST(t.sender_id AS UNSIGNED))=?",
             (
                 project,
                 issue,
@@ -471,7 +467,6 @@ async fn participation_sources<M: Mysql>(
                 owner,
                 project,
                 issue,
-                owner,
                 owner,
             ),
         )
@@ -882,5 +877,6 @@ mod tests {
         ));
         assert!(!sql.contains("SELECT content"));
         assert!(!sql.contains("wework_transcripts"));
+        assert!(!sql.contains("m.sender_id=CAST(? AS CHAR)"));
     }
 }
