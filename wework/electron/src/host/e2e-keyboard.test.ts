@@ -222,7 +222,27 @@ describe('isolated native keyboard verification', () => {
     commit()
     await insertion
     expect(view.insertText.mock.calls).toEqual([['first'], ['second']])
-    expect(view.executeJavaScript).toHaveBeenCalledTimes(2)
+    expect(view.executeJavaScript).toHaveBeenCalledTimes(3)
+  })
+
+  test('commits native Enter before inserting the following paragraph', async () => {
+    const { view, contents, focusWindow } = fixture()
+    let commitEnter!: () => void
+    view.executeJavaScript.mockResolvedValueOnce(undefined).mockReturnValueOnce(
+      new Promise<void>(resolve => {
+        commitEnter = resolve
+      })
+    )
+    const insertion = sendE2EText(contents, 'first\nsecond', focusWindow, environment)
+    try {
+      await vi.waitFor(() => expect(view.executeJavaScript).toHaveBeenCalledTimes(2))
+      expect(view.sendInputEvent).toHaveBeenCalled()
+      expect(view.insertText.mock.calls).toEqual([['first']])
+    } finally {
+      commitEnter()
+      await insertion
+    }
+    expect(view.insertText.mock.calls).toEqual([['first'], ['second']])
   })
 
   test.each([{}, { WEWORK_E2E_CONTROL_URL: environment.WEWORK_E2E_CONTROL_URL }])(
