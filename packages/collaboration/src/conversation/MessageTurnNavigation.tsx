@@ -253,6 +253,7 @@ export function MessageTurnNavigation({
     }
     const observer = new MutationObserver(locate)
     observer.observe(content, { childList: true, subtree: true })
+    let resizeFrame: SafeAnimationFrameHandle | null = null
     let width = scroller.clientWidth
     let height = scroller.clientHeight
     const viewportObserver = new ResizeObserver(() => {
@@ -262,13 +263,20 @@ export function MessageTurnNavigation({
       width = nextWidth
       height = nextHeight
       // Opening a question owns its context until the reader chooses another position.
-      if (!cancelled && locatedRequest.current === key) locate()
+      if (cancelled || locatedRequest.current !== key || resizeFrame) return
+      // Reacquiring creates observers on this viewport. Register them before
+      // the next layout, outside the current ResizeObserver depth traversal.
+      resizeFrame = requestSafeAnimationFrame(() => {
+        resizeFrame = null
+        if (!cancelled && locatedRequest.current === key) locate()
+      })
     })
     viewportObserver.observe(scroller)
     const cleanupOpeningTarget = () => {
       cancelled = true
       observer.disconnect()
       viewportObserver.disconnect()
+      if (resizeFrame) cancelSafeAnimationFrame(resizeFrame)
       if (openingTargetCleanupRef.current === cleanupOpeningTarget)
         openingTargetCleanupRef.current = null
     }

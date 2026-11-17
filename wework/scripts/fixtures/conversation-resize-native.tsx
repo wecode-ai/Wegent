@@ -1,3 +1,4 @@
+import './turn-navigation-resize-native'
 import { createRoot } from 'react-dom/client'
 import { useLayoutEffect, useRef, useState } from 'react'
 import {

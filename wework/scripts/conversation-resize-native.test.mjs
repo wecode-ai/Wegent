@@ -38,6 +38,7 @@ app.whenReady().then(async()=>{
   await window.loadURL('data:text/html,'+encodeURIComponent('<div id="root"></div>'))
   await window.webContents.executeJavaScript(${JSON.stringify(await readFile(bundle, 'utf8'))})
   const result=await window.webContents.executeJavaScript('window.runConversationResizeContract()')
+  result.navigation=await window.webContents.executeJavaScript('window.runTurnNavigationResizeContract()')
   require('fs').writeFileSync(${JSON.stringify(output)},JSON.stringify(result))
   window.destroy()
   app.exit(0)
@@ -67,6 +68,9 @@ app.whenReady().then(async()=>{
       JSON.stringify(evidence)
     )
     assert.deepEqual(evidence.uncovered, [])
+    assert.deepEqual(evidence.navigation.errors, [])
+    assert.deepEqual(evidence.navigation.offsets, [0, 0, 0, 0])
+    assert.equal(evidence.navigation.cancelledScrollTop, 100)
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
