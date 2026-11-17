@@ -1614,14 +1614,12 @@ export async function openTrackedWorkItemBoard(control, issuePanel) {
     },
     'The work-item board did not settle on the tracked task awaiting confirmation'
   )
-  await control.command(
-    'waitFor',
-    `${activeBoardContentSelector} [data-testid="${activityTestId}"]`,
-    {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  const activitySelector = `${activeBoardContentSelector} [data-testid="${activityTestId}"]`
+  await control.command('scrollIntoView', activitySelector)
+  await control.command('waitFor', activitySelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   return activeBoardContentSelector
 }
 

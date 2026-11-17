@@ -28,10 +28,13 @@ function navigationControl({
   reviewCardCount = '1',
   detailStatus = 'in_review',
   detailTitle = 'WEWORK_DESKTOP_E2E_TASK',
+  scrollReady = Promise.resolve(),
+  scrollError,
 } = {}) {
   const calls = []
   let snapshotIndex = 0
   let scopedSnapshotIndex = 0
+  let activityVisible = false
   return {
     calls,
     async command(action, selector, options) {
@@ -59,6 +62,16 @@ function navigationControl({
         assert.ok(selector === detailStatusSelector || selector === detailTitleSelector)
         return selector === detailStatusSelector ? detailStatus : detailTitle
       }
+      if (action === 'scrollIntoView') {
+        assert.equal(selector, activitySelector)
+        await scrollReady
+        if (scrollError) throw scrollError
+        activityVisible = true
+        return
+      }
+      if (action === 'waitFor' && selector === activitySelector && options?.visible) {
+        assert.ok(activityVisible, 'The mounted Issue activity starts below the viewport')
+      }
       if (action === 'click' || action === 'waitFor') return undefined
       throw new Error(`Unexpected control action: ${action}`)
     },
@@ -79,7 +92,7 @@ function boardSnapshot(params = {}, overrides = {}) {
   }
 }
 
-test('verifies the bound Issue in its focused My Tasks tab after itemId is consumed', async () => {
+test('scrolls the exact bound Issue activity into view after verifying its focused My Tasks tab', async () => {
   vi.useFakeTimers()
   const control = navigationControl({ snapshots: [boardSnapshot()] })
   const opening = openTrackedWorkItemBoard(control, issuePanel)
@@ -96,11 +109,52 @@ test('verifies the bound Issue in its focused My Tasks tab after itemId is consu
   assert.ok(control.calls.some(call => call.selector === reviewCardSelector))
   assert.ok(control.calls.some(call => call.selector === detailStatusSelector))
   assert.ok(control.calls.some(call => call.selector === detailTitleSelector))
+  assert.deepEqual(control.calls.at(-2), {
+    action: 'scrollIntoView',
+    selector: activitySelector,
+    options: undefined,
+  })
   assert.deepEqual(control.calls.at(-1), {
     action: 'waitFor',
     selector: activitySelector,
     options: { visible: true, timeoutMs: DEFAULT_STEP_TIMEOUT_MS },
   })
+})
+
+test('waits for the native Issue activity scroll before asserting actual visibility', async () => {
+  vi.useFakeTimers()
+  const scrollReady = Promise.withResolvers()
+  const control = navigationControl({ scrollReady: scrollReady.promise })
+  let settled = false
+  const opening = openTrackedWorkItemBoard(control, issuePanel).finally(() => {
+    settled = true
+  })
+  await vi.advanceTimersByTimeAsync(500)
+  assert.equal(settled, false)
+  assert.equal(control.calls.at(-1).action, 'scrollIntoView')
+  assert.equal(control.calls.at(-1).selector, activitySelector)
+  assert.ok(
+    !control.calls.some(call => call.action === 'waitFor' && call.selector === activitySelector)
+  )
+  scrollReady.resolve()
+  assert.equal(await opening, boardContent)
+  assert.equal(control.calls.at(-1).action, 'waitFor')
+  assert.equal(control.calls.at(-1).options.visible, true)
+})
+
+test('preserves a native Issue activity scroll failure without claiming visibility', async () => {
+  vi.useFakeTimers()
+  const failure = new Error('Issue detail scroll failed')
+  const control = navigationControl({ scrollError: failure })
+  const outcome = openTrackedWorkItemBoard(control, issuePanel).then(
+    () => null,
+    error => error
+  )
+  await vi.advanceTimersByTimeAsync(500)
+  assert.equal(await outcome, failure)
+  assert.ok(
+    !control.calls.some(call => call.action === 'waitFor' && call.selector === activitySelector)
+  )
 })
 
 test.each([
@@ -167,7 +221,7 @@ test.each(['', 'cloud-task-activity-'])(
   }
 )
 
-test('preserves a focused Issue detail failure after the correct route loads', async () => {
+test('preserves an actual visibility failure after scrolling the correct Issue detail', async () => {
   vi.useFakeTimers()
   const control = navigationControl({ snapshots: [boardSnapshot()] })
   const command = control.command.bind(control)
@@ -182,6 +236,11 @@ test('preserves a focused Issue detail failure after the correct route loads', a
   )
   await vi.advanceTimersByTimeAsync(500)
   assert.equal(await outcome, failure)
+  assert.ok(
+    control.calls.some(
+      call => call.action === 'scrollIntoView' && call.selector === activitySelector
+    )
+  )
 })
 
 function issueEditingControl({ panelReady = Promise.resolve(), saveError } = {}) {
