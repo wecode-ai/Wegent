@@ -47,7 +47,7 @@ import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
 import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
-import { createCloudModelCatalog } from './cloudModelCatalog'
+import { createModelCatalog } from './modelCatalog'
 import {
   canonicalCloudTaskPort,
   registeredCloudDeviceId,
@@ -490,7 +490,11 @@ export function createHybridWorkbenchServices(
   let nextCloudDevicesRevision = 1
   let unscopedCloudDevicesRequest: Promise<DeviceInfo[]> | null = null
   const cloudDevicesRequestsBySignal = new WeakMap<AbortSignal, Promise<DeviceInfo[]>>()
-  const cloudModels = createCloudModelCatalog(async (signal, forceRefresh) => {
+  const localModels = createModelCatalog('local', async (signal, forceRefresh) => {
+    const response = await localServices.modelApi.listModels({ signal, forceRefresh })
+    return response.data
+  })
+  const cloudModels = createModelCatalog('cloud', async (signal, forceRefresh) => {
     const response = await cloudServices.modelApi.listModels({ signal, forceRefresh })
     console.info('[Wework] Cloud model catalog loaded', {
       count: response.data.length,
@@ -1839,20 +1843,25 @@ export function createHybridWorkbenchServices(
       listProjects: localServices.projectApi.listProjects,
     },
     modelApi: {
-      subscribe: cloudModels.subscribe,
-      refresh: cloudModels.refresh,
+      subscribe(listener) {
+        const unsubscribeLocal = localModels.subscribe(listener)
+        const unsubscribeCloud = cloudModels.subscribe(listener)
+        return () => {
+          unsubscribeLocal()
+          unsubscribeCloud()
+        }
+      },
+      refresh() {
+        localModels.refresh()
+        cloudModels.refresh()
+      },
       getModel: cloudServices.modelApi.getModel,
       async listModels(): Promise<UnifiedModelListResponse> {
-        cloudModels.loadIfNeeded()
-        // Start the cloud catalog before awaiting the local one: the local
-        // catalog depends on the local executor and the desktop preferences,
-        // and a failure there must never keep the cloud models from loading.
-        const localModels = await localServices.modelApi.listModels().catch(error => {
-          console.warn('[Wework] Failed to list local models', error)
-          return { data: [] }
-        })
+        // Each source publishes independently; native startup cannot hold a
+        // ready cloud catalog, and cloud connectivity cannot hold local models.
+        await Promise.race([localModels.loadIfNeeded(), cloudModels.loadIfNeeded()])
         return {
-          data: mergeModelCatalogs(localModels.data, cloudModels.getModels()),
+          data: mergeModelCatalogs(localModels.getModels(), cloudModels.getModels()),
         }
       },
     },

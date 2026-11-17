@@ -1,40 +1,48 @@
 import type { UnifiedModel } from '@/types/api'
 
-/** Cache cloud models and refresh only on initial load or an explicit request. */
-export function createCloudModelCatalog(
+/** Publish one model source independently, refreshing only on explicit requests. */
+export function createModelCatalog(
+  source: 'local' | 'cloud',
   load: (signal: AbortSignal, forceRefresh: boolean) => Promise<UnifiedModel[]>
 ) {
   let models: UnifiedModel[] = []
   let loadStarted = false
+  let loadCompleted = false
   let request: AbortController | null = null
+  let requestPromise: Promise<void> | null = null
   const listeners = new Set<() => void>()
 
   function loadCatalog(forceRefresh: boolean) {
-    if (request) return
+    if (request) return requestPromise
     loadStarted = true
     const controller = new AbortController()
     request = controller
-    void Promise.resolve()
+    requestPromise = Promise.resolve()
       .then(() => load(controller.signal, forceRefresh))
       .then(nextModels => {
         if (controller.signal.aborted || request !== controller) return
         models = nextModels
+        loadCompleted = true
         listeners.forEach(listener => listener())
       })
       .catch(error => {
         if (request !== controller) return
-        console.warn('[Wework] Failed to refresh cloud models', error)
+        loadCompleted = true
+        console.warn(`[Wework] Failed to refresh ${source} models`, error)
       })
       .finally(() => {
         if (request !== controller) return
         request = null
+        requestPromise = null
       })
+    return requestPromise
   }
 
   return {
     refresh: () => loadCatalog(true),
     loadIfNeeded() {
       if (!loadStarted) loadCatalog(false)
+      return loadCompleted ? Promise.resolve() : (requestPromise ?? Promise.resolve())
     },
     getModels(): UnifiedModel[] {
       return models

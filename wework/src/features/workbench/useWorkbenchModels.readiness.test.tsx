@@ -2,6 +2,79 @@ import type { ModelSelectionConfig, UnifiedModel } from '@/types/api'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { useWorkbenchModels } from './useWorkbenchModels'
+import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
+
+test('refreshes the owning catalog after committed local model settings change', async () => {
+  const before: UnifiedModel = { name: 'before-edit', type: 'runtime' }
+  const after: UnifiedModel = { name: 'after-edit', type: 'runtime' }
+  let models = [before]
+  const api = {
+    listModels: vi.fn(async () => ({ data: models })),
+    refresh: vi.fn(() => {
+      models = [after]
+    }),
+  }
+  const hook = renderHook(() => useWorkbenchModels({ api, locked: false, persistSelection: false }))
+  await waitFor(() => expect(hook.result.current.models).toEqual([before]))
+  act(() => window.dispatchEvent(new Event(LOCAL_MODEL_SETTINGS_CHANGED_EVENT)))
+  await waitFor(() => expect(hook.result.current.models).toEqual([after]))
+  expect(api.refresh).toHaveBeenCalledOnce()
+  hook.unmount()
+  window.dispatchEvent(new Event(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+  expect(api.refresh).toHaveBeenCalledOnce()
+})
+
+test('restores the configured native model when its source arrives after cloud discovery', async () => {
+  const cloud: UnifiedModel = { name: 'cloud-model', type: 'public' }
+  const local: UnifiedModel = {
+    name: 'native-codex',
+    type: 'runtime',
+    runtime: { family: 'codex', provider: 'native-provider' },
+  }
+  let models = [cloud]
+  let notify: (() => void) | undefined
+  const onSelectionChange = vi.fn()
+  const api = {
+    listModels: vi.fn(async () => ({ data: models })),
+    subscribe: (listener: () => void) => {
+      notify = listener
+      return () => {
+        notify = undefined
+      }
+    },
+  }
+  const hook = renderHook(() =>
+    useWorkbenchModels({
+      api,
+      locked: false,
+      persistSelection: false,
+      fallbackWhenConfiguredModelUnavailable: false,
+      selectionConfig: {
+        modelName: local.name,
+        modelType: local.type,
+        options: { runnerModelProvider: 'native-provider', reasoning: 'high' },
+      },
+      onSelectionChange,
+    })
+  )
+  await waitFor(() => expect(hook.result.current.models).toEqual([cloud]))
+  expect(hook.result.current.selectedModel).toBeNull()
+  expect(hook.result.current.isSelectionReady).toBe(false)
+  expect(onSelectionChange).not.toHaveBeenCalled()
+
+  act(() => {
+    models = [local, cloud]
+    notify?.()
+  })
+  await waitFor(() => expect(hook.result.current.selectedModel).toEqual(local))
+  expect(hook.result.current.isSelectionReady).toBe(true)
+  expect(hook.result.current.getSelectedModelOptions()).toMatchObject({
+    runnerModelProvider: 'native-provider',
+    reasoning: 'high',
+  })
+  expect(onSelectionChange).not.toHaveBeenCalled()
+  hook.unmount()
+})
 
 test('keeps a restored native provider through catalog refresh and clears it on model change', async () => {
   const model: UnifiedModel = {

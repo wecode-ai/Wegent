@@ -508,7 +508,7 @@ export function useWorkbenchModels({
     queueMicrotask(() => {
       if (!cancelled) void loadModels()
     })
-    window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
+    window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, refreshModels)
     // A transient lookup can fail while the desktop is offline. Retry when
     // connectivity returns instead of leaving readiness pending forever.
     window.addEventListener('online', loadModels)
@@ -516,10 +516,10 @@ export function useWorkbenchModels({
       cancelled = true
       modelLoadRevisionRef.current += 1
       unsubscribe?.()
-      window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
+      window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, refreshModels)
       window.removeEventListener('online', loadModels)
     }
-  }, [api, enabled, loadModels])
+  }, [api, enabled, loadModels, refreshModels])
 
   useEffect(() => {
     if (!enabled || !selectionReady) {

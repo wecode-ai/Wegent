@@ -1952,16 +1952,94 @@ describe('createHybridWorkbenchServices', () => {
     mocks.localListModels.mockRejectedValue(new Error('Local catalog unavailable'))
     const services = createServices()
 
-    const initial = await services.modelApi.listModels()
-    expect(initial.data).toEqual([])
+    await services.modelApi.listModels()
 
     await vi.waitFor(async () => {
       const refreshed = await services.modelApi.listModels()
       expect(refreshed.data.map(model => model.name)).toEqual(['codex-gpt-5.5'])
     })
 
-    expect(warning).toHaveBeenCalledWith('[Wework] Failed to list local models', expect.any(Error))
+    expect(warning).toHaveBeenCalledWith(
+      '[Wework] Failed to refresh local models',
+      expect.any(Error)
+    )
     warning.mockRestore()
+  })
+
+  it('publishes cloud models while native discovery is pending, then publishes local completion', async () => {
+    let finishLocal!: (response: { data: (typeof chatCompletionsModel)[] }) => void
+    const pending = new Promise<{ data: (typeof chatCompletionsModel)[] }>(resolve => {
+      finishLocal = resolve
+    })
+    mocks.localListModels.mockReturnValue(pending)
+    mocks.cloudListModels.mockResolvedValue({ data: [responsesModel] })
+    const services = createServices()
+    const changed = vi.fn()
+    const unsubscribe = services.modelApi.subscribe?.(changed)
+    let initial: string[] | undefined
+    const read = services.modelApi.listModels().then(response => {
+      initial = response.data.map(model => model.name)
+    })
+    try {
+      await vi.waitFor(() => expect(initial).toEqual(['responses-model']))
+      await read
+      expect(mocks.localListModels).toHaveBeenCalledOnce()
+      expect((await services.modelApi.listModels()).data.map(model => model.name)).toEqual([
+        'responses-model',
+      ])
+      finishLocal({ data: [chatCompletionsModel] })
+      await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2))
+      expect((await services.modelApi.listModels()).data.map(model => model.name)).toEqual([
+        'chat-completions-model',
+        'responses-model',
+      ])
+      expect(mocks.localListModels).toHaveBeenCalledOnce()
+    } finally {
+      finishLocal({ data: [] })
+      unsubscribe?.()
+    }
+  })
+
+  it('keeps both source snapshots during refresh and publishes each successful removal separately', async () => {
+    mocks.localListModels.mockResolvedValue({ data: [chatCompletionsModel] })
+    mocks.cloudListModels.mockResolvedValue({ data: [responsesModel] })
+    const services = createServices()
+    const unsubscribe = services.modelApi.subscribe?.(vi.fn())
+    let finishLocal!: (response: { data: [] }) => void
+    let finishCloud!: (response: { data: [] }) => void
+    try {
+      await vi.waitFor(async () => {
+        expect((await services.modelApi.listModels()).data.map(model => model.name)).toEqual([
+          'chat-completions-model',
+          'responses-model',
+        ])
+      })
+      mocks.localListModels.mockReturnValue(new Promise(resolve => (finishLocal = resolve)))
+      mocks.cloudListModels.mockReturnValue(new Promise(resolve => (finishCloud = resolve)))
+      services.modelApi.refresh?.()
+      let duringRefresh: string[] | undefined
+      const read = services.modelApi.listModels().then(response => {
+        duringRefresh = response.data.map(model => model.name)
+      })
+      await vi.waitFor(() =>
+        expect(duringRefresh).toEqual(['chat-completions-model', 'responses-model'])
+      )
+      await read
+      finishLocal({ data: [] })
+      await vi.waitFor(async () =>
+        expect((await services.modelApi.listModels()).data.map(model => model.name)).toEqual([
+          'responses-model',
+        ])
+      )
+      finishCloud({ data: [] })
+      await vi.waitFor(async () => expect((await services.modelApi.listModels()).data).toEqual([]))
+      expect(mocks.localListModels).toHaveBeenCalledTimes(2)
+      expect(mocks.cloudListModels).toHaveBeenCalledTimes(2)
+    } finally {
+      finishLocal?.({ data: [] })
+      finishCloud?.({ data: [] })
+      unsubscribe?.()
+    }
   })
 
   it('waits for an explicit refresh after a cloud model request fails', async () => {
