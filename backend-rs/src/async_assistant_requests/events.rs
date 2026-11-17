@@ -78,7 +78,7 @@ pub(super) async fn acknowledge_on(
             .as_array_mut()
             .and_then(|commands| commands.iter_mut().find(|command| command["id"] == id))
             .ok_or_else(|| reject(404, "Request command not found"))?;
-        if command["executionId"] != row.id.to_string() {
+        if command["executionId"].as_str() != Some(event.execution_id.as_str()) {
             return Err(reject(409, "Request command belongs to an earlier attempt"));
         }
         command["acknowledged"] = json!(true);
@@ -139,6 +139,7 @@ fn require_approved_merge(
     if merge["state"] != "merged" || intent["assistant_request"]["worktree"]["merge"] == *merge {
         return Ok(());
     }
+    let execution_id = execution.to_string();
     let approved = intent["assistant_request"]["commands"]
         .as_array()
         .into_iter()
@@ -146,7 +147,7 @@ fn require_approved_merge(
         .any(|command| {
             command_id.is_none_or(|id| command["id"] == id)
                 && command["action"] == "merge"
-                && command["executionId"] == execution.to_string()
+                && command["executionId"].as_str() == Some(execution_id.as_str())
                 && command["approvedByUserId"] == owner
                 && command["targetRevision"] == merge["targetRevision"]
                 && command["candidateRevision"] == merge["candidateRevision"]
@@ -341,6 +342,11 @@ mod tests {
         intent["assistant_request"]["commands"] = json!([{"id":"approved","action":"merge","executionId":"41","approvedByUserId":3,"targetRevision":target,"candidateRevision":revision}]);
         assert!(require_approved_merge(&intent, &evidence, 41, 3, Some("approved")).is_ok());
         assert!(require_approved_merge(&intent, &evidence, 41, 3, None).is_ok());
+        for execution_id in [json!(41), json!("041")] {
+            let mut invalid = intent.clone();
+            invalid["assistant_request"]["commands"][0]["executionId"] = execution_id;
+            assert!(require_approved_merge(&invalid, &evidence, 41, 3, Some("approved")).is_err());
+        }
         assert!(require_approved_merge(&intent, &evidence, 41, 3, Some("other")).is_err());
         assert!(require_approved_merge(&intent, &evidence, 42, 3, Some("approved")).is_err());
         assert!(require_approved_merge(&intent, &evidence, 41, 4, Some("approved")).is_err());

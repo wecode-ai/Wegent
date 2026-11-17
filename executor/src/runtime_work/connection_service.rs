@@ -209,11 +209,6 @@ mod tests {
     #[tokio::test]
     async fn native_wait_preserves_the_parent_pipe_and_starts_node_with_only_reader_authority() {
         let root = tempfile::tempdir().unwrap();
-        let output = std::process::Command::new("node")
-            .args(["-p", "process.execPath"])
-            .output()
-            .unwrap();
-        assert!(output.status.success());
         let entry = root.path().join("service.js");
         // A positive checkpoint requires the real child to remain alive while Native awaits it.
         std::fs::write(
@@ -233,7 +228,7 @@ mod tests {
         .unwrap();
         let delivery = Delivery {
             manifest: root.path().join("manifest.json"),
-            node: PathBuf::from(String::from_utf8(output.stdout).unwrap().trim()),
+            node: PathBuf::from("node"),
             entry,
             providers: vec![],
         };
