@@ -914,7 +914,8 @@ export function FileWorkspacePanel({
             try {
               const resolvedPath = resolveMarkdownFilePath(displayedPreview.path, path)
               const open = () => openFilePath(resolvedPath, options)
-              if (options?.lineStart !== undefined) navigateWithDirtyGuard(open)
+              if (options?.lineStart !== undefined || options?.isDirectory)
+                navigateWithDirtyGuard(open)
               else open()
             } catch {
               setPreviewError(t('workbench.workspace_file_preview_failed', '读取文件失败'))
