@@ -174,7 +174,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
       const roleId = 'im-reviewer'
       const role = {
         id: roleId,
-        name: 'IM 验证分身',
+        name: 'IM 验证助理',
         enabled: false,
         prompt: '',
         version: 0,
@@ -247,8 +247,8 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
         messageId: `standin-${Date.now()}`,
         message: '/standin',
       })
-      assert.ok(standInMode.replies.some(reply => reply.includes('已进入 Wework 分身模式')))
-      const roleMessage = '请按评审分身的职责，列出本次变更需要检查的三项内容。'
+      assert.ok(standInMode.replies.some(reply => reply.includes('已进入 Wework 助理模式')))
+      const roleMessage = '请按评审助理的职责，列出本次变更需要检查的三项内容。'
       const roleSent = await fixture({
         operation: 'send',
         conversationId: `im-story-${userId}-0`,

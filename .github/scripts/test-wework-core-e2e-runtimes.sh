@@ -54,6 +54,9 @@ ruby -ryaml -e '
   copies = dockerfile.scan(/^COPY (\S+) (\/app\/\S+)$/)
   expected = [["wegent-backend-rs", "/app/wegent-backend-rs"], ["attachment-s3-e2e", "/app/attachment-s3-e2e"], ["attachment-hosting-e2e", "/app/attachment-hosting-e2e"]]
   raise "Backend Rust image must contain all runtime binaries" unless copies.sort == expected.sort
+  builder_copy = "COPY shared/data/builtin-connector-apps.json ../shared/data/builtin-connector-apps.json"
+  raise "Backend Rust builder must copy its compiled builtin connector data" unless builder.lines.map(&:strip).include?(builder_copy)
+  raise "Backend Rust OCI digest must include compiled builtin connector data" unless digests.first.include?("shared/data/builtin-connector-apps.json")
   restore = steps.fetch("Restore content-addressed Backend Rust E2E binary").fetch("run")
   restored_paths = restore.scan(/"\$container_id:(\/app\/[^"]+)"/).flatten
   raise "Backend Rust cache hits must restore the published payload" unless restored_paths.sort == copies.map(&:last).sort

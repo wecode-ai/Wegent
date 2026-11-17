@@ -24,6 +24,22 @@ function deferred<T>() {
 }
 
 describe('local transcript startup ordering', () => {
+  test('preserves advertised event support when adding worktree capabilities', async () => {
+    const runtimeFeatures = { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } }
+    const ready = { ...status, runtimeFeatures }
+    const services = createLocalAppServices({
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+      available: async () => ready,
+      ensure: async () => ready,
+      request: vi.fn().mockResolvedValue({ runtimeWorktrees: { version: 1, managed: true } }),
+    })
+    const devices = await services.deviceApi!.listDevices()
+    expect(devices[0].runtime_features).toMatchObject({
+      ...runtimeFeatures,
+      worktrees: { version: 1, managed: true },
+    })
+  })
+
   beforeEach(() => {
     localStorage.clear()
     clearLocalModelConfigs()

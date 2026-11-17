@@ -1,3 +1,4 @@
+import type { DeviceInfo } from '@/types/api'
 import { createRequestId } from '@/lib/request-id'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
 import { deliverRuntimeTransport } from '@/e2e/runtime-transport-gates'
@@ -25,6 +26,7 @@ export interface DshExecutorDescription {
   device_route_id?: string
   version?: string
   capabilities: string[]
+  runtime_features?: DeviceInfo['runtime_features']
   renderer_methods: string[]
   transports: string[]
 }

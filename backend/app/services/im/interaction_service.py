@@ -20,11 +20,11 @@ from app.services.im.stand_in_service import send_stand_in_message
 from shared.telemetry.decorators import trace_async
 
 GUIDANCE = (
-    "当前为 Wework 分身模式。发送 /chat 返回 Wegent 聊天。"
-    "连接或切换分身，请打开 Wework“我的分身”的“分身详情”浮层，点击对应的 IM 渠道。"
+    "当前为 Wework 助理模式。发送 /chat 返回 Wegent 聊天。"
+    "连接或切换助理，请打开 Wework“我的助理”的“助理详情”浮层，点击对应的 IM 渠道。"
 )
 RETIRED_TASK_GUIDANCE = (
-    "任务模式已移除。发送 /standin 进入 Wework 分身模式，或 /chat 返回 Wegent 聊天。"
+    "任务模式已移除。发送 /standin 进入 Wework 助理模式，或 /chat 返回 Wegent 聊天。"
 )
 NOTIFY_ON_ARGS = {"on", "open", "enable", "enabled", "true", "1", "开", "开启", "打开"}
 NOTIFY_OFF_ARGS = {"off", "close", "disable", "disabled", "false", "0", "关", "关闭"}
@@ -110,15 +110,15 @@ class IMInteractionService:
             await im_session_service.set_mode(session, IMSessionMode.CHAT)
             await device_selection_manager.set_chat_mode(user.id)
             await port.delete_conversation_task_id(context.conversation_id, user.id)
-            return "已返回 Wegent 聊天模式。发送 /standin 可进入 Wework 分身模式。"
+            return "已返回 Wegent 聊天模式。发送 /standin 可进入 Wework 助理模式。"
         if (
             command.command == CommandType.STAND_IN
             or command.command == CommandType.MODE
-            and argument in {"standin", "stand_in", "分身"}
+            and argument in {"standin", "stand_in", "助理"}
         ):
             await im_session_service.set_mode(session, IMSessionMode.STAND_IN)
             return (
-                "已进入 Wework 分身模式。未指定分身时，将连接账号默认执行设备的主分身。"
+                "已进入 Wework 助理模式。未指定助理时，将连接账号默认执行设备的主助理。"
                 + GUIDANCE
             )
         if argument:
@@ -127,7 +127,7 @@ class IMInteractionService:
         return (
             GUIDANCE
             if mode == IMSessionMode.STAND_IN
-            else "当前为 Wegent 聊天模式。发送 /standin 可进入 Wework 分身模式。"
+            else "当前为 Wegent 聊天模式。发送 /standin 可进入 Wework 助理模式。"
         )
 
     async def _notification_command(

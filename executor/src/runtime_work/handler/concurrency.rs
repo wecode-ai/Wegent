@@ -14,6 +14,10 @@ pub(super) enum RuntimeTaskKind {
 }
 
 impl SpawnTurnRequest {
+    pub(super) fn is_automatic_input(&self) -> bool {
+        super::automatic_turns::is_automatic_input(&self.request)
+    }
+
     pub(super) fn task_kind(&self) -> RuntimeTaskKind {
         self.task_kind.unwrap_or_else(|| {
             RuntimeTaskKind::from_origin(self.request.extra.get("origin").unwrap_or(&Value::Null))
@@ -243,7 +247,7 @@ impl RuntimeTurnScheduler {
     }
 
     fn automatic_waits(&self, turn: &SpawnTurnRequest) -> bool {
-        turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true))
+        turn.is_automatic_input()
             && self
                 .waiting_automatic_task_ids
                 .contains(&turn.local_task_id)

@@ -39,7 +39,7 @@ export async function verifyIssueAssignmentReceipts(
   await rpc('runtime.stand_in.save', { ...params, settings: { ...settings, enabled: false } })
   let issue = await rpc('todos.create', {
     project_id: projectId,
-    todo: { title: '分配回执：本人和分身独立接收', assignee_user_id: peerUserId },
+    todo: { title: '分配回执：本人和助理独立接收', assignee_user_id: peerUserId },
   })
   const load = () => rpc('todos.assignment_receipts', { project_id: projectId, task_id: issue.id })
   const open = async () => {

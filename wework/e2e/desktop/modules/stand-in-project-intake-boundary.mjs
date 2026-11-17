@@ -11,7 +11,7 @@ export async function verifyProjectIntakeBoundary({
   timeoutMs,
 }) {
   const content = '[data-workspace-tab-content][aria-hidden="false"]'
-  const name = `分身接入边界-${process.pid}`
+  const name = `助理接入边界-${process.pid}`
   await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
   await createLocalCollaborationProject(control, content, name)
   const project = (await rpc('projects.list', {})).find(row => row.name === name)
@@ -46,7 +46,7 @@ export async function verifyProjectIntakeBoundary({
   }
   settings = await save({ ...settings, roles: [role] })
   const sourceBoundary = settings.roles[0].projectBoundaries[0].enabledAfter
-  const historical = await create('接入分身前已分配，不应自动处理')
+  const historical = await create('接入助理前已分配，不应自动处理')
   settings.roles[0].collaboration.projects.push(ref)
   settings = await save(settings)
   assert.equal(

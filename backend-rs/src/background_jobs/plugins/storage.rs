@@ -15,8 +15,13 @@ pub struct Storage {
 }
 impl Storage {
     pub fn new() -> Result<Self> {
-        let mut config = MinioConfig::from_env()
-            .ok_or_else(|| anyhow::anyhow!("Plugin object storage is not configured"))?;
+        let mut config = crate::smart_apps_download::artifact::plugin_storage_config();
+        if config.endpoint.is_empty()
+            || config.access_key.is_empty()
+            || config.secret_key.is_empty()
+        {
+            bail!("Plugin object storage is not configured")
+        }
         let secure = crate::config::env_or_dotenv("ATTACHMENT_S3_USE_SSL")
             .map(|value| value.eq_ignore_ascii_case("true"))
             .unwrap_or(true);
@@ -25,8 +30,6 @@ impl Storage {
             if secure { "https" } else { "http" },
             config.host()
         );
-        config.bucket = crate::config::env_or_dotenv("PLUGIN_STORAGE_BUCKET")
-            .unwrap_or_else(|| "wegent".into());
         Ok(Self {
             config,
             http: minio_client::build_client()?,

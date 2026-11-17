@@ -6,6 +6,7 @@ import { hasMatchingConversationSummaryHostService } from '@/features/dsh-runtim
 import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useWorkbenchDeviceReconnect } from '@/features/workbench/useWorkbenchDeviceReconnect'
 import {
   getChangeRequestMonitor,
   runtimeTaskChangeRequestTarget,
@@ -129,6 +130,20 @@ export function applySharedChangeRequestSnapshot(
   snapshot: TaskChangeRequestSnapshot
 ): EnvironmentInfo {
   const provider = snapshot.provider ?? snapshot.changeRequest?.provider
+  const previous = snapshot.changeRequest ?? environmentInfo.changeRequest?.changeRequest
+  if ((snapshot.error || snapshot.stale) && previous) {
+    return {
+      ...environmentInfo,
+      changeRequest: { provider: previous.provider, state: 'found', changeRequest: previous },
+      changeRequestObservation: snapshot.observation ?? {
+        state: snapshot.lookupState === 'unauthenticated' ? 'auth_required' : 'error',
+        transport: 'poll',
+        lastSuccessAt: null,
+        stale: true,
+        error: snapshot.error,
+      },
+    }
+  }
   if (
     provider &&
     snapshot.lookupState &&
@@ -153,6 +168,7 @@ export function applySharedChangeRequestSnapshot(
   if (!resolvedProvider) return environmentInfo
   return {
     ...environmentInfo,
+    changeRequestObservation: snapshot.observation,
     changeRequest: snapshot.changeRequest
       ? {
           provider: resolvedProvider,
@@ -652,6 +668,15 @@ export function useWorkbenchPaneEnvironment({
       refreshChangeRequestStatus(),
     ])
   }, [loadCurrentEnvironmentInfo, refreshChangeRequestStatus])
+
+  const reloadEnvironmentAfterReconnect = useCallback(() => {
+    void loadCurrentEnvironmentInfo({ force: true, showLoading: true, shareInflight: false })
+  }, [loadCurrentEnvironmentInfo])
+  useWorkbenchDeviceReconnect({
+    deviceId: activeWorkspaceTarget?.deviceId,
+    devices: state.devices,
+    onReconnect: reloadEnvironmentAfterReconnect,
+  })
 
   useEffect(() => {
     if (!activeConversationProjectKey && !currentRuntimeTaskKey) {

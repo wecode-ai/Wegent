@@ -51,6 +51,22 @@ title: Test
     expect(screen.getByText('# Body')).toBeInTheDocument()
   })
 
+  it('hides connector authorization markers from the reply', () => {
+    const source = [
+      '请先完成授权。',
+      '',
+      '[打开 钉钉文档 授权](wegent://modal/connector-oauth?slug=dingtalk_docs)',
+      '',
+      'connector_auth_required connectorSlug=dingtalk_docs',
+    ].join('\n')
+    const { container } = render(<EnhancedMarkdown theme="light" source={source} />)
+
+    expect(container.textContent).toContain('请先完成授权。')
+    expect(container.textContent).toContain('打开 钉钉文档 授权')
+    expect(container.textContent).not.toContain('connector_auth_required')
+    expect(container.textContent).not.toContain('connectorSlug')
+  })
+
   it('renders artifact HTML in a sandboxed iframe without exposing chat send APIs', () => {
     const { container } = render(
       <EnhancedMarkdown

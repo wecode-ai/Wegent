@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { constants as osConstants } from 'node:os'
 import { createEmailAccounts } from './email-accounts.js'
-import { createEmailProvider } from './email-provider.js'
+import { createEmailProvider, EMAIL_PROVIDER } from './email-provider.js'
+import { initializeObservation } from '../plugin-runtime/connection-observations.js'
 import { createEmailSender } from './email-send.js'
 import { imapError, mailError } from './email-client.js'
 
@@ -137,7 +138,7 @@ test('UID snapshots separate old and new mail even with identical server timesta
     ],
   }
   const provider = createEmailProvider(
-    { get: async () => config },
+    { get: async () => config, list: async () => [{ id: 'one', email: config.email }] },
     {
       imapSession: async (_account, action) => action(client),
       parseMail: async () => ({
@@ -148,9 +149,18 @@ test('UID snapshots separate old and new mail even with identical server timesta
     }
   )
   const ctx = { signal: new AbortController().signal }
-  const source = { id: 'INBOX', profile: 'one', enabledAfter: after }
-  const checkpoint = await provider.initialize(ctx, source)
-  assert.deepEqual(checkpoint, { partition: '123', sequence: 1 })
+  const discovered = await provider.listResources(ctx, { kind: 'inbox', query: '' })
+  const { source, checkpoint } = await initializeObservation(
+    { call: (_id, method, input) => provider[method](ctx, input) },
+    EMAIL_PROVIDER,
+    { ...discovered.items[0], enabledAfter: after }
+  )
+  assert.deepEqual(source.boundary, { partition: '123', sequence: 1 })
+  assert.deepEqual(checkpoint, {
+    partition: '123',
+    sequence: 1,
+    activationBoundary: { partition: '123', sequence: 1 },
+  })
   client.mailbox.uidNext = 4
   const page = await provider.collect(ctx, { source, checkpoint })
   assert.deepEqual(
@@ -160,6 +170,24 @@ test('UID snapshots separate old and new mail even with identical server timesta
   assert.deepEqual(queries[0], { uid: '2:3' })
   assert.equal(page.nextCheckpoint.sequence, 3)
   assert.equal(page.hasMore, false)
+  const next = await initializeObservation(
+    { call: (_id, method, input) => provider[method](ctx, input) },
+    EMAIL_PROVIDER,
+    source
+  )
+  assert.deepEqual(next.source.boundary, { partition: '123', sequence: 3 })
+  assert.deepEqual(
+    (await provider.collect(ctx, next)).events,
+    [],
+    'A new subscription excludes mail between the old and fresh boundaries'
+  )
+  client.mailbox.uidNext = 5
+  client.search = async () => [4]
+  client.fetchAll = async () => [{ uid: 4, internalDate: new Date(after), source: 'new', size: 10 }]
+  assert.deepEqual(
+    (await provider.collect(ctx, next)).events.map(event => event.id),
+    ['123:4']
+  )
   client.mailbox.uidValidity = 456n
   await assert.rejects(provider.collect(ctx, { source, checkpoint }), {
     code: 'email_mailbox_reset',

@@ -231,7 +231,7 @@ it.each(['Asia/Shanghai', 'America/Los_Angeles'])(
     try {
       const schedule = {
         id: 'memory-review',
-        name: '分身记忆整理',
+        name: '助理记忆整理',
         enabled: true,
         updatedAt: '2026-11-11T04:40:00Z',
         timezone: 'UTC',

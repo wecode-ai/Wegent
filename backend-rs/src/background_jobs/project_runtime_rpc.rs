@@ -88,6 +88,11 @@ pub(crate) async fn call(
             )?;
     let payload =
         enforce_remote_runtime_proxy(state, user_id, route.device_type, method, payload).await?;
+    let rpc = state
+        .socketio_rpc
+        .as_ref()
+        .context("Socket.IO RPC subscriber is unavailable")?;
+    let mut guard = rpc.route_guard();
     let online = crate::device_online_state::read_online_state::<Value>(
         state,
         user_id,
@@ -100,11 +105,7 @@ pub(crate) async fn call(
         .as_str()
         .filter(|value| !value.is_empty())
         .context("Device is offline")?;
-    let rpc = state
-        .socketio_rpc
-        .as_ref()
-        .context("Socket.IO RPC subscriber is unavailable")?;
-    let pending = rpc.begin(socket, "/local-executor")?;
+    let pending = rpc.begin_for_route(socket, "/local-executor", &mut guard)?;
     let envelope = json!([{"method":method,"payload":payload}]);
     let message = crate::socketio_emit::emit_message_with_callback(
         "runtime:rpc",
