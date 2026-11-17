@@ -1,7 +1,7 @@
 //! Backfill the shared system catalog independently of development-only YAML.
 
 use anyhow::Result;
-use brz_mysql::{FromMysqlRow, Json, MysqlService, MysqlTransaction};
+use brz_mysql::{FromMysqlRow, Json, MysqlResult, MysqlService, MysqlTransaction};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -70,33 +70,92 @@ fn payload(definition: &Definition) -> Value {
     value
 }
 
-pub(super) async fn apply(mysql: &MysqlService) -> Result<()> {
+const COMPLETION_KEY: &str = "builtin_connector_apps_initialized";
+
+async fn seed(tx: &mut impl MysqlTransaction, definitions: &[Definition]) -> MysqlResult<()> {
     #[derive(FromMysqlRow)]
     struct Endpoint {
         payload: Json<Value>,
     }
-    for definition in definitions()? {
-        mysql.with_transaction(async |tx| {
-            if let Some(existing) = super::kind(tx, "ConnectorApp", &definition.slug, "system").await? {
-                let mut value = existing.payload.0;
-                if existing.is_active == Some(true) && backfill(&mut value, &definition) {
-                    tx.execute("UPDATE kinds SET json=?,updated_at=NOW() WHERE id=?", (Json(value), existing.id)).await?;
-                }
-                return Ok(());
+    for definition in definitions {
+        if let Some(existing) = super::kind(tx, "ConnectorApp", &definition.slug, "system").await? {
+            let mut value = existing.payload.0;
+            if existing.is_active == Some(true) && backfill(&mut value, definition) {
+                tx.execute(
+                    "UPDATE kinds SET json=?,updated_at=NOW() WHERE id=?",
+                    (Json(value), existing.id),
+                )
+                .await?;
             }
-            let endpoints: Vec<Endpoint> = tx.fetch_all(
-                "SELECT json AS payload FROM kinds WHERE user_id=0 AND kind='ConnectorApp' AND namespace='system' AND is_active=1", ()
-            ).await?;
-            let normalized = definition.mcp_url.trim_end_matches('/').to_lowercase();
-            if endpoints.iter().any(|row| row.payload.0["spec"]["mcpUrl"].as_str().unwrap_or("").trim_end_matches('/').to_lowercase() == normalized) {
-                return Ok(());
-            }
-            super::insert_kind(tx, "ConnectorApp", &definition.slug, "system", &payload(&definition)).await?;
-            Ok(())
-        }).await?;
+            continue;
+        }
+        let endpoints: Vec<Endpoint> = tx
+            .fetch_all(
+                "SELECT json AS payload FROM kinds WHERE user_id=0 AND kind='ConnectorApp' AND namespace='system' AND is_active=1",
+                (),
+            )
+            .await?;
+        let normalized = definition.mcp_url.trim_end_matches('/').to_lowercase();
+        if endpoints.iter().any(|row| {
+            row.payload.0["spec"]["mcpUrl"]
+                .as_str()
+                .unwrap_or("")
+                .trim_end_matches('/')
+                .to_lowercase()
+                == normalized
+        }) {
+            continue;
+        }
+        super::insert_kind(
+            tx,
+            "ConnectorApp",
+            &definition.slug,
+            "system",
+            &payload(definition),
+        )
+        .await?;
     }
+    // Publish the completion marker atomically with the catalog entries.
+    tx.execute(
+        "INSERT INTO system_configs (config_key,config_value,version,updated_by,created_at,updated_at) VALUES (?, ?, 1, 0, NOW(), NOW())",
+        (COMPLETION_KEY, r#"{"completed":true}"#),
+    )
+    .await?;
     Ok(())
 }
+
+pub(super) async fn apply(mysql: &MysqlService) -> Result<()> {
+    #[derive(FromMysqlRow)]
+    struct Completion {
+        payload: Json<Value>,
+    }
+    let definitions = definitions()?;
+    mysql
+        .with_transaction(async |tx| {
+            let completion: Option<Completion> = tx
+                .fetch_optional(
+                    "SELECT config_value AS payload FROM system_configs WHERE config_key=? LIMIT 1",
+                    (COMPLETION_KEY,),
+                )
+                .await?;
+            if completion.is_some_and(|row| row.payload.0["completed"] == true) {
+                return Ok(());
+            }
+            // An incomplete marker remains retriable if this transaction fails.
+            tx.execute(
+                "DELETE FROM system_configs WHERE config_key=?",
+                (COMPLETION_KEY,),
+            )
+            .await?;
+            seed(tx, &definitions).await
+        })
+        .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "connectors_tests.rs"]
+mod persistence_tests;
 
 #[cfg(test)]
 mod tests {

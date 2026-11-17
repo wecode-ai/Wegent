@@ -83,6 +83,7 @@ async fn verify_initialization(mysql: &MysqlService) -> Result<()> {
     use brz_mysql::Json;
     use serde_json::{Value, json};
     crate::initialization::yaml(mysql).await?;
+    verify_connector_failure_recovery(mysql).await?;
     crate::initialization::connectors(mysql).await?;
     verify_connector_initialization(mysql).await?;
     #[derive(FromMysqlRow)]
@@ -165,7 +166,17 @@ async fn verify_connector_initialization(mysql: &MysqlService) -> Result<()> {
     assert_eq!(docs.payload.0["spec"]["toolLoadingMode"], "static");
     assert_eq!(docs.payload.0["spec"]["keywords"], json!(["custom"]));
     mysql.execute("DELETE FROM kinds WHERE kind='ConnectorApp' AND namespace='system' AND user_id=0 AND name='dingtalk_docs'", ()).await?;
-    // Another owner's namesake must not suppress the system app.
+    crate::initialization::connectors(mysql).await?;
+    let deleted = read().await?;
+    assert_eq!(deleted.len(), 3);
+    assert!(deleted.iter().all(|app| app.name != "dingtalk_docs"));
+    // A new bootstrap still scopes catalog identity to the system owner.
+    mysql
+        .execute(
+            "DELETE FROM system_configs WHERE config_key='builtin_connector_apps_initialized'",
+            (),
+        )
+        .await?;
     mysql.execute("INSERT INTO kinds (kind,name,namespace,user_id,json,is_active,created_at,updated_at) VALUES ('ConnectorApp','dingtalk_docs','system',7,?,1,NOW(),NOW())", (Json(json!({"spec":{"mcpUrl":"https://foreign.example/mcp"}})),)).await?;
     crate::initialization::connectors(mysql).await?;
     let restored = read().await?;
@@ -176,6 +187,27 @@ async fn verify_connector_initialization(mysql: &MysqlService) -> Result<()> {
         .unwrap();
     assert_eq!(docs.payload.0["spec"]["enabled"], true);
     assert_eq!(docs.payload.0["spec"]["toolLoadingMode"], "lazy");
+    Ok(())
+}
+
+async fn verify_connector_failure_recovery(mysql: &MysqlService) -> Result<()> {
+    #[derive(FromMysqlRow)]
+    struct Count {
+        n: i64,
+    }
+    // Fail the third app after two inserts to verify the production rollback.
+    mysql.execute("CREATE TRIGGER reject_builtin_connector BEFORE INSERT ON kinds FOR EACH ROW BEGIN IF NEW.kind='ConnectorApp' AND NEW.name='dingtalk_aitable' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='test connector publication failure'; END IF; END", ()).await?;
+    assert!(crate::initialization::connectors(mysql).await.is_err());
+    let count: Count = mysql.fetch_one("SELECT COUNT(*) AS n FROM kinds WHERE kind='ConnectorApp' AND namespace='system' AND user_id=0", ()).await?;
+    assert_eq!(count.n, 0);
+    let marker: Count = mysql.fetch_one("SELECT COUNT(*) AS n FROM system_configs WHERE config_key='builtin_connector_apps_initialized'", ()).await?;
+    assert_eq!(marker.n, 0);
+    mysql
+        .execute("DROP TRIGGER reject_builtin_connector", ())
+        .await?;
+    crate::initialization::connectors(mysql).await?;
+    let marker: Count = mysql.fetch_one("SELECT COUNT(*) AS n FROM system_configs WHERE config_key='builtin_connector_apps_initialized' AND JSON_EXTRACT(config_value,'$.completed')=true", ()).await?;
+    assert_eq!(marker.n, 1);
     Ok(())
 }
 
