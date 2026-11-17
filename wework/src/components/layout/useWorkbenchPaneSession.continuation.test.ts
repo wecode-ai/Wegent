@@ -234,6 +234,53 @@ test.each([false, true])(
   }
 )
 
+test('retains a rejected queued send and its attachments while a question is pending', async () => {
+  const { result } = await renderSession()
+  const queued = {
+    id: 'queued-question-retry',
+    content: 'Keep this retryable',
+    status: 'failed' as const,
+    createdAt: new Date().toISOString(),
+    attachments: [attachment],
+  }
+  act(() => {
+    cacheRuntimeConversationQueuePaused(address, true)
+    cacheRuntimeConversationQueuedMessages(address, [queued])
+    reconcileRuntimeConversationSnapshot(address, [
+      {
+        id: 'question-turn',
+        status: 'done',
+        items: [
+          {
+            id: 'question-item',
+            type: 'block',
+            block: {
+              id: 'question-item',
+              type: 'tool',
+              toolName: 'request_user_input',
+              status: 'done',
+              createdAt: 1,
+              renderPayload: {
+                kind: 'request_user_input',
+                delivery: 'async',
+                itemId: 'question-item',
+                questions: [{ id: 'audience', question: 'Who receives the report?' }],
+              },
+            },
+          },
+        ],
+      },
+    ])
+  })
+  mocks.send.mockResolvedValueOnce(false)
+  await act(async () => result.current.sendQueuedAsGuidance(queued.id))
+  expect(mocks.send).toHaveBeenCalledOnce()
+  expect(getRuntimeConversationQueuedMessages(address)).toEqual([
+    expect.objectContaining({ ...queued, status: 'failed', error: '发送失败' }),
+  ])
+  expect(pendingRequestUserInputPayload(result.current.messages)?.itemId).toBe('question-item')
+})
+
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.send.mockReset().mockResolvedValue(true)
@@ -749,12 +796,17 @@ describe('explicit composer draft replacement', () => {
         await interruption
       })
 
-      if (change === 'none') {
+      if (change !== 'unpublished') {
         expect(mocks.setInput).toHaveBeenCalledExactlyOnceWith(
           scopeKey,
           `Queued message\n\n${draft}`
         )
-        expect(result.current.replaceDraftKey).toBe(replacementKey + 1)
+        expect(result.current.replaceDraftKey).toBe(replacementKey + (change === 'none' ? 1 : 0))
+        if (change === 'scope') {
+          expect(result.current.input).toBe('')
+          rerender({ currentRuntimeTask: address })
+          expect(result.current.input).toBe(`Queued message\n\n${draft}`)
+        }
       } else {
         expect(mocks.setInput).not.toHaveBeenCalled()
         expect(result.current.replaceDraftKey).toBe(replacementKey)
@@ -913,6 +965,47 @@ describe('composer draft ownership during delayed send acknowledgment', () => {
 })
 
 describe('composer draft during an in-flight send', () => {
+  test.each(['unchanged', 'published', 'buffered', 'unmounted'] as const)(
+    'restores a rejected draft to its original scope after switching (%s)',
+    async mode => {
+      const restoreAttachment = vi.fn()
+      Object.assign(mocks.context.projectChat as object, {
+        addExistingAttachmentForScope: restoreAttachment,
+      })
+      const { result, rerender, unmount } = await renderSession()
+      act(() => result.current.clearCodeComments())
+      let finish!: (accepted: boolean) => void
+      mocks.send.mockImplementationOnce(() => new Promise<boolean>(resolve => (finish = resolve)))
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      expect(mocks.setInput).toHaveBeenLastCalledWith(scopeKey, '')
+      if (mode === 'published') act(() => result.current.setInput('New draft in A'))
+      if (mode === 'buffered') act(() => result.current.onDraftEdit())
+      const otherTask = { ...address, taskId: 'other-draft-owner' }
+      const otherScope = getRuntimeTaskChatScopeKey(otherTask)
+      rerender({ currentRuntimeTask: otherTask })
+      act(() => result.current.setInput('Draft in B'))
+      act(() => result.current.onDraftEdit())
+      if (mode === 'unmounted') unmount()
+      mocks.setInput.mockClear()
+      await act(async () => {
+        finish(false)
+        expect(await submission).toBe(false)
+      })
+      if (mode === 'unchanged' || mode === 'unmounted') {
+        expect(mocks.setInput).toHaveBeenCalledWith(scopeKey, draft)
+      } else expect(mocks.setInput).not.toHaveBeenCalled()
+      expect(restoreAttachment).toHaveBeenCalledWith(scopeKey, attachment)
+      expect(
+        (mocks.context.projectChat as { inputByScope: Record<string, string> }).inputByScope[
+          otherScope
+        ]
+      ).toBe('Draft in B')
+    }
+  )
+
   test.each([true, false])(
     'preserves a newer draft after send acknowledgment (code comments=%s)',
     async withCodeComments => {

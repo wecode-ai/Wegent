@@ -28,6 +28,48 @@ import {
 } from './workbenchCloudProjectContextTestFixtures'
 
 describe('useWorkbenchCloudProjectContext', () => {
+  test('keeps a late association in its owning task while another task is loading', async () => {
+    const targetProject = project('late-association-space', 'local')
+    const item = loopItem(targetProject.id)
+    let finishBinding!: () => void
+    const api = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [targetProject] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      findCloudContextForTask: vi.fn(() => new Promise(() => {})),
+      bindTask: vi.fn(() => new Promise<void>(resolve => (finishBinding = resolve))),
+    }
+    const { result, rerender } = renderHook(
+      ({ taskId }) =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask: { deviceId: 'device-retained', taskId },
+          defaultProjectSpace: null,
+          paneKey: 'late-association-pane',
+          runtimeTaskTitle: 'Task A',
+          services: { projectSpaceApis: { local: api } } as unknown as WorkbenchServices,
+        }),
+      { initialProps: { taskId: 'retained-task' } }
+    )
+    await waitFor(() => expect(result.current.cloudProjects).toEqual([targetProject]))
+    act(() => result.current.handleSelectCloudProject(targetProject))
+    await waitFor(() => expect(result.current.taskBoardAssociation?.loading).toBe(false))
+    act(() => result.current.associateRuntimeTaskWithExistingItem(item))
+    expect(api.bindTask).toHaveBeenCalledOnce()
+    rerender({ taskId: 'different-task' })
+    await act(async () => finishBinding())
+
+    expect(result.current.boundCloudProject).toBeNull()
+    expect(result.current.boundCloudItem).toBeNull()
+    expect(result.current.taskBoardAssociation).toBeNull()
+    expect(result.current.prepareSubmission('Continue task B')).toMatchObject({
+      additionalContext: undefined,
+      origin: undefined,
+      cloudProjectId: undefined,
+    })
+  })
+
   test('retains the same task binding across hidden tabs and failed refreshes', async () => {
     const targetProject = project('retained-space', 'local')
     const item = loopItem(targetProject.id)

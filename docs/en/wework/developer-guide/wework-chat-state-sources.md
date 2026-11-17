@@ -630,6 +630,8 @@ When a user submits new input while the message queue is paused, they can preser
 
 No behavior may block local message admission. Send synchronously validates the input, records the message in its owning conversation or queue, and clears only the submitted draft revision before required attachment preparation, runtime checks, and transport. Late receipts must preserve newer drafts and other conversations. An unanswered question remains visible until delivery is confirmed; the new input appears as sending meanwhile. Admission, queueing, failure, and completed model execution are distinct states.
 
+Project and Issue bindings carry their owning task; late association results cannot populate a different conversation. Failed sends restore text and attachments against the original conversation's draft revision even after the pane switches or closes, preserving newer edits. Each send removes only the temporary queue entry it created; existing entries retain their retry action on failure.
+
 Sending does not query project or Issue details, load referenced transcripts, or wait for list refreshes. Project context carries only the selected project_store, space_id, and item_id. When details matter, the model first checks the current binding through wework_space.get_current_context and reads the required Issue, comments, or attachments. Explicit IDs apply when there is no default binding. Source tools read current authoritative data; previews and old bodies are not current evidence. Unavailable or denied reads must be reported without bypassing access controls.
 
 ```mermaid
@@ -643,6 +645,7 @@ sequenceDiagram
     S-->>C: Display immediately
     S->>R: Message, explicit attachments, resource IDs
     R-->>S: Accepted, queued, or failed receipt
+    S->>S: Settle by original conversation and draft revision; retain failed retries
     R->>M: Start turn
     M->>T: Read details on demand
     T-->>M: Current data or explicit error, preserving authorization

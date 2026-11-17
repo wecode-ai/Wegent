@@ -162,7 +162,13 @@ export function createDesktopScenario({
         })
         await control.command('fill', COMPOSER, { value: FOLLOWUP })
         await control.command('clickWhenEnabled', `${PANE} [data-testid="send-message-button"]`)
-        await control.command('waitFor', `${PANE} [data-testid="message-user"]`, { text: FOLLOWUP })
+        // Read once, without polling through the unrelated context lookup's timeout.
+        assert.ok(
+          (await control.command('getText', `${PANE} [data-testid="message-user"]`)).includes(
+            FOLLOWUP
+          ),
+          'The follow-up must be visible immediately after clicking Send'
+        )
         await control.command('waitFor', `${PANE} [data-testid="message-assistant"]`, {
           text: `${FOLLOWUP}_COMPLETE`,
           timeoutMs: modelResponseTimeoutMs,

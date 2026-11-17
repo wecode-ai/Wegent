@@ -319,7 +319,7 @@ export function useWorkbenchPaneSession({
   }, [])
   const [inputRevision, setInputRevision] = useState(0)
   const inputRevisionRef = useRef(0)
-  const draftEditVersionRef = useRef(0)
+  const draftEditVersionsRef = useRef(new Map<string, number>())
   const [replaceDraftKey, setReplaceDraftKey] = useState(0)
   const activeInputScopeRef = useRef(inputScopeKey)
   useLayoutEffect(() => {
@@ -351,7 +351,10 @@ export function useWorkbenchPaneSession({
     (value: string) => replaceInputForScope(inputScopeKey, value),
     [inputScopeKey, replaceInputForScope]
   )
-  const getDraftEditVersion = useCallback(() => draftEditVersionRef.current, [])
+  const getDraftEditVersion = useCallback(
+    () => draftEditVersionsRef.current.get(inputScopeKey) ?? 0,
+    [inputScopeKey]
+  )
   const [localError, setLocalError] = useState<string | null>(null)
   const error = projectChat.composerErrorByScope
     ? (projectChat.composerErrorByScope[inputScopeKey] ?? null)
@@ -380,9 +383,9 @@ export function useWorkbenchPaneSession({
   const setInput = scopedSetInput
   const onDraftEdit = useCallback(() => {
     if (activeInputScopeRef.current !== inputScopeKey) return
-    draftEditVersionRef.current += 1
+    draftEditVersionsRef.current.set(inputScopeKey, getDraftEditVersion() + 1)
     clearError()
-  }, [clearError, inputScopeKey])
+  }, [clearError, getDraftEditVersion, inputScopeKey])
 
   const clearCodeCommentsAfterCommit = useCallback(
     (reason: BrowserAnnotationCommand['reason'], contexts: CodeCommentContext[]) => {
@@ -1123,12 +1126,12 @@ export function useWorkbenchPaneSession({
             message: createRuntimeQueuedUserMessage(message),
           })
         }
-        pendingAdmission = options.appendLocalMessage !== false && !appendedLocalMessage
-        if (pendingAdmission) {
-          setQueuedMessages(messages => [
-            ...messages.filter(item => item.id !== message.id),
-            { ...message, status: 'sending' },
-          ])
+        if (options.appendLocalMessage !== false && !appendedLocalMessage) {
+          setQueuedMessages(messages => {
+            if (messages.some(item => item.id === message.id)) return messages
+            pendingAdmission = true
+            return [...messages, { ...message, status: 'sending' }]
+          })
         }
         const result = await sendRuntimeQueuedMessage(
           currentRuntimeTask,
@@ -1781,7 +1784,16 @@ export function useWorkbenchPaneSession({
     useCallback(
       async (inputOverride, options = {}) => {
         const submittedInput = (inputOverride ?? input).trim()
-        const submittedDraftEditVersion = options.draftEditVersion ?? draftEditVersionRef.current
+        const submittedDraftEditVersion = options.draftEditVersion ?? getDraftEditVersion()
+        const restoreRevisions = new Map([
+          [
+            inputScopeKey,
+            {
+              shared: sharedInputRevision,
+              edits: submittedDraftEditVersion,
+            },
+          ],
+        ])
         // Capture the rendered revision, before asynchronous submission preparation.
         let submittedInputRevision = inputRevision
         let submittedSharedInputRevision = sharedInputRevision
@@ -1794,9 +1806,18 @@ export function useWorkbenchPaneSession({
           setInput('')
           submittedInputRevision = inputRevisionRef.current
           submittedSharedInputRevision = getInputRevisionForScope(inputScopeKey)
+          restoreRevisions.set(inputScopeKey, {
+            shared: submittedSharedInputRevision,
+            edits: submittedDraftEditVersion,
+          })
         }
         const restoreSubmittedInput = (scopeKey: string, value: string) => {
-          if (ownsSubmittedInput() && draftEditVersionRef.current === submittedDraftEditVersion) {
+          const revision = restoreRevisions.get(scopeKey)
+          if (
+            revision &&
+            getInputRevisionForScope(scopeKey) === revision.shared &&
+            (draftEditVersionsRef.current.get(scopeKey) ?? 0) === revision.edits
+          ) {
             replaceInputForScope(scopeKey, value)
           }
         }
@@ -2097,6 +2118,10 @@ export function useWorkbenchPaneSession({
               onRuntimeTaskOptimisticOpen: (address, context) => {
                 errorScopeKey = getRuntimeTaskChatScopeKey(address)
                 submissionScopeKey = errorScopeKey
+                restoreRevisions.set(submissionScopeKey, {
+                  shared: getInputRevisionForScope(submissionScopeKey),
+                  edits: draftEditVersionsRef.current.get(submissionScopeKey) ?? 0,
+                })
                 options.onRuntimeTaskCreated?.(address)
                 if (pendingInitialGoal) {
                   setPendingGoalState(current =>
@@ -2253,6 +2278,7 @@ export function useWorkbenchPaneSession({
         inputRevision,
         sharedInputRevision,
         getInputRevisionForScope,
+        getDraftEditVersion,
         inputScopeKey,
         interruptAndSendQueuedMessage,
         lifecycleStore,
@@ -2545,36 +2571,39 @@ export function useWorkbenchPaneSession({
         notice: undefined,
       }
       setInput('')
-      const submittedInputRevision = inputRevisionRef.current
       const submittedSharedInputRevision = getInputRevisionForScope(inputScopeKey)
-      const submittedDraftEditVersion = draftEditVersionRef.current
+      const submittedDraftEditVersion = getDraftEditVersion()
       resetAttachments()
       const sent = await interruptAndSendQueuedMessage(combinedMessage)
       if (sent) return
       if (
-        activeInputScopeRef.current === inputScopeKey &&
-        inputRevisionRef.current === submittedInputRevision &&
         getInputRevisionForScope(inputScopeKey) === submittedSharedInputRevision &&
-        draftEditVersionRef.current === submittedDraftEditVersion
+        getDraftEditVersion() === submittedDraftEditVersion
       ) {
-        replaceInput(combinedMessage.displayContent ?? combinedMessage.content)
+        replaceInputForScope(
+          inputScopeKey,
+          combinedMessage.displayContent ?? combinedMessage.content
+        )
       }
-      combinedMessage.attachments?.forEach(addExistingAttachment)
+      combinedMessage.attachments?.forEach(attachment =>
+        addExistingAttachmentForScope(inputScopeKey, attachment)
+      )
       if (combinedMessage.codeComments && combinedMessage.codeComments.length > 0) {
         setCodeCommentContexts(combinedMessage.codeComments)
       }
     },
     [
-      addExistingAttachment,
+      addExistingAttachmentForScope,
       attachmentState.attachments,
       input,
       inputScopeKey,
       getInputRevisionForScope,
+      getDraftEditVersion,
       interruptAndSendQueuedMessage,
       queuedMessageBusyBlocks,
       queuedMessages,
       resetAttachments,
-      replaceInput,
+      replaceInputForScope,
       setInput,
     ]
   )
