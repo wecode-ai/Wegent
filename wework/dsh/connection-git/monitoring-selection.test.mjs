@@ -58,6 +58,7 @@ function fixture(platform) {
             headRefOid: HEAD,
             statusCheckRollup: { state: state.changed ? 'FAILURE' : 'SUCCESS' },
             mergeQueueEntry: state.closed ? null : { state: state.queueState },
+            ...state.nativeStatus,
           }
         else if (input.operation === 'checks') {
           const check = {
@@ -305,3 +306,45 @@ for (const platform of ['github', 'gitlab']) {
     }
   )
 }
+
+test('GitHub aggregate merge status remains distinct from each successful check', async () => {
+  const f = fixture('github')
+  f.state.nativeStatus = {
+    isDraft: false,
+    mergeable: 'CONFLICTING',
+    mergeStateStatus: 'DIRTY',
+    statusCheckRollup: { state: 'PENDING' },
+  }
+  const source = {
+    ...(await f.discover([pr(1)])),
+    enabledAfter: new Date(Date.now() - 3600000).toISOString(),
+  }
+  const url = 'https://github.com/org/repo/pull/1'
+  const baseline = await drain(f, source, {})
+  assert.deepEqual(baseline.events, [])
+  let checkpoint = baseline.checkpoint
+  for (const stage of [
+    { mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', checks: 'SUCCESS' },
+    { mergeable: 'MERGEABLE', mergeStateStatus: 'BLOCKED', checks: 'SUCCESS' },
+    { mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', checks: 'SUCCESS' },
+  ]) {
+    f.state.nativeStatus = {
+      isDraft: false,
+      mergeable: stage.mergeable,
+      mergeStateStatus: stage.mergeStateStatus,
+      statusCheckRollup: { state: stage.checks },
+    }
+    const result = await drain(f, source, { ...checkpoint, nextCheckAt: 0 })
+    checkpoint = result.checkpoint
+    const aggregate = result.events.filter(event => event.external.eventType === 'tracked.status')
+    assert.equal(aggregate.length, 1)
+    assert.equal(aggregate[0].topicId, url)
+    assert.equal(aggregate[0].external.headSha, HEAD)
+    assert.deepEqual(aggregate[0].external.payload, {
+      ...checkpoint.resourceStates[url].data,
+      conclusion: 'success',
+    })
+    assert.equal(aggregate[0].external.payload.mergeStateStatus, stage.mergeStateStatus)
+  }
+  assert.deepEqual((await drain(f, source, { ...checkpoint, nextCheckAt: 0 })).events, [])
+})

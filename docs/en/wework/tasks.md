@@ -68,6 +68,8 @@ After an event arrives and before execution starts, **Event received; waiting fo
 
 **Preparing event wait** means setup is still in progress. A setup failure shows **Event wait is not ready; ask AI to check and retry**. If **Connection needs authorization** appears, authorize that connection again. If **Status synchronization failed; check the connection** appears, ask AI in the same conversation to inspect the subscription and connection. **Event continuation needs attention; check this conversation** points to an execution problem; inspect the failure in the conversation. Cancelling a subscription does not resume its waiting Goal; explicitly request continuation when wanted.
 
+AI sets the wake condition, and the connection filters events before starting a model turn. For example, “notify me when the PR can merge” should wait for the aggregate merge state; individual E2E completions should update the connection without waking the model. If all checks must pass, use the aggregate check result as well. Ordinary messages and Goals share this filtering. Instructions for what to do after waking are not event conditions. Unsupported conditions must be explained rather than silently replaced with every-change wakeups.
+
 PR status in the interface shares connector collection with conversation subscriptions. A visible PR continues to update when no conversation subscription exists or its batch has already been delivered. Closing the related views or hiding the window releases that UI observation. Manual refresh uses the same collection path without waking the model. Views on the same device share PR state, while event handling records remain specific to each conversation.
 
 <a id="personal-schedules"></a>

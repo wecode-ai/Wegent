@@ -202,6 +202,8 @@ impl RuntimeWorkRpcHandler {
 mod tests {
     use super::*;
 
+    mod merge_readiness;
+
     #[test]
     fn every_consumer_captures_before_shared_history_is_compacted() {
         let source = json!({"providerId":"documents","enabledAfter":"2026-11-15T00:00:00Z"});
