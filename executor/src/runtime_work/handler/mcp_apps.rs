@@ -207,10 +207,10 @@ impl RuntimeWorkRpcHandler {
                 return Ok(app_descriptor(source, &link, &call_id, uri, None));
             }
         }
-        let source_status = match read["thread"]["status"]["type"].as_str() {
-            Some(status @ ("notLoaded" | "active" | "idle" | "systemError")) => status,
-            _ => "unknown",
-        };
+        let source_status = read["thread"]["status"]["type"]
+            .as_str()
+            .filter(|status| matches!(*status, "notLoaded" | "active" | "idle" | "systemError"))
+            .unwrap_or("unknown");
         if source_status == "notLoaded" {
             self.resume_codex_thread_for_action(&link, &thread_id)
                 .await
@@ -230,7 +230,7 @@ impl RuntimeWorkRpcHandler {
                 )],
             );
         }
-        let server_catalog = server_catalog.map_err(|error| {
+        let server_catalog = server_catalog.inspect_err(|_| {
             crate::logging::log_executor_event(
                 "MCP App catalog lookup failed",
                 &[
@@ -242,7 +242,6 @@ impl RuntimeWorkRpcHandler {
                     ("source_age_ms", started.elapsed().as_millis().to_string()),
                 ],
             );
-            error
         })?;
         let server_catalog = server_catalog.as_ref().unwrap_or(&Value::Null);
         let catalog: Vec<Value> = server_catalog["tools"]
