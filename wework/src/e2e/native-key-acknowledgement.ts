@@ -12,17 +12,28 @@ export async function sendNativeKeyAndWait(
     reject = rejectEvent
   })
   let delivered = 0
+  let timeout: number | undefined
+  const waitForNextKey = () => {
+    window.clearTimeout(timeout)
+    timeout = window.setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Native ${type} did not reach its target; delivered=${delivered}, expected=${expectedCount}, connected=${target.isConnected}`
+          )
+        ),
+      10_000
+    )
+  }
   const record = (event: KeyboardEvent) => {
     if (event.isTrusted && event.composedPath()[0] === target) {
       delivered += 1
       if (delivered === expectedCount) acknowledge()
+      else waitForNextKey()
     }
   }
   window.addEventListener(type, record, true)
-  const timeout = window.setTimeout(
-    () => reject(new Error(`Native ${type} did not reach its target`)),
-    10_000
-  )
+  waitForNextKey()
   try {
     await Promise.all([Promise.resolve().then(send), received])
   } finally {

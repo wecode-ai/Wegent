@@ -116,7 +116,30 @@ test('requires every native key in a batch and rejects a missing final event', a
   const missing = sendNativeKeyAndWait(target, 'press', async () => {}, 2)
   const rejected = expect(missing).rejects.toThrow('Native keydown did not reach its target')
   listener?.(nativeEvent(target))
-  await vi.advanceTimersByTimeAsync(10_000)
+  await vi.advanceTimersByTimeAsync(6000)
+  listener?.(nativeEvent(document.body))
+  listener?.(nativeEvent(target, target, false))
+  await vi.advanceTimersByTimeAsync(4000)
   await rejected
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+test('keeps the original per-key deadline while a native batch makes progress', async () => {
+  vi.useFakeTimers()
+  const target = document.createElement('textarea')
+  let listener: ((event: KeyboardEvent) => void) | undefined
+  vi.spyOn(window, 'addEventListener').mockImplementation((type, callback) => {
+    if (type === 'keydown') listener = callback as (event: KeyboardEvent) => void
+  })
+  const result = sendNativeKeyAndWait(target, 'press', async () => {}, 2)
+  const outcome = result.then(
+    () => 'delivered',
+    error => error.message
+  )
+  await vi.advanceTimersByTimeAsync(6000)
+  listener?.(nativeEvent(target))
+  await vi.advanceTimersByTimeAsync(6000)
+  listener?.(nativeEvent(target))
+  expect(await outcome).toBe('delivered')
   expect(vi.getTimerCount()).toBe(0)
 })
