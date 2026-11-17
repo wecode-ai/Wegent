@@ -1760,6 +1760,7 @@ impl RuntimeWorkRpcHandler {
                 let status = match &result {
                     Ok(turn) => super::hooks::lifecycle_status(&turn.outcome),
                     Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED => "interrupted",
+                    Err(_) if runtime_was_stopped => "interrupted",
                     Err(_) => "failed",
                 };
                 hooks.finish(status);

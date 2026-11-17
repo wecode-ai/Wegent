@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
@@ -20,6 +20,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { handleEvent } from './logger.mjs'
+import { BUFFER_BYTES, git as runGit } from './git.mjs'
 import { processQueue } from './worker.mjs'
 import { digest, readJson, writeJson } from './storage.mjs'
 
@@ -95,6 +96,109 @@ async function records(logs) {
 
 const patchPath = (f, record) =>
   join(f.logs, 'records', digest(record.event.event_id), 'diff.patch')
+
+test('verbose Git warnings are drained while metadata stdout remains bounded', async t => {
+  const f = await fixture(t)
+  git(f.workspace, 'config', 'core.autocrlf', 'true')
+  git(f.workspace, 'config', 'core.safecrlf', 'warn')
+  for (let i = 0; i < 400; i++)
+    await writeFile(join(f.workspace, 'warning-' + i + '-' + 'x'.repeat(180)), 'line\n')
+  const warning = spawnSync('git', ['-C', f.workspace, 'add', '--all'], {
+    env: { ...environment, GIT_INDEX_FILE: join(f.root, 'warning.index') },
+    encoding: 'utf8',
+  })
+  assert.equal(warning.status, 0, warning.stderr)
+  assert.ok(Buffer.byteLength(warning.stderr) > BUFFER_BYTES)
+  await f.invoke(f.event(0, 'TurnStarted'))
+  await writeFile(join(f.workspace, 'large.txt'), 'x'.repeat(BUFFER_BYTES + 1))
+  const blob = git(f.workspace, 'hash-object', '-w', 'large.txt')
+  await assert.rejects(runGit(f.workspace, ['cat-file', 'blob', blob]), /exceeds 64 KiB/)
+})
+
+test('failed metadata writes and syncs remove their temporary files', async t => {
+  const f = await fixture(t)
+  const probe = await open(join(f.root, 'probe'), 'w')
+  const prototype = Object.getPrototypeOf(probe)
+  await probe.close()
+  for (const method of ['writeFile', 'sync']) {
+    const fault = t.mock.method(prototype, method, async function () {
+      throw new Error('injected metadata failure')
+    })
+    try {
+      await assert.rejects(writeJson(join(f.root, 'metadata.json'), {}), /injected/)
+    } finally {
+      fault.mock.restore()
+    }
+    assert.equal(
+      (await readdir(f.root)).some(name => name.startsWith('metadata.json')),
+      false
+    )
+  }
+})
+
+test('failed queue publication releases refs only before the job becomes visible', async t => {
+  for (const stage of ['write', ...(process.platform === 'win32' ? [] : ['directory-sync'])]) {
+    const f = await fixture(t)
+    const start = await f.invoke(f.event(0, 'TurnStarted'))
+    const statePath = join(start.queue_path, 'executions', digest('one'), 'state.json')
+    const baseline = await readJson(statePath)
+    await writeFile(join(f.workspace, 'source.txt'), 'captured despite sync failure\n')
+    const probe = await open(join(f.root, 'probe'), 'w')
+    const prototype = Object.getPrototypeOf(probe)
+    await probe.close()
+    const write = prototype.writeFile
+    const sync = prototype.sync
+    let jobWritten = false
+    const writer = t.mock.method(prototype, 'writeFile', async function (bytes, ...args) {
+      if (JSON.parse(bytes).input?.event_id === 'one:1') {
+        if (stage === 'write') throw new Error('injected queue failure')
+        jobWritten = true
+      }
+      return write.call(this, bytes, ...args)
+    })
+    const syncer = t.mock.method(prototype, 'sync', async function () {
+      if (jobWritten && (await this.stat()).isDirectory()) {
+        jobWritten = false
+        throw new Error('injected queue failure')
+      }
+      return sync.call(this)
+    })
+    try {
+      await assert.rejects(f.invoke(f.event(1)), /injected queue failure/)
+    } finally {
+      writer.mock.restore()
+      syncer.mock.restore()
+    }
+    const refs = () =>
+      git(f.workspace, 'for-each-ref', '--format=%(refname)', 'refs/wegent/turn-diff')
+    const pending = await readdir(join(start.queue_path, 'pending'))
+    if (stage === 'write') {
+      assert.deepEqual(pending, [])
+      assert.equal(refs(), baseline.reference)
+    } else {
+      assert.equal(pending.length, 1)
+      assert.match(refs(), /-event-/)
+      git(f.workspace, 'gc', '--prune=now')
+      await processQueue(start.queue_path)
+      const [record] = await records(f.logs)
+      assert.match(await readFile(patchPath(f, record), 'utf8'), /captured despite sync failure/)
+      assert.equal(refs(), baseline.reference)
+      assert.equal(git(f.workspace, 'rev-parse', baseline.reference), baseline.tree)
+    }
+  }
+})
+
+test('replaying a closed execution releases a baseline left by an interrupted cleanup', async t => {
+  const f = await fixture(t)
+  const start = await f.invoke(f.event(0, 'TurnStarted'))
+  const statePath = join(start.queue_path, 'executions', digest('one'), 'state.json')
+  const baseline = await readJson(statePath)
+  await writeJson(statePath, { ...baseline, closed: true })
+  assert.equal(git(f.workspace, 'rev-parse', baseline.reference), baseline.tree)
+  await f.invoke(f.event(1, 'ExecutionCompleted'))
+  assert.equal(git(f.workspace, 'for-each-ref', '--format=%(refname)', 'refs/wegent/turn-diff'), '')
+  assert.deepEqual(await records(f.logs), [])
+})
 
 test('only snapshot differences are logged, including child shell writes and separate increments', async t => {
   const f = await fixture(t)

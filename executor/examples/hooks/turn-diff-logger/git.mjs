@@ -9,13 +9,17 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 export const BUFFER_BYTES = 64 * 1024
 
-async function bounded(stream) {
+async function bounded(stream, truncate = false) {
   const chunks = []
   let bytes = 0
   for await (const chunk of stream) {
-    bytes += chunk.length
-    if (bytes > BUFFER_BYTES) throw new Error('Git metadata exceeds 64 KiB')
-    chunks.push(chunk)
+    const remaining = BUFFER_BYTES - bytes
+    if (chunk.length > remaining && !truncate) throw new Error('Git metadata exceeds 64 KiB')
+    if (remaining > 0) {
+      const retained = chunk.subarray(0, remaining)
+      chunks.push(retained)
+      bytes += retained.length
+    }
   }
   return Buffer.concat(chunks)
     .toString('utf8')
@@ -52,7 +56,7 @@ export async function git(cwd, args, { index, output, input, hooks } = {}) {
             })
           )
         : bounded(child.stdout),
-      bounded(child.stderr),
+      bounded(child.stderr, true),
       exited,
       input == null ? undefined : pipeline(Readable.from([input]), child.stdin),
     ])

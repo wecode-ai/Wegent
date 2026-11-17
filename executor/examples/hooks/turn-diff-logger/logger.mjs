@@ -78,8 +78,6 @@ async function enqueue(root, directory, state, input) {
   const prefix = state.reference + '-event-' + digest(input.event_id)
   // Refs outside heads protect immutable trees without changing the user's index.
   const references = [prefix + '-before', prefix + '-after']
-  await pin(state.workspace, references[0], state.tree, hooks)
-  await pin(state.workspace, references[1], after, hooks)
   const job = {
     input,
     workspace: state.workspace,
@@ -91,7 +89,18 @@ async function enqueue(root, directory, state, input) {
   }
   // Publish the complete job before advancing the baseline. A crash can merge
   // or repeat a later increment but cannot turn a queued job into a partial patch.
-  await writeJson(join(root, 'pending', digest(input.event_id) + '.json'), job)
+  const pending = join(root, 'pending', digest(input.event_id) + '.json')
+  try {
+    await pin(state.workspace, references[0], state.tree, hooks)
+    await pin(state.workspace, references[1], after, hooks)
+    await writeJson(pending, job)
+  } catch (error) {
+    // A directory-sync error can follow a successful rename. Published jobs
+    // still own their refs even when publication did not return successfully.
+    if (!(await optionalJson(pending)))
+      for (const reference of references) await unpin(state.workspace, reference, hooks)
+    throw error
+  }
   await pin(state.workspace, state.reference, after, hooks)
   const next = {
     ...state,
@@ -136,7 +145,10 @@ export async function handleEvent(input, config, { launchWorker = startWorker } 
     } else {
       if (!state) throw new Error('TurnStarted baseline is missing')
       if (input.hook_event_name === 'ExecutionCompleted') {
-        if (state.closed) return
+        if (state.closed) {
+          await unpin(workspace, reference, hooks)
+          return
+        }
         if (input.sequence > state.sequence + 1)
           state = await enqueue(root, directory, state, input)
         await writeJson(join(directory, 'state.json'), {

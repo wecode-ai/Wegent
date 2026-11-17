@@ -40,12 +40,12 @@ export async function writeJson(path, value) {
   const temporary = path + '.' + randomUUID() + '.tmp'
   const file = await open(temporary, 'wx', 0o600)
   try {
-    await file.writeFile(bytes)
-    await file.sync()
-  } finally {
-    await file.close()
-  }
-  try {
+    try {
+      await file.writeFile(bytes)
+      await file.sync()
+    } finally {
+      await file.close()
+    }
     await rename(temporary, path)
     await syncDirectory(dirname(path))
   } finally {

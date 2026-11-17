@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
@@ -95,7 +96,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
 
     async verify(control) {
       rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-      root = await mkdtemp(join(resultDir, 'async-hooks-'))
+      root = await mkdtemp(join(tmpdir(), 'wework-async-hooks-'))
       let verified = false
       try {
         const workspace = join(root, 'repository')
@@ -103,6 +104,11 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         const plugin = join(root, 'plugin')
         await mkdir(workspace)
         await mkdir(plain)
+        const plainGit = spawnSync('git', ['-C', plain, 'rev-parse', '--is-inside-work-tree'], {
+          encoding: 'utf8',
+        })
+        assert.equal(plainGit.status, 128, 'The non-Git fixture belongs to a repository')
+        assert.match(plainGit.stderr, /not a git repository/i)
         const git = (...args) =>
           execFileSync('git', ['-C', workspace, ...args], {
             encoding: 'utf8',
@@ -193,7 +199,7 @@ console.log('HOOK_WRITES_COMPLETE')
         )
         const result = await rpc('runtime.hooks.install', { path: plugin })
         installed = true
-        assert.equal(result.plugin.health, 'ready')
+        assert.equal(result.plugin.health.status, 'ready')
         assert.equal(result.plugin.handlers.length, 3)
         const catalog = await rpc('runtime.runner.catalog', {})
         const model = catalog.models.find(value => value.runtime === 'codex' && value.is_default)
@@ -309,7 +315,8 @@ console.log('HOOK_WRITES_COMPLETE')
           uiTimeoutMs
         )
         if (installed) await rpc('runtime.hooks.delete', { pluginId })
-        if (verified) await rm(root, { recursive: true, force: true })
+        if (!verified) await cp(root, join(resultDir, 'async-hooks-failure'), { recursive: true })
+        await rm(root, { recursive: true, force: true })
       }
     },
   }
