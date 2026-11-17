@@ -536,10 +536,13 @@ done
             .await
             .unwrap();
             assert_eq!(
-                handler
-                    .cancel_task(json!({"taskId":"waiting"}))
-                    .await
-                    .unwrap()["accepted"],
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    handler.cancel_task(json!({"taskId":"waiting"})),
+                )
+                .await
+                .expect("Cancellation must interrupt a pending account read")
+                .unwrap()["accepted"],
                 true
             );
             tokio::time::timeout(Duration::from_secs(2), async {
