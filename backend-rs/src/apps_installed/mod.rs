@@ -18,6 +18,12 @@
 pub(crate) mod connection;
 pub mod db;
 mod handler;
+pub(crate) mod http_tools;
 pub mod mcp;
+pub(crate) mod mcp_sse;
 pub mod models;
+pub(crate) mod refresh;
+mod refresh_endpoint;
+#[cfg(test)]
+mod refresh_mysql_tests;
 pub mod service;

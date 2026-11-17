@@ -9,7 +9,7 @@ ROOT = Path(__file__).parents[2]
 CONTRACT = ROOT / "docs/zh/wegent/developer-guide/collaboration-permissions.md"
 # CP14 approval: invitees manage their current Issue only; CP07 is unchanged.
 APPROVED_CONTRACT_SHA256 = (
-    "3cb074ac45606f8ea2ae5355dff0533fe0f62d32b672eb7459a0e328d98a3771"
+    "881bfb834b058e78121c05dddd7c6d35e273a80b3996d16e2e02f25b1946fe82"
 )
 
 

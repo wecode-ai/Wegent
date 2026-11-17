@@ -52,7 +52,7 @@ async def create_connector_oauth_session(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Connector app does not use OAuth",
         )
-    return await connector_oauth_service.create_session(slug=slug, user_id=user.id)
+    return await connector_oauth_service.create_session(db, slug=slug, user_id=user.id)
 
 
 @router.get(

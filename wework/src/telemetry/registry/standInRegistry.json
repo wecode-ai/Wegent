@@ -8,11 +8,11 @@
       "key": "stand_in.configuration",
       "action": "configuration",
       "name": {
-        "zh-CN": "保存分身配置",
+        "zh-CN": "保存助理配置",
         "en": "Save stand-in configuration"
       },
       "description": {
-        "zh-CN": "保存分身配置",
+        "zh-CN": "保存助理配置",
         "en": "Save stand-in configuration"
       },
       "failureStages": [
@@ -69,11 +69,11 @@
       "key": "stand_in.conversation",
       "action": "conversation",
       "name": {
-        "zh-CN": "发送分身对话",
+        "zh-CN": "发送助理对话",
         "en": "Send stand-in message"
       },
       "description": {
-        "zh-CN": "发送分身对话",
+        "zh-CN": "发送助理对话",
         "en": "Send stand-in message"
       },
       "failureStages": [
@@ -130,11 +130,11 @@
       "key": "stand_in.proposal",
       "action": "proposal",
       "name": {
-        "zh-CN": "处理分身配置提案",
+        "zh-CN": "处理助理配置提案",
         "en": "Resolve stand-in proposal"
       },
       "description": {
-        "zh-CN": "处理分身配置提案",
+        "zh-CN": "处理助理配置提案",
         "en": "Resolve stand-in proposal"
       },
       "failureStages": [
@@ -191,11 +191,11 @@
       "key": "stand_in.work_action",
       "action": "work_action",
       "name": {
-        "zh-CN": "操作分身工作",
+        "zh-CN": "操作助理工作",
         "en": "Act on stand-in work"
       },
       "description": {
-        "zh-CN": "操作分身工作",
+        "zh-CN": "操作助理工作",
         "en": "Act on stand-in work"
       },
       "failureStages": [
@@ -252,11 +252,11 @@
       "key": "stand_in.dispatch",
       "action": "dispatch",
       "name": {
-        "zh-CN": "派发分身工作",
+        "zh-CN": "派发助理工作",
         "en": "Dispatch stand-in work"
       },
       "description": {
-        "zh-CN": "派发分身工作",
+        "zh-CN": "派发助理工作",
         "en": "Dispatch stand-in work"
       },
       "failureStages": [
@@ -315,11 +315,11 @@
       "key": "stand_in.opened",
       "eventName": "stand_in_opened",
       "name": {
-        "zh-CN": "打开分身",
+        "zh-CN": "打开助理",
         "en": "Open stand-in"
       },
       "description": {
-        "zh-CN": "打开分身",
+        "zh-CN": "打开助理",
         "en": "Open stand-in"
       },
       "publicProperties": [
@@ -344,11 +344,11 @@
       "key": "stand_in.execution_started",
       "eventName": "stand_in_execution_started",
       "name": {
-        "zh-CN": "分身执行开始",
+        "zh-CN": "助理执行开始",
         "en": "Stand-in execution started"
       },
       "description": {
-        "zh-CN": "分身执行开始",
+        "zh-CN": "助理执行开始",
         "en": "Stand-in execution started"
       },
       "publicProperties": [
@@ -390,11 +390,11 @@
       "key": "stand_in.execution_waiting",
       "eventName": "stand_in_execution_waiting",
       "name": {
-        "zh-CN": "分身等待回复或确认",
+        "zh-CN": "助理等待回复或确认",
         "en": "Stand-in execution waiting"
       },
       "description": {
-        "zh-CN": "分身等待回复或确认",
+        "zh-CN": "助理等待回复或确认",
         "en": "Stand-in execution waiting"
       },
       "publicProperties": [
@@ -436,11 +436,11 @@
       "key": "stand_in.execution_completed",
       "eventName": "stand_in_execution_completed",
       "name": {
-        "zh-CN": "分身执行结束",
+        "zh-CN": "助理执行结束",
         "en": "Stand-in execution completed"
       },
       "description": {
-        "zh-CN": "分身执行结束",
+        "zh-CN": "助理执行结束",
         "en": "Stand-in execution completed"
       },
       "publicProperties": [
