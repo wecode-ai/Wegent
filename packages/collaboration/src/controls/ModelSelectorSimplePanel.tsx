@@ -70,7 +70,7 @@ export function ModelSelectorSimplePanel({
       ref={panelRef}
       data-model-picker-panel="simple"
       style={{ maxHeight }}
-      className="flex w-full flex-col overflow-y-auto p-1"
+      className="flex w-full flex-col overflow-y-auto p-1 max-md:px-4"
     >
       <ModelSelectorSummary
         translate={t}

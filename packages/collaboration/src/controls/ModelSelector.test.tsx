@@ -61,6 +61,67 @@ function officialModel(modelId: string, isDefault = false): CodexOfficialModel {
 }
 
 describe("model controls without a desktop host", () => {
+  it("owns radio choices separate from reasoning controls within its modal picker", () => {
+    const models = codexRuntimeModels(
+      [officialModel("gpt-6.1-sol", true), officialModel("gpt-6-astra")],
+      null,
+      true,
+    );
+    act(() =>
+      root.render(
+        <ModelSelector
+          translate={translate}
+          isMobile={false}
+          models={models}
+          selectedModel={models[0]}
+          selectedModelOptions={{ reasoning: "medium" }}
+          disabled={false}
+          onSelectModel={vi.fn()}
+          onSelectModelOption={vi.fn()}
+          onOpenModelSettings={vi.fn()}
+        />,
+      ),
+    );
+    act(() => {
+      element("model-selector-button").focus();
+      element("model-selector-button").click();
+    });
+    act(() => element("model-advanced-toggle").click());
+    const selected = element("model-option-default");
+    const menu = selected.closest<HTMLElement>('[role="radiogroup"]');
+    expect(menu?.getAttribute("aria-label")).toBe("选择模型");
+    expect(menu?.querySelector('[role="slider"]')).toBeNull();
+    expect(document.activeElement).toBe(selected);
+    const options = [...menu!.querySelectorAll<HTMLElement>('[role="radio"]')];
+    const press = (key: string, shiftKey = false) => {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => {
+        document.activeElement?.dispatchEvent(event);
+      });
+      return event;
+    };
+    act(() => options.at(-1)!.focus());
+    expect(options.filter((option) => option.tabIndex === 0)).toEqual([
+      options.at(-1),
+    ]);
+    for (const shiftKey of [false, true]) {
+      expect(press("Tab", shiftKey).defaultPrevented).toBe(true);
+      expect(
+        element("model-selector-menu").contains(document.activeElement),
+      ).toBe(true);
+    }
+    press("Escape");
+    expect(
+      document.querySelector('[data-testid="model-selector-menu"]'),
+    ).toBeNull();
+    expect(document.activeElement).toBe(element("model-selector-button"));
+  });
+
   it.each(["model", "preset"])(
     "keeps selection intent when the host rejects an atomic %s selection",
     (kind) => {
@@ -775,6 +836,9 @@ describe("model controls without a desktop host", () => {
       act(() => element("model-selector-button").click());
 
       const reasoningSlider = element("model-control-reasoning-track");
+      expect(reasoningSlider.getAttribute("aria-label")).toBe(
+        translate("workbench.reasoning_level", "Reasoning"),
+      );
       expect(reasoningSlider.getAttribute("aria-valuetext")).toBe(
         translate("workbench.local_model_reasoning_high", "High"),
       );
@@ -816,19 +880,18 @@ it.each([false, true])(
   },
 );
 
-
-it.each(['editor', 'trigger'] as const)(
-  'owns portaled keyboard focus and restores its %s opener',
-  opener => {
-    const onClose = vi.fn()
+it.each(["editor", "trigger"] as const)(
+  "owns portaled keyboard focus and restores its %s opener",
+  (opener) => {
+    const onClose = vi.fn();
     const otherModel = {
       ...cloudDeepseekModel,
-      name: 'other-cloud',
-      displayName: 'Other cloud model',
-    }
+      name: "other-cloud",
+      displayName: "Other cloud model",
+    };
     function Host() {
-      const ref = useDialogKeyboard<HTMLDivElement>(onClose)
-      const [selected, setSelected] = useState(cloudDeepseekModel)
+      const ref = useDialogKeyboard<HTMLDivElement>(onClose);
+      const [selected, setSelected] = useState(cloudDeepseekModel);
       return (
         <div ref={ref} role="dialog" aria-label="Parent" tabIndex={-1}>
           <input data-testid="host-editor" />
@@ -844,69 +907,92 @@ it.each(['editor', 'trigger'] as const)(
           />
           <button data-testid="host-last">Last parent control</button>
         </div>
-      )
+      );
     }
-    act(() => root.render(<Host />))
-    const previous = element(opener === 'editor' ? 'host-editor' : 'model-selector-button')
-    act(() => previous.focus())
-    act(() => element('model-selector-button').click())
-    const picker = element('model-selector-menu').closest<HTMLElement>('[role="dialog"]')!
-    expect(picker.getAttribute('aria-modal')).toBe('true')
-    expect(element('model-selector-button').getAttribute('aria-controls')).toBe(picker.id)
-    expect(picker.getAttribute('aria-label')).toBe('选择模型')
-    expect(element('model-selector-button').getAttribute('aria-haspopup')).toBe('dialog')
-    expect(picker.contains(document.activeElement)).toBe(true)
-    const radios = [...picker.querySelectorAll<HTMLElement>('[role="radio"]')]
-    expect(radios).toHaveLength(2)
-    expect(radios.every(radio => radio.closest('[role="radiogroup"]'))).toBe(true)
-    expect(picker.querySelector('[role="menuitemradio"]')).toBeNull()
-    expect(radios.filter(radio => radio.tabIndex === 0)).toHaveLength(1)
+    act(() => root.render(<Host />));
+    const previous = element(
+      opener === "editor" ? "host-editor" : "model-selector-button",
+    );
+    act(() => previous.focus());
+    act(() => element("model-selector-button").click());
+    const picker = element("model-selector-menu").closest<HTMLElement>(
+      '[role="dialog"]',
+    )!;
+    expect(picker.getAttribute("aria-modal")).toBe("true");
+    expect(element("model-selector-button").getAttribute("aria-controls")).toBe(
+      picker.id,
+    );
+    expect(picker.getAttribute("aria-label")).toBe("选择模型");
+    expect(element("model-selector-button").getAttribute("aria-haspopup")).toBe(
+      "dialog",
+    );
+    expect(picker.contains(document.activeElement)).toBe(true);
+    expect(element("model-selector-menu").dataset.panel).toBe("simple");
+    act(() => element("model-advanced-toggle").click());
+    expect(element("model-selector-menu").dataset.panel).toBe("advanced");
+    const radios = [...picker.querySelectorAll<HTMLElement>('[role="radio"]')];
+    expect(radios).toHaveLength(2);
+    expect(radios.every((radio) => radio.closest('[role="radiogroup"]'))).toBe(
+      true,
+    );
+    expect(picker.querySelector('[role="menuitemradio"]')).toBeNull();
+    expect(radios.filter((radio) => radio.tabIndex === 0)).toHaveLength(1);
     const press = (target: HTMLElement, key: string, shiftKey = false) =>
       act(() => {
         target.dispatchEvent(
-          new KeyboardEvent('keydown', {
+          new KeyboardEvent("keydown", {
             key,
-            keyCode: key === 'Escape' ? 27 : 0,
+            keyCode: key === "Escape" ? 27 : 0,
             bubbles: true,
             cancelable: true,
             shiftKey,
-          })
-        )
-      })
-    act(() => radios[0].focus())
+          }),
+        );
+      });
+    act(() => radios[0].focus());
     act(() =>
       radios[0].dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'ArrowDown',
+        new KeyboardEvent("keydown", {
+          key: "ArrowDown",
           keyCode: 229,
           isComposing: true,
           bubbles: true,
           cancelable: true,
-        })
-      )
-    )
-    expect(radios[0].getAttribute('aria-checked')).toBe('true')
-    press(radios[0], 'ArrowDown')
-    expect(radios[1].getAttribute('aria-checked')).toBe('true')
-    expect(picker.contains(document.activeElement)).toBe(true)
+        }),
+      ),
+    );
+    expect(radios[0].getAttribute("aria-checked")).toBe("true");
+    press(radios[0], "ArrowDown");
+    expect(radios[1].getAttribute("aria-checked")).toBe("true");
+    expect(picker.contains(document.activeElement)).toBe(true);
     // Selecting a model can reveal its configuration panel. Focus follows the visible view.
-    expect(document.activeElement?.closest('[inert], [aria-hidden="true"]')).toBeNull()
+    expect(
+      document.activeElement?.closest('[inert], [aria-hidden="true"]'),
+    ).toBeNull();
     const controls = [
-      ...picker.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])'),
-    ].filter(control => control.tabIndex >= 0 && !control.closest('[inert], [aria-hidden="true"]'))
-    expect(controls.length).toBeGreaterThan(0)
-    const first = controls[0]
-    const last = controls.at(-1)!
-    act(() => last.focus())
-    press(last, 'Tab')
-    expect(document.activeElement).toBe(first)
-    press(first, 'Tab', true)
-    expect(document.activeElement).toBe(last)
-    press(last, 'Escape')
-    expect(document.querySelector('[data-testid="model-selector-menu"]')).toBeNull()
-    expect(document.activeElement).toBe(previous)
-    expect(onClose).not.toHaveBeenCalled()
-    press(previous, 'Escape')
-    expect(onClose).toHaveBeenCalledOnce()
-  }
-)
+      ...picker.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), input:not([disabled])",
+      ),
+    ].filter(
+      (control) =>
+        control.tabIndex >= 0 &&
+        !control.closest('[inert], [aria-hidden="true"]'),
+    );
+    expect(controls.length).toBeGreaterThan(0);
+    const first = controls[0];
+    const last = controls.at(-1)!;
+    act(() => last.focus());
+    press(last, "Tab");
+    expect(document.activeElement).toBe(first);
+    press(first, "Tab", true);
+    expect(document.activeElement).toBe(last);
+    press(last, "Escape");
+    expect(
+      document.querySelector('[data-testid="model-selector-menu"]'),
+    ).toBeNull();
+    expect(document.activeElement).toBe(previous);
+    expect(onClose).not.toHaveBeenCalled();
+    press(previous, "Escape");
+    expect(onClose).toHaveBeenCalledOnce();
+  },
+);

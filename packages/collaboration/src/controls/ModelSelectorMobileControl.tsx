@@ -17,7 +17,7 @@ export function ModelSelectorMobileControl({
 }) {
   return (
     <section key={control.id} className="space-y-2">
-      <h3 className="px-1 text-xs font-semibold text-text-muted">
+      <h3 className="px-1 text-xs font-semibold text-text-secondary">
         {control.labelKey ? t(control.labelKey, control.label) : control.label}
       </h3>
       <div className="scrollbar-none flex gap-2 overflow-x-auto pb-1">

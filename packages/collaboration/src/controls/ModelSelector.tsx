@@ -44,7 +44,8 @@ import { MobileModelSelector } from "./MobileModelSelector";
 import { defaultNewChatModel } from "./runtimeModelSelection";
 import {
   MODEL_SELECTOR_VIEWPORT_MARGIN,
-  MODEL_SELECTOR_VIEWPORT_TOP,
+  MODEL_SELECTOR_MAX_HEIGHT,
+  getDesktopModelSelectorVerticalLayout,
 } from "./model-selector-layout";
 import {
   isCloudModel,
@@ -57,11 +58,9 @@ import {
   modelPowerOptions,
 } from "./model-selector-utils";
 import styles from "./ModelSelector.module.css";
-import { useModelSelectorKeyboard } from "./useModelSelectorKeyboard";
+import { useDesktopModelMenu } from "./useDesktopModelMenu";
 
 const MAIN_MENU_WIDTH = 320;
-const MAIN_MENU_TRIGGER_GAP = 8;
-const MAIN_MENU_MAX_HEIGHT = 608;
 const SIMPLE_MENU_FALLBACK_HEIGHT = 160;
 const ADVANCED_MENU_FALLBACK_HEIGHT = 316;
 type DesktopMenuView = "simple" | "advanced";
@@ -123,8 +122,9 @@ export function ModelSelector({
   );
   const [desktopMenuLeft, setDesktopMenuLeft] = useState(0);
   const [desktopMenuWidth, setDesktopMenuWidth] = useState(MAIN_MENU_WIDTH);
-  const [desktopMenuMaxHeight, setDesktopMenuMaxHeight] =
-    useState(MAIN_MENU_MAX_HEIGHT);
+  const [desktopMenuMaxHeight, setDesktopMenuMaxHeight] = useState(
+    MODEL_SELECTOR_MAX_HEIGHT,
+  );
   const [viewHeights, setViewHeights] = useState<
     Partial<Record<DesktopMenuView, number>>
   >({});
@@ -229,9 +229,6 @@ export function ModelSelector({
     const menuPanel = menuPanelRef.current;
     if (!button || !menuPanel) return;
 
-    const viewportTop = MODEL_SELECTOR_VIEWPORT_TOP;
-    const viewportBottom = window.innerHeight - MODEL_SELECTOR_VIEWPORT_MARGIN;
-    const maxAvailableHeight = Math.max(0, viewportBottom - viewportTop);
     const activePanelName =
       menuPanel.dataset.panel === "advanced" ? "advanced" : "simple";
     const activePanel = menuPanel.querySelector<HTMLElement>(
@@ -246,19 +243,12 @@ export function ModelSelector({
       (activePanelName === "simple"
         ? SIMPLE_MENU_FALLBACK_HEIGHT
         : ADVANCED_MENU_FALLBACK_HEIGHT);
-    const menuHeight = Math.min(
-      MAIN_MENU_MAX_HEIGHT,
-      maxAvailableHeight,
-      naturalHeight,
-    );
     const buttonRect = button.getBoundingClientRect();
-    const preferredTop =
-      menuPlacement === "below"
-        ? buttonRect.bottom + MAIN_MENU_TRIGGER_GAP
-        : buttonRect.top - MAIN_MENU_TRIGGER_GAP - menuHeight;
-    const maxTop = viewportBottom - menuHeight;
-    const clampedTop = Math.round(
-      Math.max(viewportTop, Math.min(preferredTop, maxTop)),
+    const verticalLayout = getDesktopModelSelectorVerticalLayout(
+      buttonRect,
+      window.innerHeight,
+      naturalHeight,
+      menuPlacement,
     );
     const viewportRight = Math.min(
       window.innerWidth,
@@ -278,16 +268,14 @@ export function ModelSelector({
       ),
     );
 
-    if (menuPlacement === "below") {
-      setDesktopMenuTop(clampedTop);
+    if (verticalLayout.top !== undefined) {
+      setDesktopMenuTop(verticalLayout.top);
       setDesktopMenuBottom(null);
     } else {
-      setDesktopMenuBottom(
-        Math.max(0, Math.round(window.innerHeight - clampedTop - menuHeight)),
-      );
+      setDesktopMenuBottom(verticalLayout.bottom ?? null);
     }
     setDesktopMenuLeft(clampedLeft);
-    setDesktopMenuMaxHeight(maxAvailableHeight);
+    setDesktopMenuMaxHeight(verticalLayout.maxHeight);
   }, [getViewportRightBoundary, menuPlacement, viewHeights]);
   const activateMobileFamily = useCallback(
     (familyId: string) => {
@@ -298,8 +286,8 @@ export function ModelSelector({
     [setActiveFamilyId],
   );
 
-  const { ref: desktopMenuWrapperRef, onKeyDown: handleMenuKeyDown } =
-    useModelSelectorKeyboard(closeMenu, open && !isMobile);
+  const { ref: desktopMenuWrapperRef, ...desktopMenuKeyboard } =
+    useDesktopModelMenu(closeMenu, open && !isMobile);
 
   useEffect(() => {
     if (!open || isMobile) return;
@@ -440,8 +428,13 @@ export function ModelSelector({
   useLayoutEffect(() => {
     if (!open || isMobile) return;
     const measure = () => {
-      const simpleHeight = simplePanelRef.current?.offsetHeight;
-      const advancedHeight = advancedPanelRef.current?.offsetHeight;
+      const simpleHeight = simplePanelRef.current?.scrollHeight;
+      const advancedHeight = advancedPanelRef.current
+        ? Math.min(
+            advancedPanelRef.current.scrollHeight,
+            ADVANCED_MENU_FALLBACK_HEIGHT,
+          )
+        : undefined;
       setViewHeights((current) => {
         const next = {
           ...(simpleHeight ? { simple: simpleHeight } : {}),
@@ -533,6 +526,7 @@ export function ModelSelector({
           data-model-provider-id={codexProviderId(model)}
           role="radio"
           aria-checked={selected}
+          tabIndex={selected ? 0 : -1}
           aria-disabled={modelDisabled}
           title={disabledMessage}
           onClick={() => {
@@ -605,6 +599,7 @@ export function ModelSelector({
             data-model-preset={preset.name}
             role="radio"
             aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
             onClick={() => selectPowerPreset(preset)}
             className={`${styles.defaultItem} transition-colors hover:bg-muted focus-visible:bg-muted`}
           >
@@ -789,7 +784,7 @@ export function ModelSelector({
             aria-modal="true"
             aria-label={t("workbench.model_picker_title", "选择模型")}
             tabIndex={-1}
-            onKeyDown={handleMenuKeyDown}
+            {...desktopMenuKeyboard}
             style={{
               ...portalTheme.style,
               left: desktopMenuLeft,
@@ -811,7 +806,11 @@ export function ModelSelector({
               data-testid="model-selector-menu"
               data-panel={resolvedDesktopMenuView}
               data-enter-animation="main"
-              style={{ maxHeight: desktopMenuMaxHeight }}
+              style={{
+                maxHeight: desktopMenuMaxHeight,
+                transformOrigin:
+                  desktopMenuBottom === null ? "right top" : "right bottom",
+              }}
               className={cn(
                 "w-full shrink-0 overflow-hidden rounded-2xl bg-popover",
                 styles.mainMenu,
@@ -887,14 +886,23 @@ export function ModelSelector({
                     <div
                       ref={advancedPanelRef}
                       data-model-picker-panel="advanced"
-                      className={cn(styles.advancedPanel, "max-h-[316px]")}
+                      className={styles.advancedPanel}
+                      style={{
+                        maxHeight: Math.min(
+                          ADVANCED_MENU_FALLBACK_HEIGHT,
+                          desktopMenuMaxHeight,
+                        ),
+                      }}
                     >
                       <div className={styles.sectionLabel}>
                         {t("workbench.model_picker_title", "选择模型")}
                       </div>
                       <div
                         role="radiogroup"
-                        aria-label={t("workbench.model_picker_title", "选择模型")}
+                        aria-label={t(
+                          "workbench.model_picker_title",
+                          "选择模型",
+                        )}
                       >
                         {renderAdvancedModelSource(
                           "model-source-local-chatgpt",

@@ -7,6 +7,7 @@ import { openStandInDetails } from './stand-in-profile-navigation.mjs'
 import { reloadMainWindow } from './workspace-flows.mjs'
 import { finishStandInOnboarding } from './stand-in-instance-flows.mjs'
 import { selectWorkbenchTheme } from './appearance-theme.mjs'
+import { verifyNarrowImMenu } from './stand-in-im-menu-layout.mjs'
 
 /** Reuse the real Backend/Redis/Executor; only the external IM input is synthetic. */
 export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot }) {
@@ -70,6 +71,7 @@ export function createStandInImConnectionsStory({ uiTimeoutMs, captureScreenshot
         '0',
         'Unavailable channels belong in the add menu'
       )
+      await verifyNarrowImMenu(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-add-channels"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-im-channel-telegram"]')
       const closeConnections = async () => {
