@@ -8,7 +8,7 @@ import {
   type SharedEditorProject,
 } from '@wegent/collaboration'
 
-function setup(canAssign = true, editable = true, outside = false) {
+function setup(canAssign = true, editable = true, outside = false, showAssignee = true) {
   const item = {
     id: 'issue',
     cloud_project_id: 'project',
@@ -36,6 +36,7 @@ function setup(canAssign = true, editable = true, outside = false) {
       update: vi.fn(async () => ({ ...item, version: 8 })),
     },
     members: {
+      searchUsers: vi.fn(async () => [{ id: 5, user_name: 'Outside person' }]),
       list: vi.fn(async () => [
         { user_id: 1, user_name: 'Member', role: 'Developer' },
         { user_id: 2, user_name: 'Viewer', role: 'Viewer' },
@@ -58,7 +59,8 @@ function setup(canAssign = true, editable = true, outside = false) {
   const onUpdated = vi.fn()
   const editor = (
     currentItem: SharedEditorIssue,
-    currentProject: SharedEditorProject | undefined
+    currentProject: SharedEditorProject | undefined,
+    allItems = [currentItem]
   ) => (
     <SharedIssueDetailEditor
       mode="edit"
@@ -66,7 +68,8 @@ function setup(canAssign = true, editable = true, outside = false) {
       project={currentProject}
       editable={editable}
       canAssign={canAssign}
-      allItems={[currentItem]}
+      showAssignee={showAssignee}
+      allItems={allItems}
       port={port as unknown as SharedIssueDetailPort}
       onUpdated={onUpdated}
       onClose={vi.fn()}
@@ -84,6 +87,18 @@ function setup(canAssign = true, editable = true, outside = false) {
     item,
     onUpdated,
     getAssignment: () => context.commentAssignment,
+    getActions: () => context.commentActions,
+    switchToPeopleBoard: () =>
+      view.rerender(
+        editor(
+          item,
+          {
+            ...project,
+            board_config: { group_by: 'assignee', processing_start_status_id: null, statuses: [] },
+          },
+          [item, { ...item, id: 'other', assignee_user_id: 6, assignee_name: 'Other outsider' }]
+        )
+      ),
     switchToInvited: () =>
       view.rerender(
         editor(
@@ -102,6 +117,65 @@ function setup(canAssign = true, editable = true, outside = false) {
 }
 
 describe('Issue comment assignment persistence', () => {
+  it('confirms an outside assignee discovered through another board Issue', async () => {
+    const { getActions, switchToPeopleBoard, port } = setup()
+    switchToPeopleBoard()
+    await waitFor(() =>
+      expect(getActions()?.moves.some(move => move.label === 'Other outsider')).toBe(true)
+    )
+    const move = getActions()!.moves.find(move => move.label === 'Other outsider')!
+    let operation!: Promise<void | boolean>
+    act(() => {
+      operation = getActions()!.move(move.value)
+    })
+    fireEvent.click(await screen.findByTestId('issue-outside-assignee-cancel'))
+    expect(await operation).toBe(false)
+    expect(port.issues.assign).not.toHaveBeenCalled()
+  })
+
+  it('shows comment assignment confirmation when the property selector is hidden', async () => {
+    const { port, item, getAssignment } = setup(true, true, true, false)
+    port.issues.get.mockResolvedValue({ ...item, assignee_user_id: null, version: 7 })
+    await waitFor(() =>
+      expect(getAssignment()?.options.some(option => option.value === '5')).toBe(true)
+    )
+    expect(screen.queryByTestId('cloud-todo-detail-assignee')).not.toBeInTheDocument()
+    let operation!: Promise<void | boolean>
+    act(() => {
+      operation = getAssignment()!.assign('5')
+    })
+    fireEvent.click(await screen.findByTestId('issue-outside-assignee-cancel'))
+    expect(await operation).toBe(false)
+    expect(port.issues.assign).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])('retains notify=%s without project metadata', async notify => {
+    const { port, item, switchToInvited } = setup()
+    switchToInvited()
+    port.issues.get.mockResolvedValue({
+      ...item,
+      id: 'invited',
+      cloud_project_id: 'another-project',
+      version: 7,
+    })
+    fireEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    if (!notify) fireEvent.click(screen.getByTestId('cloud-todo-assignee-notify'))
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-assignee-search'), {
+      target: { value: 'Outside' },
+    })
+    fireEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:5'))
+    fireEvent.click(await screen.findByTestId('issue-outside-assignee-confirm'))
+    await waitFor(() =>
+      expect(port.issues.assign).toHaveBeenCalledWith('another-project', 'invited', {
+        version: 1,
+        assigneeType: 'user',
+        assigneeId: '5',
+        notifyAssignee: notify,
+      })
+    )
+    expect(port.issues.update).not.toHaveBeenCalled()
+  })
+
   it('does not reuse another project roster to bypass a new Issue invitation confirmation', async () => {
     const { port, getAssignment, switchToInvited } = setup()
     await waitFor(() =>

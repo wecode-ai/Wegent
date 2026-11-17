@@ -6,6 +6,7 @@
 from sqlalchemy.orm import Session
 
 from app.models.delivery import LoopItem
+from app.models.loop_item_execution import LoopItemExecution
 
 
 def lock_existing_issue(db: Session, item_id: str | None) -> None:
@@ -18,3 +19,14 @@ def lock_existing_issue(db: Session, item_id: str | None) -> None:
             db.query(LoopItem.id).filter(
                 LoopItem.id == candidate.id
             ).with_for_update().first()
+
+
+def lock_execution_issue(db: Session, execution_id: int) -> None:
+    """Acquire the parent lock before any execution update or row lock."""
+    with db.no_autoflush:
+        item_id = (
+            db.query(LoopItemExecution.loop_item_id)
+            .filter(LoopItemExecution.id == execution_id)
+            .scalar()
+        )
+        lock_existing_issue(db, item_id)

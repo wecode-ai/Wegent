@@ -247,6 +247,29 @@ describe('comment assignment', () => {
     }
   )
 
+  it('keeps a cancelled assignee move pending without reposting its comment', async () => {
+    const move = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(undefined)
+    actions = {
+      moves: [],
+      boardName: 'People',
+      currentColumns: [],
+      closed: false,
+      canToggle: true,
+      move,
+      toggle: vi.fn(),
+    }
+    render('Transfer this')
+    act(() => transfer.setMove('outside'))
+    await act(() => transfer.submit(draft))
+    expect(transfer.moveTarget).toBe('outside')
+    expect(transfer.commentCommitted).toBe(true)
+    await act(() => transfer.submit(draft))
+    expect(move).toHaveBeenCalledTimes(2)
+    expect(send).toHaveBeenCalledOnce()
+    expect(transfer.moveTarget).toBe('')
+    expect(transfer.commentCommitted).toBe(false)
+  })
+
   it('keeps the saved comment when cancelling assignment but retaining the pending move', async () => {
     const move = vi.fn().mockResolvedValue(undefined)
     actions = {

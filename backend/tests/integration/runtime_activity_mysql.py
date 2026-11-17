@@ -17,9 +17,11 @@ from app.services.loop_item_executions.service import loop_item_execution_servic
 from app.services.project_chat.service import project_chat_service
 
 
-def verify_reply_runtime_lock_order(engine: Engine, with_execution: bool) -> None:
+def verify_reply_runtime_lock_order(
+    engine: Engine, with_execution: bool, terminal: bool = False
+) -> None:
     """A reply holding Issue must not deadlock with an incoming runtime event."""
-    task_id = f"lock-order-{with_execution}"
+    task_id = f"lock-order-{with_execution}-{terminal}"
     with Session(engine, expire_on_commit=False) as setup:
         if setup.get(CloudProject, "project-1") is None:
             setup.add(CloudProject(id="project-1", name="Lock order project"))
@@ -80,7 +82,16 @@ def verify_reply_runtime_lock_order(engine: Engine, with_execution: bool) -> Non
         runtime_thread.append(get_ident())
         assert held.wait(10)
         with Session(engine) as db:
-            if execution_id:
+            if terminal:
+                assert loop_item_execution_service._transition_terminal(
+                    db,
+                    execution_id=execution_id,
+                    terminal_status="cancelled",
+                    note=None,
+                    content=None,
+                    commit=False,
+                )
+            elif execution_id:
                 assert loop_item_execution_service._lock_runtime_event_execution(
                     db, execution_id=execution_id, event_seq=1
                 )
@@ -104,8 +115,11 @@ def verify_reply_runtime_lock_order(engine: Engine, with_execution: bool) -> Non
             db.query(ProjectChatMessage).filter_by(message_id=task_id).one().content
             == "replyruntime"
         )
+        if terminal:
+            assert db.get(LoopItemExecution, execution_id).status == "cancelled"
     print(
-        f"MySQL: reply/runtime lock order is serialized with_execution={with_execution}"
+        "MySQL: reply/runtime lock order is serialized "
+        f"with_execution={with_execution} terminal={terminal}"
     )
 
 
@@ -287,6 +301,7 @@ def main() -> None:
         verify_existing_activity_serialization(engine)
         for with_execution in (False, True):
             verify_reply_runtime_lock_order(engine, with_execution)
+        verify_reply_runtime_lock_order(engine, with_execution=True, terminal=True)
         for identity in ("bound", "client", "wrong_turn", "old_sequence"):
             verify_final_content_after_concurrent_history(engine, identity)
     finally:

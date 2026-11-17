@@ -1390,6 +1390,9 @@ export function TodoEditor(props: TodoEditorProps) {
     setTasks(initialTaskBindingsRef.current ?? []);
     setAttachments([]);
     setCollaborators([]);
+    setCollaboratorBusy(false);
+    setCollaboratorError(null);
+    setAddingCollaborator(false);
     setDownloadingAttachmentId(null);
     setAttachmentBusy(false);
     setAttachmentError(null);
@@ -1745,6 +1748,8 @@ export function TodoEditor(props: TodoEditorProps) {
           canAssign,
           issues: editorPort.issues,
           onUpdated: editProps.onUpdated,
+          confirmAssignee: (target) =>
+            confirmOutsideTarget(target as IssueAssigneeTarget),
           translate: t,
         })
       : undefined;
@@ -1887,23 +1892,14 @@ export function TodoEditor(props: TodoEditorProps) {
         assignee_group_id: target.slice(6),
       });
     }
-    if (project) {
-      return editorPort.issues.assign(project.id, source.id, {
-        version: source.version,
-        assigneeType: target.slice(0, target.indexOf(":")) as
-          | "user"
-          | "agent"
-          | "team",
-        assigneeId: target.slice(target.indexOf(":") + 1),
-        ...(target.startsWith("user:") ? { notifyAssignee: shouldNotify } : {}),
-      });
-    }
-    const assignment = parseIssueAssigneeTarget(target);
-    return editorPort.issues.update(source.id, {
+    return editorPort.issues.assign(source.cloud_project_id, source.id, {
       version: source.version,
-      assignee_user_id: assignment.assigneeUserId,
-      assignee_agent_id: assignment.assigneeAgentId,
-      assignee_team_id: assignment.assigneeTeamId,
+      assigneeType: target.slice(0, target.indexOf(":")) as
+        | "user"
+        | "agent"
+        | "team",
+      assigneeId: target.slice(target.indexOf(":") + 1),
+      ...(target.startsWith("user:") ? { notifyAssignee: shouldNotify } : {}),
     });
   }
 
@@ -1937,16 +1933,20 @@ export function TodoEditor(props: TodoEditorProps) {
       return;
     setCollaboratorBusy(true);
     setCollaboratorError(null);
+    const generation = itemLoadGenerationRef.current;
+    const isCurrent = () => isCurrentItemLoad(editItemId, generation);
     try {
       for (const id of ids) {
         const collaborator = await editorPort.collaborators.add(editItemId, id);
-        setCollaborators((current) => [
-          ...current.filter((entry) => entry.user_id !== id),
-          collaborator,
-        ]);
+        if (isCurrent())
+          setCollaborators((current) => [
+            ...current.filter((entry) => entry.user_id !== id),
+            collaborator,
+          ]);
       }
-      setAddingCollaborator(false);
+      if (isCurrent()) setAddingCollaborator(false);
     } catch (cause) {
+      if (!isCurrent()) return;
       setCollaboratorError(
         cause instanceof Error
           ? cause.message
@@ -1954,7 +1954,7 @@ export function TodoEditor(props: TodoEditorProps) {
       );
       throw cause;
     } finally {
-      setCollaboratorBusy(false);
+      if (isCurrent()) setCollaboratorBusy(false);
     }
   }
 
@@ -1962,19 +1962,23 @@ export function TodoEditor(props: TodoEditorProps) {
     if (!canEditCollaborators || !editItemId || collaboratorBusy) return;
     setCollaboratorBusy(true);
     setCollaboratorError(null);
+    const generation = itemLoadGenerationRef.current;
+    const isCurrent = () => isCurrentItemLoad(editItemId, generation);
     try {
       await editorPort.collaborators.remove(editItemId, collaborator.user_id);
+      if (!isCurrent()) return;
       setCollaborators((current) =>
         current.filter((entry) => entry.id !== collaborator.id),
       );
     } catch (cause) {
+      if (!isCurrent()) return;
       setCollaboratorError(
         cause instanceof Error
           ? cause.message
           : t("todo.remove_collaborator_failed", "移除参与者失败"),
       );
     } finally {
-      setCollaboratorBusy(false);
+      if (isCurrent()) setCollaboratorBusy(false);
     }
   }
 
@@ -2298,10 +2302,20 @@ export function TodoEditor(props: TodoEditorProps) {
     ).values(),
   ];
   function outsideTargetUser(target: IssueAssigneeTarget) {
-    return outsidePeople.find(
-      (user) =>
-        target === `user:${user.id}` &&
-        !projectMembers.some((member) => member.user_id === user.id),
+    if (!target.startsWith("user:")) return undefined;
+    const id = Number(target.slice(5));
+    if (projectMembers.some((member) => member.user_id === id))
+      return undefined;
+    const assigned = allItems.find(
+      (candidate) =>
+        candidate.cloud_project_id === editProjectId &&
+        candidate.assignee_user_id === id,
+    );
+    return (
+      outsidePeople.find((user) => user.id === id) ?? {
+        id,
+        user_name: assigned?.assignee_name || String(id),
+      }
     );
   }
   function confirmOutsideTarget(target: IssueAssigneeTarget): Promise<boolean> {
@@ -2603,34 +2617,34 @@ export function TodoEditor(props: TodoEditorProps) {
         }
         options={assigneeOptions}
       />
-      {outsideAssignee && (
-        <ConfirmationDialog
-          title={confirmPersonLabel}
-          subject={outsideAssignee.user_name}
-          description={outsideLabel}
-          labels={{
-            cancel: t("common.cancel", "取消"),
-            confirm: t("common.confirm", "确认"),
-            pending: t("common.saving", "保存中"),
-            failed: t("todo.save_failed", "保存失败"),
-          }}
-          testIdPrefix="issue-outside-assignee"
-          onClose={() => {
-            outsideAssigneeConfirmationRef.current?.(false);
-            outsideAssigneeConfirmationRef.current = null;
-            setOutsideAssignee(null);
-          }}
-          onConfirm={async () => {
-            setSelectedOutsideUsers((current) => [
-              ...current.filter((user) => user.id !== outsideAssignee.id),
-              outsideAssignee,
-            ]);
-            outsideAssigneeConfirmationRef.current?.(true);
-            outsideAssigneeConfirmationRef.current = null;
-          }}
-        />
-      )}
     </>
+  );
+  const outsideAssigneeDialog = outsideAssignee && (
+    <ConfirmationDialog
+      title={confirmPersonLabel}
+      subject={outsideAssignee.user_name}
+      description={outsideLabel}
+      labels={{
+        cancel: t("common.cancel", "取消"),
+        confirm: t("common.confirm", "确认"),
+        pending: t("common.saving", "保存中"),
+        failed: t("todo.save_failed", "保存失败"),
+      }}
+      testIdPrefix="issue-outside-assignee"
+      onClose={() => {
+        outsideAssigneeConfirmationRef.current?.(false);
+        outsideAssigneeConfirmationRef.current = null;
+        setOutsideAssignee(null);
+      }}
+      onConfirm={async () => {
+        setSelectedOutsideUsers((current) => [
+          ...current.filter((user) => user.id !== outsideAssignee.id),
+          outsideAssignee,
+        ]);
+        outsideAssigneeConfirmationRef.current?.(true);
+        outsideAssigneeConfirmationRef.current = null;
+      }}
+    />
   );
   const notificationAvailable =
     assigneeTarget.startsWith("user:") && (isCreate || assigneeChanged);
@@ -4711,6 +4725,7 @@ export function TodoEditor(props: TodoEditorProps) {
             onClose: () => setStatusHistoryOpen(false),
           }) ?? null)
         : null}
+      {outsideAssigneeDialog}
     </div>
   );
 }

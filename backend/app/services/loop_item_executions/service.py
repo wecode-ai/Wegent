@@ -2616,6 +2616,9 @@ class LoopItemExecutionService:
 
         if terminal_status not in TERMINAL_STATUSES:
             raise ValueError(f"Unsupported terminal status: {terminal_status}")
+        from app.services.loop_items.locking import lock_execution_issue
+
+        lock_execution_issue(db, execution_id)
         now = utcnow()
         values: dict[str, Any] = {
             "status": terminal_status,
@@ -3278,14 +3281,9 @@ class LoopItemExecutionService:
         execution and activity so replies and cancellation cannot invert this order.
         """
 
-        from app.services.loop_items.locking import lock_existing_issue
+        from app.services.loop_items.locking import lock_execution_issue
 
-        item_id = (
-            db.query(LoopItemExecution.loop_item_id)
-            .filter(LoopItemExecution.id == execution_id)
-            .scalar()
-        )
-        lock_existing_issue(db, item_id)
+        lock_execution_issue(db, execution_id)
         execution = (
             db.query(LoopItemExecution)
             .filter(LoopItemExecution.id == execution_id)

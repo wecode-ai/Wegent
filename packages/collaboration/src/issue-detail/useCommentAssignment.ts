@@ -172,7 +172,7 @@ export function useCommentAssignment(
         setSentSuggestion('')
       }
       if (moveTarget && actions) {
-        await actions.move(moveTarget)
+        if ((await actions.move(moveTarget)) === false) return
         setMoveTarget('')
       }
       if (toggle !== null && actions) {
