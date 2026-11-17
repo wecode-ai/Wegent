@@ -119,6 +119,8 @@ Measurement spans control registration through the last received acknowledgement
 
 Analyze measured variation before establishing a baseline: distinguish startup, polling, business actions and lifecycle termination. Runner contention affects timings and polling counts. Keep renders, DOM mutations and paint frames distinct. Future baseline enforcement still requires an explicit first-establishment phase and must never silently bootstrap again after trusted baseline evidence is lost.
 
+`coordination-history` uses real SQLite, scheduler and native tasks to verify that a large failed-history backlog does not block new work and that background retention progresses. Retention scans indexed candidates outside a write transaction, then requests nonblocking write admission for at most 25 records before checking references and committing. This prevents unrelated WAL commits from invalidating a read snapshot during write promotion. An existing writer still makes maintenance yield immediately, and WAL readers remain available. The 100ms scheduling budget, four-commit limit and reference protections remain unchanged; the budget never interrupts an admitted transaction or extends the E2E deadline.
+
 ### Counting semantics and fault diagnosis
 
 Project-space task context lookups emit `project-space-task-context-lookup` with a lookup identity, source indices, outcomes, sources still pending at the deadline, and late results. `project-space-task-context-failed` retains handled failure messages and stacks, including individual aggregate causes; existing warnings remain separate records. These diagnostics distinguish lookup deadlines, source failures, and late delivery using identities and diagnostic fields without request bodies.

@@ -600,6 +600,73 @@ fn protected_prefix_advances_cursor_instead_of_starving_later_expired_events() {
 }
 
 #[test]
+fn cleanup_admits_a_bounded_write_before_planning_and_keeps_wal_readers_available() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let connection = store.connection().unwrap();
+    let at = Utc::now();
+    indexed(
+        &connection,
+        "stand_in_action",
+        json!({"id":"action","userId":7,"status":"succeeded","kind":"ignore_events","batchId":"batch"}),
+        at - chrono::Duration::days(8),
+    );
+    insert(
+        &connection,
+        "foreground-setting",
+        "unrelated",
+        &at.to_rfc3339(),
+    );
+    let (tx, changes) =
+        LocalTaskStore::plan_history_chunk(&connection, at, &[("action".into(), 0.0)]).unwrap();
+    let writer = Connection::open(&path).unwrap();
+    writer.busy_timeout(Duration::ZERO).unwrap();
+    let visible: i64 = writer
+        .query_row(
+            "SELECT count(*) FROM loop_items WHERE id='action'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        visible, 1,
+        "WAL readers remain available during cleanup planning"
+    );
+    let error = writer
+        .execute(
+            "UPDATE loop_items SET metadata='{}' WHERE id='foreground-setting'",
+            [],
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, rusqlite::Error::SqliteFailure(code, _) if code.code == rusqlite::ErrorCode::DatabaseBusy)
+    );
+    assert_eq!(
+        LocalTaskStore::apply_history_changes(&tx, changes).unwrap(),
+        1
+    );
+    tx.commit().unwrap();
+    assert_eq!(
+        writer
+            .execute(
+                "UPDATE loop_items SET metadata='{}' WHERE id='foreground-setting'",
+                []
+            )
+            .unwrap(),
+        1
+    );
+    let remaining: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM loop_items WHERE id='action'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining, 0);
+}
+
+#[test]
 fn foreground_reference_write_invalidates_cleanup_snapshot_before_deletion() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("tasks.sqlite");

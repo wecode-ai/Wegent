@@ -101,19 +101,7 @@ impl LocalTaskStore {
                 if started.elapsed() >= budget || commits >= MAX_COMMITS {
                     break;
                 }
-                let tx = rusqlite::Transaction::new_unchecked(
-                    connection,
-                    TransactionBehavior::Deferred,
-                )?;
-                // Plan against one WAL read snapshot without holding the writer.
-                // A foreground commit invalidates snapshot promotion instead of
-                // allowing stale reference decisions to be applied.
-                let mut changes = Vec::new();
-                for (id, _) in chunk {
-                    if let Some(change) = Self::plan_history_record(&tx, at, id)? {
-                        changes.push(change);
-                    }
-                }
+                let (tx, changes) = Self::plan_history_chunk(connection, at, chunk)?;
                 let count = Self::apply_history_changes(&tx, changes)?;
                 let (id, jd) = chunk.last().expect("nonempty retention chunk");
                 Self::save_retention_cursor(&tx, kind, *jd, id, at)?;
@@ -124,6 +112,24 @@ impl LocalTaskStore {
             }
         }
         Ok(())
+    }
+
+    fn plan_history_chunk<'store>(
+        connection: &'store Connection,
+        at: chrono::DateTime<Utc>,
+        chunk: &[(String, f64)],
+    ) -> Result<(rusqlite::Transaction<'store>, Vec<HistoryChange>), TaskRuntimeError> {
+        // Candidates were scanned without a writer. Admit this bounded chunk
+        // before checking references so unrelated WAL commits cannot invalidate
+        // its read snapshot during promotion. The maintenance connection never waits.
+        let tx = rusqlite::Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+        let mut changes = Vec::new();
+        for (id, _) in chunk {
+            if let Some(change) = Self::plan_history_record(&tx, at, id)? {
+                changes.push(change);
+            }
+        }
+        Ok((tx, changes))
     }
 
     fn save_retention_cursor(
