@@ -10,6 +10,9 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import event
+from sqlalchemy.engine import Connection, ExecutionContext
+from sqlalchemy.engine.interfaces import DBAPICursor
 from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem
@@ -549,6 +552,36 @@ def test_replay_and_version_conflicts_do_not_duplicate_audits(
         )
     assert conflict.value.status_code == 409
     assert conflict.value.detail["reason_code"] == "version_conflict"
+
+
+def test_project_row_lock_binds_the_varchar_primary_key_as_a_string(
+    configured_project: CloudProject, test_db: Session
+) -> None:
+    """Bind integer API identifiers exactly to the string primary key."""
+    project_id = str(configured_project.id)
+    bound_ids: list[str | int] = []
+
+    def record_lock(
+        connection: Connection,
+        cursor: DBAPICursor,
+        statement: str,
+        parameters: object,
+        context: ExecutionContext,
+        many: bool,
+    ) -> None:
+        compiled = context.compiled
+        if compiled is not None and compiled.statement._for_update_arg is not None:
+            bound_ids.append(context.compiled_parameters[0]["id_1"])
+
+    engine = test_db.get_bind()
+    event.listen(engine, "before_cursor_execute", record_lock)
+    try:
+        locked = cloud_project_service._lock_project(test_db, int(project_id))
+    finally:
+        event.remove(engine, "before_cursor_execute", record_lock)
+
+    assert locked.id == project_id
+    assert bound_ids == [project_id]
 
 
 def test_removed_tag_rejects_stale_issue_writes_until_admin_recreates_it(

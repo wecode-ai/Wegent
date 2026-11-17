@@ -61,7 +61,7 @@ class CloudProjectService(CloudProjectMemberService):
     def _lock_project(db: Session, cloud_project_id: int) -> CloudProject:
         project = (
             db.query(CloudProject)
-            .filter(CloudProject.id == cloud_project_id)
+            .filter(CloudProject.id == str(cloud_project_id))
             .populate_existing()
             .with_for_update()
             .one_or_none()
