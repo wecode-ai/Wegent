@@ -2947,6 +2947,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       reportE2EDiagnostic('renderer-window-size', {
         windowLabel: getDesktopWindowLabel(),
         topFrame: window === window.top,
+        visibilityState: document.visibilityState,
+        focused: document.hasFocus(),
+        outerSize: { width: window.outerWidth, height: window.outerHeight },
         requested: nextSize,
         viewport: { width: window.innerWidth, height: window.innerHeight },
         screen: { width: window.screen.width, height: window.screen.height },

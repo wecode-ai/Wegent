@@ -893,6 +893,10 @@ export function createElectronCapabilityRouter(
       contentSize: target.getContentSize(),
       bounds: target.getBounds(),
       maximized: target.isMaximized(),
+      minimized: target.isMinimized(),
+      visible: target.isVisible(),
+      focused: target.isFocused(),
+      fullScreen: target.isFullScreen(),
     })
     return previous
   })

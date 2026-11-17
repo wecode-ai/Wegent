@@ -137,6 +137,9 @@ describe('Electron desktop E2E automation', () => {
       expect(diagnostic).toHaveBeenCalledWith('renderer-window-size', {
         windowLabel: 'main',
         topFrame: true,
+        visibilityState: document.visibilityState,
+        focused: document.hasFocus(),
+        outerSize: { width: window.outerWidth, height: window.outerHeight },
         requested: { width: 1040, height: 760, ...(maximized === undefined ? {} : { maximized }) },
         viewport: { width: window.innerWidth, height: window.innerHeight },
         screen: { width: window.screen.width, height: window.screen.height },
