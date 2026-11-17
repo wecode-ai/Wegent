@@ -32,6 +32,7 @@ export async function createAccountAuthFixture({
   oauthSecret,
   transferSecret,
   recordPythonRuntime = false,
+  accountConnectorSlugs,
 }) {
   await mkdir(join(fixtureRoot, '.codex-plugin'), { recursive: true })
   await mkdir(join(fixtureRoot, 'scripts'), { recursive: true })
@@ -189,7 +190,12 @@ print(json.dumps(result))
             exportMode: 'exclusive',
           },
         },
-      ],
+      ].filter(
+        connector =>
+          !accountConnectorSlugs ||
+          !connector.accountAuth ||
+          accountConnectorSlugs.includes(connector.slug)
+      ),
     })
   )
   await writeFile(

@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { useInvitedIssueRoute } from "./useInvitedIssueRoute";
+
 import { templateMessages } from "../templates/messages";
 import { applyWorkspaceTemplate } from "../templates/workspaceConfiguration";
 import {
@@ -1443,8 +1445,13 @@ function CollaborationPlatformAppContent({
     !host.location.workspaceId &&
     Boolean(host.renderIssueList) &&
     Boolean(host.location.rootView?.startsWith("issues-"));
+  const isIssuePage = Boolean(host.location.projectId && host.location.issueId);
   const ownsPageRequests =
-    isDevicePage || isStandInPage || isTemplatePage || isPersonalIssuesPage;
+    isDevicePage ||
+    isStandInPage ||
+    isTemplatePage ||
+    isPersonalIssuesPage ||
+    isIssuePage;
   const deviceCatalog = useDeviceCatalog(
     api,
     isDevicePage,
@@ -1756,6 +1763,18 @@ function CollaborationPlatformAppContent({
       },
     };
   }, [api, host.location.projectId, host.location.workspaceId]);
+  const routeProject = state.projects.find(
+    (project) => String(project.id) === host.location.projectId,
+  );
+  const invitedIssueRoute = useInvitedIssueRoute({
+    api: scopedApi,
+    projectId: host.location.projectId,
+    issueId: host.location.issueId,
+    projectReady: Boolean(routeProject),
+    enabled: Boolean(renderProject),
+    failureLabel: messages.loadFailed,
+  });
+  const invitedRouteMatches = invitedIssueRoute.invited;
   const workspaceAgentConfigurationApi = useMemo(
     () =>
       host.location.workspaceId
@@ -2169,7 +2188,8 @@ function CollaborationPlatformAppContent({
     );
   } else if (
     host.location.projectId &&
-    (state.workspace ||
+    (isIssuePage ||
+      state.workspace ||
       state.workspaceNavigationContext ||
       state.projects.some(
         (project) =>
@@ -2184,7 +2204,33 @@ function CollaborationPlatformAppContent({
         (project) => String(project.id) === host.location.projectId,
       ) ?? null;
     content =
-      selectedProject && renderProject ? (
+      renderProject &&
+      isIssuePage &&
+      !selectedProject &&
+      !invitedRouteMatches ? (
+        invitedIssueRoute.error ? (
+          <div className="collaboration-alert" role="alert">
+            {invitedIssueRoute.error}
+            <button
+              type="button"
+              data-testid="collaboration-issue-access-retry"
+              onClick={invitedIssueRoute.retry}
+              className="min-h-11 px-2 underline md:min-h-8"
+            >
+              {translate("common.retry", "重试")}
+            </button>
+          </div>
+        ) : state.error ? (
+          <div className="collaboration-alert" role="alert">
+            {state.error}
+          </div>
+        ) : (
+          <ProjectLoadingSkeleton
+            label={translate("common.loading", "正在加载…")}
+            layout="board"
+          />
+        )
+      ) : selectedProject && renderProject && !invitedRouteMatches ? (
         renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp
