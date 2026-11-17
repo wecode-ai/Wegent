@@ -188,7 +188,11 @@ fn admitted_preparation_failure_or_cancellation_settles_native_state() {
                 (previous, scheduler.enqueue_forced(turn))
             };
             handler
-                .persist_turn_queue(VecDeque::new(), Some(&previous), &[turn.clone()])
+                .persist_turn_queue(
+                    VecDeque::new(),
+                    Some(&previous),
+                    std::slice::from_ref(&turn),
+                )
                 .await
                 .unwrap();
             handler.reserve_turn_preparation(&turn);
