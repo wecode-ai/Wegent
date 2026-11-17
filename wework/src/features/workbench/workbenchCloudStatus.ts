@@ -222,11 +222,23 @@ export function startCloudRuntimeSync(
   }
 }
 
-export function updateCloudRuntimeSync(
+export function updateCloudRuntimeDevices(
   state: CloudRuntimeState,
   revision: number,
-  result: CloudRuntimeSyncResult,
-  complete = false
+  devices: DeviceInfo[]
+): CloudRuntimeState {
+  if (state.inFlightRevision !== revision) return state
+  return {
+    ...state,
+    current: state.current ? { ...state.current, devices } : null,
+    lastGood: state.lastGood ? { ...state.lastGood, devices } : null,
+  }
+}
+
+export function finishCloudRuntimeSync(
+  state: CloudRuntimeState,
+  revision: number,
+  result: CloudRuntimeSyncResult
 ): CloudRuntimeState {
   if (state.inFlightRevision !== revision) {
     return state
@@ -278,19 +290,11 @@ export function updateCloudRuntimeSync(
 
   return {
     ...state,
-    availability: cloudRuntimeAvailability(checks, complete ? null : revision, lastGood),
+    availability: cloudRuntimeAvailability(checks, null, lastGood),
     current,
     lastGood,
-    inFlightRevision: complete ? null : revision,
+    inFlightRevision: null,
   }
-}
-
-export function finishCloudRuntimeSync(
-  state: CloudRuntimeState,
-  revision: number,
-  result: CloudRuntimeSyncResult
-): CloudRuntimeState {
-  return updateCloudRuntimeSync(state, revision, result, true)
 }
 
 export function selectCloudRuntimeSnapshot(state: CloudRuntimeState): CloudRuntimeSnapshot | null {

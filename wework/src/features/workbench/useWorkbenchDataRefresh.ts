@@ -30,7 +30,7 @@ import {
   selectVisibleDevices,
   startCloudRuntimeSync,
   timedWorkbenchBootstrapRequest,
-  updateCloudRuntimeSync,
+  updateCloudRuntimeDevices,
 } from './workbenchCloudStatus'
 import type { WorkbenchAction } from './workbenchReducer'
 import {
@@ -381,9 +381,7 @@ export function useWorkbenchDataRefresh({
           devicesResult?.status === 'fulfilled'
         ) {
           updateCloudRuntimeState(
-            updateCloudRuntimeSync(cloudRuntimeStateRef.current, revision, {
-              devices: devicesResult,
-            })
+            updateCloudRuntimeDevices(cloudRuntimeStateRef.current, revision, devicesResult.value)
           )
           const devices = resolveDeviceListWithCache(
             cacheScope,
