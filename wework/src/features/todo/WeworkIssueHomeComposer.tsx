@@ -131,7 +131,7 @@ export function WeworkIssueHomeComposer({
                 if (mode) setTaskOpened(true)
                 setTaskMode(mode)
               }}
-              className={`min-h-11 border-b-2 pb-1 text-base transition-colors keyboard:focus-visible:rounded-sm keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-text-primary md:min-h-8 ${taskMode === mode ? 'border-text-primary font-medium text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
+              className={`min-h-11 border-b-2 pb-1 text-base transition-colors keyboard:focus-visible:rounded-sm keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:min-h-8 ${taskMode === mode ? 'border-text-primary font-medium text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
             >
               {t(mode ? 'issue_creation.create_task' : 'issue_creation.record_mode')}
             </button>

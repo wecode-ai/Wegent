@@ -3,6 +3,7 @@ import {
   Clock,
   ChevronRight,
   Folder,
+  GitBranch,
   Mail,
   MessageSquare,
   Search,
@@ -15,6 +16,7 @@ import type { ConnectionProviderDescriptor } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { EMAIL_PROVIDER } from './StandInEmailConnections'
+import { GIT_CONNECTION_PREFIX } from './StandInGitConnections'
 import { findStandInProject } from './standInProjects'
 
 const DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
@@ -27,6 +29,7 @@ export function StandInConnectionCatalog({
   disabled,
   scheduling,
   local = true,
+  projectScopeConfigured = true,
   onSelect,
 }: {
   role: StandInRole
@@ -36,13 +39,15 @@ export function StandInConnectionCatalog({
   disabled: boolean
   scheduling: boolean
   local?: boolean
+  projectScopeConfigured?: boolean
   onSelect(view: string): void
 }) {
   const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
   const [configuredOnly, setConfiguredOnly] = useState(false)
   const source = role.collaboration
-  const projectConfigured = source.allProjects || source.projects.length > 0
+  const projectConfigured =
+    projectScopeConfigured && (source.allProjects || source.projects.length > 0)
   const connections = role.connections ?? []
   const providerIds = [
     ...new Set([...providers.map(item => item.id), ...connections.map(row => row.providerId)]),
@@ -116,7 +121,12 @@ export function StandInConnectionCatalog({
       return {
         id,
         testId: `stand-in-add-${prefix}-connection`,
-        icon: id === EMAIL_PROVIDER ? Mail : MessageSquare,
+        icon:
+          id === EMAIL_PROVIDER
+            ? Mail
+            : id.startsWith(GIT_CONNECTION_PREFIX)
+              ? GitBranch
+              : MessageSquare,
         name: provider?.displayName ?? t('standIn.workspace.connection_unknown_source'),
         configured,
         active: configured && ready && !loading,
@@ -179,7 +189,7 @@ export function StandInConnectionCatalog({
     <div className="space-y-6" data-testid="stand-in-connection-type-picker">
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-text-muted">
+          <p className="text-sm text-text-secondary">
             {t('standIn.workspace.connection_catalog_help')}
           </p>
           <button
@@ -197,7 +207,7 @@ export function StandInConnectionCatalog({
             <ChevronRight aria-hidden="true" className="h-4 w-4" />
           </button>
         </div>
-        <label className="flex min-h-11 items-center gap-2 rounded-xl bg-muted px-3 text-text-muted focus-within:ring-2 focus-within:ring-focus">
+        <label className="flex min-h-11 items-center gap-2 rounded-xl bg-muted px-3 text-text-secondary focus-within:ring-2 focus-within:ring-focus">
           <Search aria-hidden="true" className="h-4 w-4 shrink-0" />
           <input
             type="search"
@@ -206,7 +216,7 @@ export function StandInConnectionCatalog({
             placeholder={t('standIn.workspace.connection_search')}
             value={query}
             onChange={event => setQuery(event.target.value)}
-            className="min-w-0 flex-1 appearance-none border-0 bg-transparent py-2 text-base text-text-primary outline-none placeholder:text-text-muted"
+            className="min-w-0 flex-1 appearance-none border-0 bg-transparent py-2 text-base text-text-primary outline-none placeholder:text-text-secondary"
           />
         </label>
       </div>
@@ -254,7 +264,7 @@ export function StandInConnectionCatalog({
         </section>
       )}
       {!visibleRows.length && !showSchedule && (
-        <p role="status" className="py-8 text-center text-sm text-text-muted">
+        <p role="status" className="py-8 text-center text-sm text-text-secondary">
           {t(
             configuredOnly && !search
               ? 'standIn.workspace.connection_configured_empty'
@@ -305,7 +315,7 @@ function ConnectionRow({
       <span className="min-w-0 flex-1">
         <span className="block text-base font-medium">{name}</span>
         <span
-          className="mt-1 line-clamp-1 break-words text-sm text-text-muted"
+          className="mt-1 line-clamp-1 break-words text-sm text-text-secondary"
           title={summaryLabel || undefined}
         >
           {summary}

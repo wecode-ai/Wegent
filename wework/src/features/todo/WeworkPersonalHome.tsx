@@ -274,7 +274,7 @@ export function WeworkPersonalHome({
     <IssueDetailDraftProvider key={userId} scope={draftScope}>
       <div
         ref={viewport}
-        className="flex h-full min-h-0 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
+        className="isolate flex h-full min-h-0 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
         data-testid="personal-home"
       >
         <main
@@ -295,7 +295,7 @@ export function WeworkPersonalHome({
                 aria-expanded={!sidebarCollapsed}
                 aria-controls={`${panelId}-sidebar`}
                 onClick={() => setSidebarCollapsed(value => !value)}
-                className="hidden h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-text-primary lg:inline-flex"
+                className="hidden h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] lg:inline-flex"
               >
                 {sidebarCollapsed ? (
                   <PanelRightOpen aria-hidden="true" className="h-4 w-4" />

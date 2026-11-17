@@ -17,7 +17,7 @@ import { StandInProcessingSettings } from './StandInProcessingSettings'
 
 export const GIT_CONNECTION_PREFIX = '@wegent/dsh-connection-git/'
 const fieldClassName =
-  'block h-11 w-full min-w-0 rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors focus-visible:border-focus focus-visible:ring-2 focus-visible:ring-focus/20 disabled:opacity-50 md:h-9'
+  'block h-11 w-full min-w-0 rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-secondary focus-visible:border-focus focus-visible:ring-2 focus-visible:ring-focus/20 disabled:opacity-50 md:h-9'
 
 type Resource = Pick<StandInSourceConnection, 'id' | 'name' | 'profile' | 'kind' | 'providerId'>
 export function StandInGitConnections({
@@ -44,6 +44,7 @@ export function StandInGitConnections({
   const [selection, setSelection] = useState<Resource[]>([])
   const [cursor, setCursor] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const [searchState, setSearchState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [error, setError] = useState<string>()
   const [auth, setAuth] = useState<LocalConnectorAuthTarget>()
   const authTransport = useMemo<LocalConnectorAuthTransport>(
@@ -83,6 +84,13 @@ export function StandInGitConnections({
     []
   )
   const rows = (role.connections ?? []).filter(row => row.providerId === provider.id)
+  const resetSearch = () => {
+    setError(undefined)
+    setItems([])
+    setSelection([])
+    setCursor(undefined)
+    setSearchState('idle')
+  }
   const report = (cause: unknown) => {
     const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined
     setError(
@@ -92,11 +100,13 @@ export function StandInGitConnections({
   const search = async (page?: string) => {
     const address = instanceOrigin(instance)
     if (!address) {
+      setSearchState('error')
       setError(t('standIn.git.invalid_instance'))
       return
     }
     const request = ++sequence.current
     setBusy(true)
+    setSearchState('loading')
     setError(undefined)
     try {
       const result = await api.searchConnectionResources(
@@ -109,6 +119,7 @@ export function StandInGitConnections({
       if (request !== sequence.current) return
       const availability = result.availability
       if (availability && availability.status !== 'ready') {
+        setSearchState('error')
         setItems([])
         setSelection([])
         setCursor(undefined)
@@ -144,8 +155,12 @@ export function StandInGitConnections({
       }
       setItems(previous => (page ? [...previous, ...result.items] : result.items))
       setCursor(result.hasMore ? result.nextCursor : undefined)
+      setSearchState('ready')
     } catch (cause) {
-      if (request === sequence.current) report(cause)
+      if (request === sequence.current) {
+        setSearchState('error')
+        report(cause)
+      }
     } finally {
       if (request === sequence.current) setBusy(false)
     }
@@ -214,11 +229,8 @@ export function StandInGitConnections({
               value={instance}
               disabled={disabled || busy}
               onChange={event => {
-                setError(undefined)
+                resetSearch()
                 setInstance(event.target.value)
-                setItems([])
-                setSelection([])
-                setCursor(undefined)
               }}
             />
           </label>
@@ -226,7 +238,7 @@ export function StandInGitConnections({
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <p className="text-sm font-medium">{t('standIn.git.account')}</p>
-            <p className="text-xs leading-relaxed text-text-muted">
+            <p className="text-xs leading-relaxed text-text-secondary">
               {t('standIn.git.account_help')}
             </p>
           </div>
@@ -268,7 +280,7 @@ export function StandInGitConnections({
         >
           <div className="min-w-0 flex-1">
             <p className="break-all text-sm">{row.name}</p>
-            <p className="text-xs text-text-muted">
+            <p className="text-xs text-text-secondary">
               {t(`standIn.git.${row.kind}`)} · {profileInstance(row.profile)}
             </p>
           </div>
@@ -292,11 +304,8 @@ export function StandInGitConnections({
           value={kind}
           disabled={disabled || busy}
           onChange={event => {
-            setError(undefined)
+            resetSearch()
             setKind(event.target.value)
-            setItems([])
-            setSelection([])
-            setCursor(undefined)
           }}
         >
           <option className="bg-background text-text-primary" value="personal">
@@ -323,11 +332,8 @@ export function StandInGitConnections({
               value={query}
               disabled={disabled || busy}
               onChange={event => {
-                setError(undefined)
+                resetSearch()
                 setQuery(event.target.value)
-                setItems([])
-                setSelection([])
-                setCursor(undefined)
               }}
             />
           )}
@@ -341,11 +347,23 @@ export function StandInGitConnections({
             {t(kind === 'personal' ? 'standIn.git.check_account' : 'standIn.git.search')}
           </Button>
         </div>
-        <p className="text-xs leading-relaxed text-text-muted">
+        <p className="text-xs leading-relaxed text-text-secondary">
           {t(kind === 'personal' ? 'standIn.git.personal_help' : 'standIn.git.repository_help')}
         </p>
       </div>
-      <p className="text-xs leading-relaxed text-text-muted">{t('standIn.git.permissions')}</p>
+      <p className="text-xs leading-relaxed text-text-secondary">{t('standIn.git.permissions')}</p>
+      {(searchState === 'loading' ||
+        (searchState === 'ready' && items.length === 0 && !cursor)) && (
+        <p
+          role="status"
+          data-testid="stand-in-git-query-status"
+          className="text-sm text-text-secondary"
+        >
+          {t(
+            `standIn.git.${searchState === 'loading' ? 'loading' : 'empty'}_${kind === 'personal' ? 'account' : 'repositories'}`
+          )}
+        </p>
+      )}
       {items.map(item => (
         <label
           key={`${item.profile}:${item.id}`}
@@ -416,6 +434,7 @@ export function StandInGitConnections({
           onSuccess={() => {
             setAuth(undefined)
             setError(undefined)
+            setSearchState('idle')
           }}
         />
       )}

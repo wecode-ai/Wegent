@@ -277,7 +277,7 @@ export function StandInHomeWorkspace(props: Props) {
                           key={item.key}
                           data-testid={`personal-home-work-${item.task.taskId}`}
                           onClick={() => openTask(item.address, item.task.title)}
-                          className="group/work flex min-h-11 w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-text-primary/[0.025] keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-text-primary"
+                          className="group/work flex min-h-11 w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-text-primary/[0.025] keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]"
                         >
                           <Icon
                             aria-hidden="true"

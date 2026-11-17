@@ -124,6 +124,7 @@ export function StandInImConnections({
   const device = devices.find(row => sameDevice(row.device_id))
   return (
     <section ref={section} aria-label={t('standIn.im.title')} data-testid="stand-in-im-channels">
+      <h3 className="mb-2 text-sm font-medium text-text-secondary">{t('standIn.im.title')}</h3>
       {loading && (
         <p
           role="status"
@@ -182,6 +183,7 @@ export function StandInImConnections({
             ariaLabel={t('standIn.im.add_channels')}
             testId="stand-in-im-add-channels"
             placement="bottom-end"
+            itemClassName="max-md:min-h-11"
             triggerClassName="flex min-h-11 min-w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-9 md:min-w-9"
             onOpenChange={setMenuOpen}
             items={availableToAdd.map(type => ({

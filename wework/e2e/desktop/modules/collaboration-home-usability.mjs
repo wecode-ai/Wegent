@@ -105,6 +105,48 @@ async function verifyEnglishParticipantExplanation(control, home, issueId, timeo
   }
 }
 
+async function verifyFocusedDraftResize(control, home, taskInput) {
+  const draft = await control.command('getValue', taskInput)
+  const longDraft = Array.from(
+    { length: 40 },
+    (_, index) => `尚未发送的长草稿 ${index + 1}：缩小窗口后继续从这里编辑，保留全部内容。`
+  ).join('\n')
+  const previous = await control.command('setMainWindowSize', 'body', {
+    value: JSON.stringify({ width: 1100, height: 900 }),
+  })
+  try {
+    await control.command('fill', taskInput, { value: longDraft })
+    await control.command('click', taskInput)
+    await control.command('setSelectionOffset', taskInput, {
+      value: String(longDraft.replaceAll('\n', '').length),
+    })
+    for (const [width, height] of [
+      [1000, 600],
+      [390, 480],
+    ]) {
+      await resizeHome(control, home, width, height, 10000)
+      await until(
+        async () =>
+          JSON.parse(
+            await control.command('getElementMetrics', taskInput, {
+              value: JSON.stringify({ includeSelection: true }),
+            })
+          )[0],
+        metrics =>
+          metrics?.selection?.hitTestVisible &&
+          metrics.selection.visibleIntersection?.height >= metrics.selection.height - 1,
+        'The focused caret must remain visible after resizing without further typing or focus',
+        10000
+      )
+      await control.command('waitFor', `${taskInput}:focus`)
+      assert.equal(await control.command('getValue', taskInput), longDraft)
+    }
+  } finally {
+    await control.command('setMainWindowSize', 'body', { value: previous })
+    await control.command('fill', taskInput, { value: draft })
+  }
+}
+
 async function verifyTaskLabels(control, home) {
   const participating = await control.command(
     'getAttribute',
@@ -135,6 +177,7 @@ async function verifyTaskLabels(control, home) {
   )
   const taskInput = `${panel} [data-testid="personal-home-task-content"]`
   const draft = await control.command('getValue', taskInput)
+  await verifyFocusedDraftResize(control, home, taskInput)
   const projectLabel = await control.command(
     'getAttribute',
     `${panel} [data-testid="collaboration-issue-project-trigger"]`,
@@ -266,6 +309,12 @@ async function verifyProjectDialogKeyboard(control, home, timeoutMs) {
   await control.command('click', trigger)
   await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
   await control.command('waitFor', dialog, { visible: true })
+  const assistant = '[data-testid="right-workspace-chat-composer-shell"]'
+  const background = JSON.parse(await control.command('getElementMetrics', assistant))
+  assert.ok(
+    background.every(item => !item.hitTestVisible),
+    'The project modal must cover every background assistant composer'
+  )
   await resizeHome(control, dialog, 390, 900, timeoutMs)
   for (const testId of [
     'collaboration-project-create-close',

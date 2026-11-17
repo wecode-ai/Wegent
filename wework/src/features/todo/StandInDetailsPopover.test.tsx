@@ -64,6 +64,61 @@ it('shows device, empty activity and outputs without exposing configuration cont
   expect(props.onSettings).toHaveBeenCalledOnce()
 })
 
+it('distinguishes an unconfigured work scope from device availability', async () => {
+  const props = fixture()
+  expect(await screen.findByText('在线')).toBeVisible()
+  expect(screen.getByText('尚未配置工作来源，可以先聊天。到设置中添加关注范围。')).toBeVisible()
+  await userEvent.setup().click(screen.getByTestId('stand-in-details-work-sources'))
+  expect(props.onSettings).toHaveBeenCalledOnce()
+})
+
+it('retains the paused intake state when historical activity exists', async () => {
+  fixture({ enabled: false, items: [runtimeItem] })
+  expect(await screen.findByText('已暂停接收')).toBeVisible()
+  expect(screen.getByText(/上次活跃/)).toBeVisible()
+  expect(screen.queryByText('接收工作中')).not.toBeInTheDocument()
+})
+
+it('shows the complete source count even when long names require a shortened preview', async () => {
+  fixture({
+    configuration: {
+      connections: [
+        'Long source name '.repeat(8),
+        'Second long source '.repeat(8),
+        'Third source',
+      ].map((name, index) => ({
+        providerId: 'provider',
+        id: String(index),
+        name,
+        kind: 'group',
+        policy: { automatic: true, askBeforeAct: true },
+      })),
+    } as ComponentProps<typeof StandInDetailsPopover>['configuration'],
+  })
+  expect(await screen.findByText('共 3 个来源，进入管理查看全部。')).toBeVisible()
+  expect(screen.queryByText(/另有 1 个来源/)).not.toBeInTheDocument()
+})
+
+it('shows configured source names without claiming they are online or enabled', async () => {
+  fixture({
+    enabled: false,
+    configuration: {
+      connections: [
+        {
+          providerId: 'mail',
+          profile: 'work',
+          kind: 'mailbox',
+          id: 'inbox',
+          name: '工作邮箱',
+          policy: { automatic: true, askBeforeAct: true },
+        },
+      ],
+    },
+  })
+  expect(await screen.findByText('已配置：工作邮箱')).toBeVisible()
+  expect(screen.getByText('已暂停接收')).toBeVisible()
+})
+
 it('does not present unstarted source intake as an independent thread', async () => {
   fixture({
     items: [runtimeItem],

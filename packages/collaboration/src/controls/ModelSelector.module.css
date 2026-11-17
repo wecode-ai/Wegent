@@ -95,7 +95,6 @@
 
 .groupLabel {
   padding-top: 12px;
-  color: rgb(var(--color-text-secondary));
 }
 
 .subgroupLabel {
@@ -172,6 +171,14 @@
   to {
     opacity: 1;
     transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@media (max-width: 767px) {
+  .menuWrapper button,
+  .submenu button {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 

@@ -147,6 +147,30 @@
   cursor: pointer;
 }
 
+@media (max-width: 767px) {
+  .collaboration-environment-devices :is(button, select, summary) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .collaboration-environment-device-actions[open] {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .collaboration-environment-device-actions > div {
+    position: static;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .collaboration-environment-device-actions > div > button {
+    max-width: 100%;
+    text-align: left;
+    white-space: normal;
+  }
+}
+
 .collaboration-alert {
   border: 1px solid rgb(var(--color-error));
   border-radius: 8px;

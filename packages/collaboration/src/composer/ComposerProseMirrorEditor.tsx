@@ -769,7 +769,10 @@ export const ComposerProseMirrorEditor = forwardRef<
     const viewport = mountRef.current;
     const content = viewRef.current?.dom;
     if (!props.scrollContainerClassName || !viewport || !content) return;
-    return observeComposerScrollFade(viewport, content);
+    return observeComposerScrollFade(viewport, content, () => {
+      const view = viewRef.current;
+      if (view?.hasFocus()) view.dispatch(view.state.tr.scrollIntoView());
+    });
   }, [props.scrollContainerClassName]);
 
   useEffect(() => {
