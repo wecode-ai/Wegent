@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
 import { createGitHostingCliFixtures } from '../../e2e/desktop/scenarios/change-request-status.scenario.mjs'
 
 test('GitLab protocol fixture validates the real login command and creates an isolated config', async t => {
@@ -16,15 +18,26 @@ test('GitLab protocol fixture validates the real login command and creates an is
     await rm(directory, { recursive: true, force: true })
   })
   await createGitHostingCliFixtures(directory)
-  const run = async (args, input = '') => {
-    const child = spawn(
-      process.execPath,
-      [join(directory, '.wework-e2e-bin', 'glab.mjs'), ...args],
-      {
-        env: { ...process.env, GLAB_CONFIG_DIR: join(directory, 'managed-glab') },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }
-    )
+  const bin = join(directory, '.wework-e2e-bin')
+  const launcher = join(bin, process.platform === 'win32' ? 'protocol.exe' : 'protocol')
+  await promisify(execFile)('rustc', [
+    fileURLToPath(new URL('../../e2e/desktop/fixtures/node-cli-protocol.rs', import.meta.url)),
+    '--edition',
+    '2021',
+    '-o',
+    launcher,
+  ])
+  await copyFile(join(bin, 'glab.mjs'), join(bin, 'protocol.mjs'))
+  const run = async (args, input = '', program = launcher) => {
+    const child = spawn(program, args, {
+      env: {
+        ...process.env,
+        HOME: directory,
+        USERPROFILE: directory,
+        GLAB_CONFIG_DIR: join(directory, 'managed-glab'),
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
     let stdout = ''
     child.stdout.on('data', chunk => {
       stdout += chunk
@@ -34,6 +47,14 @@ test('GitLab protocol fixture validates the real login command and creates an is
     const [code] = await once(child, 'close')
     return { code, stdout }
   }
+  const github = join(bin, process.platform === 'win32' ? 'gh.exe' : 'gh')
+  const identity = await run(
+    ['api', '--hostname', 'github.com', '--method', 'GET', 'user'],
+    '',
+    github
+  )
+  assert.equal(identity.code, 0)
+  assert.deepEqual(JSON.parse(identity.stdout), { id: 1, login: 'wework-e2e' })
   const help = await run(['auth', 'login', '--help'])
   assert.equal(help.code, 0)
   assert.match(help.stdout, /--git-protocol/)

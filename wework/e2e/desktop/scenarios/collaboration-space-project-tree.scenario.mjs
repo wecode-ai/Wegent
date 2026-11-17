@@ -11,7 +11,6 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
   let cloud
   let business
   const projects = []
-  let scrollTarget
   async function request(path, method = 'GET', values) {
     const response = await fetch(`${cloud.backendUrl}${path}`, {
       method,
@@ -76,10 +75,9 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
         is_default: true,
       })
       for (let index = 0; index < 20; index += 1) {
-        const project = await request(`/api/v1/workspaces/${business.id}/projects`, 'POST', {
+        await request(`/api/v1/workspaces/${business.id}/projects`, 'POST', {
           name: `滚动验收-${index}-${process.pid}`,
         })
-        if (index === 0) scrollTarget = project
       }
     },
     async verify(control) {
@@ -159,15 +157,23 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs, ca
         }),
         'auto'
       )
-      await control.command(
-        'scrollIntoView',
-        sidebar(`collaboration-workspace-project-${scrollTarget.id}`)
+      const beforeScroll = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${projectScroll}, ${sidebar('collaboration-project-tree')} [data-testid^="collaboration-workspace-project-"]`
+        )
       )
-      await control.command(
-        'waitFor',
-        sidebar(`collaboration-workspace-project-${scrollTarget.id}`),
-        { visible: true, timeoutMs: uiTimeoutMs }
+      const viewport = beforeScroll.find(row => row.testId === 'collaboration-projects-scroll')
+      const scrollTarget = beforeScroll
+        .filter(row => row.testId?.startsWith('collaboration-workspace-project-'))
+        .sort((left, right) => right.top - left.top)[0]
+      assert.ok(
+        viewport && scrollTarget && scrollTarget.top >= viewport.bottom,
+        'The fixture must expose a project below the viewport before scrolling'
       )
+      const target = sidebar(scrollTarget.testId)
+      await control.command('scrollIntoViewAsUser', target)
+      await control.command('waitFor', target, { visible: true, timeoutMs: uiTimeoutMs })
       const [metrics] = JSON.parse(await control.command('getElementMetrics', projectScroll))
       assert.ok(
         metrics.scrollHeight > metrics.clientHeight,

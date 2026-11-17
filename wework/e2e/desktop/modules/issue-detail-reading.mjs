@@ -539,11 +539,16 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
   const reply = snapshot.testIds.find(id => id.startsWith('cloud-task-activity-reply-toggle-'))
   assert.ok(reply, 'The persisted comment must offer a reply')
   const replySelector = scope(`[data-testid="${reply}"]`)
-  await control.command('scrollIntoView', replySelector)
+  // Expand the description so the title can leave even a tall desktop viewport.
+  await control.command('clickWhenEnabled', toggle)
+  await control.command('waitFor', `${toggle}[aria-expanded="true"]`)
+  await control.command('scrollIntoViewAsUser', replySelector, { value: 'start' })
   await control.command('waitFor', scope('[data-testid="issue-header-context"]'), {
     text: `${TITLE}已更新`,
     visible: true,
   })
+  await control.command('clickWhenEnabled', toggle)
+  await control.command('waitFor', `${toggle}[aria-expanded="false"]`)
   const timestamp = `${list} .task-detail-thread-actions time`
   const foreground = luminance(
     await control.command('getComputedStyleValue', timestamp, { value: 'color' })

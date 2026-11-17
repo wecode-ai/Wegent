@@ -1,9 +1,10 @@
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
+import { fileURLToPath } from 'node:url'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
 import { selectE2EModel, runChecked, repoDir, waitForLogPattern } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -36,7 +37,6 @@ async function configureGitFixture(workspacePath) {
 export async function createGitHostingCliFixtures(homePath) {
   const binPath = join(homePath, '.wework-e2e-bin')
   const fixturePath = join(binPath, 'gh.mjs')
-  const executablePath = join(binPath, process.platform === 'win32' ? 'gh.cmd' : 'gh')
   await mkdir(binPath, { recursive: true })
   await writeFile(
     fixturePath,
@@ -153,9 +153,8 @@ if (endpoint === 'user') {
 }
 `
   )
-  if (process.platform === 'win32') {
-    await writeFile(executablePath, '@echo off\r\nnode "%~dp0gh.mjs" %*\r\n')
-  } else {
+  if (process.platform !== 'win32') {
+    const executablePath = join(binPath, 'gh')
     await writeFile(executablePath, '#!/bin/sh\nexec node "$(dirname "$0")/gh.mjs" "$@"\n')
     await chmod(executablePath, 0o755)
   }
@@ -181,14 +180,23 @@ if (args.includes('--help')) {
 }
 `
   )
-  const gitLabPath = join(binPath, process.platform === 'win32' ? 'glab.cmd' : 'glab')
-  await writeFile(
-    gitLabPath,
-    process.platform === 'win32'
-      ? '@echo off\r\nnode "%~dp0glab.mjs" %*\r\n'
-      : '#!/bin/sh\nexec node "$(dirname "$0")/glab.mjs" "$@"\n'
-  )
-  if (process.platform !== 'win32') await chmod(gitLabPath, 0o755)
+  if (process.platform !== 'win32') {
+    const gitLabPath = join(binPath, 'glab')
+    await writeFile(gitLabPath, '#!/bin/sh\nexec node "$(dirname "$0")/glab.mjs" "$@"\n')
+    await chmod(gitLabPath, 0o755)
+  }
+  if (process.platform === 'win32') {
+    // Rust CreateProcess resolves native executables, not the legacy shell's .cmd shim.
+    const executable = join(binPath, 'gh.exe')
+    await runChecked('rustc', [
+      fileURLToPath(new URL('../fixtures/node-cli-protocol.rs', import.meta.url)),
+      '--edition',
+      '2021',
+      '-o',
+      executable,
+    ])
+    await copyFile(executable, join(binPath, 'glab.exe'))
+  }
   process.env.PATH = `${binPath}${delimiter}${process.env.PATH ?? ''}`
 }
 
