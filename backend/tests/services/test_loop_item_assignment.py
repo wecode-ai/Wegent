@@ -2017,11 +2017,6 @@ def test_external_assign_preserves_creator_label(
     monkeypatch.setattr(
         external_loop_item_provider, "_get_issue", MagicMock(return_value=issue)
     )
-    monkeypatch.setattr(
-        external_loop_item_provider,
-        "_response",
-        MagicMock(return_value=_external_response(can_view_detail=True)),
-    )
     monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
 
     external_loop_item_provider.assign(
