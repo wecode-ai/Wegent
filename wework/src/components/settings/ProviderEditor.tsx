@@ -49,7 +49,6 @@ export function ProviderEditor({
   const { t } = useTranslation('modelConnections')
   const existing = snapshot.providers.some(provider => provider.id === initial.id)
   const [presetId, setPresetId] = useState(() => (existing ? detectProviderPreset(initial) : ''))
-  const [stage, setStage] = useState<'connection' | 'models'>(existing ? 'models' : 'connection')
   const [search, setSearch] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [expandedModels, setExpandedModels] = useState<Set<string>>(
@@ -220,22 +219,7 @@ export function ProviderEditor({
             </button>
           </div>
           <div className="min-h-0 space-y-4 overflow-y-auto p-5">
-            <nav aria-label={t('editorDescription')} className="flex gap-2">
-              {(['connection', 'models'] as const).map(value => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-pressed={stage === value}
-                  data-testid={`provider-stage-${value}`}
-                  disabled={pending || (value === 'models' && !presetId)}
-                  className={stage === value ? PRIMARY : BUTTON}
-                  onClick={() => setStage(value)}
-                >
-                  {t(value === 'connection' ? 'connection' : 'models')}
-                </button>
-              ))}
-            </nav>
-            <div hidden={stage !== 'connection'} className="space-y-4">
+            <div className="space-y-4">
               <label className="grid gap-1.5 text-sm text-text-primary">
                 {t('service')}
                 <select
@@ -260,11 +244,7 @@ export function ProviderEditor({
                   <option value="custom">{t('customInterface')}</option>
                 </select>
               </label>
-              <fieldset
-                disabled={pending}
-                onInvalid={() => setStage('connection')}
-                className="space-y-3"
-              >
+              <fieldset disabled={pending} className="space-y-3">
                 {
                   <label className="flex items-center gap-2 text-sm text-text-secondary">
                     <input
@@ -460,7 +440,7 @@ export function ProviderEditor({
                 }
               </fieldset>
             </div>
-            <fieldset hidden={stage !== 'models'} disabled={pending} className="space-y-3">
+            <fieldset disabled={pending} className="space-y-3">
               <div className="space-y-2 border-t border-border pt-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h4 className="text-sm font-medium text-text-primary">{t('models')}</h4>
@@ -682,17 +662,6 @@ export function ProviderEditor({
               >
                 {t('cancel')}
               </button>
-              {stage === 'connection' && (
-                <button
-                  type="button"
-                  className={BUTTON}
-                  data-testid="provider-editor-next"
-                  disabled={pending || !presetId || !validDiscoveryUrl(draft.base_url)}
-                  onClick={() => setStage('models')}
-                >
-                  {t('manageModels')}
-                </button>
-              )}
               <button
                 type="submit"
                 className={PRIMARY}
