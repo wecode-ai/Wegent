@@ -218,7 +218,7 @@ export function IssueMainCommentComposer({
               onChange={transfer.setTarget}
               disabled={
                 blocked ||
-                Boolean(transfer.pendingChild) ||
+                transfer.childTargetLocked ||
                 (transfer.mode === "current" &&
                   assignment.canAssignCurrent === false)
               }
@@ -234,7 +234,7 @@ export function IssueMainCommentComposer({
               onChange={transfer.setTarget}
               disabled={
                 blocked ||
-                Boolean(transfer.pendingChild) ||
+                transfer.childTargetLocked ||
                 (transfer.mode === "current" &&
                   assignment.canAssignCurrent === false)
               }

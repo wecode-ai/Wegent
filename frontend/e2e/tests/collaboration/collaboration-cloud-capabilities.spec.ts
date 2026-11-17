@@ -584,7 +584,8 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId('issue-primary-metadata')).toBeVisible()
       await expect(page.getByTestId('cloud-todo-add-collaborator')).toBeVisible()
       await page.getByTestId('cloud-todo-add-collaborator').click()
-      await page.getByTestId('cloud-todo-collaborator-select').selectOption(String(member.id))
+      await page.getByTestId('cloud-todo-collaborator-select').fill(member.user_name)
+      await page.getByTestId(`cloud-todo-collaborator-option-${member.id}`).click()
       await page.getByTestId('cloud-todo-confirm-collaborator').click()
       await expect(
         page.getByTestId('cloud-todo-collaborators').getByRole('button', {

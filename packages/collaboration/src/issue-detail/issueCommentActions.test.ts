@@ -63,6 +63,7 @@ function setup(overrides: Partial<Parameters<typeof createIssueCommentActions>[0
       assign,
     } as unknown as SharedIssueDetailPort['issues'],
     onUpdated,
+    confirmAssignee: vi.fn(async () => true),
     translate: t,
     ...overrides,
   })
@@ -70,6 +71,40 @@ function setup(overrides: Partial<Parameters<typeof createIssueCommentActions>[0
 }
 
 describe('Issue composer board operations', () => {
+  it.each([false, true])('confirms assignee column moves (approved=%s)', async approved => {
+    const confirmAssignee = vi.fn(async () => approved)
+    const { actions, assign, onUpdated } = setup({
+      confirmAssignee,
+      board: {
+        name: 'People',
+        groupBy: 'assignee',
+        columns: ['', 'user:5'].map(groupValue => ({
+          key: groupValue || 'unassigned',
+          type: 'assignee',
+          groupValue,
+          label: groupValue || 'Unassigned',
+          dotClass: '',
+          status: '',
+        })),
+      },
+    })
+    const result = await actions.move(JSON.stringify(['unassigned', 'user:5']))
+    expect(confirmAssignee).toHaveBeenCalledExactlyOnceWith('user:5')
+    if (approved) {
+      expect(assign).toHaveBeenCalledExactlyOnceWith('project', 'issue', {
+        version: 9,
+        assigneeType: 'user',
+        assigneeId: '5',
+        notifyAssignee: true,
+      })
+      expect(onUpdated).toHaveBeenCalledOnce()
+    } else {
+      expect(result).toBe(false)
+      expect(assign).not.toHaveBeenCalled()
+      expect(onUpdated).not.toHaveBeenCalled()
+    }
+  })
+
   it('uses the selected view and source column without writing until submission', async () => {
     const { actions, update, onUpdated } = setup()
     expect(actions.boardName).toBe('研发视图')

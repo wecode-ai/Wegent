@@ -834,6 +834,10 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
 
   const markerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"]`
   await control.command('click', markerSelector)
+  await control.command('waitFor', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`, {
+    text: promptText,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command(
     'scrollIntoViewAsUser',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
@@ -1423,14 +1427,24 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
     initialPrompt: QUEUE_DIRECT_INITIAL,
     queuedPrompts: [QUEUE_DIRECT_FIRST, QUEUE_DIRECT_SECOND, QUEUE_DIRECT_THIRD],
   })
-  const queueSnapshot = JSON.parse(
-    await control.command('snapshot', '[data-testid="conversation-queue-panel"]')
+  const queueTestIds = JSON.parse(
+    await control.command('getTestIdOrder', '[data-testid="conversation-queue-panel"]')
   )
-  const dragHandleTestIds = queueSnapshot.testIds.filter(testId =>
-    testId.startsWith('queue-drag-handle-')
-  )
+  const dragHandleTestIds = queueTestIds.filter(testId => testId.startsWith('queue-drag-handle-'))
   assert.equal(dragHandleTestIds.length, 3, 'The three queued messages did not expose drag handles')
   const firstQueuedId = dragHandleTestIds[0].slice('queue-drag-handle-'.length)
+  const thirdQueuedId = dragHandleTestIds[2].slice('queue-drag-handle-'.length)
+  for (const [id, prompt] of [
+    [firstQueuedId, QUEUE_DIRECT_FIRST],
+    [thirdQueuedId, QUEUE_DIRECT_THIRD],
+  ]) {
+    assert.ok(
+      (await control.command('getText', `[data-testid="conversation-queue-row-${id}"]`)).includes(
+        prompt
+      ),
+      'Queue drag targets must follow visible message order, independent of message IDs'
+    )
+  }
   await control.command('drag', `[data-testid="${dragHandleTestIds[2]}"]`, {
     target: `[data-testid="conversation-queue-row-${firstQueuedId}"]`,
   })

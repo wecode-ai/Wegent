@@ -9,6 +9,7 @@ use std::{process::Stdio, time::Duration};
 use tokio::io::AsyncRead;
 use tokio::io::AsyncWriteExt;
 use tokio::{io::AsyncReadExt, process::Command};
+mod status;
 
 pub(crate) const PACKAGE: &str = "@wegent/dsh-connection-git/";
 
@@ -468,14 +469,31 @@ async fn api_request(
             return Err(GitRequestError::not_sent(rate_limit_failure(instance)));
         }
         if !status.success(){
-            let text=String::from_utf8_lossy(&err).to_lowercase();
-            let auth=http_status==401||status.code()==Some(4)||text.contains("auth login");
-            let error = AppIpcError::new(if auth{"connector_auth_required"}else if http_status==403{"git_permission_denied"}else if http_status==404{"git_not_found"}else{"git_cli_failed"},"Git operation failed; check account permissions and connectivity. Inspect remote state before repeating a write.");
+            let error = AppIpcError::new(cli_failure_code(http_status,status.code(),&err),"Git operation failed; check account permissions and connectivity. Inspect remote state before repeating a write.");
             return Err(GitRequestError {error, uncertain: !definite_rejection(http_status)});
         }
         let data=if response_body.is_empty(){json!({"success":true})}else{serde_json::from_slice(response_body).map_err(|_|invalid("Invalid Git CLI JSON response; inspect remote state before repeating a write"))?};
         Ok(ApiReply{data,poll_interval})
     }).await.map_err(|_|GitRequestError::from(AppIpcError::new("git_cli_timeout","Git request timed out; inspect remote state before repeating a write")))?
+}
+
+fn cli_failure_code(http_status: u16, exit_code: Option<i32>, stderr: &[u8]) -> &'static str {
+    if http_status == 401
+        || exit_code == Some(4)
+        || String::from_utf8_lossy(stderr)
+            .to_lowercase()
+            .contains("auth login")
+    {
+        "connector_auth_required"
+    } else if exit_code == Some(127) {
+        "git_cli_missing"
+    } else if http_status == 403 {
+        "git_permission_denied"
+    } else if http_status == 404 {
+        "git_not_found"
+    } else {
+        "git_cli_failed"
+    }
 }
 
 fn definite_rejection(status: u16) -> bool {
@@ -511,6 +529,12 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
     }
     if input["operation"] == "identity" {
         return Ok(json!({"profile":profile,"accountId":id,"login":login,"instance":instance}));
+    }
+    if input["operation"] == "change_request_status" && platform == "github" {
+        let response = status::read(&instance, &input).await?;
+        return Ok(
+            json!({"data":response.data,"profile":profile,"pollIntervalSeconds":response.poll_interval}),
+        );
     }
     if input["operation"] == "job_log" {
         endpoint(
@@ -682,6 +706,23 @@ fn comment_event_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cli_failure_diagnostics_preserve_auth_permission_and_missing_tool_causes() {
+        for (http, exit, stderr, code) in [
+            (200, Some(127), "gh: command not found", "git_cli_missing"),
+            (401, Some(1), "", "connector_auth_required"),
+            (200, Some(4), "", "connector_auth_required"),
+            (403, Some(1), "", "git_permission_denied"),
+            (404, Some(1), "", "git_not_found"),
+            (200, Some(1), "", "git_cli_failed"),
+        ] {
+            assert_eq!(cli_failure_code(http, exit, stderr.as_bytes()), code);
+        }
+        assert!(
+            !definite_rejection(200),
+            "A CLI failure must not prove a remote write was unsent"
+        );
+    }
     #[tokio::test]
     async fn preflight_failures_are_definitely_unsent() {
         let oversized = json!({"body":"x".repeat(256*1024)});

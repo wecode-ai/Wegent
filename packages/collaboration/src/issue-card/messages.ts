@@ -15,7 +15,7 @@ export const boardCardMessages: Record<'zh-CN' | 'en', Record<string, string>> =
     'todo.task_progress_count': '{{count}} 个任务',
     'board.card.needs_configuration': '待配置',
     'board.card.participation_agent': '智能体处理',
-    'board.card.participation_stand_in': '分身处理',
+    'board.card.participation_stand_in': '助理处理',
     'board.card.participation_human': '等待{{name}}处理',
     'board.card.archive': '归档任务',
     'board.group.search': '搜索分组字段',

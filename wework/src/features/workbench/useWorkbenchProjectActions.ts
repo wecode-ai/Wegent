@@ -495,8 +495,6 @@ export function useWorkbenchProjectActions({
         deviceId: runtimeWorkspace.deviceId,
         workspacePath: runtimeWorkspace.workspacePath,
       })
-      await refreshWorkLists({ syncCloud: false })
-      dispatch({ type: 'runtime_project_removed', projectId })
       if (clearsStandaloneWorkspace) {
         dispatch({
           type: 'project_cleared',
@@ -515,7 +513,6 @@ export function useWorkbenchProjectActions({
       executorClient,
       invalidateRemoteProjectSync,
       markRuntimeProjectRemoved,
-      refreshWorkLists,
       state.runtimeWork,
       state.standaloneDeviceId,
       state.standaloneWorkspacePath,
@@ -559,7 +556,6 @@ export function useWorkbenchProjectActions({
         deviceId: standaloneDeviceId,
         workspacePath: standaloneWorkspacePath,
       })
-      await refreshWorkLists({ syncCloud: false })
       dispatch({
         type: 'project_cleared',
         standaloneDeviceId,
@@ -574,7 +570,6 @@ export function useWorkbenchProjectActions({
       executorClient,
       invalidateRemoteProjectSync,
       markRuntimeProjectRemoved,
-      refreshWorkLists,
       state.standaloneDeviceId,
       state.standaloneWorkspacePath,
     ]

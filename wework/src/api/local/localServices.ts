@@ -2,7 +2,10 @@ import { runtimeProjectRefFromWorkspace } from '../../../../packages/chat-core/s
 import type { RuntimeTaskArchiveRequest } from '../../../../packages/chat-core/src/runtime-management-types'
 import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
 import { createStandInExecutorApi } from '@/api/standIn'
-import { modelInterfaceRuntimeConfig } from '../../../electron/src/host/model-interface-runtime'
+import {
+  modelInterfaceRuntimeConfig,
+  modelHarnessUpstream,
+} from '../../../electron/src/host/model-interface-runtime'
 import type { McpAppRequest } from '@/api/mcpApps'
 import { createLocalProjectDevicePluginApi } from '@/api/projectDevicePlugins'
 import { requestRunnerSelection } from '@/lib/runner-selection'
@@ -613,6 +616,7 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
     device_type: 'local' as const,
     runtime_instance_id: status.runtimeInstanceId ?? null,
     capabilities: ['runtime-work', 'device-commands'],
+    ...(status.runtimeFeatures ? { runtime_features: status.runtimeFeatures } : {}),
     slot_used: 0,
     slot_max: 5,
     executor_version:
@@ -1098,10 +1102,6 @@ function recordString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
-function recordNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
-}
-
 async function harnessProxyUpstream(
   runtime: string,
   option: LocalHarnessModelOption,
@@ -1122,35 +1122,10 @@ async function harnessProxyUpstream(
   if (!baseUrl || !apiFormat || !apiKey) {
     throw new Error('Harness model proxy configuration is incomplete')
   }
-  const nativeToolSearch =
-    typeof config.native_tool_search === 'boolean' ? config.native_tool_search : false
-  const nativeNamespaceTools =
-    typeof config.native_namespace_tools === 'boolean' ? config.native_namespace_tools : false
-  const headers =
-    config.default_headers &&
-    typeof config.default_headers === 'object' &&
-    !Array.isArray(config.default_headers)
-      ? Object.entries(config.default_headers as Record<string, unknown>).flatMap(
-          ([name, value]) => (typeof value === 'string' ? [[name, value]] : [])
-        )
-      : []
   const requestUrl =
     recordString(config.responses_url) ?? `${baseUrl.replace(/\/+$/, '')}/responses`
-  return {
-    base_url: baseUrl,
-    request_url: requestUrl,
-    api_format: apiFormat,
-    convert_custom_tools: config.tool_profile !== 'custom',
-    native_tool_search: nativeToolSearch,
-    native_namespace_tools: nativeNamespaceTools,
-    codex_request_mode: recordString(config.codex_request_mode) ?? 'auto',
-    api_key: apiKey,
-    default_headers: headers,
-    proxy_url: await resolveLocalCodexProxyUrl(requestUrl),
-    model_id: recordString(config.model_id),
-    routing_model_id: null,
-    max_output_tokens: recordNumber(config.max_output_tokens),
-  }
+  const proxyUrl = await resolveLocalCodexProxyUrl(requestUrl)
+  return modelHarnessUpstream({ ...config, ...(proxyUrl ? { proxy: { url: proxyUrl } } : {}) })
 }
 
 async function applyRuntimeModelOptions(
@@ -3482,7 +3457,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
               { deviceId: device.device_id }
             )
             device.runtime_features = {
-              schemaVersion: 1,
+              ...(device.runtime_features ?? { schemaVersion: 1 }),
               worktrees: capabilities.runtimeWorktrees,
             }
           } catch (error) {

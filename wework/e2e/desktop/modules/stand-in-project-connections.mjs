@@ -57,7 +57,7 @@ export async function verifyStandInProjectConnectionNames(control, uiTimeoutMs) 
         ...settings.roles,
         {
           id: ROLE,
-          name: '连接名称测试分身',
+          name: '连接名称测试助理',
           enabled: false,
           prompt: '',
           executionDeviceId: settings.executionDeviceId,

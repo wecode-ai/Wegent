@@ -41,6 +41,7 @@ const weworkDir = resolve(scriptDir, '..', '..')
 const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')
 const isolatedXvfbPath = join(scriptDir, 'run-with-xvfb.sh')
 const openboxPath = join(scriptDir, 'run-with-openbox.sh')
+const keyringPath = join(scriptDir, 'run-with-keyring.sh')
 const cliArgs = process.argv.slice(2)
 const requestedArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
 const allocateXvfbDisplay = createXvfbDisplayAllocator()
@@ -63,7 +64,18 @@ function runTaskFlow(args, env, label) {
     const isolateDisplay = process.platform === 'linux' && env.WEWORK_E2E_ISOLATED_XVFB === 'true'
     const command = isolateDisplay ? 'sh' : process.execPath
     const commandArgs = isolateDisplay
-      ? [isolatedXvfbPath, 'sh', openboxPath, process.execPath, taskFlowPath, ...args]
+      ? [
+          isolatedXvfbPath,
+          'dbus-run-session',
+          '--',
+          'sh',
+          keyringPath,
+          'sh',
+          openboxPath,
+          process.execPath,
+          taskFlowPath,
+          ...args,
+        ]
       : [taskFlowPath, ...args]
     const child = spawn(command, commandArgs, {
       env: isolateDisplay
@@ -126,6 +138,15 @@ async function readFailureSummary(result) {
       .filter(Boolean)
       .at(-1) ?? 'No failure details were emitted'
   )
+}
+
+function annotateCheckpointFailure(checkpoint, failure) {
+  if (process.env.GITHUB_ACTIONS !== 'true') return
+  const message = `[${checkpoint}] ${failure}`
+    .replaceAll('%', '%25')
+    .replaceAll('\r', '%0D')
+    .replaceAll('\n', '%0A')
+  console.error(`::error title=Desktop checkpoint failed::${message}`)
 }
 
 function checkpointScenarioEnv(env, checkpoint) {
@@ -365,6 +386,7 @@ async function runRequestedArgs() {
     return
   }
   const failure = await readFailureSummary(result)
+  annotateCheckpointFailure(label, failure)
   console.error(
     `[desktop-e2e] FAIL ${label}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
   )
@@ -439,6 +461,7 @@ async function runParallelCheckpoints(checkpoints) {
           return
         }
         const failure = await readFailureSummary(result)
+        annotateCheckpointFailure(checkpoint, failure)
         failures.push({ checkpoint, failure, ...result })
         console.error(
           `[desktop-e2e] FAIL ${checkpoint}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`
@@ -482,6 +505,7 @@ async function runCheckpoints(checkpoints) {
     }
 
     const failure = await readFailureSummary(result)
+    annotateCheckpointFailure(checkpoint, failure)
     failures.push({ checkpoint, failure, ...result })
     console.error(
       `[desktop-e2e] FAIL ${checkpoint}: duration=${formatDuration(result.durationMs)}, ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}, error=${failure}${result.resultDir ? `, evidence=${result.resultDir}` : ''}`

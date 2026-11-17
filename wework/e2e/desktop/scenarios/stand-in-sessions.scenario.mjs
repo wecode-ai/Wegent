@@ -72,7 +72,7 @@ export function createDesktopScenario({
         assert.ok(input.includes(SECOND), 'Work results must wake the current execution session')
         assert.ok(!input.includes(FIRST), 'Work results must not reopen the old execution session')
         resultDelivered = true
-        events = [assistantMessage('独立工作的结果已回到同一个分身入口。')]
+        events = [assistantMessage('独立工作的结果已回到同一个助理入口。')]
       } else if (input.includes(CHILD)) {
         events = [assistantMessage('独立工作已完成。')]
       } else if (input.includes(FOLLOWUP)) {
@@ -291,7 +291,7 @@ export function createDesktopScenario({
         'runtime.tasks.create',
         {
           taskId: 'stand-in-session-child',
-          title: '分身分段后的独立工作',
+          title: '助理分段后的独立工作',
           runtime: 'codex',
           workspacePath,
           message: CHILD,

@@ -100,8 +100,10 @@ fn request(id: &str, method: &str) -> Value {
 }
 
 #[test]
-fn cancellation_only_covers_cooperative_transcript_reads() {
-    assert!(is_cancellable_read(Some("runtime.tasks.transcript")));
+fn cancellation_only_covers_cooperative_reads() {
+    for method in CANCELLABLE_READ_METHODS {
+        assert!(is_cancellable_read(Some(method)));
+    }
     for method in [
         "runtime.tasks.transcript.search",
         "runtime.tasks.search",
@@ -129,6 +131,25 @@ async fn cancelling_history_read_releases_handler_and_preserves_control_requests
     assert_eq!(responses[0]["ok"], true);
     assert_eq!(responses[1]["error"]["code"], "request_cancelled");
     assert_eq!(runtime.dropped.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn cancelling_connection_capability_reads_releases_their_native_handlers() {
+    for method in [
+        "runtime.connections.mcp",
+        "runtime.connections.cli",
+        "runtime.connections.git.read",
+    ] {
+        let runtime = ControlledRuntime::default();
+        let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
+        let (mut reader, mut writer) = connect(server).await;
+        write_frame(&mut writer, request("collection", method)).await;
+        runtime.entered.notified().await;
+        write_frame(&mut writer, json!({"type":"cancel","id":"collection"})).await;
+        let response = read_response(&mut reader).await;
+        assert_eq!(response["error"]["code"], "request_cancelled");
+        assert_eq!(runtime.dropped.load(Ordering::SeqCst), 1);
+    }
 }
 
 #[tokio::test]

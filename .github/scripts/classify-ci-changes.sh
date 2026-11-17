@@ -27,6 +27,10 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    .github/scripts/verify-native-event-goal.sh)
+      changed[executor]=true
+      return
+      ;;
     # Known leaf actions select their actual consumers; unknown actions retain full validation.
     .github/ci/wework-unit-test-durations.json | .github/scripts/balance-wework-unit-tests.* | \
       wework/scripts/ci-test-sequencer.*)
@@ -59,6 +63,7 @@ classify_path() {
       return
       ;;
     .github/actions/build-wework-core-e2e/* | .github/actions/build-wework-windows-e2e/* | \
+      .github/actions/setup-wework-native-test-dependencies/* | \
       .github/actions/build-wework-macos-e2e/* | .github/actions/build-minio-e2e/* | \
       .github/actions/setup-minio-e2e/* | .github/scripts/prepare-macos-inspector-e2e.sh | \
       .github/scripts/build-macos-e2e-runtimes.sh | .github/scripts/macos-e2e-source-digest.mjs | \
@@ -135,6 +140,7 @@ classify_path() {
       changed[platform_e2e]=true
       ;;
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
+      .github/ci/wework-native-test-ubuntu.sources | \
       .github/ci/wework-linux-checkpoint-durations.json | \
       .github/scripts/order-wework-linux-e2e.* | \
       .github/scripts/core-runner-slots.* | \

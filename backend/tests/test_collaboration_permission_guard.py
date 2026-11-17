@@ -7,8 +7,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 CONTRACT = ROOT / "docs/zh/wegent/developer-guide/collaboration-permissions.md"
+# CP07/CP14 approval: all current invitees, including explicit Viewers, manage only
+# their invited Issue. Children remain separately authorized; execution stays denied.
 APPROVED_CONTRACT_SHA256 = (
-    "b06ba0add8de4df74e89c40c1177ef64cc47751a2c5c50d209c9a68b1fc524ef"
+    "e5fce7840e7302315c426789788c5ab78bc39211121828a23a68fa2f6d994593"
 )
 
 

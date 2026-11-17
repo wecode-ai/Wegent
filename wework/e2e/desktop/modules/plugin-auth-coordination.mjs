@@ -157,25 +157,53 @@ export async function verifyPluginAuthCoordination({
     await otherLease.release()
   }
   const backgroundRow = await holdInstalledPluginRow(cloud, installedId)
-  let pausedMarker
+  let pendingWait
+  let enrollmentLogOffset
+  const executorLog = join(resultDir, 'executor.log')
+  // Independent inserts can split an InnoDB page and replace physical lock
+  // IDs while the same transactions still wait. Track transaction identity.
+  const readPendingWait = async () => {
+    const [row] = await cloud.queryDatabase(
+      `SELECT EXISTS(SELECT 1 FROM performance_schema.data_lock_waits
+       WHERE REQUESTING_ENGINE_TRANSACTION_ID = %s AND BLOCKING_ENGINE_TRANSACTION_ID = %s) AS pending`,
+      [pendingWait.requestingTransactionId, pendingWait.blockingTransactionId]
+    )
+    return row.pending
+  }
   try {
     await signalAutomaticRetry()
-    await backgroundRow.waitFor('blocked')
-    pausedMarker = await readFile(reconcileMarker, 'utf8')
+    pendingWait = await backgroundRow.waitFor('blocked')
+    assert.ok(pendingWait.requestingTransactionId && pendingWait.blockingTransactionId)
     await verifyIndependentPluginMutations(cloud, independent, evidence)
     assert.equal(
-      await readFile(reconcileMarker, 'utf8'),
-      pausedMarker,
-      'Background authentication finished before its real database fence was released'
+      await readPendingWait(),
+      1,
+      'The target database request stopped waiting before its row was released'
     )
     evidence.push({ case: 'background-authentication-does-not-block-other-plugin', installedId })
+    enrollmentLogOffset = (await readFile(executorLog, 'utf8')).length
   } finally {
     await backgroundRow.release()
   }
   await until(
-    () => readFile(reconcileMarker, 'utf8'),
-    value => value.length > pausedMarker.length,
+    readPendingWait,
+    value => value === 0,
+    'The target database request remained blocked after its row was released'
+  )
+  await until(
+    () => readFile(executorLog, 'utf8'),
+    value =>
+      value
+        .slice(enrollmentLogOffset)
+        .includes(
+          `plugin auth automatic enrollment finished installed_plugin_id=${installedId} connector_slug=mail ok=true`
+        ),
     'Background authentication did not recover after its row was released'
+  )
+  await until(
+    () => connectionFor('mail'),
+    value => value?.status === 'connected' && value.device_ids.length > 0,
+    'Background authentication did not retain its real credential registration'
   )
   await logout()
 
