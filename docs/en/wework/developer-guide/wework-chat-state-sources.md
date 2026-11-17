@@ -168,6 +168,18 @@ target is treated as unordered and the drag result is lost.
 
 ## Conversation Scrolling and Diagram Rendering
 
+Turn navigation owns its target until the actual row is aligned, and virtualization must retain that row. Native `scrollend` only ends one scroll operation. If row measurements move the target, navigation must retarget its current geometry before releasing ownership. A temporary row remount is not completion. Reader input, a newer target, and unmount still cancel the previous navigation immediately.
+
+```mermaid
+flowchart LR
+  A[Select turn] --> B[Retain target row]
+  B --> C[Check actual target position]
+  C -->|Misaligned| D[Retarget measured position]
+  D --> C
+  C -->|Aligned| E[Release navigation target]
+  B -->|Reader input or unmount| F[Cancel previous navigation]
+```
+
 TanStack Virtual and its native ResizeObserver own message measurements. Keep message content visible during scrolling and reuse rows by message identity. Do not introduce a second height writer, replace scrolling content with placeholders, or estimate Markdown height on every frame.
 
 Opening a conversation initially positions it at the latest content; returning to a reader position restores the saved location. A boundary observer rooted in the current scroll container prefetches the previous page before the reader reaches loaded history. Prepending history preserves the reader position through stable message, content-item, and paragraph identities. The boundary marker always occupies one pixel; loading feedback and pagination actions are portaled outside the transcript without affecting measurements. Open search retains explicit pagination, and hidden panes suspend automatic loading. Failures and completed requests that leave the boundary unchanged offer manual recovery without a request loop. Manual retries retain the control and keyboard focus.
