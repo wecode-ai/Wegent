@@ -6,6 +6,7 @@ fn main() {
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
     let response = match arguments.as_slice() {
         ["health", ..] => r#"{"status":"ok"}"#,
+        ["auth", "status", ..] => r#"{"success":true,"authenticated":true,"token_valid":true}"#,
         ["profile", "list", ..] => {
             r#"{"currentProfile":"connection-test-account","profiles":[{"profile":"connection-test-account","userName":"Fixture","userId":"fixture-user"}]}"#
         }

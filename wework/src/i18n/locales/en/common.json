@@ -6234,6 +6234,7 @@
       "dependency_not_ready": "Plugin installation has not completed on the execution device. Check its plugin sync status, then refresh the connection when installation completes.",
       "dependency_missing": "A required source plugin is not installed. Open Stand-in settings, select the source under Connections, and choose Install required plugins. Then reload the source.",
       "connection_host_unavailable": "The connection service is temporarily unavailable. Try again later.",
+      "connection_cli_request_unavailable": "The source request failed. Try again later; if it keeps failing, reauthorize the connection.",
       "connection_response_invalid": "The connection returned invalid data. Check the source and try again.",
       "stand_in_dispatch_unknown": "The stand-in task’s start result is unknown. Check the task list first.",
       "stand_in_grouping_failed": "Stand-in could not organize the work. Try again.",

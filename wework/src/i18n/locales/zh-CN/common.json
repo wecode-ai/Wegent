@@ -6229,6 +6229,7 @@
       "dependency_not_ready": "插件安装尚未在执行设备上完成。请检查设备的插件同步状态，完成后刷新连接。",
       "dependency_missing": "来源所需插件尚未安装。请打开助理设置，在「连接」中选择该来源并点击「安装所需插件」，安装后重新加载。",
       "connection_host_unavailable": "连接服务暂不可用，请稍后重试。",
+      "connection_cli_request_unavailable": "来源请求暂时失败，请稍后重试；若仍失败，请重新授权连接。",
       "connection_response_invalid": "连接返回的数据无效，请检查来源后重试。",
       "stand_in_dispatch_unknown": "无法确认助理任务的启动结果，请先检查任务列表。",
       "stand_in_grouping_failed": "助理未能整理工作归属，请重试。",
