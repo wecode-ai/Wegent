@@ -234,6 +234,15 @@ async fn verify_running_transition(writer: &MysqlService) -> anyhow::Result<()> 
     crate::migrations::upgrade(writer).await?;
     writer
         .execute(
+            "INSERT INTO users (id, user_name, password_hash, email, is_active, `role`, \
+              auth_source, preferences, git_info, created_at, updated_at) \
+             VALUES (7, 'cancel-owner', 'unused', '', 1, 'user', 'password', \
+              JSON_OBJECT(), JSON_ARRAY(), NOW(), NOW())",
+            (),
+        )
+        .await?;
+    writer
+        .execute(
             "INSERT INTO tasks (id, user_id, kind, name, namespace, json, is_active, \
               created_at, updated_at, project_id, client_origin, is_group_chat) \
              VALUES (12, 7, 'Task', 'lag-test', 'default', JSON_OBJECT('status', \
@@ -483,6 +492,7 @@ async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::Result<()> 
     let mut app = crate::app_test_support::app(writer.clone());
     std::sync::Arc::get_mut(&mut app).unwrap().redis = Some(redis);
 
+    verify_chat_cancel_waits_for_runtime_then_falls_back(writer, &app).await?;
     verify_cancel_callback_order(writer, &app).await?;
     verify_terminal_callback_retry(writer, &app).await
 }
@@ -623,6 +633,85 @@ async fn verify_cancel_callback_order(
             .await?;
         assert_eq!(before.map(|json| json.0), after.map(|json| json.0));
     }
+    Ok(())
+}
+
+async fn verify_chat_cancel_waits_for_runtime_then_falls_back(
+    writer: &MysqlService,
+    app: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    reset_callback_state(writer, "RUNNING").await?;
+    writer
+        .execute("UPDATE tasks SET json = JSON_OBJECT('status', JSON_OBJECT('status', 'RUNNING')) WHERE id = 12", ())
+        .await?;
+    crate::internal_callback::session::add_text_content(
+        app.redis.as_ref().expect("Redis fixture"),
+        43,
+        "server partial cancel result",
+    )
+    .await?;
+    let runtime = std::sync::Arc::new(crate::socketio::runtime::SocketRuntime::new().0);
+    // The token-expiry branch only touches the runtime when a token is expired;
+    // the normal admission path installs emitters during service construction.
+    let server = crate::socketio::handlers::build_test_server()
+        .await
+        .map_err(|error| anyhow::anyhow!("build test Socket.IO server: {error}"))?;
+    runtime.install_emitters(std::sync::Arc::new(
+        crate::socketio::runtime::SocketEmitters::for_test(&server)
+            .map_err(|error| anyhow::anyhow!("build test Socket.IO emitters: {error}"))?,
+    ));
+    let identity = crate::socketio::auth::Identity {
+        user_id: 7,
+        user_name: String::new(),
+        auth_type: "jwt",
+        email: None,
+    };
+    let claims =
+        serde_json::json!({"sub": "cancel-owner", "exp": chrono::Utc::now().timestamp() + 300});
+    let payload = {
+        use base64::Engine as _;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims)?)
+    };
+    let token = format!("header.{payload}.signature");
+    let session = crate::socketio::chat_session::ChatSession::new(&identity, Some(&token), None);
+    crate::socketio::chat_control::cancel(
+        app,
+        &runtime,
+        &session,
+        "test-socket",
+        serde_json::json!({"subtask_id": 43, "shell_type": "Chat", "partial_content": "stale client result"}),
+    )
+    .await?;
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLED".into(), "CANCELLED".into())
+    );
+    let result: brz_mysql::Json<serde_json::Value> = writer
+        .fetch_one("SELECT result FROM subtasks WHERE id = 43", ())
+        .await?;
+    assert_eq!(
+        result.0["value"].as_str().unwrap_or_default(),
+        "server partial cancel result"
+    );
+    let cancel_key = crate::socketio::chat_control::cancel_key(43);
+    let intent_key = "chat:cancel-intent:43".to_string();
+    let redis = app.redis.as_ref().expect("Redis fixture");
+    let streaming_left = redis.get::<_, String>("chat:streaming:43").await;
+    let cancel_left = redis.get::<_, String>(cancel_key.as_str()).await;
+    let intent_left = redis.get::<_, String>(intent_key.as_str()).await;
+    assert!(
+        streaming_left.unwrap().is_none()
+            && cancel_left.unwrap().is_none()
+            && intent_left.unwrap().is_none()
+    );
+
+    terminal_callback(app, "done", "late outcome")
+        .await
+        .unwrap();
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLED".into(), "CANCELLED".into())
+    );
     Ok(())
 }
 
