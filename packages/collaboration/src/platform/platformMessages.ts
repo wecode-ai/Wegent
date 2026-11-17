@@ -17,6 +17,8 @@ export const platformMessages = {
     remoteProjects: "远程项目",
     createLocalProject: "新建本地项目",
     createRemoteProject: "新建远程项目",
+    selectedProjectAgentsUnavailable:
+      "部分已选智能体已不可用，请重新选择协作成员后重试",
     home: "新建 Issue",
     personalHome: "首页",
     myIssues: "我的事项",
@@ -253,6 +255,8 @@ export const platformMessages = {
     remoteProjects: "Remote projects",
     createLocalProject: "New local project",
     createRemoteProject: "New remote project",
+    selectedProjectAgentsUnavailable:
+      "Some selected Agents are unavailable. Select the collaborators again and retry.",
     home: "New Issue",
     personalHome: "Home",
     myIssues: "My issues",

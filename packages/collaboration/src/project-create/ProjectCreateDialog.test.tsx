@@ -99,6 +99,7 @@ describe("shared project creation members", () => {
   it("loads cloud generation models after switching from a local project", async () => {
     const setup = resourceSetup();
     setup.loadCollaborationGroupGenerationModels = vi.fn(async () => ({
+      defaultSelection: null,
       models: [
         {
           modelName: "cloud-model",

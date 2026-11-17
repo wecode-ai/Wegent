@@ -7524,6 +7524,7 @@ describe("CollaborationPlatformApp real component flow", () => {
     const { api } = createApi({
       initialProjects: [],
       initialWorkspaces: [workspace, groupWorkspace],
+      initialGroups: [collaborationGroup],
     });
     await render(
       <PlatformHarness
@@ -7531,9 +7532,29 @@ describe("CollaborationPlatformApp real component flow", () => {
         start={{ ...initialLocation, workspaceId: workspace.id }}
       />,
     );
+    const previousAgent = { ...agent, id: "previous-directory-agent" };
+    vi.mocked(api.resources!.list).mockResolvedValue({
+      agents: [previousAgent],
+      execution_environments: [environment],
+    });
     await chooseBlankProjectCreation("collaboration-workspace-project-create");
     const pending = deferred<CollaborationMember[]>();
     api.workspaces!.listMembers = vi.fn(() => pending.promise);
+    const pendingResources = deferred<{
+      agents: CollaborationOwnedAgent[];
+      execution_environments: CollaborationExecutionEnvironment[];
+    }>();
+    const pendingAgents = deferred<CollaborationOwnedAgent[]>();
+    const pendingGroups = deferred<CollaborationGroup[]>();
+    vi.mocked(api.resources!.list).mockReturnValueOnce(
+      pendingResources.promise,
+    );
+    vi.mocked(api.workspaces!.listAgents).mockReturnValueOnce(
+      pendingAgents.promise,
+    );
+    vi.mocked(api.workspaces!.listCollaborationGroups).mockReturnValueOnce(
+      pendingGroups.promise,
+    );
     const select = byTestId("collaboration-project-workspace-select");
     await act(async () => {
       Object.getOwnPropertyDescriptor(
@@ -7557,6 +7578,193 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(
       portalByTestId("collaboration-project-create-member-88").textContent,
     ).toContain(replacement.user_name);
+    await click(
+      portalByTestId("collaboration-project-create-collaborator-tab-agents"),
+    );
+    expect(
+      document.body.querySelector(
+        `[data-testid="collaboration-project-create-agent-${previousAgent.id}"]`,
+      ),
+    ).toBeNull();
+    await click(
+      portalByTestId("collaboration-project-create-collaborator-tab-groups"),
+    );
+    expect(
+      document.body.querySelector(
+        `[data-testid="collaboration-project-create-group-${collaborationGroup.id}"]`,
+      ),
+    ).toBeNull();
+    await act(async () => {
+      pendingResources.resolve({ agents: [], execution_environments: [] });
+      pendingAgents.resolve([]);
+      pendingGroups.resolve([]);
+    });
+  });
+
+  it.each(["workspace", "personal"] as const)(
+    "persists selected %s agents and the current device while a directory retry is pending",
+    async (source) => {
+      const { api } = createApi({ initialProjects: [] });
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{ ...initialLocation, workspaceId: workspace.id }}
+        />,
+      );
+      const selectedAgent = {
+        ...agent,
+        id: "dialog-only-agent",
+        team_id: 99,
+        name: "Selected before retry",
+      };
+      const currentEnvironment = { ...environment, is_current_device: true };
+      const resources = {
+        agents: source === "personal" ? [selectedAgent] : [],
+        execution_environments: [currentEnvironment],
+      };
+      vi.mocked(api.resources!.list).mockResolvedValue(resources);
+      vi.mocked(api.workspaces!.listAgents).mockResolvedValue(
+        source === "workspace" ? [selectedAgent] : [],
+      );
+      vi.mocked(api.workspaces!.listMembers).mockRejectedValueOnce(
+        new Error("Directory temporarily unavailable"),
+      );
+      api.agents.create = vi.fn(async () => agent);
+      await chooseBlankProjectCreation(
+        "collaboration-workspace-project-create",
+      );
+      await change(
+        byTestId("collaboration-project-name-input") as HTMLInputElement,
+        "Keep selected resources",
+      );
+      await click(byTestId("collaboration-project-create-add-collaborator"));
+      await click(
+        portalByTestId("collaboration-project-create-collaborator-tab-agents"),
+      );
+      await click(
+        portalByTestId(
+          `collaboration-project-create-agent-${selectedAgent.id}`,
+        ),
+      );
+      expect(container.textContent).toContain(selectedAgent.name);
+
+      const pendingResources = deferred<typeof resources>();
+      const pendingAgents = deferred<CollaborationOwnedAgent[]>();
+      const pendingMembers = deferred<CollaborationMember[]>();
+      vi.mocked(api.resources!.list).mockReturnValueOnce(
+        pendingResources.promise,
+      );
+      vi.mocked(api.workspaces!.listAgents).mockReturnValueOnce(
+        pendingAgents.promise,
+      );
+      vi.mocked(api.workspaces!.listMembers).mockReturnValueOnce(
+        pendingMembers.promise,
+      );
+      await click(byTestId("collaboration-project-create-add-collaborator"));
+      await click(
+        portalByTestId("collaboration-project-create-member-search-retry"),
+      );
+      await click(byTestId("collaboration-project-create-confirm"));
+
+      expect(api.projects.create).toHaveBeenCalledOnce();
+      expect(api.agents.create).toHaveBeenCalledWith(
+        project.id,
+        createSharedAgentBindingInput(selectedAgent),
+      );
+      expect(api.projects.addExecutionEnvironment).toHaveBeenCalledWith(
+        project.id,
+        currentEnvironment.device_id,
+      );
+      await act(async () => {
+        pendingResources.resolve(resources);
+        pendingAgents.resolve(source === "workspace" ? [selectedAgent] : []);
+        pendingMembers.resolve([member]);
+      });
+    },
+  );
+
+  it("reports missing selected Agents and lets users remove them before creating a project", async () => {
+    const { api } = createApi({ initialProjects: [] });
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+    const selectedAgent = {
+      ...agent,
+      id: "removed-directory-agent",
+      team_id: 99,
+    };
+    vi.mocked(api.resources!.list).mockResolvedValue({
+      agents: [selectedAgent],
+      execution_environments: [],
+    });
+    vi.mocked(api.workspaces!.listMembers).mockRejectedValueOnce(
+      new Error("Retry directory"),
+    );
+    await chooseBlankProjectCreation("collaboration-workspace-project-create");
+    await change(
+      byTestId("collaboration-project-name-input") as HTMLInputElement,
+      "Do not lose a collaborator",
+    );
+    await click(byTestId("collaboration-project-create-advanced"));
+    await change(
+      byTestId(
+        "collaboration-project-description-input",
+      ) as HTMLTextAreaElement,
+      "Keep this description",
+    );
+    await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(
+      portalByTestId("collaboration-project-create-collaborator-tab-agents"),
+    );
+    await click(
+      portalByTestId(`collaboration-project-create-agent-${selectedAgent.id}`),
+    );
+    vi.mocked(api.resources!.list).mockResolvedValue({
+      agents: [],
+      execution_environments: [],
+    });
+    await click(byTestId("collaboration-project-create-add-collaborator"));
+    await click(
+      portalByTestId("collaboration-project-create-member-search-retry"),
+    );
+    await click(byTestId("collaboration-project-create-confirm"));
+
+    expect(api.projects.create).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "部分已选智能体已不可用",
+    );
+    const unavailable = byTestId(
+      `collaboration-project-create-unavailable-agent-${selectedAgent.id}`,
+    );
+    expect(unavailable.textContent).toContain("不可用的智能体");
+    expect(unavailable.textContent).not.toContain(selectedAgent.id);
+    await click(unavailable.querySelector<HTMLButtonElement>("button")!);
+    expect(
+      (byTestId("collaboration-project-name-input") as HTMLInputElement).value,
+    ).toBe("Do not lose a collaborator");
+    expect(
+      (
+        byTestId(
+          "collaboration-project-description-input",
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("Keep this description");
+    await click(byTestId("collaboration-project-create-confirm"));
+    expect(api.projects.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        name: "Do not lose a collaborator",
+        description: "Keep this description",
+      }),
+    );
+    expect(api.agents.create).not.toHaveBeenCalled();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-project-name-input"]',
+      ),
+    ).toBeNull();
   });
 
   it("recovers the project collaborator directory without clearing the project draft", async () => {

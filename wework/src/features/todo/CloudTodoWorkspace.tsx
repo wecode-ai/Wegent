@@ -724,7 +724,6 @@ export function CloudTodoWorkspace({
         async (projectId, members) => {
           await cloudWorkspace.commands.loadProjectSnapshot(projectId, {
             invalidate: true,
-            throwOnError: true,
           })
           if (members.length) {
             setProjectCreationNotice(

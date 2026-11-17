@@ -72,6 +72,7 @@ export const projectCreateLabels: Record<
     peopleSearchFailed: "人员搜索失败，请重新搜索",
     importGroupDescription: "使用已有分工创建项目专属小组",
     availableAgents: "智能体",
+    unavailableSelectedAgent: "不可用的智能体",
     availableGroups: "小组",
     noAvailableCollaborators: "暂无其他可添加项",
     membersUnavailable: "本地项目暂不支持从云端账号目录选择成员。",
@@ -205,6 +206,7 @@ export const projectCreateLabels: Record<
     peopleSearchFailed: "People search failed. Please search again.",
     importGroupDescription: "Create a project group from this division of work",
     availableAgents: "Agents",
+    unavailableSelectedAgent: "Unavailable Agent",
     availableGroups: "Groups",
     noAvailableCollaborators: "Nothing else is available to add",
     membersUnavailable:

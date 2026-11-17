@@ -86,6 +86,10 @@ pnpm --filter wework test src/features/todo/CloudTodoWorkspace.test.tsx src/feat
 
 共享创建、模板与完整协作平台 22 文件、301 项测试通过；普通入口与资源工厂 2 文件、71 项完整回归通过，随后新增的看板失败负路径 1 项单独通过；模型相关 4 文件、49 项测试通过。共享包构建、Wework typecheck、完整 lint 通过（0 错误、4 项既有警告），双语文档契约 8 项通过；Prettier、Rustfmt 与差异检查通过。未提高超时、跳过断言或修改 E2E 行为。本次最新提交的 CI 以 PR 对应 head 的检查为准，不沿用旧提交结论。
 
+随后 `77b542644` 的全部 GitHub CI 再次通过（60 项通过、0 失败或待定），三个实际桌面检查点均通过。新评审提示的资源重载边界又获得稳定复现：已选 workspace/personal 智能体后重试人员目录，其他资源请求仍在等待时提交，会创建项目却不绑定智能体。现在同一 API、账户及分组作用域重载保留有效目录快照，切换作用域立即隔离旧数据；新目录确认已选智能体不存在时，创建前明确报错，失效项可见且可取消，名称、说明和其他选择保留，合法模板智能体不受影响。
+
+新测试同时确认：成员已经以 Developer 保存后，看板读取失败仍曾阻止成功回调。现在项目快照读取使用原有页面错误报告路径，不再把看板错误包装为成员配置失败；保留名单回读及成功成员提示。无成员和有成员两条看板失败路径均覆盖。此轮完整 Platform 与 Dialog 共 193 项、普通入口与工厂共 73 项测试通过；共享构建、Wework typecheck、格式检查及针对性 lint 通过，未新增 lint 问题。新增目录 mock 补齐了 `defaultSelection: null`。最新提交仍须取得其自身的 CI 结果。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

@@ -5,6 +5,7 @@
 import { DialogForm } from "../controls/DialogForm";
 import { TemplateCreateSection } from "../templates/TemplateCreateSection";
 import { TemplateEnvironmentSelection } from "../templates/TemplateEnvironmentSelection";
+import { templateAgentId } from "../templates/agents";
 
 import {
   ArrowRight,
@@ -870,6 +871,17 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const directAgents = selectedAgents.filter(
     (agent) => !inGroup("agent", agent.id),
   );
+  const templateAgentIds = new Set(
+    (state.templateDocument?.spec.resources.collaboration.agents ?? []).map(
+      (agent) => templateAgentId(agent.key),
+    ),
+  );
+  const unavailableAgentIds = state.agentResourceIds.filter(
+    (id) =>
+      !resourceSetup?.agents.some((agent) => agent.id === id) &&
+      !templateAgentIds.has(id) &&
+      !inGroup("agent", id),
+  );
   const assignedAgentIds = new Set(revealedGenerationAgentIds);
   const draftParticipants = groupEditorDraft
     ? [groupEditorDraft.leader, ...groupEditorDraft.members]
@@ -1277,6 +1289,16 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                       label={agent.name}
                       removeLabel={`${labels.cancel} ${agent.name}`}
                       onRemove={() => removeAgent(agent.id)}
+                    />
+                  ))}
+                  {unavailableAgentIds.map((id) => (
+                    <CollaboratorToken
+                      key={`unavailable-agent:${id}`}
+                      icon={<Bot aria-hidden="true" />}
+                      label={labels.unavailableSelectedAgent}
+                      testId={`collaboration-project-create-unavailable-agent-${id}`}
+                      removeLabel={`${labels.cancel} ${labels.unavailableSelectedAgent}`}
+                      onRemove={() => removeAgent(id)}
                     />
                   ))}
                 </div>

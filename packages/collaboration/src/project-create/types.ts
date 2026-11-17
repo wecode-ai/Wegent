@@ -219,6 +219,7 @@ export interface ProjectCreateLabels {
   peopleSearchFailed: string;
   importGroupDescription: string;
   availableAgents: string;
+  unavailableSelectedAgent: string;
   availableGroups: string;
   noAvailableCollaborators: string;
   membersUnavailable: string;

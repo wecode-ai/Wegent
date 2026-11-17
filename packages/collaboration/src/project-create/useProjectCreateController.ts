@@ -336,6 +336,7 @@ export function useProjectCreateController({
       executionEnvironmentDeviceIds,
       collaborationGroupDraft,
       collaborationGroupDrafts,
+      templateDocument,
     },
     commands: {
       setTemplateDocument,

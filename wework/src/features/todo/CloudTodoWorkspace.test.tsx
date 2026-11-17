@@ -2753,56 +2753,91 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument()
   })
 
-  it('keeps ordinary creation complete when the new project board cannot load', async () => {
-    const workbenchServices = services()
-    const createProject = vi.mocked(workbenchServices.deliveryApi!.createCloudProject)
-    const persistProject = createProject.getMockImplementation()!
-    createProject.mockImplementation(async values => {
-      const created = await persistProject(values)
-      vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
-        items: [project, created],
-      })
-      return created
-    })
-    workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => {
-      throw new Error('Board unavailable')
-    })
-    const onActiveProjectChange = vi.fn()
-    const view = render(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[]}
-        services={workbenchServices}
-        activeProjectRef={null}
-        onActiveProjectChange={onActiveProjectChange}
-      />
-    )
-    await userEvent.click(await screen.findByTestId('cloud-project-add'))
-    await userEvent.type(screen.getByTestId('cloud-project-name'), 'Created before board loading')
-    await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
-
-    await waitFor(() =>
-      expect(onActiveProjectChange).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          id: '12',
-          name: 'Created before board loading',
-          location: 'cloud',
+  it.each([false, true])(
+    'keeps ordinary creation complete when the new project board cannot load (members: %s)',
+    async selectMembers => {
+      const workbenchServices = services()
+      if (selectMembers) {
+        const owner = { id: 1, user_id: 1, user_name: 'local', email: null, role: 'Owner' as const }
+        const members: import('@/api/deliveries').CloudProjectMember[] = [owner]
+        workbenchServices.deliveryApi!.listCloudProjectMembers = vi.fn(async () => [...members])
+        workbenchServices.deliveryApi!.searchCloudProjectUsers = vi.fn(async () => ({
+          users: [{ id: 2, user_name: 'alice', email: null }],
+          total: 1,
+        }))
+        workbenchServices.deliveryApi!.addCloudProjectMember = vi.fn(async (_id, userId, role) => {
+          const member = { ...owner, id: userId, user_id: userId, user_name: 'alice', role: role! }
+          members.push(member)
+          return member
         })
+      }
+      const createProject = vi.mocked(workbenchServices.deliveryApi!.createCloudProject)
+      const persistProject = createProject.getMockImplementation()!
+      createProject.mockImplementation(async values => {
+        const created = await persistProject(values)
+        vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+          items: [project, created],
+        })
+        return created
+      })
+      workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => {
+        throw new Error('Board unavailable')
+      })
+      const onActiveProjectChange = vi.fn()
+      const view = render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+          activeProjectRef={null}
+          onActiveProjectChange={onActiveProjectChange}
+        />
       )
-    )
-    expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument()
-    view.rerender(
-      <CloudTodoWorkspace
-        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
-        localProjects={[]}
-        services={workbenchServices}
-        activeProjectRef={{ projectStore: 'backend', projectId: '12' }}
-        onActiveProjectChange={onActiveProjectChange}
-      />
-    )
-    expect(await screen.findByText('云端协作数据加载失败')).toBeInTheDocument()
-    expect(workbenchServices.deliveryApi!.createCloudProject).toHaveBeenCalledOnce()
-  })
+      await userEvent.click(await screen.findByTestId('cloud-project-add'))
+      await userEvent.type(screen.getByTestId('cloud-project-name'), 'Created before board loading')
+      if (selectMembers) {
+        await userEvent.click(screen.getByTestId('collaboration-project-create-add-collaborator'))
+        fireEvent.change(screen.getByTestId('collaboration-project-create-people-search'), {
+          target: { value: 'alice' },
+        })
+        await userEvent.click(await screen.findByTestId('collaboration-project-create-member-2'))
+      }
+      await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
+
+      if (selectMembers) {
+        await waitFor(() =>
+          expect(workbenchServices.deliveryApi!.addCloudProjectMember).toHaveBeenCalledWith(
+            '12',
+            2,
+            'Developer'
+          )
+        )
+      }
+
+      await waitFor(() =>
+        expect(onActiveProjectChange).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            id: '12',
+            name: 'Created before board loading',
+            location: 'cloud',
+          })
+        )
+      )
+      expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument()
+      if (selectMembers) expect(screen.getByTestId('transient-notice')).toHaveTextContent('alice')
+      view.rerender(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+          activeProjectRef={{ projectStore: 'backend', projectId: '12' }}
+          onActiveProjectChange={onActiveProjectChange}
+        />
+      )
+      expect(await screen.findByText('云端协作数据加载失败')).toBeInTheDocument()
+      expect(workbenchServices.deliveryApi!.createCloudProject).toHaveBeenCalledOnce()
+    }
+  )
 
   it('persists selected members from ordinary project creation and shows the refreshed roster', async () => {
     const workbenchServices = services()
