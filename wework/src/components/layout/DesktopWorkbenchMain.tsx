@@ -22,6 +22,7 @@ import {
   workspaceFileTabId,
   type WorkspaceFileTabs,
 } from './workspace-panels/workspaceFileTabs'
+import { resolveWorkspaceFilePath } from './workspace-panels/workspaceFilePaths'
 import {
   memo,
   type MouseEvent as ReactMouseEvent,
@@ -4420,7 +4421,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [setOpenFileRequest, openRightPanelTab, setSelectedFileWorkspaceTargetKey]
   )
   const openFileTab = useCallback(
-    (target: WorkspaceTarget, path: string) => {
+    (target: WorkspaceTarget, path: string, options?: WorkspaceFileOpenOptions) => {
       const tab = workspaceFileTabId(target, path)
       if (
         rightPanelTabs.includes('files') &&
@@ -4428,13 +4429,34 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         !selectedWorkspaceFile.isDirectory &&
         workspaceFileTabId(selectedWorkspaceFile.target, selectedWorkspaceFile.path) === tab
       ) {
+        if (options) {
+          setOpenFileRequest(current => ({
+            ...options,
+            id: (current?.id ?? 0) + 1,
+            path,
+            target,
+          }))
+        }
         openRightPanelTab('files')
         return
       }
-      setFileTabs(current => (current[tab] ? current : { ...current, [tab]: { target, path } }))
+      setFileTabs(current => {
+        const existing = current[tab]
+        if (existing && !options) return current
+        return {
+          ...current,
+          [tab]: {
+            target,
+            path,
+            openRequest: options
+              ? { ...options, id: (existing?.openRequest?.id ?? 0) + 1, path }
+              : undefined,
+          },
+        }
+      })
       openRightPanelTab(tab)
     },
-    [openRightPanelTab, rightPanelTabs, selectedWorkspaceFile, setFileTabs]
+    [openRightPanelTab, rightPanelTabs, selectedWorkspaceFile, setFileTabs, setOpenFileRequest]
   )
   const handleFileWorkspaceSelectionChange = useCallback(
     (selection: { path: string; isDirectory: boolean }) => {
@@ -4541,21 +4563,28 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             pathStyleSource: workspaceTarget?.path,
           })
         }
-        setOpenFileRequest(current => ({
-          id: (current?.id ?? 0) + 1,
-          path: trimmedPath,
-          lineStart: options?.lineStart,
-          lineEnd: options?.lineEnd,
-          isDirectory,
-          traceId,
-          target: localTarget ?? undefined,
-        }))
+        const target = localTarget ?? effectiveWorkspaceTarget
+        if (target && !isDirectory) {
+          const resolvedPath = resolveWorkspaceFilePath(target, trimmedPath)
+          if (!resolvedPath) return
+          openFileTab(target, resolvedPath, { ...options, isDirectory, traceId })
+        } else {
+          setOpenFileRequest(current => ({
+            id: (current?.id ?? 0) + 1,
+            path: trimmedPath,
+            lineStart: options?.lineStart,
+            lineEnd: options?.lineEnd,
+            isDirectory,
+            traceId,
+            target: localTarget ?? undefined,
+          }))
+          openRightPanelTab('files')
+        }
         logFilePreviewDiagnostic(traceId, 'open_file_request_queued', {
           ...pathMetadata,
           hasLocalTarget: Boolean(localTarget),
           isDirectory: isDirectory ?? null,
         })
-        openRightPanelTab('files')
         logFilePreviewDiagnostic(traceId, 'right_panel_open_requested')
         scheduleFilePreviewMainThreadProbe(traceId, 'right_panel_open_requested')
       } catch (error) {
@@ -4568,6 +4597,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       fileWorkspaceTargets,
       getDeviceHomeDirectory,
       workspaceTarget,
+      openFileTab,
       openRightPanelTab,
       setOpenFileRequest,
       setFileOpenError,
@@ -6203,6 +6233,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onCloseTab={closeRightPanelTab}
               onHarnessSessionExit={onLocalHarnessSessionExit}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
+              onOpenWorkspaceFile={openWorkspaceFileFromMessage}
               onOpenReviewSourceFile={(path, lineStart, lineEnd) =>
                 void openWorkspaceFileFromMessage(path, { lineStart, lineEnd })
               }

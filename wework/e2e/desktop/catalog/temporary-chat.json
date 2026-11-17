@@ -2,6 +2,7 @@
   "order": 182000,
   "scenario": "./scenarios/temporary-chat.scenario.mjs",
   "scenarioOnly": true,
+  "paths": ["wework/e2e/desktop/modules/temporary-chat-file-preview.mjs"],
   "ci": {
     "core": {
       "order": 129000,
