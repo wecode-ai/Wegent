@@ -110,9 +110,25 @@ impl LocalTaskStore {
         &self,
         create: &LocalCommentCreate,
     ) -> Result<LocalComment, TaskRuntimeError> {
+        self.create_comment_with_receipt(create, None)
+    }
+
+    pub fn create_comment_with_receipt(
+        &self,
+        create: &LocalCommentCreate,
+        receipt: Option<&board_receipts::BoardWriteReceipt>,
+    ) -> Result<LocalComment, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(receipt) = receipt {
+            if let Some(result) = receipt.replay(&transaction)? {
+                return Ok(result);
+            }
+        }
         let comment = insert_comment(&transaction, create, "completed")?;
+        if let Some(receipt) = receipt {
+            receipt.record(&transaction, &comment)?;
+        }
         transaction.commit()?;
         Ok(comment)
     }

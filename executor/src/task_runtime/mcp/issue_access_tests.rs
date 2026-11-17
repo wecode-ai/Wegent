@@ -70,7 +70,7 @@ async fn unbound_discovery_fetches_backend_data_only_on_explicit_tool_call() {
     let projects = result_value(
         call_tool_with_runtime_context(&runtime, "list_spaces", json!({}), &context).await,
     );
-    assert_eq!(projects[0]["id"], "12");
+    assert_eq!(projects["items"][0]["id"], "12");
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     server.abort();
 }

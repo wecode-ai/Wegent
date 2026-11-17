@@ -97,6 +97,8 @@ pub(crate) fn stand_in_mcp_client_config(
         request.auth_token.clone(),
     );
     context.surface = WeworkMcpSurface::StandIn;
+    context.current_device_id = Some(identity.device.clone());
+    context.principal_id = Some(identity.user.to_string());
     context.stand_in = Some(identity);
     let registered = super::super::mcp_http::register_space_mcp_context(context)?;
     if let Some(signature) = batch_signature {
@@ -344,7 +346,10 @@ pub(super) async fn call(
         };
     }
     if name == "list_projects" {
-        return call_tool_with_runtime_context(runtime, "list_spaces", json!({}), context).await;
+        return match batch::all_spaces(runtime, context).await {
+            Ok(value) => text_result(value.to_string(), false),
+            Err(error) => text_result(error, true),
+        };
     }
     let result = match name {
         "configure_git_webhook"|"git_webhook_plan"=>super::stand_in_tasks::call(identity.clone(),name.to_owned(),arguments).await,
