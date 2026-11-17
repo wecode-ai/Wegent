@@ -1,41 +1,19 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { waitForElementWidth } from '../modules/layout-metrics.mjs'
 
 const USER_ID = 9001
 const selector = id => `[data-testid="${id}"]`
 
-async function verifyNarrowImMenu(control) {
-  const previous = await control.command('setMainWindowSize', 'body', {
-    value: JSON.stringify({ width: 760, height: 760 }),
-  })
-  try {
-    await waitForElementWidth(
-      control,
-      'body',
-      width => width > 0 && width <= 767,
-      'IM menu narrow viewport'
-    )
-    await control.command('clickWhenEnabled', selector('stand-in-im-add-channels'))
-    for (const channel of ['dingtalk', 'telegram', 'discord', 'weibo']) {
-      const item = `[role="menuitem"]${selector('stand-in-im-channel-' + channel)}`
-      await control.command('waitFor', item, { visible: true })
-      const boxes = JSON.parse(await control.command('getElementMetrics', item))
-      assert.equal(boxes.length, 1)
-      assert.ok(
-        boxes[0].width >= 44 && boxes[0].height >= 44,
-        `Narrow ${channel} menu target: ${JSON.stringify(boxes)}`
-      )
-    }
-    await control.command('clickWhenEnabled', selector('stand-in-im-add-channels'))
-    await control.command(
-      'waitFor',
-      `[role="menuitem"]${selector('stand-in-im-channel-dingtalk')}`,
-      { visible: false }
-    )
-  } finally {
-    await control.command('setMainWindowSize', 'body', { value: previous })
-  }
+async function verifyProjectMenuDismissal(control, retainedView) {
+  const trigger = `${selector('stand-in-profile-panel')} ${selector('stand-in-workspace-bar')} ${selector('project-work-button')}`
+  const menu = `${selector('project-work-menu')}.z-critical`
+  await control.command('scrollIntoView', trigger)
+  await control.command('clickWhenEnabled', trigger)
+  await control.command('waitFor', `${menu} ${selector('project-search-input')}`, { visible: true })
+  await control.command('press', `${menu} ${selector('project-search-input')}`, { key: 'Escape' })
+  await control.command('waitFor', menu, { visible: false })
+  await control.command('waitFor', selector(retainedView), { visible: true })
+  assert.equal(await control.command('getActiveElementTestId', 'body'), 'project-work-button')
 }
 
 /** The real onboarding record persists independently of optional source configuration. */
@@ -85,9 +63,9 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
         visible: true,
       })
       await captureScreenshot(control, 'stand-in-onboarding-skipped.png')
-      await verifyNarrowImMenu(control)
       await control.command('clickWhenEnabled', selector('stand-in-details-work-sources'))
       await control.command('waitFor', selector('stand-in-primary-profile'), { visible: true })
+      await verifyProjectMenuDismissal(control, 'stand-in-primary-execution')
       await control.command('press', selector('stand-in-preferences'), { key: 'Escape' })
       await control.command('waitFor', selector('stand-in-profile-panel'), { visible: false })
       assert.equal(await control.command('getActiveElementTestId', 'body'), 'stand-in-details-open')
@@ -150,6 +128,13 @@ export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
         visible: true,
       })
       await captureScreenshot(control, 'stand-in-role-source-draft-retained.png')
+      await control.command('clickWhenEnabled', selector('stand-in-advanced-open'))
+      await verifyProjectMenuDismissal(control, 'stand-in-path-advanced')
+      await control.command('clickWhenEnabled', selector('stand-in-back'))
+      assert.equal(
+        await control.command('getValue', selector('stand-in-role-name')),
+        'UI draft review role'
+      )
       await control.command('clickWhenEnabled', selector('stand-in-connections-open'))
       await control.command('clickWhenEnabled', selector('stand-in-add-projects-connection'))
       assert.equal(

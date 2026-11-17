@@ -3,6 +3,7 @@ import {
   Clock,
   ChevronRight,
   Folder,
+  GitBranch,
   Mail,
   MessageSquare,
   Search,
@@ -15,6 +16,7 @@ import type { ConnectionProviderDescriptor } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { EMAIL_PROVIDER } from './StandInEmailConnections'
+import { GIT_CONNECTION_PREFIX } from './StandInGitConnections'
 import { findStandInProject } from './standInProjects'
 
 const DINGTALK_PROVIDER = '@wegent/dsh-connection-dingtalk/dingtalk'
@@ -119,7 +121,12 @@ export function StandInConnectionCatalog({
       return {
         id,
         testId: `stand-in-add-${prefix}-connection`,
-        icon: id === EMAIL_PROVIDER ? Mail : MessageSquare,
+        icon:
+          id === EMAIL_PROVIDER
+            ? Mail
+            : id.startsWith(GIT_CONNECTION_PREFIX)
+              ? GitBranch
+              : MessageSquare,
         name: provider?.displayName ?? t('standIn.workspace.connection_unknown_source'),
         configured,
         active: configured && ready && !loading,

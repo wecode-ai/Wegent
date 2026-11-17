@@ -50,6 +50,8 @@ The number beside **My Stand-in** counts unread AI messages in primary and role 
 4. **Recent activity** mixes work threads and schedules. Work opens as a read-only preview inside the same popover; Back restores the list position. Use **Open conversation in workspace** to reply, approve or use the full workspace. Human questions remain in **Needs your input** and the original work.
 5. To delete a scenario role, use its settings action and confirm the target. Deleting differs from pausing a source; adjust source reception if you want to keep the role but temporarily stop intake.
 
+While the project picker is open, `Escape` closes only the picker and returns focus to its trigger. The current settings view and unsaved changes remain. A second `Escape` follows that settings view's existing Back or discard-confirmation behavior.
+
 When opening your stand-in, the page checks onboarding status and shows an inline loading message. Initial setup opens automatically only after the check confirms it is incomplete. Completed setup opens the stand-in directly. If the check fails, use the retry action in the error prompt.
 
 Initial binding discovery shows a loading state, never a premature account-mismatch error. Within the same app session, returning from tasks or boards preserves the loaded stand-in interface while refreshing configuration in the background. Work-list and configuration-proposal polling pause while the stand-in is hidden. Changing accounts or cloud services does not reuse the previous account's page data; an ownership warning appears only after the actual binding has been read.

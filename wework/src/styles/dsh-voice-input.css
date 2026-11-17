@@ -26,6 +26,17 @@
   --dsw-alias-label-tertiary: rgb(var(--color-text-secondary));
 }
 
+/* The preparation dialog has a narrow content column even in a wide window. */
+.wework-voice-setup-modal .wework-voice-preparation label:has(> select) {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.wework-voice-setup-modal .wework-voice-preparation label > select {
+  width: 100%;
+  min-width: 0;
+}
+
 @media (max-width: 767px) {
   .wework-voice-preparation :is(button, select, [role='button']),
   .wework-voice-setup-modal button,

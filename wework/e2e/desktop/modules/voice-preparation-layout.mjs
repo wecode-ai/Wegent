@@ -20,6 +20,29 @@ async function verifyVoiceThemePreference(control, mode) {
   )
   await control.command('navigate', 'body', { value: '/settings/general' })
   await control.command('waitFor', '[data-testid="voice-input-settings"]')
+  const segments = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      '[data-testid="general-settings-basic-section"] [role="group"] button'
+    )
+  )
+  assert.ok(
+    segments.length >= 9,
+    'General settings must retain its mode, language, send and follow-up controls'
+  )
+  for (const box of segments)
+    assert.ok(
+      box.width >= 44 && box.height >= 44,
+      `Narrow General setting target: ${JSON.stringify(box)}`
+    )
+  const controls = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      '[data-testid="general-settings-page"] button:not(:disabled), [data-testid="general-settings-page"] select:not(:disabled)'
+    )
+  )
+  for (const box of controls.filter(box => box.width > 0 && box.height > 0))
+    assert.ok(box.width >= 44 && box.height >= 44, 'Narrow General control: ' + JSON.stringify(box))
   for (const id of ['settings-back-button', 'settings-nav-git-hosting', 'settings-nav-general']) {
     const box = await metrics(control, '[data-testid="' + id + '"]')
     assert.ok(
@@ -176,6 +199,18 @@ export async function verifyVoicePreparationLayout(control) {
     await control.command('click', GUIDE_ACTION)
     await control.command('waitFor', '[data-testid="voice-input-setup"] select')
     await assertVoicePreparationLayout(control)
+    const choices = JSON.parse(
+      await control.command('getElementMetrics', `${MODAL} label > select`)
+    )
+    assert.ok(
+      choices.length >= 3,
+      'Preparation must expose recognition service, language and model source'
+    )
+    for (const choice of choices)
+      assert.ok(
+        choice.width >= 240,
+        `Preparation choices need room for their values and arrow: ${JSON.stringify(choice)}`
+      )
     await assertNarrowTargets(control, `${MODAL} button, ${MODAL} select, ${MODAL} [role="button"]`)
     await control.command('click', CLOSE)
     await control.command('waitFor', MODAL, { visible: false })

@@ -43,6 +43,7 @@ import {
   isLocalProjectWorkspaceDevice,
 } from './project-work-bar-utils'
 import { useOutsideClick } from '../composer/useOutsideClick'
+import { useEscapeKey } from '../markdown/useEscapeKey'
 
 const PROJECT_MENU_MAX_HEIGHT = 480
 const PROJECT_MENU_LIST_MAX_HEIGHT = 230
@@ -165,6 +166,15 @@ export function ProjectWorkBar({
     setProjectQuery('')
     setExternalMenuAnchorElement(null)
   }, [])
+  useEscapeKey(
+    () => {
+      const trigger = externalMenuAnchorElement ?? triggerButtonRef.current
+      closeMenu()
+      trigger?.focus()
+    },
+    open,
+    menuRef
+  )
 
   const availableProjectChoices = useMemo(
     () => resolveRuntimeTaskProjects(projects, runtimeWork),

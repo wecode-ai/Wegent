@@ -418,6 +418,26 @@ it('persists real project and model selections and protects unsaved changes when
   )
 })
 
+it('dismisses the project menu before asking to discard an unsaved workspace', async () => {
+  const props = fixture()
+  const user = userEvent.setup()
+  render(<StandInPrimaryProfile {...props} />)
+  await user.click(screen.getByTestId('project-work-button'))
+  await user.click(await screen.findByTestId('project-option-17'))
+  const trigger = screen.getByTestId('project-work-button')
+  await user.click(trigger)
+  await user.keyboard('{Escape}')
+  expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+  expect(trigger).toHaveFocus()
+  expect(trigger).toHaveTextContent('Repository')
+  expect(props.onClose).not.toHaveBeenCalled()
+  expect(props.onSave).not.toHaveBeenCalled()
+  await user.keyboard('{Escape}')
+  expect(await screen.findByTestId('stand-in-primary-discard')).toBeInTheDocument()
+  expect(props.onClose).not.toHaveBeenCalled()
+})
+
 it('shows existing local connection names on a remote device while limiting new selections', async () => {
   const props = fixture()
   props.settings.executionDeviceId = 'remote'
