@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { useReducer } from 'react'
+import { useLayoutEffect, useReducer, useRef } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { LOCAL_USER } from '@/api/local/localSession'
@@ -760,6 +760,92 @@ describe('useWorkbenchDataRefresh', () => {
       }
     }
   )
+
+  test('uses one committed snapshot when removal runs before passive runtime-work synchronization', async () => {
+    const removedProject = { id: 7, key: 'removed', name: 'Removed', tasks: [] }
+    const independentProject = { id: 8, key: 'independent', name: 'Independent', tasks: [] }
+    const independentAddress = {
+      deviceId: 'local-device',
+      workspacePath: '/independent',
+      taskId: 'independent-task',
+    }
+    const initialWork = {
+      projects: [{ project: removedProject, deviceWorkspaces: work.chats }],
+      chats: [],
+      totalTasks: 1,
+    }
+    const nextWork = {
+      ...initialWork,
+      projects: [
+        ...initialWork.projects,
+        {
+          project: independentProject,
+          deviceWorkspaces: [
+            {
+              ...work.chats[0],
+              workspacePath: '/independent',
+              tasks: [{ ...work.chats[0].tasks[0], ...independentAddress }],
+            },
+          ],
+        },
+      ],
+      totalTasks: 2,
+    }
+    const listRuntimeWork = vi.fn().mockResolvedValue(initialWork)
+    const executorClient = {
+      runtime: { listRuntimeWork },
+      commands: { listDevices: vi.fn().mockResolvedValue(devices) },
+    } as unknown as ExecutorClient
+    const previousLocation = `${window.location.pathname}${window.location.search}`
+    const hook = renderHook(() => {
+      const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
+      const actions = useWorkbenchDataRefresh({
+        user: LOCAL_USER,
+        executorClient,
+        services,
+        state,
+        dispatch,
+      })
+      const removed = useRef(false)
+      const { markRuntimeProjectRemoved } = actions
+      useLayoutEffect(() => {
+        if (removed.current || state.currentProject?.id !== 8) return
+        removed.current = true
+        markRuntimeProjectRemoved(7, {
+          deviceId: 'local-device',
+          workspacePath: '/workspace',
+        })
+      }, [markRuntimeProjectRemoved, state.currentProject?.id])
+      return { state, dispatch, ...actions }
+    })
+    try {
+      await waitFor(() => expect(hook.result.current.state.runtimeWork?.projects).toHaveLength(1))
+      act(() => {
+        hook.result.current.dispatch({ type: 'runtime_work_refreshed', runtimeWork: nextWork })
+        hook.result.current.dispatch({
+          type: 'runtime_task_opened',
+          project: independentProject,
+          address: independentAddress,
+        })
+        navigateTo(buildRuntimeTaskRoute(independentAddress))
+      })
+      expect(hook.result.current.state.runtimeWork?.projects.map(item => item.project.id)).toEqual([
+        8,
+      ])
+      expect(hook.result.current.state.currentProject?.id).toBe(8)
+      expect(hook.result.current.state.currentRuntimeTask).toEqual(independentAddress)
+      expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)?.taskId).toBe(
+        'independent-task'
+      )
+      expect(
+        hook.result.current.getRuntimeWorkSnapshot()?.projects.map(item => item.project.id)
+      ).toEqual([8])
+      expect(listRuntimeWork).toHaveBeenCalledTimes(1)
+    } finally {
+      hook.unmount()
+      window.history.replaceState({}, '', previousLocation)
+    }
+  })
 
   test('completes initial cloud inventory after a work event supersedes bootstrap work', async () => {
     const pendingDevices = deferred<DeviceInfo[]>()

@@ -742,6 +742,7 @@ export function useWorkbenchDataRefresh({
   const markRuntimeProjectRemoved = useCallback(
     (projectId: number, workspace?: { deviceId: string; workspacePath: string }) => {
       if (cachedRemoteRuntimeWorkRef.current.ownershipKey !== cacheScope) return
+      const selection = selectionRef.current
       const normalizedWorkspace = workspace
         ? {
             deviceId: workspace.deviceId.trim(),
@@ -749,10 +750,10 @@ export function useWorkbenchDataRefresh({
           }
         : undefined
       const removal = createRuntimeProjectRemoval(
-        runtimeWorkRef.current,
+        selection.runtimeWork,
         projectId,
         normalizedWorkspace,
-        { devices: devicesRef.current }
+        { devices: selection.devices }
       )
       const localRuntimeWork = localRuntimeWorkRef.current
         ? removeRuntimeProject(localRuntimeWorkRef.current, removal)
@@ -765,10 +766,9 @@ export function useWorkbenchDataRefresh({
         cloudRuntimeStateRef.current,
         removal
       )
-      const visibleRuntimeWork = runtimeWorkRef.current
-        ? removeRuntimeProject(runtimeWorkRef.current, removal)
+      const visibleRuntimeWork = selection.runtimeWork
+        ? removeRuntimeProject(selection.runtimeWork, removal)
         : null
-      const selection = selectionRef.current
       const removesCurrentSelection = isRuntimeProjectSelectionRemoved(
         selection,
         projectId,
@@ -781,11 +781,7 @@ export function useWorkbenchDataRefresh({
       localRuntimeWorkRef.current = localRuntimeWork
       cachedRemoteRuntimeWorkRef.current = {
         ...cachedRemoteRuntimeWorkRef.current,
-        runtimeWork: writeCachedRemoteRuntimeWork(
-          cacheScope,
-          cachedRuntimeWork,
-          devicesRef.current
-        ),
+        runtimeWork: writeCachedRemoteRuntimeWork(cacheScope, cachedRuntimeWork, removal.devices),
       }
       updateCloudRuntimeState(cloudRuntimeState)
       runtimeWorkRef.current = visibleRuntimeWork
