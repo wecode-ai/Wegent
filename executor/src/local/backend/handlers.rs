@@ -9,6 +9,21 @@ where
     T: LocalBackendTransport,
     R: TaskRunner,
 {
+    pub(super) fn plugin_auth_changed_handler(&self) -> EventHandler {
+        let connected = self.connection_status.clone();
+        Arc::new(move |payload| {
+            let connected = connected.clone();
+            Box::pin(async move {
+                if connected.load(Ordering::Acquire) {
+                    if let Some(id) = payload["installed_plugin_id"].as_u64().filter(|id| *id > 0) {
+                        crate::plugin_account_auth::broker::request_reconcile(Some(id));
+                    }
+                }
+                None
+            })
+        })
+    }
+
     pub(super) fn connection_closed_handler(&self) -> ConnectionClosedHandler {
         let connection_status = Arc::clone(&self.connection_status);
         let connection_epoch = Arc::clone(&self.connection_epoch);

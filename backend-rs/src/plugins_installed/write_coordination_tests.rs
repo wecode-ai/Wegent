@@ -12,6 +12,9 @@ use brz_redis::{
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+#[path = "write_coordination_policy_tests.rs"]
+mod policy_tests;
+
 #[test]
 fn coordination_failures_keep_the_service_unavailable_response_contract() {
     for code in [
@@ -98,7 +101,7 @@ async fn cancelling_auto_update_response_keeps_transaction_and_unlock_owned() {
             .owners
             .lock()
             .unwrap()
-            .contains_key("wegent:plugin-write:23")
+            .contains_key("wegent:plugin-write:23:@account-policy")
     );
     finish
         .send(())
@@ -309,7 +312,7 @@ impl MysqlTransaction for RevisionTransaction {
             assert_eq!(args.len(), 1);
             self.inserted_user = first_argument;
         } else {
-            assert_eq!(args.len(), 4);
+            assert!([4, 5].contains(&args.len()));
             self.next_revision = first_argument;
         }
         self.statements.push(sql.as_ref().to_string());
@@ -367,9 +370,9 @@ async fn lease_uses_shared_key_nx_and_bounded_expiry() {
     let lease = PluginWriteLease::acquire(Some(&redis), 23).await.unwrap();
     let commands = redis.commands.lock().unwrap();
     assert_eq!(commands[0][0], "SET");
-    assert_eq!(commands[0][1], "wegent:plugin-write:23");
+    assert_eq!(commands[0][1], "wegent:plugin-write:23:@account-policy");
     assert_eq!(commands[0][2].len(), 32);
-    assert_eq!(&commands[0][3..], ["PX", "30000", "NX"]);
+    assert_eq!(&commands[0][3..], ["PX", "180000", "NX"]);
     assert!(lease.deadline < Instant::now() + Duration::from_secs(30));
 }
 
@@ -431,11 +434,10 @@ async fn acquisition_deadline_also_bounds_an_unresponsive_redis_request() {
 #[tokio::test]
 async fn blocked_acquisition_polls_at_the_redis_py_sleep_interval() {
     let redis = LeaseRedis::default();
-    redis
-        .owners
-        .lock()
-        .unwrap()
-        .insert("wegent:plugin-write:23".into(), "fixture".into());
+    redis.owners.lock().unwrap().insert(
+        "wegent:plugin-write:23:@account-policy".into(),
+        "fixture".into(),
+    );
 
     // redis-py's Lock sleeps 100ms between attempts and stops as soon as the
     // next attempt would pass the 350ms blocking timeout: four SET ... NX
@@ -463,11 +465,10 @@ async fn acquisition_deadline_prevents_another_set_after_the_last_wait() {
         stall_after_claim: true,
         ..LeaseRedis::default()
     };
-    redis
-        .owners
-        .lock()
-        .unwrap()
-        .insert("wegent:plugin-write:23".into(), "fixture".into());
+    redis.owners.lock().unwrap().insert(
+        "wegent:plugin-write:23:@account-policy".into(),
+        "fixture".into(),
+    );
 
     let result = PluginWriteLease::acquire_token(
         &redis,
@@ -488,7 +489,7 @@ async fn acquisition_deadline_prevents_another_set_after_the_last_wait() {
 
 #[tokio::test]
 async fn primary_lease_remains_valid_when_the_replica_is_behind() {
-    let key = "wegent:plugin-write:23";
+    let key = "wegent:plugin-write:23:@account-policy";
     for replica_owner in [None, Some("previous-owner")] {
         let redis = LeaseRedis {
             replica_owners: Some(
@@ -512,7 +513,7 @@ async fn primary_lease_remains_valid_when_the_replica_is_behind() {
 
 #[tokio::test]
 async fn stale_owner_cannot_validate_or_release_the_successor_lease() {
-    let key = "wegent:plugin-write:23";
+    let key = "wegent:plugin-write:23:@account-policy";
     let redis = LeaseRedis {
         replica_owners: Some(HashMap::from([(key.into(), "previous-owner".into())])),
         ..LeaseRedis::default()
@@ -546,12 +547,13 @@ async fn changed_parent_revision_rejects_commit_even_if_redis_still_matches() {
     let redis = LeaseRedis::default();
     let lease = PluginWriteLease::acquire(Some(&redis), 23).await.unwrap();
     let mut transaction = RevisionTransaction::default();
-    let expected = PluginWriteRevision {
+    let expected = scoped::PluginRevision {
         id: 42,
+        name: "plugin-a".into(),
         revision: 6,
     };
     let error = lease
-        .commit_revision(&mut transaction, expected)
+        .commit_plugin_revision(&mut transaction, expected, "plugin-a")
         .await
         .unwrap_err();
     assert_eq!(
@@ -559,20 +561,12 @@ async fn changed_parent_revision_rejects_commit_even_if_redis_still_matches() {
         Some("plugin_write_conflict")
     );
     assert_eq!(transaction.statements.len(), 1);
-    assert!(
-        transaction.statements[0]
-            .contains("UPDATE kinds SET json=json_set(kinds.json, '$.spec.revision', ?)")
-    );
-    // The source compares `Kind.json["spec"]["revision"].as_integer()`, which
-    // renders as a nested json_extract normalized by CASE/CAST before coalesce.
-    assert!(transaction.statements[0].contains(
-        "coalesce(CASE JSON_EXTRACT(JSON_EXTRACT(kinds.json, '$.\"spec\"'), \
-         '$.\"revision\"') WHEN 'null' THEN NULL ELSE"
-    ));
-    assert!(transaction.statements[0].contains("CAST(JSON_EXTRACT(JSON_EXTRACT(kinds.json"));
-    assert!(transaction.statements[0].contains("AS SIGNED INTEGER) END, 0) = ?"));
-    assert!(transaction.statements[0].contains("kinds.is_active IS true"));
-    assert!(transaction.statements[0].contains("kinds.user_id = ?"));
+    let sql = &transaction.statements[0];
+    assert!(sql.contains("'$.spec.writeRevision'"));
+    assert!(sql.contains("kind='InstalledPlugin'"));
+    assert!(sql.contains("namespace='default' AND name=?"));
+    assert!(sql.contains("user_id=?"));
+    assert!(!sql.contains("ConnectorAuthPolicy"));
     assert_eq!(transaction.next_revision, Some(7));
 }
 
@@ -585,12 +579,14 @@ async fn current_parent_revision_accepts_commit_without_a_locking_read() {
         ..RevisionTransaction::default()
     };
     lease
-        .commit_revision(
+        .commit_plugin_revision(
             &mut transaction,
-            PluginWriteRevision {
+            scoped::PluginRevision {
                 id: 42,
+                name: "plugin-a".into(),
                 revision: 0,
             },
+            "plugin-a",
         )
         .await
         .unwrap();
@@ -606,12 +602,14 @@ async fn operation_deadline_rejects_commit_before_any_revision_write() {
     lease.deadline = Instant::now();
     let mut transaction = RevisionTransaction::default();
     let error = lease
-        .commit_revision(
+        .commit_plugin_revision(
             &mut transaction,
-            PluginWriteRevision {
+            scoped::PluginRevision {
                 id: 42,
+                name: "plugin-a".into(),
                 revision: 0,
             },
+            "plugin-a",
         )
         .await
         .unwrap_err();
@@ -829,4 +827,64 @@ async fn ordinary_errors_do_not_load_the_script() {
         .map(|c| c[0].clone())
         .collect();
     assert_eq!(names, ["EVALSHA"]);
+}
+
+#[tokio::test]
+async fn different_installations_progress_while_same_installation_is_busy() {
+    let redis = LeaseRedis::default();
+    let first = PluginWriteLease::acquire_names(Some(&redis), 23, vec!["plugin-a".into()])
+        .await
+        .unwrap();
+    let second = PluginWriteLease::acquire_names(Some(&redis), 23, vec!["plugin-b".into()])
+        .await
+        .unwrap();
+    let error = PluginWriteLease::acquire_names_wait(
+        Some(&redis),
+        23,
+        vec!["plugin-a".into()],
+        Duration::ZERO,
+    )
+    .await
+    .err()
+    .unwrap();
+    assert_eq!(
+        http_error(error).detail_message(),
+        Some("plugin_write_busy")
+    );
+    first.verify_owned().await.unwrap();
+    second.verify_owned().await.unwrap();
+    assert_eq!(redis.owners.lock().unwrap().len(), 2);
+    first.release().await;
+    second.release().await;
+    assert!(redis.owners.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn batch_never_holds_another_plugin_while_waiting_for_a_busy_one() {
+    let redis = LeaseRedis::default();
+    let held = PluginWriteLease::acquire_names(Some(&redis), 23, vec!["plugin-b".into()])
+        .await
+        .unwrap();
+    let started = Instant::now();
+    let error = PluginWriteLease::acquire_names(
+        Some(&redis),
+        23,
+        vec!["plugin-a".into(), "plugin-b".into()],
+    )
+    .await
+    .err()
+    .unwrap();
+    assert_eq!(
+        http_error(error).detail_message(),
+        Some("plugin_write_busy")
+    );
+    assert!(started.elapsed() < Duration::from_millis(100));
+    assert!(
+        !redis
+            .owners
+            .lock()
+            .unwrap()
+            .contains_key("wegent:plugin-write:23:plugin-a")
+    );
+    held.release().await;
 }

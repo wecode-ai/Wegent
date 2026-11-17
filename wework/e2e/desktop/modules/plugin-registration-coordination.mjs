@@ -80,7 +80,7 @@ export async function verifyPluginRegistrationCoordination({
       'SELECT state, actual_release_id, desired_release_id, last_sync_at FROM plugin_device_installations WHERE user_id = %s AND installed_kind_id = %s AND device_id = %s',
       [1, item.installedId, CLOUD_DEVICE_ID]
     )
-  const lease = await holdPluginWriteLease(cloud)
+  const lease = await holdPluginWriteLease(cloud, item)
   try {
     // Seed an unconfirmed install under the real lease so heartbeat ACKs cannot
     // race the fixture setup. Only a later full registration may confirm it.

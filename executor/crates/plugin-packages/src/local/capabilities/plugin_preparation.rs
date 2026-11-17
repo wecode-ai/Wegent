@@ -283,12 +283,14 @@ impl PreparedPlugin {
 }
 
 impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
+    /// Legacy callers retain an owned publication guard. Versioned callers
+    /// acquire the same mutex only for the shared metadata comparison.
     pub(super) async fn prepare_plugin(
         &self,
         spec: &PluginSyncSpec,
         manifest: &Value,
         lease: Arc<PreparationLease>,
-        metadata_lock: Option<Arc<AsyncMutex<()>>>,
+        held_publication: Option<Arc<OwnedMutexGuard<()>>>,
     ) -> Result<PreparedPlugin, PluginSyncFailure> {
         let verify_started = Instant::now();
         let store = self.store.clone();
@@ -414,9 +416,13 @@ impl<P: CapabilityPackageProvider> CapabilitySyncHandler<P> {
         self.plugin_sync_binding
             .check()
             .map_err(PluginSyncFailure::runtime_metadata)?;
+        let metadata_lock = held_publication.is_none().then(|| self.sync_lock.clone());
         tokio::task::spawn_blocking(move || {
             // Keep both bounds alive in the worker if its async caller is cancelled.
             let _lease = lease;
+            // Legacy synchronization already owns this mutex. Retain its guard
+            // through cancellation rather than trying to acquire it again.
+            let _publication = held_publication;
             if let Some(root) = root {
                 let package = prepare_shared_package(&root, &spec, cached, bytes)?;
                 PreparedPlugin::finish(

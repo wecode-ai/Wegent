@@ -6,13 +6,42 @@ sidebar_position: 59
 
 Local install, uninstall, update and reconciliation use authenticated account HTTP and local IPC. Device registration, a device ID, Socket connectivity and other-device acknowledgements are not prerequisites. Ordinary local plugin commands keep their local authentication flow; managed account commands use the Native authorization below. Cloud and legacy clients retain Device/Socket permission checks.
 
+Plugin leases have a 180-second TTL. See [plugin write coordination](../../wework/developer-guide/plugin-write-coordination.md) for first-account metadata initialization boundaries and rollout requirements. This design does not guarantee unique first creation across lease expiry.
+
 ## State ownership
 
 `InstalledPlugin/default` remains authoritative account intent. No new tables, migrations, independent operation records, snapshot history or receipt ledger are created. There are no records in a `plugin-local-sync` namespace.
 
-The existing `PluginSyncState/plugin-sync/account` retains generation and device watermarks. `spec.localIntentOrders` fences old requests per instance/plugin. `spec.localIntents` retains only one latest acceptance marker per instance/plugin: operation ID, request hash, order, installed ID, action and installed revision. It stores no complete plugin copy or operation history. Markers, watermarks and account changes commit atomically under the existing account write lease and revision CAS.
+The existing `PluginSyncState/plugin-sync/account` retains generation and device watermarks. `spec.localIntentOrders` fences old requests per instance/plugin. `spec.localIntents` retains only one latest acceptance marker per instance/plugin: operation ID, request hash, order, installed ID, action and installed revision. It stores no complete plugin copy or operation history. Markers, watermarks and account changes commit atomically under installation Redis leases and CAS.
 
 Native persists original requests before HTTP in an account/Backend-scoped journal without tokens. The shared Socket/HTTP installer owns real files, manifests, generation ordering, tombstones, validation and publication.
+
+HTTP and Socket deliveries of the same plugin target share preparation and publication, while each response retains its own generation. The target fingerprint covers the installation and plugin identities, enabled state, version, package checksum, and component configuration. Sharing installation targets across generations requires a trusted checksum, which also allows temporary download URLs to be ignored. The manifest retains the fingerprint and equivalent ordering range; publication always preserves the newest accepted generation. A changed target, update, or removal ends the previous equivalent range, so a later return to that target cannot revive an obsolete operation. Shared failures and cancellations never confirm successful installation.
+
+After a shared download failure, a waiting request with a different download path rechecks ordering and tries its own path once. Failures using the same path, verification failures, and cancellations still reach the caller and never imply successful installation.
+
+Connected devices submit their precise registered record route as the optional origin; unregistered local instances leave it empty. The Backend retains a supplied but ambiguous origin and defers its background broadcast instead of treating failed resolution as an instruction to synchronize every device. Local HTTP operations still complete independently.
+
+Manual reconciliation treats Native `plugin_local_sync_busy` as a deferral signal, rereading and checking again after 500 ms, then 1 second, capped at 2-second intervals within a 30-second waiting window. It schedules state checks without creating new install, update, or uninstall intents; the journal retains its existing request recovery. Foreground operations suspend checking, which resumes with fresh state afterward. Account, Backend, device, or request changes cancel old work. Real failures and expired waits remain visible, and success requires inventory readback verification.
+
+After a Rust device reconnect, plugin acknowledgements commit one installation at a time, each with its own plugin lease, transaction, and CAS validation. Persistence does not hold every plugin lease together, and one busy plugin does not prevent other acknowledgements from committing. The entire round retains its 20-second write budget. Database conflicts retry only the transaction without resending an executed device operation; unrecorded plugins remain pending and diagnostics identify the installation.
+
+```mermaid
+flowchart TD
+  A[Refresh installation state] --> B[Read local inventory and request Native reconciliation]
+  B --> C{Result}
+  C -->|Temporarily busy| D{Current scope and within waiting window}
+  D -->|Yes| E[Show waiting and reschedule]
+  E --> B
+  D -->|No| F[Cancel old work or report expired wait]
+  C -->|Real failure| G[Preserve error and retry entry]
+  C -->|Completed| H[Read back account and local inventories]
+  H --> I{Still current}
+  I -->|No| F
+  I -->|Yes| K{Inventory verified}
+  K -->|Yes| J[Report successful reconciliation]
+  K -->|No| G
+```
 
 ## Execution
 
@@ -39,6 +68,66 @@ Pending submission starts before full content scanning. Fingerprints run on a bl
 
 Scans use the existing monotonic intent order to identify new foreground requests. Acceptance, definitive rejection and superseded archival are recovery progress and merge without rescanning; their reconciliation markers and cache invalidation remain intact.
 
+## Installation write coordination
+
+The shared key is `wegent:plugin-write:{user_id}:{InstalledPlugin.name}`. Existing
+stable name derivation is available before first installation; legacy names also
+retain their own lease. Device identity cannot partition account-owned writes.
+TTL is 180 seconds, Python renewal is every 10 seconds, operation budget is 20
+seconds and single-target acquisition waits up to three seconds. Multi-target
+operations acquire sorted names without waiting and roll back before releasing
+partially acquired leases.
+
+`InstalledPlugin.spec.writeRevision` fences installation, authentication and device
+writes. Whole-document replacements preserve and compare it; final commits advance
+it by CAS. The existing `spec.revision` remains the desired-state revision. Soft
+uninstall retains the parent row for reinstall and late-receipt fencing. Existing
+v2 generations, watermarks and desired-state comparisons reject obsolete receipts.
+
+Healthy catalog reads take no installation write leases. Only detected catalog
+drift or duplicate groups are leased and revalidated before repair.
+
+Independent intent paths atomically merge into existing `PluginSyncState` JSON.
+Snapshot builders read its revision before reading installations, then CAS that
+revision together with generation. Desired-state mutations touch it in the same
+transaction, preventing older content from receiving a newer generation. Snapshot
+conflicts require rollback and reconstruction. No table or `FOR UPDATE` is added.
+
+Single-device and batch acknowledgements share one persistence entry point.
+Metadata CAS conflicts use the existing limit of three transaction attempts,
+rolling back, releasing leases and rereading current state each time. Only database
+writes are replayed, never remote execution. Busy locks in ordinary operations,
+unavailable Redis and lost leases still fail directly.
+
+Python full-snapshot reconciliation retains account-wide CAS for catalog
+preparation and acknowledgement persistence. Only these two database transactions
+may back off after contention, after rolling back and releasing all leases and
+sessions. They reread state at 50/100/200 ms intervals capped at 250 ms within each
+transaction's existing 20-second budget. Waiting to persist an acknowledgement
+does not resend the executed device RPC. Changed desired state still requires a
+new snapshot, so an old acknowledgement cannot confirm current state. Account
+installation, update and removal requests are not resubmitted.
+
+Authentication validates the actual account policy using a final conditional no-op
+update until commit; ordinary authentication never advances that policy revision.
+Installation/update/uninstall do not depend on the policy. Genuine policy edits
+and first metadata initialization use short dedicated metadata leases. Local
+journal leases are released across HTTP, adapter and installer waits; existing
+per-plugin preparation and short manifest publication locks remain.
+
+Before a parent exists, first installation acquires Redis NX and reads its name's
+counter in existing `PluginSyncState.spec.creationRevisions`. Commit compares and
+increments only that plugin's counter. Retaining it through uninstall rejects a
+resumed expired creator after a successor commits. Independent creations compare
+different slots; the shared metadata row is held only during final database writes,
+without network or adapter waits. Existing parents use their own `writeRevision`.
+Request retention reuses existing latest-acceptance slots and ordering watermarks.
+
+Old user keys and new plugin keys do not coordinate. Deployment and rollback must
+stop acceptance and drain old writers before switching both Python and Rust
+Backends. Mixed rolling deployment is unsafe. The v2 client protocol remains
+compatible; local concurrency requires the updated desktop.
+
 Deploy all Backend, gateway and Runtime replicas before enabling `PLUGIN_LOCAL_SYNC_ENABLED` (default false). Legacy requests without the mode preserve their original behavior. Contract 3 does not mix with contract 2 from earlier PR revisions. Disabling new acceptance retains replay and reconciliation for existing instances. Old local pending requests are preserved; obsolete receipt entries are no longer sent.
 
 Focused tests cover no-device lifecycle, bounded acceptance slots, request hashing, rollback, compacted and legacy-write supersession, isolation, independent recovery, and Runtime-token renewal during queued operations, both scan phases and pending recovery. Independent connection-field changes verify the account, Backend and Socket validation boundaries. Existing CI invokes real HTTP/MySQL/Redis coverage and the desktop `plugin-write-coordination` checkpoint. Actual release-package compatibility for 1.0.0, 1.1.0 and 1.1.1 remains unverified.
@@ -62,7 +151,7 @@ grants and Runtime checks are unchanged. Ordinary local SDK commands retain thei
 existing local authentication flow.
 
 No new tables, columns or execution ledger are added. Existing connection,
-migration, transfer and policy records share the account write lease. Optional
+migration and transfer records share their installation write lease. Optional
 JSON fields hold Native key grants (`localGrants`), keyed source observations
 (`nativeAuthSources`), pending login generations and Native lease ownership.
 Legacy credential writes preserve applicable Native grants; definition changes
@@ -70,12 +159,27 @@ and logout revoke them. Exclusive transfers keep escrow until durable adapter
 detach, including lost acceptance replies. Uncertain OAuth refreshes require
 reconnection rather than reusing a potentially consumed refresh token.
 
-No new timers are introduced. Existing 15-second auth/revocation workers use
-small HTTP exchanges instead of Socket, preserving cooldown/backoff. Empty
-installed-plugin discovery returns immediately. Business reads, status and
-prepare calls do not advance database revisions. Session renewal and transient
-failures reuse the existing desktop refresh and 30-second retry scheduling.
-Installation pending requests, ordering fences and reconciliation remain intact.
+Automatic authentication reuses the existing task. Startup, Backend reconnection,
+managed inventory changes and successful local login/logout trigger reconciliation.
+Inventory events select changed enabled managed installations; lifecycle events clear
+only the target cooldown. Safety audits run every 300 seconds with per-process ±30
+second jitter, unaffected by intervening events. Each audit drains all batches of up
+to 16 installations, with at most four adapter actions per batch. Failures retry after
+30, 60 and then 300 seconds; removed installations lose their retries. Success
+cooldowns do not create minute polling. Revocation keeps its existing 15-second
+checks and backoff; session refresh is unchanged. Empty inventory returns without
+an automatic-auth Backend query. Native HTTP business reads, status and preparation
+do not advance installation write revisions. Local-device automatic `prepare_only`
+on the legacy Socket path is also read-only, without batch installation leases.
+Intent creation and credential writes acquire their target installation leases and
+validate CAS.
+
+After credential enrollment, OAuth updates or exclusive transfer commits, Rust
+Backend publishes `plugin.auth.changed` through the existing Socket.IO Redis
+adapter to the same account. It contains only the installation ID. Cloud/Remote
+executors immediately reconcile that installation under existing account policy
+and device authorization. Local executors ignore the hint to prevent export loops.
+The low-frequency audit recovers lost notifications.
 
 Real HTTP/MySQL/Redis tests cover no-Device sessions, user/key isolation, Python
 ciphertext compatibility, refresh/revocation and escrow replay. The existing

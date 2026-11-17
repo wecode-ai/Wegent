@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
+import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from '@/components/plugins/PluginManagementRows'
 import { CODEX_INSTALLATION_RECEIPT_TTL_MS } from '@/api/local/codexPluginInstallation'
 import {
@@ -18,87 +18,7 @@ import {
   subscribePluginMarketplaceCache,
 } from './pluginMarketplaceCache'
 
-function item(
-  overrides: Partial<PluginMarketplaceItem> & Pick<PluginMarketplaceItem, 'id' | 'name'>
-): PluginMarketplaceItem {
-  return {
-    remotePluginId: String(overrides.id),
-    displayName: overrides.name,
-    description: '',
-    version: '1.0.0',
-    author: null,
-    visibility: 'public',
-    featured: false,
-    installed: false,
-    installedPluginId: null,
-    enabled: false,
-    sourceType: 'marketplace',
-    interface: null,
-    components: {
-      skills: [],
-      commands: [],
-      agents: [],
-      hooks: [],
-      mcps: [],
-      lsps: [],
-      monitors: [],
-      bins: [],
-      connectors: [],
-    },
-    ownerUserId: 0,
-    sourceLabel: '',
-    latestReleaseId: null,
-    manifest: {},
-    ...overrides,
-  }
-}
-
-function installedItem(id: string, marketplaceId: string, pluginKey: string): InstalledPluginItem {
-  return {
-    id,
-    name: pluginKey,
-    description: '',
-    enabled: true,
-    version: '1.0.0',
-    origin: 'market',
-    sourceLabel: marketplaceId,
-    distribution: 'personal',
-    updateAvailable: false,
-    componentCounts: {},
-    raw: {
-      apiVersion: 'v1',
-      kind: 'InstalledPlugin',
-      metadata: { name: pluginKey, namespace: marketplaceId, labels: { id } },
-      spec: {
-        source: {
-          type: 'local',
-          providerKey: marketplaceId,
-          pluginKey,
-          marketplace: marketplaceId,
-        },
-        origin: 'market',
-        displayName: pluginKey,
-        description: '',
-        installState: 'installed',
-        enabled: true,
-        componentStates: {},
-        components: {
-          skills: [],
-          commands: [],
-          agents: [],
-          hooks: [],
-          mcps: [],
-          lsps: [],
-          monitors: [],
-          bins: [],
-          connectors: [],
-        },
-        interface: null,
-      },
-      status: { state: 'enabled' },
-    },
-  }
-}
+import { item, installedItem } from './pluginMarketplaceCache.test-fixtures'
 
 describe('pluginMarketplaceCache', () => {
   afterEach(() => {
@@ -501,7 +421,8 @@ describe('pluginMarketplaceCache', () => {
     })
     flushPluginMarketplaceCachePersist()
 
-    expect(window.localStorage.getItem(storageKey)).toMatch(/^lz:/)
+    const persisted = JSON.parse(window.localStorage.getItem(storageKey)!)
+    expect(typeof persisted.entries[key].marketplaceItems).toBe('string')
     resetPluginMarketplaceCacheMemory()
     expect(getPluginMarketplaceCache(key)?.marketplaceItems[0]?.name).toBe('gmail')
   })
@@ -908,180 +829,5 @@ describe('pluginMarketplaceCache', () => {
       { name: 'review', description: 'Review code', path: 'skills/review' },
     ]
     expect(sameInstalledPlugins(left, componentsChanged)).toBe(false)
-  })
-
-  test('keeps memory and listeners immediate while delaying durable persist', () => {
-    vi.useFakeTimers()
-    const key = pluginMarketplaceCacheKey('http://api', 'token-debounce')
-    const storageKey = 'wework.plugins.inventory.v2'
-    const heard: Array<string | undefined> = []
-    const unsubscribe = subscribePluginMarketplaceCache(next => {
-      heard.push(next?.deviceId)
-    })
-
-    setPluginMarketplaceCache({
-      cacheKey: key,
-      marketplaceItems: [item({ id: 1, name: 'a' })],
-      installedPlugins: [],
-      marketplaces: [],
-      selectedMarketplaceKey: '',
-      deviceId: 'device-live',
-      fetchedAt: Date.now(),
-    })
-
-    expect(getPluginMarketplaceCache(key)?.deviceId).toBe('device-live')
-    expect(heard).toEqual(['device-live'])
-    expect(window.localStorage.getItem(storageKey)).toBeNull()
-
-    vi.advanceTimersByTime(300)
-    expect(window.localStorage.getItem(storageKey)).toBeTruthy()
-    unsubscribe()
-    vi.useRealTimers()
-  })
-
-  test('skips a durable rewrite when the snapshot signature is unchanged', () => {
-    const key = pluginMarketplaceCacheKey('http://api', 'token-skip')
-    const snapshot = {
-      cacheKey: key,
-      marketplaceItems: [item({ id: 1, name: 'a' })],
-      installedPlugins: [],
-      marketplaces: [],
-      selectedMarketplaceKey: '',
-      deviceId: 'device-1',
-      fetchedAt: Date.now(),
-    }
-    setPluginMarketplaceCache(snapshot, { persistImmediately: true })
-    const setItem = vi.spyOn(Storage.prototype, 'setItem')
-    setItem.mockClear()
-    setPluginMarketplaceCache(
-      { ...snapshot, fetchedAt: Date.now() + 10 },
-      {
-        persistImmediately: true,
-      }
-    )
-    expect(setItem).not.toHaveBeenCalled()
-  })
-
-  test('persists a component-only catalog change', () => {
-    const key = pluginMarketplaceCacheKey('http://api', 'token-components')
-    const snapshot = {
-      cacheKey: key,
-      marketplaceItems: [item({ id: 1, name: 'a' })],
-      installedPlugins: [],
-      marketplaces: [],
-      selectedMarketplaceKey: '',
-      deviceId: 'device-1',
-      fetchedAt: Date.now(),
-    }
-    setPluginMarketplaceCache(snapshot, { persistImmediately: true })
-    const setItem = vi.spyOn(Storage.prototype, 'setItem')
-    setItem.mockClear()
-
-    setPluginMarketplaceCache(
-      {
-        ...snapshot,
-        marketplaceItems: [
-          item({
-            id: 1,
-            name: 'a',
-            components: {
-              ...snapshot.marketplaceItems[0]!.components,
-              skills: [{ name: 'review', description: 'Review code', path: 'skills/review' }],
-            },
-          }),
-        ],
-      },
-      { persistImmediately: true }
-    )
-
-    expect(setItem).toHaveBeenCalled()
-    resetPluginMarketplaceCacheMemory()
-    expect(getPluginMarketplaceCache(key)?.marketplaceItems[0]?.components.skills).toEqual([
-      { name: 'review', description: 'Review code', path: 'skills/review' },
-    ])
-  })
-
-  test('persists source ownership changes even when canonical records are unchanged', () => {
-    const key = pluginMarketplaceCacheKey('http://api', 'token-sources')
-    const plugin = installedItem('tool@market', 'market', 'tool').raw
-    const identity = 'market:tool'
-    const snapshot = {
-      cacheKey: key,
-      deviceId: 'device',
-      fetchedAt: Date.now(),
-      marketplaceItems: [],
-      installedPlugins: [plugin],
-      marketplaces: [],
-      selectedMarketplaceKey: '',
-    }
-    setPluginMarketplaceCache(
-      {
-        ...snapshot,
-        localInstalledSources: { codex: [identity], store: [] },
-        localInstalledSourceStatus: { codex: 'fulfilled', store: 'fulfilled' },
-      },
-      { persistImmediately: true }
-    )
-    setPluginMarketplaceCache(
-      {
-        ...snapshot,
-        localInstalledSources: { codex: [], store: [identity] },
-        localInstalledSourceStatus: { codex: 'rejected', store: 'fulfilled' },
-      },
-      { persistImmediately: true }
-    )
-
-    resetPluginMarketplaceCacheMemory()
-    const restored = getPluginMarketplaceCache(key)!
-    expect(restored.installedPlugins).toHaveLength(1)
-    expect(restored.localInstalledSources).toEqual({ codex: [], store: [identity] })
-    expect(restored.localInstalledSourceStatus).toEqual({ codex: 'rejected', store: 'fulfilled' })
-  })
-
-  test('remaps native ownership when a cloud response projects a new canonical identity', () => {
-    const key = pluginMarketplaceCacheKey('http://api', 'token-project-source')
-    const raw = installedItem('tool@market', 'market', 'tool').raw
-    raw.spec.sourcePayload = { cloudPluginId: 42, managedByWegent: true }
-    const base = {
-      cacheKey: key,
-      deviceId: 'device',
-      fetchedAt: Date.now(),
-      marketplaceItems: [],
-      marketplaces: [],
-      selectedMarketplaceKey: '',
-    }
-    setPluginMarketplaceCache(
-      { ...base, installedPlugins: [raw], localInstalledSources: { store: ['market:tool'] } },
-      { persistImmediately: true }
-    )
-    const cloud = { ...raw, spec: { ...raw.spec, pluginId: 42 } }
-    setPluginMarketplaceCache({ ...base, installedPlugins: [cloud] }, { persistImmediately: true })
-    resetPluginMarketplaceCacheMemory()
-    expect(getPluginMarketplaceCache(key)?.localInstalledSources?.store).toEqual(['cloud:42'])
-    removePluginMarketplaceInstallation(key, {
-      installedIds: ['tool@market'],
-      pluginKeys: ['tool'],
-      marketplaceItemIds: [],
-    })
-    expect(getPluginMarketplaceCache(key)?.localInstalledSources?.store).toEqual([])
-  })
-
-  test('flushPluginMarketplaceCachePersist writes the pending snapshot immediately', () => {
-    vi.useFakeTimers()
-    const key = pluginMarketplaceCacheKey('http://api', 'token-flush')
-    const storageKey = 'wework.plugins.inventory.v2'
-    setPluginMarketplaceCache({
-      cacheKey: key,
-      marketplaceItems: [item({ id: 2, name: 'b' })],
-      installedPlugins: [],
-      marketplaces: [],
-      selectedMarketplaceKey: '',
-      deviceId: 'device-flush',
-      fetchedAt: Date.now(),
-    })
-    expect(window.localStorage.getItem(storageKey)).toBeNull()
-    flushPluginMarketplaceCachePersist()
-    expect(window.localStorage.getItem(storageKey)).toBeTruthy()
-    vi.useRealTimers()
   })
 })
