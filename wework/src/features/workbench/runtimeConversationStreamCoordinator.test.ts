@@ -4,6 +4,28 @@ import type { WorkbenchServices } from './workbenchServices'
 import { registerRuntimeConversationStream } from './runtimeConversationStreamCoordinator'
 
 describe('registerRuntimeConversationStream', () => {
+  test('captures E2E stream ownership in the debug channel', () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    const stream = { subscribe: vi.fn(() => vi.fn()) } as unknown as WorkbenchServices['chatStream']
+    const unregister = registerRuntimeConversationStream(stream, { onMessageAction: vi.fn() }, true)
+    try {
+      expect(debug).toHaveBeenCalledWith(
+        '[Wework] Runtime task create diagnostic',
+        expect.stringContaining('"stage":"runtime-stream-owner"')
+      )
+      expect(JSON.parse(debug.mock.calls[0][1] as string)).toMatchObject({
+        action: 'registered',
+        activeRegistrations: 1,
+        subscribed: true,
+      })
+    } finally {
+      unregister()
+      debug.mockRestore()
+      vi.unstubAllEnvs()
+    }
+  })
+
   test('receives events from the active provider after replacing an inactive service graph', () => {
     let activeStreamHandlers: ChatStreamHandlers = {}
     const inactiveStream = {

@@ -121,13 +121,17 @@ function createDelegatingHandlers(coordinator: Coordinator): ChatStreamHandlers 
 
 function logCoordinatorStage(action: string, details: Record<string, unknown> = {}): void {
   if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
-  logRuntimeTaskCreateStage('runtime-stream-owner', {
-    action,
-    registrations: coordinator.registrations.size,
-    activeRegistrations: [...coordinator.registrations.values()].filter(entry => entry.active)
-      .length,
-    sourceOrder: preferredRegistration()?.order ?? null,
-    subscribed: coordinator.unsubscribe !== null,
-    ...details,
-  })
+  logRuntimeTaskCreateStage(
+    'runtime-stream-owner',
+    {
+      action,
+      registrations: coordinator.registrations.size,
+      activeRegistrations: [...coordinator.registrations.values()].filter(entry => entry.active)
+        .length,
+      sourceOrder: preferredRegistration()?.order ?? null,
+      subscribed: coordinator.unsubscribe !== null,
+      ...details,
+    },
+    'debug'
+  )
 }

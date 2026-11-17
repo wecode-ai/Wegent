@@ -1,6 +1,7 @@
 import type { DeviceInfo } from '@/types/api'
 import { createRequestId } from '@/lib/request-id'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { deliverRuntimeTransport } from '@/e2e/runtime-transport-gates'
 
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
@@ -283,11 +284,21 @@ function connectDshExecutorEventStream(
   let reconnectTimer: number | null = null
   let reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
   let connected = false
+  let connectionAttempt = 0
+
+  const diagnostic = (action: string, details: Record<string, unknown> = {}) => {
+    logRuntimeTaskCreateStage(
+      'runtime-event-transport',
+      { action, connectionAttempt, cursor, subscribers: executorEventSubscribers.size, ...details },
+      'debug'
+    )
+  }
 
   const scheduleReconnect = () => {
     if (closed || reconnectTimer !== null) return
     const delay = reconnectDelayMs
     reconnectDelayMs = Math.min(reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS)
+    diagnostic('reconnect-scheduled', { delayMs: delay })
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null
       connect()
@@ -296,6 +307,9 @@ function connectDshExecutorEventStream(
 
   const connect = () => {
     if (closed) return
+    connectionAttempt += 1
+    const startedAt = Date.now()
+    diagnostic('connecting', { replay: connected })
     const nextSource = new EventSource(
       `${EXECUTOR_BASE_PATH}/events?after=${encodeURIComponent(String(cursor))}&replay=${
         connected ? '1' : '0'
@@ -303,7 +317,9 @@ function connectDshExecutorEventStream(
     )
     source = nextSource
     nextSource.onopen = () => {
-      if (source === nextSource) connected = true
+      if (source !== nextSource) return
+      connected = true
+      diagnostic('opened', { elapsedMs: Date.now() - startedAt })
     }
     nextSource.onmessage = message => {
       if (source !== nextSource) return
@@ -331,6 +347,22 @@ function connectDshExecutorEventStream(
         scheduleReconnect()
         return
       }
+      if (
+        event.event === 'response.completed' ||
+        event.event === 'response.failed' ||
+        event.event === 'response.incomplete'
+      ) {
+        const emittedAt = Date.parse(event.emittedAt)
+        diagnostic('terminal-received', {
+          event: event.event,
+          sequence: event.sequence,
+          accepted: event.sequence > cursor,
+          taskId: typeof event.payload?.taskId === 'string' ? event.payload.taskId : null,
+          subtaskId: typeof event.payload?.subtaskId === 'string' ? event.payload.subtaskId : null,
+          deviceId: typeof event.payload?.deviceId === 'string' ? event.payload.deviceId : null,
+          ...(Number.isFinite(emittedAt) ? { deliveryLatencyMs: Date.now() - emittedAt } : {}),
+        })
+      }
       if (event.sequence <= cursor) return
       cursor = event.sequence
       reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
@@ -351,6 +383,10 @@ function connectDshExecutorEventStream(
     }
     nextSource.onerror = () => {
       if (source !== nextSource) return
+      diagnostic('disconnected', {
+        readyState: nextSource.readyState,
+        elapsedMs: Date.now() - startedAt,
+      })
       nextSource.close()
       source = null
       scheduleReconnect()
@@ -372,6 +408,7 @@ function connectDshExecutorEventStream(
   executorEventReconnectors.add(reconnect)
   connect()
   return () => {
+    diagnostic('closed')
     closed = true
     executorEventReconnectors.delete(reconnect)
     if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)

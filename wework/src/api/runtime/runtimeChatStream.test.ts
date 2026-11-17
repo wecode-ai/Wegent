@@ -629,6 +629,48 @@ describe('createRuntimeChatStream', () => {
     expect(subscribe).toHaveBeenCalledTimes(1)
   })
 
+  test('records E2E terminal routing in the captured debug channel without response content', async () => {
+    vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const stream = createRuntimeChatStream({ subscribe, request })
+    const cleanup = stream.subscribe({ onChatDone: vi.fn() })
+    try {
+      await Promise.resolve()
+      listener({
+        event: 'response.completed',
+        sequence: 165,
+        payload: {
+          taskId: 'task-1',
+          subtaskId: 'turn-1',
+          data: { text: 'PRIVATE_RESPONSE' },
+        },
+      })
+      const entry = debug.mock.calls.find(
+        ([prefix, details]) =>
+          prefix === '[Wework] Runtime task create diagnostic' &&
+          typeof details === 'string' &&
+          JSON.parse(details).stage === 'runtime-terminal-received'
+      )
+      expect(entry).toBeDefined()
+      expect(JSON.parse(entry![1] as string)).toMatchObject({
+        taskId: 'task-1',
+        sequence: 165,
+        subscriptionCount: 1,
+        matchedSubscriptionCount: 1,
+      })
+      expect(entry![1]).not.toContain('PRIVATE_RESPONSE')
+    } finally {
+      cleanup()
+      debug.mockRestore()
+      vi.unstubAllEnvs()
+    }
+  })
+
   test('broadcasts real native events to E2E listeners', async () => {
     vi.stubEnv('VITE_WEWORK_E2E', 'true')
     const root = globalThis as typeof globalThis & {

@@ -319,9 +319,10 @@ function logRuntimeChatTerminalEvent(
     deviceId: stringField(payload, 'deviceId') ?? null,
     subscriptionCount,
     matchedSubscriptionCount,
+    sequence: event.sequence ?? null,
   }
   if (import.meta.env.VITE_WEWORK_E2E === 'true') {
-    logRuntimeTaskCreateStage('runtime-terminal-received', details)
+    logRuntimeTaskCreateStage('runtime-terminal-received', details, 'debug')
   } else {
     console.info('[Wework] Runtime chat stream terminal event received', details)
   }

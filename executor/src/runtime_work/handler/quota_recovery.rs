@@ -358,7 +358,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn start_quota_turn(&self, mut turn: SpawnTurnRequest) {
         let gate = self.task_send_gate(&turn.local_task_id);
-        let _send = gate.lock().await;
+        let send = gate.lock().await;
         if !self
             .local_task_link(&turn.local_task_id)
             .is_some_and(|link| {
@@ -393,6 +393,9 @@ impl RuntimeWorkRpcHandler {
             self.finish_quota_command(&turn).await;
             return;
         };
+        // Local execution ownership now serializes this task. Cancellation must
+        // acquire the send gate while native quota requests are pending.
+        drop(send);
         let Some(mut wait) = wait(&turn) else {
             self.finish_local_task_execution(&turn.local_task_id, execution);
             self.end_quota_turn(&turn, "Invalid saved quota recovery record")

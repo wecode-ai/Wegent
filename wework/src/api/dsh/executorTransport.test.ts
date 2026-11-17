@@ -580,6 +580,65 @@ describe('DSH executor transport', () => {
     unsubscribe()
     consoleError.mockRestore()
   })
+
+  test('captures terminal delivery and reconnect metadata without conversation content', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-17T10:19:04.500Z'))
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
+    const sources: FakeEventSource[] = []
+    vi.stubGlobal(
+      'EventSource',
+      class extends FakeEventSource {
+        constructor(url: string) {
+          super(url)
+          sources.push(this)
+        }
+      }
+    )
+    const listener = vi.fn()
+    const unsubscribe = subscribeDshExecutorEvents(listener)
+    try {
+      sources[0].onopen?.()
+      const event = {
+        ...eventEnvelope(1, 'response.completed'),
+        emittedAt: '2026-11-17T10:19:04.231Z',
+        payload: {
+          taskId: 'task-1',
+          subtaskId: 'turn-1',
+          deviceId: 'device-1',
+          data: { text: 'PRIVATE_RESPONSE', token: 'PRIVATE_CREDENTIAL' },
+        },
+      }
+      emitExecutorEvent(sources[0].onmessage, event)
+      emitExecutorEvent(sources[0].onmessage, event)
+      sources[0].onerror?.()
+      const diagnostics = debug.mock.calls.flatMap(([prefix, entry]) =>
+        prefix === '[Wework] Runtime task create diagnostic' && typeof entry === 'string'
+          ? [JSON.parse(entry) as Record<string, unknown>]
+          : []
+      )
+      expect(diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ action: 'opened', connectionAttempt: 1, cursor: 0 }),
+          expect.objectContaining({
+            action: 'terminal-received',
+            taskId: 'task-1',
+            sequence: 1,
+            accepted: true,
+            deliveryLatencyMs: 269,
+          }),
+          expect.objectContaining({ action: 'terminal-received', accepted: false, cursor: 1 }),
+          expect.objectContaining({ action: 'reconnect-scheduled', cursor: 1, delayMs: 500 }),
+        ])
+      )
+      expect(listener).toHaveBeenCalledOnce()
+      expect(JSON.stringify(diagnostics)).not.toMatch(/PRIVATE_RESPONSE|PRIVATE_CREDENTIAL/)
+    } finally {
+      unsubscribe()
+      debug.mockRestore()
+      vi.useRealTimers()
+    }
+  })
 })
 
 function emitExecutorEvent(

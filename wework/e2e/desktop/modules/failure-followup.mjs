@@ -1,5 +1,6 @@
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { projectCreationHeaderFailureSummary } from './project-create-failure-diagnostics.mjs'
 
 // The follow-up observes the failed condition itself instead of sampling after a
 // fixed delay: the WebView bridge's waitFor polls the condition inside the
@@ -275,6 +276,10 @@ export async function captureFailureFollowup(
       JSON.parse(snapshot),
       JSON.parse(workbenchDebug)
     ),
+  }
+  const creationSummary = projectCreationHeaderFailureSummary(followup, control.commandHistory)
+  if (creationSummary) {
+    console.info('[desktop-e2e-project-create-failure]', JSON.stringify(creationSummary))
   }
   await writeFile(
     join(resultDir, 'failure-followup.json'),

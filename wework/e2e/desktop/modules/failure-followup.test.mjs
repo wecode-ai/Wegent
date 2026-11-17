@@ -9,6 +9,106 @@ import {
   failedWaitCondition,
   failureFollowupBudgetMs,
 } from './failure-followup.mjs'
+import { projectCreationHeaderFailureSummary } from './project-create-failure-diagnostics.mjs'
+
+const CREATE_CONFIRM = '[data-testid="collaboration-project-create-confirm"]'
+const PROJECT_HEADER = '[data-testid="cloud-project-header-title"]'
+
+function projectCreationHistory() {
+  return [
+    {
+      action: 'clickWhenEnabled',
+      selector: CREATE_CONFIRM,
+      queuedAt: '2026-11-17T10:22:38.000Z',
+      deliveredAt: '2026-11-17T10:22:38.010Z',
+      startedAt: '2026-11-17T10:22:38.020Z',
+      resultReceivedAt: '2026-11-17T10:22:38.500Z',
+    },
+    { action: 'waitFor', selector: CREATE_CONFIRM, visible: false },
+    { action: 'waitFor', selector: PROJECT_HEADER, failedAt: '2026-11-17T10:22:49.000Z' },
+  ]
+}
+
+test('project header failure logs only bounded state from the original creation commands', () => {
+  const summary = projectCreationHeaderFailureSummary(
+    {
+      condition: { action: 'waitFor', selector: PROJECT_HEADER, text: 'private project name' },
+      outcome: 'condition-unsettled-within-budget',
+      uiSnapshot: {
+        location: 'https://private.example/?token=private-token',
+        text: 'private prompt and project name',
+        testIds: ['collaboration-platform-opening-project', 'private-token'],
+      },
+      workbenchDebug: {
+        workbench: { isBootstrapping: false, error: 'private error body', currentProject: {} },
+      },
+    },
+    [
+      ...projectCreationHistory(),
+      { action: 'waitFor', selector: PROJECT_HEADER, resultReceivedAt: 'later observation' },
+    ]
+  )
+  assert.equal(summary.event, 'project-create-header-failure')
+  assert.equal(summary.conditionSettledAfterFailure, false)
+  assert.deepEqual(summary.stages.submit, {
+    delivered: true,
+    started: true,
+    resultReceived: true,
+    failed: false,
+    queueMs: 10,
+    executionMs: 480,
+  })
+  assert.equal(summary.stages.header.failed, true)
+  assert.equal(summary.stages.header.resultReceived, false)
+  assert.equal(summary.mountedPageMarkers['collaboration-platform-opening-project'], true)
+  assert.equal(summary.mountedPageMarkers['cloud-project-header-title'], false)
+  assert.deepEqual(summary.workbench, { captured: true, bootstrapping: false, hasError: true })
+  assert.ok(!JSON.stringify(summary).includes('private'))
+})
+
+test('project creation diagnostics do not attribute unrelated or other-window header failures', () => {
+  const followup = { condition: { action: 'waitFor', selector: PROJECT_HEADER } }
+  assert.equal(projectCreationHeaderFailureSummary(followup), null)
+  assert.equal(
+    projectCreationHeaderFailureSummary(
+      { condition: { action: 'waitFor', selector: '[data-testid="unrelated"]' } },
+      projectCreationHistory()
+    ),
+    null
+  )
+  assert.equal(
+    projectCreationHeaderFailureSummary(
+      { condition: { ...followup.condition, clientId: 'detached-window' } },
+      projectCreationHistory().map(command => ({ ...command, clientId: 'main-window' }))
+    ),
+    null
+  )
+  const history = projectCreationHistory()
+  history.splice(2, 0, { action: 'navigate', selector: 'body', value: '/private' })
+  assert.equal(projectCreationHeaderFailureSummary(followup, history), null)
+})
+
+test('creation header failure summary reuses follow-up capture without extra control reads', async t => {
+  const resultDir = await mkdtemp(join(tmpdir(), 'wework-failure-followup-'))
+  const info = t.mock.method(console, 'info', () => {})
+  try {
+    const control = controlReturning({ uiSnapshot: { testIds: ['cloud-project-header-title'] } })
+    control.commandHistory = projectCreationHistory()
+    const followup = await captureFailureFollowup(control, resultDir, {
+      condition: { action: 'waitFor', selector: PROJECT_HEADER, text: 'private project name' },
+    })
+    assert.equal(followup.outcome, 'settled-after-failure')
+    assert.deepEqual(
+      control.commands.map(command => command.action),
+      ['waitFor', 'snapshot', 'getWorkbenchDebugSnapshot']
+    )
+    assert.equal(info.mock.calls.length, 1)
+    assert.equal(info.mock.calls[0].arguments[0], '[desktop-e2e-project-create-failure]')
+    assert.ok(!info.mock.calls[0].arguments[1].includes('private'))
+  } finally {
+    await rm(resultDir, { recursive: true, force: true })
+  }
+})
 
 function controlReturning({
   waitForBehavior = 'settle-after',

@@ -3,6 +3,29 @@
 
 use super::*;
 
+pub(in crate::runtime_work::handler) struct NativeHistoryEnvironment {
+    _environment: ScalarEnv,
+    _home: tempfile::TempDir,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+impl NativeHistoryEnvironment {
+    pub(in crate::runtime_work::handler) fn new() -> Self {
+        let lock = crate::test_env::lock();
+        let home = tempfile::tempdir().unwrap();
+        let environment = ScalarEnv::set("WEGENT_EXECUTOR_HOME", home.path().to_str().unwrap());
+        assert_eq!(
+            LocalTaskStore::default_path(),
+            home.path().join("data/tasks.sqlite")
+        );
+        Self {
+            _environment: environment,
+            _home: home,
+            _lock: lock,
+        }
+    }
+}
+
 pub(in crate::runtime_work::handler) fn install_native_history(
     handler: &mut RuntimeWorkRpcHandler,
     root: &std::path::Path,

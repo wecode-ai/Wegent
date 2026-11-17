@@ -42,7 +42,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
 
 #[path = "native_history_test_support.rs"]
 pub(super) mod native_history_test_support;
-pub(super) use native_history_test_support::install_native_history;
+pub(super) use native_history_test_support::{install_native_history, NativeHistoryEnvironment};
 
 #[path = "command_recovery_tests.rs"]
 mod command_recovery_tests;

@@ -411,6 +411,8 @@ impl RuntimeWorkRpcHandler {
         for turn in starting {
             self.store.update_task(&turn.local_task_id, |link| {
                 store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
+                // Admission owns the reservation before process startup or preparation.
+                crate::runtime_work::lifecycle::begin_native_request(link);
             });
         }
         if let Some((previous, current)) = admissions {
@@ -1957,13 +1959,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn is_busy_local_task(&self, local_task_id: &str) -> bool {
-        self.is_active_local_task(local_task_id)
-            || self.is_queued_local_task(local_task_id)
-            || self
-                .preparing_turns
-                .lock()
-                .expect("preparation map poisoned")
-                .contains_key(local_task_id)
+        self.has_local_execution_owner(local_task_id) || self.is_queued_local_task(local_task_id)
     }
 
     pub(super) async fn remove_queued_turn(

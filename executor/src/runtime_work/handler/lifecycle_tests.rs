@@ -7,6 +7,9 @@ use super::*;
 #[path = "goal_recovery_tests.rs"]
 mod goal_recovery_tests;
 
+#[path = "capacity_release_tests.rs"]
+mod capacity_release_tests;
+
 #[tokio::test]
 async fn native_continuation_retains_capacity_after_local_control_finishes() {
     for clear_during_turn in [false, true] {
