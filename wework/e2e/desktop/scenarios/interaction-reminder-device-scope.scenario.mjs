@@ -156,6 +156,13 @@ export function hasPersistedInteractionAnswer(transcript, expected) {
   })
 }
 
+export function assertRemoteQuestionCreated(task, device, workspacePath) {
+  assert.equal(task.accepted, true, `Remote interaction fixture was rejected: ${task.error}`)
+  assert.equal(task.deviceId, device.execution_target_id ?? device.device_id)
+  assert.ok(task.taskId, 'The peer App did not return the created task identity')
+  assert.equal(task.workspacePath, workspacePath)
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   resultDir,
@@ -219,10 +226,7 @@ export function createDesktopScenario({
         modelSelection,
       }),
     })
-    assert.equal(task.accepted, true, `Remote interaction fixture was rejected: ${task.error}`)
-    assert.equal(task.deviceId, remoteDevice.app_device_id)
-    assert.ok(task.taskId, 'The peer App did not return the created task identity')
-    assert.equal(task.workspacePath, remoteWorkspace)
+    assertRemoteQuestionCreated(task, remoteDevice, remoteWorkspace)
     await releaseHeldQuestion(prompt)
     const address = await waitForValue(
       async () => {

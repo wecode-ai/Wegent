@@ -13,6 +13,7 @@ import {
 import { pluginApi, until } from './plugin-regression-fixture.mjs'
 import {
   assertBackgroundPluginAuthPaused,
+  describePluginAuthRecovery,
   hasFreshPluginAuthSuccess,
   isFreshPluginAuthRecovery,
   readPluginAuthTarget,
@@ -208,20 +209,60 @@ export async function verifyPluginAuthCoordination({
     'The target database request remained blocked after its row was released'
   )
   await signalAutomaticRetry()
-  await until(
-    async () => ({
-      before: recoveryBefore,
-      after: await readPluginAuthTarget(cloud, installedId),
-      freshTargetSuccess: hasFreshPluginAuthSuccess(
-        await readFile(executorLog, 'utf8'),
-        recoveryOffset,
-        installedId
-      ),
-      installedId,
-    }),
-    isFreshPluginAuthRecovery,
-    'Background authentication did not freshly enroll its target after the row was released'
-  )
+  let latestRecovery
+  let recoveryLogCharacters
+  try {
+    await until(
+      async () => {
+        const after = await readPluginAuthTarget(cloud, installedId)
+        const log = await readFile(executorLog, 'utf8')
+        recoveryLogCharacters = log.length
+        latestRecovery = {
+          before: recoveryBefore,
+          after,
+          freshTargetSuccess: hasFreshPluginAuthSuccess(log, recoveryOffset, installedId),
+          installedId,
+        }
+        return latestRecovery
+      },
+      isFreshPluginAuthRecovery,
+      'Background authentication did not freshly enroll its target after the row was released'
+    )
+  } catch (error) {
+    let diagnosticHint = 'could not save recovery diagnostics'
+    try {
+      const description = describePluginAuthRecovery(
+        latestRecovery ?? {
+          before: recoveryBefore,
+          after: [],
+          freshTargetSuccess: false,
+          installedId,
+        }
+      )
+      const diagnosticName = 'plugin-auth-recovery-failure.json'
+      await writeFile(
+        join(resultDir, diagnosticName),
+        JSON.stringify(
+          {
+            observationAvailable: Boolean(latestRecovery),
+            recoveryOffset,
+            logCharacters: recoveryLogCharacters ?? null,
+            ...description,
+          },
+          null,
+          2
+        )
+      )
+      const failed = Object.entries(description.checks)
+        .filter(([, passed]) => !passed)
+        .map(([name]) => name)
+      diagnosticHint = `${diagnosticName}; failed=${failed.join(',')}`
+    } catch {
+      // Diagnostics must not replace the original recovery failure.
+    }
+    if (error instanceof Error) error.message += `\nRecovery diagnostics: ${diagnosticHint}`
+    throw error
+  }
   await until(
     () => connectionFor('mail'),
     value => value?.status === 'connected' && value.device_ids.length > 0,

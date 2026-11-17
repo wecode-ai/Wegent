@@ -1,6 +1,84 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
-import { hasPersistedInteractionAnswer } from '../e2e/desktop/scenarios/interaction-reminder-device-scope.scenario.mjs'
+import {
+  assertRemoteQuestionCreated,
+  hasPersistedInteractionAnswer,
+} from '../e2e/desktop/scenarios/interaction-reminder-device-scope.scenario.mjs'
+
+const remoteDevice = {
+  device_id: 'app-record-73',
+  app_device_id: 'wework-e2e-peer-app-430',
+}
+const remoteTask = {
+  accepted: true,
+  deviceId: 'app-record-73',
+  taskId: 'remote-task',
+  workspacePath: '/workspace/review',
+}
+
+test('accepts a remote creation receipt on the recorded canonical App route', () => {
+  assert.doesNotThrow(() =>
+    assertRemoteQuestionCreated(remoteTask, remoteDevice, remoteTask.workspacePath)
+  )
+})
+
+test('validates the explicitly selected execution target before the device alias', () => {
+  const device = {
+    ...remoteDevice,
+    device_id: remoteDevice.app_device_id,
+    execution_target_id: remoteDevice.device_id,
+  }
+  assert.doesNotThrow(() =>
+    assertRemoteQuestionCreated(remoteTask, device, remoteTask.workspacePath)
+  )
+})
+
+test('rejects a receipt for the original App alias or another App', () => {
+  for (const deviceId of [remoteDevice.app_device_id, 'app-record-74']) {
+    assert.throws(
+      () =>
+        assertRemoteQuestionCreated(
+          { ...remoteTask, deviceId },
+          remoteDevice,
+          remoteTask.workspacePath
+        ),
+      assert.AssertionError
+    )
+  }
+})
+
+test('keeps remote acceptance, task identity, and workspace evidence strict', () => {
+  assert.throws(
+    () =>
+      assertRemoteQuestionCreated(
+        { ...remoteTask, accepted: false, error: 'remote access denied' },
+        remoteDevice,
+        remoteTask.workspacePath
+      ),
+    /Remote interaction fixture was rejected: remote access denied/
+  )
+  assert.throws(
+    () =>
+      assertRemoteQuestionCreated(
+        { ...remoteTask, taskId: '' },
+        remoteDevice,
+        remoteTask.workspacePath
+      ),
+    /The peer App did not return the created task identity/
+  )
+  assert.throws(
+    () =>
+      assertRemoteQuestionCreated(
+        { ...remoteTask, workspacePath: '/workspace/another-review' },
+        remoteDevice,
+        remoteTask.workspacePath
+      ),
+    error =>
+      error instanceof assert.AssertionError &&
+      error.actual === '/workspace/another-review' &&
+      error.expected === remoteTask.workspacePath
+  )
+})
 
 const expected = {
   taskId: 'remote-task',

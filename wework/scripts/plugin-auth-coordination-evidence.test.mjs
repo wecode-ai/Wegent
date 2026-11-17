@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import {
   assertBackgroundPluginAuthPaused,
+  describePluginAuthRecovery,
   hasFreshPluginAuthSuccess,
   isFreshPluginAuthRecovery,
 } from '../e2e/desktop/modules/plugin-auth-coordination-evidence.mjs'
@@ -240,4 +241,135 @@ test('an unrelated, pending, failed, or unchanged intent cannot prove target rec
       false
     )
   }
+})
+
+test('diagnostic flags identify each unmet recovery condition without changing acceptance', () => {
+  const recovered = {
+    before: [connection, migration],
+    after: [connection, completedMigration],
+    freshTargetSuccess: true,
+    installedId,
+  }
+  assert.equal(describePluginAuthRecovery(recovered).accepted, true)
+  assert.ok(Object.values(describePluginAuthRecovery(recovered).checks).every(Boolean))
+  const cases = [
+    ['freshTargetSuccess', { freshTargetSuccess: false }],
+    ['baselineConnectionPresent', { before: [migration] }],
+    ['currentConnectionPresent', { after: [completedMigration] }],
+    ['connectionIdUnchanged', { after: [{ ...connection, id: 76 }, completedMigration] }],
+    ['connectionActive', { after: [{ ...connection, is_active: 0 }, completedMigration] }],
+    [
+      'connectionConnected',
+      { after: [{ ...connection, status: 'disconnected' }, completedMigration] },
+    ],
+    [
+      'credentialPresent',
+      { after: [{ ...connection, credential_present: 0 }, completedMigration] },
+    ],
+    ['singleTargetPrincipal', { before: [connection] }],
+    ['targetPrincipalPresent', { before: [connection, { ...migration, local_principal: '' }] }],
+    [
+      'targetPrincipalGranted',
+      { after: [{ ...connection, local_grants: { unrelated: true } }, completedMigration] },
+    ],
+    [
+      'matchingMigrationPresent',
+      { after: [connection, { ...completedMigration, local_principal: 'unrelated' }] },
+    ],
+    ['migrationExport', { after: [connection, { ...completedMigration, operation: 'failed' }] }],
+    ['migrationInactive', { after: [connection, { ...completedMigration, is_active: 1 }] }],
+    [
+      'migrationRevisionAdvanced',
+      { after: [connection, { ...completedMigration, revision: migration.revision }] },
+    ],
+    [
+      'migrationGenerationAdvanced',
+      { after: [connection, { ...completedMigration, name: migration.name }] },
+    ],
+  ]
+  for (const [failedCondition, changes] of cases) {
+    const observation = { ...recovered, ...changes }
+    const description = describePluginAuthRecovery(observation)
+    assert.equal(description.checks[failedCondition], false, failedCondition)
+    assert.equal(description.accepted, false, failedCondition)
+    assert.equal(description.accepted, isFreshPluginAuthRecovery(observation), failedCondition)
+  }
+})
+
+test('recovery diagnostics retain only scoped metadata and hashes, never credentials or grants', () => {
+  const privatePrincipal = 'private-current-local-principal'
+  const privateGrant = 'private-unrelated-local-principal'
+  const previousNonce = 'private-previous-migration-nonce'
+  const currentNonce = 'private-current-migration-nonce'
+  const secretCredential = 'private-credential-value'
+  const secretStateHash = 'private-state-hash'
+  const current = {
+    ...connection,
+    credential: secretCredential,
+    local_grants: JSON.stringify({ [privatePrincipal]: true, [privateGrant]: true }),
+    state_hash: secretStateHash,
+  }
+  const previous = { ...migration, name: previousNonce, local_principal: privatePrincipal }
+  const completed = {
+    ...completedMigration,
+    name: currentNonce,
+    local_principal: privatePrincipal,
+    credential: secretCredential,
+  }
+  const diagnostic = describePluginAuthRecovery({
+    before: [current, previous],
+    after: [current, completed],
+    freshTargetSuccess: true,
+    installedId,
+  })
+  assert.equal(diagnostic.accepted, true)
+  assert.equal(diagnostic.after[0].matchingPrincipalGrant, true)
+  assert.equal(diagnostic.before[1].migrationNonceChanged, false)
+  assert.equal(diagnostic.after[1].migrationNonceChanged, true)
+  assert.match(diagnostic.after[1].migrationNonceHash, /^[a-f0-9]{64}$/)
+  assert.match(diagnostic.after[1].principalHash, /^[a-f0-9]{64}$/)
+  assert.equal(diagnostic.before[1].principalHash, diagnostic.after[1].principalHash)
+  assert.notEqual(diagnostic.before[1].migrationNonceHash, diagnostic.after[1].migrationNonceHash)
+  const serialized = JSON.stringify(diagnostic)
+  for (const secret of [
+    privatePrincipal,
+    privateGrant,
+    previousNonce,
+    currentNonce,
+    secretCredential,
+    secretStateHash,
+    'local_grants',
+  ]) {
+    assert.equal(serialized.includes(secret), false, secret)
+  }
+})
+
+test('recovery still rejects missing events and ambiguous principals before decoding grants', () => {
+  const malformed = { ...connection, local_grants: 'not-json' }
+  assert.equal(
+    isFreshPluginAuthRecovery({
+      before: [connection, migration],
+      after: [malformed, completedMigration],
+      freshTargetSuccess: false,
+      installedId,
+    }),
+    false
+  )
+  assert.equal(
+    isFreshPluginAuthRecovery({
+      before: [connection, migration, { ...migration, id: 76 }],
+      after: [malformed, completedMigration],
+      freshTargetSuccess: true,
+      installedId,
+    }),
+    false
+  )
+  assert.throws(() =>
+    isFreshPluginAuthRecovery({
+      before: [connection, migration],
+      after: [malformed, completedMigration],
+      freshTargetSuccess: true,
+      installedId,
+    })
+  )
 })

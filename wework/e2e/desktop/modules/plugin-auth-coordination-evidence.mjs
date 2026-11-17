@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 
 export function assertBackgroundPluginAuthPaused({ before, after, fence }) {
   assert.equal(fence.held, true, 'The target database fence is no longer held')
@@ -31,8 +32,7 @@ export function hasFreshPluginAuthSuccess(log, offset, installedId, connectorSlu
   })
 }
 
-export function isFreshPluginAuthRecovery({ before, after, freshTargetSuccess, installedId }) {
-  if (!freshTargetSuccess) return false
+function recoveryContext({ before, after, installedId }) {
   const targetRows = (rows, kind) =>
     rows.filter(
       row =>
@@ -43,31 +43,92 @@ export function isFreshPluginAuthRecovery({ before, after, freshTargetSuccess, i
   const previous = targetRows(before, 'ConnectorConnection')[0]
   const current = targetRows(after, 'ConnectorConnection')[0]
   const intents = targetRows(before, 'ConnectorMigration')
-  if (intents.length !== 1) return false
-  const old = intents[0]
-  const completed = targetRows(after, 'ConnectorMigration').find(
-    row => row.id === old.id && row.local_principal === old.local_principal
-  )
+  const old = intents.length === 1 ? intents[0] : undefined
+  const completed = old
+    ? targetRows(after, 'ConnectorMigration').find(
+        row => row.id === old.id && row.local_principal === old.local_principal
+      )
+    : undefined
   const grants =
-    typeof current?.local_grants === 'string'
+    old &&
+    (typeof current?.local_grants === 'string'
       ? JSON.parse(current.local_grants)
-      : current?.local_grants
-  return Boolean(
-    previous &&
-    current &&
-    current.id === previous.id &&
-    Number(current.is_active) === 1 &&
-    current.status === 'connected' &&
-    Number(current.credential_present) === 1 &&
-    typeof old.local_principal === 'string' &&
-    old.local_principal.length > 0 &&
-    grants?.[old.local_principal] === true &&
-    completed &&
-    completed.operation === 'export' &&
-    Number(completed.is_active) === 0 &&
-    Number(completed.revision) > Number(old.revision) &&
-    (completed.name !== old.name || Number(old.is_active) === 1)
-  )
+      : current?.local_grants)
+  return { previous, current, intents, old, completed, grants }
+}
+
+function recoveryChecks(
+  { freshTargetSuccess },
+  { previous, current, intents, old, completed, grants }
+) {
+  return {
+    freshTargetSuccess: Boolean(freshTargetSuccess),
+    baselineConnectionPresent: Boolean(previous),
+    currentConnectionPresent: Boolean(current),
+    connectionIdUnchanged: Boolean(previous && current && current.id === previous.id),
+    connectionActive: Number(current?.is_active) === 1,
+    connectionConnected: current?.status === 'connected',
+    credentialPresent: Number(current?.credential_present) === 1,
+    singleTargetPrincipal: intents.length === 1,
+    targetPrincipalPresent:
+      typeof old?.local_principal === 'string' && old.local_principal.length > 0,
+    targetPrincipalGranted: Boolean(old && grants?.[old.local_principal] === true),
+    matchingMigrationPresent: Boolean(completed),
+    migrationExport: completed?.operation === 'export',
+    migrationInactive: Boolean(completed && Number(completed.is_active) === 0),
+    migrationRevisionAdvanced: Boolean(
+      completed && Number(completed.revision) > Number(old.revision)
+    ),
+    migrationGenerationAdvanced: Boolean(
+      completed && (completed.name !== old.name || Number(old.is_active) === 1)
+    ),
+  }
+}
+
+export function isFreshPluginAuthRecovery(observation) {
+  if (!observation.freshTargetSuccess) return false
+  const checks = recoveryChecks(observation, recoveryContext(observation))
+  return Object.values(checks).every(Boolean)
+}
+
+export function describePluginAuthRecovery(observation) {
+  const context = recoveryContext(observation)
+  const checks = recoveryChecks(observation, context)
+  const digest = value =>
+    value === undefined || value === null
+      ? null
+      : createHash('sha256').update(String(value)).digest('hex')
+  const project = row => {
+    const baseline = observation.before.find(
+      candidate => candidate.id === row.id && candidate.kind === row.kind
+    )
+    const grants =
+      typeof row.local_grants === 'string' ? JSON.parse(row.local_grants) : row.local_grants
+    return {
+      kind: row.kind,
+      id: row.id,
+      installedPluginId: row.installed_plugin_id,
+      connectorSlug: row.connector_slug,
+      isActive: row.is_active,
+      status: row.status,
+      revision: row.revision,
+      operation: row.operation,
+      credentialPresent: Number(row.credential_present) === 1,
+      matchingPrincipalGrant: Boolean(
+        context.old && grants?.[context.old.local_principal] === true
+      ),
+      principalHash: digest(row.local_principal),
+      migrationNonceHash: row.kind === 'ConnectorMigration' ? digest(row.name) : null,
+      migrationNonceChanged:
+        row.kind === 'ConnectorMigration' && baseline ? row.name !== baseline.name : null,
+    }
+  }
+  return {
+    accepted: Object.values(checks).every(Boolean),
+    checks,
+    before: observation.before.map(project),
+    after: observation.after.map(project),
+  }
 }
 
 export async function readPluginAuthTarget(cloud, installedId) {
