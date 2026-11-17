@@ -37,6 +37,8 @@ Windows Git 连接适配器复用现有的 PATH／PATHEXT 与 Node 批处理 shi
 
 跨页面验证实验功能开关时，先等待开关的目标状态和重新可用，确认原生偏好保存已经结束；设置页的乐观状态不能作为其他页面已应用配置的依据。
 
+Issue 悬浮标题检查使用 1440×720 内容视口，先验证滚动区存在溢出且可编辑标题已滚出视口，再验证悬浮标题，并恢复原窗口尺寸。Windows 原生决策辅助程序记录程序集加载、窗口查询和按钮调用前后阶段及终止原因；E2E 构建记录项目选择器实例的挂载、菜单状态和关闭请求，便于区分原生阻塞、组件重挂与关闭事件。诊断保持原有时限、匹配条件和安全断言。
+
 普通桌面 E2E 即使未设置发布槽位目录，也会把经过脱敏的 `[shutdown-step]` 和 `[application-quit]` 记录同步写入 `app.log` 的捕获流，避免原生退出时遗失异步输出。Linux 退出等待失败时还记录该进程的线程状态、等待通道及可读取的内核栈；读取失败只作为诊断记录，不替换原始失败。仅由 `traceShutdownStep` 包装的步骤（如 `desktop-runtime`、`control-bridge` 和 `workspace-catalog-log`）记录开始、完成或失败；`completed` 仅表示包装回调未抛出异常。`systemResume.stop()` 未被包装；`performance-recording` 内部会捕获录制器停止错误，因此其 `completed` 不能证明录制器刷新成功，仍需检查 `[performance]` 错误日志。结合这些记录可区分已跟踪的清理流程未结束与 Electron 已触发退出事件但原生进程未结束。发布槽位仍保留自己的 `activation-diagnostics.log`。这些诊断不改变退出预算或进程存活断言。
 
 ## 运行方式

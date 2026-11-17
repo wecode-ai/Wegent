@@ -539,13 +539,28 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
   const reply = snapshot.testIds.find(id => id.startsWith('cloud-task-activity-reply-toggle-'))
   assert.ok(reply, 'The persisted comment must offer a reply')
   const replySelector = scope(`[data-testid="${reply}"]`)
-  await control.command('scrollIntoView', replySelector)
+  const previousWindow = JSON.parse(
+    await control.command('setMainWindowSize', 'body', {
+      value: JSON.stringify({ width: 1440, height: 720 }),
+    })
+  )
+  let headerFailure
   try {
+    await control.command('scrollIntoView', replySelector)
+    const [scroll, editableTitle] = JSON.parse(
+      await control.command(
+        'getElementMetrics',
+        [scope('[data-testid="cloud-todo-detail-scroll"]'), title].join(', ')
+      )
+    )
+    assert.ok(scroll.scrollHeight > scroll.clientHeight, 'The title test requires overflow')
+    assert.ok(editableTitle.bottom <= scroll.top, 'Scroll the editable title above the viewport')
     await control.command('waitFor', scope('[data-testid="issue-header-context"]'), {
       text: `${TITLE}已更新`,
       visible: true,
     })
   } catch (error) {
+    headerFailure = error
     const selectors = [
       title,
       replySelector,
@@ -560,6 +575,13 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
       console.error('[issue-detail-reading] geometry diagnostic failed:', diagnosticError)
     }
     throw error
+  } finally {
+    try {
+      await control.command('setMainWindowSize', 'body', { value: JSON.stringify(previousWindow) })
+    } catch (restoreError) {
+      if (!headerFailure) throw restoreError
+      console.error('[issue-detail-reading] window restoration failed:', restoreError)
+    }
   }
   const timestamp = `${list} .task-detail-thread-actions time`
   const foreground = luminance(

@@ -74,19 +74,34 @@ end run`,
   }
   if (process.platform === 'win32') {
     const script = `
+[Console]::Error.WriteLine('Native decision stage: assembly-client-start')
 Add-Type -AssemblyName UIAutomationClient
+[Console]::Error.WriteLine('Native decision stage: assembly-types-start')
 Add-Type -AssemblyName UIAutomationTypes
+[Console]::Error.WriteLine('Native decision stage: assemblies-ready')
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, ${pid})
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
+$iteration = 0
 while ([DateTime]::UtcNow -lt $deadline) {
+  $iteration += 1
+  [Console]::Error.WriteLine('Native decision stage: root-lookup-start ' + $iteration)
   $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+  [Console]::Error.WriteLine('Native decision stage: root-lookup-complete ' + $windows.Count)
   foreach ($window in $windows) {
+    [Console]::Error.WriteLine('Native decision stage: window-name-start')
+    [Console]::Error.WriteLine('Native decision window: ' + $window.Current.Name)
     if ($window.Current.Name -notin @(${TITLES.map(title => `'${title}'`).join(', ')})) { continue }
+    [Console]::Error.WriteLine('Native decision stage: button-lookup-start')
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+    [Console]::Error.WriteLine('Native decision stage: button-lookup-complete ' + $buttons.Count)
     foreach ($button in $buttons) {
+      [Console]::Error.WriteLine('Native decision stage: button-name-start')
+      [Console]::Error.WriteLine('Native decision element: ' + $button.Current.Name)
       if ($button.Current.Name -in @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
         $pattern = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        [Console]::Error.WriteLine('Native decision stage: invoke-start')
         $pattern.Invoke()
+        [Console]::Error.WriteLine('Native decision stage: invoke-complete')
         exit 0
       }
     }
@@ -105,16 +120,28 @@ $diagnostics = @([System.Windows.Automation.AutomationElement]::RootElement.Find
 [Console]::Error.WriteLine('Native decision owned windows: ' + (ConvertTo-Json -InputObject $diagnostics -Compress))
 throw 'The isolated app did not display its native Core plugin decision'
 `
-    await execute(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-EncodedCommand',
-        Buffer.from(script, 'utf16le').toString('base64'),
-      ],
-      options
-    )
+    const startedAt = Date.now()
+    try {
+      await execute(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(script, 'utf16le').toString('base64'),
+        ],
+        options
+      )
+    } catch (error) {
+      console.error('[native-plugin-decision] Windows helper failed', {
+        applicationProcessId: pid,
+        elapsedMs: Date.now() - startedAt,
+        killed: error.killed,
+        signal: error.signal,
+        code: error.code,
+      })
+      throw error
+    }
     return
   }
   // X11 keyboard input targets only this process's named modal. Cancel is the default.
