@@ -9,10 +9,42 @@ import {
   testId,
   until,
 } from './plugin-regression-fixture.mjs'
+import { holdPluginWriteLease } from './plugin-write-lease.mjs'
 
 const skillName = 'resilience-check'
 const prefix = 'install-update-resilience-'
 const packageFailureCode = 'PLUGIN_PACKAGE_INTEGRITY_FAILED'
+
+export async function settlePluginPolicyWrite(cloud, installedId, operate, timeoutMs) {
+  const read = () =>
+    cloud.queryDatabase(
+      'SELECT device_id, state, CAST(last_sync_at AS CHAR) AS last_sync_at FROM plugin_device_installations WHERE user_id=%s AND installed_kind_id=%s',
+      [1, installedId]
+    )
+  const before = await read()
+  assert.ok(before.length > 0, 'Policy setup needs existing real device installations')
+  await operate()
+  const settled = await until(
+    read,
+    rows =>
+      before.every(previous =>
+        rows.some(
+          row =>
+            row.device_id === previous.device_id &&
+            row.state === 'installed' &&
+            row.last_sync_at &&
+            row.last_sync_at !== previous.last_sync_at
+        )
+      ),
+    'Plugin policy sync did not persist on every existing Runtime',
+    timeoutMs
+  )
+  // Persistence happens inside the write lease. Acquire and release that exact
+  // scope to establish that the setup ACK writer has finished before auto-update.
+  const lease = await holdPluginWriteLease(cloud, installedId)
+  await lease.release()
+  return settled
+}
 
 function within(root, path) {
   const child = relative(root, path)
@@ -640,8 +672,17 @@ export async function verifyPluginInstallUpdateResilience({
         // away from the plugin page and observe actual per-plugin request order.
         await control.command('click', testId('new-chat-button'))
         entry.autoRequestStart = apiProxy.requests.length
-        await setPolicy(bad.old, 'auto')
-        await setPolicy(good.old, 'auto')
+        entry.policySetup = []
+        for (const item of [bad, good]) {
+          entry.policySetup.push(
+            await settlePluginPolicyWrite(
+              cloud,
+              item.before.account.id,
+              () => setPolicy(item.old, 'auto'),
+              timeoutMs
+            )
+          )
+        }
         await refresh(good.old)
         entry.failed = await failedPackage(bad.old, bad.next, bad.old)
         entry.healthyUpdated = await awaitInstalled(good.old, good.next)
