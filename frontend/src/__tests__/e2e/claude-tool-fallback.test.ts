@@ -13,13 +13,24 @@ const reminder =
   "The date has changed. Today's date is now 2026-11-17. No need to announce the new date — the user's own clock shows it."
 
 it('preserves the complete conversation when no system reminder is present', () => {
-  expect(withClaudeToolFallback(conversation)).toEqual([
+  const deferred = [
+    ...conversation.slice(0, -1),
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Finish the follow-up', cache_control: { type: 'ephemeral' } },
+      ],
+    },
+  ]
+  const snapshot = JSON.stringify(deferred)
+  expect(withClaudeToolFallback(deferred, 'Finish the follow-up')).toEqual([
     ...conversation,
     {
       role: 'system',
       content: [{ type: 'text', text: notice, cache_control: { type: 'ephemeral' } }],
     },
   ])
+  expect(JSON.stringify(deferred)).toBe(snapshot)
 })
 
 it('preserves the midnight reminder and follow-up while appending the exact fallback notice', () => {
@@ -31,7 +42,7 @@ it('preserves the midnight reminder and follow-up while appending the exact fall
     },
   ]
   const snapshot = JSON.stringify(before)
-  expect(withClaudeToolFallback(before)).toEqual([
+  expect(withClaudeToolFallback(before, 'Finish the follow-up')).toEqual([
     ...conversation,
     {
       role: 'system',
@@ -50,7 +61,29 @@ it.each([
   { label: 'non-string', content: [{ type: 'text', text: 42 }] },
   { label: 'multiple blocks', content: [{ text: 'a' }, { text: 'b' }] },
 ])('rejects $label system content instead of discarding it', ({ content }) => {
-  expect(() => withClaudeToolFallback([...conversation, { role: 'system', content }])).toThrow(
-    'Unexpected Claude Code trailing system message structure'
-  )
+  expect(() =>
+    withClaudeToolFallback([...conversation, { role: 'system', content }], 'Finish the follow-up')
+  ).toThrow('Unexpected Claude Code trailing system message structure')
+})
+
+it('rejects a missing or changed follow-up instead of rewriting conversation content', () => {
+  for (const content of [
+    [{ type: 'text', text: 'Changed follow-up', cache_control: { type: 'ephemeral' } }],
+    [
+      {
+        type: 'text',
+        text: 'Finish the follow-up',
+        cache_control: { type: 'ephemeral' },
+        extra: true,
+      },
+    ],
+  ]) {
+    expect(() =>
+      withClaudeToolFallback(
+        [...conversation.slice(0, -1), { role: 'user', content }],
+        'Finish the follow-up'
+      )
+    ).toThrow()
+  }
+  expect(() => withClaudeToolFallback(conversation.slice(0, -1), 'Finish the follow-up')).toThrow()
 })

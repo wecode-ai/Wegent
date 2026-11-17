@@ -218,15 +218,9 @@ test.describe('Real Claude Code cloud-model compaction', () => {
           )
           // A midnight date reminder already occupies the trailing system
           // message. The CLI appends its fallback notice to that same block.
-          const conversation =
-            deferred.messages.at(-1)?.role === 'system'
-              ? deferred.messages.slice(0, -1)
-              : deferred.messages
-          expect(conversation.at(-1)).toEqual({
-            role: 'user',
-            content: `Finish the follow-up for ${model}.`,
-          })
-          expect(fallback.messages).toEqual(withClaudeToolFallback(deferred.messages))
+          expect(fallback.messages).toEqual(
+            withClaudeToolFallback(deferred.messages, `Finish the follow-up for ${model}.`)
+          )
         }
         for (const capture of captures) {
           expect(capture.body.model).toBe(model)
