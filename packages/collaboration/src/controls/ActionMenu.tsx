@@ -617,7 +617,7 @@ export function ActionMenu({
                   }}
                   onKeyDown={(event) => handleItemKeyDown(event, item)}
                   className={[
-                    "flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]",
+                    "flex h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px] md:h-8",
                     item.danger
                       ? "text-red-500 hover:bg-red-50"
                       : "text-text-primary hover:bg-muted",
@@ -700,7 +700,7 @@ export function ActionMenu({
                     }}
                     onKeyDown={(event) => handleItemKeyDown(event, item, true)}
                     className={[
-                      "flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]",
+                      "flex h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px] md:h-8",
                       item.danger
                         ? "text-red-500 hover:bg-red-50"
                         : "text-text-primary hover:bg-muted",

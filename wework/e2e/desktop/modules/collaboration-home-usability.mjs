@@ -481,7 +481,7 @@ export async function verifyCollaborationHomeUsability(
       paragraph.top >= preview.top && paragraph.top + lineHeight <= preview.bottom + 1,
       'The collapsed Markdown description must show a complete line of useful body text'
     )
-    const descriptionToggle = `${home} [data-testid="cloud-todo-detail-description-toggle"]`
+    const descriptionToggle = `${home} [data-testid="issue-description-toggle"]`
     await control.command('waitFor', `${descriptionToggle}[aria-expanded="false"]`)
     const controlled = await control.command('getAttribute', descriptionToggle, {
       value: 'aria-controls',

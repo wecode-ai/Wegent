@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -48,7 +48,13 @@ const project = {
   access_role: 'Owner',
 } as CloudProject
 
-function setup(assignmentError?: Error, initialItem = initial, presentation?: 'workspace-panel') {
+function setup(
+  assignmentError?: Error,
+  workspacePanel = false,
+  backend = false,
+  initialItem = initial
+) {
+  let replaceIssue!: (item: CloudLoopItem) => void
   let persisted = initialItem
   const updateLoopItem = vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
     persisted = { ...persisted, ...values, version: persisted.version + 1 }
@@ -74,13 +80,14 @@ function setup(assignmentError?: Error, initialItem = initial, presentation?: 'w
   }
   function Editor() {
     const [item, setItem] = useState(initialItem)
+    replaceIssue = setItem
     return (
       <TodoEditor
         mode="edit"
-        presentation={presentation}
-        readFirst={presentation === 'workspace-panel'}
+        presentation={workspacePanel ? 'workspace-panel' : 'modal'}
+        readFirst={workspacePanel}
         item={item}
-        project={project}
+        project={backend ? { ...project, project_store: 'backend' } : project}
         allItems={[item]}
         api={api as never}
         onUpdated={setItem}
@@ -89,18 +96,22 @@ function setup(assignmentError?: Error, initialItem = initial, presentation?: 'w
     )
   }
   render(<Editor />)
-  return { updateLoopItem, read: () => persisted }
+  return {
+    updateLoopItem,
+    read: () => persisted,
+    replaceIssue: (item: CloudLoopItem) => act(() => replaceIssue(item)),
+  }
 }
 
 describe('immediate Issue properties', () => {
   it('lets readers expand a short Markdown body without changing its saved content', async () => {
     const description = '# Review feedback\n\nKeep the interview context.'
-    const { updateLoopItem } = setup(
-      undefined,
-      { ...initial, title: 'Review feedback', description },
-      'workspace-panel'
-    )
-    const toggle = await screen.findByTestId('cloud-todo-detail-description-toggle')
+    const { updateLoopItem } = setup(undefined, true, false, {
+      ...initial,
+      title: 'Review feedback',
+      description,
+    })
+    const toggle = await screen.findByTestId('issue-description-toggle')
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     const target = document.getElementById(toggle.getAttribute('aria-controls')!)
     expect(target).toHaveAttribute('data-repeated-heading', 'true')
@@ -108,6 +119,235 @@ describe('immediate Issue properties', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByTestId('test-description')).toHaveValue(description)
     expect(updateLoopItem).not.toHaveBeenCalled()
+  })
+
+  it('opens the parent picker from visible expanded properties and returns keyboard focus', async () => {
+    setup(undefined, true)
+    const parent = screen.getByTestId('cloud-todo-detail-parent')
+    expect(parent).not.toBeVisible()
+    await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
+    expect(parent).toBeVisible()
+    await userEvent.click(parent)
+    const search = await screen.findByTestId('cloud-todo-detail-parent-search')
+    expect(search).toHaveFocus()
+    await userEvent.type(search, 'Missing parent')
+    expect(await screen.findByText('没有匹配的父任务')).toBeVisible()
+    await userEvent.keyboard('{Escape}')
+    expect(parent).toHaveFocus()
+    expect(parent).toBeVisible()
+    await userEvent.click(screen.getByTestId('cloud-todo-more-properties'))
+    await userEvent.tab()
+    expect(parent).not.toHaveFocus()
+  })
+
+  it('isolates pending security writes when switching Issues', async () => {
+    const { updateLoopItem, replaceIssue } = setup(undefined, true, true)
+    const pending = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem.mockImplementationOnce(() => pending.promise)
+    fireEvent.change(screen.getByTestId('cloud-issue-security-level'), {
+      target: { value: 'related' },
+    })
+    expect(screen.getByTestId('cloud-issue-security-level')).toBeDisabled()
+    replaceIssue({ ...initial, id: 'PROPS-2', security_level: 'open' })
+    expect(screen.getByTestId('cloud-issue-security-level')).not.toBeDisabled()
+    await act(async () => pending.resolve({ ...initial, security_level: 'related', version: 2 }))
+    expect(screen.getByTestId('cloud-issue-security-level')).toHaveValue('open')
+    fireEvent.change(screen.getByTestId('cloud-issue-security-level'), {
+      target: { value: 'related' },
+    })
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(2))
+    expect(updateLoopItem.mock.calls[1]).toEqual([
+      'PROPS-2',
+      { security_level: 'related', version: 1 },
+    ])
+  })
+
+  it('does not close another Issue editor when an earlier description write finishes', async () => {
+    const { updateLoopItem, replaceIssue } = setup(undefined, true)
+    fireEvent.click(screen.getByTestId('issue-description-edit'))
+    fireEvent.change(screen.getByTestId('test-description'), { target: { value: 'Same text' } })
+    const pending = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem.mockImplementationOnce(() => pending.promise)
+    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    replaceIssue({ ...initial, id: 'PROPS-2', description: 'Same text' })
+    fireEvent.click(await screen.findByTestId('issue-description-edit'))
+    expect(screen.getByTestId('cloud-todo-cancel-content-edit')).toBeVisible()
+    await act(async () => pending.resolve({ ...initial, description: 'Same text', version: 2 }))
+    expect(screen.getByTestId('cloud-todo-cancel-content-edit')).toBeVisible()
+    expect(screen.getByTestId('test-description')).toHaveValue('Same text')
+  })
+
+  it('preserves a cleared date through an older acknowledgement, a newer failure and retry', async () => {
+    const { updateLoopItem } = setup()
+    const first = Promise.withResolvers<CloudLoopItem>()
+    const latest = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => latest.promise)
+      .mockResolvedValueOnce({ ...initial, due_at: null, version: 3 })
+    fireEvent.click(screen.getByRole('button', { name: '时间范围' }))
+    const due = await screen.findByTestId('cloud-todo-detail-due-date')
+    fireEvent.change(due, { target: { value: '2026-11-20' } })
+    fireEvent.change(due, { target: { value: '' } })
+    await act(async () => first.resolve({ ...initial, due_at: '2026-11-20', version: 2 }))
+    expect(due).toHaveValue('')
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(2))
+    await act(async () => latest.reject(new Error('Latest date save failed')))
+    await screen.findByTestId('cloud-todo-field-retry')
+    expect(due).toHaveValue('')
+    fireEvent.click(screen.getByTestId('cloud-todo-field-retry'))
+    await waitFor(() => expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存'))
+    expect(updateLoopItem.mock.lastCall?.[1]).toMatchObject({ version: 2, due_at: null })
+    expect(due).toHaveValue('')
+  })
+
+  it('discards a failed title when the user restores the persisted title', async () => {
+    const { updateLoopItem } = setup()
+    updateLoopItem.mockRejectedValueOnce(new Error('Offline'))
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Abandoned' } })
+    fireEvent.blur(title)
+    await screen.findByTestId('cloud-todo-field-retry')
+    fireEvent.change(title, { target: { value: initial.title } })
+    fireEvent.blur(title)
+    expect(screen.queryByTestId('cloud-todo-field-retry')).toBeNull()
+    expect(title).toHaveValue(initial.title)
+    expect(updateLoopItem).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { value: '', workspacePanel: true, enter: true },
+    { value: '   ', workspacePanel: false, enter: false },
+  ])(
+    'explains an empty title without submitting it: %j',
+    async ({ value, workspacePanel, enter }) => {
+      const { updateLoopItem } = setup(undefined, workspacePanel)
+      const title = screen.getByTestId('cloud-todo-detail-title')
+      fireEvent.change(title, { target: { value } })
+      if (enter) fireEvent.keyDown(title, { key: 'Enter' })
+      else fireEvent.blur(title)
+      expect(await screen.findByTestId('issue-title-error')).toHaveTextContent('请输入事项标题')
+      expect(title).toHaveAttribute('aria-invalid', 'true')
+      expect(title).toHaveAccessibleDescription('请输入事项标题')
+      expect(title).toHaveValue(value)
+      expect(updateLoopItem).not.toHaveBeenCalled()
+      fireEvent.blur(title)
+      expect(updateLoopItem).not.toHaveBeenCalled()
+      fireEvent.change(title, { target: { value: 'Corrected title' } })
+      expect(screen.queryByTestId('issue-title-error')).not.toBeInTheDocument()
+      fireEvent.blur(title)
+      await waitFor(() => expect(updateLoopItem).toHaveBeenCalledOnce())
+      expect(updateLoopItem.mock.lastCall?.[1]).toMatchObject({ title: 'Corrected title' })
+    }
+  )
+
+  it('discards a superseded title retry when a newer title fails local validation', async () => {
+    const { updateLoopItem } = setup()
+    updateLoopItem.mockRejectedValueOnce(new Error('Offline'))
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Abandoned' } })
+    fireEvent.blur(title)
+    await screen.findByTestId('cloud-todo-field-retry')
+    fireEvent.change(title, { target: { value: '' } })
+    fireEvent.blur(title)
+    expect(await screen.findByTestId('issue-title-error')).toBeVisible()
+    expect(screen.queryByTestId('cloud-todo-field-retry')).not.toBeInTheDocument()
+    expect(updateLoopItem).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a restored title visible while older writes finish and persists the latest intent', async () => {
+    const { updateLoopItem } = setup()
+    const first = Promise.withResolvers<CloudLoopItem>()
+    const latest = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => latest.promise)
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Abandoned' } })
+    fireEvent.blur(title)
+    fireEvent.change(title, { target: { value: initial.title } })
+    fireEvent.blur(title)
+    await act(async () => first.resolve({ ...initial, title: 'Abandoned', version: 2 }))
+    expect(title).toHaveValue(initial.title)
+    await waitFor(() => expect(updateLoopItem).toHaveBeenCalledTimes(2))
+    expect(updateLoopItem).toHaveBeenLastCalledWith(initial.id, {
+      version: 2,
+      title: initial.title,
+    })
+    await act(async () => latest.resolve({ ...initial, version: 3 }))
+    expect(title).toHaveValue(initial.title)
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存')
+  })
+
+  it('keeps description save and cancel disabled while its write is pending', async () => {
+    const { updateLoopItem } = setup(undefined, true)
+    fireEvent.click(screen.getByTestId('issue-description-edit'))
+    fireEvent.change(screen.getByTestId('test-description'), { target: { value: 'Edited' } })
+    const pending = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem.mockImplementationOnce(() => pending.promise)
+    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    expect(screen.getByTestId('cloud-todo-save')).toBeDisabled()
+    expect(screen.getByTestId('cloud-todo-cancel-content-edit')).toBeDisabled()
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('保存中')
+    await act(async () => pending.resolve({ ...initial, description: 'Edited', version: 2 }))
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存')
+    expect(screen.queryByTestId('cloud-todo-cancel-content-edit')).toBeNull()
+  })
+
+  it('discards a failed description save when the edit is cancelled', async () => {
+    const { updateLoopItem } = setup(undefined, true)
+    fireEvent.click(screen.getByTestId('issue-description-edit'))
+    fireEvent.change(screen.getByTestId('test-description'), { target: { value: 'Abandoned' } })
+    updateLoopItem.mockRejectedValueOnce(new Error('Offline'))
+    fireEvent.click(screen.getByTestId('cloud-todo-save'))
+    await screen.findByTestId('cloud-todo-field-retry')
+    fireEvent.click(screen.getByTestId('cloud-todo-cancel-content-edit'))
+    expect(screen.queryByTestId('cloud-todo-field-retry')).toBeNull()
+    expect(screen.getByTestId('test-description')).toHaveValue('Saved description')
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Kept title' } })
+    fireEvent.blur(title)
+    await waitFor(() => expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存'))
+    expect(updateLoopItem).toHaveBeenCalledTimes(2)
+    expect(updateLoopItem).toHaveBeenLastCalledWith(initial.id, { version: 1, title: 'Kept title' })
+  })
+
+  it('marks a retained invalid date range as unsaved after a successful save', async () => {
+    const { updateLoopItem } = setup()
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Saved title' } })
+    fireEvent.blur(title)
+    await waitFor(() => expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存'))
+    fireEvent.click(screen.getByRole('button', { name: '时间范围' }))
+    fireEvent.change(await screen.findByTestId('cloud-todo-detail-due-date'), {
+      target: { value: '2026-11-20' },
+    })
+    await waitFor(() => expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存'))
+    const savedCalls = updateLoopItem.mock.calls.length
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-start-date'), {
+      target: { value: '2026-11-21' },
+    })
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('有未保存的修改')
+    expect(updateLoopItem).toHaveBeenCalledTimes(savedCalls)
+  })
+
+  it('announces unsaved, pending, failed and retried title saves without losing the draft', async () => {
+    const { updateLoopItem } = setup()
+    expect(screen.queryByTestId('issue-save-status')).toBeNull()
+    const pending = Promise.withResolvers<CloudLoopItem>()
+    updateLoopItem.mockImplementationOnce(() => pending.promise)
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    fireEvent.change(title, { target: { value: 'Edited title' } })
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('有未保存的修改')
+    fireEvent.blur(title)
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('保存中')
+    await act(async () => pending.reject(new Error('Offline')))
+    expect(await screen.findByTestId('cloud-todo-save-error')).toHaveTextContent('Offline')
+    expect(screen.getByTestId('issue-save-status')).toHaveTextContent('保存失败')
+    expect(title).toHaveValue('Edited title')
+    await userEvent.click(screen.getByTestId('cloud-todo-field-retry'))
+    await waitFor(() => expect(screen.getByTestId('issue-save-status')).toHaveTextContent('已保存'))
+    expect(title).toHaveValue('Edited title')
   })
 
   it('saves title and priority independently while description requires explicit save', async () => {

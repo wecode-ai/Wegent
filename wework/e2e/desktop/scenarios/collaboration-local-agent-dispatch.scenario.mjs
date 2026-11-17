@@ -145,6 +145,21 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
     text: ASSIGNED_TASK,
     timeoutMs,
   })
+  const availability = scoped('[data-testid="issue-collaborators-unavailable"]')
+  const addParticipant = scoped('[data-testid="cloud-todo-add-collaborator"]')
+  await control.command('waitFor', availability, {
+    text: '此项目暂不支持编辑参与者',
+    visible: true,
+  })
+  await control.command('waitFor', `${addParticipant}:disabled`)
+  assert.equal(
+    await control.command('getAttribute', addParticipant, { value: 'aria-describedby' }),
+    await control.command('getAttribute', availability, { value: 'id' }),
+    'The unavailable local participant action must explain its capability boundary'
+  )
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-collaborator-select"]'), {
+    visible: false,
+  })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
     visible: false,
   })
