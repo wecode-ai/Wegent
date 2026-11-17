@@ -1989,11 +1989,7 @@ class DesktopE2EServer {
 
     const readyResult = readyPluginWorkspaceResult(body)
     if (readyResult) {
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(readyResult),
-        responseCompleted(responseId),
-      ])
+      this.writeLocalAssistantMessage(response, { protocol }, readyResult)
       return
     }
 
@@ -2004,11 +2000,11 @@ class DesktopE2EServer {
         requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
         'The unmatched connector auth resume scenario did not receive its trigger prompt'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      this.writeLocalAssistantMessage(
+        response,
+        { protocol },
+        CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT
+      )
       return
     }
 
@@ -2019,20 +2015,12 @@ class DesktopE2EServer {
           'Wework Plugin Creator did not resolve its shipped skill'
         )
       }
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(PLUGIN_CREATOR_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      this.writeLocalAssistantMessage(response, { protocol }, PLUGIN_CREATOR_COMPLETION_TEXT)
       return
     }
 
     if (JSON.stringify(body).includes(PLUGIN_REFINEMENT_PROMPT)) {
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(PLUGIN_REFINEMENT_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      this.writeLocalAssistantMessage(response, { protocol }, PLUGIN_REFINEMENT_COMPLETION_TEXT)
       return
     }
 
