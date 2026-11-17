@@ -134,6 +134,8 @@ impl CodexAppServerClient {
         log_executor_event(
             "reply prediction finished",
             &[
+                ("source_thread_id", source_thread_id.to_owned()),
+                ("prediction_thread_id", thread_id.to_owned()),
                 ("duration_ms", started.elapsed().as_millis().to_string()),
                 (
                     "status",
@@ -299,7 +301,18 @@ impl CodexAppServerClient {
 }
 
 fn parse_prediction(content: &str) -> Result<Value, String> {
-    let result: Value = serde_json::from_str(content).map_err(|_| "Invalid prediction JSON")?;
+    let result: Value = serde_json::from_str(content).map_err(|error| {
+        log_executor_event(
+            "reply prediction JSON rejected",
+            &[
+                ("content_bytes", content.len().to_string()),
+                ("json_category", format!("{:?}", error.classify())),
+                ("json_line", error.line().to_string()),
+                ("json_column", error.column().to_string()),
+            ],
+        );
+        "Invalid prediction JSON"
+    })?;
     let suggestion = result
         .get("suggestion")
         .ok_or("Prediction has no suggestion field")?;
