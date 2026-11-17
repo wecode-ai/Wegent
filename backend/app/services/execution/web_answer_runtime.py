@@ -54,6 +54,35 @@ def _selected_shell(db: Any, answer: Any, team: Kind) -> str:
     return get_shell_type(db, bot, bot.user_id) if bot is not None else ""
 
 
+def _has_native_knowledge(db: Any, task: Any, operation: WebAnswerOperation) -> bool:
+    """Select the native KB feature without taking over unrelated runtimes."""
+    from app.services.chat.selected_knowledge import (
+        build_inherited_selected_knowledge_refs,
+    )
+    from app.services.context import context_service
+
+    ids = {
+        int(ref.knowledge_base_id)
+        for ref in build_inherited_selected_knowledge_refs(db, task, operation.actor_id)
+        if ref.provider == "wegent"
+    }
+    for context in context_service.get_by_subtask(db, operation.user_subtask_id or 0):
+        data = context.type_data or {}
+        if context.context_type == "knowledge_base":
+            ids.add(data.get("knowledge_id"))
+        elif context.context_type == "selected_documents":
+            ids.add(data.get("knowledge_base_id"))
+    ids.discard(None)
+    if not ids:
+        return False
+    return any(
+        not (kb.json or {}).get("spec", {}).get("source")
+        for kb in db.query(Kind)
+        .filter(Kind.id.in_(ids), Kind.kind == "KnowledgeBase", Kind.is_active)
+        .all()
+    )
+
+
 def _prepare(operation: WebAnswerOperation) -> dict | None:
     """Select only persisted native Web Chat; capture identity before preparation."""
     from app.api.ws.chat_namespace import _detach_retry_dispatch_objects
@@ -84,9 +113,15 @@ def _prepare(operation: WebAnswerOperation) -> dict | None:
         ):
             return None
         if operation.action == "retry":
-            return {"selected": True}
+            return {"selected": True} if answer.answer_generation_id else None
         if operation.action == "cancel":
-            return {"generation_id": answer.answer_generation_id}
+            return (
+                {"generation_id": answer.answer_generation_id}
+                if answer.answer_generation_id
+                else None
+            )
+        if not _has_native_knowledge(db, task, operation):
+            return None
         if answer.status != SubtaskStatus.PENDING or answer.answer_generation_id:
             raise HTTPException(409, "Answer attempt is no longer pending")
         user_turn = subtask_store.get_basic_by_id(

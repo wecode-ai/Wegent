@@ -48,6 +48,7 @@ def context(monkeypatch):
     monkeypatch.setattr(runtime.task_access_store, "get_task", lambda *a, **k: task)
     monkeypatch.setattr(runtime.task_access_store, "is_member", lambda *a, **k: True)
     monkeypatch.setattr(runtime, "_selected_shell", lambda *a: "Chat")
+    monkeypatch.setattr(runtime, "_has_native_knowledge", lambda *a: True)
     db.get.side_effect = lambda model, key: SimpleNamespace(id=key)
     monkeypatch.setattr(
         runtime.subtask_store, "update_fields_if_attempt", lambda *a, **k: True
@@ -72,6 +73,79 @@ def test_start_captures_server_identity_before_async_preparation(context):
 def test_disabled_deep_thinking_reaches_the_existing_trigger(context):
     prepared = runtime._prepare(operation(options={"enable_deep_thinking": False}))
     assert prepared["enable_deep_thinking"] is False
+
+
+def test_turn_without_native_knowledge_keeps_existing_runtime(context, monkeypatch):
+    monkeypatch.setattr(runtime, "_has_native_knowledge", lambda *a: False)
+    assert runtime._prepare(operation()) is None
+    context[0].commit.assert_not_called()
+
+
+@pytest.mark.parametrize("action", ["cancel", "retry"])
+def test_control_does_not_take_over_an_unaccepted_runtime(context, action):
+    assert runtime._prepare(operation().model_copy(update={"action": action})) is None
+    context[0].commit.assert_not_called()
+
+
+@pytest.mark.parametrize("action", ["cancel", "retry"])
+def test_control_keeps_accepted_attempt_after_knowledge_selection_changes(
+    context, monkeypatch, action
+):
+    context[2].answer_generation_id = "a" * 32
+    monkeypatch.setattr(runtime, "_has_native_knowledge", lambda *a: False)
+    prepared = runtime._prepare(operation().model_copy(update={"action": action}))
+    assert prepared is not None
+    if action == "cancel":
+        assert prepared["generation_id"] == "a" * 32
+
+
+@pytest.mark.parametrize(
+    "source", ["context", "selected_documents", "task", "scopes", "agent_default"]
+)
+@pytest.mark.parametrize("external", [False, True])
+def test_native_knowledge_selection_uses_persisted_context_and_bindings(
+    monkeypatch, source, external
+):
+    from app.services.chat import selected_knowledge, task_default_knowledge_bases
+    from app.services.context import context_service
+
+    db = MagicMock()
+    spec = {}
+    if source in ("task", "scopes"):
+        spec["knowledgeBaseRefs" if source == "task" else "knowledgeBaseScopes"] = [
+            {"id": 3}
+        ]
+    task = SimpleNamespace(id=9, json={"spec": spec})
+    contexts = []
+    if source in ("context", "selected_documents"):
+        contexts = [
+            SimpleNamespace(
+                context_type="knowledge_base" if source == "context" else source,
+                type_data={
+                    "knowledge_id" if source == "context" else "knowledge_base_id": 3
+                },
+            )
+        ]
+    monkeypatch.setattr(context_service, "get_by_subtask", lambda *a: contexts)
+    monkeypatch.setattr(
+        task_default_knowledge_bases,
+        "resolve_task_default_knowledge_base_ids",
+        lambda *a: [3] if source == "agent_default" else [],
+    )
+    monkeypatch.setattr(
+        selected_knowledge,
+        "_build_wegent_refs_for_ids",
+        lambda db, task, ids: [
+            selected_knowledge.SelectedKnowledgeRef("wegent", str(kb_id), "test")
+            for kb_id in ids
+        ],
+    )
+    db.query.return_value.filter.return_value.all.return_value = [
+        SimpleNamespace(
+            json={"spec": {"source": {"type": "external"} if external else None}}
+        )
+    ]
+    assert runtime._has_native_knowledge(db, task, operation()) is (not external)
 
 
 @pytest.mark.asyncio
