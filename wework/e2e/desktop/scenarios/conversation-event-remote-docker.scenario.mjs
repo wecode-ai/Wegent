@@ -389,9 +389,12 @@ export function createDesktopScenario(options) {
             visible: false,
           })
           await assertRecoveredUi(control)
-          await control.command('waitFor', '[data-testid="connection-event-message"]', {
-            text: `${MARKER}_${phase}`,
-          })
+          const deliveryNote = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="connection-event-message"]`
+          await control.command('waitFor', deliveryNote, { text: '发布文档' })
+          const deliveryText = await control.command('getText', deliveryNote)
+          assert.match(deliveryText, /发布文档/)
+          assert.doesNotMatch(deliveryText, /Wework connection event delivery|"events"\s*:/)
+          assert.doesNotMatch(deliveryText, new RegExp(MARKER))
           await captureScreenshot(control, `remote-event-${phase}-continued.png`)
           const completedRequests = modelRequests
           const dedupeDeadline = Date.now() + 17000
