@@ -3981,17 +3981,21 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await captureVerificationScreenshot(control, 'file-panel-anchor-01-before-open.png')
 
       await control.command('click', filePanelLinkSelector)
-      const activeLinkedFileTabSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid^="right-workspace-file-tab-"][role="tab"][aria-selected="true"]`
+      const linkedFileWorkspaceSelector = '[data-workspace-tab-content][aria-hidden="false"]'
+      const activeLinkedFileTabSelector = `${linkedFileWorkspaceSelector} [data-testid^="right-workspace-file-tab-"][role="tab"][aria-selected="true"]`
       await control.command('waitFor', activeLinkedFileTabSelector, {
         text: FILE_PANEL_LINK_NAME,
+        visible: true,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       const linkedFileTabId = await control.command('getAttribute', activeLinkedFileTabSelector, {
         value: 'data-testid',
+        text: FILE_PANEL_LINK_NAME,
+        visible: true,
       })
       assert.ok(linkedFileTabId, 'The linked file did not activate its workspace tab')
-      const linkedFileTabSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid=${JSON.stringify(linkedFileTabId)}]`
-      const linkedFileTabCloseSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid=${JSON.stringify(`${linkedFileTabId}-close-button`)}]`
+      const linkedFileTabSelector = `${linkedFileWorkspaceSelector} [data-testid=${JSON.stringify(linkedFileTabId)}]`
+      const linkedFileTabCloseSelector = `${linkedFileWorkspaceSelector} [data-testid=${JSON.stringify(`${linkedFileTabId}-close-button`)}]`
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
         join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
@@ -4057,7 +4061,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         snapshot => !snapshot.testIds.includes(linkedFileTabId),
         'The file panel remained open after the anchor regression check',
         DEFAULT_STEP_TIMEOUT_MS,
-        ACTIVE_WORKBENCH_SELECTOR
+        linkedFileWorkspaceSelector
       )
       await control.command('finishAnimations', 'body')
       const filePanelScrollerAfterClose = await waitForElementWidth(
