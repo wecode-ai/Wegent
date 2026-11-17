@@ -857,7 +857,9 @@ async def create_task_and_subtasks(
     if assistant_subtask:
         db.refresh(assistant_subtask)
 
-    schedule_chat_memory_save(db, task, user_subtask, user, team, existing_subtasks)
+    schedule_chat_memory_save(
+        db, task, user_subtask, user, team, session.memory_history
+    )
 
     # Initialize Redis chat history from existing subtasks if needed
     if existing_subtasks:
@@ -882,7 +884,7 @@ def schedule_chat_memory_save(
     user_subtask: Subtask,
     user: User,
     team: Kind,
-    existing_subtasks: list[Subtask],
+    memory_history: list[Subtask],
 ) -> None:
     """Schedule the existing long-term memory write for a committed user message."""
     # Store user message in long-term memory (fire-and-forget)
@@ -917,7 +919,7 @@ def schedule_chat_memory_save(
             # Build context messages using shared utility
             context_messages = build_context_messages(
                 db=db,
-                existing_subtasks=session.memory_history,
+                existing_subtasks=memory_history,
                 current_message=user_subtask.prompt,
                 current_user=user,
                 is_group_chat=is_group_chat,

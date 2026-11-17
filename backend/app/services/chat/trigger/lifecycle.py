@@ -382,7 +382,7 @@ def prepare_execution_session(
                     task_id=task.id,
                     user_id=subtask_user_id,
                     current_task=task,
-                    limit=min(50, max(0, settings.MEMORY_CONTEXT_MESSAGES - 1)),
+                    limit=settings.MEMORY_CONTEXT_MESSAGES - 1,
                     statuses=(SubtaskStatus.COMPLETED,),
                     roles=(SubtaskRole.USER, SubtaskRole.ASSISTANT),
                 )
