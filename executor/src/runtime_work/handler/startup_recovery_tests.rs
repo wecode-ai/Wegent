@@ -41,6 +41,42 @@ fn fixture() -> (tempfile::TempDir, RuntimeWorkRpcHandler, Value) {
     (root, handler, payload)
 }
 
+#[test]
+fn interrupted_start_recovery_requires_an_exact_async_request_identity() {
+    let (_root, handler, _) = fixture();
+    let mut link = handler.local_task_link("failed-issue").unwrap();
+    assert!(handler.has_recoverable_session_start(&link));
+    for status in ["active", "queued", "cancelled"] {
+        link.status = status.into();
+        assert!(!handler.has_recoverable_session_start(&link));
+    }
+    link.local_task_id = "assistant-request-a".into();
+    link.runtime_handle["origin"] = json!({"type":"issue_dispatch","initiatedBy":"stand_in",
+        "userId":7,"deviceId":"mac","runtimeTaskId":"assistant-request-a","assistantRequestId":"a",
+        "assistantRequest":{"requestId":"a","ownerUserId":7,"deviceId":"mac","conversationId":"assistant-request-a"}});
+    for status in ["active", "queued", "cancelled"] {
+        link.status = status.into();
+        assert!(handler.has_recoverable_session_start(&link));
+    }
+    let origin = link.runtime_handle["origin"].clone();
+    for (field, invalid) in [
+        ("type", json!("stand_in_identity")),
+        ("initiatedBy", json!("someone_else")),
+        ("assistantRequestId", json!("b")),
+        ("userId", json!(8)),
+        ("deviceId", json!("other-device")),
+        ("runtimeTaskId", json!("assistant-request-b")),
+        ("assistantRequest", Value::Null),
+    ] {
+        link.runtime_handle["origin"] = origin.clone();
+        link.runtime_handle["origin"][field] = invalid;
+        assert!(!handler.has_recoverable_session_start(&link), "{field}");
+    }
+    link.runtime_handle["origin"] = origin;
+    link.thread_id = Some("existing-session".into());
+    assert!(!handler.has_recoverable_session_start(&link));
+}
+
 #[tokio::test]
 async fn asynchronous_startup_error_survives_restart_without_credentials() {
     let (root, mut handler, payload) = fixture();

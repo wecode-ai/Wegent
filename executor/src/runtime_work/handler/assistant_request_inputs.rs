@@ -26,45 +26,6 @@ fn persisted_input(payload: &Value) -> Value {
     persisted
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn persistence_redacts_configuration_and_preserves_opaque_input_and_model_limits() {
-        let source = json!({"executionRequest":{
-            "auth_token":"SYNTHETIC_AUTH","model_config":{"api_key":"SYNTHETIC_KEY","max_output_tokens":4096,"max_tokens":"SYNTHETIC_INVALID_LIMIT"},
-            "mcp_servers":[{"headers":{"X-Auth":"SYNTHETIC_HEADER"},"env":{"CUSTOM_ACCESS":"SYNTHETIC_ENV"}}],
-            "prompt":[{"type":"text","text":"A business payload","headers":{"sample":"business data"},"env":{"mode":"example"}}],
-            "history":[{"role":"user","content":{"headers":{"sample":"business history"}}}]},
-            "modelSelection":{"options":{"weworkCloudModelMaxOutputTokens":"4096"}},
-            "userMessagePresentation":{"content":"Business input","metadata":{"env":{"mode":"example"}}}});
-        let saved = persisted_input(&source);
-        assert!(!saved.to_string().contains("SYNTHETIC_"));
-        assert_eq!(
-            saved["executionRequest"]["prompt"],
-            source["executionRequest"]["prompt"]
-        );
-        assert_eq!(
-            saved["executionRequest"]["history"],
-            source["executionRequest"]["history"]
-        );
-        assert_eq!(
-            saved["userMessagePresentation"],
-            source["userMessagePresentation"]
-        );
-        assert_eq!(
-            saved["executionRequest"]["model_config"]["max_output_tokens"],
-            4096
-        );
-        assert_eq!(
-            saved["modelSelection"]["options"]["weworkCloudModelMaxOutputTokens"],
-            "4096"
-        );
-        assert_eq!(saved["assistantInputRequiresCredentials"], true);
-    }
-}
-
 impl RuntimeWorkRpcHandler {
     pub(super) async fn submit_native_assistant_followup(
         &self,
@@ -248,5 +209,44 @@ impl RuntimeWorkRpcHandler {
                 inputs.remove(client_id);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persistence_redacts_configuration_and_preserves_opaque_input_and_model_limits() {
+        let source = json!({"executionRequest":{
+            "auth_token":"SYNTHETIC_AUTH","model_config":{"api_key":"SYNTHETIC_KEY","max_output_tokens":4096,"max_tokens":"SYNTHETIC_INVALID_LIMIT"},
+            "mcp_servers":[{"headers":{"X-Auth":"SYNTHETIC_HEADER"},"env":{"CUSTOM_ACCESS":"SYNTHETIC_ENV"}}],
+            "prompt":[{"type":"text","text":"A business payload","headers":{"sample":"business data"},"env":{"mode":"example"}}],
+            "history":[{"role":"user","content":{"headers":{"sample":"business history"}}}]},
+            "modelSelection":{"options":{"weworkCloudModelMaxOutputTokens":"4096"}},
+            "userMessagePresentation":{"content":"Business input","metadata":{"env":{"mode":"example"}}}});
+        let saved = persisted_input(&source);
+        assert!(!saved.to_string().contains("SYNTHETIC_"));
+        assert_eq!(
+            saved["executionRequest"]["prompt"],
+            source["executionRequest"]["prompt"]
+        );
+        assert_eq!(
+            saved["executionRequest"]["history"],
+            source["executionRequest"]["history"]
+        );
+        assert_eq!(
+            saved["userMessagePresentation"],
+            source["userMessagePresentation"]
+        );
+        assert_eq!(
+            saved["executionRequest"]["model_config"]["max_output_tokens"],
+            4096
+        );
+        assert_eq!(
+            saved["modelSelection"]["options"]["weworkCloudModelMaxOutputTokens"],
+            "4096"
+        );
+        assert_eq!(saved["assistantInputRequiresCredentials"], true);
     }
 }

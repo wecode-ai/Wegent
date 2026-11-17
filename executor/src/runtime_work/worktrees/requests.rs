@@ -160,11 +160,13 @@ impl WorktreeManager {
         self.prepare_with_path(
             source,
             task_id,
-            Some(base_revision),
-            false,
-            Some(path),
-            Some(repository_fingerprint),
-            Some(owner),
+            WorktreePreparation {
+                git_ref: Some(base_revision),
+                permanent: false,
+                path,
+                repo_root_fingerprint: Some(repository_fingerprint),
+                request: Some(owner),
+            },
         )
     }
 

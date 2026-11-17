@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import logging
 from io import StringIO
 from pathlib import Path
 
@@ -60,11 +61,16 @@ def test_mysql_payload_widening_and_rollback_preserve_accepted_data():
 
 
 def test_real_alembic_upgrade_head_and_downgrade_preserve_large_history(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, caplog
 ):
+    logger = logging.getLogger(__name__)
     url = f"sqlite:///{(tmp_path / 'assistant-requests.sqlite').as_posix()}"
     monkeypatch.setattr(settings, "DATABASE_URL", url)
-    config = Config("alembic.ini")
+    backend = Path(__file__).resolve().parents[2]
+    config = Config(str(backend / "alembic.ini"))
+    config.set_main_option("script_location", str(backend / "alembic"))
+    # Programmatic migrations must preserve the test runner's logging state.
+    config.config_file_name = None
     engine = sa.create_engine(url)
     with engine.begin() as connection:
         connection.execute(sa.text("CREATE TABLE alembic_version (version_num TEXT)"))
@@ -100,3 +106,5 @@ def test_real_alembic_upgrade_head_and_downgrade_preserve_large_history(
             connection.scalar(sa.text("SELECT * FROM loop_item_executions")) == payload
         )
     engine.dispose()
+    logger.warning("Application logging remains available after programmatic migration")
+    assert "Application logging remains available" in caplog.text

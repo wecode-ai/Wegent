@@ -240,19 +240,8 @@ impl RuntimeWorkRpcHandler {
             AppIpcError::new("worktree_request_invalid", "Missing request worktree owner")
         })?;
         if link.runtime_handle["assistantMergePrepared"] != request["executionId"] {
-            let manager = self.worktrees.clone();
-            let path = PathBuf::from(&link.workspace_path);
-            let candidate_owner = owner.clone();
-            self.prepare_and_report_assistant_merge(
-                config,
-                issue,
-                request,
-                None,
-                manager,
-                path,
-                candidate_owner,
-            )
-            .await?;
+            self.prepare_and_report_assistant_merge(config, issue, request, None, &link, &owner)
+                .await?;
             self.store.update_task(task, |link| {
                 link.runtime_handle["assistantMergePrepared"] = request["executionId"].clone();
             });
@@ -274,9 +263,8 @@ impl RuntimeWorkRpcHandler {
                         issue,
                         request,
                         command["id"].as_str(),
-                        self.worktrees.clone(),
-                        PathBuf::from(&link.workspace_path),
-                        owner.clone(),
+                        &link,
+                        &owner,
                     )
                     .await?
                 }
@@ -292,10 +280,12 @@ impl RuntimeWorkRpcHandler {
         issue: &Value,
         request: &Value,
         command: Option<&str>,
-        manager: WorktreeManager,
-        path: PathBuf,
-        owner: crate::runtime_work::worktrees::RequestWorktreeOwner,
+        link: &RuntimeTaskLink,
+        owner: &crate::runtime_work::worktrees::RequestWorktreeOwner,
     ) -> Result<(), AppIpcError> {
+        let manager = self.worktrees.clone();
+        let path = PathBuf::from(&link.workspace_path);
+        let owner = owner.clone();
         let outcome =
             tokio::task::spawn_blocking(move || manager.prepare_request_merge(&path, &owner, None))
                 .await

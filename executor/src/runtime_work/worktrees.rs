@@ -111,6 +111,14 @@ pub(crate) struct WorktreePlan {
     pub base_revision: String,
 }
 
+struct WorktreePreparation<'a> {
+    git_ref: Option<&'a str>,
+    permanent: bool,
+    path: &'a Path,
+    repo_root_fingerprint: Option<&'a str>,
+    request: Option<&'a RequestWorktreeOwner>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct WorktreeReconciliation {
     pub record: ManagedWorktree,
@@ -474,11 +482,13 @@ impl WorktreeManager {
         self.prepare_with_path(
             source_path,
             worktree_id,
-            Some(&plan.base_revision),
-            permanent,
-            Some(&plan.path),
-            Some(&plan.repo_root_fingerprint),
-            None,
+            WorktreePreparation {
+                git_ref: Some(&plan.base_revision),
+                permanent,
+                path: &plan.path,
+                repo_root_fingerprint: Some(&plan.repo_root_fingerprint),
+                request: None,
+            },
         )
     }
 
@@ -493,11 +503,13 @@ impl WorktreeManager {
         self.prepare_with_path(
             source_path,
             worktree_id,
-            git_ref,
-            permanent,
-            Some(planned_path),
-            None,
-            None,
+            WorktreePreparation {
+                git_ref,
+                permanent,
+                path: planned_path,
+                repo_root_fingerprint: None,
+                request: None,
+            },
         )
     }
 
@@ -513,11 +525,13 @@ impl WorktreeManager {
         self.prepare_with_path(
             source_path,
             worktree_id,
-            git_ref,
-            permanent,
-            Some(planned_path),
-            Some(repo_root_fingerprint),
-            None,
+            WorktreePreparation {
+                git_ref,
+                permanent,
+                path: planned_path,
+                repo_root_fingerprint: Some(repo_root_fingerprint),
+                request: None,
+            },
         )
     }
 
@@ -525,16 +539,16 @@ impl WorktreeManager {
         &self,
         source_path: &Path,
         worktree_id: &str,
-        git_ref: Option<&str>,
-        permanent: bool,
-        planned_path: Option<&Path>,
-        expected_repo_root_fingerprint: Option<&str>,
-        request: Option<&RequestWorktreeOwner>,
+        preparation: WorktreePreparation<'_>,
     ) -> Result<ManagedWorktree, String> {
         self.ensure_persistent_storage_verified()?;
-        let planned_path = planned_path.ok_or_else(|| {
-            "worktree_target_conflict: Planned worktree path is required".to_owned()
-        })?;
+        let WorktreePreparation {
+            git_ref,
+            permanent,
+            path: planned_path,
+            repo_root_fingerprint: expected_repo_root_fingerprint,
+            request,
+        } = preparation;
         let worktree_lock = self.worktree_lock(planned_path)?;
         let _worktree_guard = measure_stage(worktree_id, "prepare_worktree_lock", || {
             worktree_lock

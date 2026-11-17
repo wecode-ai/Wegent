@@ -1086,9 +1086,10 @@ impl RuntimeWorkRpcHandler {
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
         if owner_input && request_user_input_response(&payload).is_none() {
-            if let Some(link) = self.local_task_link(&local_task_id).filter(|link| {
-                link.runtime_handle["origin"]["assistantRequestId"].is_string()
-            }) {
+            if let Some(link) = self
+                .local_task_link(&local_task_id)
+                .filter(|link| link.runtime_handle["origin"]["assistantRequestId"].is_string())
+            {
                 return self.submit_native_assistant_followup(payload, &link).await;
             }
         }

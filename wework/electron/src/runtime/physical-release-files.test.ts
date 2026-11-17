@@ -1,13 +1,23 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { Header, create } from 'tar'
+import { promisify } from 'node:util'
+import { Header } from 'tar'
 import { afterEach, expect, test } from 'vitest'
 import { extractPhysicalRelease } from './physical-release-files.js'
 
+const require = createRequire(import.meta.url)
+// Fixtures and assertions address physical archive bytes in both Node and Electron.
+const physicalFs: typeof import('node:fs/promises') = require(
+  process.versions.electron ? 'original-fs' : 'node:fs'
+).promises
 const roots: string[] = []
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
+  await Promise.all(
+    roots.splice(0).map(root => physicalFs.rm(root, { recursive: true, force: true }))
+  )
 })
 
 async function fixture() {
@@ -26,12 +36,23 @@ test('extracts physical ASAR files and paths beyond Windows MAX_PATH', async () 
   await mkdir(join(source, 'resources'))
   await writeFile(join(source, deep), 'runtime module')
   await writeFile(join(source, 'resources/app.asar'), 'physical ASAR bytes')
-  await create({ cwd: source, file: archive, gzip: true }, ['.'])
+  // Keep the test host's ASAR support intact while the fixture packer reads raw bytes.
+  await promisify(execFile)(
+    process.execPath,
+    [
+      '--input-type=commonjs',
+      '--eval',
+      `process.noAsar = true; require(${JSON.stringify(require.resolve('tar'))}).create({
+        cwd: ${JSON.stringify(source)}, file: ${JSON.stringify(archive)}, gzip: true
+      }, ['.']).catch(error => { console.error(error); process.exitCode = 1 })`,
+    ],
+    { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 30_000 }
+  )
 
   await extractPhysicalRelease(archive, destination)
 
   expect(await readFile(join(destination, deep), 'utf8')).toBe('runtime module')
-  expect(await readFile(join(destination, 'resources/app.asar'), 'utf8')).toBe(
+  expect(await physicalFs.readFile(join(destination, 'resources/app.asar'), 'utf8')).toBe(
     'physical ASAR bytes'
   )
 })
