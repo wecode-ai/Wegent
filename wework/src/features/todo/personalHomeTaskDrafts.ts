@@ -1,6 +1,5 @@
 import type { CollaborationIssue } from '@wegent/collaboration'
 import type { Attachment } from '@wegent/chat-core/runtime'
-import { useState } from 'react'
 
 /** The collaboration host owns unfinished starts across page navigation. */
 export interface PersonalHomeTaskDraft {
@@ -16,23 +15,25 @@ export interface PersonalHomeTaskDraft {
 
 export type PersonalHomeTaskDrafts = Map<string, PersonalHomeTaskDraft>
 
-export function usePersonalHomeTaskDrafts(
-  scope: string,
-  sources: readonly unknown[]
-): PersonalHomeTaskDrafts {
-  const [cache, setCache] = useState(() => ({
-    scope,
-    sources,
-    drafts: new Map() as PersonalHomeTaskDrafts,
-  }))
-  if (
-    cache.scope !== scope ||
-    cache.sources.length !== sources.length ||
-    cache.sources.some((source, index) => source !== sources[index])
-  ) {
-    const next = { scope, sources, drafts: new Map() as PersonalHomeTaskDrafts }
-    setCache(next)
-    return next.drafts
+export interface PersonalHomeTaskDraftStore {
+  get(scope: string, sources: readonly unknown[]): PersonalHomeTaskDrafts
+}
+
+/** The workbench owns drafts; account and service changes discard the old scope. */
+export function createPersonalHomeTaskDraftStore(): PersonalHomeTaskDraftStore {
+  let cache:
+    | { scope: string; sources: readonly unknown[]; drafts: PersonalHomeTaskDrafts }
+    | undefined
+  return {
+    get(scope, sources) {
+      if (
+        !cache ||
+        cache.scope !== scope ||
+        cache.sources.length !== sources.length ||
+        cache.sources.some((source, index) => source !== sources[index])
+      )
+        cache = { scope, sources: [...sources], drafts: new Map() }
+      return cache.drafts
+    },
   }
-  return cache.drafts
 }

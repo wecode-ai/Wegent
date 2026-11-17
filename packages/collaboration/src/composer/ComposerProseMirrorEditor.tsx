@@ -212,6 +212,7 @@ export const ComposerProseMirrorEditor = forwardRef<
         }
         pendingFocusRef.current = false;
         view.focus();
+        view.dispatch(view.state.tr.scrollIntoView());
       },
       getSnapshot() {
         return viewRef.current
@@ -264,7 +265,14 @@ export const ComposerProseMirrorEditor = forwardRef<
           valueLength: value.length,
           selectionEnd: selectionOffset,
         });
-        replaceComposerValue(view, value, selectionOffset, false, true);
+        // A background reset must not pull the active pane back to this editor.
+        replaceComposerValue(
+          view,
+          value,
+          selectionOffset,
+          false,
+          view.hasFocus(),
+        );
       },
     }),
     [],
@@ -776,7 +784,10 @@ export const ComposerProseMirrorEditor = forwardRef<
     const viewport = mountRef.current;
     const content = viewRef.current?.dom;
     if (!props.scrollContainerClassName || !viewport || !content) return;
-    return observeComposerScrollFade(viewport, content);
+    return observeComposerScrollFade(viewport, content, () => {
+      const view = viewRef.current;
+      if (view?.hasFocus()) view.dispatch(view.state.tr.scrollIntoView());
+    });
   }, [props.scrollContainerClassName]);
 
   useEffect(() => {

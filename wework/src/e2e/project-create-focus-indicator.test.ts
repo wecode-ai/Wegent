@@ -22,6 +22,11 @@ function metrics(outline = 'rgb(37, 99, 235)', row = 'rgb(245, 245, 245)') {
 test.each([
   ['light', 'rgb(37, 99, 235)', 'rgb(245, 245, 245)'],
   ['dark', 'rgb(51, 156, 255)', 'rgb(35, 35, 35)'],
+  [
+    'computed color-mix',
+    'color(srgb 0.136471 0.33098 0.757647)',
+    'color(srgb 0.960784 0.960784 0.960784)',
+  ],
 ])('accepts an opaque inset indicator on the %s focused row', (_theme, outline, row) => {
   expect(() =>
     assertFocusIndicatorMetrics(metrics(outline, row), { checkClipping: true })
@@ -35,6 +40,13 @@ test('rejects the observed missing outline and low-contrast DSH fallback', () =>
 
 test('rejects a translucent focus outline', () => {
   expect(() => assertFocusIndicatorMetrics(metrics('rgba(37, 99, 235, 0.3)'))).toThrow(/opaque/)
+  expect(() => assertFocusIndicatorMetrics(metrics('color(srgb 0.1 0.3 0.7 / 0.3)'))).toThrow(
+    /opaque/
+  )
+})
+
+test('keeps the contrast threshold for normalized sRGB colors', () => {
+  expect(() => assertFocusIndicatorMetrics(metrics('color(srgb 0.48 0.67 1)'))).toThrow(/below 3:1/)
 })
 
 test('includes the row background when checking an inset outline', () => {

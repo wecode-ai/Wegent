@@ -7,7 +7,8 @@ import i18n from '@/i18n'
 
 interface DshLocaleService {
   getSnapshot(): { active: string }
-  setLocale(language: 'en' | 'zh'): void
+  setLocale(locale: string): void
+  subscribe(listener: () => void): () => void
 }
 
 export function DshClientContextProvider({
@@ -19,23 +20,36 @@ export function DshClientContextProvider({
 }) {
   useEffect(() => {
     if (!context) return
-    const synchronize = (language: string) => {
-      try {
-        const locale = context.get('locale') as DshLocaleService | undefined
-        if (!locale) return
-        // DSH's Chinese catalog is `zh`; Wework's interface preference is `zh-CN`.
-        const target = language.toLowerCase().startsWith('en') ? 'en' : 'zh'
-        if (locale.getSnapshot().active !== target) locale.setLocale(target)
-      } catch (error) {
-        console.error('[Wework] Failed to synchronize DSH interface language:', error)
-      }
-    }
-    i18n.on('languageChanged', synchronize)
-    synchronize(i18n.resolvedLanguage ?? i18n.language)
+    let disposed = false
+    let stopSync = () => {}
+    const binding = context.inject(['locale'], owner => {
+      const locale = owner.get('locale') as DshLocaleService
+      owner.effect(() => {
+        // Wework owns the preference; official DSH components keep their dictionaries.
+        const sync = () => {
+          if (disposed) return
+          try {
+            const language = (i18n.resolvedLanguage || i18n.language).startsWith('zh') ? 'zh' : 'en'
+            if (locale.getSnapshot().active !== language) locale.setLocale(language)
+          } catch (error) {
+            console.error('[Wework] Failed to synchronize DSH interface language:', error)
+          }
+        }
+        const unsubscribe = locale.subscribe(sync)
+        i18n.on('languageChanged', sync)
+        sync()
+        stopSync = () => {
+          unsubscribe()
+          i18n.off('languageChanged', sync)
+        }
+        return stopSync
+      }, 'wework: synchronize official UI language')
+    })
     return () => {
-      i18n.off('languageChanged', synchronize)
+      disposed = true
+      stopSync()
+      void binding.dispose()
     }
   }, [context])
-
   return <DshClientContext.Provider value={context}>{children}</DshClientContext.Provider>
 }

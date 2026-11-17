@@ -1,5 +1,7 @@
 import { IssueCommentChildAction } from '@wegent/collaboration'
 import { IssueManagerEvent } from './IssueManagerEvent'
+import { IssueReplyContext } from './IssueReplyContext'
+import { issueReplyCopy, type IssueReplyContextKind } from './issueReplyCopy'
 import { IssueHumanRequests } from './IssueHumanRequests'
 import { IssueAssignmentEvent } from './IssueAssignmentEvent'
 import {
@@ -460,7 +462,6 @@ export function TaskActivityView({
     () => messages.filter(message => message.taskId === task.id),
     [messages, task]
   )
-  const requestedTaskBindingAddresses = useRef(new Set<string>())
   const commentCards = useMemo<IssueActivityThreadModel<ProjectChatMessage>[]>(
     () =>
       issueTimeline
@@ -468,6 +469,7 @@ export function TaskActivityView({
         : groupIssueActivityThreads(threadMessages),
     [issueTimeline, threadMessages]
   )
+  const requestedTaskBindingAddresses = useRef(new Set<string>())
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
   const {
     text: newCommentDraft,
@@ -529,6 +531,15 @@ export function TaskActivityView({
   }
   const replyHumanDispatch =
     replyTarget && onStartHumanTaskFromReply ? humanDispatchForCard(replyTarget) : null
+  const replySessionAddress =
+    replyTarget && !replyHumanDispatch ? boundCardSessionAddress(replyTarget, taskBindings) : null
+  const replyContextKind: IssueReplyContextKind = replyHumanDispatch
+    ? 'human'
+    : replyTarget && isPublicStandInMessage(replyTarget.root)
+      ? 'stand-in'
+      : replySessionAddress
+        ? 'execution'
+        : 'discussion'
   // The code workspace the assigned robot is bound to. Only a rebound backend
   // project can be selected here; a legacy record that still needs rebinding
   // and a device-owned workspace carry no selectable project.
@@ -1350,53 +1361,18 @@ export function TaskActivityView({
                 : {})}
             >
               {replyTarget ? (
-                <div className="task-detail-comment-reply-context mx-3 border-b border-border/60 px-1 text-xs text-text-secondary">
-                  <div className="task-detail-comment-reply-context-row flex min-h-8 items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate">
-                      {t(
-                        replyHumanDispatch
-                          ? 'workbench.task_activity_replying_to_human'
-                          : isPublicStandInMessage(replyTarget.root)
-                            ? 'workbench.task_activity_replying_to_stand_in'
-                            : cardHasExecution(replyTarget)
-                              ? 'workbench.task_activity_replying_to'
-                              : 'workbench.task_activity_replying_to_discussion',
-                        {
-                          name: replyTarget.root.sender.name,
-                        }
-                      )}
-                      {replyTarget.root.content ? ` · ${replyTarget.root.content}` : ''}
-                    </span>
-                    <button
-                      type="button"
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary"
-                      data-testid="issue-reply-cancel"
-                      aria-label={t('workbench.task_activity_cancel_reply')}
-                      onClick={() => setReplyTarget(null)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                  {replyHumanDispatch ? (
-                    <p
-                      className="min-h-6 pb-1.5 leading-5"
-                      data-testid="issue-reply-starts-task-hint"
-                    >
-                      {t('workbench.task_activity_reply_starts_task', {
-                        title: replyHumanDispatch.taskTitle,
-                      })}
-                    </p>
-                  ) : null}
-                </div>
+                <IssueReplyContext
+                  kind={replyContextKind}
+                  name={replyTarget.root.sender.name}
+                  content={replyTarget.root.content}
+                  taskTitle={replyHumanDispatch?.taskTitle}
+                  onCancel={() => setReplyTarget(null)}
+                />
               ) : null}
               <TaskCommentComposer
                 issueActions={!replyTarget ? commentActions : undefined}
                 assignment={!replyTarget ? commentAssignment : undefined}
-                predictionAddress={
-                  replyTarget && !replyHumanDispatch
-                    ? boundCardSessionAddress(replyTarget, taskBindings)
-                    : null
-                }
+                predictionAddress={replySessionAddress}
                 key={task.id}
                 value={notificationComposer?.draft ?? newCommentDraft}
                 onChange={value => {
@@ -1417,15 +1393,7 @@ export function TaskActivityView({
                 projectWork={commentProjectWork}
                 serverExecution={Boolean(client?.executeTaskComment)}
                 placeholder={
-                  replyTarget
-                    ? t(
-                        isPublicStandInMessage(replyTarget.root)
-                          ? 'workbench.task_activity_stand_in_reply_placeholder'
-                          : cardHasExecution(replyTarget) && !replyHumanDispatch
-                            ? 'workbench.task_activity_inline_placeholder'
-                            : 'workbench.task_activity_discussion_reply_placeholder'
-                      )
-                    : undefined
+                  replyTarget ? t(issueReplyCopy[replyContextKind].placeholder) : undefined
                 }
               />
             </div>
@@ -1652,7 +1620,13 @@ export function TaskActivityView({
                           rootId={rootId}
                           projectId={project.id}
                           disabled={!client}
-                          placeholder={t('workbench.task_activity_inline_placeholder')}
+                          placeholder={t(
+                            issueReplyCopy[
+                              boundCardSessionAddress(card, taskBindings)
+                                ? 'execution'
+                                : 'discussion'
+                            ].placeholder
+                          )}
                           aiError={replyQueue.error(rootId)}
                           mentionCandidates={mentionCandidates}
                           translate={activityTranslate}

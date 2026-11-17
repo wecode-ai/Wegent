@@ -4,7 +4,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act, useState, type ReactNode } from "react";
+import { act, useRef, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -804,8 +804,10 @@ function PlatformHarness({
   projectAgentConfiguration,
   renderProject,
   renderIssueComposer,
+  issueHomeDraft,
   renderStandInPage,
   renderPersonalHome,
+  createIndependentIssue,
   openProjectConversation,
   currentUser,
   workspaceOwnerOptions,
@@ -819,8 +821,10 @@ function PlatformHarness({
   projectTemplateRequest?: CollaborationPlatformHostAdapter["projectTemplateRequest"];
   refreshKey?: string;
   renderIssueComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
+  issueHomeDraft?: CollaborationPlatformHostAdapter["issueHomeDraft"];
   renderStandInPage?: CollaborationPlatformHostAdapter["renderStandInPage"];
   renderPersonalHome?: CollaborationPlatformHostAdapter["renderPersonalHome"];
+  createIndependentIssue?: CollaborationPlatformHostAdapter["createIndependentIssue"];
   openProjectConversation?: CollaborationPlatformHostAdapter["openProjectConversation"];
   currentUser?: CollaborationPlatformHostAdapter["currentUser"];
   api: SharedWorkspaceApi;
@@ -848,8 +852,10 @@ function PlatformHarness({
     projectTemplateRequest,
     cloudAccess,
     renderIssueComposer,
+    issueHomeDraft,
     renderStandInPage,
     renderPersonalHome,
+    createIndependentIssue,
     openProjectConversation,
     currentUser,
     location,
@@ -2144,6 +2150,95 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(api.projects.list).toHaveBeenCalledTimes(2);
   });
 
+  it("closes compact navigation after selecting a destination or pressing Escape", async () => {
+    const { api } = createApi();
+    await render(<PlatformHarness api={api} />);
+    const toggle = byTestId("collaboration-navigation-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const content = document.getElementById(
+      toggle.getAttribute("aria-controls")!,
+    );
+    expect(content).toBe(byTestId("collaboration-navigation-content"));
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    await click(byTestId("collaboration-primary-home"));
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await click(toggle);
+    vi.spyOn(toggle, "getClientRects").mockReturnValue([
+      new DOMRect(0, 0, 200, 44),
+    ] as unknown as DOMRectList);
+    byTestId("collaboration-primary-home").focus();
+    await act(async () =>
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it("pauses hidden home work while compact navigation preserves its draft", async () => {
+    const { api } = createApi();
+    await render(
+      <PlatformHarness
+        api={api}
+        renderPersonalHome={({ contentVisible }) => (
+          <section
+            data-testid="home-visibility"
+            data-active={String(contentVisible)}
+          >
+            <input data-testid="home-draft" defaultValue="Unfinished work" />
+          </section>
+        )}
+      />,
+    );
+    const draft = byTestId("home-draft") as HTMLInputElement;
+    draft.value = "Keep this draft";
+    await click(byTestId("collaboration-navigation-toggle"));
+    expect(byTestId("home-visibility").getAttribute("data-active")).toBe(
+      "false",
+    );
+    expect(byTestId("home-draft")).toBe(draft);
+    await click(byTestId("collaboration-navigation-toggle"));
+    expect(byTestId("home-visibility").getAttribute("data-active")).toBe(
+      "true",
+    );
+    expect(draft.value).toBe("Keep this draft");
+  });
+
+  it("records a Markdown heading as the Issue title without flattening its body", async () => {
+    const { api } = createApi();
+    const content =
+      "# 客户反馈处理流程\n\n本周需要整理反馈。\n\n## 验收结果\n- 保留草稿";
+    await render(
+      <PlatformHarness
+        api={api}
+        currentUser={{ id: 7, name: "李明" }}
+        renderPersonalHome={({ createIssue }) => <>{createIssue}</>}
+        renderIssueComposer={(props) => (
+          <button
+            data-testid="record-markdown"
+            onClick={() => props.onSubmit(content)}
+          >
+            Record
+          </button>
+        )}
+      />,
+    );
+    await click(byTestId("record-markdown"));
+    expect(api.issues.create).toHaveBeenCalledWith(
+      project.id,
+      expect.objectContaining({
+        title: "客户反馈处理流程",
+        description: content,
+      }),
+    );
+  });
+
   it.each([false, true])(
     "shows project load failure and retries all sources from a cached workspace: %s",
     async (insideWorkspace) => {
@@ -2562,6 +2657,35 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(openProjectConversation).not.toHaveBeenCalled();
     expect(api.issues.create).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "starts an independent Issue without a project, empty workspace catalog: %s",
+    async (emptyWorkspaces) => {
+      const { api } = createApi({
+        initialProjects: [],
+        ...(emptyWorkspaces ? { initialWorkspaces: [] } : {}),
+      });
+      const createIndependentIssue = vi.fn();
+      await render(
+        <PlatformHarness
+          api={api}
+          createIndependentIssue={createIndependentIssue}
+        />,
+      );
+      expect(
+        byTestId("collaboration-first-issue-starter").textContent,
+      ).toContain("从第一件事开始");
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-first-project-create"]',
+        ),
+      ).toBeNull();
+      await click(byTestId("collaboration-first-issue-create"));
+      expect(createIndependentIssue).toHaveBeenCalledOnce();
+      expect(api.projects.create).not.toHaveBeenCalled();
+      expect(api.workspaces!.create).not.toHaveBeenCalled();
+    },
+  );
 
   it("starts the first project from collaboration home and preserves its workspace", async () => {
     const { api } = createApi({ initialProjects: [] });
@@ -4494,7 +4618,8 @@ describe("CollaborationPlatformApp real component flow", () => {
       />,
     );
 
-    expect(container.textContent).toContain("导入第一个本地项目");
+    expect(container.textContent).toContain("创建第一个协作项目");
+    expect(container.textContent).not.toContain("选择当前设备上的项目文件夹");
     expect(
       byTestId("collaboration-workspace-starter-create-project").textContent,
     ).toContain("新建项目");
@@ -7630,5 +7755,159 @@ describe("Issue permission separation in the real shared editor", () => {
     await click(byTestId("cloud-todo-create-task"));
     expect(onCreateTask).toHaveBeenCalledOnce();
     titleScrollHeight.mockRestore();
+  });
+  it("preserves a newer host draft when a submission finishes after remount", async () => {
+    const { api } = createApi({ initialProjects: [project] });
+    const pending = deferred<CollaborationIssue>();
+    vi.mocked(api.issues.create).mockReturnValueOnce(pending.promise);
+    function Host() {
+      const [open, setOpen] = useState(true);
+      const [value, setValue] = useState("Original submission");
+      const revision = useRef(0);
+      return (
+        <>
+          <button
+            data-testid="toggle-collaboration"
+            onClick={() => setOpen((current) => !current)}
+          >
+            Settings
+          </button>
+          {open && (
+            <PlatformHarness
+              api={api}
+              issueHomeDraft={{
+                value,
+                projectId: project.id,
+                onSelectProject: vi.fn(),
+                getRevision: () => revision.current,
+                onChange: (next) => {
+                  revision.current += 1;
+                  setValue(next);
+                },
+              }}
+              renderPersonalHome={({ createIssue }) => createIssue}
+              renderIssueComposer={(props) => (
+                <>
+                  <input
+                    data-testid="host-home-draft"
+                    value={props.value}
+                    onChange={(event) => props.onChange(event.target.value)}
+                  />
+                  <button
+                    data-testid="host-home-submit"
+                    onClick={() => void props.onSubmit(props.value)}
+                  >
+                    Record
+                  </button>
+                </>
+              )}
+            />
+          )}
+        </>
+      );
+    }
+    await render(<Host />);
+    await click(byTestId("host-home-submit"));
+    expect(api.issues.create).toHaveBeenCalledOnce();
+    await click(byTestId("toggle-collaboration"));
+    await click(byTestId("toggle-collaboration"));
+    await change(
+      byTestId("host-home-draft") as HTMLInputElement,
+      "New unfinished draft",
+    );
+    await act(async () =>
+      pending.resolve({
+        id: "created",
+        title: "Original submission",
+        status: "inbox",
+        version: 1,
+      } as CollaborationIssue),
+    );
+    expect((byTestId("host-home-draft") as HTMLInputElement).value).toBe(
+      "New unfinished draft",
+    );
+  });
+
+  it("restores the host-owned home draft after the collaboration page unmounts", async () => {
+    const second = {
+      ...project,
+      id: "draft-second",
+      name: "Second draft project",
+    };
+    const { api } = createApi({ initialProjects: [project, second] });
+    function Host() {
+      const [open, setOpen] = useState(true);
+      const [value, setValue] = useState("");
+      const revision = useRef(0);
+      const onChange = (next: string) => {
+        revision.current += 1;
+        setValue(next);
+      };
+      const [projectId, onSelectProject] = useState<string | null>(null);
+      return (
+        <>
+          <button
+            data-testid="toggle-collaboration"
+            onClick={() => setOpen((current) => !current)}
+          >
+            Settings
+          </button>
+          {open ? (
+            <PlatformHarness
+              api={api}
+              issueHomeDraft={{
+                value,
+                onChange,
+                projectId,
+                onSelectProject,
+                getRevision: () => revision.current,
+              }}
+              renderPersonalHome={({ createIssue }) => createIssue}
+              renderIssueComposer={(props) => (
+                <>
+                  <select
+                    data-testid="host-home-project"
+                    value={props.projectId}
+                    onChange={(event) =>
+                      props.onSelectProject(event.target.value)
+                    }
+                  >
+                    {props.projects.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    data-testid="host-home-draft"
+                    value={props.value}
+                    onChange={(event) => props.onChange(event.target.value)}
+                  />
+                </>
+              )}
+            />
+          ) : (
+            <p>Settings</p>
+          )}
+        </>
+      );
+    }
+    await render(<Host />);
+    await change(byTestId("host-home-project") as HTMLSelectElement, second.id);
+    await change(
+      byTestId("host-home-draft") as HTMLInputElement,
+      "Keep the unfinished issue",
+    );
+    await click(byTestId("toggle-collaboration"));
+    expect(
+      container.querySelector('[data-testid="host-home-draft"]'),
+    ).toBeNull();
+    await click(byTestId("toggle-collaboration"));
+    expect((byTestId("host-home-project") as HTMLSelectElement).value).toBe(
+      second.id,
+    );
+    expect((byTestId("host-home-draft") as HTMLInputElement).value).toBe(
+      "Keep the unfinished issue",
+    );
   });
 });
