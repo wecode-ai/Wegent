@@ -164,7 +164,7 @@ Open **bottom-left account menu → Settings**, then select the group and page b
 | Integrations → Browser          | Download directory, browser data and cache                                                                   | `/settings/browser`                     |
 | Coding → Execution environments | Node.js and execution-environment configuration. See [Settings and data](./settings.md)                      | `/settings/execution-environments`      |
 | Coding → Coding tools           | OpenCode, Claude Code, Kimi Code; experimental                                                               | `/settings/harnesses`                   |
-| Coding → Hooks                  | Runtime hook configuration                                                                                   | `/settings/hooks`                       |
+| Coding → Hooks                  | Configure tool and asynchronous lifecycle Hooks; see [settings](./settings.md#hooks-controls) | `/settings/hooks` |
 | Coding → Git hosting            | GitHub / GitLab connections; Git plugin entry in developer mode. See [Git connections](./git-connections.md) | `/settings/git-hosting`                 |
 | Coding → Worktrees              | Worktree location, retention and cleanup; Git plugin entry in developer mode                                 | `/settings/worktrees`                   |
 | Archived → Archived tasks       | Find, restore and delete archived conversations                                                              | `/settings/archived-conversations`      |

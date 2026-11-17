@@ -16,8 +16,8 @@ use super::{
     command::execute_command_hook,
     matcher::matches_tool,
     model::{
-        HookEventName, HookHealth, HookRunStatus, HookRunSummary, HookUser, PostToolUseInput,
-        ResolvedHookPluginView, CODEX_ROLLOUT_SUBSCRIPTION,
+        HookEventName, HookHealth, HookRunStatus, HookRunSummary, HookUser, LifecycleInput,
+        PostToolUseInput, ResolvedHookPluginView, CODEX_ROLLOUT_SUBSCRIPTION,
     },
     registry::HookRegistryStore,
     rollout::CodexRolloutObserver,
@@ -70,13 +70,47 @@ impl HookService {
         &self.registry
     }
 
+    /// Called only by the background lifecycle consumer, never by the agent.
+    pub(super) async fn dispatch_lifecycle(&self, input: LifecycleInput) {
+        for plugin in self.registry.discover() {
+            if !plugin.enabled || plugin.health != HookHealth::Ready {
+                continue;
+            }
+            for hook in plugin.hooks {
+                if hook.event_name != input.hook_event_name
+                    || !matches_tool(&hook.matcher, &input.status)
+                {
+                    continue;
+                }
+                let Ok(_permit) = self.capacity.acquire().await else {
+                    return;
+                };
+                let started = Instant::now();
+                let started_at = now_ms();
+                let outcome =
+                    execute_command_hook(&hook.config, &plugin.directory, &input.cwd, &input).await;
+                let run = summary(
+                    plugin.manifest.id.clone(),
+                    hook.handler_id,
+                    started_at,
+                    started.elapsed(),
+                    outcome,
+                );
+                let _ = self.registry.record_run(run.clone());
+                emit_run_event(&self.event_tx, &run);
+            }
+        }
+    }
+
     pub async fn dispatch(&self, input: PostToolUseInput) {
         for plugin in self.registry.discover() {
             if !dispatches_from_turn_stream(&plugin) {
                 continue;
             }
             for hook in plugin.hooks {
-                if !matches_tool(&hook.matcher, &input.tool_name) {
+                if hook.event_name != HookEventName::PostToolUse
+                    || !matches_tool(&hook.matcher, &input.tool_name)
+                {
                     continue;
                 }
                 let key = format!(
@@ -156,24 +190,62 @@ impl HookService {
             .into_iter()
             .find(|hook| hook.handler_id == handler_id)
             .ok_or("hook handler not found")?;
-        let input = PostToolUseInput {
-            user: HookUser {
-                id: None,
-                name: "anonymous".to_owned(),
-            },
-            session_id: "hook-test-session".to_owned(),
-            turn_id: "hook-test-turn".to_owned(),
-            agent_id: None,
-            agent_type: None,
-            transcript_path: None,
-            cwd: cwd.clone(),
-            hook_event_name: HookEventName::PostToolUse,
-            model: None,
-            permission_mode: "workspace-write".to_owned(),
-            tool_name: "apply_patch".to_owned(),
-            tool_use_id: "hook-test-call".to_owned(),
-            tool_input: serde_json::json!({"changes": []}),
-            tool_response: serde_json::json!({"status":"completed"}),
+        let input = if hook.event_name == HookEventName::PostToolUse {
+            serde_json::to_value(PostToolUseInput {
+                user: HookUser {
+                    id: None,
+                    name: "anonymous".to_owned(),
+                },
+                session_id: "hook-test-session".to_owned(),
+                turn_id: "hook-test-turn".to_owned(),
+                agent_id: None,
+                agent_type: None,
+                transcript_path: None,
+                cwd: cwd.clone(),
+                hook_event_name: HookEventName::PostToolUse,
+                model: None,
+                permission_mode: "workspace-write".to_owned(),
+                tool_name: "apply_patch".to_owned(),
+                tool_use_id: "hook-test-call".to_owned(),
+                tool_input: serde_json::json!({"changes": []}),
+                tool_response: serde_json::json!({"status":"completed"}),
+            })
+            .map_err(|error| error.to_string())?
+        } else {
+            serde_json::to_value(LifecycleInput {
+                schema_version: 1,
+                emitted_at_ms: now_ms(),
+                event_id: format!("test-{}", now_ms()),
+                execution_id: "hook-test-execution".into(),
+                sequence: 0,
+                task_id: None,
+                request_id: None,
+                runtime_task_id: None,
+                device_id: None,
+                runtime: None,
+                executor_version: None,
+                platform: std::env::consts::OS.into(),
+                arch: std::env::consts::ARCH.into(),
+                user: HookUser {
+                    id: None,
+                    name: "anonymous".into(),
+                },
+                cwd: cwd.clone(),
+                session_id: None,
+                turn_id: None,
+                model: None,
+                model_provider: None,
+                permission_mode: "workspace-write".into(),
+                hook_event_name: hook.event_name,
+                status: if hook.event_name == HookEventName::TurnStarted {
+                    "started"
+                } else {
+                    "completed"
+                }
+                .into(),
+                is_test: true,
+            })
+            .map_err(|error| error.to_string())?
         };
         let started = Instant::now();
         let started_at_ms = now_ms();
