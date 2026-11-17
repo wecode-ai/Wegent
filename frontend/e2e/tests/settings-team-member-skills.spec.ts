@@ -9,6 +9,13 @@ import { ADMIN_USER } from '../config/test-users'
 import { DataBuilders } from '../fixtures/data-builders'
 import { createApiClient, type ApiClient } from '../utils/api-client'
 import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
+import { deleteDedicatedBotModel } from '../utils/cleanup-dedicated-bot-model'
+
+interface CreatedBot {
+  id: number
+  name: string
+  namespace: string
+}
 
 interface MemberAgent {
   id: number
@@ -23,7 +30,7 @@ interface MemberSkills {
   api: ApiClient
   agents: MemberAgent[]
   skill: { id: number; name: string }
-  createdBots: number[]
+  createdBots: CreatedBot[]
   prefix: string
 }
 
@@ -42,7 +49,7 @@ const test = base.extend<{ memberSkills: MemberSkills }>({
     const userId = currentUser.data!.id
     const groups: string[] = []
     const agents: MemberAgent[] = []
-    const createdBots: number[] = []
+    const createdBots: CreatedBot[] = []
     let skillId: number | undefined
     const baseURL = process.env.E2E_BASE_URL || 'http://localhost:3000'
     const context = await browser.newContext({
@@ -106,7 +113,7 @@ const test = base.extend<{ memberSkills: MemberSkills }>({
         })
         expect(bot.status, JSON.stringify(bot.data)).toBe(201)
         const botId = (bot.data as { id: number }).id
-        createdBots.push(botId)
+        createdBots.push({ id: botId, name: prefix + '-' + suffix + '-bot', namespace })
         const name = prefix + '-' + suffix + '-agent'
         const team = await api.createTeam({
           name,
@@ -149,12 +156,16 @@ const test = base.extend<{ memberSkills: MemberSkills }>({
           ).status
         ).toBe(200)
       }
-      for (const botId of createdBots)
-        expect((await api.delete('/api/bots/' + botId + '?force=true')).status).toBe(200)
+      for (const bot of createdBots) {
+        expect((await api.delete('/api/bots/' + bot.id + '?force=true')).status).toBe(200)
+        await deleteDedicatedBotModel(api, bot.name, bot.namespace)
+      }
       if (skillId !== undefined)
         expect((await admin.delete('/api/v1/kinds/skills/' + skillId)).status).toBe(204)
-      for (const group of groups)
-        expect([200, 204]).toContain((await admin.deleteGroup(group)).status)
+      for (const group of groups) {
+        const removed = await admin.deleteGroup(group)
+        expect(removed.status, JSON.stringify(removed.data)).toBe(204)
+      }
       expect((await admin.adminDeleteUser(userId)).status).toBe(204)
     }
   },
@@ -244,7 +255,7 @@ test('member edit and same-namespace clones keep group Skill authority and persi
     const cloneResponse = await created
     expect(cloneResponse.status(), await cloneResponse.text()).toBe(201)
     const cloneId = ((await cloneResponse.json()) as { id: number }).id
-    f.createdBots.push(cloneId)
+    f.createdBots.push({ id: cloneId, name: cloneName, namespace: agent.namespace })
     expect(cloneId).not.toBe(agent.botId)
     expect(cloneResponse.request().postDataJSON()).toMatchObject({
       target_group_names: [agent.group],
@@ -329,7 +340,7 @@ for (const failure of ['pending', 'failed'] as const) {
         await drawer.getByTestId('save-button').click()
         const response = await saved
         expect(response.status(), await response.text()).toBe(201)
-        f.createdBots.push(((await response.json()) as { id: number }).id)
+        f.createdBots.push((await response.json()) as CreatedBot)
         await expect(drawer).toBeHidden()
         release()
         // Drain the held abort before removing interception, which resumes pending requests.
