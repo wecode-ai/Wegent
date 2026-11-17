@@ -760,10 +760,31 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 pub(crate) async fn verify_source_resolution(mysql: &impl brz_mysql::Mysql) -> anyhow::Result<()> {
-    let execution = mysql.execute("INSERT INTO loop_item_executions(loop_item_id,cloud_project_id,agent_id,executor_owner_user_id,status,runtime_device_id,runtime_task_id,execution_payload,error_message) VALUES ('timestamp-issue','timestamp-project',NULL,1,'claimed','native-device','native-task','{}','')",()).await?.last_insert_id;
+    let execution = mysql.execute("INSERT INTO loop_item_executions(loop_item_id,cloud_project_id,agent_id,executor_owner_user_id,status,runtime_device_id,runtime_task_id,execution_payload,error_message) VALUES ('timestamp-issue','timestamp-project','',1,'claimed','native-device','native-task','{}','')",()).await?.last_insert_id;
     for id in ["first-source", "newer-source"] {
-        mysql.execute("INSERT INTO project_chat_messages(message_id,project_id,task_id,sender_type,sender_id,sender_name,message_type,content,metadata,agent_id,runtime_device_id,runtime_task_id,status) VALUES (?,'timestamp-project','timestamp-issue','agent','group','Group','agent_status','private output',?,'','native-device','native-task','completed')",
-            (id,Json(json!({"execution_id":execution,"runtime_event_sequence":"7","private_prompt":"private"})))).await?;
+        let message = InsertMessage {
+            message_id: id,
+            client_message_id: "",
+            project_id: "timestamp-project",
+            task_id: "timestamp-issue",
+            sender_type: "agent",
+            sender_id: "group",
+            sender_name: "Group",
+            message_type: "agent_status",
+            content: "private output",
+            metadata: json!({"execution_id":execution,"runtime_event_sequence":"7","private_prompt":"private"}),
+            trigger_message_id: id,
+            reply_to_message_id: "",
+            thread_root_message_id: "",
+            agent_id: "",
+            runtime_device_id: "native-device",
+            runtime_task_id: "native-task",
+            runtime_activity_key: "",
+            status: "completed",
+        };
+        mysql
+            .execute(INSERT_MESSAGE_SQL, insert_message_args(&message))
+            .await?;
     }
     let messages = load_messages(
         mysql,
@@ -780,7 +801,7 @@ pub(crate) async fn verify_source_resolution(mysql: &impl brz_mysql::Mysql) -> a
     assert_eq!(messages[0]["messageId"], "first-source");
     assert_eq!(
         messages[0]["traceState"], "available",
-        "A canonical group execution has a nullable agent ID"
+        "A canonical group execution uses the persisted empty agent ID"
     );
     assert_eq!(messages[0]["runtimeAddress"]["taskId"], "native-task");
     assert_eq!(messages[0]["content"], "");

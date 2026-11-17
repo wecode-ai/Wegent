@@ -40,7 +40,7 @@ pub(crate) async fn message_views(
            AND a.resource_type='chat_agent' \
          LEFT JOIN loop_items i ON i.id=m.task_id AND i.cloud_project_id=m.project_id AND i.resource_type='task' \
          LEFT JOIN loop_item_executions e ON e.id=CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.execution_id')) AS UNSIGNED) \
-           AND e.cloud_project_id=m.project_id AND e.loop_item_id=m.task_id AND COALESCE(e.agent_id,'')=m.agent_id \
+           AND e.cloud_project_id=m.project_id AND e.loop_item_id=m.task_id AND e.agent_id=m.agent_id \
          LEFT JOIN users u ON u.id=CASE \
            WHEN m.sender_type='user' THEN CAST(m.sender_id AS UNSIGNED) \
            WHEN m.sender_type='agent' THEN COALESCE( \
