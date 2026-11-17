@@ -294,6 +294,48 @@ async fn settled_async_answer_is_admitted_after_local_cleanup() {
     }
 }
 
+#[tokio::test]
+async fn completed_async_question_releases_capacity_after_local_cleanup() {
+    let (handler, root, execution) = completed_async_question();
+    {
+        let mut scheduler = handler.turn_scheduler.lock().unwrap();
+        scheduler.settings = RuntimeSettings::uniform(2);
+        scheduler
+            .active_task_ids
+            .insert("capacity-blocker".into(), RuntimeTaskKind::Personal);
+        assert_eq!(scheduler.active_task_ids.len(), 2);
+    }
+
+    assert!(handler.finish_local_task("task", execution, None, "done"));
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while handler
+            .turn_scheduler
+            .lock()
+            .unwrap()
+            .active_task_ids
+            .contains_key("task")
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("A settled native question must release its slot after local cleanup");
+    let scheduler = handler.turn_scheduler.lock().unwrap();
+    assert_eq!(scheduler.active_task_ids.len(), 1);
+    assert!(scheduler.active_task_ids.contains_key("capacity-blocker"));
+    drop(scheduler);
+    assert_eq!(
+        handler
+            .local_task_link("task")
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        Some(INTERACTION_AWAITING_USER_REPLY),
+        "Releasing execution capacity must preserve the unanswered question"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 fn completed_async_question() -> (RuntimeWorkRpcHandler, PathBuf, u64) {
     let (handler, root) = isolated_runtime_work_handler("async-answer-cleanup");
     let mut link = RuntimeTaskLink::new_pending(

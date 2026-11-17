@@ -596,6 +596,9 @@ impl RuntimeWorkRpcHandler {
             }
         });
         if let Some(link) = self.local_task_link(local_task_id) {
+            if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(&link) {
+                self.release_settled_native_capacity(local_task_id, &state);
+            }
             self.project_runtime_link_status_now(&link);
         }
         if status != "running" {
