@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import (
     CloudProject,
+    LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
 )
@@ -185,18 +186,22 @@ async def test_delayed_cloud_dispatch_checks_persisted_run(
         test_db, rule, trigger, datetime(2026, 9, 30, 1)
     )
     monkeypatch.setattr(execution_module, "utcnow", lambda: datetime(2026, 10, 1, 1))
-    create_task = MagicMock()
-    dispatch = AsyncMock()
+    monkeypatch.setattr("app.core.async_utils.schedule_async_task", MagicMock())
+    create_task = MagicMock(wraps=project_automation_execution._ensure_run_task)
     monkeypatch.setattr(project_automation_execution, "_ensure_run_task", create_task)
-    monkeypatch.setattr(
-        project_automation_execution, "_dispatch_configured_target", dispatch
-    )
     await project_automation_execution.dispatch(test_db, rule, run)
     assert create_task.called is (not skipped)
-    assert dispatch.await_count == (0 if skipped else 1)
+    test_db.refresh(run)
+    tasks = test_db.query(LoopItem).all()
+    assert len(tasks) == (0 if skipped else 1)
     if skipped:
         assert run.status == "skipped"
         assert "not a China statutory workday" in run.description
+        assert not run.task_id
+    else:
+        assert run.status == "succeeded"
+        assert run.task_id == tasks[0].id
+        assert tasks[0].assignee_user_id == test_user.id
 
 
 @pytest.mark.asyncio
