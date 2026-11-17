@@ -47,6 +47,7 @@ pub(super) async fn create(
         user_id: runner,
         owner_user_id: runner.try_into()?,
         continuation: None,
+        history_window: None,
         team_id: team.id,
         bot_ids: &bots.bot_ids,
         create_assistant: true,

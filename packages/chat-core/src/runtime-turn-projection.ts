@@ -50,6 +50,15 @@ function projectTurn(
   blocksById: ReadonlyMap<string, ProcessingBlock>,
   nonSubagentParentIds: ReadonlySet<string>,
 ): WorkbenchMessage[] {
+  // A send cancelled before native turn/start has no backend history to keep.
+  // Do not project its optimistic prompt after a later turn has taken the tail.
+  if (
+    turn.id === null &&
+    turn.status === "cancelled" &&
+    turn.items.every((item) => item.type === "user_message")
+  ) {
+    return [];
+  }
   const messages: WorkbenchMessage[] = [];
   let assistantItems: RuntimeConversationItem[] = [];
   let followsGuidance = false;

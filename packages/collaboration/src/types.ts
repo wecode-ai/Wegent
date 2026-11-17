@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
+import type { ProjectSettingsPagesProps } from "./project-manage/ProjectSettingsPages";
 import type { ProjectAgentConfigurationHost } from "./project-agent-config/types";
 import type { ProjectCreateHostAdapter } from "./project-create/types";
 
@@ -581,6 +582,7 @@ export interface CollaborationLocation {
 }
 
 export interface CollaborationHostAdapter {
+  settingsPages?: ComponentType<ProjectSettingsPagesProps>;
   capabilities: CollaborationCapabilities;
   defaultAssistant?: CollaborationDefaultAssistant;
   location: CollaborationLocation;

@@ -48,6 +48,14 @@ it.each([
         <TemplateBindings document={template} locale={locale} candidates={[]} onChange={onChange} />
       )
     )
+    const disclosure = container.querySelector<HTMLDetailsElement>('details')!
+    expect(disclosure.open).toBe(false)
+    expect(container.querySelector('.collaboration-template-agent-roster')).not.toBeNull()
+    expect(container.querySelectorAll('.collaboration-template-binding')).toHaveLength(0)
+    await act(async () => {
+      disclosure.open = true
+      disclosure.dispatchEvent(new Event('toggle'))
+    })
     const select = container.querySelector<HTMLSelectElement>(
       `[data-testid="template-role-${group.key}-${group.leaderRole}"]`
     )!
@@ -57,7 +65,7 @@ it.each([
     )
     expect(container.querySelector('.collaboration-template-agent-roster')).toBeNull()
     const details = select.closest('details')!
-    expect(details.open).toBe(false)
+    expect(details.open).toBe(true)
     expect(onChange.mock.lastCall![0]).not.toBeNull()
     await act(async () => {
       select.value = ''

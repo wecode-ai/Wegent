@@ -2,18 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { X } from "lucide-react";
-import { ConfirmationDialog } from "../controls/ConfirmationDialog";
-import { createCollaborationTranslator } from "../i18n";
-import { GroupTemplateActions } from "../templates/GroupTemplateActions";
-import { GroupTemplateCreator } from "../templates/GroupTemplateCreator";
-import { useCollaborationTemplateStore } from "../templates/context";
-import { templateMessages } from "../templates/messages";
-import { applyTemplateGroups } from "../templates/apply";
-import { usePanelData, PanelFeedback } from "./usePanelData";
 import {
-  GroupParticipantsEditor,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+
+import { createCollaborationTranslator } from "../i18n";
+
+import { useCollaborationTemplateStore } from "../templates/context";
+
+import { usePanelData } from "./usePanelData";
+import {
   type GroupAgentAction,
   type GroupCandidate,
 } from "./GroupParticipantsEditor";
@@ -214,11 +217,11 @@ const copy = {
     projectOwned: "Project resource",
     removeFromProject: "Remove from project",
     deleteProjectGroup: "Delete",
-    deleteGroup: "Delete team",
+    deleteGroup: "Delete group",
     removeGroupConfirm:
-      "Remove this team association? The source team will be retained.",
+      "Remove this group association? The source group will be retained.",
     deleteGroupConfirm:
-      "This cannot be undone. Delete this collaboration team?",
+      "This cannot be undone. Delete this collaboration group?",
     deleting: "Deleting…",
     operationFailed: "Operation failed. Please try again.",
     createAgent: "Create agent",
@@ -230,17 +233,12 @@ const copy = {
   },
 } as const;
 
-function ErrorMessage({ message }: { message: string | null }) {
-  return message ? (
-    <div className="collaboration-alert" role="alert">
-      {message}
-    </div>
-  ) : null;
-}
+import { GroupConfigurationView } from "./GroupConfigurationView";
 
-export function WorkspaceCollaborationGroupsConfiguration({
+export function useGroupConfiguration({
   workspace,
   groups,
+  collectionState = "ready",
   availableGroups = [],
   members: suppliedMembers,
   agents: suppliedAgents,
@@ -261,6 +259,7 @@ export function WorkspaceCollaborationGroupsConfiguration({
 }: {
   workspace?: CollaborationWorkspace;
   groups: CollaborationGroup[];
+  collectionState?: "loading" | "ready" | "error";
   availableGroups?: CollaborationGroup[];
   members: Array<Pick<CollaborationMember, "user_id" | "user_name">>;
   agents: CollaborationAgent[];
@@ -314,11 +313,10 @@ export function WorkspaceCollaborationGroupsConfiguration({
     [locale],
   );
 
-  const [detailTab, setDetailTab] = useState<
-    "members" | "rules" | "environment" | "sharing"
-  >("members");
   const [mentionOpen, setMentionOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
+  const initializedGroup = useRef<string | null>(null);
+  const [savedDraft, setSavedDraft] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
   const [draftInstructions, setDraftInstructions] = useState("");
   const [draftLeader, setDraftLeader] = useState("");
@@ -502,40 +500,69 @@ export function WorkspaceCollaborationGroupsConfiguration({
     }
   }, [currentUserId, formOpen, includeCurrentUserByDefault, leader, members]);
 
-  useEffect(() => {
-    if (!selectedGroup) return;
-    setDraftName(selectedGroup.name);
-    setDraftDescription(selectedGroup.description);
-    setDraftInstructions(selectedGroup.instructions ?? "");
-    setDraftLeader(`${selectedGroup.leader.kind}:${selectedGroup.leader.id}`);
-    const leaderIdentity = `${selectedGroup.leader.kind}:${selectedGroup.leader.id}`;
-    setDraftMembers(
-      selectedGroup.members.map((member) => ({
-        ...member,
-        responsibility:
-          `${member.kind}:${member.id}` === leaderIdentity
-            ? ""
-            : member.responsibility,
-      })),
+  const restoreGroupDraft = useCallback((group: CollaborationGroup) => {
+    const leaderIdentity = group.leader.kind + ":" + group.leader.id;
+    const members = group.members.map((member) => ({
+      ...member,
+      responsibility:
+        member.kind + ":" + member.id === leaderIdentity
+          ? ""
+          : member.responsibility,
+    }));
+    const stages = group.stages.map((stage) => ({
+      ...stage,
+      assignee:
+        stage.assignee &&
+        stage.assignee.kind + ":" + stage.assignee.id !== leaderIdentity
+          ? { ...stage.assignee }
+          : null,
+    }));
+    const tags = group.execution_requirements?.required_tags ?? [];
+    setDraftName(group.name);
+    setDraftDescription(group.description);
+    setDraftInstructions(group.instructions ?? "");
+    setDraftLeader(leaderIdentity);
+    setDraftMembers(members);
+    setDraftStages(stages);
+    setDraftRequiredEnvironmentTags(tags);
+    setSavedDraft(
+      JSON.stringify([
+        group.name,
+        group.description,
+        group.instructions ?? "",
+        leaderIdentity,
+        members,
+        stages,
+        tags,
+      ]),
     );
-    setDraftStages(
-      selectedGroup.stages.map((stage) => ({
-        ...stage,
-        assignee:
-          stage.assignee &&
-          `${stage.assignee.kind}:${stage.assignee.id}` !== leaderIdentity
-            ? { ...stage.assignee }
-            : null,
-      })),
-    );
-    setDraftRequiredEnvironmentTags(
-      selectedGroup.execution_requirements?.required_tags ?? [],
-    );
-    setDetailTab("members");
     setMentionOpen(false);
     setEnvironmentTagInput("");
     setError(null);
-  }, [selectedGroup]);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedGroup) {
+      initializedGroup.current = null;
+      return;
+    }
+    const revision = selectedGroup.id + ":" + selectedGroup.version;
+    if (initializedGroup.current === revision) return;
+    initializedGroup.current = revision;
+    restoreGroupDraft(selectedGroup);
+  }, [selectedGroup, restoreGroupDraft]);
+
+  const dirty =
+    savedDraft !==
+    JSON.stringify([
+      draftName,
+      draftDescription,
+      draftInstructions,
+      draftLeader,
+      draftMembers,
+      draftStages,
+      draftRequiredEnvironmentTags,
+    ]);
 
   const displayName = (kind: "human" | "agent", id: string) =>
     candidates.find(
@@ -671,1122 +698,95 @@ export function WorkspaceCollaborationGroupsConfiguration({
     );
     setEnvironmentTagInput("");
   };
+  return {
+    addCreatedAgent,
+    addRequiredEnvironmentTag,
+    agentActionBusy,
+    agentActions,
+    agentConfiguration,
+    agentCreatorOpen,
+    availableGroups,
+    canManage,
+    candidates,
+    collaborationGroupAgentId,
+    commands,
+    copyAgentOpen,
+    copyableAgents,
+    createMembers,
+    currentUserId,
+    description,
+    detailPresentation,
+    dirty,
+    displayName,
+    draftDescription,
+    draftInstructions,
+    draftLeader,
+    draftMembers,
+    draftName,
+    draftRequiredEnvironmentTags,
+    draftStages,
+    environmentTagInput,
+    error,
+    executableDraftMemberIds,
+    executableDraftMembers,
+    formOpen,
+    groupAgentActions,
+    groups,
+    collectionState,
+    insertRuleMention,
+    leader,
+    loadParticipants,
+    locale,
+    mentionOpen,
+    messages,
+    name,
+    onDetailClose,
+    participants,
+    participantsPending,
+    pendingRemoval,
+    persistedMemberName,
+    restoreGroupDraft,
+    ruleEditorRef,
+    saving,
+    selectedGroup,
+    selectedGroupId,
+    setAgentActionBusy,
+    setAgentCreatorOpen,
+    setCopyAgentOpen,
+    setCreateMembers,
+    setDescription,
+    setDraftDescription,
+    setDraftInstructions,
+    setDraftLeader,
+    setDraftMembers,
+    setDraftName,
+    setDraftRequiredEnvironmentTags,
+    setDraftStages,
+    setEnvironmentTagInput,
+    setError,
+    setFormOpen,
+    setLeader,
+    setMentionOpen,
+    setName,
+    setPendingRemoval,
+    setSaving,
+    setSelectedGroupId,
+    showGroupCollection,
+    templateStore,
+    translate,
+    updateCreateMemberResponsibility,
+    updateCreateMemberSelection,
+    updateMemberSelection,
+    withCandidateName,
+    workspace,
+  };
+}
 
-  const content = (
-    <>
-      {pendingRemoval && (
-        <ConfirmationDialog
-          key={`${pendingRemoval.prefix}:${pendingRemoval.group.id}`}
-          title={
-            workspace || pendingRemoval.group.owner_type === "project"
-              ? messages.deleteGroup
-              : messages.removeFromProject
-          }
-          subject={pendingRemoval.group.name}
-          description={
-            workspace || pendingRemoval.group.owner_type === "project"
-              ? messages.deleteGroupConfirm
-              : messages.removeGroupConfirm
-          }
-          labels={{
-            cancel: messages.cancel,
-            confirm:
-              workspace || pendingRemoval.group.owner_type === "project"
-                ? messages.deleteProjectGroup
-                : messages.remove,
-            pending: messages.deleting,
-            failed: messages.operationFailed,
-          }}
-          testIdPrefix={pendingRemoval.prefix}
-          onClose={() => setPendingRemoval(null)}
-          onConfirm={async () => {
-            await commands.removeCollaborationGroup(pendingRemoval.group.id);
-            if (selectedGroupId === pendingRemoval.group.id) {
-              setSelectedGroupId(null);
-              onDetailClose?.();
-            }
-          }}
-        />
-      )}
-      {selectedGroup ? (
-        <div
-          className={`collaboration-group-detail${
-            detailPresentation === "dialog"
-              ? " collaboration-group-detail-dialog"
-              : ""
-          }`}
-          data-testid={`collaboration-group-detail-${selectedGroup.id}`}
-        >
-          {detailPresentation === "page" ? (
-            <div className="collaboration-resource-heading">
-              <div>
-                <button
-                  type="button"
-                  className="collaboration-link-button collaboration-group-back"
-                  data-testid="collaboration-group-detail-back"
-                  onClick={() =>
-                    onDetailClose ? onDetailClose() : setSelectedGroupId(null)
-                  }
-                >
-                  ← {messages.backToGroups}
-                </button>
-                <h2>{selectedGroup.name}</h2>
-                <p>
-                  {selectedGroup.owner_type === "project"
-                    ? messages.projectOwned
-                    : messages.workspaceOwned}
-                </p>
-              </div>
-            </div>
-          ) : null}
-          <form
-            className="collaboration-group-detail-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (
-                !commands.updateCollaborationGroup ||
-                !draftName.trim() ||
-                !draftLeader ||
-                draftMembers.length === 0
-              ) {
-                return;
-              }
-              const [leaderKind, leaderId] = draftLeader.split(":");
-              setSaving(true);
-              setError(null);
-              void commands
-                .updateCollaborationGroup(selectedGroup.id, {
-                  version: selectedGroup.version,
-                  name: draftName.trim(),
-                  description: draftDescription.trim(),
-                  instructions: draftInstructions.trim(),
-                  leader: {
-                    kind: leaderKind as "human" | "agent",
-                    id: leaderId,
-                    name: persistedMemberName(
-                      leaderKind as "human" | "agent",
-                      leaderId,
-                      selectedGroup.leader.kind === leaderKind &&
-                        selectedGroup.leader.id === leaderId
-                        ? selectedGroup.leader.name
-                        : undefined,
-                    ),
-                    responsibility: "",
-                  },
-                  members: draftMembers.map((member) =>
-                    member.kind === leaderKind && member.id === leaderId
-                      ? withCandidateName({ ...member, responsibility: "" })
-                      : withCandidateName(member),
-                  ),
-                  coordinationMode: "manager",
-                  stages: draftStages.map((stage) => ({
-                    ...stage,
-                    assignee:
-                      stage.assignee &&
-                      executableDraftMemberIds.has(
-                        `${stage.assignee.kind}:${stage.assignee.id}`,
-                      )
-                        ? stage.assignee
-                        : null,
-                  })),
-                  executionRequirements: {
-                    requiredTags: draftRequiredEnvironmentTags,
-                  },
-                })
-                .catch(() => setError(messages.operationFailed))
-                .finally(() => setSaving(false));
-            }}
-          >
-            <aside className="collaboration-group-detail-section collaboration-group-detail-profile">
-              {detailPresentation === "page" ? (
-                <>
-                  <span className="collaboration-group-detail-avatar">
-                    {draftName.slice(0, 1).toUpperCase()}
-                  </span>
-                  <div className="collaboration-group-section-heading">
-                    <div>
-                      <h3>{locale === "zh-CN" ? "基本信息" : "Basics"}</h3>
-                      <p>
-                        {selectedGroup.owner_type === "project"
-                          ? messages.projectOwned
-                          : messages.workspaceOwned}
-                      </p>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="collaboration-group-dialog-section-title">
-                  <h3>{locale === "zh-CN" ? "基本信息" : "Basics"}</h3>
-                  <span>
-                    {selectedGroup.owner_type === "project"
-                      ? messages.projectOwned
-                      : messages.workspaceOwned}
-                  </span>
-                </div>
-              )}
-              <div className="collaboration-group-profile-fields">
-                <label>
-                  <span>{messages.groupName}</span>
-                  <input
-                    data-testid="collaboration-group-detail-name"
-                    value={draftName}
-                    disabled={!canManage}
-                    onChange={(event) => setDraftName(event.target.value)}
-                  />
-                </label>
-                <label>
-                  <span>{messages.groupDescription}</span>
-                  <textarea
-                    data-testid="collaboration-group-detail-description"
-                    value={draftDescription}
-                    disabled={!canManage}
-                    onChange={(event) =>
-                      setDraftDescription(event.target.value)
-                    }
-                  />
-                </label>
-              </div>
-              {detailPresentation === "page" ? (
-                <dl className="collaboration-group-detail-meta">
-                  <div>
-                    <dt>{messages.membersLabel}</dt>
-                    <dd>{draftMembers.length}</dd>
-                  </div>
-                  <div>
-                    <dt>{messages.stages}</dt>
-                    <dd>{draftStages.length}</dd>
-                  </div>
-                  <div>
-                    <dt>{locale === "zh-CN" ? "版本" : "Version"}</dt>
-                    <dd>{selectedGroup.version}</dd>
-                  </div>
-                </dl>
-              ) : null}
-            </aside>
+export type GroupConfigurationModel = ReturnType<typeof useGroupConfiguration>;
 
-            <div className="collaboration-group-detail-main">
-              <div
-                className="collaboration-group-detail-tabs"
-                role="tablist"
-                aria-label={
-                  locale === "zh-CN"
-                    ? "协作小组配置"
-                    : "Collaboration group configuration"
-                }
-              >
-                {(
-                  [
-                    ["members", messages.membersLabel],
-                    ["rules", messages.groupRule],
-                    ["environment", messages.environmentRequirements],
-                    ...(templateStore
-                      ? [
-                          [
-                            "sharing",
-                            templateMessages[locale].configuration,
-                          ] as const,
-                        ]
-                      : []),
-                  ] as const
-                ).map(([tab, label]) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    role="tab"
-                    aria-selected={detailTab === tab}
-                    className={detailTab === tab ? "active" : undefined}
-                    data-testid={`collaboration-group-detail-tab-${tab}`}
-                    onClick={() => setDetailTab(tab)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {detailTab === "sharing" && commands.loadTemplateAgents && (
-                <GroupTemplateActions
-                  group={selectedGroup}
-                  locale={locale}
-                  loadAgents={commands.loadTemplateAgents}
-                />
-              )}
-              {detailTab === "members" ? (
-                <section className="collaboration-group-detail-section collaboration-group-detail-tab-panel">
-                  <div className="collaboration-group-section-heading">
-                    <div>
-                      <h3>{messages.membersLabel}</h3>
-                      <p>
-                        {locale === "zh-CN"
-                          ? "成员可以是人或智能体；职责用于帮助负责人正确委派任务。"
-                          : "Members can be people or agents. Responsibilities help the leader delegate correctly."}
-                      </p>
-                    </div>
-                  </div>
-                  <GroupParticipantsEditor
-                    candidates={candidates}
-                    leader={draftLeader}
-                    members={draftMembers}
-                    locale={locale}
-                    agentActions={
-                      canManage && !agentActionBusy ? groupAgentActions : []
-                    }
-                    onLeaderChange={(candidate) => {
-                      updateMemberSelection(candidate, true);
-                      setDraftMembers((current) =>
-                        current.map((member) =>
-                          member.kind === candidate.kind &&
-                          member.id === candidate.id
-                            ? { ...member, responsibility: "" }
-                            : member,
-                        ),
-                      );
-                      setDraftLeader(candidate.value);
-                      setDraftStages((current) =>
-                        current.map((stage) =>
-                          stage.assignee?.kind === candidate.kind &&
-                          stage.assignee.id === candidate.id
-                            ? { ...stage, assignee: null }
-                            : stage,
-                        ),
-                      );
-                    }}
-                    onMemberChange={updateMemberSelection}
-                    onResponsibilityChange={(candidate, responsibility) =>
-                      setDraftMembers((current) =>
-                        current.map((member) =>
-                          member.kind === candidate.kind &&
-                          member.id === candidate.id
-                            ? { ...member, responsibility }
-                            : member,
-                        ),
-                      )
-                    }
-                  />
-                </section>
-              ) : null}
-
-              {detailTab === "rules" ? (
-                <section className="collaboration-group-detail-section collaboration-group-detail-tab-panel collaboration-group-rules-panel">
-                  <div className="collaboration-group-section-heading">
-                    <h3>{messages.groupRule}</h3>
-                  </div>
-                  <div className="collaboration-group-rule-editor">
-                    <textarea
-                      ref={ruleEditorRef}
-                      data-testid="collaboration-group-detail-instructions"
-                      value={draftInstructions}
-                      disabled={!canManage}
-                      placeholder={
-                        locale === "zh-CN"
-                          ? "说明如何协作，使用 @ 指定负责成员"
-                          : "Describe how the group collaborates and use @ to assign members"
-                      }
-                      onChange={(event) => {
-                        const nextValue = event.target.value;
-                        setDraftInstructions(nextValue);
-                        setMentionOpen(nextValue.endsWith("@"));
-                      }}
-                    />
-                    <div className="collaboration-group-rule-editor-toolbar">
-                      <button
-                        type="button"
-                        className="collaboration-secondary-button"
-                        aria-expanded={mentionOpen}
-                        data-testid="collaboration-group-rule-mention-trigger"
-                        disabled={!canManage}
-                        onClick={() => setMentionOpen((current) => !current)}
-                      >
-                        @ {locale === "zh-CN" ? "提及成员" : "Mention"}
-                      </button>
-                    </div>
-                    {mentionOpen ? (
-                      <div
-                        className="collaboration-group-rule-mention-menu"
-                        data-testid="collaboration-group-rule-mention-menu"
-                      >
-                        {draftMembers.map((member) => {
-                          const candidate = candidates.find(
-                            (item) =>
-                              item.kind === member.kind &&
-                              item.id === member.id,
-                          );
-                          if (!candidate) return null;
-                          return (
-                            <button
-                              key={candidate.value}
-                              type="button"
-                              data-testid={`collaboration-group-rule-mention-${candidate.kind}-${candidate.id}`}
-                              onClick={() => insertRuleMention(candidate)}
-                            >
-                              <span>
-                                {candidate.name.slice(0, 1).toUpperCase()}
-                              </span>
-                              <strong>{candidate.name}</strong>
-                              <small>{member.responsibility}</small>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="collaboration-group-reference-flow">
-                    <div className="collaboration-group-section-heading">
-                      <h3>
-                        {messages.stages}
-                        <small>{messages.stagesHint}</small>
-                      </h3>
-                      {canManage ? (
-                        <button
-                          type="button"
-                          className="collaboration-secondary-button"
-                          data-testid="collaboration-group-stage-add"
-                          onClick={() =>
-                            setDraftStages((current) => [
-                              ...current,
-                              {
-                                id: crypto.randomUUID(),
-                                name:
-                                  locale === "zh-CN"
-                                    ? `阶段 ${current.length + 1}`
-                                    : `Stage ${current.length + 1}`,
-                                description: "",
-                                assignee: null,
-                              },
-                            ])
-                          }
-                        >
-                          + {messages.addStage}
-                        </button>
-                      ) : null}
-                    </div>
-                    {draftStages.length ? (
-                      <div className="collaboration-group-stage-flow">
-                        {draftStages.map((stage, index) => (
-                          <div
-                            key={stage.id}
-                            className="collaboration-group-stage-card"
-                            data-testid={`collaboration-group-stage-${stage.id}`}
-                          >
-                            <header>
-                              <span>{index + 1}</span>
-                              <input
-                                value={stage.name}
-                                disabled={!canManage}
-                                aria-label={`${messages.stages} ${index + 1}`}
-                                onChange={(event) =>
-                                  setDraftStages((current) =>
-                                    current.map((candidate) =>
-                                      candidate.id === stage.id
-                                        ? {
-                                            ...candidate,
-                                            name: event.target.value,
-                                          }
-                                        : candidate,
-                                    ),
-                                  )
-                                }
-                              />
-                              {canManage ? (
-                                <button
-                                  type="button"
-                                  className="collaboration-link-button collaboration-resource-remove"
-                                  aria-label={messages.remove}
-                                  onClick={() =>
-                                    setDraftStages((current) =>
-                                      current.filter(
-                                        (candidate) =>
-                                          candidate.id !== stage.id,
-                                      ),
-                                    )
-                                  }
-                                >
-                                  {messages.remove}
-                                </button>
-                              ) : null}
-                            </header>
-                            <div>
-                              <textarea
-                                value={stage.description}
-                                disabled={!canManage}
-                                placeholder={
-                                  locale === "zh-CN"
-                                    ? "说明这一阶段要完成什么"
-                                    : "Describe what this stage should accomplish"
-                                }
-                                onChange={(event) =>
-                                  setDraftStages((current) =>
-                                    current.map((candidate) =>
-                                      candidate.id === stage.id
-                                        ? {
-                                            ...candidate,
-                                            description: event.target.value,
-                                          }
-                                        : candidate,
-                                    ),
-                                  )
-                                }
-                              />
-                              <select
-                                value={
-                                  stage.assignee &&
-                                  executableDraftMemberIds.has(
-                                    `${stage.assignee.kind}:${stage.assignee.id}`,
-                                  )
-                                    ? `${stage.assignee.kind}:${stage.assignee.id}`
-                                    : ""
-                                }
-                                disabled={!canManage}
-                                aria-label={`${messages.leader} ${index + 1}`}
-                                onChange={(event) => {
-                                  const [kind, id] =
-                                    event.target.value.split(":");
-                                  const member = draftMembers.find(
-                                    (candidate) =>
-                                      candidate.kind === kind &&
-                                      candidate.id === id,
-                                  );
-                                  setDraftStages((current) =>
-                                    current.map((candidate) =>
-                                      candidate.id === stage.id
-                                        ? {
-                                            ...candidate,
-                                            assignee: member
-                                              ? { ...member }
-                                              : null,
-                                          }
-                                        : candidate,
-                                    ),
-                                  );
-                                }}
-                              >
-                                <option value="">
-                                  {messages.leaderAssignment}
-                                </option>
-                                {executableDraftMembers.map((member) => (
-                                  <option
-                                    key={`${member.kind}:${member.id}`}
-                                    value={`${member.kind}:${member.id}`}
-                                  >
-                                    @{displayName(member.kind, member.id)}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </section>
-              ) : null}
-
-              {detailTab === "environment" ? (
-                <section className="collaboration-group-detail-section collaboration-group-detail-tab-panel collaboration-group-environment-panel">
-                  <div className="collaboration-group-section-heading">
-                    <h3>{messages.environmentRequirements}</h3>
-                  </div>
-                  <label>
-                    <span>{messages.requiredEnvironmentTags}</span>
-                    <div className="collaboration-group-environment-tag-input">
-                      <input
-                        data-testid="collaboration-group-environment-tag-input"
-                        value={environmentTagInput}
-                        disabled={!canManage}
-                        placeholder={messages.environmentTagPlaceholder}
-                        onChange={(event) =>
-                          setEnvironmentTagInput(event.target.value)
-                        }
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter") return;
-                          event.preventDefault();
-                          addRequiredEnvironmentTag();
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className="collaboration-secondary-button"
-                        data-testid="collaboration-group-environment-tag-add"
-                        disabled={!canManage || !environmentTagInput.trim()}
-                        onClick={addRequiredEnvironmentTag}
-                      >
-                        {locale === "zh-CN" ? "添加" : "Add"}
-                      </button>
-                    </div>
-                  </label>
-                  {draftRequiredEnvironmentTags.length ? (
-                    <div className="collaboration-group-environment-tags">
-                      {draftRequiredEnvironmentTags.map((tag) => (
-                        <span key={tag}>
-                          {tag}
-                          {canManage ? (
-                            <button
-                              type="button"
-                              aria-label={`${messages.remove} ${tag}`}
-                              data-testid={`collaboration-group-environment-tag-remove-${tag}`}
-                              onClick={() =>
-                                setDraftRequiredEnvironmentTags((current) =>
-                                  current.filter(
-                                    (candidate) => candidate !== tag,
-                                  ),
-                                )
-                              }
-                            >
-                              {messages.remove}
-                            </button>
-                          ) : null}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="collaboration-group-inline-empty">
-                      {locale === "zh-CN" ? "不限环境" : "Any environment"}
-                    </div>
-                  )}
-                </section>
-              ) : null}
-              <ErrorMessage message={error} />
-              {canManage && commands.updateCollaborationGroup ? (
-                <div className="collaboration-resource-form-actions collaboration-group-save-actions">
-                  <button
-                    type="button"
-                    className="collaboration-link-button collaboration-resource-remove"
-                    data-testid="collaboration-group-detail-delete"
-                    disabled={saving}
-                    onClick={() =>
-                      setPendingRemoval({
-                        group: selectedGroup,
-                        prefix: "collaboration-group-detail-delete",
-                      })
-                    }
-                  >
-                    {messages.deleteGroup}
-                  </button>
-                  <button
-                    type="submit"
-                    className="collaboration-primary-button"
-                    data-testid="collaboration-group-detail-save"
-                    disabled={
-                      saving ||
-                      participantsPending ||
-                      !draftName.trim() ||
-                      !draftLeader ||
-                      draftMembers.length === 0
-                    }
-                  >
-                    {saving
-                      ? locale === "zh-CN"
-                        ? "保存中…"
-                        : "Saving…"
-                      : messages.saveGroup}
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </form>
-        </div>
-      ) : (
-        <>
-          {showGroupCollection ? (
-            <div className="collaboration-resource-heading">
-              <div>
-                <h2>{messages.collaborationGroups}</h2>
-                <p>{messages.collaborationGroupHint}</p>
-              </div>
-              {canManage && !formOpen ? (
-                <button
-                  type="button"
-                  className={
-                    workspace
-                      ? "collaboration-primary-button"
-                      : "collaboration-secondary-button"
-                  }
-                  data-testid="collaboration-group-open-create"
-                  onClick={() => setFormOpen(true)}
-                >
-                  {messages.createGroup}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          {canManage && formOpen ? (
-            <div
-              className="collaboration-dialog-backdrop"
-              role="presentation"
-              onMouseDown={(event) => {
-                if (event.target === event.currentTarget && !saving) {
-                  setFormOpen(false);
-                }
-              }}
-            >
-              <form
-                className="collaboration-dialog collaboration-resource-dialog collaboration-group-create-dialog"
-                data-testid="collaboration-group-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (!name.trim() || !leader) return;
-                  const [leaderKind, leaderId] = leader.split(":");
-                  setSaving(true);
-                  setError(null);
-                  void commands
-                    .createCollaborationGroup({
-                      name: name.trim(),
-                      description: description.trim(),
-                      leader: {
-                        kind: leaderKind as "human" | "agent",
-                        id: leaderId,
-                        name: persistedMemberName(
-                          leaderKind as "human" | "agent",
-                          leaderId,
-                        ),
-                        responsibility: "",
-                      },
-                      members: [
-                        withCandidateName({
-                          kind: leaderKind as "human" | "agent",
-                          id: leaderId,
-                          responsibility: "",
-                        }),
-                        ...createMembers
-                          .filter(
-                            (member) =>
-                              `${member.kind}:${member.id}` !== leader,
-                          )
-                          .map(withCandidateName),
-                      ],
-                      coordinationMode: "manager",
-                      instructions: "",
-                      stages: [],
-                      executionRequirements: { requiredTags: [] },
-                    })
-                    .then((created) => {
-                      setName("");
-                      setDescription("");
-                      setLeader("");
-                      setCreateMembers([]);
-                      setFormOpen(false);
-                      setSelectedGroupId(created.id);
-                    })
-                    .catch(() => setError(messages.operationFailed))
-                    .finally(() => setSaving(false));
-                }}
-              >
-                <div className="collaboration-group-create-heading">
-                  <div>
-                    <h3>{messages.createGroup}</h3>
-                    <p>
-                      {locale === "zh-CN"
-                        ? "已自动设置负责人，可在成员列表中随时调整。"
-                        : "A leader is selected automatically and can be changed from the member list."}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="collaboration-group-create-close"
-                    data-testid="collaboration-group-create-close"
-                    aria-label={locale === "zh-CN" ? "关闭" : "Close"}
-                    disabled={saving}
-                    onClick={() => {
-                      setFormOpen(false);
-                      setError(null);
-                      setCreateMembers([]);
-                      setLeader("");
-                    }}
-                  >
-                    <X size={18} aria-hidden="true" />
-                  </button>
-                </div>
-                <div className="collaboration-group-create-layout">
-                  <div className="collaboration-group-create-main">
-                    <div className="collaboration-group-create-content">
-                      <section className="collaboration-group-create-panel">
-                        <GroupTemplateCreator
-                          modelConfiguration={
-                            agentConfiguration && workspace
-                              ? {
-                                  host: agentConfiguration,
-                                  location: workspace.location,
-                                }
-                              : undefined
-                          }
-                          locale={locale}
-                          candidates={candidates.map((candidate) => ({
-                            ...candidate,
-                            label: candidate.name,
-                            responsibility: "",
-                          }))}
-                          currentUserId={currentUserId}
-                          existingNames={groups.map((group) => group.name)}
-                          disabled={saving || participantsPending}
-                          onApply={async (drafts, document, resolveRouting) => {
-                            const created = commands.createTemplateGroups
-                              ? await commands.createTemplateGroups(
-                                  document,
-                                  drafts,
-                                  resolveRouting,
-                                )
-                              : await applyTemplateGroups(
-                                  drafts,
-                                  (draft) =>
-                                    commands.createCollaborationGroup({
-                                      ...draft,
-                                      coordinationMode: "manager",
-                                    }),
-                                  templateMessages[locale].partial,
-                                );
-                            setFormOpen(false);
-                            setSelectedGroupId(created.at(-1)?.id ?? null);
-                          }}
-                        />
-                        <div className="collaboration-group-field-grid collaboration-group-create-fields">
-                          <label>
-                            <span>{messages.groupName}</span>
-                            <input
-                              data-testid="collaboration-group-name"
-                              value={name}
-                              autoFocus
-                              onChange={(event) => setName(event.target.value)}
-                            />
-                          </label>
-                          <label>
-                            <span>{messages.groupDescription}</span>
-                            <input
-                              data-testid="collaboration-group-description"
-                              value={description}
-                              placeholder={
-                                locale === "zh-CN"
-                                  ? "简要说明这个小组负责什么"
-                                  : "Briefly describe what this group owns"
-                              }
-                              onChange={(event) =>
-                                setDescription(event.target.value)
-                              }
-                            />
-                          </label>
-                        </div>
-                        <GroupParticipantsEditor
-                          candidates={candidates}
-                          leader={leader}
-                          members={createMembers}
-                          locale={locale}
-                          compact
-                          agentActions={
-                            agentActionBusy ? [] : groupAgentActions
-                          }
-                          onLeaderChange={(candidate) => {
-                            if (candidate.value === leader) return;
-                            const previous = candidates.find(
-                              (item) => item.value === leader,
-                            );
-                            setCreateMembers((current) => {
-                              const next = [...current];
-                              for (const participant of [previous, candidate]) {
-                                if (
-                                  participant &&
-                                  !next.some(
-                                    (member) =>
-                                      `${member.kind}:${member.id}` ===
-                                      participant.value,
-                                  )
-                                ) {
-                                  next.push({
-                                    kind: participant.kind,
-                                    id: participant.id,
-                                    responsibility: "",
-                                  });
-                                }
-                              }
-                              return next.map((member) =>
-                                `${member.kind}:${member.id}` ===
-                                candidate.value
-                                  ? { ...member, responsibility: "" }
-                                  : member,
-                              );
-                            });
-                            setLeader(candidate.value);
-                          }}
-                          onMemberChange={updateCreateMemberSelection}
-                          onResponsibilityChange={
-                            updateCreateMemberResponsibility
-                          }
-                        />
-                      </section>
-                    </div>
-
-                    <div className="collaboration-resource-form-actions collaboration-group-create-actions">
-                      <button
-                        type="button"
-                        className="collaboration-link-button"
-                        data-testid="collaboration-group-create-cancel"
-                        disabled={saving}
-                        onClick={() => {
-                          setFormOpen(false);
-                          setError(null);
-                          setCreateMembers([]);
-                          setLeader("");
-                        }}
-                      >
-                        {messages.cancel}
-                      </button>
-                      <span />
-                      <button
-                        type="submit"
-                        className="collaboration-primary-button"
-                        data-testid="collaboration-group-create"
-                        disabled={
-                          saving ||
-                          participantsPending ||
-                          !name.trim() ||
-                          !leader
-                        }
-                      >
-                        {messages.createGroup}
-                      </button>
-                    </div>
-                    <ErrorMessage message={error} />
-                  </div>
-                </div>
-              </form>
-            </div>
-          ) : null}
-          {showGroupCollection ? (
-            <>
-              <div
-                className={
-                  workspace ? undefined : "collaboration-resource-section"
-                }
-              >
-                {groups.length ? (
-                  <div className="collaboration-group-card-grid">
-                    {groups.map((group) => (
-                      <article
-                        key={group.id}
-                        className="collaboration-group-card"
-                        data-testid={`collaboration-group-${group.id}`}
-                      >
-                        <div className="collaboration-group-card-header">
-                          <span className="collaboration-resource-avatar">
-                            {group.name.slice(0, 1).toUpperCase()}
-                          </span>
-                          <span>
-                            <strong>{group.name}</strong>
-                            <small>
-                              {group.owner_type === "project"
-                                ? messages.projectOwned
-                                : messages.workspaceOwned}
-                            </small>
-                          </span>
-                        </div>
-                        <div className="collaboration-group-card-summary">
-                          <p>
-                            {group.description ||
-                              (locale === "zh-CN"
-                                ? "暂未填写协作目标"
-                                : "No collaboration goal yet")}
-                          </p>
-                          <div className="collaboration-group-card-meta">
-                            <span>
-                              {messages.leader}：
-                              {displayName(group.leader.kind, group.leader.id)}
-                            </span>
-                            <span>
-                              {group.members.length} {messages.membersLabel}
-                            </span>
-                            <span>
-                              {group.stages.length
-                                ? `${group.stages.length} ${messages.stages}`
-                                : messages.leaderAssignment}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="collaboration-resource-actions">
-                          <button
-                            type="button"
-                            className="collaboration-secondary-button"
-                            data-testid={`collaboration-group-manage-${group.id}`}
-                            onClick={() => setSelectedGroupId(group.id)}
-                          >
-                            {messages.manageGroup}
-                          </button>
-                          {canManage ? (
-                            <button
-                              type="button"
-                              className="collaboration-link-button collaboration-resource-remove"
-                              data-testid={`collaboration-group-remove-${group.id}`}
-                              onClick={() =>
-                                setPendingRemoval({
-                                  group,
-                                  prefix: "collaboration-group-delete",
-                                })
-                              }
-                            >
-                              {workspace
-                                ? messages.remove
-                                : group.owner_type === "project"
-                                  ? messages.deleteProjectGroup
-                                  : messages.removeFromProject}
-                            </button>
-                          ) : null}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="collaboration-resource-empty">
-                    {workspace ? messages.noGroups : messages.noProjectGroups}
-                  </div>
-                )}
-              </div>
-              {availableGroups.length > 0 && commands.addCollaborationGroup ? (
-                <div className="collaboration-resource-section">
-                  <h3>{messages.availableWorkspaceGroups}</h3>
-                  <div className="collaboration-group-card-grid">
-                    {availableGroups.map((group) => (
-                      <article
-                        key={group.id}
-                        className="collaboration-group-card compact"
-                        data-testid={`collaboration-group-available-${group.id}`}
-                      >
-                        <div className="collaboration-group-card-header">
-                          <span className="collaboration-resource-avatar">
-                            {group.name.slice(0, 1).toUpperCase()}
-                          </span>
-                          <span>
-                            <strong>{group.name}</strong>
-                            <small>{messages.workspaceOwned}</small>
-                          </span>
-                        </div>
-                        {canManage ? (
-                          <button
-                            type="button"
-                            className="collaboration-secondary-button"
-                            data-testid={`collaboration-group-add-${group.id}`}
-                            onClick={() => {
-                              setError(null);
-                              void commands
-                                .addCollaborationGroup?.(group.id)
-                                .catch(() =>
-                                  setError(messages.operationFailed),
-                                );
-                            }}
-                          >
-                            {locale === "zh-CN"
-                              ? "添加到项目"
-                              : "Add to project"}
-                          </button>
-                        ) : null}
-                      </article>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-              <ErrorMessage message={error} />
-            </>
-          ) : null}
-        </>
-      )}
-      {agentCreatorOpen && agentActions?.renderCreator
-        ? agentActions.renderCreator({
-            onClose: () => setAgentCreatorOpen(false),
-            onCreated: async (agent) => {
-              addCreatedAgent(agent);
-              setAgentCreatorOpen(false);
-            },
-          })
-        : null}
-      {copyAgentOpen ? (
-        <div
-          className="collaboration-dialog-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !agentActionBusy) {
-              setCopyAgentOpen(false);
-            }
-          }}
-        >
-          <section
-            className="collaboration-dialog collaboration-resource-dialog collaboration-group-copy-agent-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label={messages.copyAgentTitle}
-            data-testid="collaboration-group-copy-agent-dialog"
-          >
-            <h2>{messages.copyAgentTitle}</h2>
-            {copyableAgents.length ? (
-              <div className="collaboration-resource-candidates">
-                {copyableAgents.map((agent) => {
-                  const agentId = collaborationGroupAgentId(agent);
-                  return (
-                    <button
-                      type="button"
-                      key={agentId}
-                      disabled={agentActionBusy}
-                      data-testid={`collaboration-group-copy-agent-${agentId}`}
-                      onClick={() => {
-                        setAgentActionBusy(true);
-                        setError(null);
-                        void agentActions
-                          ?.copy?.(agent)
-                          .then((created) => {
-                            addCreatedAgent(created);
-                            setCopyAgentOpen(false);
-                          })
-                          .catch(() => setError(messages.operationFailed))
-                          .finally(() => setAgentActionBusy(false));
-                      }}
-                    >
-                      <span className="collaboration-resource-avatar">
-                        {agent.name.slice(0, 1).toUpperCase()}
-                      </span>
-                      <span>
-                        <strong>{agent.name}</strong>
-                        <small>{messages.copyAgentHint}</small>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="collaboration-resource-empty">
-                {messages.noCopyableAgents}
-              </div>
-            )}
-            <footer>
-              <button
-                type="button"
-                className="collaboration-secondary-button"
-                disabled={agentActionBusy}
-                onClick={() => setCopyAgentOpen(false)}
-              >
-                {messages.cancel}
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
-    </>
-  );
-
-  if (!showGroupCollection && !selectedGroup) {
-    return content;
-  }
-
-  return (
-    <section
-      className={`collaboration-platform-panel${
-        detailPresentation === "dialog"
-          ? " collaboration-group-dialog-content"
-          : ""
-      }`}
-    >
-      {loadParticipants && (formOpen || selectedGroupId) ? (
-        <PanelFeedback
-          state={participants}
-          translate={translate}
-          testId="workspace-group-participants"
-        />
-      ) : null}
-      {content}
-    </section>
-  );
+export function WorkspaceCollaborationGroupsConfiguration(
+  props: Parameters<typeof useGroupConfiguration>[0],
+) {
+  const model = useGroupConfiguration(props);
+  return <GroupConfigurationView model={model} />;
 }

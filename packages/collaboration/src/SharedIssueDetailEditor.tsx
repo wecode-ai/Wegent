@@ -2895,6 +2895,8 @@ export function TodoEditor(props: TodoEditorProps) {
     >
       <section
         data-testid={isCreate ? "cloud-todo-create-panel" : "cloud-todo-detail"}
+        data-field-save-state={fieldSaves.pending ? "pending" : "idle"}
+        aria-busy={fieldSaves.pending || undefined}
         className={cn(
           "flex flex-col overflow-hidden rounded-2xl bg-background shadow-2xl",
           workspacePanel

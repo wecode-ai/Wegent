@@ -49,7 +49,10 @@ export type {
 import type { RuntimeTaskCreateIntent } from '@wegent/chat-core/runtime-task-api-types'
 export type { RuntimeTaskCreateResponse } from '@wegent/chat-core/runtime-task-api-types'
 import type { RuntimeTaskCancelResponse } from '@wegent/chat-core/runtime-task-api-types'
-export type { RuntimeTaskCancelResponse } from '@wegent/chat-core/runtime-task-api-types'
+export type {
+  RuntimeTaskCancelRequest,
+  RuntimeTaskCancelResponse,
+} from '@wegent/chat-core/runtime-task-api-types'
 import type {
   RuntimeProjectSpaceRef,
   RuntimeProjectAiSettings,

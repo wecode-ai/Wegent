@@ -102,10 +102,11 @@ export async function verifyCollaborationScheduleViews({
   await control.command('fill', '[data-testid="cloud-todo-detail-due-date"]', {
     value: keys.initialEnd,
   })
-  await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
-    visible: false,
-    timeoutMs,
-  })
+  await control.command(
+    'waitFor',
+    scoped('[data-testid="cloud-todo-detail"][data-field-save-state="idle"]'),
+    { timeoutMs }
+  )
   await control.command('click', scoped('[data-testid="cloud-todo-detail-close"]'))
   await control.command('waitFor', scoped('[data-testid="collaboration-issue-detail"]'), {
     visible: false,
