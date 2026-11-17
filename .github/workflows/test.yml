@@ -853,7 +853,7 @@ jobs:
 
       - name: Verify collaboration experiment desktop contracts
         if: matrix.shard == 1
-        run: node --test wework/scripts/collaboration-exp-registration.test.mjs wework/scripts/collaboration-exp-viewport-flows.test.mjs
+        run: node --test wework/scripts/collaboration-exp-registration.test.mjs wework/scripts/collaboration-exp-viewport-flows.test.mjs wework/scripts/lib/desktop-owner-fixture.test.mjs wework/scripts/stand-in-onboarding-arrangements.test.mjs
 
       - name: Run Wework tests
         env:
