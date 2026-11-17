@@ -16,11 +16,15 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.endpoints import project_automations
+from app.db import session as database_session
+from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.workspace import CollaborationGroupResponse
+from app.schemas.workspace import CollaborationGroupCreate, CollaborationGroupResponse
+from app.services.workspaces.collaboration_groups import _group_payload
 from shared.telemetry import decorators
 
 TemplateProject = tuple[str, dict[str, str], dict[str, Any]]
@@ -187,6 +191,87 @@ def test_response_validation_hides_input_values() -> None:
         assert "coordination_mode" in message
         assert "literal_error" in message
         assert PRIVATE_RESPONSE_VALUE not in message
+
+
+def test_group_storage_failure_hides_bound_instructions_from_error_and_trace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    template_spans: InMemorySpanExporter,
+) -> None:
+    monkeypatch.setattr(
+        database_session,
+        "SQLALCHEMY_DATABASE_URL",
+        f"sqlite:///{tmp_path / 'group-storage.sqlite3'}",
+    )
+    engine = database_session._create_engine()
+    private_instructions = "P6719"
+    human = {"kind": "human", "id": "1", "name": "synthetic"}
+    payload = _group_payload(
+        CollaborationGroupCreate(
+            name="g",
+            instructions=private_instructions,
+            leader=human,
+            members=[human],
+        )
+    )
+
+    @decorators.trace_sync("project.collaboration_group.create")
+    def insert_group(group_id: int | None = None) -> int:
+        with Session(engine) as db:
+            group = Kind(
+                id=group_id,
+                user_id=1,
+                kind="CollaborationGroup",
+                name="g",
+                namespace="projects/1",
+                json=payload,
+            )
+            db.add(group)
+            db.flush()
+            created_id = int(group.id)
+            db.commit()
+            return created_id
+
+    try:
+        Kind.__table__.create(engine)
+        group_id = insert_group()
+        with Session(engine) as db:
+            stored = db.get(Kind, group_id)
+            assert stored.json == payload
+            assert stored.json["spec"]["instructions"] == private_instructions
+
+        with pytest.raises(IntegrityError) as captured:
+            insert_group(group_id)
+
+        assert "INSERT INTO kinds" in captured.value.statement
+        assert private_instructions in str(captured.value.params)
+        assert "UNIQUE constraint failed: kinds.id" in str(captured.value)
+        span = next(
+            span
+            for span in template_spans.get_finished_spans()
+            if span.status.status_code == StatusCode.ERROR
+        )
+        exceptions = [event for event in span.events if event.name == "exception"]
+        assert exceptions
+        assert all(
+            "IntegrityError" in event.attributes["exception.type"]
+            for event in exceptions
+        )
+        trace_text = str(span.status.description) + str(
+            [dict(event.attributes) for event in exceptions]
+        )
+        assert "INSERT INTO kinds" in trace_text
+        messages = {
+            "error": str(captured.value),
+            "error_repr": repr(captured.value),
+            "span_status": str(span.status.description),
+            "span_exceptions": str([dict(event.attributes) for event in exceptions]),
+        }
+        assert [
+            name for name, text in messages.items() if private_instructions in text
+        ] == []
+    finally:
+        engine.dispose()
 
 
 def test_response_failure_reports_created_group_without_logging_payload(

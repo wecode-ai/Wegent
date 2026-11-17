@@ -20,6 +20,7 @@ def test_sqlite_engine_enables_concurrent_access_pragmas(
     engine = session._create_engine()
 
     try:
+        assert engine.hide_parameters is True
         with engine.connect() as connection:
             journal_mode = connection.exec_driver_sql("PRAGMA journal_mode").scalar()
             busy_timeout = connection.exec_driver_sql("PRAGMA busy_timeout").scalar()
@@ -44,6 +45,7 @@ def test_mysql_sync_engine_uses_configured_pool_limits(monkeypatch):
     engine = session._create_engine()
 
     try:
+        assert engine.hide_parameters is True
         assert isinstance(engine.pool, ObservedQueuePool)
         assert engine.pool.size() == 7
         assert engine.pool._max_overflow == 3
