@@ -427,10 +427,7 @@ async fn spawn_mock_manager(
     status: u16,
     headers: &'static str,
     body: &'static str,
-) -> (
-    std::net::SocketAddr,
-    tokio::sync::oneshot::Receiver<String>,
-) {
+) -> (std::net::SocketAddr, tokio::sync::oneshot::Receiver<String>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -508,8 +505,7 @@ async fn workspace_root_and_executor_file_proxy_via_executor_manager() {
         assert_eq!(err.status(), expected, "workspace_root upstream {upstream}");
     }
 
-    let (addr, rx) =
-        spawn_mock_manager(200, "Content-Type: text/markdown\r\n", "# Report\n").await;
+    let (addr, rx) = spawn_mock_manager(200, "Content-Type: text/markdown\r\n", "# Report\n").await;
     let manager_url = format!("http://{addr}");
     let bytes =
         files::executor_file_via_manager(&state, &manager_url, &source, 42, 7, "outputs/report.md")

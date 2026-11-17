@@ -61,8 +61,7 @@ pub(super) async fn workspace_root_via_manager(
     query: &ArtifactQuery,
 ) -> Result<String, FastApiError> {
     let response =
-        manager_artifact_request_at(state, manager, source, query, Duration::from_secs(15))
-            .await?;
+        manager_artifact_request_at(state, manager, source, query, Duration::from_secs(15)).await?;
     if !response.status().is_success() {
         return Err(upstream_unavailable(response.status().as_u16()));
     }
