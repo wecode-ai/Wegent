@@ -19,6 +19,52 @@ const testId = name => scoped(`[data-testid="${name}"]`)
 const PROJECT_DIALOG =
   '[data-testid="workspace-tab-content-fixed-board"] [data-testid="collaboration-project-create-dialog"]'
 
+const waitForProjectDialogUnmount = (control, timeoutMs, message) =>
+  waitForValue(
+    () => control.command('getElementCount', PROJECT_DIALOG),
+    count => Number(count) === 0,
+    message,
+    timeoutMs
+  )
+
+export async function discardTemplateProjectDraft(
+  control,
+  { uiTimeoutMs, workbenchReadyTimeoutMs }
+) {
+  await control.command('clickWhenEnabled', testId('collaboration-project-create-cancel'), {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('waitFor', testId('collaboration-project-create-discard'), {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command(
+    'clickWhenEnabled',
+    testId('collaboration-project-create-discard-confirm'),
+    {
+      visible: true,
+      timeoutMs: uiTimeoutMs,
+    }
+  )
+  await waitForProjectDialogUnmount(
+    control,
+    workbenchReadyTimeoutMs,
+    'Template project draft did not close'
+  )
+}
+
+export async function openTemplateProjectBindings(control, { uiTimeoutMs }) {
+  await control.command('clickWhenEnabled', testId('project-create-configure-template'), {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('waitFor', testId('project-create-template-configuration'), {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+}
+
 export async function submitConfiguredTemplateProject(
   control,
   { projectName, uiTimeoutMs, workbenchReadyTimeoutMs, beforeSubmit }
@@ -41,11 +87,10 @@ export async function submitConfiguredTemplateProject(
   })
   // The form stays mounted while template resources are configured. Its footer
   // can be hidden by configuration navigation before submission has completed.
-  await waitForValue(
-    () => control.command('getElementCount', PROJECT_DIALOG),
-    count => Number(count) === 0,
-    'Template project configuration did not finish',
-    workbenchReadyTimeoutMs
+  await waitForProjectDialogUnmount(
+    control,
+    workbenchReadyTimeoutMs,
+    'Template project configuration did not finish'
   )
   await control.command('waitFor', testId('cloud-project-header-title'), {
     text: projectName,
@@ -109,16 +154,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   const wait = (control, name, text) =>
     control.command('waitFor', testId(name), { text, timeoutMs: uiTimeoutMs })
   const openTemplateProject = async (control, text) => {
-    await click(control, 'template-use')
+    await control.command('clickWhenEnabled', testId('template-use'), {
+      visible: true,
+      timeoutMs: uiTimeoutMs,
+    })
     const workspace = testId('collaboration-project-workspace-wework-local-workspace')
     const templateSection = testId('project-create-template-section')
     await control.command('waitFor', `${workspace}, ${templateSection}`, {
+      visible: true,
       timeoutMs: uiTimeoutMs,
     })
     if (Number(await control.command('getElementCount', workspace)) > 0) {
-      await control.command('clickWhenEnabled', workspace, { timeoutMs: uiTimeoutMs })
+      await control.command('clickWhenEnabled', workspace, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
     }
     await control.command('waitFor', templateSection, {
+      visible: true,
       ...(text ? { text } : {}),
       timeoutMs: uiTimeoutMs,
     })
@@ -370,12 +423,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'collaboration-workspace-wework-local-workspace')
       await openTemplateProject(control, accountTemplate.document.spec.displayName)
       await capture(control, '00-account-download')
-      await control.command(
-        'click',
-        scoped(
-          '[data-testid="collaboration-project-create-dialog"] .collaboration-project-create-footer button[type="button"]'
-        )
-      )
+      await discardTemplateProjectDraft(control, { uiTimeoutMs, workbenchReadyTimeoutMs })
       await wait(
         control,
         `template-card-${accountTemplate.document.metadata.name}`,
@@ -405,6 +453,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         0,
         'A self-contained template must be ready without selecting existing Agents'
       )
+      await openTemplateProjectBindings(control, { uiTimeoutMs })
       await click(control, 'template-customize-main')
       await control.command('select', testId('template-role-main-role-1'), { value: '' })
       assert.equal(
