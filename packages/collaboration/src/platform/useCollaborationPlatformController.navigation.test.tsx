@@ -166,6 +166,34 @@ it.each([401, 403, 404])(
   },
 )
 
+it.each([401, 403, 404])(
+  'loads other authorized navigation when a cold project route is rejected with %s',
+  async status => {
+    const sibling = { ...project, id: 'accessible-project' }
+    const localProject = { ...project, id: 'local-project', workspace_id: localWorkspace.id }
+    const cloudApi = apiFor(cloudWorkspace, [project, sibling])
+    const localApi = apiFor(localWorkspace, [localProject])
+    cloudApi.projects.get = vi.fn().mockRejectedValue(Object.assign(new Error('Denied'), { status }))
+    const route = { ...location, workspaceId: null }
+
+    await render([localApi, cloudApi], route, 'denied', cloudApi)
+
+    expect(currentState().workspaces).toEqual([localWorkspace, cloudWorkspace])
+    expect(currentState().navigationProjects).toEqual([localProject, sibling])
+    expect(currentState().projects).toEqual([localProject, sibling])
+    expect(currentState().workspace).toBeNull()
+    expect(currentState().workspaceNavigationContext).toBeNull()
+    expect(currentState().error).toBe('Failed')
+
+    vi.mocked(cloudApi.projects.get).mockResolvedValue(project)
+    await render([localApi, cloudApi], route, 'restored', cloudApi)
+
+    expect(currentState().workspace?.id).toBe(cloudWorkspace.id)
+    expect(currentState().projects).toContainEqual(project)
+    expect(currentState().error).toBeNull()
+  }
+)
+
 it('does not reuse a project workspace from a replaced API after a transport failure', async () => {
   const api = apiFor(cloudWorkspace, [project])
   api.projects.get = vi.fn(async () => project)

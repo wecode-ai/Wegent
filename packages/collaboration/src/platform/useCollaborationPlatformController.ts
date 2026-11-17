@@ -303,6 +303,7 @@ export function useCollaborationPlatformController({
         (project) => project.id === location.projectId,
       );
       let requestedProjectAuthorized = false;
+      let projectAccessRevoked = false;
       if (!workspaceId && location.projectId) {
         try {
           requestedProject = await api.projects.get(location.projectId);
@@ -317,6 +318,8 @@ export function useCollaborationPlatformController({
               ? cause.status
               : null;
           if (status === 401 || status === 403 || status === 404) {
+            projectAccessRevoked = true;
+            requestedProject = undefined;
             authorizedProjectRef.current = null;
             navigationCacheRef.current.projects =
               navigationCacheRef.current.projects.filter(
@@ -335,7 +338,6 @@ export function useCollaborationPlatformController({
               loading: false,
               error: loadFailedMessage,
             }));
-            return;
           }
           // A transport failure does not move an already known project out of its workspace.
           const authorized = authorizedProjectRef.current;
@@ -440,7 +442,7 @@ export function useCollaborationPlatformController({
         loading: workspaceId
           ? current.workspace?.id !== workspaceId
           : navigationCacheStatusRef.current !== "complete",
-        error: null,
+        error: projectAccessRevoked ? loadFailedMessage : null,
       }));
       if (!workspaceId) {
         const sources = navigationApis?.length ? navigationApis : [api];
@@ -457,6 +459,11 @@ export function useCollaborationPlatformController({
         const publish = () => {
           if (revision !== loadRevisionRef.current) return;
           const snapshot = mergeRootNavigationSnapshots(snapshots);
+          if (projectAccessRevoked) {
+            snapshot.projects = snapshot.projects.filter(
+              (project) => project.id !== location.projectId,
+            );
+          }
           const navigationProjects = primaryNavigationSettled
             ? reconcileNavigationProjects(
                 snapshot.projects,
@@ -501,7 +508,7 @@ export function useCollaborationPlatformController({
             executionEnvironments: [],
             resources: snapshot.resources,
             loading: false,
-            error: null,
+            error: projectAccessRevoked ? loadFailedMessage : null,
           }));
         };
         const updateSnapshot = (

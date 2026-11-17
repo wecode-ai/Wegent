@@ -996,6 +996,9 @@ export function createCollaborationWorkspaceControllerCommands({
   const selectedIssueCommentsRevisions = new Map<string, number>();
   const selectedIssueAssignmentsRevisions = new Map<string, number>();
   const projectMutationGenerations = new Map<string, number>();
+  const revokedProjectIds = new Set<string>();
+  // Recovery must not authorize responses that started before revocation.
+  const projectAccessGenerations = new Map<string, number>();
   const revalidatingProjects = new Map<
     string,
     {
@@ -1014,7 +1017,15 @@ export function createCollaborationWorkspaceControllerCommands({
     Promise<WorkspaceBoardSnapshot | null>
   >();
   const homeSnapshotResults = new Map<string, WorkspaceBoardSnapshot | null>();
-  let homeMyWorkLoad: Promise<WorkspaceMyWorkItem[]> | null = null;
+  let homeMyWorkLoad: {
+    promise: Promise<WorkspaceMyWorkItem[]>;
+    accessGenerations: ReadonlyMap<string, number>;
+  } | null = null;
+  const startMyWorkLoad = () => ({
+    accessGenerations: new Map(projectAccessGenerations),
+    promise:
+      myWorkEnabled && api.myWork ? api.myWork.list() : Promise.resolve([]),
+  });
   const loadStandardSnapshot = (projectId: string) => {
     const active = standardSnapshotLoads.get(projectId);
     if (active) return active;
@@ -1095,11 +1106,30 @@ export function createCollaborationWorkspaceControllerCommands({
       : [...catalogProjects, project];
     return project;
   };
-  const acceptCatalog = (incoming: CollaborationProject[]) => {
-    const projects = incoming.map(acceptProject);
+  const acceptCatalog = (
+    incoming: CollaborationProject[],
+    requestGenerations: ReadonlyMap<string, number>,
+  ) => {
+    const projects = incoming
+      .filter(
+        (project) =>
+          !revokedProjectIds.has(project.id) ||
+          (requestGenerations.get(project.id) ?? 0) ===
+            (projectAccessGenerations.get(project.id) ?? 0),
+      )
+      .map(acceptProject);
+    for (const project of projects) revokedProjectIds.delete(project.id);
     catalogProjects = projects;
     return projects;
   };
+  const canShowMyWorkItem = (
+    item: WorkspaceMyWorkItem,
+    requestGenerations: ReadonlyMap<string, number>,
+  ) =>
+    item.invited_only === true ||
+    (!revokedProjectIds.has(item.cloud_project_id) &&
+      (requestGenerations.get(item.cloud_project_id) ?? 0) ===
+        (projectAccessGenerations.get(item.cloud_project_id) ?? 0));
   const projectVersion = (projectId: string) =>
     Math.max(
       catalogProjects.find((project) => project.id === projectId)?.version ?? 0,
@@ -1187,6 +1217,7 @@ export function createCollaborationWorkspaceControllerCommands({
           mutationGeneration !== projectMutationGeneration(projectId))
       )
         return;
+      revokedProjectIds.delete(projectId);
       const project = acceptProject(incoming);
       if (options?.revalidate && project !== incoming) return;
       mutationGeneration = projectMutationGeneration(projectId);
@@ -1277,6 +1308,11 @@ export function createCollaborationWorkspaceControllerCommands({
           : null;
       if (status === 401 || status === 403 || status === 404) {
         markProjectMutated(projectId);
+        revokedProjectIds.add(projectId);
+        projectAccessGenerations.set(
+          projectId,
+          (projectAccessGenerations.get(projectId) ?? 0) + 1,
+        );
         catalogProjects = catalogProjects.filter(
           (project) => project.id !== projectId,
         );
@@ -1339,9 +1375,10 @@ export function createCollaborationWorkspaceControllerCommands({
       const isCurrent = options?.isCurrent ?? (() => true);
       dispatch({ type: "loading", value: true });
       try {
+        const requestGenerations = new Map(projectAccessGenerations);
         const incoming = await api.projects.list();
         if (!isCurrent()) return;
-        acceptCatalog(incoming);
+        acceptCatalog(incoming, requestGenerations);
         dispatch({ type: "project-catalog-loaded", projects: catalogProjects });
       } catch {
         if (!isCurrent()) return;
@@ -1354,54 +1391,68 @@ export function createCollaborationWorkspaceControllerCommands({
       dispatch({ type: "loading", value: true });
       dispatch({ type: "error", value: null });
       try {
-        homeMyWorkLoad =
-          myWorkEnabled && api.myWork ? api.myWork.list() : Promise.resolve([]);
-        const myWorkResult = homeMyWorkLoad.then(
+        const myWorkLoad = startMyWorkLoad();
+        homeMyWorkLoad = myWorkLoad;
+        const myWorkResult = myWorkLoad.promise.then(
           (items) => ({ status: "fulfilled" as const, items }),
           (error: unknown) => ({ status: "rejected" as const, error }),
         );
-        const projects = acceptCatalog(await api.projects.list());
+        const requestGenerations = new Map(projectAccessGenerations);
+        const projects = acceptCatalog(
+          await api.projects.list(),
+          requestGenerations,
+        );
+        const snapshotProjects = projects.map((project) => ({
+          project,
+          mutationGeneration: projectMutationGeneration(project.id),
+        }));
         dispatch({ type: "project-catalog-loaded", projects });
         const myWorkOutcome = await myWorkResult;
         if (myWorkOutcome.status === "rejected") throw myWorkOutcome.error;
         const myWork = myWorkOutcome.items;
         const snapshots = preloadHomeSnapshots
           ? await Promise.all(
-              projects.map(async (project) => ({
+              snapshotProjects.map(async ({ project, mutationGeneration }) => ({
                 projectId: project.id,
-                mutationGeneration: projectMutationGeneration(project.id),
-                snapshot: !canPreloadHomeSnapshot(project)
-                  ? null
-                  : isExternalGitProject(project)
-                    ? await loadExternalGitBoardSnapshot(
-                        api,
-                        project.id,
-                        {
-                          parentId: null,
-                          pageSize: defaultExternalGitBoardPageSize,
-                          eager: true,
-                        },
-                        getProjectSnapshot(project.id),
-                      )
-                        .then((result) => result.snapshot)
-                        .catch(() => null)
-                    : await loadHomeSnapshot(project.id),
+                mutationGeneration,
+                snapshot:
+                  revokedProjectIds.has(project.id) ||
+                  mutationGeneration !==
+                    projectMutationGeneration(project.id) ||
+                  !canPreloadHomeSnapshot(project)
+                    ? null
+                    : isExternalGitProject(project)
+                      ? await loadExternalGitBoardSnapshot(
+                          api,
+                          project.id,
+                          {
+                            parentId: null,
+                            pageSize: defaultExternalGitBoardPageSize,
+                            eager: true,
+                          },
+                          getProjectSnapshot(project.id),
+                        )
+                          .then((result) => result.snapshot)
+                          .catch(() => null)
+                      : await loadHomeSnapshot(project.id),
               })),
             )
           : [];
         const currentSnapshots = snapshots.filter(
           ({ projectId, mutationGeneration }) =>
+            !revokedProjectIds.has(projectId) &&
             mutationGeneration === projectMutationGeneration(projectId),
         );
         const preserveSnapshotProjectIds = snapshots
           .filter(
             ({ projectId, mutationGeneration }) =>
+              !revokedProjectIds.has(projectId) &&
               mutationGeneration !== projectMutationGeneration(projectId),
           )
           .map(({ projectId }) => projectId);
         dispatch({
           type: "home-loaded",
-          projects,
+          projects: catalogProjects,
           preserveSnapshotProjectIds,
           projectItems: Object.fromEntries(
             currentSnapshots.flatMap(({ projectId, snapshot }) =>
@@ -1423,7 +1474,9 @@ export function createCollaborationWorkspaceControllerCommands({
               snapshot ? [[projectId, snapshot.taskBindings]] : [],
             ),
           ),
-          myWork,
+          myWork: myWork.filter((item) =>
+            canShowMyWorkItem(item, myWorkLoad.accessGenerations),
+          ),
         });
       } catch {
         reportError(messages.loadFailed, "load");
@@ -1440,11 +1493,13 @@ export function createCollaborationWorkspaceControllerCommands({
       dispatch({ type: "loading", value: true });
       dispatch({ type: "error", value: null });
       try {
-        const pending = homeMyWorkLoad;
+        const pending = homeMyWorkLoad ?? startMyWorkLoad();
         homeMyWorkLoad = null;
         dispatch({
           type: "my-work-loaded",
-          items: await (pending ?? api.myWork.list()),
+          items: (await pending.promise).filter((item) =>
+            canShowMyWorkItem(item, pending.accessGenerations),
+          ),
         });
       } catch {
         reportError(messages.loadFailed, "load");

@@ -9,6 +9,11 @@ export interface ProjectSnapshotWriteGuard {
   scope: object | null
   projectId: string | null
   issueIds: ReadonlySet<string>
+  independentIssueAccess?: {
+    scope: object | null
+    projectId: string
+    issueIds: ReadonlySet<string>
+  }
   canWrite: boolean
   message: string
   acceptProject?(project: CollaborationProject): void
@@ -29,6 +34,14 @@ export function guardProjectSnapshotWrites(
   api: SharedWorkspaceApi,
   getGuard: () => ProjectSnapshotWriteGuard
 ): SharedWorkspaceApi {
+  const hasIndependentIssueAccess = (
+    guard: ProjectSnapshotWriteGuard,
+    projectId: string,
+    issueId: string
+  ) =>
+    guard.independentIssueAccess?.scope === guard.scope &&
+    guard.independentIssueAccess?.projectId === projectId &&
+    guard.independentIssueAccess.issueIds.has(issueId)
   const assertProjectWritable = (projectId: string) => {
     const guard = getGuard()
     if (guard.projectId === projectId && !guard.canWrite) throw new Error(guard.message)
@@ -58,6 +71,7 @@ export function guardProjectSnapshotWrites(
           guard.projectId !== null &&
           !guard.canWrite &&
           guard.issueIds.has(args[0]) &&
+          !hasIndependentIssueAccess(guard, guard.projectId, args[0]) &&
           structuralIssueFields.some(field => field in args[1])
         ) {
           throw new Error(guard.message)
@@ -69,7 +83,14 @@ export function guardProjectSnapshotWrites(
         return api.issues.reorder(...args)
       },
       async assign(...args: Parameters<SharedWorkspaceApi['issues']['assign']>) {
-        assertProjectWritable(args[0])
+        const guard = getGuard()
+        if (
+          guard.projectId === args[0] &&
+          !guard.canWrite &&
+          !hasIndependentIssueAccess(guard, args[0], args[1])
+        ) {
+          throw new Error(guard.message)
+        }
         return api.issues.assign(...args)
       },
     },

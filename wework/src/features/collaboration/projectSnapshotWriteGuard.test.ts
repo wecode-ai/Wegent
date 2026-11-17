@@ -100,6 +100,80 @@ describe('project snapshot write guard', () => {
     expect(transport.issues.assign).toHaveBeenCalledOnce()
   })
 
+  it('allows explicitly independent Issue writes without unlocking its stale project', async () => {
+    const { api, transport, getGuard, setGuard } = createGuardedApi()
+    setGuard({
+      ...getGuard(),
+      issueIds: new Set(['issue-one', 'invited-issue']),
+      independentIssueAccess: {
+        scope: getGuard().scope,
+        projectId: 'one',
+        issueIds: new Set(['invited-issue']),
+      },
+    })
+    const assignment = { version: 1, assigneeType: 'user' as const, assigneeId: '2' }
+
+    await api.issues.assign('one', 'invited-issue', assignment)
+    await api.issues.update('invited-issue', { version: 1, status: 'pending' })
+    expect(transport.issues.assign).toHaveBeenCalledExactlyOnceWith(
+      'one',
+      'invited-issue',
+      assignment
+    )
+    expect(transport.issues.update).toHaveBeenCalledExactlyOnceWith('invited-issue', {
+      version: 1,
+      status: 'pending',
+    })
+
+    for (const issueId of ['issue-one', 'unknown-issue']) {
+      await expect(api.issues.assign('one', issueId, assignment)).rejects.toThrow(
+        'Refresh project before changing stages'
+      )
+    }
+    await expect(api.issues.update('issue-one', { version: 1, status: 'pending' })).rejects.toThrow(
+      'Refresh project before changing stages'
+    )
+    await expect(api.projects.update('one', { version: 1, tags: [] })).rejects.toThrow()
+    await expect(api.issues.create('one', { title: 'New issue' })).rejects.toThrow()
+    await expect(
+      api.issues.reorder('one', { parentId: null, status: null, issueIds: ['invited-issue'] })
+    ).rejects.toThrow()
+    expect(transport.issues.assign).toHaveBeenCalledOnce()
+    expect(transport.issues.update).toHaveBeenCalledOnce()
+    expect(transport.projects.update).not.toHaveBeenCalled()
+    expect(transport.issues.create).not.toHaveBeenCalled()
+    expect(transport.issues.reorder).not.toHaveBeenCalled()
+  })
+
+  it('does not reuse independent Issue access after changing the API scope or project', async () => {
+    const { api, transport, getGuard, setGuard } = createGuardedApi()
+    const originalScope = getGuard().scope
+    const independentIssueAccess = {
+      scope: originalScope,
+      projectId: 'one',
+      issueIds: new Set(['invited-issue']),
+    }
+    const assignment = { version: 1, assigneeType: 'user' as const, assigneeId: '2' }
+    setGuard({
+      ...getGuard(),
+      scope: {},
+      issueIds: new Set(['invited-issue']),
+      independentIssueAccess,
+    })
+
+    await expect(api.issues.assign('one', 'invited-issue', assignment)).rejects.toThrow()
+    await expect(
+      api.issues.update('invited-issue', { version: 1, status: 'pending' })
+    ).rejects.toThrow()
+    setGuard({ ...getGuard(), scope: originalScope, projectId: 'two' })
+    await expect(api.issues.assign('two', 'invited-issue', assignment)).rejects.toThrow()
+    await expect(
+      api.issues.update('invited-issue', { version: 1, status: 'pending' })
+    ).rejects.toThrow()
+    expect(transport.issues.assign).not.toHaveBeenCalled()
+    expect(transport.issues.update).not.toHaveBeenCalled()
+  })
+
   it('reads the current guard for every call and accepts the mutation response immediately', async () => {
     const { api, transport, getGuard, setGuard } = createGuardedApi()
     await expect(

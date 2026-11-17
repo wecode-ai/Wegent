@@ -16,11 +16,17 @@ import { WeworkSharedProject } from './WeworkCollaborationPlatform'
 const editor = vi.hoisted(() => ({ api: null as SharedWorkspaceApi | null }))
 const originalGetAnimations = Element.prototype.getAnimations
 vi.mock('./TodoEditor', () => ({
-  TodoEditor: ({ sharedApi }: { sharedApi: SharedWorkspaceApi }) => {
+  TodoEditor: ({
+    sharedApi,
+    structuralWritesEnabled,
+  }: {
+    sharedApi: SharedWorkspaceApi
+    structuralWritesEnabled?: boolean
+  }) => {
     const [dialogOpen, setDialogOpen] = useState(false)
     editor.api = sharedApi
     return (
-      <div data-testid="snapshot-test-editor">
+      <div data-testid="snapshot-test-editor" data-structure-ready={structuralWritesEnabled}>
         <button data-testid="snapshot-test-open-dialog" onClick={() => setDialogOpen(true)}>
           Open dialog
         </button>
@@ -189,6 +195,57 @@ afterEach(() => {
 })
 
 describe('production project snapshot lifecycle', () => {
+  it('keeps retained detail controls blocked until the activation board read completes', async () => {
+    const fixture = createFixture('backend')
+    render(<WeworkSharedProject {...fixture.props} />)
+    await expectFresh()
+    await screen.findByTestId('snapshot-test-editor')
+    expect(screen.getByTestId('snapshot-test-editor')).toHaveAttribute(
+      'data-structure-ready',
+      'true'
+    )
+    const board = deferred<typeof fixture.snapshot>()
+    fixture.getBoardSnapshot.mockReturnValueOnce(board.promise)
+    fireEvent.focus(window)
+    await waitFor(() => expect(fixture.getBoardSnapshot).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('snapshot-test-editor')).toHaveAttribute(
+      'data-structure-ready',
+      'false'
+    )
+    await act(async () => board.resolve(fixture.snapshot))
+    await expectFresh()
+    expect(screen.getByTestId('snapshot-test-editor')).toHaveAttribute(
+      'data-structure-ready',
+      'true'
+    )
+  })
+
+  it('retains the selected Issue and its draft when its workspace context arrives', async () => {
+    const fixture = createFixture('local')
+    const view = render(<WeworkSharedProject {...fixture.props} workspace={null} />)
+    await expectFresh()
+    const detail = await screen.findByTestId('snapshot-test-editor')
+    fireEvent.click(screen.getByTestId('snapshot-test-open-dialog'))
+    const draft = screen.getByTestId('snapshot-test-dialog')
+    const board = deferred<typeof fixture.snapshot>()
+    fixture.getBoardSnapshot.mockReturnValueOnce(board.promise)
+
+    try {
+      await act(async () => {
+        view.rerender(<WeworkSharedProject {...fixture.props} />)
+      })
+      expect(screen.getByTestId('snapshot-test-editor')).toBe(detail)
+      expect(screen.getByTestId('snapshot-test-dialog')).toBe(draft)
+      expect(fixture.getBoardSnapshot).toHaveBeenCalledOnce()
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'fresh'
+      )
+    } finally {
+      await act(async () => board.resolve(fixture.snapshot))
+    }
+  })
+
   it.each(
     [401, 403, 404].flatMap(status =>
       (['metadata', 'snapshot'] as const).map(read => ({ status, read }))
@@ -292,6 +349,10 @@ describe('production project snapshot lifecycle', () => {
     )
     await screen.findByTestId('snapshot-test-editor')
     expect(screen.queryByTestId('project-snapshot-sync-state')).not.toBeInTheDocument()
+    expect(screen.getByTestId('snapshot-test-editor')).toHaveAttribute(
+      'data-structure-ready',
+      'true'
+    )
     expect(fixture.get).not.toHaveBeenCalled()
     expect(fixture.getBoardSnapshot).not.toHaveBeenCalled()
     await expect(

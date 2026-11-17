@@ -609,25 +609,29 @@ export function WeworkSharedProject({
   }, [runtimeTaskLifecycle])
   const workspaceId = workspace?.id ?? null
   const hasFullWorkspaceAccess = workspace !== null && 'access_role' in workspace
-  const workspaceAccessRef = useRef(hasFullWorkspaceAccess)
+  const workspaceContextRef = useRef({ id: workspaceId, hasFullAccess: hasFullWorkspaceAccess })
   useLayoutEffect(() => {
-    workspaceAccessRef.current = hasFullWorkspaceAccess
-  }, [hasFullWorkspaceAccess])
+    workspaceContextRef.current = { id: workspaceId, hasFullAccess: hasFullWorkspaceAccess }
+  }, [hasFullWorkspaceAccess, workspaceId])
   const projectApi = useMemo<SharedWorkspaceApi>(
     () => ({
       ...api,
       projects: {
         ...api.projects,
         list: async () => {
-          if (workspaceAccessRef.current && workspaceId) return api.projects.list(workspaceId)
+          const workspaceContext = workspaceContextRef.current
+          if (workspaceContext.hasFullAccess && workspaceContext.id)
+            return api.projects.list(workspaceContext.id)
           const accessibleProjects = await api.projects.list()
           return accessibleProjects.filter(candidate => String(candidate.id) === String(project.id))
         },
-        create: input =>
-          api.projects.create({
+        create: input => {
+          const currentWorkspaceId = workspaceContextRef.current.id
+          return api.projects.create({
             ...input,
-            ...(workspaceId ? { workspaceId } : {}),
-          }),
+            ...(currentWorkspaceId ? { workspaceId: currentWorkspaceId } : {}),
+          })
+        },
       },
       issues: {
         ...api.issues,
@@ -649,7 +653,7 @@ export function WeworkSharedProject({
         },
       },
     }),
-    [api, project.id, project.project_store, workspaceId]
+    [api, project.id, project.project_store]
   )
   const scopedApi = useProjectSnapshotWriteGuardApi(projectApi, () => snapshotWriteGuardRef.current)
   const standInWorkspaceApi = useMemo(
@@ -1346,6 +1350,7 @@ export function WeworkSharedProject({
       focusedCommentId={focusedItemId === issue.id ? focusedCommentId : null}
       focusedCommentRequestKey={focusedItemId === issue.id ? focusedCommentRequestKey : null}
       sharedApi={issueApi}
+      structuralWritesEnabled={snapshotSync.canWrite}
       api={services.deliveryApi}
       presentation="workspace-panel"
       workspacePanelFill

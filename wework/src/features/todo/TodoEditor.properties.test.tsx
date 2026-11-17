@@ -52,9 +52,11 @@ function setup(
   assignmentError?: Error,
   workspacePanel = false,
   backend = false,
-  initialItem = initial
+  initialItem = initial,
+  structuralWritesEnabled = true
 ) {
   let replaceIssue!: (item: CloudLoopItem) => void
+  let setStructuralWritesEnabled!: (enabled: boolean) => void
   let persisted = initialItem
   const updateLoopItem = vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
     persisted = { ...persisted, ...values, version: persisted.version + 1 }
@@ -80,13 +82,16 @@ function setup(
   }
   function Editor() {
     const [item, setItem] = useState(initialItem)
+    const [structureReady, setStructureReady] = useState(structuralWritesEnabled)
     replaceIssue = setItem
+    setStructuralWritesEnabled = setStructureReady
     return (
       <TodoEditor
         mode="edit"
         presentation={workspacePanel ? 'workspace-panel' : 'modal'}
         readFirst={workspacePanel}
         item={item}
+        structuralWritesEnabled={structureReady}
         project={backend ? { ...project, project_store: 'backend' } : project}
         allItems={[item]}
         api={api as never}
@@ -100,10 +105,49 @@ function setup(
     updateLoopItem,
     read: () => persisted,
     replaceIssue: (item: CloudLoopItem) => act(() => replaceIssue(item)),
+    setStructuralWritesEnabled: (enabled: boolean) =>
+      act(() => setStructuralWritesEnabled(enabled)),
   }
 }
 
 describe('immediate Issue properties', () => {
+  it('keeps safe text writes available while structural controls await snapshot recovery', async () => {
+    const { updateLoopItem, setStructuralWritesEnabled } = setup(
+      undefined,
+      true,
+      false,
+      initial,
+      false
+    )
+    for (const field of ['status', 'parent', 'assignee']) {
+      expect(screen.getByTestId(`cloud-todo-detail-${field}`)).toBeDisabled()
+    }
+    expect(screen.queryByTestId('cloud-todo-detail-tag-input')).not.toBeInTheDocument()
+    const title = screen.getByTestId('cloud-todo-detail-title')
+    expect(title).not.toHaveAttribute('readonly')
+    fireEvent.change(title, { target: { value: 'Safe title' } })
+    fireEvent.blur(title)
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenCalledExactlyOnceWith(initial.id, {
+        version: 1,
+        title: 'Safe title',
+      })
+    )
+    setStructuralWritesEnabled(true)
+    for (const field of ['status', 'parent', 'assignee']) {
+      expect(screen.getByTestId(`cloud-todo-detail-${field}`)).toBeEnabled()
+    }
+    fireEvent.change(screen.getByTestId('cloud-todo-detail-status'), {
+      target: { value: 'pending' },
+    })
+    await waitFor(() =>
+      expect(updateLoopItem).toHaveBeenLastCalledWith(initial.id, {
+        version: 2,
+        status: 'pending',
+      })
+    )
+  })
+
   it('lets readers expand a short Markdown body without changing its saved content', async () => {
     const description = '# Review feedback\n\nKeep the interview context.'
     const { updateLoopItem } = setup(undefined, true, false, {

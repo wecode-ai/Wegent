@@ -2947,11 +2947,12 @@ class DesktopE2EServer {
             'text(JSON.stringify({ ok: true }))',
           ].join('\n')
           const exec = selectProgrammaticExec(body, program)
-          this.writeSse(response, [
-            responseCreated(responseId),
-            ...selectedToolCall(EMBEDDED_BROWSER_SETUP_OPEN_ID, { codeMode: exec }),
-            responseCompleted(responseId),
-          ])
+          this.writeLocalNamespaceToolCall(
+            response,
+            { protocol },
+            { name: exec.name, arguments: { input: exec.input }, codeMode: exec },
+            EMBEDDED_BROWSER_SETUP_OPEN_ID
+          )
           return
         }
         const search = selectToolSearch(body, 'Wework browser open')
@@ -2974,11 +2975,11 @@ class DesktopE2EServer {
           findNestedString(body, serializedOutputReportsSuccess),
           'The programmatic Wework browser_open call did not complete successfully'
         )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          assistantMessage(EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT),
-          responseCompleted(responseId),
-        ])
+        this.writeLocalAssistantMessage(
+          response,
+          { protocol },
+          EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT
+        )
         return
       }
 
@@ -3050,11 +3051,12 @@ class DesktopE2EServer {
             'text(JSON.stringify(result))',
           ].join('\n')
           const exec = selectProgrammaticExec(body, program)
-          this.writeSse(response, [
-            responseCreated(responseId),
-            ...selectedToolCall(EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID, { codeMode: exec }),
-            responseCompleted(responseId),
-          ])
+          this.writeLocalNamespaceToolCall(
+            response,
+            { protocol },
+            { name: exec.name, arguments: { input: exec.input }, codeMode: exec },
+            EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID
+          )
           return
         }
         const search = selectToolSearch(body, 'Wework browser open')
@@ -3080,11 +3082,11 @@ class DesktopE2EServer {
             !browserOutput.includes('Foreign embedded browser bridge'),
           'The browser tool followed a foreign bridge runtime record'
         )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          assistantMessage(EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT),
-          responseCompleted(responseId),
-        ])
+        this.writeLocalAssistantMessage(
+          response,
+          { protocol },
+          EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT
+        )
         return
       }
 
@@ -6210,8 +6212,12 @@ class DesktopE2EServer {
     this.writeAnthropicToolCall(response, search.arguments, callId, search.name)
   }
 
-  writeLocalNamespaceToolCall(response, model, tool) {
-    const callId = `${model.protocol}-local-browser-open`
+  writeLocalNamespaceToolCall(
+    response,
+    model,
+    tool,
+    callId = `${model.protocol}-local-browser-open`
+  ) {
     if (model.protocol === 'responses') {
       const id = `local-${model.protocol}-browser-open`
       this.writeSse(response, [

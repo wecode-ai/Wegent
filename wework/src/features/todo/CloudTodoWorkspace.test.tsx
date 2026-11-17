@@ -935,10 +935,9 @@ describe('CloudTodoWorkspace', () => {
       'data-sync-state',
       'revalidating'
     )
+    expect(screen.getByTestId('cloud-todo-detail-status')).toBeDisabled()
     await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'pending')
-    expect(await screen.findByTestId('cloud-todo-save-error')).toHaveTextContent(
-      '请先刷新项目配置，再变更阶段或看板设置。'
-    )
+    expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue('in_progress')
     expect(localApi.updateLoopItem).not.toHaveBeenCalled()
 
     await user.click(screen.getByTestId('cloud-todo-detail-title'))
@@ -959,10 +958,9 @@ describe('CloudTodoWorkspace', () => {
         'stale'
       )
     )
+    expect(screen.getByTestId('cloud-todo-detail-status')).toBeDisabled()
     await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'completed')
-    expect(await screen.findByTestId('cloud-todo-save-error')).toHaveTextContent(
-      '请先刷新项目配置，再变更阶段或看板设置。'
-    )
+    expect(screen.getByTestId('cloud-todo-detail-status')).toHaveValue('in_progress')
     expect(localApi.updateLoopItem).toHaveBeenCalledTimes(1)
 
     await user.click(screen.getByTestId('project-snapshot-retry'))
@@ -972,6 +970,7 @@ describe('CloudTodoWorkspace', () => {
         'fresh'
       )
     )
+    expect(screen.getByTestId('cloud-todo-detail-status')).toBeEnabled()
     await user.selectOptions(screen.getByTestId('cloud-todo-detail-status'), 'in_review')
     await waitFor(() =>
       expect(localApi.updateLoopItem).toHaveBeenCalledWith(
@@ -980,6 +979,201 @@ describe('CloudTodoWorkspace', () => {
       )
     )
     expect(localApi.updateLoopItem).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves native project identity and bound Issue cards while refreshing local metadata', async () => {
+    const { localApi, localProject, workbenchServices } = localSnapshotServices()
+    const nativeProject = {
+      ...localProject,
+      id: 'default-work-items',
+      project_key: 'WORK',
+      current_user_id: 0,
+      metadata: { system_kind: 'default_work_items' },
+    }
+    const trackedIssue = {
+      ...item,
+      id: 'WORK-12',
+      cloud_project_id: nativeProject.id,
+      created_by_user_id: 0,
+      title: 'Native Issue remains bound',
+    }
+    const address = { deviceId: 'local-device', taskId: 'native-metadata-refresh' }
+    const binding = {
+      id: 12,
+      loop_item_id: trackedIssue.id,
+      task_user_id: 0,
+      device_id: address.deviceId,
+      task_id: address.taskId,
+      task_title: trackedIssue.title,
+      backend_task_id: null,
+      linked_at: item.created_at,
+    }
+    vi.mocked(localApi.listCloudProjects).mockResolvedValue({ items: [nativeProject] })
+    vi.mocked(localApi.getLoopItem).mockResolvedValue(trackedIssue)
+    vi.mocked(localApi.listTaskBindings).mockResolvedValue([binding])
+    vi.mocked(localApi.getBoardSnapshot).mockResolvedValue({
+      items: [trackedIssue],
+      task_bindings: [binding],
+      members: [],
+      agents: [],
+    })
+    const props = {
+      user: { id: 9001, user_name: 'signed-in-user' } as User,
+      localProjects: [],
+      services: workbenchServices,
+      activeProjectRef: { projectStore: 'local' as const, projectId: nativeProject.id },
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 91, name: 'Native runtime project' },
+            deviceWorkspaces: [
+              {
+                deviceId: address.deviceId,
+                workspacePath: '/tmp/native-project',
+                available: true,
+                tasks: [
+                  {
+                    taskId: address.taskId,
+                    workspacePath: '/tmp/native-project',
+                    title: trackedIssue.title,
+                    runtime: 'codex' as const,
+                    running: false,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    }
+    const page = render(<CloudTodoWorkspace {...props} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'fresh'
+      )
+    )
+    expect(screen.getByTestId('cloud-todo-card-WORK-12')).toHaveTextContent(trackedIssue.title)
+    expect(
+      screen.queryByTestId('cloud-todo-card-runtime:local-device:native-metadata-refresh')
+    ).not.toBeInTheDocument()
+    vi.mocked(localApi.listCloudProjects).mockResolvedValue({
+      items: [{ ...nativeProject, version: 2, name: 'Updated native project' }],
+    })
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() => expect(localApi.getBoardSnapshot).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'fresh'
+      )
+    )
+    expect(screen.getByTestId('cloud-project-header-title')).toHaveTextContent(
+      'Updated native project'
+    )
+    expect(screen.getByTestId('cloud-todo-card-WORK-12')).toHaveTextContent(trackedIssue.title)
+    expect(
+      screen.queryByTestId('cloud-todo-card-runtime:local-device:native-metadata-refresh')
+    ).not.toBeInTheDocument()
+    vi.mocked(localApi.listCloudProjects).mockResolvedValue({ items: [nativeProject] })
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() => expect(localApi.getBoardSnapshot).toHaveBeenCalledTimes(3))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'fresh'
+      )
+    )
+    expect(screen.getByTestId('cloud-project-header-title')).toHaveTextContent(
+      'Updated native project'
+    )
+    page.rerender(<CloudTodoWorkspace {...props} focusedItemId={trackedIssue.id} />)
+    expect(await screen.findByTestId('cloud-todo-detail-title')).toHaveValue(trackedIssue.title)
+    await waitFor(() => expect(localApi.listTaskBindings).toHaveBeenCalledWith(trackedIssue.id))
+  })
+
+  it('preserves native task bindings when accepting saved project configuration mutations', async () => {
+    const { localApi, localProject, workbenchServices } = localSnapshotServices()
+    const nativeProject = { ...localProject, current_user_id: 0, current_user_name: '' }
+    const nativeIssue = { ...item, status: 'in_review' as const }
+    const binding = {
+      id: 1,
+      loop_item_id: item.id,
+      task_user_id: 0,
+      device_id: 'local-device',
+      task_id: 'native-mutation-task',
+      task_title: item.title,
+      backend_task_id: null,
+      linked_at: item.created_at,
+    }
+    vi.mocked(localApi.listCloudProjects).mockResolvedValue({ items: [nativeProject] })
+    vi.mocked(localApi.listTaskBindings).mockResolvedValue([binding])
+    vi.mocked(localApi.getBoardSnapshot).mockResolvedValue({
+      items: [nativeIssue],
+      task_bindings: [binding],
+      members: [],
+      agents: [],
+    })
+    localApi.updateCloudProject = vi.fn(async (_projectId, values) => ({
+      ...nativeProject,
+      ...values,
+      name: 'Saved native project',
+      version: values.version + 1,
+    }))
+    const user = userEvent.setup({ delay: null })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 9001, user_name: 'signed-in-user' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectRef={{ projectStore: 'local', projectId: nativeProject.id }}
+      />
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'fresh'
+      )
+    )
+    expect(screen.getByTestId(`cloud-todo-card-tasks-${item.id}`)).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('board-view-picker'))
+    await user.click(screen.getByTestId('board-view-edit'))
+    await user.click(screen.getByTestId('cloud-board-display-menu'))
+    await user.click(screen.getByTestId('cloud-board-display-assignee'))
+    await user.click(screen.getByTestId('board-view-save'))
+    await waitFor(() => expect(screen.queryByTestId('board-view-editor')).not.toBeInTheDocument())
+    expect(localApi.updateCloudProject).toHaveBeenNthCalledWith(
+      1,
+      nativeProject.id,
+      expect.objectContaining({
+        version: 1,
+        card_display: expect.objectContaining({ show_assignee: false }),
+      })
+    )
+    expect(screen.getByTestId('cloud-project-header-title')).toHaveTextContent(
+      'Saved native project'
+    )
+    expect(screen.getByTestId(`cloud-todo-card-tasks-${item.id}`)).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('board-view-picker'))
+    await user.click(screen.getByTestId('board-view-edit'))
+    await user.click(screen.getByTestId('cloud-board-display-menu'))
+    await user.click(screen.getByTestId('cloud-board-display-priority'))
+    await user.click(screen.getByTestId('board-view-save'))
+    await waitFor(() => expect(screen.queryByTestId('board-view-editor')).not.toBeInTheDocument())
+    expect(localApi.updateCloudProject).toHaveBeenNthCalledWith(
+      2,
+      nativeProject.id,
+      expect.objectContaining({
+        version: 2,
+        card_display: expect.objectContaining({ show_assignee: false, show_priority: false }),
+      })
+    )
+    expect(screen.getByTestId(`cloud-todo-card-tasks-${item.id}`)).toBeInTheDocument()
+    expect(screen.getByTestId(`cloud-todo-card-${item.id}`)).toHaveTextContent(item.title)
   })
 
   it.each(['manage', 'files'] as const)(
@@ -1119,6 +1313,98 @@ describe('CloudTodoWorkspace', () => {
       })
     )
     expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('New API task')
+  })
+
+  it('hides previous local table rows when its API scope changes and the new read fails', async () => {
+    const first = localSnapshotServices()
+    const second = localSnapshotServices()
+    const props = {
+      user: { id: 1, user_name: 'local' } as User,
+      localProjects: [],
+      activeProjectRef: { projectStore: 'local' as const, projectId: project.id },
+    }
+    const page = render(<CloudTodoWorkspace {...props} services={first.workbenchServices} />)
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await userEvent.click(screen.getByTestId('cloud-project-table-view'))
+    await screen.findByTestId('collaboration-issue-table-row-WEG-1')
+    await waitFor(() =>
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'fresh'
+      )
+    )
+    const pending =
+      Promise.withResolvers<Awaited<ReturnType<typeof second.localApi.getBoardSnapshot>>>()
+    vi.mocked(second.localApi.getBoardSnapshot).mockReturnValueOnce(pending.promise)
+    page.rerender(<CloudTodoWorkspace {...props} services={second.workbenchServices} />)
+    await waitFor(() => expect(second.localApi.getBoardSnapshot).toHaveBeenCalledOnce())
+    expect(screen.queryByTestId('collaboration-issue-table-row-WEG-1')).not.toBeInTheDocument()
+
+    await act(async () => pending.reject(new Error('Replacement API unavailable')))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'stale'
+      )
+    )
+    expect(screen.queryByTestId('collaboration-issue-table-row-WEG-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
+
+    vi.mocked(second.localApi.listLoopItems).mockResolvedValue({
+      items: [{ ...item, title: 'Replacement API Issue' }],
+    })
+    await userEvent.click(screen.getByTestId('project-snapshot-retry'))
+    expect(await screen.findByTestId('collaboration-issue-table-row-WEG-1')).toHaveTextContent(
+      'Replacement API Issue'
+    )
+  })
+
+  it('preserves newer local edits in the drawer and search cache when a pending board read completes', async () => {
+    const { localApi, workbenchServices } = localSnapshotServices()
+    const user = userEvent.setup({ delay: null })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectRef={{ projectStore: 'local', projectId: project.id }}
+      />
+    )
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+    await openIssueFromBoard()
+    await screen.findByTestId('cloud-todo-detail')
+    const pending = Promise.withResolvers<Awaited<ReturnType<typeof localApi.getBoardSnapshot>>>()
+    vi.mocked(localApi.getBoardSnapshot).mockReturnValueOnce(pending.promise)
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() => expect(localApi.getBoardSnapshot).toHaveBeenCalledTimes(2))
+    await user.click(screen.getByTestId('cloud-todo-detail-title'))
+    await user.clear(screen.getByTestId('cloud-todo-detail-title'))
+    await user.type(screen.getByTestId('cloud-todo-detail-title'), 'Saved version two')
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(localApi.updateLoopItem).toHaveBeenCalledOnce())
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('Saved version two')
+    )
+
+    await act(async () =>
+      pending.resolve({ items: [item], task_bindings: [], members: [], agents: [] })
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+        'data-sync-state',
+        'fresh'
+      )
+    )
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('Saved version two')
+    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue('Saved version two')
+
+    const searchRead = Promise.withResolvers<Awaited<ReturnType<typeof localApi.listLoopItems>>>()
+    vi.mocked(localApi.listLoopItems).mockReturnValueOnce(searchRead.promise)
+    await user.keyboard('{Meta>}k{/Meta}')
+    await user.type(screen.getByTestId('cloud-global-search-input'), 'WEG-1')
+    expect(await screen.findByTestId('cloud-global-search-result-WEG-1')).toHaveTextContent(
+      'Saved version two'
+    )
   })
 
   it('reveals a failed startup snapshot with its error and recovers through retry', async () => {

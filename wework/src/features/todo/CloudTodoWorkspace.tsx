@@ -341,6 +341,18 @@ type LocatedCloudProject = LocatedProjectSpace
 type LocatedLoopItem = CloudLoopItem & {
   project_store?: RuntimeProjectSpaceRef['projectStore']
 }
+
+function latestLoopItem(
+  current: LocatedLoopItem | undefined,
+  incoming: LocatedLoopItem
+): LocatedLoopItem {
+  return current?.id === incoming.id &&
+    current.cloud_project_id === incoming.cloud_project_id &&
+    current.project_store === incoming.project_store &&
+    current.version > incoming.version
+    ? current
+    : incoming
+}
 type LoopItemTaskBinding = Awaited<ReturnType<DeliveryApi['listTaskBindings']>>[number]
 type BoardReadResult = {
   items: CloudLoopItem[]
@@ -356,6 +368,10 @@ function toWeworkCloudProject(project: CollaborationProject): CloudProject {
 
 function toCloudLoopItem(issue: Awaited<ReturnType<SharedWorkspaceApi['issues']['get']>>) {
   return issue as CloudLoopItem
+}
+
+function isInvitedOnlyIssue(issue: CloudLoopItem | null | undefined): boolean {
+  return Boolean(issue && 'invited_only' in issue && issue.invited_only === true)
 }
 
 function boardTaskModelSelection(
@@ -865,6 +881,8 @@ export function CloudTodoWorkspace({
               ? project
               : {
                   ...updated,
+                  current_user_id: project.current_user_id,
+                  current_user_name: project.current_user_name,
                   id: currentProject.id,
                   project_store: currentProject.project_store,
                   location: currentProject.location,
@@ -1084,16 +1102,7 @@ export function CloudTodoWorkspace({
       }
       setItems(current => {
         const currentById = new Map(current.map(item => [item.id, item]))
-        return fetchedItems.map(incoming => {
-          const existing = currentById.get(incoming.id)
-          return existing &&
-            existing.cloud_project_id === incoming.cloud_project_id &&
-            existing.project_store === incoming.project_store
-            ? existing.version > incoming.version
-              ? existing
-              : incoming
-            : incoming
-        })
+        return fetchedItems.map(incoming => latestLoopItem(currentById.get(incoming.id), incoming))
       })
       setItemsProjectKey(spaceKey)
       setBoardError(error)
@@ -1577,6 +1586,8 @@ export function CloudTodoWorkspace({
       setSelectedTaskBinding(null)
       setTaskComposerRequest(null)
       setBackgroundTaskItemId(null)
+      setItems([])
+      setItemsProjectKey(null)
       setLocalProjectItems({})
       setLocalProjectMembers({})
       setLocalProjectAgents({})
@@ -1613,9 +1624,10 @@ export function CloudTodoWorkspace({
           isCurrent,
         })
       } else {
-        if (!localProjectManageApi) throw new Error(cloudWorkspaceMessages.loadFailed)
-        const updated = await localProjectManageApi.projects
-          .get(String(project.id))
+        const localDelivery = apiForProject(project)
+        if (!localDelivery) throw new Error(cloudWorkspaceMessages.loadFailed)
+        const updated = await createWeworkDeliverySharedWorkspaceApi(localDelivery)
+          .projects.get(String(project.id))
           .catch(cause => {
             if (isCurrent()) revokeLocalBoardAccess(project, cause)
             throw cause
@@ -1640,16 +1652,29 @@ export function CloudTodoWorkspace({
     localSnapshotWriteGuardRef.current = {
       scope: snapshotScope,
       projectId: localProject ? String(localProject.id) : null,
+      independentIssueAccess:
+        localProject &&
+        isInvitedOnlyIssue(selectedItem) &&
+        selectedItem?.project_store === localProject.project_store &&
+        String(selectedItem.cloud_project_id) === String(localProject.id)
+          ? {
+              scope: snapshotScope,
+              projectId: String(localProject.id),
+              issueIds: new Set([selectedItem.id]),
+            }
+          : undefined,
       issueIds: new Set([
         ...items
           .filter(
             item =>
               localProject &&
+              !isInvitedOnlyIssue(item) &&
               item.project_store === localProject.project_store &&
               String(item.cloud_project_id) === String(localProject.id)
           )
           .map(item => item.id),
         ...(localProject &&
+        !isInvitedOnlyIssue(selectedItem) &&
         selectedItem?.project_store === localProject.project_store &&
         String(selectedItem.cloud_project_id) === String(localProject.id)
           ? [selectedItem.id]
@@ -1661,15 +1686,28 @@ export function CloudTodoWorkspace({
     snapshotWriteGuardRef.current = {
       scope: snapshotScope,
       projectId: selectedProject?.location === 'cloud' ? String(selectedProject.id) : null,
+      independentIssueAccess:
+        selectedProject?.location === 'cloud' &&
+        isInvitedOnlyIssue(selectedItem) &&
+        selectedItem?.project_store === 'backend' &&
+        String(selectedItem.cloud_project_id) === String(selectedProject.id)
+          ? {
+              scope: snapshotScope,
+              projectId: String(selectedProject.id),
+              issueIds: new Set([selectedItem.id]),
+            }
+          : undefined,
       issueIds: new Set([
         ...cloudWorkspace.state.issues
           .filter(
             issue =>
               selectedProject?.location === 'cloud' &&
+              issue.invited_only !== true &&
               String(issue.cloud_project_id) === String(selectedProject.id)
           )
           .map(issue => issue.id),
         ...(selectedProject?.location === 'cloud' &&
+        !isInvitedOnlyIssue(selectedItem) &&
         selectedItem?.project_store === 'backend' &&
         String(selectedItem.cloud_project_id) === String(selectedProject.id)
           ? [selectedItem.id]
@@ -3116,38 +3154,53 @@ export function CloudTodoWorkspace({
               }))
             }
             // Keep the projects-home cache in sync with the board fetch.
-            setLocalProjectItems(current => ({
-              ...current,
-              [selectedProjectKey]: isExternalGitBoard
-                ? Array.from(
-                    new Map(
-                      [...(current[selectedProjectKey] ?? []), ...locatedItems].map(item => [
-                        item.id,
-                        item,
-                      ])
-                    ).values()
-                  )
-                : locatedItems,
-            }))
+            setLocalProjectItems(current => {
+              const currentById = new Map(
+                (current[selectedProjectKey] ?? []).map(item => [item.id, item])
+              )
+              const refreshed = locatedItems.map(incoming =>
+                latestLoopItem(currentById.get(incoming.id), incoming)
+              )
+              return {
+                ...current,
+                [selectedProjectKey]: isExternalGitBoard
+                  ? Array.from(
+                      new Map(
+                        [...(current[selectedProjectKey] ?? []), ...refreshed].map(item => [
+                          item.id,
+                          item,
+                        ])
+                      ).values()
+                    )
+                  : refreshed,
+              }
+            })
             setLocalProjectCounts(current => ({
               ...current,
               [selectedProjectKey]: response.items.length,
             }))
             // Only sync the open drawer when it belongs to this project; a drawer
             // opened from another view (e.g. my work) must not be closed here.
-            setSelectedItem(current =>
-              current &&
-              sameProjectSpace(
-                {
-                  projectStore: current.project_store ?? selectedProject.project_store,
-                  projectId: current.cloud_project_id,
-                },
-                projectSpaceRef(selectedProject)
-              )
-                ? (locatedItems.find(item => item.id === current.id) ??
-                  (isExternalGitBoard ? current : null))
-                : current
-            )
+            setSelectedItem(current => {
+              if (
+                !current ||
+                !sameProjectSpace(
+                  {
+                    projectStore: current.project_store ?? selectedProject.project_store,
+                    projectId: current.cloud_project_id,
+                  },
+                  projectSpaceRef(selectedProject)
+                )
+              ) {
+                return current
+              }
+              const incoming = locatedItems.find(item => item.id === current.id)
+              return incoming
+                ? latestLoopItem(current, incoming)
+                : isExternalGitBoard
+                  ? current
+                  : null
+            })
           })
           .catch(async error => {
             console.error('[Wework project board] issue refresh failed', {
@@ -5812,6 +5865,16 @@ export function CloudTodoWorkspace({
                   mode="edit"
                   presentation="workspace-panel"
                   readFirst
+                  structuralWritesEnabled={
+                    isInvitedOnlyIssue(selectedItem) ||
+                    !selectedItemProject ||
+                    !selectedProject ||
+                    !sameProjectSpace(
+                      projectSpaceRef(selectedItemProject),
+                      projectSpaceRef(selectedProject)
+                    ) ||
+                    projectSnapshot.canWrite
+                  }
                   selectedTaskId={
                     selectedTaskBinding?.work_item_id === selectedItem.id
                       ? selectedTaskBinding.task_id
@@ -5949,15 +6012,26 @@ export function CloudTodoWorkspace({
                       cloudWorkspace.commands.replaceIssue(updated as CollaborationIssue)
                     } else if (selectedItemProject?.location === 'local') {
                       setItems(current =>
-                        current.map(item => (item.id === updated.id ? locatedUpdated : item))
+                        current.map(item =>
+                          item.id === updated.id ? latestLoopItem(item, locatedUpdated) : item
+                        )
                       )
+                      const projectKey = projectSpaceKey(projectSpaceRef(selectedItemProject))
+                      setLocalProjectItems(current => ({
+                        ...current,
+                        [projectKey]: (current[projectKey] ?? []).map(item =>
+                          item.id === updated.id ? latestLoopItem(item, locatedUpdated) : item
+                        ),
+                      }))
                     }
                     if (selectedItemProject?.location === 'local') {
                       setDetailItems(current =>
-                        current.map(item => (item.id === updated.id ? locatedUpdated : item))
+                        current.map(item =>
+                          item.id === updated.id ? latestLoopItem(item, locatedUpdated) : item
+                        )
                       )
                     }
-                    setSelectedItem(locatedUpdated)
+                    setSelectedItem(current => latestLoopItem(current ?? undefined, locatedUpdated))
                     track('feature_action_completed', { domain: 'board_item', action: 'update' })
                   }}
                 />
