@@ -202,6 +202,47 @@ describe('Workbench', () => {
     )
   })
 
+  test('removes a loaded preview immediately when its URL becomes unsafe', () => {
+    const app = {
+      name: 'Generated app',
+      address: '127.0.0.1:3000',
+      previewUrl: 'https://preview.example.test/app',
+    }
+    const { rerender } = render(<Workbench {...props} taskStatus="RUNNING" app={app} />)
+    expect(screen.getByTestId('app-preview-frame')).toBeInTheDocument()
+
+    rerender(
+      <Workbench
+        {...props}
+        taskStatus="RUNNING"
+        app={{ ...app, previewUrl: 'data:text/html,<script>alert(1)</script>' }}
+      />
+    )
+
+    expect(screen.queryByTestId('app-preview-frame')).not.toBeInTheDocument()
+    expect(screen.getByTestId('app-preview-unavailable')).toBeInTheDocument()
+  })
+
+  test('opens the preview when an existing app receives its first safe URL', () => {
+    const app = { name: 'Generated app', address: '127.0.0.1:3000', previewUrl: '' }
+    const { rerender } = render(<Workbench {...props} taskStatus="RUNNING" app={app} />)
+    expect(screen.queryByTestId('app-preview-frame')).not.toBeInTheDocument()
+
+    rerender(
+      <Workbench
+        {...props}
+        taskStatus="RUNNING"
+        app={{ ...app, previewUrl: 'https://preview.example.test/app' }}
+      />
+    )
+
+    expect(screen.getByTestId('app-preview-frame')).toHaveAttribute(
+      'src',
+      'https://preview.example.test/app'
+    )
+    expect(screen.queryByTestId('app-preview-unavailable')).not.toBeInTheDocument()
+  })
+
   test('uses the task repository when workbench metadata is missing', () => {
     render(<Workbench {...props} taskStatus="COMPLETED" repository="owner/repository" />)
     fireEvent.click(screen.getByRole('button', { name: 'Files Changed' }))
