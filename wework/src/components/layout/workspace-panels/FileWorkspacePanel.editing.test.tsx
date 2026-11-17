@@ -320,30 +320,60 @@ test.each([
   expect(api.readWorkspaceTextFile).toHaveBeenLastCalledWith(target.deviceId, expected, target.path)
 })
 
-test('shows a navigation error for an invalid Markdown path and recovers on retry', async () => {
-  const document = {
-    ...initial,
-    path: '/repo/report.md',
-    name: 'report.md',
-    content: '[Invalid link](../../image.png)',
+test.each([false, true])(
+  'keeps Markdown editable after invalid link navigation (dirty=%s)',
+  async dirty => {
+    const document = {
+      ...initial,
+      path: '/repo/report.md',
+      name: 'report.md',
+      content: '[Invalid link](../../image.png)',
+    }
+    const api = {
+      listWorkspaceEntries: vi.fn(async () => ({ path: target.path, entries: [] })),
+      readWorkspaceTextFile: vi.fn().mockResolvedValue(document),
+      writeWorkspaceTextFile: vi.fn(async (_device: string, _path: string, content: string) => ({
+        ...document,
+        content,
+        revision: 'saved',
+      })),
+    }
+    render(
+      <FileWorkspacePanel
+        target={target}
+        workspaceFileApi={api}
+        openFileRequest={{ path: document.path, id: 1 }}
+      />
+    )
+    await screen.findByTestId('assistant-markdown-link')
+    const expected = dirty ? `${document.content}\n\nUnsaved Markdown` : document.content
+    if (dirty) {
+      fireEvent.click(screen.getByTestId('workspace-file-markdown-mode-button'))
+      await waitFor(() => expect(getWorkspaceCodeText()).toContain(document.content))
+      await edit(expected)
+      fireEvent.click(screen.getByTestId('workspace-file-markdown-mode-button'))
+    }
+    fireEvent.click(await screen.findByTestId('assistant-markdown-link'))
+    expect(await screen.findByTestId('workspace-file-navigation-error')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent('Invalid link')
+    if (dirty)
+      expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent('Unsaved Markdown')
+    expect(api.readWorkspaceTextFile).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByTestId('workspace-file-markdown-mode-button'))
+    await waitFor(() => expect(getWorkspaceCodeText()).toContain(document.content))
+    if (dirty) expect(getWorkspaceCodeText()).toContain('Unsaved Markdown')
+    await edit('# Repaired document')
+    save()
+    await waitFor(() =>
+      expect(api.writeWorkspaceTextFile).toHaveBeenCalledWith(
+        target.deviceId,
+        document.path,
+        '# Repaired document',
+        document.revision
+      )
+    )
   }
-  const api = {
-    listWorkspaceEntries: vi.fn(async () => ({ path: target.path, entries: [] })),
-    readWorkspaceTextFile: vi.fn().mockResolvedValue(document),
-  }
-  render(
-    <FileWorkspacePanel
-      target={target}
-      workspaceFileApi={api}
-      openFileRequest={{ path: document.path, id: 1 }}
-    />
-  )
-  fireEvent.click(await screen.findByTestId('assistant-markdown-link'))
-  expect(await screen.findByTestId('workspace-file-preview-error')).toBeInTheDocument()
-  expect(api.readWorkspaceTextFile).toHaveBeenCalledTimes(1)
-  fireEvent.click(screen.getByTestId('workspace-file-preview-retry-button'))
-  expect(await screen.findByTestId('assistant-markdown-link')).toBeEnabled()
-})
+)
 
 test.each(['folder:///repo/subdir', './linked.md'])(
   'retains unsaved Markdown when opening %s cannot save the document',

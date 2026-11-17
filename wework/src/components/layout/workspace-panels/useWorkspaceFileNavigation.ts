@@ -1,7 +1,7 @@
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { MarkdownFileOpenOptions } from '@wegent/collaboration/markdown'
 import { resolveMarkdownFilePath } from './workspaceFilePaths'
-import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 
 export function useWorkspaceFileNavigation({
   dirty,
@@ -37,27 +37,34 @@ export function useWorkspaceMarkdownFileNavigation({
   documentPath,
   onOpenFile,
   navigateWithDirtyGuard,
-  onError,
+  onOpenFileTab,
 }: {
   documentPath?: string
   onOpenFile: (path: string, options?: MarkdownFileOpenOptions) => void
   navigateWithDirtyGuard: (action: () => void) => void
-  onError: () => void
+  onOpenFileTab?: (path: string) => void
 }) {
-  return useCallback(
+  const [errorDocumentPath, setErrorDocumentPath] = useState<string | null>(null)
+  const openFile = useCallback(
     (path: string, options?: MarkdownFileOpenOptions) => {
       if (!documentPath) return
+      setErrorDocumentPath(null)
       try {
         const resolvedPath = resolveMarkdownFilePath(documentPath, path)
-        const open = () => onOpenFile(resolvedPath, options)
-        if (options?.lineStart !== undefined || options?.isDirectory) navigateWithDirtyGuard(open)
-        else open()
+        if (onOpenFileTab && options?.lineStart === undefined && !options?.isDirectory) {
+          navigateWithDirtyGuard(() => onOpenFileTab(resolvedPath))
+        } else {
+          const open = () => onOpenFile(resolvedPath, options)
+          if (options?.lineStart !== undefined || options?.isDirectory) navigateWithDirtyGuard(open)
+          else open()
+        }
       } catch {
-        onError()
+        setErrorDocumentPath(documentPath)
       }
     },
-    [documentPath, onOpenFile, navigateWithDirtyGuard, onError]
+    [documentPath, onOpenFile, onOpenFileTab, navigateWithDirtyGuard]
   )
+  return { openFile, navigationError: Boolean(documentPath && errorDocumentPath === documentPath) }
 }
 
 export interface PreviewLineTarget {

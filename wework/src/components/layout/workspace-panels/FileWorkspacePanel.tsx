@@ -571,20 +571,12 @@ export function FileWorkspacePanel({
     ]
   )
 
-  const openMarkdownFile = useWorkspaceMarkdownFileNavigation({
+  const { openFile: openMarkdownFile, navigationError } = useWorkspaceMarkdownFileNavigation({
     documentPath: preview?.path,
-    onOpenFile: (path, options) => {
-      if (
-        stableTarget &&
-        onOpenFileTab &&
-        options?.lineStart === undefined &&
-        !options?.isDirectory
-      ) {
-        navigateWithDirtyGuard(() => onOpenFileTab(stableTarget, path))
-      } else openFilePath(path, options)
-    },
+    onOpenFile: openFilePath,
+    onOpenFileTab:
+      stableTarget && onOpenFileTab ? path => onOpenFileTab(stableTarget, path) : undefined,
     navigateWithDirtyGuard,
-    onError: () => setPreviewError(t('workbench.workspace_file_preview_failed', '读取文件失败')),
   })
 
   useEffect(() => {
@@ -953,6 +945,15 @@ export function FileWorkspacePanel({
           />
         </div>
       </div>
+      {navigationError && (
+        <p
+          role="alert"
+          data-testid="workspace-file-navigation-error"
+          className="px-4 py-2 text-sm text-destructive"
+        >
+          {t('workbench.workspace_file_preview_failed', '读取文件失败')}
+        </p>
+      )}
       {saveError && (
         <div
           data-testid="workspace-file-save-error"
