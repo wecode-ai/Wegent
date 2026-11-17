@@ -50,7 +50,13 @@ export async function verifyStartupDatabaseLock({
       timeoutMs
     )
     // None of the startup reads may end the other connection's transaction.
-    assert.equal(database.isTransaction, true)
+    const contender = new DatabaseSync(join(executorHome, 'data', 'tasks.sqlite'))
+    try {
+      contender.exec('PRAGMA busy_timeout = 0')
+      assert.throws(() => contender.exec('BEGIN IMMEDIATE'), /database is locked/)
+    } finally {
+      contender.close()
+    }
   } finally {
     database.exec('ROLLBACK')
     database.close()
