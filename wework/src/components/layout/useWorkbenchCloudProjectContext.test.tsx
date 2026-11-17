@@ -74,6 +74,7 @@ describe('useWorkbenchCloudProjectContext', () => {
           error: 'Task is not linked to a project space',
           deviceId: 'failure-device',
           taskId: 'failure-task',
+          pendingBinding: null,
           causes: [
             { message: localCause.message, stack: localCause.stack },
             { message: backendCause.message, stack: backendCause.stack },

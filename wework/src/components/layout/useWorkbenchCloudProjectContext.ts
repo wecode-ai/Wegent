@@ -625,9 +625,19 @@ export function useWorkbenchCloudProjectContext({
               t('workbench.cloud_project_bind_failed', '关联项目空间失败')
             )
           }
+          const pendingBinding = pendingBindingFor(contextRuntimeTask, paneKey)
           reportE2EDiagnostic('project-space-task-context-failed', {
             taskId: contextRuntimeTask.taskId,
             deviceId: contextRuntimeTask.deviceId,
+            pendingBinding: pendingBinding
+              ? {
+                  projectId: pendingBinding.project.id,
+                  projectStore: pendingBinding.project.project_store,
+                  defaultProject: isDefaultWorkItemProject(pendingBinding.project),
+                  itemId: pendingBinding.item?.id ?? null,
+                  targetTaskId: pendingBinding.target?.taskId ?? null,
+                }
+              : null,
             error: error instanceof Error ? error.message : String(error),
             stack: error instanceof Error ? error.stack : undefined,
             elapsedMs: Math.round(performance.now() - lookupStartedAt),
