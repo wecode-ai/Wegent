@@ -318,6 +318,7 @@ export async function verifyLocalSettingsProjectVersion(control, { scoped, proje
   await control.command('waitFor', find('automatic-processing-form'), { visible: false })
   await addProjectTag(control, scoped, 'settings-rule-update')
   await control.command('click', find('collaboration-project-settings-automatic-processing'))
+  await control.command('focus', find(`automatic-processing-delete-${ruleId}`))
   await control.command('clickWhenEnabled', find(`automatic-processing-delete-${ruleId}`))
   await control.command('waitFor', find('automatic-processing-delete-dialog'), { visible: true })
   const isolatedNavigation = `${find('collaboration-project-settings-project')}:is([inert], [inert] *)`
