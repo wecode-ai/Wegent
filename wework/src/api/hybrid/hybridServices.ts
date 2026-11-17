@@ -82,6 +82,7 @@ import type {
   RuntimeSendRequest,
   RuntimeSidebarMutationResponse,
   RuntimeTaskAddress,
+  RuntimeTaskCancelRequest,
   RuntimeTaskCreateRequest,
   RuntimeTaskForkRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
@@ -1455,7 +1456,7 @@ export function createHybridWorkbenchServices(
         ? localServices.runtimeWorkApi!.cleanupArchivedConversations({ items: localItems })
         : emptyCleanupResponse()
     },
-    cancelRuntimeTask(address: RuntimeTaskAddress) {
+    cancelRuntimeTask(address: RuntimeTaskCancelRequest) {
       return routeByAddress(address).cancelRuntimeTask(address)
     },
     forceStartRuntimeTask(address: RuntimeTaskAddress) {

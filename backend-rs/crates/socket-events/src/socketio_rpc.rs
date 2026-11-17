@@ -74,13 +74,19 @@ impl ClosedRoutes {
             // Do not evict an unexpired fence and accidentally admit its stale route.
             self.reject_until = Some(self.reject_until.map_or(expires, |old| old.max(expires)));
         } else {
-            self.peers.entry(peer).and_modify(|old| *old = (*old).max(expires)).or_insert(expires);
+            self.peers
+                .entry(peer)
+                .and_modify(|old| *old = (*old).max(expires))
+                .or_insert(expires);
         }
     }
 
     fn rejects(&mut self, sid: &str, namespace: &str, now: Instant) -> bool {
         self.prune(now);
-        self.reject_until.is_some() || self.peers.contains_key(&(sid.to_owned(), namespace.to_owned()))
+        self.reject_until.is_some()
+            || self
+                .peers
+                .contains_key(&(sid.to_owned(), namespace.to_owned()))
     }
 }
 
@@ -155,7 +161,14 @@ impl SocketIoRpc {
         let worker_routes = closed_routes.clone();
         let worker_waiters = Arc::clone(&waiters);
         let worker_sink = Arc::clone(&emit_sink);
-        tokio::spawn(run(worker_waiters, worker_closed, worker_routes, worker_sink, endpoint, receiver));
+        tokio::spawn(run(
+            worker_waiters,
+            worker_closed,
+            worker_routes,
+            worker_sink,
+            endpoint,
+            receiver,
+        ));
         Arc::new(Self {
             waiters,
             closed,
@@ -191,11 +204,21 @@ impl SocketIoRpc {
     }
 
     /// Register only while the observed route still belongs to a live transport.
-    pub fn begin_for_route(&self, sid: &str, namespace: &str, guard: &mut RouteGuard) -> Result<SocketIoCall, RpcError> {
+    pub fn begin_for_route(
+        &self,
+        sid: &str,
+        namespace: &str,
+        guard: &mut RouteGuard,
+    ) -> Result<SocketIoCall, RpcError> {
         self.begin_inner(sid, namespace, Some(guard))
     }
 
-    fn begin_inner(&self, sid: &str, namespace: &str, guard: Option<&mut RouteGuard>) -> Result<SocketIoCall, RpcError> {
+    fn begin_inner(
+        &self,
+        sid: &str,
+        namespace: &str,
+        guard: Option<&mut RouteGuard>,
+    ) -> Result<SocketIoCall, RpcError> {
         let id = self.next_callback_id(sid)?;
         let key = (sid.to_string(), namespace.to_string(), id);
         let (sender, receiver) = oneshot::channel();
@@ -204,13 +227,20 @@ impl SocketIoRpc {
                 .waiters
                 .lock()
                 .map_err(|_| RpcError::Unavailable("callback waiter table is poisoned".into()))?;
-            if self.closed_routes.lock().map_err(|_| RpcError::Unavailable("route fence registry is poisoned".into()))?.rejects(sid, namespace, Instant::now()) {
+            if self
+                .closed_routes
+                .lock()
+                .map_err(|_| RpcError::Unavailable("route fence registry is poisoned".into()))?
+                .rejects(sid, namespace, Instant::now())
+            {
                 return Err(RpcError::Closed);
             }
             if let Some(guard) = guard {
                 loop {
                     match guard.0.try_recv() {
-                        Ok((peer, scope)) if peer == sid && scope == namespace => return Err(RpcError::Closed),
+                        Ok((peer, scope)) if peer == sid && scope == namespace => {
+                            return Err(RpcError::Closed);
+                        }
                         Ok(_) => continue,
                         Err(broadcast::error::TryRecvError::Empty) => break,
                         Err(_) => return Err(RpcError::Closed),
@@ -255,7 +285,14 @@ impl SocketIoRpc {
 
     /// End calls for a disconnected transport without touching a replacement SID.
     pub fn disconnect(&self, sid: &str, namespace: &str, retention: Duration) {
-        close_peer(&self.waiters, &self.closed, &self.closed_routes, sid, namespace, retention);
+        close_peer(
+            &self.waiters,
+            &self.closed,
+            &self.closed_routes,
+            sid,
+            namespace,
+            retention,
+        );
     }
 
     /// `_generate_ack_id`: the next ack id of one socket, counting from 1.
@@ -332,11 +369,22 @@ struct Endpoint {
     password: Option<String>,
 }
 
-fn close_peer(waiters: &Waiters, closed: &broadcast::Sender<Peer>, closed_routes: &Mutex<ClosedRoutes>, sid: &str, namespace: &str, retention: Duration) {
+fn close_peer(
+    waiters: &Waiters,
+    closed: &broadcast::Sender<Peer>,
+    closed_routes: &Mutex<ClosedRoutes>,
+    sid: &str,
+    namespace: &str,
+    retention: Duration,
+) {
     if let Ok(mut waiters) = waiters.lock() {
         waiters.retain(|(peer, scope, _), _| peer != sid || scope != namespace);
         if let Ok(mut routes) = closed_routes.lock() {
-            routes.remember((sid.to_owned(), namespace.to_owned()), retention, Instant::now());
+            routes.remember(
+                (sid.to_owned(), namespace.to_owned()),
+                retention,
+                Instant::now(),
+            );
         }
         let _ = closed.send((sid.to_owned(), namespace.to_owned()));
     }
@@ -511,9 +559,21 @@ fn dispatch(
     };
     match message.get("method").and_then(Value::as_str) {
         Some("runtime_peer_closed") => {
-            if let (Some(sid), Some(namespace)) = (message["sid"].as_str(), message["namespace"].as_str()) {
-                if let Some(retain_ms) = message["retain_ms"].as_u64().filter(|value| *value > 0 && *value <= 600_000) {
-                    close_peer(waiters, closed, closed_routes, sid, namespace, Duration::from_millis(retain_ms));
+            if let (Some(sid), Some(namespace)) =
+                (message["sid"].as_str(), message["namespace"].as_str())
+            {
+                if let Some(retain_ms) = message["retain_ms"]
+                    .as_u64()
+                    .filter(|value| *value > 0 && *value <= 600_000)
+                {
+                    close_peer(
+                        waiters,
+                        closed,
+                        closed_routes,
+                        sid,
+                        namespace,
+                        Duration::from_millis(retain_ms),
+                    );
                 }
             }
             return;
@@ -697,11 +757,25 @@ mod tests {
         let other_namespace = rpc.begin("old", "/chat").unwrap();
         rpc.disconnect("old", "/local-executor", Duration::from_secs(90));
         assert_eq!(rpc.waiters.lock().unwrap().len(), 2);
-        assert!(matches!(old.wait(Duration::from_secs(1)).await, Err(RpcError::Closed)));
-        assert!(!rpc.deliver_local("old", "/local-executor", old_id, &serde_json::json!(["late"])));
-        for (sid, namespace, call) in [("new", "/local-executor", replacement), ("old", "/chat", other_namespace)] {
+        assert!(matches!(
+            old.wait(Duration::from_secs(1)).await,
+            Err(RpcError::Closed)
+        ));
+        assert!(!rpc.deliver_local(
+            "old",
+            "/local-executor",
+            old_id,
+            &serde_json::json!(["late"])
+        ));
+        for (sid, namespace, call) in [
+            ("new", "/local-executor", replacement),
+            ("old", "/chat", other_namespace),
+        ] {
             assert!(rpc.deliver_local(sid, namespace, call.id(), &serde_json::json!(["ok"])));
-            assert_eq!(call.wait(Duration::from_secs(1)).await.unwrap(), serde_json::json!(["ok"]));
+            assert_eq!(
+                call.wait(Duration::from_secs(1)).await.unwrap(),
+                serde_json::json!(["ok"])
+            );
         }
     }
 
@@ -712,7 +786,10 @@ mod tests {
         let old = rpc.begin("old", "/local-executor").unwrap();
         rpc.disconnect("old", "/local-executor", Duration::from_secs(90));
         drop(old);
-        assert!(matches!(rpc.begin_for_route("old", "/local-executor", &mut route), Err(RpcError::Closed)));
+        assert!(matches!(
+            rpc.begin_for_route("old", "/local-executor", &mut route),
+            Err(RpcError::Closed)
+        ));
         assert!(rpc.begin("replacement", "/local-executor").is_ok());
     }
 
@@ -726,12 +803,30 @@ mod tests {
         socket_host.disconnect("old", "/local-executor", Duration::from_secs(90));
         assert_eq!(caller.waiters.lock().unwrap().len(), 2);
         dispatch(
-            push(r#"{"method":"runtime_peer_closed","sid":"old","namespace":"/local-executor","host_id":"another-process","retain_ms":90000}"#),
-            &caller.waiters, &caller.closed, &caller.closed_routes, &no_sink(),
+            push(
+                r#"{"method":"runtime_peer_closed","sid":"old","namespace":"/local-executor","host_id":"another-process","retain_ms":90000}"#,
+            ),
+            &caller.waiters,
+            &caller.closed,
+            &caller.closed_routes,
+            &no_sink(),
         );
-        assert!(matches!(old.wait(Duration::from_secs(1)).await, Err(RpcError::Closed)));
-        assert!(!caller.deliver_local("old", "/local-executor", old_id, &serde_json::json!(["late"])));
-        assert!(caller.deliver_local("new", "/local-executor", replacement.id(), &serde_json::json!(["ok"])));
+        assert!(matches!(
+            old.wait(Duration::from_secs(1)).await,
+            Err(RpcError::Closed)
+        ));
+        assert!(!caller.deliver_local(
+            "old",
+            "/local-executor",
+            old_id,
+            &serde_json::json!(["late"])
+        ));
+        assert!(caller.deliver_local(
+            "new",
+            "/local-executor",
+            replacement.id(),
+            &serde_json::json!(["ok"])
+        ));
         assert!(replacement.wait(Duration::from_secs(1)).await.is_ok());
     }
 
@@ -740,8 +835,14 @@ mod tests {
         let rpc = registry();
         rpc.disconnect("old", "/local-executor", Duration::from_secs(90));
         let mut late_route = rpc.route_guard();
-        assert!(matches!(rpc.begin_for_route("old", "/local-executor", &mut late_route), Err(RpcError::Closed)));
-        assert!(rpc.begin_for_route("new", "/local-executor", &mut late_route).is_ok());
+        assert!(matches!(
+            rpc.begin_for_route("old", "/local-executor", &mut late_route),
+            Err(RpcError::Closed)
+        ));
+        assert!(
+            rpc.begin_for_route("new", "/local-executor", &mut late_route)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -749,8 +850,14 @@ mod tests {
         let rpc = registry();
         let mut route = rpc.route_guard();
         rpc.disconnect("old", "/local-executor", Duration::from_secs(90));
-        rpc.closed_routes.lock().unwrap().prune(Instant::now() + Duration::from_secs(91));
-        assert!(matches!(rpc.begin_for_route("old", "/local-executor", &mut route), Err(RpcError::Closed)));
+        rpc.closed_routes
+            .lock()
+            .unwrap()
+            .prune(Instant::now() + Duration::from_secs(91));
+        assert!(matches!(
+            rpc.begin_for_route("old", "/local-executor", &mut route),
+            Err(RpcError::Closed)
+        ));
     }
 
     #[test]
@@ -758,7 +865,11 @@ mod tests {
         let now = Instant::now();
         let mut routes = ClosedRoutes::default();
         for index in 0..=MAX_SID_COUNTERS {
-            routes.remember((index.to_string(), "/local-executor".into()), Duration::from_secs(90), now);
+            routes.remember(
+                (index.to_string(), "/local-executor".into()),
+                Duration::from_secs(90),
+                now,
+            );
         }
         assert_eq!(routes.peers.len(), MAX_SID_COUNTERS);
         assert!(routes.rejects("0", "/local-executor", now));

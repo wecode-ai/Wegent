@@ -98,6 +98,7 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskArchiveResponse,
   RuntimeTaskCancelResponse,
+  RuntimeTaskCancelRequest,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
   RuntimeTaskMaterializeResponse,
@@ -2996,7 +2997,7 @@ export function createRuntimeWorkApiFromIpc(
     cleanupArchivedConversations(data: RuntimeArchivedConversationBulkRequest) {
       return requestWithLocalDevice('runtime.archived_conversations.cleanup', data)
     },
-    cancelRuntimeTask(data: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
+    cancelRuntimeTask(data: RuntimeTaskCancelRequest): Promise<RuntimeTaskCancelResponse> {
       return requestWithLocalDevice('runtime.tasks.cancel', data)
     },
     async createRuntimeTask(

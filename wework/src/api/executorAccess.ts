@@ -28,6 +28,7 @@ import type {
   RuntimeSendResponse,
   RuntimeTaskAddress,
   RuntimeTaskSummary,
+  RuntimeTaskCancelRequest,
   RuntimeTaskCancelResponse,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
@@ -184,7 +185,7 @@ export interface ExecutorRuntimeClient {
   deleteArchivedConversationsBulk: ReturnType<
     typeof createRuntimeWorkApi
   >['deleteArchivedConversationsBulk']
-  cancelRuntimeTask: (address: RuntimeTaskAddress) => Promise<RuntimeTaskCancelResponse>
+  cancelRuntimeTask: (request: RuntimeTaskCancelRequest) => Promise<RuntimeTaskCancelResponse>
   forceStartRuntimeTask: (address: RuntimeTaskAddress) => Promise<RuntimeTaskCancelResponse>
   reorderQueuedRuntimeTask: (
     data: RuntimeTaskQueueReorderRequest

@@ -198,6 +198,7 @@ impl RuntimeWorkRpcHandler {
         state: &Value,
         settings_version: &Value,
     ) -> Result<Value, AppIpcError> {
+        let _stage = super::stand_in_diagnostics::CoordinationStage::start(user, "collect_source");
         let checkpoint = state.get("checkpoint").cloned().unwrap_or_else(|| {
             if source_provider(source) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
                 && state["after"].is_string()

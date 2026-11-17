@@ -10,6 +10,8 @@
     }
   },
   "paths": [
+    "wework/e2e/desktop/modules/independent-issue-draft.mjs",
+    "wework/src/components/settings/DefaultRunnerSetting*",
     "backend-rs/src/personal_issues.rs",
     "backend-rs/src/personal_issues/*",
     "backend/app/services/loop_items/service.py",

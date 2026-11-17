@@ -194,7 +194,7 @@ where
 pub(super) async fn build_local_plugins<Q: PluginQuery>(
     query: &mut Q,
     user_id: i64,
-) -> Result<Value, BuildError> {
+) -> Result<(Value, Value), BuildError> {
     let rows: Vec<InstalledKindRow> = query.fetch_all(format!(
         "SELECT {KIND_COLUMNS} FROM kinds WHERE user_id = ? AND kind = 'InstalledPlugin' AND namespace = 'default' ORDER BY id ASC"
     ), (user_id,)).await?;
@@ -205,7 +205,18 @@ pub(super) async fn build_local_plugins<Q: PluginQuery>(
     {
         plugins.push(plugin_payload(query, row, None, true).await?);
     }
-    Ok(serde_json::json!({"mode":"merge", "scope":"plugins", "plugins":plugins}))
+    let revisions: Map<String, Value> = rows
+        .iter()
+        .filter_map(|row| {
+            super::write_coordination::business_revision(&row.json.0.to_value())
+                .ok()
+                .map(|revision| (row.id.to_string(), Value::from(revision)))
+        })
+        .collect();
+    Ok((
+        serde_json::json!({"mode":"merge", "scope":"plugins", "plugins":plugins}),
+        Value::Object(revisions),
+    ))
 }
 
 /// Restrict a mutation to one owned installation; full reconciliation remains
@@ -215,14 +226,14 @@ pub(super) async fn restrict_local_plugin<Q: PluginQuery>(
     user_id: i64,
     installed_id: i64,
     payload: &mut Value,
-) -> Result<(), BuildError> {
+) -> Result<Value, BuildError> {
     let Some(row) = query.fetch_optional::<_,_,InstalledKindRow>(format!("SELECT {KIND_COLUMNS} FROM kinds WHERE id = ? AND user_id = ? AND kind = 'InstalledPlugin' AND namespace = 'default'"), (installed_id,user_id)).await? else {
         return Err(brz_mysql::MysqlError::InvalidQuery{reason:"SNAPSHOT_NOT_OWNED".into()}.into());
     };
-    let plugins = payload["plugins"]
-        .as_array_mut()
-        .expect("local plugins builder");
-    plugins.retain(|item| item["installed_plugin_id"].as_i64() == Some(installed_id));
+    let mut plugins = Vec::new();
+    if row.is_active && is_synced_install(&row.json.0.to_value()) {
+        plugins.push(plugin_payload(query, &row, None, true).await?);
+    }
     let mut removed = Vec::new();
     if plugins.is_empty() {
         let document = row.json.0.to_value();
@@ -231,8 +242,10 @@ pub(super) async fn restrict_local_plugin<Q: PluginQuery>(
         removed.push(serde_json::json!({"installed_plugin_id":installed_id,"name":plugin_payload_name(&row,&document,&spec,&source),"marketplace":spec.get("marketplace").or_else(||source.get("marketplace"))}));
     }
     payload["scope"] = Value::String("plugin_delta".into());
+    payload["plugins"] = Value::Array(plugins);
     payload["removed_plugins"] = Value::Array(removed);
-    Ok(())
+    let revision = super::write_coordination::business_revision(&row.json.0.to_value())?;
+    Ok(serde_json::json!({installed_id.to_string():revision}))
 }
 
 /// Source `capability_snapshot`: the stable desired state represented by a

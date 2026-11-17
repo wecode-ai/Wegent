@@ -248,6 +248,9 @@ export function CollaborationProjectViewShell({
   return (
     <ProjectShell
       {...shellProps}
+      compactTitle={
+        resolved.view === 'manage' ? shellProps.compactTitle : undefined
+      }
       viewSwitcherPlacement={grouped ? 'below-header' : 'header'}
       boardView={
         resolved.view === 'board' ||

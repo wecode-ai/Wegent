@@ -525,6 +525,11 @@ describe('ProjectExecutionEnvironments', () => {
     expect(element('-configuration-error').textContent).toContain(
       '请补全仓库的名称、Git 仓库和目录'
     )
+    const error = element('-configuration-error')
+    const url = element('-repository-url-0')
+    expect(url.getAttribute('aria-invalid')).toBe('true')
+    expect(url.getAttribute('aria-describedby')).toBe(error.id)
+    expect(document.activeElement).toBe(error)
   })
 
   it('summarizes a device-side clone failure and shows it once', async () => {
@@ -991,6 +996,19 @@ describe('ProjectExecutionEnvironments', () => {
     expect(
       [...element<HTMLSelectElement>('-status-filter').options].map(option => option.textContent)
     ).toEqual(['All', 'Online', 'Offline', 'Preparing', 'Error'])
+  })
+
+  it('keeps the English device menu and project authorization instructions in English', async () => {
+    await render({
+      locale: 'en',
+      assigned: [environment(22, 'Assigned device', 'online')],
+    })
+    expect(element('-actions-toggle-22').textContent).toBe('More')
+    await openPicker()
+    expect(element('-picker').textContent).toContain(
+      'Choose a device to authorize for this project.'
+    )
+    expect(element('-picker').textContent).not.toMatch(/\p{Script=Han}/u)
   })
 
   it('derives name and directory from the selected repository and submits the chosen branch', async () => {

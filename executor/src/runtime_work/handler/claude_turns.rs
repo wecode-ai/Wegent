@@ -416,6 +416,14 @@ impl RuntimeWorkRpcHandler {
             let _ = sink
                 .send(builder.response_created(Some("ClaudeCode")))
                 .await;
+            let mut lifecycle = if authorization.is_ok() {
+                handler.begin_lifecycle_hooks(&request, &local_task_id, "ClaudeCode")
+            } else {
+                None
+            };
+            if let Some(hooks) = lifecycle.as_mut() {
+                hooks.started(&local_task_id, &request.subtask_id);
+            }
             let outcome = match authorization {
                 Err(message) => ExecutionOutcome::Failed { message },
                 Ok(()) => tokio::select! {
@@ -433,6 +441,14 @@ impl RuntimeWorkRpcHandler {
                 handler.event_goal_admission_failed(&local_task_id, &request);
             }
 
+            if let Some(hooks) = lifecycle.as_mut() {
+                if let Some(session_id) = crate::agent_session::saved_executor_session(&request)
+                    .and_then(|session| string_field(&session, "sessionId"))
+                {
+                    hooks.started(&session_id, &request.subtask_id);
+                }
+                hooks.finish(super::hooks::lifecycle_status(&outcome));
+            }
             scheduled_turn_guard.command_outcome =
                 Some(command_journal::CommandState::from_execution(&outcome));
             if let Some(session) = crate::agent_session::saved_executor_session(&request) {

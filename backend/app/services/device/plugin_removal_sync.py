@@ -28,11 +28,11 @@ RETRY_INTERVAL_SECONDS = 60
 MAX_RETRY_INTERVAL_SECONDS = 3600
 # Coordination only; pending work remains in PluginDeviceInstallation across restarts.
 _inflight: set[tuple[int, str]] = set()
+_wakeups: set[tuple[int, str]] = set()
 
 
 def prepare_plugin_removal(db: Session, user_id: int, installed_id: int) -> None:
     """Stage durable cleanup in the same transaction as the account removal."""
-    acquire_plugin_write_lock(db, user_id)
     installed = (
         db.query(Kind)
         .filter_by(
@@ -45,6 +45,7 @@ def prepare_plugin_removal(db: Session, user_id: int, installed_id: int) -> None
     )
     if installed is None:
         return
+    acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
     # Older/uploaded installations may not yet have materialization rows.
     devices = (
         db.query(Kind)
@@ -100,7 +101,28 @@ def pending_removal_devices(user_id: int, device_id: str | None) -> set[str]:
             for row in rows
             if removal_retry_due(row, now)
         }
-        return devices & {target} if target else devices
+        selected = devices & {target} if target else devices
+        logger.info(
+            "Plugin removal scan user_id=%s submitted_device_id=%s "
+            "canonical_target=%s eligible_devices=%s selected_devices=%s rows=%s",
+            user_id,
+            device_id,
+            target,
+            sorted(devices),
+            sorted(selected),
+            [
+                {
+                    "installed_id": row.installed_kind_id,
+                    "device_id": row.device_id,
+                    "state": row.state,
+                    "attempt_count": row.attempt_count,
+                    "last_sync_at": row.last_sync_at,
+                    "retry_due": removal_retry_due(row, now),
+                }
+                for row in rows
+            ],
+        )
+        return selected
 
 
 def removal_retry_due(row: PluginDeviceInstallation, now: datetime) -> bool:
@@ -114,11 +136,40 @@ def removal_retry_due(row: PluginDeviceInstallation, now: datetime) -> bool:
     return row.last_sync_at <= now - timedelta(seconds=interval)
 
 
+@trace_async(tracer_name="backend.plugins", span_name="drain_device_plugin_removals")
 async def _sync_device(user_id: int, device_id: str) -> None:
     key = (user_id, device_id)
     if key in _inflight:
+        _wakeups.add(key)
+        logger.info(
+            "Plugin removal wakeup merged reason=inflight user_id=%s device_id=%s",
+            user_id,
+            device_id,
+        )
         return
     _inflight.add(key)
+    try:
+        while True:
+            _wakeups.discard(key)
+            await _sync_device_once(user_id, device_id)
+            # Consume real concurrent notifications, rechecking durable work and
+            # backoff before another attempt. A notification arriving during
+            # the query must also be consumed before releasing the drainer.
+            while key in _wakeups:
+                _wakeups.discard(key)
+                pending = await asyncio.to_thread(
+                    pending_removal_devices, user_id, device_id
+                )
+                if device_id in pending:
+                    break
+            else:
+                return
+    finally:
+        _wakeups.discard(key)
+        _inflight.discard(key)
+
+
+async def _sync_device_once(user_id: int, device_id: str) -> None:
     try:
         # Always rebuild desired state, including a reinstall committed meanwhile.
         if await device_capability_sync_service.supports_plugin_delta(
@@ -128,6 +179,12 @@ async def _sync_device(user_id: int, device_id: str) -> None:
                 _pending_removal_ids, user_id, device_id
             )
             if not installed_ids:
+                logger.info(
+                    "Plugin removal skipped reason=no_pending_ids "
+                    "user_id=%s device_id=%s",
+                    user_id,
+                    device_id,
+                )
                 return
             result = await device_capability_sync_service.sync_plugin_change(
                 user_id=user_id,
@@ -141,6 +198,14 @@ async def _sync_device(user_id: int, device_id: str) -> None:
                 )
             )
         await asyncio.to_thread(_record_sync_result, user_id, result)
+        logger.info(
+            "Plugin removal result recorded user_id=%s device_id=%s "
+            "success=%s acknowledged=%s",
+            user_id,
+            device_id,
+            result.success,
+            result.acknowledged,
+        )
         if not result.success:
             logger.warning(
                 "Plugin removal sync pending: user_id=%s device_id=%s",
@@ -151,8 +216,6 @@ async def _sync_device(user_id: int, device_id: str) -> None:
         logger.exception(
             "Plugin removal sync failed: user_id=%s device_id=%s", user_id, device_id
         )
-    finally:
-        _inflight.discard(key)
 
 
 def _pending_removal_ids(user_id: int, device_id: str) -> list[int]:

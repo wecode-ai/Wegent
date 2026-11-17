@@ -1,4 +1,5 @@
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
+import type { ProjectWorkBarProps } from '@wegent/collaboration/controls/ProjectWorkBar'
 import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
 import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
 import { ComposerErrorBanner } from '@wegent/collaboration/composer'
@@ -16,6 +17,7 @@ import {
 import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import type {
   Attachment,
@@ -122,6 +124,8 @@ export interface ProjectChatControls {
 }
 
 export interface ProjectWorkControls {
+  projectSelectorLabel?: string
+  projectMenuLabels?: ProjectWorkBarProps['menuLabels']
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   runtimeWork?: RuntimeWorkListResponse | null
@@ -400,6 +404,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
   ref
 ) {
   const { t } = useTranslation('common')
+  const isMobile = useIsMobile()
   const { t: tChat } = useTranslation('chat')
   const workbench = useContext(WorkbenchContext)
   const sendKey = workbench?.state?.user?.preferences?.send_key ?? 'enter'
@@ -696,7 +701,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
   if (variant === 'desktop') {
     return (
       <PluginTrialSelectionContext.Provider value={controls.showTrialGuide}>
-        <div className="w-full">
+        <div className="w-full min-w-0">
           <TaskPlanProgress plan={taskPlan} />
           {queuePanel}
           {quotaWaitStatus}
@@ -797,7 +802,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             onPause={onPause}
             showWorkspaceMenu={showWorkspaceMenu}
             collapseWhenIdle={collapseWhenIdle}
-            alwaysShowComposerToolbar={alwaysShowComposerToolbar}
+            alwaysShowComposerToolbar={alwaysShowComposerToolbar || isMobile}
             contextHeader={
               (contextHeader ||
                 onCancelEventSubscription ||

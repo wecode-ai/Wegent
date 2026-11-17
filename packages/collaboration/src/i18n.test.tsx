@@ -11,6 +11,26 @@ import {
 } from "./i18n";
 
 describe("collaboration i18n", () => {
+  it("keeps English project maintenance and rule configuration readable", () => {
+    const en = createCollaborationTranslator("en");
+    const zh = createCollaborationTranslator("zh-CN");
+    const labels = {
+      "todo.project_basic_information": "Basic information",
+      "todo.project_access": "Project access",
+      "todo.project_agents": "Agents",
+      "todo.archive_project_agent": "Deactivate",
+      "todo.project_execution_environments": "Execution environments",
+      "todo.automatic_processing": "Automatic processing",
+      "todo.create_automatic_processing": "Create automatic rule",
+      "todo.schedule_advanced": "Advanced settings (Cron)",
+      "todo.processing_target": "Processing target",
+    };
+    for (const [key, english] of Object.entries(labels)) {
+      expect(en(key, "中文回退")).toBe(english);
+      expect(zh(key)).not.toBe(key);
+    }
+  });
+
   it("localizes canonical history names without changing custom or missing status names", () => {
     const en = createCollaborationTranslator("en");
     const zh = createCollaborationTranslator("zh-CN");
