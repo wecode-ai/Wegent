@@ -645,8 +645,14 @@ async fn the_parsed_upload_tail_refreshes_the_context_after_commit() {
 #[tokio::test]
 async fn pre_parsed_upload_records_parsing_then_ready_in_transaction() {
     let body = b"# Weekly Report\n\nAll checks passed.";
-    let prepared =
-        prepare_upload_parse(&MySqlStorageBackend, "text/markdown", "default", body, ".md").await;
+    let prepared = prepare_upload_parse(
+        &MySqlStorageBackend,
+        "text/markdown",
+        "default",
+        body,
+        ".md",
+    )
+    .await;
     assert!(matches!(prepared, PreparedUpload::Parsed(Ok(_))));
 
     let mut transaction = StatementLog::default();
