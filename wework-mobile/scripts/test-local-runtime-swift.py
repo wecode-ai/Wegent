@@ -7,10 +7,14 @@ from pathlib import Path
 
 MODULE = Path(__file__).resolve().parents[1] / "modules/wework-local-runtime"
 SUITES = [
+    "RuntimeBridgeOptions",
     "RuntimeEventJournal",
     "RuntimeWorkLeaseRevisions",
     "RuntimePipeReader",
     "RuntimeProfiles",
+    "RuntimeStartupDiagnostics",
+    "RuntimeDiagnostics",
+    "RuntimeLegacyDiagnostics",
 ]
 
 
@@ -28,6 +32,11 @@ def main() -> None:
                     "swiftc",
                     "-warnings-as-errors",
                     str(MODULE / "ios" / f"{suite}.swift"),
+                    *(
+                        [str(MODULE / "ios" / "RuntimeBridgeOptions.swift")]
+                        if suite == "RuntimeEventJournal"
+                        else []
+                    ),
                     str(MODULE / "tests" / f"{suite}Tests.swift"),
                     "-o",
                     str(executable),

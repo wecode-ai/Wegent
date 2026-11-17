@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { isSameModelSelection } from '@/lib/model-ui'
 import { resolveAutomaticModel } from '@/features/workbench/runtimeModelSelection'
+import { modelFromTaskSnapshot } from '@wegent/chat-core/runtime-model-selection'
 import type {
   ModelOptions,
   ModelSelectionConfig,
@@ -47,24 +48,6 @@ interface UseRuntimeTaskModelSelectionOptions {
 
 function runtimeTaskModelScopeKey(userId: number, address: RuntimeTaskAddress): string {
   return `user:${userId}:${getRuntimeTaskChatScopeKey(address)}`
-}
-
-function modelFromTaskSnapshot(selection: ModelSelectionConfig | null): UnifiedModel | null {
-  if (!selection?.modelName || !selection.modelType) return null
-
-  const resourceUserIdValue = selection.options?.weworkCloudModelResourceUserId
-  const resourceUserId = resourceUserIdValue ? Number(resourceUserIdValue) : null
-  return {
-    name: selection.modelName,
-    displayName: selection.modelName,
-    modelId: selection.modelName,
-    type: selection.modelType,
-    provider: selection.modelType === 'runtime' ? 'local' : 'cloud',
-    ...(selection.options?.weworkCloudModelNamespace
-      ? { namespace: selection.options.weworkCloudModelNamespace }
-      : {}),
-    ...(resourceUserId !== null && Number.isSafeInteger(resourceUserId) ? { resourceUserId } : {}),
-  }
 }
 
 export function useRuntimeTaskModelSelection({

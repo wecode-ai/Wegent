@@ -50,5 +50,5 @@ export function mobileCreatableDevices(devices: readonly DeviceInfo[]): DeviceIn
 }
 
 export function mobileProjectCreatableDevices(devices: readonly DeviceInfo[]): DeviceInfo[] {
-  return mobileCreatableDevices(devices).filter(device => device.device_type !== 'app')
+  return mobileCreatableDevices(devices)
 }

@@ -1,3 +1,6 @@
+vi.mock('@/components/ArchivedConversationsScreen', () => ({
+  ArchivedConversationsScreen: 'ArchivedConversationsScreen',
+}))
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
@@ -24,6 +27,9 @@ const runtime = vi.hoisted(() => ({
   devices: [],
   clearError: vi.fn(),
   refresh: vi.fn(),
+  failures: [] as import('@/hooks/useRuntimeFailures').RuntimeFailureAction[],
+  retryFailure: vi.fn(),
+  cloudConnected: true,
   connectionError: null as string | null,
   archiveConversation: vi.fn(),
   openConversation: vi.fn(),
@@ -70,7 +76,7 @@ vi.mock('@/components/PhoneProviderEditorScreen', () => ({
   PhoneProviderEditorScreen: 'PhoneProviderEditorScreen',
 }))
 vi.mock('@/components/PrivacyPolicyScreen', () => ({ PrivacyPolicyScreen: 'PrivacyPolicyScreen' }))
-vi.mock('@/services/chatLayoutDiagnostics', () => ({ recordChatLayoutDiagnostic: vi.fn() }))
+vi.mock('@/hooks/useMobileDiagnostics', () => ({ useMobileDiagnostics: vi.fn() }))
 vi.mock('@/theme', () => ({ lightTheme: {}, darkTheme: {} }))
 vi.mock('expo-status-bar', () => ({ StatusBar: 'StatusBar' }))
 vi.mock('react-native', () => ({
@@ -146,6 +152,7 @@ vi.mock('@/components/files/FilePreviewProvider', () => ({
 describe('local-first settings navigation', () => {
   let renderer: ReactTestRenderer
   beforeEach(async () => {
+    runtime.cloudConnected = true
     vi.clearAllMocks()
     authState.current.config = {
       backendUrl: 'https://backend.example.com',
@@ -201,6 +208,7 @@ describe('local-first settings navigation', () => {
   })
 
   it('keeps Backend login optional and hides filters when using only this phone', async () => {
+    runtime.cloudConnected = false
     authState.current.config = null
     authState.current.user = null
     await act(() => renderer.update(<App />))
@@ -220,6 +228,7 @@ describe('local-first settings navigation', () => {
   })
 
   it('opens the bundled privacy page from settings and every model entry without Backend login', async () => {
+    runtime.cloudConnected = false
     authState.current.config = null
     authState.current.user = null
     await act(() => renderer.update(<App />))
@@ -241,15 +250,25 @@ describe('local-first settings navigation', () => {
   })
 
   it('routes connection failures to the sidebar instead of the global alert on every screen', async () => {
-    runtime.connectionError = 'Network unavailable'
+    runtime.failures = [
+      {
+        id: 'cloud-connection',
+        label: '云端连接',
+        error: 'Network unavailable',
+        phoneOwned: false,
+        retrying: false,
+        retry: vi.fn(),
+      },
+    ]
     await act(() => renderer.update(<App />))
     const list = renderer.root.findByType('ConversationListScreen' as never)
-    expect(list.props.connectionError).toBe('Network unavailable')
+    expect(list.props.failures).toBe(runtime.failures)
+    expect(list.props.onRetryFailure).toBe(runtime.retryFailure)
     expect(list.props.onRefresh).toBe(runtime.refresh)
     expect(renderer.root.findAll(node => node.props.error === 'Network unavailable')).toHaveLength(
       0
     )
-    runtime.connectionError = null
+    runtime.failures = []
   })
 })
 
@@ -260,6 +279,7 @@ describe('conversation archive navigation', () => {
   const list = () => renderer.root.findByType('ConversationListScreen' as never)
 
   beforeEach(async () => {
+    runtime.cloudConnected = true
     vi.clearAllMocks()
     runtime.currentAddress = address
     navigation.currentRouteKey = 'conversation-1'
@@ -374,6 +394,7 @@ describe('conversation focus request ownership', () => {
   const transition = (closing = false) => listeners().transitionEnd({ data: { closing } })
 
   beforeEach(async () => {
+    runtime.cloudConnected = true
     vi.clearAllMocks()
     runtime.currentAddress = null
     navigation.currentRouteKey = navigation.conversationRouteKey = 'conversation-1'

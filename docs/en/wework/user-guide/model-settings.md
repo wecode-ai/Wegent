@@ -18,6 +18,14 @@ models retains the conversation, draft and workspace panels instead of creating 
 conversation. An in-progress reply keeps its original model; model capabilities and existing
 tool permissions still apply.
 
+Opening an existing computer conversation on Mobile restores the task's saved model, provider
+and reasoning options, and follow-up messages retain those settings. If its model catalog is
+still loading or unavailable, Mobile preserves the task model identity instead of substituting
+the new-conversation default. Manual model choices on Mobile belong to the current conversation;
+other conversations and new conversations retain their own choices.
+Selecting an available execution device automatically loads its model catalog. Reasoning levels
+and defaults follow the PC capability resolver without requiring the model list to be opened first.
+
 | Feature                    | Steps and result                                                                                  | Limitations                                                                                                      |
 | -------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | Local Codex subscription   | Toggle and restart when prompted; expand model or account management                              | Local Codex and Wegent cloud accounts are separate                                                               |

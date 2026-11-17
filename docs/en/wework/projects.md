@@ -525,6 +525,12 @@ Opening a conversation does not enable background project coordination. For work
 
 ## Issue details and execution tasks
 
+<a id="issue-linked-existing-tasks"></a>
+
+### Link an existing task
+
+Beside **Linked tasks** in Issue details, click **Link existing task**, search by title or ID, and select an existing task from your current task list. Saving the link adds it to the linked task list without starting it or changing the Issue status. A task has one active Issue link; any existing Issue link moves to the current Issue. Read-only Issues hide this action. A failed link keeps the picker open for retry.
+
 In Issue activity, click an attachment link or embedded image to preview it and download the original. Images, Markdown documents and other files share resource resolution and authenticated reads for the current Issue. An attachment ID identifies a file directly; local and relative paths match the link label and full basename exactly. Only a unique match opens. Execution paths are never read as files on the viewer's device.
 
 <a id="issue-resource-preview"></a>
@@ -690,3 +696,4 @@ Use **Create child Issue** beside any existing visible comment, including commen
 Project maintainers can choose **Project settings → AI configuration → Agents → Delete** and confirm removal. Existing tasks, execution history and shared source resources remain intact. Replace or remove all leader, member and stage references in collaboration groups first. System-managed current-device Agents cannot be deleted. Removing a collaboration group also requires confirmation; Cancel leaves it unchanged.
 
 Use **Project settings → AI configuration → Execution environments** to maintain AI devices, repositories and setup steps. Explicit preparation shows **Project directory ready** on completion. Version conflicts preserve your draft. **Load latest configuration** replaces the draft with server values; **Keep draft and refresh version** retains your input without submitting it. Review it before clicking **Save configuration**, which replaces the latest environment configuration. A failed read can be retried without repeating a write.
+

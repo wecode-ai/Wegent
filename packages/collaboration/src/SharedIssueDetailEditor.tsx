@@ -689,6 +689,7 @@ export type TodoEditorProps = {
   onDelete?: () => void;
   deleteLabel?: string;
   selectedTaskId?: string | null;
+  linkedTaskAction?: ReactNode;
   onCreateTask?: () => void;
   onOpenTaskConversation?: (task: SharedIssueDetailTaskBinding) => void;
   onOpenChildTask?: (task: CloudLoopItem) => void;
@@ -3900,6 +3901,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             ? props.onCreateTask
                             : undefined
                         }
+                        linkedTaskAction={props.linkedTaskAction}
                         onOpenTaskConversation={props.onOpenTaskConversation}
                         onOpenChildTask={props.onOpenChildTask}
                         translate={t}

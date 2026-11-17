@@ -12,6 +12,7 @@ import { usePhoneModelProviders } from '@/hooks/usePhoneModelProviders'
 import { AuthorizationScreen } from './AuthorizationScreen'
 import { LocalRuntimeSettings } from './LocalRuntimeSettings'
 import { ErrorNotice } from './errors/ErrorNotice'
+import { DiagnosticsSettings } from './DiagnosticsSettings'
 
 export function SettingsPage({
   title,
@@ -318,6 +319,9 @@ export function SettingsScreen({
           onPress={onPrivacy}
           testID="settings-privacy-policy"
         />
+      </SettingsGroup>
+      <SettingsGroup title="诊断">
+        <DiagnosticsSettings />
       </SettingsGroup>
       {providers.error != null && (
         <ErrorNotice

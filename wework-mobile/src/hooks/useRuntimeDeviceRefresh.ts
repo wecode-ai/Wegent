@@ -1,89 +1,50 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, type RefObject } from 'react'
 import type { LocalRuntime } from '@/services/localRuntime'
-import type { RuntimeApi } from '@/services/runtimeApi'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/runtime'
-import { messageFrom } from './mobileRuntimeHelpers'
 
 export function useRuntimeDeviceRefresh({
-  api,
-  sessionIdentity,
   local,
+  backendIdentity,
   inventory,
   selectedDeviceId,
   allDevicesSelected,
   applyDevices,
   reloadWork,
   reloadAllWork,
-  reloadRelated,
-  setConnectionError,
 }: {
-  api: Pick<RuntimeApi, 'listDevices'>
-  sessionIdentity: string | null
   local?: LocalRuntime
+  backendIdentity: string | null
   inventory: RefObject<DeviceInfo[]>
   selectedDeviceId: RefObject<string | null>
   allDevicesSelected: RefObject<boolean>
   applyDevices: (devices: DeviceInfo[]) => string | null
   reloadWork: (deviceId: string) => Promise<RuntimeWorkListResponse>
-  reloadAllWork: () => Promise<void>
-  reloadRelated: () => Promise<void>
-  setConnectionError: (error: string | null) => void
+  reloadAllWork: (alreadyReadDeviceId?: string) => Promise<void>
 }) {
-  const revision = useRef(0)
-  const discoveryError = useRef<string | null>(null)
-  const refreshingRef = useRef(false)
+  const phonePending = useRef(new Set<string>())
+  const cloudPending = useMemo(() => new Set<string>(), [backendIdentity])
+  const [, render] = useReducer(value => value + 1, 0)
   const initialLocalRead = useRef<string | null>(null)
-  const [refreshing, setRefreshing] = useState(false)
-  useLayoutEffect(() => {
-    revision.current += 1
-    setConnectionError(null)
-  }, [sessionIdentity, setConnectionError])
-
-  const refreshDevices = useCallback(
-    async (retainError = false): Promise<string | null> => {
-      const requestRevision = ++revision.current
-      let response
-      try {
-        response = await api.listDevices()
-      } catch (cause) {
-        if (requestRevision !== revision.current) return selectedDeviceId.current
-        throw cause
-      }
-      if (requestRevision !== revision.current) return selectedDeviceId.current
-      discoveryError.current = response.error ?? null
-      if (response.error || !retainError) setConnectionError(discoveryError.current)
-      return applyDevices(response.items)
-    },
-    [api, applyDevices, selectedDeviceId, setConnectionError]
-  )
-
+  const scope = () => (allDevicesSelected.current ? 'all' : selectedDeviceId.current)
+  const pendingFor = (key: string | null) =>
+    local?.ownsDevice(key ?? undefined) ? phonePending.current : cloudPending
   const refresh = useCallback(async () => {
-    if (refreshingRef.current) return
-    refreshingRef.current = true
-    setRefreshing(true)
-    const requestRevision = revision.current + 1
+    const key = allDevicesSelected.current ? 'all' : selectedDeviceId.current
+    if (!key) return
+    const pending = local?.ownsDevice(key) ? phonePending.current : cloudPending
+    if (pending.has(key)) return
+    pending.add(key)
+    render()
     try {
-      const deviceId = await refreshDevices(true)
-      if (requestRevision !== revision.current) return
-      if (allDevicesSelected.current) await reloadAllWork()
-      else if (deviceId) await reloadWork(deviceId)
-      if (requestRevision !== revision.current) return
-      await reloadRelated()
-      if (requestRevision === revision.current) setConnectionError(discoveryError.current)
-    } catch (cause) {
-      if (requestRevision === revision.current) setConnectionError(messageFrom(cause))
+      if (key === 'all') await reloadAllWork()
+      else await reloadWork(key)
+    } catch {
+      // The individual list owner retained the failure and its retry.
     } finally {
-      refreshingRef.current = false
-      setRefreshing(false)
+      pending.delete(key)
+      render()
     }
-  }, [
-    allDevicesSelected,
-    refreshDevices,
-    reloadAllWork,
-    reloadWork,
-    reloadRelated,
-    setConnectionError,
-  ])
+  }, [allDevicesSelected, selectedDeviceId, local, cloudPending, reloadAllWork, reloadWork])
 
   useEffect(() => {
     if (!local) return
@@ -96,7 +57,7 @@ export function useRuntimeDeviceRefresh({
       initialLocalRead.current = device.device_id
       // One initial read owns phone startup independently of cloud discovery.
       // Later readiness changes never refresh or retry the same environment.
-      void reloadWork(device.device_id).catch(cause => setConnectionError(messageFrom(cause)))
+      void reloadWork(device.device_id).catch(() => {})
     }
     readInitialLocalWork()
     return local.onStatus(() => {
@@ -105,7 +66,7 @@ export function useRuntimeDeviceRefresh({
       identity = next
       readInitialLocalWork()
     })
-  }, [local, applyDevices, inventory, reloadWork, setConnectionError])
+  }, [local, applyDevices, inventory, reloadWork])
 
-  return { refreshDevices, refresh, refreshing }
+  return { refresh, refreshing: pendingFor(scope()).has(scope() ?? '') }
 }
