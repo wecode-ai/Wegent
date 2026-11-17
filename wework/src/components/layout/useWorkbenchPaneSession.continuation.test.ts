@@ -1668,6 +1668,7 @@ describe('composer cancellation rollback', () => {
       applyRuntimeConversationAction(address, {
         type: 'assistant_started',
         subtaskId: 'completed-during-cancel',
+        clientUserMessageId: 'completed-during-cancel-user',
       })
       applyRuntimeConversationAction(address, {
         type: 'assistant_chunk',
@@ -1677,6 +1678,7 @@ describe('composer cancellation rollback', () => {
       })
       stopping = result.current.pauseCurrentResponse()
     })
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(address)
 
     await act(async () => {
       applyRuntimeConversationAction(address, {

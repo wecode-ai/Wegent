@@ -1155,14 +1155,13 @@ impl RuntimeWorkRpcHandler {
                     .cancelled_pending_sends
                     .lock()
                     .expect("cancelled pending sends lock should not be poisoned");
-                if pending.get(&local_task_id).map(String::as_str)
-                    == Some(client_user_message_id.as_str())
-                {
+                let cancelled = pending
+                    .get_mut(&local_task_id)
+                    .is_some_and(|message_ids| message_ids.remove(&client_user_message_id));
+                if cancelled && pending.get(&local_task_id).is_some_and(HashSet::is_empty) {
                     pending.remove(&local_task_id);
-                    true
-                } else {
-                    false
                 }
+                cancelled
             };
             if cancelled {
                 return Ok(json!({
@@ -2442,7 +2441,9 @@ impl RuntimeWorkRpcHandler {
             self.cancelled_pending_sends
                 .lock()
                 .expect("cancelled pending sends lock should not be poisoned")
-                .insert(local_task_id.clone(), client_user_message_id);
+                .entry(local_task_id.clone())
+                .or_default()
+                .insert(client_user_message_id);
         }
         let had_active_local_execution =
             self.request_active_turn_stop(&local_task_id) || had_active_local_execution;

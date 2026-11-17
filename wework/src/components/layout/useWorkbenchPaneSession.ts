@@ -2817,11 +2817,12 @@ export function useWorkbenchPaneSession({
         runtimeConversationKey(currentRuntimeTask)
       )
       interruptedTurn = optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
-      const cancelled = interruptedTurn?.clientUserMessageId
-        ? await cancelRuntimePaneTask(currentRuntimeTask, {
-            pendingClientUserMessageId: interruptedTurn.clientUserMessageId,
-          })
-        : await cancelRuntimePaneTask(currentRuntimeTask)
+      const cancelled =
+        interruptedTurn?.turnId === null && interruptedTurn.clientUserMessageId
+          ? await cancelRuntimePaneTask(currentRuntimeTask, {
+              pendingClientUserMessageId: interruptedTurn.clientUserMessageId,
+            })
+          : await cancelRuntimePaneTask(currentRuntimeTask)
       accepted = cancelled
       if (!cancelled) return
     } finally {
