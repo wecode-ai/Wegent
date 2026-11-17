@@ -436,15 +436,15 @@ async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control 
   assert.ok(anthropicModel, 'The Anthropic cloud model fixture is missing')
   control.setScenario('anthropic_empty_response')
   await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask === null && snapshot.pane?.currentRuntimeTask === null,
+    'The Anthropic recovery scenario did not activate its new conversation'
+  )
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  // The new-chat default can still be reconciling. Choose this protocol explicitly
-  // instead of accepting a transient default label as fixture configuration.
-  await control.command(
-    'clickWhenEnabled',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
-  )
   await selectE2EModel(
     control,
     anthropicModel.optionIds,
