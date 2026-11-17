@@ -232,7 +232,9 @@ Wework 发起压缩前先解析目标会话保存的模型选择，并用当前�
 
 恢复已停止的 Goal 属于会消耗模型的操作：executor 必须在 `thread/goal/set` 激活目标前，使用任务当前模型配置注册并绑定线程路由。历史刷新只恢复原生线程，不能代替模型路由准备；executor 重启或空闲路由回收后尤其如此。路由引用由现有线程事件路由持有，持续到 Goal 暂停、阻塞、完成或清除，不能在激活 RPC 返回时释放；已有运行中的对话继续使用其当前路由和模型选择。桌面 `goal-state-sync` 检查点覆盖失败目标在隔离应用重启、历史刷新后的 UI 恢复，核对真实模型调用、`update_goal` 工具完成、会话身份与目标计数保留。
 
-可用 `pnpm --filter wework e2e:desktop -- --parallel-segments goal-resume-route` 单独运行此回归，复用 CI 的共享 runtime 准备流程；CI 仍在既有 `goal-state-sync` 检查点内执行它，不增加应用启动或 job。
+可用 `pnpm --filter wework e2e:desktop -- --parallel-segments goal-resume-route` 单独运行此回归，复用 CI 的共享 runtime 准备流程；CI 仍在既有 `goal-state-sync` 检查点内执行它，不新增独立检查点进程或 job；用例自身执行一次受控应用重启。
+
+配额恢复在完成本地执行归属登记后释放发送锁，再进行可能阻塞的账号与额度读取；校验完成后重新获取锁，并复核该执行仍可继续。取消请求因此可以在外部读取未返回时发出取消信号，而不会等待恢复流程持有的同一把锁。既有配额协议测试通过挂起账号读取验证取消仍能完成。
 
 压缩事件路由保留 `${taskId}-context-compact` 这一合成 subtask 身份，避免真实 Codex turn ID 把前端乐观处理块拆成另一条消息。executor 同时兼容 `item/completed` 和 `context/compaction` 两种通知形式：相同压缩项按 item ID 去重，不同压缩项必须分别发出。Wework 会按 subtask 对账乐观块和运行时块，避免同一次压缩显示两条指示器。桌面 E2E 通过受控的 mock 模型端点接收并阻塞 Wework 发出的压缩请求，验证确认、运行中、完成和后续消息四个阶段，并确认后续模型请求实际包含 mock 返回的压缩摘要，而不是只验证界面标记；同一 checkpoint 还会让 mock 端点拒绝一次压缩请求，断言失败在 App-IPC 截止之前自行暴露且不是超时文案。Codex transcript 持久化完成边界由 executor 回归测试覆盖，空闲线程的模型路由绑定由 executor 单测覆盖。
 
