@@ -390,13 +390,23 @@ test('deadline replay rejects unknown durations and preserves known sums', () =>
 
 function assertDeadlineReplay(replay) {
   const workflow = readFileSync(new URL('../workflows/wework-e2e.yml', import.meta.url), 'utf8')
-  const budget =
+  const stepBudget =
     Number(
       workflow.match(
         /name: Run Windows Wework desktop Core shard E2E[\s\S]*?timeout-minutes: (\d+)/
       )?.[1]
     ) * 60
-  assert.ok(budget > 0)
+  const processWrapper = readFileSync(
+    new URL('./run-windows-standard-user-process.ps1', import.meta.url),
+    'utf8'
+  )
+  const budget =
+    Number(
+      processWrapper.match(
+        /\$remainingSeconds = (\d+) \* 60 - \$deadlineClock.Elapsed.TotalSeconds/
+      )?.[1]
+    ) * 60
+  assert.ok(budget > 0 && budget < stepBudget)
   const observed = { ...replay.unobservedSeconds, ...replay.seconds }
   assert.deepEqual(
     replay.matrix.include.map(shard => shard.id),
@@ -441,6 +451,16 @@ test('complete real-Backend Windows workloads retain cleanup time within the dea
     JSON.parse(
       readFileSync(
         new URL('./fixtures/wework-windows-real-backend-deadline-replay.json', import.meta.url)
+      )
+    )
+  )
+})
+
+test('current Windows workloads fit the process deadline before the step deadline', () => {
+  assertDeadlineReplay(
+    JSON.parse(
+      readFileSync(
+        new URL('./fixtures/wework-windows-current-deadline-replay.json', import.meta.url)
       )
     )
   )
