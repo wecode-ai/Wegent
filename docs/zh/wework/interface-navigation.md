@@ -100,6 +100,8 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 从侧栏的 **项目 → 新建项目 → 云端项目** 可在选择远程主机时添加设备，见[项目与工作区](./projects.md#add-device-from-project)。
 
+Issue 详情的 **参与者 → +** 支持搜索多选，负责人选择器也可搜索非项目成员；确认后仅授予该 Issue 的管理权限，见[项目成员与 Issue 协作](./projects.md#project-controls)。
+
 从 **项目设置 → AI 配置** 编辑智能体定义；项目 Maintainer 可以编辑项目内的非私有定义，共享源定义仍按原权限控制。导入和手动创建使用相同入口，分配设备冲突的排查步骤见[智能体配置](./projects.md#agent-capabilities)。
 
 ## 侧栏的功能入口
