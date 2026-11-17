@@ -37,6 +37,34 @@ const get = (id: string) => document.querySelector<HTMLElement>(`[data-testid="$
 const model = { name: 'model', type: 'public' as const, displayName: 'Model' }
 const translate = createCollaborationTranslator('en')
 
+it('leaves a preexisting inert attribute under its React owner when a layer closes', () => {
+  function Layer({ onClose }: { onClose: () => void }) {
+    const ref = useDialogKeyboard<HTMLDivElement>(onClose)
+    return (
+      <div ref={ref} role="dialog" aria-modal="true">
+        <button onClick={onClose} data-testid="close-owned-layer">
+          Close
+        </button>
+      </div>
+    )
+  }
+  function Host() {
+    const [open, setOpen] = useState(true)
+    return (
+      <>
+        <section data-testid="react-owned-background" inert={open}>
+          Owner content
+        </section>
+        {open && <Layer onClose={() => setOpen(false)} />}
+      </>
+    )
+  }
+  act(() => root.render(<Host />))
+  expect(get('react-owned-background').hasAttribute('inert')).toBe(true)
+  act(() => get('close-owned-layer').click())
+  expect(get('react-owned-background').hasAttribute('inert')).toBe(false)
+})
+
 it.each(['popover-first', 'modal-first'] as const)(
   'restores background attributes after overlapping Radix aria isolation (%s)',
   order => {

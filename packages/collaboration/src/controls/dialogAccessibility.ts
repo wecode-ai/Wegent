@@ -1,4 +1,4 @@
-type InertOwnership = { count: number; originalValue: string | null }
+type InertOwnership = { count: number; applied: boolean }
 const inertOwners = new WeakMap<Element, InertOwnership>()
 
 function isolate(element: Element) {
@@ -7,17 +7,17 @@ function isolate(element: Element) {
     owner.count += 1
     return
   }
-  const originalValue = element.getAttribute('inert')
-  inertOwners.set(element, { count: 1, originalValue })
-  if (originalValue === null) element.setAttribute('inert', '')
+  const applied = !element.hasAttribute('inert')
+  inertOwners.set(element, { count: 1, applied })
+  if (applied) element.setAttribute('inert', '')
 }
 
 function restore(element: Element) {
   const owner = inertOwners.get(element)
   if (!owner || --owner.count > 0) return
   inertOwners.delete(element)
-  if (owner.originalValue === null) element.removeAttribute('inert')
-  else element.setAttribute('inert', owner.originalValue)
+  // React retains ownership of any preexisting attribute, including removing it.
+  if (owner.applied) element.removeAttribute('inert')
 }
 
 /** Keep ordinary configuration panels outside the modal isolation lifecycle. */
