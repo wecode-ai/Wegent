@@ -27,9 +27,11 @@ fn database_name(timestamp: u128) -> String {
 #[test]
 fn concurrent_fixtures_do_not_share_a_schema_when_the_clock_has_not_advanced() {
     let names = std::thread::scope(|scope| {
-        (0..8)
-            .map(|_| scope.spawn(|| database_name(1_794_940_570_490_771_831)))
-            .collect::<Vec<_>>()
+        let mut threads = Vec::with_capacity(8);
+        for _ in 0..8 {
+            threads.push(scope.spawn(|| database_name(1_794_940_570_490_771_831)));
+        }
+        threads
             .into_iter()
             .map(|thread| thread.join().unwrap())
             .collect::<std::collections::HashSet<_>>()
