@@ -1,8 +1,9 @@
 import { setSessionTelemetryConsent } from '@/telemetry/sessionConsent'
+import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
 import type { AppPreferences } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
@@ -71,6 +72,11 @@ const getRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 const updateRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 const refreshWorkListsMock = vi.hoisted(() => vi.fn())
 const changeWorkbenchModeMock = vi.hoisted(() => vi.fn())
+const experimentalFeaturesEnabledMock = vi.hoisted(() => vi.fn(() => false))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: experimentalFeaturesEnabledMock,
+}))
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -178,8 +184,52 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
   }),
 }))
 
+function installSettingsContributions(initialEntries: WeworkDshSlotEntry[]) {
+  const originalRuntime = window.__WEWORK_DSH_UI__!
+  let entries = initialEntries
+  const listeners = new Set<() => void>()
+  const dispose = vi.fn()
+  const attach = vi.fn((_slot, id, container: HTMLElement) => {
+    const heading = document.createElement('h2')
+    heading.textContent = entries.find(entry => entry.id === id)?.label ?? ''
+    container.append(heading)
+    return {
+      update: () => {},
+      dispose: () => {
+        heading.remove()
+        dispose()
+      },
+    }
+  })
+  window.__WEWORK_DSH_UI__ = {
+    getEntries: slot =>
+      slot === WEWORK_DSH_SLOTS.settingsSection ? entries : originalRuntime.getEntries(slot),
+    subscribe: (slot, listener) => {
+      if (slot !== WEWORK_DSH_SLOTS.settingsSection)
+        return originalRuntime.subscribe(slot, listener)
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    attach,
+  }
+  return {
+    attach,
+    dispose,
+    publish: (nextEntries: WeworkDshSlotEntry[]) => {
+      entries = nextEntries
+      listeners.forEach(listener => listener())
+    },
+    restore: () => {
+      window.__WEWORK_DSH_UI__ = originalRuntime
+    },
+  }
+}
+
 describe('GeneralSettingsPage', () => {
   beforeEach(() => {
+    experimentalFeaturesEnabledMock.mockReturnValue(false)
     setSessionTelemetryConsent(undefined)
     getAppPreferencesMock.mockReset()
     updateAppPreferencesMock.mockReset()
@@ -224,6 +274,55 @@ describe('GeneralSettingsPage', () => {
       trayTitle: 'AIGC -85.68',
       tooltip: 'AIGC额度\n1,127.68 / 1,042 元 (108.22%)\n剩余 -85.68 元',
     })
+  })
+
+  test.each([false, true])(
+    'shows General contributions and respects experimental visibility (%s)',
+    async experimentalEnabled => {
+      experimentalFeaturesEnabledMock.mockReturnValue(experimentalEnabled)
+      const entries = [
+        { id: 'voice-input', page: 'general', label: 'Voice input' },
+        { id: 'connections-only', page: 'connections', label: 'Connections only' },
+        {
+          id: 'experimental-general',
+          page: 'general',
+          label: 'Experimental General',
+          experimental: true,
+        },
+      ]
+      const runtime = installSettingsContributions(entries)
+      const { unmount } = render(<GeneralSettingsPage />)
+      try {
+        expect(await screen.findByRole('heading', { name: 'Voice input' })).toBeVisible()
+        expect(screen.queryByRole('heading', { name: 'Connections only' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('heading', { name: 'Experimental General' }) !== null).toBe(
+          experimentalEnabled
+        )
+        expect(runtime.attach).toHaveBeenCalledTimes(experimentalEnabled ? 2 : 1)
+        expect(updateAppPreferencesMock).not.toHaveBeenCalled()
+      } finally {
+        unmount()
+        runtime.restore()
+      }
+    }
+  )
+
+  test('adds and removes a General contribution when the plugin registration changes', async () => {
+    const runtime = installSettingsContributions([])
+    const { unmount } = render(<GeneralSettingsPage />)
+    try {
+      await waitFor(() => expect(screen.getByTestId('general-language-en-button')).toBeEnabled())
+      expect(screen.queryByRole('heading', { name: 'Voice input' })).not.toBeInTheDocument()
+      act(() => runtime.publish([{ id: 'voice-input', page: 'general', label: 'Voice input' }]))
+      expect(screen.getByRole('heading', { name: 'Voice input' })).toBeVisible()
+      expect(runtime.attach).toHaveBeenCalledTimes(1)
+      act(() => runtime.publish([]))
+      expect(screen.queryByRole('heading', { name: 'Voice input' })).not.toBeInTheDocument()
+      expect(runtime.dispose).toHaveBeenCalledTimes(1)
+    } finally {
+      unmount()
+      runtime.restore()
+    }
   })
 
   test('switches from developer mode to focus mode', async () => {

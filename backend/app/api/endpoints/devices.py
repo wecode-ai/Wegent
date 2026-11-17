@@ -31,6 +31,7 @@ from app.schemas.git_credentials import (
     DeviceGitAccountSyncRequest,
     DeviceGitAccountSyncResponse,
 )
+from app.services.device.cloud_device_restart import restart_cloud_device_for_upgrade
 from app.services.device.command_service import (
     DeviceCommandConfigurationError,
     DeviceCommandError,
@@ -82,7 +83,7 @@ class DeviceUpgradeRequest(BaseModel):
     )
     force_stop_tasks: bool = Field(
         default=False,
-        description="Cancel running tasks before upgrade (default: reject if tasks running)",
+        description="Allow the operation to interrupt running tasks",
     )
     registry: Optional[str] = Field(
         default=None, description="Optional: Override registry URL for update source"
@@ -120,7 +121,9 @@ class DeviceRuntimeSettingsResponse(BaseModel):
 class DeviceUpgradeResponse(BaseModel):
     """Response model for device upgrade trigger."""
 
-    success: bool = Field(..., description="Whether the upgrade command was sent")
+    success: bool = Field(
+        ..., description="Whether the upgrade or restart was accepted"
+    )
     message: str = Field(..., description="Human-readable status message")
 
 
@@ -303,8 +306,10 @@ async def trigger_device_upgrade(
     """
     Trigger a remote upgrade for a device.
 
-    This endpoint sends an upgrade command to the specified device via WebSocket.
-    The device must be online and owned by the current user.
+    Cloud devices use the deployment's restart operation. Other devices receive
+    an upgrade command via WebSocket.
+    The device must be owned by the current user. WebSocket upgrades require
+    an active connection.
 
     Args:
         device_id: The unique device identifier
@@ -333,7 +338,6 @@ async def trigger_device_upgrade(
             detail="Device not found or access denied",
         )
 
-    # Get device status from provider (includes Redis online status and running tasks)
     from app.schemas.device import DeviceType
     from app.services.device.provider_factory import DeviceProviderFactory
 
@@ -341,6 +345,22 @@ async def trigger_device_upgrade(
         "deviceType", DeviceType.LOCAL.value
     )
     device_type = DeviceType(device_type_str)
+
+    if device_type == DeviceType.CLOUD:
+        result = await restart_cloud_device_for_upgrade(
+            db, device_kind, request.force_stop_tasks
+        )
+        if not result.success:
+            raise HTTPException(
+                status_code=(
+                    status.HTTP_502_BAD_GATEWAY
+                    if result.provider_configured
+                    else status.HTTP_501_NOT_IMPLEMENTED
+                ),
+                detail=result.message,
+            )
+        return DeviceUpgradeResponse(success=True, message=result.message)
+
     provider = DeviceProviderFactory.get_provider(device_type)
     if provider is None:
         logger.error(

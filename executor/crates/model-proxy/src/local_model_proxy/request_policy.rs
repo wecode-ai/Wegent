@@ -48,6 +48,8 @@ pub(super) struct PreparedRequest {
     pub conversion: Option<Conversion>,
     pub expanded_browser_tools: HashSet<String>,
     pub stripped_encrypted_content: usize,
+    pub normalized_reasoning_items: usize,
+    pub foreign_history_keys: HashSet<String>,
 }
 
 /// Standard providers can execute client functions but cannot supply hosted tools.
@@ -96,6 +98,7 @@ pub(super) async fn prepare(
     history: &super::history::CodexToolHistory,
     model_switched: bool,
     forked: bool,
+    known_foreign_history_keys: &HashSet<String>,
 ) -> Result<PreparedRequest, HttpError> {
     upstream
         .codex_request_mode
@@ -108,15 +111,31 @@ pub(super) async fn prepare(
         Some(model_id) => rewrite_request_model(body, model_id)?,
         None => body.to_vec(),
     };
+    let (body, normalized_reasoning_items, foreign_history_keys) =
+        if upstream.is_official_chatgpt_codex() {
+            super::openai_reasoning::normalize_official_reasoning_history(
+                body,
+                known_foreign_history_keys,
+                model_switched,
+            )?
+        } else {
+            (body, 0, HashSet::new())
+        };
     if upstream.codex_request_mode == CodexRequestMode::Passthrough {
         return Ok(PreparedRequest {
             body,
             conversion: None,
             expanded_browser_tools: HashSet::new(),
             stripped_encrypted_content: 0,
+            normalized_reasoning_items,
+            foreign_history_keys,
         });
     }
-    let body = prepare_model_switch_request(upstream, body, model_switched)?;
+    let body = if upstream.is_official_chatgpt_codex() {
+        body
+    } else {
+        prepare_model_switch_request(upstream, body, model_switched)?
+    };
     let conversation_id = super::request_thread_identity(&body).map(|identity| identity.thread_id);
     let body =
         vision::replace_images_with_descriptions(vision_sidecar, conversation_id.as_deref(), &body)
@@ -136,5 +155,7 @@ pub(super) async fn prepare(
         conversion,
         expanded_browser_tools,
         stripped_encrypted_content,
+        normalized_reasoning_items,
+        foreign_history_keys,
     })
 }

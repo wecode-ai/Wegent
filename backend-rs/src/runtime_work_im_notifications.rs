@@ -94,25 +94,34 @@ fn channel_label(channel_type: &str) -> &str {
 /// UTF-8 JSON document. A value that is not UTF-8 or not valid JSON is `None`,
 /// matching `_decode` falling back to raw bytes that the callers then reject
 /// through their `isinstance(..., dict)` / typed checks.
-fn decode_json(value: &[u8]) -> Option<OpaqueJson> {
+pub(crate) fn decode_json(value: &[u8]) -> Option<OpaqueJson> {
     std::str::from_utf8(value)
         .ok()
         .and_then(OpaqueJson::from_json_text)
 }
 
-/// Python truthiness of a JSON value, used by `bool(data.get("enabled"))`.
+/// Python truthiness of a JSON value, used by `bool(data.get("enabled", True))`.
 use brz_json::adapters::python_truthy;
 
 /// `IMGlobalNotificationSettings` parsed from the cached document.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct GlobalNotification {
     pub(crate) enabled: bool,
     pub(crate) session_key: Option<String>,
 }
 
+impl Default for GlobalNotification {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            session_key: None,
+        }
+    }
+}
+
 impl GlobalNotification {
     /// A non-object cache value renders the source's dataclass defaults
-    /// (`enabled=False`, `session_key=None`).
+    /// (`enabled=True`, `session_key=None`).
     pub(crate) fn from_value(value: Option<&OpaqueJson>) -> Self {
         let Some(object) = value.map(OpaqueJson::to_value) else {
             return Self::default();
@@ -120,7 +129,7 @@ impl GlobalNotification {
         let Some(object) = object.as_object() else {
             return Self::default();
         };
-        let enabled = object.get("enabled").is_some_and(python_truthy);
+        let enabled = object.get("enabled").is_none_or(python_truthy);
         // `session_key if isinstance(session_key, str) else None`.
         let session_key = object
             .get("session_key")
@@ -149,16 +158,6 @@ pub(crate) struct PrivateSession {
     pub(crate) display_name: String,
     #[serde(default)]
     pub(crate) proactive_recipient_id: Option<String>,
-    /// `IMPrivateSession.from_dict` keeps the value only when it is a dict.
-    #[serde(default)]
-    pub(crate) active_runtime_task: Option<Value>,
-}
-
-impl PrivateSession {
-    /// `active_runtime_task if isinstance(..., dict) else None`.
-    pub(crate) fn active_runtime_task_object(&self) -> Option<&serde_json::Map<String, Value>> {
-        self.active_runtime_task.as_ref().and_then(Value::as_object)
-    }
 }
 
 /// `RuntimeIMNotificationSession`, serialized with the source aliases and field

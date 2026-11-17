@@ -604,6 +604,24 @@ describe('notification center', () => {
     )
   })
 
+  it('enables shared IM connections without requiring a target selection', async () => {
+    runtimeApi.getImNotificationSettings.mockResolvedValue({
+      global: { enabled: false, sessionKey: null },
+      runtimeTaskSubscriptions: [],
+    })
+    render(view())
+    fireEvent.click(screen.getByTestId('wework-notifications-button'))
+    fireEvent.click(screen.getByTestId('wework-notifications-settings'))
+    const toggle = await screen.findByTestId('wework-notifications-setting-tasks-im')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    fireEvent.click(toggle)
+    await waitFor(() =>
+      expect(runtimeApi.updateGlobalImNotification).toHaveBeenCalledWith({ enabled: true })
+    )
+    expect(screen.queryByTestId('wework-notifications-im-target')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('im-session-picker-dialog')).not.toBeInTheDocument()
+  })
+
   it('does not let a slow preference refresh overwrite a completed toggle', async () => {
     render(view())
     await waitFor(() => expect(api.getPreferences).toHaveBeenCalled())

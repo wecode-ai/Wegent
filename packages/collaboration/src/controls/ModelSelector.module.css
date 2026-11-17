@@ -87,7 +87,7 @@
 .groupLabel,
 .subgroupLabel {
   padding: 4px 8px;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 14px;
   font-weight: 400;
   line-height: 20px;
@@ -95,7 +95,6 @@
 
 .groupLabel {
   padding-top: 12px;
-  color: rgb(var(--color-text-muted));
 }
 
 .subgroupLabel {
@@ -145,7 +144,7 @@
 
 .defaultDescription {
   display: block;
-  color: rgb(var(--color-text-muted));
+  color: rgb(var(--color-text-secondary));
   font-size: 12px;
   line-height: 16px;
 }
@@ -172,6 +171,14 @@
   to {
     opacity: 1;
     transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@media (max-width: 767px) {
+  .menuWrapper button,
+  .submenu button {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 

@@ -27,6 +27,7 @@ import {
 } from '@/features/todo/projectSpaceSelection'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { DialogForm } from '@/components/common/DialogForm'
+import { isCloudDevice } from '@/lib/device-capabilities'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
 import { getRuntimeProjectOwner } from '@/lib/runtime-project-state'
@@ -171,6 +172,7 @@ function LocalProjectEditDialogContent({
   const [pluginsLoading, setPluginsLoading] = useState(false)
   const [pluginAttemptRevision, setPluginAttemptRevision] = useState<string | null>(null)
   const [installingPluginId, setInstallingPluginId] = useState<string | null>(null)
+  const cloudDevice = !!device && isCloudDevice(device)
   const capabilities = projectEditingCapabilities(device)
   const deviceRevision = projectEditingDeviceRevision(device)
   const [discoveredPluginSupport, setDiscoveredPluginSupport] = useState<{
@@ -520,7 +522,11 @@ function LocalProjectEditDialogContent({
                 data-testid="project-folders-upgrade-hint"
                 className="mt-1 text-sm text-text-secondary"
               >
-                {t('workbench.project_folders_upgrade_required')}
+                {t(
+                  cloudDevice
+                    ? 'workbench.project_cloud_device_restart_hint'
+                    : 'workbench.project_folders_upgrade_required'
+                )}
               </p>
             )}
             <div className="mt-2 overflow-hidden rounded-xl border border-border bg-background">
@@ -606,7 +612,11 @@ function LocalProjectEditDialogContent({
                     data-testid="project-default-space-upgrade-hint"
                     className="mt-1 text-sm text-text-secondary"
                   >
-                    {t('workbench.project_default_space_upgrade_required')}
+                    {t(
+                      cloudDevice
+                        ? 'workbench.project_cloud_device_restart_hint'
+                        : 'workbench.project_default_space_upgrade_required'
+                    )}
                   </p>
                 )}
                 <p className="mt-1 text-sm text-text-secondary">
@@ -660,7 +670,11 @@ function LocalProjectEditDialogContent({
                 data-testid="project-ai-settings-upgrade-hint"
                 className="mt-3 text-sm text-text-secondary"
               >
-                {t('workbench.project_ai_settings_upgrade_required')}
+                {t(
+                  cloudDevice
+                    ? 'workbench.project_cloud_device_restart_hint'
+                    : 'workbench.project_ai_settings_upgrade_required'
+                )}
               </p>
             )}
             <p className="mt-5 text-sm text-text-secondary">
@@ -780,7 +794,11 @@ function LocalProjectEditDialogContent({
                 data-testid="project-quick-phrases-upgrade-hint"
                 className="mt-3 text-sm text-text-secondary"
               >
-                {t('workbench.project_ai_settings_upgrade_required')}
+                {t(
+                  cloudDevice
+                    ? 'workbench.project_cloud_device_restart_hint'
+                    : 'workbench.project_ai_settings_upgrade_required'
+                )}
               </p>
             )}
             <div className="mb-4 mt-5 flex items-start gap-3 rounded-xl bg-muted/60 px-3 py-2.5">
@@ -814,6 +832,7 @@ function LocalProjectEditDialogContent({
             pluginsDisabled={pluginsDisabled}
             searchDisabled={submitting || pluginsPending}
             pluginSupport={pluginSupport}
+            cloudDevice={cloudDevice}
             aiSettingsSupported={capabilities.aiSettings}
             offline={offline}
             installingPluginId={installingPluginId}

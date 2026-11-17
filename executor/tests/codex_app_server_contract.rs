@@ -51,6 +51,70 @@ mod skill_membership;
 mod quota_recovery;
 
 shared_runtime_tests! {
+async fn codex_shared_app_server_injects_a_durable_provider_boundary_before_turn() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _workbench = EnvGuard::set("WEGENT_WORKBENCH_HOME", root.path().to_str().unwrap());
+    let log = root.path().join("provider-boundary.jsonl");
+    let native = write_fake_codex_with_provider_switch(&log);
+    let client = CodexAppServerClient::new(native.display().to_string());
+    let mut request: ExecutionRequest = serde_json::from_value(json!({
+        "task_id":"provider-boundary", "new_session":false,
+        "backend_url":"https://backend.example", "user_id":7, "user_name":"synthetic",
+        "team_id":12, "team_namespace":"default", "team_name":"agent",
+        "team_owner":{"kind":"user","id":7,"name":"synthetic"},
+        "bot":[{"id":7,"shell_type":"Codex"}], "prompt":"continue",
+        "model_config":{"model":"openai","model_id":"gpt-5.6-sol","protocol":"openai-responses"}
+    }))
+    .unwrap();
+    request
+        .extra
+        .insert("wework_model_provider_switched".to_owned(), json!(true));
+
+    let outcome = client
+        .run_turn_with_cancel(
+            request,
+            CodexAppServerTurnOptions {
+                resume_thread_id: Some("thread-1".to_owned()),
+                ..CodexAppServerTurnOptions::default()
+            },
+        )
+        .await
+        .expect("provider boundary injection should reach the turn");
+    assert_eq!(
+        outcome.outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+
+    let messages = read_json_lines(&log);
+    let methods = messages
+        .iter()
+        .filter_map(|message| message["method"].as_str())
+        .collect::<Vec<_>>();
+    let resume = methods
+        .iter()
+        .position(|method| *method == "thread/resume")
+        .expect("thread/resume");
+    let inject = methods
+        .iter()
+        .position(|method| *method == "thread/inject_items")
+        .expect("provider boundary injection");
+    let turn = methods
+        .iter()
+        .position(|method| *method == "turn/start")
+        .expect("turn/start");
+    assert!(resume < inject && inject < turn);
+    let item = messages[inject]["params"]["items"][0].clone();
+    assert_eq!(
+        item,
+        wegent_model_proxy::local_model_proxy::provider_switch_boundary_item()
+    );
+    assert_eq!(item["role"], "developer");
+    client.restart().await;
+}
+
 async fn codex_named_home_persists_mcp_and_rebinds_followup_credentials() {
     let _lock = env_lock().await;
     let root = tempfile::tempdir().unwrap();
@@ -1564,6 +1628,58 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
       exit 0
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    fs::write(
+        &path,
+        wegent_executor_test_support::with_codex_bundled_catalog(&content),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_with_provider_switch(log_path: &Path) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-provider-switch-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{{"id":%s,"result":{{"protocolVersion":1}}}}\n' "$request_id"
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '{{"id":%s,"result":{{"thread":{{"id":"thread-1"}}}}}}\n' "$request_id"
+      ;;
+    *'"method":"thread/inject_items"'*)
+      printf '{{"id":%s,"result":{{}}}}\n' "$request_id"
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '{{"id":%s,"result":{{"status":"unsubscribed"}}}}\n' "$request_id"
+      ;;
+    *'"method":"turn/start"'*)
+      printf '{{"id":%s,"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}\n' "$request_id"
+      printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"turn-1","item":{{"id":"message-1","type":"agentMessage","phase":"final_answer","text":"done"}}}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"completed"}}}}}}'
       ;;
   esac
 done

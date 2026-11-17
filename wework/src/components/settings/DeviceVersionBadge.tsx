@@ -11,17 +11,17 @@ function formatDeviceVersion(version?: string | null): string {
 export function DeviceVersionBadge({
   device,
   disabled,
-  onUpgrade,
+  onRestart,
 }: {
   device: DeviceInfo
   disabled: boolean
-  onUpgrade: () => void
+  onRestart: () => void
 }) {
   const { t } = useTranslation('common')
   const currentVersion = formatDeviceVersion(device.executor_version)
   const latestVersion = formatDeviceVersion(device.latest_version)
   const isRemote = device.device_type === 'remote'
-  const updateLabel = t('workbench.connection_upgrade_version_tooltip', {
+  const updateLabel = t('workbench.connection_restart_version_tooltip', {
     current: currentVersion,
     latest: latestVersion,
   })
@@ -41,12 +41,12 @@ export function DeviceVersionBadge({
             type="button"
             data-testid={`connection-upgrade-badge-${device.device_id}`}
             aria-label={updateLabel}
-            onClick={onUpgrade}
+            onClick={onRestart}
             disabled={disabled}
             className="inline-flex items-center gap-1 rounded-full bg-focus/10 px-2 py-0.5 text-xs font-medium text-focus hover:bg-focus/15 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/60 disabled:cursor-not-allowed disabled:opacity-50 wework:bg-blue-500/10 wework:text-blue-600 wework:hover:bg-blue-500/15 wework:keyboard:focus-visible:ring-blue-500/60 wework:dark:text-blue-400"
           >
             <ArrowUpCircle className="h-3 w-3" aria-hidden="true" />
-            {t('workbench.connection_upgrade_available')}
+            {t('workbench.connection_update_available')}
           </button>
         </Tooltip>
       ) : null}

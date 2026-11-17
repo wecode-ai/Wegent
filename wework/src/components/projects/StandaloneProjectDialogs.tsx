@@ -429,8 +429,8 @@ function StandaloneFolderProjectDialogContent({
                             t('workbench.remote_host_cloud_group', '云设备'),
                             t('workbench.project_device_offline', '（离线）'),
                             t(
-                              'workbench.remote_host_upgrade_required',
-                              `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
+                              'workbench.cloud_host_version_required',
+                              `需要 v${WEWORK_MIN_EXECUTOR_VERSION} 或以上`,
                               { version: WEWORK_MIN_EXECUTOR_VERSION }
                             )
                           )}
