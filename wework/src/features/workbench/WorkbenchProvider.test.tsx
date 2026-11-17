@@ -348,6 +348,7 @@ function mockComposerDirectoryRoute(resolveRoute: () => string) {
       if (method === 'executor.codex_home.config.read')
         return { enabledPluginKeys: [], disabledPluginKeys: [] }
       if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+      if (method === 'runtime.connectors.status') return { apps: [] }
       if (method === 'executor.plugins.links.list') return []
       if (method === 'codex.app_server_request') {
         const request = params as { method?: string }
@@ -4214,7 +4215,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       async (method: string, params?: unknown) => {
         if (method === 'runtime.tasks.list') return { projects: [], chats: [], totalTasks: 0 }
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'codex.app_server_request') {
           const request = params as { method?: string }
           if (request.method === 'plugin/list') return { marketplaces: [] }
@@ -4329,7 +4330,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -4458,7 +4459,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         if (method === 'executor.plugins.device_route')
           return { device_id: 'local-device', device_route_id: 'runtime-record-70' }
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -4521,7 +4522,17 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('list local apps'))
     await waitFor(() => expect(getComposerApps().map(app => app.id)).toContain('plugin:documents'))
     expect(pluginApiMocks.cloudListInstalledPlugins).toHaveBeenCalledWith('runtime-record-70')
-    await waitFor(() => expect(listWegentInstalledConnectorApps).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
+        'runtime.connectors.status'
+      )
+    )
+    expect(listWegentInstalledConnectorApps).toHaveBeenCalled()
+    expect(
+      localExecutorMocks.requestLocalExecutor.mock.calls.some(
+        ([method]) => method === 'runtime.connectors.apps.sync'
+      )
+    ).toBe(false)
 
     act(() => {
       window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
@@ -4535,7 +4546,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     localExecutorMocks.requestLocalExecutor.mockImplementation(
       async (method: string, params?: unknown) => {
         if (method === 'executor.plugins.store.list') return { storePath: '/store', plugins: [] }
-        if (method === 'runtime.connectors.apps.sync') return { apps: [] }
+        if (method === 'runtime.connectors.status') return { apps: [] }
         if (method === 'runtime.tasks.list') {
           return { projects: [], chats: [], totalTasks: 0 }
         }
@@ -12037,7 +12048,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('archives a worktree task without prompting and preserves a snapshot', async () => {
+  test('archives a worktree task with executor-owned snapshot cleanup', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -12102,11 +12113,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('workbench-error')).toHaveTextContent('')
     expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1)
     expect(getRuntimeConversationMessages(archivedAddress)).toEqual([])
-    expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
+    expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledWith({
       deviceId: 'device-1',
-      path: '/workspace/worktrees/9/project-alpha',
-      preserveSnapshot: true,
+      taskId: 'runtime-worktree',
+      workspacePath: '/workspace/worktrees/9/project-alpha',
+      cleanupWorktree: true,
     })
+    expect(runtimeWorkApi.deleteWorktree).not.toHaveBeenCalled()
   })
 
   test('keeps a newly opened task selected when a different task finishes archiving', async () => {
@@ -12190,8 +12203,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(window.location.pathname).toBe('/settings/archived-conversations')
   })
 
-  test('archives a task before snapshotting and removing its worktree', async () => {
+  test('retains accepted archive state and reports executor cleanup failure', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
+      archiveConversation: vi.fn().mockResolvedValue({
+        accepted: true,
+        taskId: 'runtime-worktree',
+        cleanupError: 'Snapshot storage unavailable',
+      }),
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
           projects: [
@@ -12237,17 +12255,15 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('archive worktree task'))
 
     await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
-    await waitFor(() =>
-      expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
-        deviceId: 'device-1',
-        path: '/workspace/worktrees/9/project-alpha',
-        preserveSnapshot: true,
-      })
-    )
-    const removeCallOrder = runtimeWorkApi.deleteWorktree.mock.invocationCallOrder.at(-1)
-    expect(runtimeWorkApi.archiveConversation.mock.invocationCallOrder[0]).toBeLessThan(
-      removeCallOrder ?? 0
-    )
+    await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
+    expect(screen.getByTestId('workbench-error')).toHaveTextContent('Snapshot storage unavailable')
+    expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      taskId: 'runtime-worktree',
+      workspacePath: '/workspace/worktrees/9/project-alpha',
+      cleanupWorktree: true,
+    })
+    expect(runtimeWorkApi.deleteWorktree).not.toHaveBeenCalled()
   })
 
   test('archives project conversations without a dirty-worktree prompt', async () => {
@@ -12324,18 +12340,16 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       workspacePath: '/workspace/worktrees/9/project-alpha',
       taskId: 'runtime-worktree',
+      cleanupWorktree: true,
     })
     expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledWith({
       deviceId: 'remote-device',
       workspacePath: '/srv/remote-project',
       taskId: 'remote-project-task',
+      cleanupWorktree: true,
     })
     expect(runtimeWorkApi.archiveProjectConversations).not.toHaveBeenCalled()
-    expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
-      deviceId: 'device-1',
-      path: '/workspace/worktrees/9/project-alpha',
-      preserveSnapshot: true,
-    })
+    expect(runtimeWorkApi.deleteWorktree).not.toHaveBeenCalled()
     await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
   })
 

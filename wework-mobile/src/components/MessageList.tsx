@@ -44,6 +44,7 @@ interface MessageListProps extends RequestUserInputHandlers {
   hasMoreBefore: boolean
   messages: ChatMessage[]
   loading: boolean
+  historyLoaded: boolean
   loadingMoreBefore: boolean
   running: boolean
   onLoadMoreBefore: () => Promise<void>
@@ -73,6 +74,7 @@ export function MessageList({
   hasMoreBefore,
   messages,
   loading,
+  historyLoaded,
   loadingMoreBefore,
   running,
   onLoadMoreBefore,
@@ -174,6 +176,7 @@ export function MessageList({
         extraData={{
           configuration,
           loading,
+          historyLoaded,
           pendingInputKeys,
           onRequestUserInputSubmit,
           onRequestUserInputSkip,
@@ -203,14 +206,13 @@ export function MessageList({
         ListEmptyComponent={
           loading ? (
             <ActivityIndicator style={styles.center} />
-          ) : (
-            <View style={styles.empty}>
-              <Text variant="headlineSmall">从这里开始</Text>
+          ) : historyLoaded ? (
+            <View style={styles.empty} testID="conversation-empty-history">
               <Text style={styles.muted} variant="bodyLarge">
-                选择云端项目，或直接向在线 executor 发起会话。
+                暂无消息
               </Text>
             </View>
-          )
+          ) : null
         }
         onStartReached={loadEarlier}
         onReady={() => {

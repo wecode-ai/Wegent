@@ -14,6 +14,8 @@ Mobile files: **Conversation → top-right More → Files / Changes (更多 → 
 available when an accessible workspace is selected. Reply file links, attachments, and expanded change
 paths also open previews. See [Mobile file previews](./mobile-file-preview.md) for controls and limits.
 
+Mobile project and conversation management: **Wework ▾ → New project / Archived conversations**; project row **… → Pin, Rename, Archive all chats, Remove**; conversation row **swipe left → Archive** and **long-press → Pin, Rename, Copy ID, Archive**. Removing a project preserves files and conversations. Permanent deletion requires confirmation in Archived conversations. See [Wework Mobile](./mobile.md).
+
 ## Know the interface
 
 | Area                | Location                               | Purpose                                                                                                       |
@@ -196,3 +198,5 @@ Use **Personal group → … → Group settings** to manage the actual personal 
 Images, Markdown and file links in Issue activity open attachment previews with retry and original-file download. See [Attachment and document previews](./projects.md#issue-resource-preview).
 
 Default execution devices and device grants from new Issues are described in [Collaboration device settings](./devices.md#collaboration-device-defaults): **Collaboration → Collaboration management → Execution devices → Personal default environment**. **Collaboration → New Issue → Runtime (optional) → Personal default environment → Save personal default device** explicitly saves personal preferences. For a selected project, **Project device access (applies immediately) → Choose or add a device** manages project grants. See [Independent Issues](./projects.md#independent-issues) for participant selection, the persistent action bar and unsaved-change protection.
+
+Link an existing task: **Collaboration → Issue details → Linked tasks → Link existing task**. See [Projects and Issues](./projects.md).

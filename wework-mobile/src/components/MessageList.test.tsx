@@ -2,6 +2,7 @@ import { KeyboardAwareLegendList } from '@legendapp/list/keyboard'
 import type { LegendListRef } from '@legendapp/list/react-native'
 import React, { type ComponentProps, type ReactNode, type RefObject } from 'react'
 import { Keyboard, Platform, StyleSheet, View } from 'react-native'
+import { ActivityIndicator } from 'react-native-paper'
 import type { SharedValue } from 'react-native-reanimated'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -120,6 +121,7 @@ describe('conversation waiting, streaming and native list integration (PC contra
         hasMoreBefore={false}
         messages={messages}
         loading={false}
+        historyLoaded
         loadingMoreBefore={false}
         running
         onLoadMoreBefore={loadMoreBefore}
@@ -134,6 +136,17 @@ describe('conversation waiting, streaming and native list integration (PC contra
   }
 
   const loadMoreBefore = async () => {}
+
+  it('shows empty history only after a successful read, without cloud onboarding on failure', async () => {
+    await render([], { historyLoaded: false, running: false })
+    expect(renderer!.root.findAllByProps({ testID: 'conversation-empty-history' })).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).not.toMatch(/从这里开始|云端项目|暂无消息/)
+    await render([], { historyLoaded: false, loading: true, running: false })
+    expect(renderer!.root.findAllByType(ActivityIndicator)).toHaveLength(1)
+    await render([], { historyLoaded: true, running: false })
+    expect(renderer!.root.findAllByProps({ testID: 'conversation-empty-history' })).toHaveLength(1)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('暂无消息')
+  })
   const button = (testID: string) =>
     renderer!.root.findAll(
       node => node.type === ('Pressable' as never) && node.props.testID === testID

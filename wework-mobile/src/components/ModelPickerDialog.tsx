@@ -1,3 +1,4 @@
+import { recordMobileDiagnosticFailure } from '@/services/mobileDiagnostics'
 import { ErrorNotice } from './errors/ErrorNotice'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -90,7 +91,8 @@ export function ModelPickerScreen(props: ModelPickerScreenProps) {
       (x, y, width, height) => {
         setMenu({ kind, anchor: { x, y, width, height } })
       },
-      () => console.warn('Unable to measure the model option menu anchor')
+      () =>
+        recordMobileDiagnosticFailure('Unable to measure the model option menu anchor', undefined)
     )
   }
   const selectModel = (model: UnifiedModel) => {

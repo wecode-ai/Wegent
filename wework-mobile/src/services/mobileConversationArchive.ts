@@ -1,45 +1,16 @@
-import { allWorkspaces } from '@/domain/work'
-import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/runtime'
+import type { RuntimeTaskAddress } from '@/types/runtime'
 import type { RuntimeApi } from './runtimeApi'
 
-/** Match PC archiveRuntimeConversations: archive first, then preserve the worktree snapshot. */
+/** PC and Mobile use task-bound archive cleanup; direct worktree deletion stays privileged. */
 export async function archiveMobileConversation(
-  api: Pick<RuntimeApi, 'archiveConversation' | 'deleteWorktree'>,
-  work: RuntimeWorkListResponse,
+  api: Pick<RuntimeApi, 'archiveConversation'>,
   address: RuntimeTaskAddress
 ): Promise<{ cleanupError: string | null }> {
-  const target = archivedWorktree(work, address)
-  const result = await api.archiveConversation(address)
+  const result = await api.archiveConversation({ ...address, cleanupWorktree: true })
   if (!result.accepted) throw new Error(result.error || '归档失败')
-  if (!target) return { cleanupError: null }
-  try {
-    const cleanup = await api.deleteWorktree({ ...target, preserveSnapshot: true })
-    if (!cleanup.success) throw new Error(cleanup.worktree.lastError || '工作树清理失败')
-    return { cleanupError: null }
-  } catch (cause) {
-    return {
-      cleanupError: `会话已归档，但工作树清理失败：${cause instanceof Error ? cause.message : String(cause)}`,
-    }
+  return {
+    cleanupError: result.cleanupError
+      ? `会话已归档，但工作树清理失败：${result.cleanupError}`
+      : null,
   }
-}
-
-function archivedWorktree(work: RuntimeWorkListResponse, address: RuntimeTaskAddress) {
-  for (const workspace of allWorkspaces(work)) {
-    if (workspace.deviceId !== address.deviceId) continue
-    const task = workspace.tasks.find(item => item.taskId === address.taskId)
-    if (
-      !task ||
-      !(
-        workspace.workspaceKind === 'worktree' ||
-        workspace.worktreeId ||
-        task.workspaceKind === 'worktree' ||
-        task.worktreeId
-      )
-    )
-      continue
-    const path = task.workspacePath?.trim() || workspace.workspacePath.trim()
-    if (!path || (address.workspacePath?.trim() && path !== address.workspacePath.trim())) continue
-    return { deviceId: workspace.deviceId, path }
-  }
-  return null
 }

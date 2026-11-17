@@ -95,6 +95,7 @@ let ensureLocalExecutorAvailablePromise: Promise<LocalExecutorStatus> | null = n
 let scheduledLocalExecutorAvailability: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorConfiguredPromise: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
+let backendConnectionWrite: Promise<unknown> = Promise.resolve()
 let localExecutorIdentityEpoch = 0
 let availableLocalExecutorStatus: LocalExecutorStatus | null = null
 let initializedLocalExecutorStatus: LocalExecutorStatus | null = null
@@ -231,6 +232,7 @@ let nextLocalExecutorRequestFailure: {
 type LocalExecutorRequestHold = {
   method: string
   phase: 'before-dispatch' | 'after-response'
+  maxHeldCount: number
   heldCount: number
   completedCount: number
   enteredWaiters: Array<() => void>
@@ -259,7 +261,8 @@ export function failNextLocalExecutorRequestForE2E(method: string, message: stri
  */
 export function holdLocalExecutorRequestsForE2E(
   method: string,
-  phase: LocalExecutorRequestHold['phase'] = 'after-response'
+  phase: LocalExecutorRequestHold['phase'] = 'after-response',
+  maxHeldCount = Number.POSITIVE_INFINITY
 ): void {
   if (!isLocalExecutorE2EMode()) {
     throw new Error('Local executor request holds are only available in E2E mode')
@@ -267,6 +270,7 @@ export function holdLocalExecutorRequestsForE2E(
   localExecutorRequestHold = {
     method,
     phase,
+    maxHeldCount,
     heldCount: 0,
     completedCount: 0,
     enteredWaiters: [],
@@ -631,6 +635,7 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
 }
 
 export function resetLocalExecutorStateForTests(): void {
+  backendConnectionWrite = Promise.resolve()
   localExecutorIdentityEpoch += 1
   bundledPluginUpdateEpoch += 1
   bundledPluginRetryListener?.()
@@ -698,19 +703,27 @@ export function copyLocalExecutorDebugInfo(text: string): Promise<void> {
 export function connectLocalExecutorToBackend(
   connection: LocalExecutorBackendConnection
 ): Promise<LocalExecutorStatus> {
-  return requestDshExecutor('executor.backend.configure', {
+  return configureLocalExecutorBackend({
     backend_url: connection.backendUrl,
     socket_url: connection.socketBaseUrl,
     auth_token: connection.authToken,
     runtime_auth_token: connection.runtimeAuthToken ?? null,
     device_type: connection.deviceType,
-  }).then(() => ensureLocalExecutorAvailable())
+  })
 }
 
 export function disconnectLocalExecutorFromBackend(): Promise<LocalExecutorStatus> {
-  return requestDshExecutor('executor.backend.configure', {}).then(() =>
-    ensureLocalExecutorAvailable()
-  )
+  return configureLocalExecutorBackend({})
+}
+
+function configureLocalExecutorBackend(
+  params: Record<string, unknown>
+): Promise<LocalExecutorStatus> {
+  // Backend configuration is one mutable host resource; admit writes in caller order.
+  const write = () => requestDshExecutor('executor.backend.configure', params)
+  const pending = backendConnectionWrite.then(write, write)
+  backendConnectionWrite = pending
+  return pending.then(() => ensureLocalExecutorAvailable())
 }
 
 export function requestLocalExecutor<T = unknown>(
@@ -777,7 +790,9 @@ export function requestLocalExecutor<T = unknown>(
     })
   }
   const hold = localExecutorRequestHold
-  if (!hold || hold.method !== method || hold.released) return dispatch()
+  if (!hold || hold.method !== method || hold.released || hold.heldCount >= hold.maxHeldCount) {
+    return dispatch()
+  }
   const enterHold = () => {
     hold.heldCount += 1
     for (const notify of hold.enteredWaiters.splice(0)) notify()
@@ -792,6 +807,7 @@ export function requestLocalExecutor<T = unknown>(
       })
   }
   return dispatch().then(async value => {
+    if (hold.heldCount >= hold.maxHeldCount) return value
     await enterHold()
     hold.completedCount += 1
     return value

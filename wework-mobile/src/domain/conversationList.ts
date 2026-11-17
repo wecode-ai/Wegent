@@ -1,21 +1,24 @@
-import type { ConversationItem, RuntimeDeviceWorkspace } from '@/types/runtime'
+import type { ConversationItem, RuntimeDeviceWorkspace, RuntimeProjectWork } from '@/types/runtime'
 
 export interface ConversationProjectGroup {
   key: string
   name: string
   detail: string | null
+  projectWork?: RuntimeProjectWork
   workspace: RuntimeDeviceWorkspace | undefined
   conversations: ConversationItem[]
 }
 
 export interface ConversationListPresentation {
   pinned: ConversationItem[]
+  pinnedProjects: ConversationProjectGroup[]
   projects: ConversationProjectGroup[]
   standalone: ConversationItem[]
 }
 
 interface ProjectWorkspace {
   projectName: string
+  projectWork?: RuntimeProjectWork
   workspace: RuntimeDeviceWorkspace
 }
 
@@ -24,16 +27,30 @@ export function buildConversationList(
   workspaces: readonly ProjectWorkspace[]
 ): ConversationListPresentation {
   const projects = new Map<string, ConversationProjectGroup>()
-  for (const { projectName, workspace } of workspaces) {
-    const key = workspaceKey(workspace.deviceId, workspace.workspacePath)
-    if (projects.has(key)) continue
-    projects.set(key, {
+  const locations = new Map<string, ConversationProjectGroup>()
+  for (const { projectName, projectWork, workspace } of workspaces) {
+    const location = workspaceKey(workspace.deviceId, workspace.workspacePath)
+    const key = projectWork
+      ? JSON.stringify([
+          projectWork.project.stateDeviceId || workspace.deviceId,
+          projectWork.project.sidebarStateKey || projectWork.project.key,
+        ])
+      : location
+    const existing = projects.get(key)
+    if (existing) {
+      locations.set(location, existing)
+      continue
+    }
+    const group: ConversationProjectGroup = {
       key,
       name: projectName,
       detail: workspaceDetail(projectName, workspace.workspacePath, workspace.label),
       workspace,
+      projectWork,
       conversations: [],
-    })
+    }
+    projects.set(key, group)
+    locations.set(location, group)
   }
 
   const pinned = conversations.filter(item => item.pinned).sort(comparePinnedConversations)
@@ -45,7 +62,10 @@ export function buildConversationList(
       continue
     }
     const key = workspaceKey(conversation.address.deviceId, conversation.sourceWorkspacePath)
-    let group = projects.get(key)
+    let group =
+      conversation.projectKey && conversation.projectStateDeviceId
+        ? projects.get(JSON.stringify([conversation.projectStateDeviceId, conversation.projectKey]))
+        : locations.get(key)
     if (!group) {
       group = {
         key,
@@ -59,7 +79,21 @@ export function buildConversationList(
     group.conversations.push(conversation)
   }
 
-  return { pinned, projects: [...projects.values()], standalone }
+  const orderedProjects = [...projects.values()].sort(
+    (a, b) =>
+      (a.projectWork?.project.pinnedOrder ??
+        a.projectWork?.project.sidebarOrder ??
+        Number.MAX_SAFE_INTEGER) -
+      (b.projectWork?.project.pinnedOrder ??
+        b.projectWork?.project.sidebarOrder ??
+        Number.MAX_SAFE_INTEGER)
+  )
+  return {
+    pinned,
+    pinnedProjects: orderedProjects.filter(group => group.projectWork?.project.pinned),
+    projects: orderedProjects.filter(group => !group.projectWork?.project.pinned),
+    standalone,
+  }
 }
 
 function workspaceKey(deviceId: string, workspacePath: string): string {

@@ -39,6 +39,9 @@ class RuntimeWorktreePreflightRequest(RuntimeWorktreeDeviceRequest):
 
     source_path: str = Field(..., alias="sourcePath", min_length=1)
     ref: Optional[str] = None
+    include_branches: Optional[bool] = Field(
+        default=None, alias="includeBranches", strict=True
+    )
 
 
 class RuntimeWorktreeSettingsPatch(RuntimeWorktreeDeviceRequest):
@@ -88,6 +91,12 @@ class RuntimeTaskAddress(BaseModel):
         default=None,
         alias="runtimeHandle",
     )
+
+
+class RuntimeTaskArchiveRequest(RuntimeTaskAddress):
+    """Archive a task and optionally snapshot its exclusively owned managed worktree."""
+
+    cleanup_worktree: bool = Field(default=False, alias="cleanupWorktree", strict=True)
 
 
 class RuntimeModelSelection(BaseModel):
@@ -895,6 +904,7 @@ class RuntimeTaskArchiveResponse(BaseModel):
     accepted: bool
     local_task_id: str = Field(..., alias="taskId")
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    cleanup_error: Optional[str] = Field(default=None, alias="cleanupError")
     error: Optional[str] = None
 
 

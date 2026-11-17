@@ -38,5 +38,45 @@ async fn initialize(mysql: &MysqlService) -> Result<()> {
     if let Err(error) = crate::initialization::yaml(mysql).await {
         tracing::error!(%error,"YAML data initialization failed");
     }
-    crate::initialization::plugins(mysql).await
+    crate::initialization::plugins(mysql).await?;
+    initialize_connectors(mysql).await;
+    Ok(())
+}
+
+async fn initialize_connectors(mysql: &MysqlService) {
+    let result = async {
+        if crate::initialization::boolean("CONNECTOR_BUILTIN_APPS_ENABLED", true)? {
+            crate::initialization::connectors(mysql).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::error!(%error, "built-in connector app initialization failed; continuing startup and retrying on the next launch");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sql_test_support::mysql_pool_server::capture_queries_until;
+    use tokio::{net::TcpListener, sync::oneshot};
+
+    #[tokio::test]
+    async fn connector_initialization_failure_does_not_abort_startup() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mysql = MysqlService::connect_lazy(&format!(
+            "mysql://test:test@{}/test",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let (stop, stopped) = oneshot::channel();
+        let server = tokio::spawn(capture_queries_until(listener, stopped));
+        initialize_connectors(&mysql).await;
+        stop.send(()).unwrap();
+        let queries = server.await.unwrap();
+        assert_eq!(queries.len(), 1);
+        assert!(queries[0].contains("FROM system_configs"));
+        mysql.close().await;
+    }
 }

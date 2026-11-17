@@ -18,6 +18,7 @@ vi.mock('react-native-paper', () => ({ Text: 'Text', useTheme: () => ({ colors: 
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
 }))
+vi.mock('./ConversationMenuNative', () => ({ ConversationMenuNative: 'NativeMenu' }))
 vi.mock('./LiquidGlass', () => ({ LiquidGlassButton: 'LiquidGlassButton' }))
 const require = createRequire(import.meta.url)
 const assetPath = require.resolve('../../assets/wework-logo-transparent.png')
@@ -42,9 +43,25 @@ describe('sidebar connection retry', () => {
       userLabel: 'User',
       onDismiss: vi.fn(),
       onSettings: vi.fn(),
-      onRetryConnection: vi.fn(async () => {}),
-      connectionError: 'private HTTP exception',
-      reconnecting: false,
+      onRetryFailure: vi.fn(async (_failure: unknown) => {}),
+      failures: [
+        {
+          id: 'cloud',
+          label: '云端连接',
+          error: 'private HTTP exception',
+          phoneOwned: false,
+          retrying: false,
+          retry: vi.fn(),
+        },
+        {
+          id: 'work:phone',
+          label: '本机会话列表',
+          error: 'private local error',
+          phoneOwned: true,
+          retrying: false,
+          retry: vi.fn(),
+        },
+      ],
     }
     await act(() => {
       renderer = create(<WorkbenchSidebar {...props} />)
@@ -53,25 +70,43 @@ describe('sidebar connection retry', () => {
       renderer.root.findAllByProps({ testID: 'workbench-sidebar-connection-badge' })
     ).toHaveLength(1)
     expect(JSON.stringify(renderer.toJSON())).not.toContain('private HTTP exception')
-    expect(props.onRetryConnection).not.toHaveBeenCalled()
-    await act(() => avatar().props.onPress())
-    expect(props.onRetryConnection).toHaveBeenCalledOnce()
+    expect(props.onRetryFailure).not.toHaveBeenCalled()
+    const menu = () => renderer.root.findByType('NativeMenu' as never)
+    expect(menu().props.actions.map((item: { title: string }) => item.title)).toEqual([
+      '云端连接',
+      '本机会话列表',
+    ])
+    await act(() => menu().props.onSelect('work:phone'))
+    expect(props.onRetryFailure).toHaveBeenCalledWith(props.failures[1])
+    expect(props.onRetryFailure).toHaveBeenCalledOnce()
     expect(props.onDismiss).not.toHaveBeenCalled()
     expect(props.onSettings).not.toHaveBeenCalled()
-    await act(() => renderer.update(<WorkbenchSidebar {...props} reconnecting />))
-    expect(avatar().props.disabled).toBe(true)
-    expect(avatar().props.accessibilityState.busy).toBe(true)
+    await act(() =>
+      renderer.update(<WorkbenchSidebar {...props} failures={[...props.failures].reverse()} />)
+    )
+    await act(() => menu().props.onSelect('work:phone'))
+    expect(props.onRetryFailure).toHaveBeenLastCalledWith(props.failures[1])
+    await act(() =>
+      renderer.update(
+        <WorkbenchSidebar
+          {...props}
+          failures={props.failures.map((item, index) => ({ ...item, retrying: index === 1 }))}
+        />
+      )
+    )
+    expect(menu().props.actions[0].disabled).toBe(false)
+    expect(menu().props.actions[1].disabled).toBe(true)
     expect(renderer.root.findAllByType('ActivityIndicator' as never)).toHaveLength(1)
     await act(() =>
       renderer.root.findByProps({ testID: 'workbench-sidebar-settings' }).props.onPress()
     )
     expect(props.onSettings).toHaveBeenCalledOnce()
-    await act(() => renderer.update(<WorkbenchSidebar {...props} connectionError={null} />))
+    await act(() => renderer.update(<WorkbenchSidebar {...props} failures={[]} />))
     expect(
       renderer.root.findAllByProps({ testID: 'workbench-sidebar-connection-badge' })
     ).toHaveLength(0)
     await act(() => avatar().props.onPress())
     expect(props.onSettings).toHaveBeenCalledTimes(2)
-    expect(props.onRetryConnection).toHaveBeenCalledOnce()
+    expect(props.onRetryFailure).toHaveBeenCalledTimes(2)
   })
 })

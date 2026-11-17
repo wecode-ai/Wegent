@@ -13,6 +13,7 @@
 
 pub mod collaboration;
 pub mod connection_events;
+pub mod connector;
 pub mod dispatch;
 mod execution;
 mod openai;

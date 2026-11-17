@@ -1,4 +1,9 @@
 import {
+  beginMobileDiagnostic,
+  recordMobileDiagnostic,
+  mobileSocketLogger,
+} from '@/services/mobileDiagnostics'
+import {
   createSocketClient,
   type AuthenticatedSocketClient,
 } from '../../../packages/chat-core/src/socket'
@@ -37,6 +42,11 @@ const TRANSCRIPT_PAYLOAD_LIMIT_PAGE_SIZE = 1
 type Listener = (event: RuntimeStreamEvent) => void
 type LifecycleListener = (address: RuntimeTaskAddress, event: RuntimeStreamEvent) => void
 
+export interface CloudConnectionSnapshot {
+  connected: boolean
+  error: Error | null
+}
+
 interface RuntimeRequestAck<T> {
   ok?: boolean
   result?: T
@@ -60,6 +70,9 @@ export class RuntimeStream {
   private lifecycleReconnectListener: (() => void) | null = null
   private accessToken: string
   private hasConnected = false
+  private connectionDiagnostic?: ReturnType<typeof beginMobileDiagnostic>
+  private cloudConnection: CloudConnectionSnapshot = { connected: false, error: null }
+  private readonly cloudConnectionListeners = new Set<() => void>()
   private scopedEventCount = 0
   private readonly localSubscriptions: (() => void)[] = []
 
@@ -89,6 +102,8 @@ export class RuntimeStream {
       return
     }
     this.backendRevision += 1
+    this.connectionDiagnostic?.cancel()
+    this.connectionDiagnostic = undefined
     for (const fail of this.pendingRemote) fail(new Error('Wegent 账号已变化，请重新操作'))
     if (this.scope && !this.local?.ownsDevice(this.scope.deviceId)) {
       this.scope = null
@@ -99,8 +114,10 @@ export class RuntimeStream {
     this.client = null
     this.backendIdentity = identity
     this.hasConnected = false
+    this.publishCloudConnection(false, null)
     this.accessToken = config?.accessToken ?? ''
     if (!config) return
+    this.connectionDiagnostic = beginMobileDiagnostic('backend-connection', 'cloud')
     const revision = this.backendRevision
     this.client = createSocketClient({
       socketBaseUrl: () => config.socketBaseUrl,
@@ -108,20 +125,48 @@ export class RuntimeStream {
       path: config.socketPath,
       getToken: () => this.accessToken,
       auth: { client_origin: 'wework' },
-      logger: console,
+      logger: mobileSocketLogger,
     })
     this.client.socket.on(RUNTIME_EVENT, envelope => {
       if (revision === this.backendRevision) this.onEvent(envelope)
     })
     this.client.subscribe(state => {
-      if (revision === this.backendRevision && state.isConnected) this.hasConnected = true
+      if (revision !== this.backendRevision) return
+      if (!state.isConnected && !state.connectionError && !this.connectionDiagnostic)
+        this.connectionDiagnostic = beginMobileDiagnostic('backend-connection', 'cloud')
+      if (state.connectionError) {
+        this.connectionDiagnostic?.fail(state.connectionError)
+        this.connectionDiagnostic = undefined
+      } else if (state.isConnected) {
+        this.connectionDiagnostic?.complete({ reconnectAttempts: state.reconnectAttempts })
+        this.connectionDiagnostic = undefined
+      }
+      if (state.isConnected) this.hasConnected = true
+      this.publishCloudConnection(state.isConnected, state.connectionError)
     })
     this.client.onReconnect(() => {
       if (revision !== this.backendRevision) return
-      this.reconnectListener?.()
+      if (this.scope && !this.local?.ownsDevice(this.scope.deviceId)) this.reconnectListener?.()
       this.lifecycleReconnectListener?.()
     })
     void this.client.connect()
+  }
+
+  getCloudConnection = (): CloudConnectionSnapshot => this.cloudConnection
+
+  subscribeCloudConnection = (listener: () => void): (() => void) => {
+    this.cloudConnectionListeners.add(listener)
+    return () => this.cloudConnectionListeners.delete(listener)
+  }
+
+  async reconnectCloud(): Promise<void> {
+    await this.requireBackend().ensureConnected()
+  }
+
+  private publishCloudConnection(connected: boolean, error: Error | null): void {
+    if (connected === this.cloudConnection.connected && error === this.cloudConnection.error) return
+    this.cloudConnection = { connected, error }
+    this.cloudConnectionListeners.forEach(listener => listener())
   }
 
   private requireBackend(): AuthenticatedSocketClient {
@@ -145,7 +190,10 @@ export class RuntimeStream {
   ): Promise<() => void> {
     this.scope = scope
     this.scopedEventCount = 0
-    console.info('[MobileRuntime] Subscribed', { deviceId: scope.deviceId, taskId: scope.taskId })
+    recordMobileDiagnostic('[MobileRuntime] Subscribed', {
+      deviceId: scope.deviceId,
+      taskId: scope.taskId,
+    })
     this.listener = listener
     this.reconnectListener = onReconnect
 
@@ -189,24 +237,22 @@ export class RuntimeStream {
   }
 
   async listWork(deviceId: string, deviceName?: string): Promise<RuntimeWorkListResponse> {
-    const startedAt = Date.now()
     const local = this.local?.ownsDevice(deviceId) ?? false
+    const diagnostic = beginMobileDiagnostic('work-list', local ? 'phone' : 'cloud')
     try {
+      diagnostic.step('request-task-list')
       const response = await this.request<unknown>(
         'runtime.tasks.list',
         {},
         deviceId,
         REQUEST_TIMEOUT_MS
       )
+      diagnostic.step('project-task-list')
       const work = adaptRuntimeWorkListResponse(response, deviceId, deviceName)
-      console.info('[MobileRuntime] Work list finished', {
-        local,
-        elapsedMs: Date.now() - startedAt,
-        totalTasks: work.totalTasks,
-      })
+      diagnostic.complete({ totalTasks: work.totalTasks, projects: work.projects.length })
       return work
     } catch (cause) {
-      console.info('[MobileRuntime] Work list failed', { local, elapsedMs: Date.now() - startedAt })
+      diagnostic.fail(cause)
       throw cause
     }
   }
@@ -223,7 +269,7 @@ export class RuntimeStream {
         : 75
     const startedAt = Date.now()
     const details = { deviceId, commandKey: input.command_key }
-    console.info('[MobileRuntime] Device command started', details)
+    recordMobileDiagnostic('[MobileRuntime] Device command started', details)
     try {
       const result = await this.request<RuntimeDeviceCommandResponse>(
         'device.execute_command',
@@ -234,7 +280,7 @@ export class RuntimeStream {
       )
       if (!result || typeof result.success !== 'boolean')
         throw new Error('设备返回了无效的命令响应')
-      console.info('[MobileRuntime] Device command finished', {
+      recordMobileDiagnostic('[MobileRuntime] Device command finished', {
         ...details,
         elapsedMs: Date.now() - startedAt,
         success: result.success,
@@ -243,7 +289,7 @@ export class RuntimeStream {
       })
       return result
     } catch (error) {
-      console.warn('[MobileRuntime] Device command failed', {
+      recordMobileDiagnostic('[MobileRuntime] Device command failed', {
         ...details,
         elapsedMs: Date.now() - startedAt,
         code: isRecord(error) && typeof error.code === 'string' ? error.code : undefined,
@@ -255,6 +301,8 @@ export class RuntimeStream {
 
   dispose(): void {
     this.backendRevision += 1
+    this.connectionDiagnostic?.cancel()
+    this.connectionDiagnostic = undefined
     for (const fail of this.pendingRemote) fail(new Error('运行时连接已关闭'))
     this.scope = null
     this.listener = null
@@ -309,7 +357,7 @@ export class RuntimeStream {
         this.scopedEventCount <= 3 ||
         ['response.completed', 'response.failed', 'response.incomplete'].includes(name)
       )
-        console.info('[MobileRuntime] Event route', {
+        recordMobileDiagnostic('[MobileRuntime] Event route', {
           name,
           taskId,
           rawDeviceId,
@@ -438,7 +486,16 @@ export class RuntimeStream {
       address.deviceId,
       TRANSCRIPT_TIMEOUT_MS
     )
-    return projectMobileRuntimeTranscript(response)
+    recordMobileDiagnostic('[MobileTranscript] Transport received', () => ({
+      local: this.local?.ownsDevice(address.deviceId) ?? false,
+      turns: response.turns?.length,
+      messages: response.messages?.length,
+      runtimeTurns: response.runtimeTurns?.length,
+      before: Boolean(options.beforeCursor),
+    }))
+    const projected = projectMobileRuntimeTranscript(response)
+    recordMobileDiagnostic('[MobileTranscript] Projected', { messages: projected.messages.length })
+    return projected
   }
 }
 
