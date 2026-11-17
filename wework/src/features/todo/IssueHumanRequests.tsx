@@ -81,7 +81,7 @@ export function IssueHumanRequests({
     return null
   return (
     <section
-      className="space-y-3 py-3"
+      className="task-detail-human-requests space-y-3 py-3"
       data-testid="issue-human-requests"
       aria-label={t('issueParticipation.waiting')}
     >
@@ -121,7 +121,7 @@ export function IssueHumanRequests({
           return (
             <div
               key={request.id}
-              className="space-y-2"
+              className="task-detail-human-request space-y-2"
               data-testid={`issue-human-request-${request.id}`}
             >
               <div className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">

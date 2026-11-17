@@ -2,12 +2,13 @@ import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { openLocalFileInWorkspaceApp } from '@/lib/local-terminal'
 import type { Attachment } from '@/types/api'
 import type { WorkspaceAttachmentPreviewSource } from '@/types/workspace-files'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { AttachmentDownloadProvider } from '../AttachmentDownloadProvider'
 import { AttachmentPreviewContext } from '../AttachmentPreviewContext'
 import { AttachmentBadges } from './AttachmentBadges'
+import i18n from '@/i18n'
 
 vi.mock('@/lib/electron-local-file', () => ({ readElectronLocalFile: vi.fn() }))
 vi.mock('@/lib/local-terminal', () => ({ openLocalFileInWorkspaceApp: vi.fn() }))
@@ -27,14 +28,14 @@ beforeEach(() => {
   vi.mocked(openLocalFileInWorkspaceApp).mockReset().mockResolvedValue(undefined)
 })
 
-function renderAttachment(overrides: Partial<Attachment> = {}) {
+function renderAttachment(overrides: Partial<Attachment> = {}, hasPreview = true) {
   const fetchBlob = vi.fn().mockResolvedValue(new Blob(['# test cloud content']))
   const remove = vi.fn()
   const openPreview = vi.fn<(source: WorkspaceAttachmentPreviewSource) => void>()
   const restore = vi.fn()
   render(
     <AttachmentDownloadProvider fetchAttachmentBlob={fetchBlob}>
-      <AttachmentPreviewContext.Provider value={openPreview}>
+      <AttachmentPreviewContext.Provider value={hasPreview ? openPreview : null}>
         <AttachmentBadges
           workspacePath="/test/workspace"
           attachments={[{ ...attachment, ...overrides }]}
@@ -48,6 +49,22 @@ function renderAttachment(overrides: Partial<Attachment> = {}) {
   )
   return { fetchBlob, remove, openPreview, restore }
 }
+
+test('localizes unavailable preview feedback', async () => {
+  const language = i18n.language
+  await act(async () => {
+    await i18n.changeLanguage('zh-CN')
+  })
+  try {
+    renderAttachment({}, false)
+    await userEvent.click(screen.getByTestId('attachment-document-preview-button'))
+    expect(await screen.findByTestId('attachment-error-badge')).toHaveTextContent('预览失败')
+  } finally {
+    await act(async () => {
+      await i18n.changeLanguage(language)
+    })
+  }
+})
 
 test('opens a cloud attachment in the bound side panel using the keyboard', async () => {
   const { fetchBlob, openPreview } = renderAttachment()

@@ -1,5 +1,6 @@
 @import './content-themes.css';
 @import './wework-theme.css';
+@import './dsh-voice-input.css';
 
 @tailwind base;
 @tailwind components;

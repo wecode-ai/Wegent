@@ -427,3 +427,117 @@ fn stores_for_the_same_path_share_live_state() {
     assert_eq!(stored.task_request["runtimeProjectKey"], "local:wework");
     fs::remove_file(path).unwrap();
 }
+
+fn update_fixture(store: &AutomationStore) -> Automation {
+    store.create(serde_json::from_value(json!({
+        "id":"daily", "version":0, "name":"Daily report", "prompt":"Original report",
+        "schedule":{"type":"cron","expression":"0 18 * * *"}, "timezone":"Asia/Shanghai",
+        "taskRequest":{"standInOwner":{"userId":7,"roleId":"@primary"},"standInCalendar":{}},
+        "taskPayload":{}
+    })).unwrap()).unwrap()
+}
+
+#[test]
+fn schedule_update_write_failure_retains_memory_disk_and_retry_version() {
+    let root = tempdir().unwrap();
+    let path = root.path().join("automations.json");
+    let store = AutomationStore::new(path.clone());
+    let original = update_fixture(&store);
+    let shared = AutomationStore::new(path.clone());
+    let bytes = fs::read(&path).unwrap();
+    let mut edited = original.clone();
+    edited.prompt = "Rejected report".into();
+    let temporary = path.with_extension("json.tmp");
+    fs::create_dir(&temporary).unwrap();
+
+    assert!(store.update(edited.clone()).is_err());
+
+    for handle in [&store, &shared] {
+        assert_eq!(
+            serde_json::to_value(handle.get("daily").unwrap()).unwrap(),
+            serde_json::to_value(&original).unwrap()
+        );
+    }
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    fs::remove_dir(&temporary).unwrap();
+    let mut other = original.clone();
+    other.id = "other".into();
+    store.create(other).unwrap();
+    assert_eq!(
+        read_state(&path).automations["daily"].prompt,
+        original.prompt
+    );
+    let saved = store.update(edited).unwrap();
+    assert_eq!(saved.version, original.version + 1);
+    assert_eq!(saved.prompt, "Rejected report");
+    drop(shared);
+    drop(store);
+    assert_eq!(
+        AutomationStore::new(path).get("daily").unwrap().prompt,
+        saved.prompt
+    );
+}
+
+#[test]
+fn schedule_update_message_keeps_an_overdue_occurrence_dispatchable_once() {
+    let root = tempdir().unwrap();
+    let store = AutomationStore::new(root.path().join("automations.json"));
+    let mut original = update_fixture(&store);
+    let at = Utc::now() - chrono::Duration::seconds(10);
+    store
+        .state
+        .lock()
+        .unwrap()
+        .automations
+        .get_mut("daily")
+        .unwrap()
+        .next_run_at = Some(at);
+    original.prompt = "Report owners, collaborators and waiting time".into();
+    // A caller's stale scheduling metadata must not replace the store's due occurrence.
+    original.next_run_at = None;
+
+    let saved = store.update(original).unwrap();
+
+    assert_eq!(saved.next_run_at, Some(at));
+    let due = store.due(Utc::now()).unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].1.scheduled_for, at);
+    assert_eq!(due[0].1.status, AutomationRunStatus::Pending);
+    assert_eq!(due[0].0.prompt, saved.prompt);
+    assert!(store.due(Utc::now()).unwrap().is_empty());
+}
+
+#[test]
+fn schedule_update_trigger_changes_recompute_the_next_occurrence() {
+    let root = tempdir().unwrap();
+    for field in ["schedule", "timezone", "enabled"] {
+        let store = AutomationStore::new(root.path().join(format!("{field}.json")));
+        let mut original = update_fixture(&store);
+        let at = Utc::now() - chrono::Duration::seconds(10);
+        store
+            .state
+            .lock()
+            .unwrap()
+            .automations
+            .get_mut("daily")
+            .unwrap()
+            .next_run_at = Some(at);
+        match field {
+            "schedule" => {
+                original.schedule =
+                    serde_json::from_value(json!({"type":"cron","expression":"0 19 * * *"}))
+                        .unwrap()
+            }
+            "timezone" => original.timezone = "UTC".into(),
+            "enabled" => original.enabled = false,
+            _ => unreachable!(),
+        }
+        let before_update = Utc::now();
+        let saved = store.update(original).unwrap();
+        if saved.enabled {
+            assert!(saved.next_run_at.unwrap() > before_update, "{field}");
+        } else {
+            assert!(saved.next_run_at.is_none());
+        }
+    }
+}

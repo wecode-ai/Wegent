@@ -23,6 +23,7 @@ import {
   type AppPreferences,
 } from '@/desktop/appPreferences'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { useDshAppearance } from '@/features/dsh-runtime/useDshAppearance'
 
 function getInitialState(): {
   appearance: AppearanceConfig
@@ -44,6 +45,7 @@ export function AppearanceProvider({
   persist?: boolean
 }) {
   const [state, setState] = useState(getInitialState)
+  useDshAppearance(state.appearance.mode)
 
   useEffect(() => {
     applyAppearance(state.appearance, state.resolvedMode)

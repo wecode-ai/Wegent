@@ -71,6 +71,14 @@ class DiscordChannelHandler(BaseChannelHandler[Any, BaseCallbackInfo]):
                 "discord_global_name": global_name,
                 "discord_channel_id": channel_id,
                 "discord_message_id": getattr(message, "id", None),
+                "message_id": (
+                    str(message.id)
+                    if getattr(message, "id", None) is not None
+                    else None
+                ),
+                "reply_to_message_id": getattr(
+                    getattr(message, "reference", None), "message_id", None
+                ),
             },
         )
 
