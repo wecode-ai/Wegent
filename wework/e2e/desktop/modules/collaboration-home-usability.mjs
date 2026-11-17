@@ -300,6 +300,32 @@ async function verifyProjectDialogKeyboard(control, home, timeoutMs) {
     `${home} [data-testid="personal-home-scope-participating"]`,
     { value: 'aria-pressed' }
   )
+  await control.command('click', `${home} [data-testid="personal-home-tab-stand-in"]`)
+  const assistant = `${home} [data-testid="right-workspace-chat-composer-shell"]`
+  await control.command('waitFor', assistant, { visible: true })
+  const before = JSON.parse(await control.command('getElementMetrics', assistant))
+  assert.ok(before.length > 0 && before.some(item => item.hitTestVisible))
+  const actions = '[data-testid="collaboration-workspace-actions-wework-local-workspace"]'
+  await control.command(
+    'hover',
+    '[data-testid="collaboration-workspace-tree-wework-local-workspace"]'
+  )
+  await control.command('click', actions)
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="collaboration-workspace-nav-create-project"]'
+  )
+  const homeDialog = '[data-testid="collaboration-project-create-dialog"]'
+  await control.command('waitFor', homeDialog, { visible: true })
+  const covered = JSON.parse(await control.command('getElementMetrics', assistant))
+  assert.equal(covered.length, before.length, 'The modal must retain the background Home composer')
+  assert.ok(
+    covered.every(item => !item.hitTestVisible),
+    'The project modal must cover every background assistant composer'
+  )
+  await control.command('click', `${homeDialog} [data-testid="collaboration-project-create-close"]`)
+  await control.command('waitFor', homeDialog, { visible: false })
+  await control.command('waitFor', home, { visible: true })
   const trigger = '[data-testid="collaboration-workspace-project-create"]'
   const dialog = '[data-testid="collaboration-project-create-dialog"]'
   await control.command(
@@ -309,12 +335,6 @@ async function verifyProjectDialogKeyboard(control, home, timeoutMs) {
   await control.command('click', trigger)
   await control.command('click', '[data-testid="collaboration-workspace-project-create-blank"]')
   await control.command('waitFor', dialog, { visible: true })
-  const assistant = '[data-testid="right-workspace-chat-composer-shell"]'
-  const background = JSON.parse(await control.command('getElementMetrics', assistant))
-  assert.ok(
-    background.every(item => !item.hitTestVisible),
-    'The project modal must cover every background assistant composer'
-  )
   await resizeHome(control, dialog, 390, 900, timeoutMs)
   for (const testId of [
     'collaboration-project-create-close',
