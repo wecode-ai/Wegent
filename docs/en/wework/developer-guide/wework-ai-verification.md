@@ -183,6 +183,8 @@ The `workbench.selection_restored`, `workbench.selection_changed` and `workbench
 
 Use the shared `ensureLocalModelCatalogReady` control command to establish local catalog readiness. The current model button’s `data-model-provider-id` describes a selected local Codex provider: a valid cloud selection can omit it while the local catalog is ready. Keep separate assertions for catalog deduplication, target options, and protocol behavior, without replacing a valid selection because sources initialized in a different order.
 
+When cumulative snapshots regress, reuse a source identity, or omit required fields, `performance.json.rejectedSnapshots` retains the rejected operation boundary, prior/current elapsed times, and regressing counters to investigate resets versus delivery order. The report remains incomplete and rejected values never overwrite acknowledged metrics.
+
 Custom scenarios requiring native cloud credentials declare `requiresNativeCloudAuthorization`; the shared runner authorizes against the real Backend after isolated Electron connects. Scenarios managing multiple device authorizations declare `requiresNativeCloudInspector` and pass the current `control` to the authorization fixture. Authorize after connection on initial launch and each new-device restart, never from `prepareApp` or `afterStop` while the native process is not running.
 
 Protocol-independent text replies in model fixtures must reuse `writeLocalAssistantMessage` to emit complete Responses, Chat Completions, or Anthropic termination events for the current request. Do not reset the selected model to accommodate a fixture with a fixed protocol or attribute stream failures caused by malformed fixture SSE to the official runtime.

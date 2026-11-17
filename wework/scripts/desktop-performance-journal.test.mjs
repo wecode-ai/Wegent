@@ -182,3 +182,28 @@ test('controlled replays remain recorded without hiding uninjected duplicates', 
     assert.deepEqual(report.violations, injected ? [] : ['executor.duplicateDeliveries'])
   }
 })
+
+test('counter regression retains rejected boundaries and values without certifying completeness', () => {
+  const journal = new DesktopPerformanceJournal(metadata)
+  journal.record('client', snapshot())
+  const next = snapshot()
+  next.durationMs = 5
+  next.renders.app = 1
+  journal.record('client', next, 'click', 'result', 'command-1')
+  const report = journal.report(true)
+  assert.equal(report.complete, false)
+  assert.equal(report.metrics['renders.app'], 2)
+  assert.deepEqual(report.rejectedSnapshots, [
+    {
+      clientId: 'client',
+      captureId: 'renderer',
+      action: 'click',
+      phase: 'result',
+      commandId: 'command-1',
+      durationMs: 5,
+      previousDurationMs: 10,
+      error: 'Performance counter reset: renders.app',
+      regressions: [{ name: 'renders.app', previous: 2, current: 1 }],
+    },
+  ])
+})

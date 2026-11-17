@@ -84,13 +84,15 @@ export class DesktopPerformanceJournal {
     this.errors = new Set()
     this.commands = new Map()
     this.observations = []
+    this.rejectedSnapshots = []
   }
 
   record(clientId, snapshot, action = 'ready', phase = 'ready', commandId = null) {
     if (phase === 'started') this.commands.set(action, (this.commands.get(action) ?? 0) + 1)
+    const previous = this.contexts.get(snapshot?.captureId)
+    let metrics
     try {
-      const metrics = flattenPerformance(snapshot)
-      const previous = this.contexts.get(snapshot.captureId)
+      metrics = flattenPerformance(snapshot)
       if (previous) {
         assert.equal(previous.clientId, clientId, 'Performance capture changed control clients')
         for (const [name, count] of Object.entries(previous.metrics)) {
@@ -127,6 +129,21 @@ export class DesktopPerformanceJournal {
       })
     } catch (error) {
       this.errors.add(error.message)
+      this.rejectedSnapshots.push({
+        clientId,
+        captureId: snapshot?.captureId ?? null,
+        action,
+        phase,
+        commandId,
+        durationMs: Number.isFinite(snapshot?.durationMs) ? snapshot.durationMs : null,
+        previousDurationMs: previous?.durationMs ?? null,
+        error: error.message,
+        regressions: Object.entries(previous?.metrics ?? {})
+          .filter(
+            ([name, count]) => metrics && (metrics[name] === undefined || metrics[name] < count)
+          )
+          .map(([name, count]) => ({ name, previous: count, current: metrics[name] ?? null })),
+      })
     }
   }
 
@@ -164,6 +181,7 @@ export class DesktopPerformanceJournal {
         removals: context.removals,
       })),
       coverageErrors: [...this.errors],
+      rejectedSnapshots: this.rejectedSnapshots,
       violations,
       metrics,
       commands: Object.fromEntries(this.commands),
