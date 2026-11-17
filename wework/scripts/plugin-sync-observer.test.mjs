@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 // @vitest-environment node
 
 import { expect, test } from 'vitest'
@@ -6,6 +7,7 @@ import {
   assertRetainedPluginUnchanged,
   latestPluginSyncRequest,
   observedRetainedPluginSync,
+  observePluginSyncTransport,
 } from '../e2e/desktop/modules/plugin-sync-observer.mjs'
 
 const retainedBaseline = () => ({
@@ -240,4 +242,25 @@ test('rejects unobserved, older and unrelated generations even with successful A
       acknowledgedPluginGeneration(observation, { plugin_sync_generation: generation }, 71, initial)
     ).toBeNull()
   }
+})
+
+test('records a reconciliation as complete only after its HTTP response finishes', () => {
+  const response = new EventEmitter()
+  const proxy = {
+    target: 'http://localhost',
+    websockets: new Set(),
+    holdNextCapabilitySync: () => ({ receive() {}, observeAcknowledgement() {} }),
+    forward() {},
+  }
+  const observation = observePluginSyncTransport(proxy)
+  proxy.forward(
+    { method: 'POST', url: '/api/plugins/installed/sync-device?reconcile=true' },
+    response
+  )
+  expect(observation.reconciliations).toHaveLength(1)
+  expect(observation.reconciliations[0].completedAt).toBeUndefined()
+  response.emit('finish')
+  expect(observation.reconciliations[0].completedAt).toBeGreaterThanOrEqual(
+    observation.reconciliations[0].at
+  )
 })
