@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { X } from "lucide-react";
 import { isTagNameTooLong } from "../tagging";
 import { useOutsideClick } from "../composer/useOutsideClick";
@@ -9,6 +9,7 @@ function cn(...values: Array<string | false | null | undefined>): string {
 interface TagEditorProps {
   tags: string[];
   onChange: (tags: string[]) => void;
+  onDraftDirtyChange?: (dirty: boolean) => void;
   disabled?: boolean;
   placeholder?: string;
   removeLabel?: (tag: string) => string;
@@ -25,6 +26,7 @@ interface TagEditorProps {
 export function TagEditor({
   tags,
   onChange,
+  onDraftDirtyChange,
   disabled = false,
   placeholder = "添加标签",
   removeLabel = (tag) => `移除标签 ${tag}`,
@@ -39,6 +41,11 @@ export function TagEditor({
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLSpanElement>(null);
   const composingRef = useRef(false);
+  const draftDirty = Boolean(draft.trim());
+  useEffect(() => {
+    onDraftDirtyChange?.(draftDirty);
+  }, [draftDirty, onDraftDirtyChange]);
+  useEffect(() => () => onDraftDirtyChange?.(false), [onDraftDirtyChange]);
 
   const normalizedDraft = draft.trim().toLowerCase();
   const tooLong = isTagNameTooLong(draft.replace(/,/g, ""));
@@ -118,7 +125,7 @@ export function TagEditor({
   return (
     <span
       ref={containerRef}
-      className="task-detail-tag-editor relative flex min-w-0 flex-1 flex-wrap items-center gap-1.5"
+      className="task-detail-tag-editor relative flex min-w-0 flex-1 flex-wrap items-center gap-1.5 rounded-md focus-within:ring-2 focus-within:ring-focus/70"
       onClick={() => inputRef.current?.focus()}
     >
       {tags.map((tag) => (
@@ -138,7 +145,7 @@ export function TagEditor({
               onClick={() =>
                 onChange(tags.filter((candidate) => candidate !== tag))
               }
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-text-muted transition hover:bg-hover hover:text-text-primary md:h-3.5 md:w-3.5"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-text-secondary transition hover:bg-hover hover:text-text-primary md:h-6 md:w-6"
             >
               <X className="h-2.5 w-2.5" />
             </button>
@@ -177,7 +184,7 @@ export function TagEditor({
           }}
           placeholder={tags.length === 0 ? placeholder : ""}
           className={cn(
-            "h-6 min-w-16 flex-1 bg-transparent text-xs text-text-primary outline-none placeholder:text-text-muted",
+            "h-11 min-w-16 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary md:h-7",
           )}
         />
       )}
@@ -204,7 +211,7 @@ export function TagEditor({
               onClick={() => add(candidate)}
               onMouseEnter={() => setHighlight(index)}
               className={cn(
-                "flex w-full items-center px-3 py-1.5 text-left text-xs text-text-primary transition",
+                "flex min-h-11 w-full items-center px-3 py-1.5 text-left text-sm text-text-primary transition md:min-h-6",
                 index === highlight ? "bg-muted" : "hover:bg-muted",
               )}
             >

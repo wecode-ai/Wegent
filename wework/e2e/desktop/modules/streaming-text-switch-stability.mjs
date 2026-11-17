@@ -17,6 +17,7 @@ export async function verifyConversationSwitchPosition(
   { address, anchorText, name, pinned, resultDir, uiTimeoutMs, whileAway }
 ) {
   await control.command('waitFor', ANCHORS, { text: anchorText })
+  if (pinned) await waitForBottom(control, `${name}: pinned sampling readiness`, uiTimeoutMs, 1)
   const startedAt = Date.now()
   const phases = []
   const recordPhase = phase => phases.push({ phase, elapsedMs: Date.now() - startedAt })

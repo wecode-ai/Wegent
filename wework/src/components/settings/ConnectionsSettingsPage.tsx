@@ -1407,7 +1407,7 @@ export function ConnectionsSettingsPage({
               type="button"
               data-testid="settings-back-button"
               onClick={onBack}
-              className="flex h-7 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-[rgb(var(--color-sidebar-hover))]"
+              className="flex h-7 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-[rgb(var(--color-sidebar-hover))] max-md:min-h-11"
             >
               <ArrowLeft className="h-4 w-4" />
               {t('workbench.settings_back_to_app', '返回')}
@@ -1428,7 +1428,7 @@ export function ConnectionsSettingsPage({
                   <div
                     data-testid={`settings-category-${item.category}`}
                     className={cn(
-                      'mb-1 px-2.5 text-xs font-medium text-text-muted',
+                      'mb-1 px-2.5 text-xs font-medium text-text-secondary',
                       index === 0 ? 'mt-2' : 'mt-5'
                     )}
                   >
@@ -1443,7 +1443,7 @@ export function ConnectionsSettingsPage({
                     navigateTo(item.path)
                   }}
                   className={[
-                    'flex min-h-[31px] w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium',
+                    'flex min-h-11 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium md:min-h-[31px]',
                     effectiveActiveNav === item.id
                       ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
                       : 'text-text-primary hover:bg-[rgb(var(--color-sidebar-hover))]',

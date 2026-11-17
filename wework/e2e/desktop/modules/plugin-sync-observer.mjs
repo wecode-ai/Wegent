@@ -1,4 +1,51 @@
 import assert from 'node:assert/strict'
+import { isDeepStrictEqual } from 'node:util'
+
+// A complete snapshot can begin before baseline capture and finish afterwards.
+// Tie ordering changes to the exact observed generation, never a polling timestamp.
+export function observedRetainedPluginSync(observation, current, baseline, deviceId) {
+  const generation = current?.plugin_sync_generation
+  if (
+    !Number.isSafeInteger(generation) ||
+    !Number.isSafeInteger(baseline?.plugin_sync_generation) ||
+    generation <= baseline.plugin_sync_generation
+  )
+    return null
+  const installedId = String(baseline.installed_plugin_id)
+  const request = observation.capabilities.find(
+    value =>
+      value.deviceId === deviceId &&
+      value.scope === 'plugins' &&
+      value.pluginSync?.version === 2 &&
+      value.pluginSync.complete === true &&
+      value.pluginSync.generation === generation &&
+      value.pluginIds.includes(installedId) &&
+      !(value.removedIds ?? []).includes(installedId)
+  )
+  if (!request) return null
+  const acknowledgement = observation.acknowledgements.find(
+    value =>
+      value.at >= request.at &&
+      value.id === request.id &&
+      value.namespace === request.namespace &&
+      value.success === true &&
+      value.scope === request.scope &&
+      value.pluginIds.includes(installedId) &&
+      isDeepStrictEqual(value.pluginSync, request.pluginSync)
+  )
+  return { request, acknowledgement }
+}
+
+export function assertRetainedPluginUnchanged(current, baseline, observation, deviceId) {
+  const sync = observedRetainedPluginSync(observation, current, baseline, deviceId)
+  assert.deepEqual(
+    sync?.acknowledgement
+      ? { ...current, plugin_sync_generation: baseline.plugin_sync_generation }
+      : current,
+    baseline,
+    'The lost change or reconciliation altered an unrelated plugin runtime'
+  )
+}
 
 function socketPacket(text, type) {
   const packet = text.match(new RegExp(`^${type}(\\/[^,]+,)?(\\d+)?(\\[.*)$`, 's'))

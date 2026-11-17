@@ -1,0 +1,53 @@
+/* The SDK modal sizes against its padded viewport layer. Keep both dismissal
+   rows visible while only the preparation body consumes the scroll area. */
+.wework-voice-setup-modal {
+  max-height: 100%;
+}
+
+.wework-voice-setup-content {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.wework-voice-setup-content > :first-child,
+.wework-voice-setup-modal > :last-child {
+  flex-shrink: 0;
+}
+
+.wework-voice-setup-content > :last-child {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Resource estimates and source guidance are informative text, not disabled
+   controls. Scope the SDK token adaptation to this preparation surface. */
+.wework-voice-preparation {
+  --dsw-alias-label-tertiary: rgb(var(--color-text-secondary));
+}
+
+/* The preparation dialog has a narrow content column even in a wide window. */
+.wework-voice-setup-modal .wework-voice-preparation label:has(> select) {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.wework-voice-setup-modal .wework-voice-preparation label > select {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 767px) {
+  .wework-voice-preparation :is(button, select, [role='button']),
+  .wework-voice-setup-modal button,
+  /* The official guide portals outside the composer. Its autofocus action is
+     the stable public marker also used by the shared voice E2E scenario. */
+    html[data-appearance-theme]
+    body
+    > [role='presentation']
+    > [role='dialog']:has(> div > button[data-modal-autofocus])
+    button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
