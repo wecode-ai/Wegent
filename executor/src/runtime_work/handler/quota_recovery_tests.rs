@@ -535,10 +535,18 @@ done
             })
             .await
             .unwrap();
+            let cancellation = tokio::time::timeout(
+                Duration::from_secs(2),
+                handler.cancel_task(json!({"taskId":"waiting"})),
+            )
+            .await;
+            if cancellation.is_err() {
+                fs::remove_file(home.path().join("hold-account")).unwrap();
+                handler.codex_app_server.restart().await;
+            }
             assert_eq!(
-                handler
-                    .cancel_task(json!({"taskId":"waiting"}))
-                    .await
+                cancellation
+                    .expect("Cancellation must not wait for the held quota request")
                     .unwrap()["accepted"],
                 true
             );

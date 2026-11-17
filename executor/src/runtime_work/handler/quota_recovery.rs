@@ -399,7 +399,10 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return;
         };
-        let checked = tokio::select! {
+        // Native quota reads may wait indefinitely. Cancellation needs this
+        // admission gate to signal the execution while the read is pending.
+        drop(_send);
+        let (checked, _send) = tokio::select! {
             biased;
             _ = cancelled => {
                 self.finish_local_task_execution(&turn.local_task_id, execution);
@@ -407,7 +410,11 @@ impl RuntimeWorkRpcHandler {
                 self.finish_quota_command(&turn).await;
                 return;
             }
-            checked = self.check_quota_turn(&turn, &wait) => checked,
+            checked = async {
+                let checked = self.check_quota_turn(&turn, &wait).await;
+                let send_guard = gate.lock().await;
+                (checked, send_guard)
+            } => checked,
         };
         if !self.is_local_task_execution_accepting_notifications(&turn.local_task_id, execution) {
             self.finish_local_task_execution(&turn.local_task_id, execution);
