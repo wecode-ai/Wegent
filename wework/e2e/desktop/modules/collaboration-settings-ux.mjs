@@ -320,7 +320,16 @@ export async function verifyLocalSettingsProjectVersion(control, { scoped, proje
   await control.command('click', find('collaboration-project-settings-automatic-processing'))
   await control.command('clickWhenEnabled', find(`automatic-processing-delete-${ruleId}`))
   await control.command('waitFor', find('automatic-processing-delete-dialog'), { visible: true })
+  const isolatedNavigation = `${find('collaboration-project-settings-project')}:is([inert], [inert] *)`
+  await control.command('waitFor', isolatedNavigation)
   await control.command('click', find('automatic-processing-delete-cancel'))
+  await control.command('waitFor', find('automatic-processing-delete-dialog'), { visible: false })
+  assert.equal(
+    Number(await control.command('getElementCount', isolatedNavigation)),
+    0,
+    'Cancelling the confirmation must restore background navigation'
+  )
+  await control.command('waitFor', `${find(`automatic-processing-delete-${ruleId}`)}:focus`)
   await control.command('waitFor', find(`automatic-processing-rule-${ruleId}`), { visible: true })
   await control.command('clickWhenEnabled', find(`automatic-processing-delete-${ruleId}`))
   await control.command('clickWhenEnabled', find('automatic-processing-delete-confirm'))

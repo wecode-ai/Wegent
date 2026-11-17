@@ -217,11 +217,11 @@ const copy = {
     projectOwned: "Project resource",
     removeFromProject: "Remove from project",
     deleteProjectGroup: "Delete",
-    deleteGroup: "Delete team",
+    deleteGroup: "Delete group",
     removeGroupConfirm:
-      "Remove this team association? The source team will be retained.",
+      "Remove this group association? The source group will be retained.",
     deleteGroupConfirm:
-      "This cannot be undone. Delete this collaboration team?",
+      "This cannot be undone. Delete this collaboration group?",
     deleting: "Deleting…",
     operationFailed: "Operation failed. Please try again.",
     createAgent: "Create agent",
