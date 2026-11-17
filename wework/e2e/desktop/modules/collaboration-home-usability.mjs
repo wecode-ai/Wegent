@@ -3,6 +3,7 @@ import { until } from './plugin-regression-fixture.mjs'
 import { verifyComposerLayout } from './issue-comment-workflow.mjs'
 import { setGoalDraftForTabTransfer } from './goal-draft-flows.mjs'
 import { waitForElementInsideScroller } from './conversation-layout.mjs'
+import { confirmProjectDraftDiscard } from './project-create-dialog-regression.mjs'
 
 async function resizeHome(control, home, width, height, timeoutMs) {
   await control.command('setMainWindowSize', 'body', {
@@ -386,10 +387,11 @@ async function verifyProjectDialogKeyboard(control, home, timeoutMs) {
       `${testId} must provide a mobile touch target`
     )
   }
-  assert.ok(
-    (await control.command('getAttribute', dialog, { value: 'aria-label' }))?.trim(),
-    'The project modal must expose its visible title as an accessible name'
-  )
+  const titleId = await control.command('getAttribute', dialog, { value: 'aria-labelledby' })
+  assert.ok(titleId?.trim(), 'The project modal must reference its visible title')
+  const title = await control.command('getText', `${dialog} [id=${JSON.stringify(titleId)}]`)
+  assert.ok(title.trim(), 'The project modal must expose a nonempty accessible name')
+  assert.equal(title, await control.command('getText', `${dialog} h2`))
   for (let index = 0; index < 12; index += 1) {
     await control.command('nativePress', ':focus', { key: 'Tab' })
     const focused = await control.command('getActiveElementTestId', 'body')
@@ -415,13 +417,20 @@ async function verifyProjectDialogKeyboard(control, home, timeoutMs) {
   assert.equal(await control.command('getValue', name), projectDraft)
   await control.command('nativePress', ':focus', { key: 'Escape' })
   await until(
-    async () => JSON.parse(await control.command('getElementMetrics', 'dialog[open]')),
+    async () =>
+      JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          '[data-testid="project-create-template-catalog"]'
+        )
+      ),
     metrics => metrics.length === 0,
     'A second Escape must close template discovery while retaining project creation',
     timeoutMs
   )
   assert.equal(await control.command('getValue', name), projectDraft)
   await control.command('nativePress', ':focus', { key: 'Escape' })
+  await confirmProjectDraftDiscard(control)
   await until(
     async () => JSON.parse(await control.command('getElementMetrics', dialog)),
     metrics => metrics.length === 0,
@@ -692,6 +701,6 @@ export async function verifyCollaborationHomeUsability(
     )
     await verifyEnglishParticipantExplanation(control, home, issueId, timeoutMs)
   } finally {
-    await resizeHome(control, home, initial.viewportWidth, initial.viewportHeight, timeoutMs)
+    await resizeHome(control, 'body', initial.viewportWidth, initial.viewportHeight, timeoutMs)
   }
 }
