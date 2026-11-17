@@ -12,8 +12,9 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import CloudProject, LoopItem
 from app.models.user import User
+from app.schemas.base_role import BaseRole
+from app.services.cloud_project_visibility import project_participant_ids
 from app.services.collaboration_permissions import collaboration_permission_service
-from app.services.issue_assignments import issue_assignment_service
 from app.services.project_automation_domain import runnable_wegent_team
 
 STAGE_ASSIGNEE_FLAG = "collab.enforceStageAssignee.v1"
@@ -137,9 +138,10 @@ def require_stage_target(
         user = db.get(User, int(target_id)) if target_id.isdecimal() else None
         if user is None or not user.is_active:
             raise HTTPException(422, "Required stage assignee is unavailable")
-        issue_assignment_service.require_canonical_member(
-            db, project=project, member_type="human", member_id=target_id
-        )
+        if user.id not in project_participant_ids(
+            db, project, required_role=BaseRole.Developer
+        ):
+            raise HTTPException(422, "Required stage assignee has no project access")
     elif target["assignee_type"] == "agent":
         collaboration_permission_service.require_project_agent(
             db, project.id, target_id

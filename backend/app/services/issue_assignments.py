@@ -310,15 +310,17 @@ class IssueAssignmentService:
         from app.services.stage_assignee_mutations import effective_assignee, lock_issue
         from app.services.stage_assignees import validate_stage_assignee
 
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         item = self._require_issue_project(db, project_id, issue_id)
+        lock_issue(db, item)
+        from app.services.loop_items.service import loop_item_service
+
+        access = loop_item_service._require_item_access(db, item, user_id)
         require_issue_action(
             access,
             action=IssueAction.ASSIGN,
             issue_creator_user_id=item.created_by_user_id,
             user_id=user_id,
         )
-        lock_issue(db, item)
         active = list(self._active_events(db, issue_id, for_update=True).values())
         if not any(event.id == str(assignment_id) for event in active):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")

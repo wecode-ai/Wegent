@@ -10,6 +10,8 @@ sidebar_position: 36
 
 开发者在项目 `workflow_definition.assignee_roles` 中配置 `qa`、`product`、`ui`、`engineering` 和通知角色 `pmo`。每个角色的值是按主负责人、备用负责人排序的目标数组，目标包含 `assignee_type`（`user`、`agent` 或 `team`）与 `assignee_id`；服务端按顺序选择当前有效且具有项目权限的目标。人员必须是 active 成员，不要求绑定设备或设备在线。阶段节点可设置成对的 `required_assignee_type/id`，或设置 `required_assignee_role`（`qa`、`product`、`ui`、`engineering`），两者互斥。Issue 工作流快照保留角色映射和 feature flags。
 
+人类阶段负责人必须具有项目 Developer 权限；单个 Issue 的显式邀请不替代该资格。无约束 Issue 仍按 CP14 接受有效外部受邀人，assignment 删除也复验当前 Issue 权限；撤销邀请后立即拒绝，阶段约束在删除记录前校验。`test_issue_explicit_invitations.py` 覆盖邀请、撤销、删除及阶段资格的交叉边界。
+
 节点显式配置的 `required_assignee_type/id` 或 `required_assignee_role` 默认强制校验，不需要开启试点策略。固定试点规则需要在权威工作流的 `feature_flags['collab.enforceStageAssignee.v1']` 中显式设置 `true`：需求提出固定由产品 jiangyang7 负责，改派时原子进入共同评审，质量验收应用 PR 准入与 QA → 产品 → UI 交接。仅使用相同中文阶段名或标签、未启用策略的旧流程保持原有成员校验与派发行为，不会隐式绑定固定账号或增加 PR 门禁。
 
 项目在 `workflow_definition` 中启用后，新建或显式应用的工作流实例复制该标志。已有 Issue 的工作流快照独立决定策略范围：快照没有该标志时不视为已启用，不会因项目后来设为 `true` 而追溯应用；只有没有工作流快照的 Issue 才使用项目定义。维护者可显式更新或应用快照。紧急回滚时，将项目 `workflow_definition.feature_flags['collab.enforceStageAssignee.v1']` 设为 `false`，即可关闭本项目所有 Issue 的阶段负责人约束及试点交接；该项目级关闭优先于 Issue 快照。保留已持久化的负责人配置，无需删除角色映射或节点约束。
