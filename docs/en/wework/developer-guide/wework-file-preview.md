@@ -12,6 +12,10 @@ The viewer enables the office, lite, and engineering capabilities: PDF, Word, Ex
 
 HTML must remain sandboxed and must not allow preview content to access Wework's same-origin state.
 
+<a id="docx-preview-retry"></a>
+
+DOCX content is sanitized before reaching the viewer. If reading or preparation fails, the file panel shows the error and a Retry action. Retry reads the loaded file again and applies the same security checks; the unprocessed source is never rendered while those checks fail. Reopen a repaired file, or select another file if the failure persists.
+
 ## Office Document Scrolling
 
 PowerPoint renders a continuous slide list. Its file viewer must provide a scrolling container constrained by the panel height instead of clipping overflowing slides. Scrolling and PageDown/PageUp expose later slides; Word and Excel retain their renderer-owned document and table scrolling regions. Excel supports vertical and horizontal scrolling and worksheet switching.

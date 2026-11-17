@@ -1,5 +1,5 @@
-import { lstat, readFile, readdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { cp, lstat, readFile, readdir, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 async function optionalJson(path) {
   try {
@@ -53,4 +53,51 @@ export async function retainStoppedPreparationDiagnostics(root, version, destina
       2
     )
   )
+}
+
+/** Preserve the existing release logs and transaction state before fixture cleanup. */
+export async function retainUpgradeReleaseDiagnostics({
+  root,
+  version,
+  resultDir,
+  electronUserDataDirectory,
+  legacyDataDirectory,
+}) {
+  await retainStoppedPreparationDiagnostics(
+    root,
+    version,
+    join(resultDir, 'stopped-preparation-result.json')
+  ).catch(error =>
+    console.warn(`Cannot retain stopped preparation metadata: ${error.code ?? error.name}`)
+  )
+  for (const [name, directory] of [
+    ['electron-logs', join(dirname(electronUserDataDirectory), 'electron-logs')],
+    ['release-logs', join(electronUserDataDirectory, 'logs')],
+    ...(legacyDataDirectory
+      ? [['release-logs/legacy-before-migration', join(legacyDataDirectory, 'logs')]]
+      : []),
+  ]) {
+    await cp(directory, join(resultDir, name), { recursive: true }).catch(error => {
+      if (error.code !== 'ENOENT') throw error
+    })
+  }
+  const state = {}
+  for (const name of [
+    'active',
+    'active-pid',
+    'bridge',
+    'macos-rollback',
+    'trial',
+    'attempted',
+    'healthy',
+    'failed',
+    'activation.json',
+    'last-activation.json',
+  ]) {
+    state[name] = await readFile(join(root, name), 'utf8').catch(error => {
+      if (error.code !== 'ENOENT') throw error
+      return null
+    })
+  }
+  await writeFile(join(resultDir, 'release-state-result.json'), JSON.stringify(state, null, 2))
 }

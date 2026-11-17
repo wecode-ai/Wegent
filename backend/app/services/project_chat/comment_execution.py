@@ -216,6 +216,7 @@ def _new_execution(
     request: ProjectChatCommentExecution,
     trigger: ProjectChatMessage,
     attachments: list[dict[str, Any]],
+    project: LoopItem,
 ) -> ProjectChatMessage | None:
     item = db.get(LoopItem, request.task_id)
     if item is None or item.cloud_project_id != request.project_id:
@@ -235,6 +236,7 @@ def _new_execution(
         }
         db.commit()
         return None
+    project_chat_service._require_task_execution(db, user_id, project, request.task_id)
     agent = project_chat_service._agent_row(
         db, project_id=request.project_id, agent_id=agent_id, active_only=True
     )
@@ -516,7 +518,7 @@ def _queue_reply(
 async def execute_comment(
     db: Session, *, user_id: int, request: ProjectChatCommentExecution
 ) -> list[ProjectChatMessageView]:
-    project_chat_service._require_scope(
+    project = project_chat_service._require_scope(
         db,
         user_id=user_id,
         project_id=request.project_id,
@@ -578,7 +580,7 @@ async def execute_comment(
         return [project_chat_service.to_view(existing, db=db)]
     attachments = _attachments(db, user_id, request.attachment_ids)
     if target is None:
-        response = _new_execution(db, user_id, request, trigger, attachments)
+        response = _new_execution(db, user_id, request, trigger, attachments, project)
         return [project_chat_service.to_view(response, db=db)] if response else []
     execution = _execution(db, request, target)
     authority_user_id = user_id
