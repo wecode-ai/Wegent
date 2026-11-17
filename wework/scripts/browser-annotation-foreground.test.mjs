@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { loadDesktopCheckpointCatalog } from '../e2e/desktop/checkpoint-catalog.mjs'
+import { checkpointScenarioEnv } from '../e2e/desktop/checkpoint-scenario-env.mjs'
 import { createDesktopScenario } from '../e2e/desktop/scenarios/embedded-browser-annotation.scenario.mjs'
 
 test('retained browser annotation preserves the runner background policy', () => {
@@ -8,7 +9,13 @@ test('retained browser annotation preserves the runner background policy', () =>
   try {
     process.argv = [...argv, '--segment', 'browser-annotation-core']
     const scenario = createDesktopScenario({})
-    const environment = { WEWORK_E2E_BACKGROUND_WINDOW: '1', ...scenario.appEnvironment }
+    assert.equal(scenario.appEnvironment?.WEWORK_E2E_BACKGROUND_WINDOW, undefined)
+    const unset = checkpointScenarioEnv({}, 'browser-annotation-core')
+    assert.equal(unset.WEWORK_E2E_BACKGROUND_WINDOW, undefined)
+    const environment = checkpointScenarioEnv(
+      { WEWORK_E2E_BACKGROUND_WINDOW: '1' },
+      'browser-annotation-core'
+    )
     assert.equal(environment.WEWORK_E2E_BACKGROUND_WINDOW, '1')
     const catalog = loadDesktopCheckpointCatalog()
     assert.ok(catalog.DESKTOP_CHECKPOINTS.includes('browser-annotation-core'))

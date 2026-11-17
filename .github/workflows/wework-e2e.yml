@@ -404,7 +404,7 @@ jobs:
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
 
       - name: Verify the existing external browser runtime
-        if: contains(matrix.segments, 'browser-toolbar-actions') || contains(matrix.segments, 'cloud-http-authorization')
+        if: contains(matrix.segments, 'browser-toolbar-actions')
         run: |
           /opt/google/chrome/chrome --version
           /opt/wegent-e2e/chromedriver/chromedriver --version
@@ -475,7 +475,7 @@ jobs:
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
-          WEWORK_E2E_EXTERNAL_BROWSER_PREREAD: ${{ (contains(matrix.segments, 'browser-toolbar-actions') || contains(matrix.segments, 'cloud-http-authorization')) && '1' || '0' }}
+          WEWORK_E2E_EXTERNAL_BROWSER_PREREAD: ${{ contains(matrix.segments, 'browser-toolbar-actions') && '1' || '0' }}
           RUNNER_PROCESS_DIAGNOSTICS: ${{ contains(matrix.segments, 'background-terminals') && '1' || '0' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs
@@ -928,6 +928,10 @@ jobs:
       # Codex creates its own user/mount namespaces inside this disposable runner.
       options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
+      # Reuse the hosted runner's browsers for HTTP cloud authorization.
+      volumes:
+        - /opt/google/chrome:/opt/google/chrome:ro
+        - /usr/local/share/chromedriver-linux64:/opt/wegent-e2e/chromedriver:ro
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -948,6 +952,12 @@ jobs:
 
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
+
+      - name: Verify the existing external browser runtime
+        if: contains(matrix.segments, 'cloud-http-authorization')
+        run: |
+          /opt/google/chrome/chrome --version
+          /opt/wegent-e2e/chromedriver/chromedriver --version
 
       - name: Download shared Wework desktop E2E build
         uses: actions/download-artifact@v6
@@ -1006,6 +1016,7 @@ jobs:
       - name: Run Wework desktop Cloud E2E checkpoints
         env:
           CI: true
+          WEWORK_E2E_EXTERNAL_BROWSER_PREREAD: ${{ contains(matrix.segments, 'cloud-http-authorization') && '1' || '0' }}
           RUNNER_PROCESS_SAMPLE_AFTER_MS: ${{ contains(matrix.segments, 'plugin-write-coordination') && '390000' || '' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs

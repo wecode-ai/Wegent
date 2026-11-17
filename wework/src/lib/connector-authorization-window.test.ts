@@ -50,6 +50,38 @@ describe('openConnectorAuthorizationWindow', () => {
     expect(invokeDesktopHostMock).not.toHaveBeenCalled()
   })
 
+  test('disposes the subscription when replay closes the attempt before registration returns', async () => {
+    isElectronRuntimeMock.mockReturnValue(true)
+    vi.stubGlobal('crypto', { ...globalThis.crypto, randomUUID: () => 'req-replay' })
+    const unsubscribe = vi.fn()
+    subscribeDesktopHostEventsMock.mockImplementationOnce((listener, options) => {
+      const unrelated = {
+        sequence: 1,
+        type: 'connectorAuthorization.closed',
+        payload: { requestId: 'another-request' },
+      }
+      const closed = {
+        sequence: 2,
+        type: 'connectorAuthorization.closed',
+        payload: { requestId: 'req-replay' },
+      }
+      expect(options?.replay?.(unrelated)).toBe(false)
+      expect(options?.replay?.(closed)).toBe(true)
+      listener(closed)
+      return unsubscribe
+    })
+
+    const handle = await openConnectorAuthorizationWindow('https://example.com/auth')
+
+    await expect(handle?.closed).resolves.toBeUndefined()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    await handle?.close?.()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    expect(invokeDesktopHostMock).toHaveBeenCalledWith('auth.closeConnectorAuthorization', {
+      requestId: 'req-replay',
+    })
+  })
+
   test('keeps desktop consent inside the app window', async () => {
     isElectronRuntimeMock.mockReturnValue(true)
     vi.stubGlobal('crypto', { ...globalThis.crypto, randomUUID: () => 'req-1' })

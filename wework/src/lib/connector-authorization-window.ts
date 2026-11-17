@@ -47,6 +47,7 @@ export async function openConnectorAuthorizationWindow(
       },
       { replay: matches }
     )
+    if (settled) unsubscribe()
     return {
       closed,
       // A missed notification costs one poll interval, not the whole session:

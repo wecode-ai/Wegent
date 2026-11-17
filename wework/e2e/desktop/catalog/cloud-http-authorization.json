@@ -3,7 +3,7 @@
   "scenario": "./scenarios/cloud-http-authorization.scenario.mjs",
   "scenarioOnly": true,
   "ci": {
-    "core": {
+    "cloud": {
       "order": 71500,
       "shard": 4,
       "position": 17000
