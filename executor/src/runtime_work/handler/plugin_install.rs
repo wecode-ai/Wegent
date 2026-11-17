@@ -149,35 +149,39 @@ impl RuntimeWorkRpcHandler {
                 let _ = background_terminal_changed.changed().await;
                 continue;
             }
-            return self
+            let result = self
                 .codex_app_server
                 .mutate_configuration_if_idle(|| async move {
-                    let value = tokio::task::spawn_blocking(mutation).await.map_err(|error| {
-                        format!("failed to join local plugin configuration mutation: {error}")
-                    })??;
+                    let value =
+                        tokio::task::spawn_blocking(mutation)
+                            .await
+                            .map_err(|error| {
+                                format!(
+                                    "failed to join local plugin configuration mutation: {error}"
+                                )
+                            })??;
                     Ok((value, true))
                 })
-                .await
-                .map_err(|error| match error {
-                    CodexIdleMutationError::Busy {
-                        active_turn_count,
-                        pending_request_count,
-                    } => AppIpcError::new(
-                        error_code,
-                        format!(
-                            "cannot change local plugins while Codex work is active \
-                             ({active_turn_count} active turns, {pending_request_count} pending requests)"
-                        ),
+                .await;
+            return result.map_err(|error| match error {
+                CodexIdleMutationError::Busy {
+                    active_turn_count,
+                    pending_request_count,
+                } => AppIpcError::new(
+                    error_code,
+                    format!(
+                        "cannot change local plugins while Codex work is active \
+                         ({active_turn_count} active turns, {pending_request_count} pending requests)"
                     ),
-                    CodexIdleMutationError::Update(error) => AppIpcError::new(error_code, error),
-                });
+                ),
+                CodexIdleMutationError::Update(error) => AppIpcError::new(error_code, error),
+            });
         }
     }
 
     pub(super) async fn install_local_plugin(&self, payload: Value) -> Result<Value, AppIpcError> {
         let target = resolve_local_plugin_install_target(&payload)
             .map_err(|error| AppIpcError::new("invalid_local_plugin_install", error))?;
-        let _configuration = self.bundled_plugin_marketplace_reconciliation.lock().await;
         let plugin_key = target.plugin_key.clone();
         let started_at = Instant::now();
         self.mutate_local_plugin_configuration("local_plugin_install_failed", move || {
@@ -204,7 +208,6 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let target = resolve_local_plugin_uninstall_target(&payload)
             .map_err(|error| AppIpcError::new("invalid_local_plugin_uninstall", error))?;
-        let _configuration = self.bundled_plugin_marketplace_reconciliation.lock().await;
         super::super::connection_host::assert_dependency_unused(&format!(
             "{}@{}",
             target.plugin_key, WEWORK_PERSONAL_MARKETPLACE
@@ -692,6 +695,48 @@ mod tests {
             .unwrap();
         assert!(!plugin_config_enabled(&codex_home, &target.plugin_key).unwrap());
         assert!(!target.cache_root.exists());
+    }
+
+    #[tokio::test]
+    async fn stalled_rpc_timeout_releases_plugin_turn_admission() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let codex_home = root.path().join("codex");
+        write_plugin_fixture(&source, "new");
+        fs::create_dir_all(&codex_home).unwrap();
+        let target = LocalPluginInstallTarget {
+            plugin_key: "example@wework-personal".to_owned(),
+            source_root: source,
+            cache_root: codex_home.join("plugins/cache/wework-personal/example/1.0.0"),
+            codex_home: codex_home.clone(),
+        };
+        let mut handler = RuntimeWorkRpcHandler::new("plugin-stalled-rpc-timeout", "/bin/false");
+        handler.store = RuntimeWorkStore::new(root.path().join("index.json"));
+        assert!(
+            handler
+                .codex_app_server
+                .timeout_stalled_request_for_test()
+                .await,
+            "the timed out RPC should release its pending entry"
+        );
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            handler.mutate_local_plugin_configuration("local_plugin_install_failed", {
+                let target = target.clone();
+                move || install_local_plugin_files(&target)
+            }),
+        )
+        .await
+        .expect("plugin mutation stayed blocked on the timed out RPC")
+        .unwrap();
+        let _turn_admission = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            handler.turn_queue_operation.lock(),
+        )
+        .await
+        .expect("turn admission stayed locked after the plugin mutation");
+        assert!(plugin_config_enabled(&codex_home, &target.plugin_key).unwrap());
     }
 
     fn local_plugin_background_terminal_handler(root: &Path) -> RuntimeWorkRpcHandler {

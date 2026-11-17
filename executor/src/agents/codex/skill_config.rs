@@ -3,25 +3,6 @@
 
 use super::*;
 
-struct PendingSkillReload {
-    request_id: u64,
-    handle: CodexAppServerHandle,
-}
-
-impl Drop for PendingSkillReload {
-    fn drop(&mut self) {
-        // A cancelled reload has no receiver left. Retaining its pending entry
-        // would indefinitely defer recovery of the invalidated process.
-        if let Ok(mut pending) = self.handle.pending.try_lock() {
-            pending.remove(&self.request_id);
-        } else {
-            let handle = self.handle.clone();
-            let request_id = self.request_id;
-            tokio::spawn(async move { handle.remove_pending(request_id).await });
-        }
-    }
-}
-
 struct SkillConfigurationUpdate<'a> {
     _activation: &'a tokio::sync::RwLockWriteGuard<'static, ()>,
     completed: bool,
@@ -56,22 +37,12 @@ impl CodexAppServerClient {
 
     pub(crate) async fn reload_user_skills(&self) -> Result<(), String> {
         let params = json!({"edits": [], "reloadUserConfig": true});
-        let (request_id, handle, response_rx) = self
+        let request = self
             .prepare_request_with_process(false, None, "config/batchWrite", &params)
             .await?;
-        let _pending = PendingSkillReload {
-            request_id,
-            handle: handle.clone(),
-        };
-        Self::send_request_and_wait(
-            "config/batchWrite",
-            params,
-            codex_rpc_timeout_seconds(),
-            request_id,
-            handle,
-            response_rx,
-        )
-        .await?;
+        request
+            .write_and_wait("config/batchWrite", params, codex_rpc_timeout_seconds())
+            .await?;
         Ok(())
     }
 }

@@ -570,32 +570,6 @@ impl CodexAppServerClient {
         }
     }
 
-    async fn send_request_and_wait(
-        method: &str,
-        params: Value,
-        timeout_seconds: u64,
-        request_id: u64,
-        handle: CodexAppServerHandle,
-        response_rx: oneshot::Receiver<Result<Value, String>>,
-    ) -> Result<Value, String> {
-        let message = json!({
-            "method": method,
-            "id": request_id,
-            "params": params,
-        });
-        if let Err(error) = handle.write_message(message).await {
-            handle.remove_pending(request_id).await;
-            return Err(error);
-        }
-
-        with_rpc_timeout(method, timeout_seconds, async {
-            response_rx
-                .await
-                .map_err(|_| "codex app-server response channel closed".to_owned())?
-        })
-        .await
-    }
-
     pub async fn ensure_started(&self) -> Result<Option<Duration>, String> {
         self.ensure_process_with_startup()
             .await
@@ -652,34 +626,24 @@ impl CodexAppServerClient {
 
     async fn request_existing(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let response_rx = self.start_existing_request(method, params).await?;
-
-        with_rpc_timeout(method, timeout_seconds, async {
-            response_rx
-                .await
-                .map_err(|_| "codex app-server response channel closed".to_owned())?
-        })
-        .await
+        let request = self
+            .prepare_request_with_process(false, None, method, &params)
+            .await?;
+        request
+            .write_and_wait(method, params, timeout_seconds)
+            .await
     }
 
     async fn start_existing_request(
         &self,
         method: &str,
         params: Value,
-    ) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
-        let (request_id, handle, response_rx) = self
+    ) -> Result<PendingCodexRequest, String> {
+        let request = self
             .prepare_request_with_process(false, None, method, &params)
             .await?;
-        let message = json!({
-            "method": method,
-            "id": request_id,
-            "params": params,
-        });
-        if let Err(error) = handle.write_message(message).await {
-            handle.remove_pending(request_id).await;
-            return Err(error);
-        }
-        Ok(response_rx)
+        request.write(method, &params).await?;
+        Ok(request)
     }
 
     pub async fn run_turn_with_cancel(
@@ -693,6 +657,62 @@ impl CodexAppServerClient {
     pub async fn restart(&self) {
         let mut state = self.state.lock().await;
         stop_codex_app_server_process(&mut state, Some("codex app-server was restarted")).await;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn timeout_stalled_request_for_test(&self) -> bool {
+        use std::process::Stdio;
+
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "pause"]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 60"]);
+            command
+        };
+        configure_codex_app_server_process_group(&mut command);
+        let mut child: CodexAppServerChild = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("the test app-server should start")
+            .into();
+        let stdin = child
+            .stdin
+            .take()
+            .expect("the test app-server should expose stdin");
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let mut state = self.state.lock().await;
+        state.process = Some(CodexAppServerProcess {
+            child,
+            stdin: Arc::new(Mutex::new(stdin)),
+            pending: Arc::clone(&pending),
+            notifications: CodexNotificationHub::new(),
+            reader_task: tokio::spawn(std::future::pending()),
+        });
+        let handle = state.process.as_ref().expect("test process").handle();
+        let (sender, response_rx) = oneshot::channel();
+        let request_id = state.next_id;
+        state.next_id += 1;
+        handle.pending.lock().await.insert(
+            request_id,
+            PendingCodexResponse {
+                method: "thread/list".to_owned(),
+                sender,
+                native_request: None,
+            },
+        );
+        drop(state);
+        let request = PendingCodexRequest::new(request_id, handle, response_rx);
+        let timed_out = request.wait("thread/list", 0).await.is_err();
+        timed_out && pending.lock().await.is_empty()
     }
 
     pub async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
@@ -934,14 +954,7 @@ impl CodexAppServerClient {
         launch_config: Option<&CodexLaunchConfig>,
         method: &str,
         params: &Value,
-    ) -> Result<
-        (
-            u64,
-            CodexAppServerHandle,
-            oneshot::Receiver<Result<Value, String>>,
-        ),
-        String,
-    > {
+    ) -> Result<PendingCodexRequest, String> {
         ensure_codex_mcp_endpoints().await?;
         let mut state = self
             .state_for_auth_mode(launch_config.and_then(|config| config.auth_mode))
@@ -1013,7 +1026,7 @@ impl CodexAppServerClient {
                     .request_context(request_id, method, params),
             },
         );
-        Ok((request_id, handle, rx))
+        Ok(PendingCodexRequest::new(request_id, handle, rx))
     }
 
     pub async fn fork_thread_at(
@@ -1295,7 +1308,7 @@ impl CodexAppServerClient {
             }
         }
 
-        let response_rx = self
+        let request = self
             .start_existing_request("thread/unsubscribe", json!({"threadId": thread_id}))
             .await?;
         {
@@ -1309,12 +1322,7 @@ impl CodexAppServerClient {
             }
         }
 
-        let result = with_rpc_timeout("thread/unsubscribe", timeout_seconds, async {
-            response_rx
-                .await
-                .map_err(|_| "codex app-server response channel closed".to_owned())?
-        })
-        .await;
+        let result = request.wait("thread/unsubscribe", timeout_seconds).await;
         match result {
             Ok(_) => Ok(true),
             Err(error) => {
@@ -1699,6 +1707,75 @@ impl Default for CodexAppServerSharedState {
     }
 }
 
+struct PendingCodexRequest {
+    request_id: u64,
+    handle: CodexAppServerHandle,
+    response_rx: oneshot::Receiver<Result<Value, String>>,
+}
+
+impl PendingCodexRequest {
+    fn new(
+        request_id: u64,
+        handle: CodexAppServerHandle,
+        response_rx: oneshot::Receiver<Result<Value, String>>,
+    ) -> Self {
+        Self {
+            request_id,
+            handle,
+            response_rx,
+        }
+    }
+
+    fn process_generation(&self) -> u64 {
+        self.handle.notifications.process_generation
+    }
+
+    async fn write(&self, method: &str, params: &Value) -> Result<(), String> {
+        self.handle
+            .write_message(json!({
+                "method": method,
+                "id": self.request_id,
+                "params": params,
+            }))
+            .await
+    }
+
+    async fn write_and_wait(
+        self,
+        method: &str,
+        params: Value,
+        timeout_seconds: u64,
+    ) -> Result<Value, String> {
+        self.write(method, &params).await?;
+        self.wait(method, timeout_seconds).await
+    }
+
+    async fn wait(mut self, operation: &str, timeout_seconds: u64) -> Result<Value, String> {
+        with_rpc_timeout(operation, timeout_seconds, async {
+            (&mut self.response_rx)
+                .await
+                .map_err(|_| "codex app-server response channel closed".to_owned())?
+        })
+        .await
+    }
+}
+
+impl Drop for PendingCodexRequest {
+    fn drop(&mut self) {
+        if let Ok(mut pending) = self.handle.pending.try_lock() {
+            let removed = pending.remove(&self.request_id).is_some();
+            drop(pending);
+            if removed {
+                self.handle.notify_pending_changed();
+            }
+        } else {
+            let handle = self.handle.clone();
+            let request_id = self.request_id;
+            tokio::spawn(async move { handle.remove_pending(request_id).await });
+        }
+    }
+}
+
 struct PendingCodexResponse {
     method: String,
     sender: oneshot::Sender<Result<Value, String>>,
@@ -1908,7 +1985,12 @@ impl CodexAppServerHandle {
     }
 
     async fn remove_pending(&self, request_id: u64) {
-        self.pending.lock().await.remove(&request_id);
+        if self.pending.lock().await.remove(&request_id).is_some() {
+            self.notify_pending_changed();
+        }
+    }
+
+    fn notify_pending_changed(&self) {
         self.notifications.pending_changed.send_modify(|version| {
             *version = version.wrapping_add(1);
         });

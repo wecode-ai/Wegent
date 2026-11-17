@@ -282,5 +282,11 @@ async fn cancelled_reload_cleans_only_its_own_pending_request_under_contention()
         .sender
         .send(Ok(json!({"data":[]})))
         .unwrap();
-    assert_eq!(other.await.unwrap().unwrap(), json!({"data":[]}));
+    assert_eq!(
+        other
+            .wait("thread/list", codex_rpc_timeout_seconds())
+            .await
+            .unwrap(),
+        json!({"data": []})
+    );
 }

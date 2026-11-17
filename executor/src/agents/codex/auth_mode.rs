@@ -70,20 +70,14 @@ impl CodexAppServerClient {
     ) -> Result<(Value, u64), String> {
         let method = "account/login/start";
         let params = json!({"type":login_type});
-        let (request_id, handle, response_rx) = self
+        let request = self
             .prepare_request_with_process(true, None, method, &params)
             .await?;
-        let generation = handle.notifications.process_generation;
+        let generation = request.process_generation();
         // Login is a mutation; never replay it after an uncertain transport outcome.
-        let result = Self::send_request_and_wait(
-            method,
-            params,
-            codex_rpc_timeout_seconds(),
-            request_id,
-            handle,
-            response_rx,
-        )
-        .await?;
+        let result = request
+            .write_and_wait(method, params, codex_rpc_timeout_seconds())
+            .await?;
         Ok((result, generation))
     }
 }
@@ -216,7 +210,7 @@ mod tests {
         let _environment = LaunchEnvironment::new();
         let _activation = crate::services::capability_activation::activate().await;
         let client = router_client().await;
-        let (request_id, handle, _response) = client
+        let pending_request = client
             .prepare_request_with_process(true, None, "account/rateLimits/read", &Value::Null)
             .await
             .unwrap();
@@ -232,14 +226,22 @@ mod tests {
             client.state.lock().await.auth_mode,
             CodexAuthMode::WeworkRouter
         );
-        assert!(handle.pending.lock().await.contains_key(&request_id));
+        assert!(pending_request
+            .handle
+            .pending
+            .lock()
+            .await
+            .contains_key(&pending_request.request_id));
 
         let request =
             client.prepare_request_with_process(true, Some(&launch), "model/list", &Value::Null);
         tokio::pin!(request);
         assert!(futures_util::poll!(&mut request).is_pending());
 
-        handle.remove_pending(request_id).await;
+        pending_request
+            .handle
+            .remove_pending(pending_request.request_id)
+            .await;
         client.restart().await;
     }
 
@@ -259,7 +261,7 @@ mod tests {
             .spawn()
             .unwrap();
         let client = router_client_with_child(child.into()).await;
-        let (request_id, handle, response_rx) = client
+        let request = client
             .prepare_request_with_process(true, None, "account/rateLimits/read", &Value::Null)
             .await
             .unwrap();
@@ -267,8 +269,9 @@ mod tests {
         tokio::pin!(admission);
         assert!(futures_util::poll!(&mut admission).is_pending());
 
-        handle
-            .write_message(json!({"id":request_id,"result":{"rateLimits":{}}}))
+        request
+            .handle
+            .write_message(json!({"id":request.request_id,"result":{"rateLimits":{}}}))
             .await
             .unwrap();
         let state = timeout(Duration::from_secs(5), admission)
@@ -276,7 +279,13 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(response_rx.await.unwrap(), Ok(json!({"rateLimits": {}})));
+        assert_eq!(
+            request
+                .wait("account/rateLimits/read", codex_rpc_timeout_seconds())
+                .await
+                .unwrap(),
+            json!({"rateLimits": {}})
+        );
         assert_eq!(state.auth_mode, CodexAuthMode::LocalSubscription);
         assert!(state.process.is_none());
     }
@@ -320,7 +329,7 @@ mod tests {
         let _environment = LaunchEnvironment::new();
         let _activation = crate::services::capability_activation::activate().await;
         let client = router_client().await;
-        let (request_id, handle, _response) = client
+        let request = client
             .prepare_request_with_process(true, None, "config/batchWrite", &Value::Null)
             .await
             .unwrap();
@@ -336,8 +345,13 @@ mod tests {
             client.state.lock().await.auth_mode,
             CodexAuthMode::WeworkRouter
         );
-        assert!(handle.pending.lock().await.contains_key(&request_id));
-        handle.remove_pending(request_id).await;
+        assert!(request
+            .handle
+            .pending
+            .lock()
+            .await
+            .contains_key(&request.request_id));
+        request.handle.remove_pending(request.request_id).await;
         client.restart().await;
     }
 
