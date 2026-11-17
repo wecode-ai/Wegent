@@ -118,12 +118,28 @@ pub struct BuildExecutionRequestInput<'a> {
     /// the builder reuses [`Self::bot`] instead of issuing a second identical
     /// `kinds` read.
     pub subtask_bot_resolved: bool,
+    /// `build_execution_request(attachment_ids=...)`: the caller's attachment
+    /// ids, used to preserve their material order.
+    pub attachment_ids: &'a [i64],
 }
 
 /// `WEB_RUNTIME_GUIDANCE_MARKER` / `WEB_RUNTIME_GUIDANCE_CLOSE`
 /// (`request_builder.py:71-72`).
 const WEB_RUNTIME_GUIDANCE_MARKER: &str = "<wegent_runtime_guidance>";
 const WEB_RUNTIME_GUIDANCE_CLOSE: &str = "</wegent_runtime_guidance>";
+
+fn execution_device_id<'a>(task: &'a Value, workspace: &'a Value) -> Option<&'a str> {
+    task.pointer("/spec/device_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|device| !device.is_empty())
+        .or_else(|| {
+            workspace
+                .pointer("/project/device_id")
+                .and_then(Value::as_str)
+                .filter(|device| !device.is_empty())
+        })
+}
 
 /// `_append_web_runtime_guidance` (`request_builder.py:1023-1082`): inject the
 /// Wegent web UI runtime guidance into the system prompt.
@@ -139,21 +155,8 @@ async fn with_web_runtime_guidance(
     }
     let project_workspace = workspace.get("project").cloned().unwrap_or(Value::Null);
     // `_extract_task_device_id(task) or project_workspace.get("device_id")`.
-    let task_device_id = input
-        .task_json
-        .pointer("/spec/device_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            project_workspace
-                .get("device_id")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        });
-    let device_type = match task_device_id.as_deref() {
+    let task_device_id = execution_device_id(input.task_json, workspace);
+    let device_type = match task_device_id {
         Some(device_id) => web_runtime_device_type(state, input.user_id, device_id).await,
         None => None,
     };
@@ -390,6 +393,7 @@ pub async fn build_execution_request(
 pub(crate) async fn build_chat_execution_request(
     state: &AppState,
     input: &BuildExecutionRequestInput<'_>,
+    is_subscription: bool,
     preload_skills: &[Value],
     generation: Option<&Value>,
     model_options: Option<&Value>,
@@ -399,7 +403,7 @@ pub(crate) async fn build_chat_execution_request(
     build_request_with_runtime(
         state,
         input,
-        false,
+        is_subscription,
         preload_skills,
         true,
         generation,
@@ -474,6 +478,17 @@ async fn build_request_with_runtime(
     // `prepare_execution_request`'s generation-context enrichment
     // (`request_preparation.py:868-878`) runs before `builder.build`, so its
     // attachment reads stay ahead of the bot and model lookups.
+    let is_subscription =
+        is_subscription || super::subscription_window::is_subscription(input.task_json);
+    let history_limit = super::subscription_window::resolve_on(
+        &mut &state.mysql,
+        input.task_json,
+        input.user_id,
+        None,
+        is_subscription,
+    )
+    .await
+    .map_err(dependency)?;
     let selected_generation = generation;
     let generation = preflight::generation_context(
         &state.mysql,
@@ -949,21 +964,10 @@ async fn build_request_with_runtime(
 
     let mut bot_configs = vec![leader];
     bot_configs.append(&mut member_configs);
-    if super::skills::is_coding_shell(&shell_type) {
-        if coordinate_team {
-            super::background::merge_leader_capabilities(&mut bot_configs);
-            for bot in &mut bot_configs {
-                super::skills::sync_bot_skill_refs(bot, &skills.skill_refs);
-            }
-        }
-        if compile_coding_mcp {
-            let leader = &mut bot_configs[0];
-            let mut servers = leader["mcp_servers"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
-            super::skills::append_coding_mcp(&mut servers, &skills, &shell_type);
-            leader["mcp_servers"] = Value::Array(servers);
+    if coordinate_team && super::skills::is_coding_shell(&shell_type) {
+        super::background::merge_leader_capabilities(&mut bot_configs);
+        for bot in &mut bot_configs {
+            super::skills::sync_bot_skill_refs(bot, &skills.skill_refs);
         }
     }
 
@@ -1006,6 +1010,7 @@ async fn build_request_with_runtime(
         // context renders its statements against the task's shard exactly
         // like the completion path's `Tables`.
         table_templates: state.task_store.table_templates(),
+        is_subscription,
     };
     let (inherited_sessions, legacy_session_bindings) =
         super::session_context::build(&state.mysql, &session_input)
@@ -1024,6 +1029,8 @@ async fn build_request_with_runtime(
     let attachment_contexts = contexts::attachments_by_subtask(&state.mysql, input.user_subtask_id)
         .await
         .map_err(dependency)?;
+    let attachment_contexts =
+        contexts::order_attachment_contexts(attachment_contexts, input.attachment_ids);
     let attachments: Vec<Value> = attachment_contexts
         .iter()
         .map(contexts::executor_attachment_payload)
@@ -1110,6 +1117,8 @@ async fn build_request_with_runtime(
         inherited_sessions,
         legacy_session_bindings,
         new_session,
+        is_subscription,
+        history_limit,
         ..ExecutionRequest::default()
     };
     // Device-dispatch contract values (`ExecutionRequest.to_dict`): the Task
@@ -1139,6 +1148,26 @@ async fn build_request_with_runtime(
         &input.team.namespace,
     )
     .await?;
+    let has_local_device = execution_device_id(input.task_json, &request.workspace).is_some();
+    super::connectors::attach(&state.mysql, &mut request, has_local_device).await?;
+    // Compile only after late Skill resolution and connector authorization
+    // have established the final tool surface. Otherwise stale personal MCP
+    // servers can survive in the Bot even after a connector supersedes them.
+    if compile_coding_mcp && super::skills::is_coding_shell(&shell_type) {
+        let mut servers = request.bot[0]["mcp_servers"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        super::skills::append_coding_mcp(
+            &mut servers,
+            &super::skills::BotSkills {
+                skills: request.skill_configs.clone(),
+                ..Default::default()
+            },
+            &shell_type,
+        );
+        request.bot[0]["mcp_servers"] = Value::Array(servers);
+    }
     if coordinate_team && super::skills::is_coding_shell(&shell_type) {
         coordinate::keep_compiled_mcp_servers(&mut request);
     }

@@ -12,7 +12,7 @@ import { createDesktopControlFile } from './file-fixture'
 import { selectDesktopControlFile } from './select-file'
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { createElementFrameSampler } from './element-frame-metrics'
-import { readElementVisibility } from './element-visibility'
+import { readElementVisibility, readSelectionVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
 import { removeToken, setToken } from '@/api/auth'
 import type { LocalPluginImportPreview } from '@/api/local/codexPlugins'
@@ -93,6 +93,7 @@ import {
   releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
+import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
 import { cloudIdentityFailure } from './cloud-identity-diagnostics'
@@ -827,7 +828,8 @@ function desktopControlElementText(selector: string, visible = false): string {
 function desktopControlElementMetrics(
   selector: string,
   includeText = false,
-  attributeNames: readonly string[] = []
+  attributeNames: readonly string[] = [],
+  includeSelection = false
 ): string {
   const elements = findDesktopControlElements(selector)
   return JSON.stringify(
@@ -863,6 +865,7 @@ function desktopControlElementMetrics(
         viewportWidth: window.innerWidth,
         width: rect.width,
         ...readElementVisibility(element),
+        ...(includeSelection ? { selection: readSelectionVisibility(element) } : {}),
       }
     })
   )
@@ -2188,6 +2191,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   if (verificationResult.handled) return verificationResult.value
 
   switch (command.action) {
+    case 'verifyConnectorAuthorizationIsolation':
+      await verifyConnectorAuthorizationIsolation(command.value ?? '')
+      return 'true'
     case 'crashRenderer':
       rendererCrashStore.trigger()
       return 'Renderer crash requested'
@@ -2402,13 +2408,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         apiBaseUrl: string
         connectorToken: string
         expiresAtMs: number
+        syncRevision?: number
       }
       return JSON.stringify(
         await requestLocalExecutor('runtime.connectors.configure', {
           apiBaseUrl: input.apiBaseUrl,
           connectorToken: input.connectorToken,
           expiresAtMs: input.expiresAtMs,
-          syncRevision: nextConnectorSyncRevision(),
+          syncRevision: input.syncRevision ?? nextConnectorSyncRevision(),
         })
       )
     }
@@ -2439,12 +2446,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(root[E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY] ?? {})
     }
     case 'holdLocalExecutorRequests': {
-      const { method, phase } = JSON.parse(command.value ?? '{}') as {
+      const { method, phase, maxHeldCount } = JSON.parse(command.value ?? '{}') as {
         method?: string
         phase?: 'before-dispatch' | 'after-response'
+        maxHeldCount?: number
       }
       if (!method) throw new Error('holdLocalExecutorRequests requires a method')
-      holdLocalExecutorRequestsForE2E(method, phase)
+      if (maxHeldCount !== undefined && (!Number.isSafeInteger(maxHeldCount) || maxHeldCount < 1)) {
+        throw new Error('maxHeldCount must be a positive integer')
+      }
+      holdLocalExecutorRequestsForE2E(method, phase, maxHeldCount)
       return ''
     }
     case 'awaitLocalExecutorRequestHold':
@@ -3035,6 +3046,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         includeText?: boolean
         attributeNames?: string[]
         waitForMatch?: boolean
+        includeSelection?: boolean
       }
       if (
         options.attributeNames !== undefined &&
@@ -3046,7 +3058,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         desktopControlElementMetrics(
           command.selector,
           options.includeText === true,
-          options.attributeNames ?? []
+          options.attributeNames ?? [],
+          options.includeSelection === true
         )
       return options.waitForMatch === true
         ? waitForDesktopControlElement(command, snapshot)

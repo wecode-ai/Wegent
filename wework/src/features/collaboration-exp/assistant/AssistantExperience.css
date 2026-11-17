@@ -620,12 +620,14 @@
     padding: 18px 12px 24px;
   }
   [data-testid='collaboration-exp-app'] .assistant-dashboard-intro {
-    border-radius: 16px;
-    padding: 18px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
   }
   [data-testid='collaboration-exp-app'] .assistant-dashboard-intro h2 {
     max-width: none;
-    font-size: var(--text-market-title);
+    font-size: var(--text-lg);
     margin: 0;
   }
   [data-testid='collaboration-exp-app'] .assistant-dashboard-intro .private-eyebrow,
@@ -804,6 +806,8 @@
 @media (max-width: 767px) {
   [data-testid='collaboration-exp-app'] .assistant-activity-button {
     min-height: 44px;
+    min-width: 0;
+    white-space: normal;
     gap: 4px;
     padding: 8px 6px;
     font-size: var(--experience-text-label);

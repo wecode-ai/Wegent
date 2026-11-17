@@ -4,7 +4,7 @@ import { getPlatform } from '@/lib/platform'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 
 export const DESKTOP_TOP_BAR_BUTTON_CLASS =
-  'electron-titlebar-interactive-region flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border-0 bg-transparent p-0 text-text-secondary transition-colors hover:bg-text-primary/[0.06] hover:text-text-primary active:bg-text-primary/[0.10] [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]'
+  'electron-titlebar-interactive-region flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border-0 bg-transparent p-0 text-text-secondary transition-colors hover:bg-text-primary/[0.06] hover:text-text-primary active:bg-text-primary/[0.10] md:h-8 md:w-8 [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]'
 
 interface DesktopTopBarProps {
   left?: ReactNode

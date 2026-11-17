@@ -86,6 +86,7 @@ window.__ModuleLoader__.load({
           yield ctx.wework.contributions.register(ctx, 'wework.settings.page', {
             ...page,
             category: 'coding',
+            categoryLabelKey: 'settings_category_coding',
             categoryLabel: '编码',
             module: 'plugins/wework-ui-git-settings.js',
           })

@@ -15,6 +15,43 @@ def _session(**overrides):
 
 
 @pytest.mark.parametrize("deleted", [False, True])
+@pytest.mark.parametrize("shell", ["Codex", "ClaudeCode"])
+@pytest.mark.parametrize("explicit_subscription", [False, True])
+def test_subscription_reads_bounded_sessions_even_without_chat_history(
+    monkeypatch, deleted, shell, explicit_subscription
+):
+    builder = TaskRequestBuilder(Mock())
+    session = (
+        _session()
+        if shell == "Codex"
+        else {"agent": "ClaudeCode", "botId": 23, "sessionId": "old-session"}
+    )
+    bounded = Mock(return_value=[session, session])
+    monkeypatch.setattr(subtask_store, "list_recent_executor_sessions_by_task", bounded)
+    unbounded = Mock(side_effect=AssertionError("Must not load assistant payloads"))
+    monkeypatch.setattr(subtask_store, "list_assistant_by_task", unbounded)
+
+    inherited, bindings = builder._build_session_context(
+        task=SimpleNamespace(
+            id=123, user_id=7, is_active=1 if explicit_subscription else 2
+        ),
+        user=SimpleNamespace(id=7),
+        bot_configs=[{"id": 23, "shell_type": shell}],
+        fork_sessions=[],
+        executor_deleted=deleted,
+        new_session=False,
+        is_subscription=explicit_subscription,
+    )
+
+    bounded.assert_called_once_with(
+        builder.db, task_id=123, owner_user_id=7, bot_ids=[23]
+    )
+    unbounded.assert_not_called()
+    assert inherited == ([session] if deleted else [])
+    assert bindings == [{**session, "task_id": 123, "user_id": 7}]
+
+
+@pytest.mark.parametrize("deleted", [False, True])
 def test_owner_query_supplies_bindings_without_expanding_inheritance(
     monkeypatch, deleted
 ):

@@ -1,5 +1,6 @@
 @import './content-themes.css';
 @import './wework-theme.css';
+@import './dsh-voice-input.css';
 
 @tailwind base;
 @tailwind components;
@@ -79,7 +80,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --color-bg-base: 255 255 255;
   --color-bg-surface: 244 244 244;
   --color-bg-hover: 20 184 166 / 0.08;
-  --color-focus: 51 156 255;
+  --color-focus: 37 99 235;
   --color-search-match: 255 195 0;
   --color-search-match-active: 226 85 7;
   --color-search-match-text: 26 26 26;

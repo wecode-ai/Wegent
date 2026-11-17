@@ -16,6 +16,7 @@ from app.services.device.plugin_sync_protocol import (
     lock_plugin_sync_state,
     plugin_snapshot_watermark,
 )
+from app.services.plugin_sync_revision import remember_ack_watermark
 
 
 def stable_plugin(plugin: dict[str, Any]) -> dict[str, Any]:
@@ -52,7 +53,12 @@ def current_legacy_plugin_ids(
 
 
 def record_versioned_result(
-    recorder: Any, db: Session, user_id: int, result: DeviceCapabilitySyncResult
+    recorder: Any,
+    db: Session,
+    user_id: int,
+    result: DeviceCapabilitySyncResult,
+    *,
+    installed_ids: list[int] | None = None,
 ) -> None:
     from app.services.device.capability_sync_service import (
         device_capability_sync_service,
@@ -61,7 +67,7 @@ def record_versioned_result(
     payload = result.desired_plugin_snapshot or {}
     metadata = payload["plugin_sync"]
     generation = metadata["generation"]
-    sync_state = lock_plugin_sync_state(db, user_id)
+    sync_state = lock_plugin_sync_state(db, user_id, merge=True)
     expected = {
         item["installed_plugin_id"]: item for item in payload.get("plugins") or []
     }
@@ -83,7 +89,9 @@ def record_versioned_result(
             if row.installed_kind_id not in expected
         )
     ids = sorted(set(expected) | removed_ids)
-    # The account write lease and revision CAS serialize this refresh with
+    if installed_ids is not None:
+        ids = [item for item in ids if item in installed_ids]
+    # The installation leases and parent CAS serialize this refresh with
     # install/remove transactions. No network work occurs inside the lease.
     installs = (
         db.query(Kind)
@@ -120,6 +128,9 @@ def record_versioned_result(
         if previous is not None and desired is not None:
             if stable_plugin(desired) != stable_plugin(previous):
                 continue
+            remember_ack_watermark(
+                db, sync_state, result.device_id, installed.id, generation
+            )
             recorder._record_desired_install(
                 db,
                 user_id=user_id,
@@ -133,6 +144,9 @@ def record_versioned_result(
             )
             if row is None:
                 continue
+            remember_ack_watermark(
+                db, sync_state, result.device_id, installed.id, generation
+            )
             if result.success and (item is None or item.status == "removed"):
                 db.delete(row)
             elif not result.success or (item and item.status == "failed"):

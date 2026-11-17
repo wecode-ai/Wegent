@@ -1,10 +1,11 @@
 import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
-import '@/i18n'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import i18n from '@/i18n'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { startTransition, Suspense, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TodoEditor } from './TodoEditor'
+import { CollaborationTheme } from '@wegent/collaboration/theme'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -47,6 +48,203 @@ const baseItem = {
 const project = { id: '11', name: 'Wework' } as unknown as CloudProject
 
 describe('TodoEditor external item sync', () => {
+  it('keeps a wrapped title fully visible when typography changes without remounting', async () => {
+    const originalFont = document.documentElement.style.getPropertyValue('--text-heading-lg')
+    let measuredHeight = 44
+    const height = vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      return this.dataset.testid === 'cloud-todo-detail-title' ? measuredHeight : 0
+    })
+    const editor = (fontSize: string) => (
+      <CollaborationTheme mode="light" variables={{ '--text-heading-lg': fontSize }}>
+        <TodoEditor
+          mode="edit"
+          item={baseItem}
+          project={project}
+          allItems={[baseItem]}
+          presentation="workspace-panel"
+          readFirst
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          api={api}
+        />
+      </CollaborationTheme>
+    )
+    try {
+      const view = render(editor('24px'))
+      const title = screen.getByTestId('cloud-todo-detail-title')
+      expect(title).toHaveStyle({ height: '44px' })
+      title.focus()
+      measuredHeight = 73
+      view.rerender(editor('27px'))
+      expect(title).toHaveStyle({ height: '73px' })
+      measuredHeight = 90
+      act(() => document.documentElement.style.setProperty('--text-heading-lg', '30px'))
+      await waitFor(() => expect(title).toHaveStyle({ height: '90px' }))
+      expect(screen.getByTestId('cloud-todo-detail-title')).toBe(title)
+      expect(title).toHaveFocus()
+      expect(title).toHaveValue(baseItem.title)
+    } finally {
+      if (originalFont)
+        document.documentElement.style.setProperty('--text-heading-lg', originalFont)
+      else document.documentElement.style.removeProperty('--text-heading-lg')
+      height.mockRestore()
+    }
+  })
+  it.each([false, true])(
+    'explains local participant availability (workspace panel: %s)',
+    async workspacePanel => {
+      const add = vi.fn()
+      render(
+        <TodoEditor
+          mode="edit"
+          item={baseItem}
+          project={{ ...project, project_store: 'local' }}
+          allItems={[baseItem]}
+          {...(workspacePanel ? { presentation: 'workspace-panel' as const, readFirst: true } : {})}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          api={{ ...(api as object), addLoopItemCollaborator: add } as never}
+        />
+      )
+      const button = screen.getByTestId('cloud-todo-add-collaborator')
+      expect(button).toBeDisabled()
+      expect(button).toHaveAccessibleDescription('此项目暂不支持编辑参与者')
+      expect(screen.getByTestId('issue-collaborators-unavailable')).toBeVisible()
+      await userEvent.click(button)
+      expect(screen.queryByTestId('cloud-todo-collaborator-select')).not.toBeInTheDocument()
+      expect(add).not.toHaveBeenCalled()
+      await act(async () => {
+        await i18n.changeLanguage('en')
+      })
+      try {
+        expect(button).toHaveAccessibleDescription(
+          'Editing participants is not available for this project yet'
+        )
+      } finally {
+        await act(async () => {
+          await i18n.changeLanguage('zh-CN')
+        })
+      }
+    }
+  )
+  it.each([false, true])(
+    'accepts a zero-id participant when editing is supported (workspace panel: %s)',
+    async workspacePanel => {
+      const add = vi.fn(async () => ({ id: 1, user_id: 0, user_name: 'Local owner' }))
+      const memberApi = {
+        ...(api as object),
+        listCloudProjectMembers: vi.fn(async () => [
+          { id: 1, user_id: 0, user_name: 'Local owner', role: 'Owner' },
+        ]),
+        addLoopItemCollaborator: add,
+      }
+      render(
+        <TodoEditor
+          mode="edit"
+          item={baseItem}
+          project={project}
+          allItems={[baseItem]}
+          {...(workspacePanel ? { presentation: 'workspace-panel' as const, readFirst: true } : {})}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          api={memberApi as never}
+        />
+      )
+      await userEvent.click(screen.getByTestId('cloud-todo-add-collaborator'))
+      const select = await screen.findByTestId('cloud-todo-collaborator-select')
+      await screen.findByRole('option', { name: 'Local owner' })
+      await userEvent.selectOptions(select, '0')
+      expect(screen.getByTestId('cloud-todo-confirm-collaborator')).toBeEnabled()
+      expect(select).toHaveAccessibleName('选择项目空间成员')
+      await userEvent.click(screen.getByTestId('cloud-todo-confirm-collaborator'))
+      await waitFor(() => expect(add).toHaveBeenCalledWith('WEG-1', 0))
+    }
+  )
+  it('shows the persisted none priority without relabelling it as medium', () => {
+    const item = { ...baseItem, priority: 'none' as const }
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={item}
+        project={project}
+        allItems={[item]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+      />
+    )
+    const priority = screen.getByTestId('cloud-todo-detail-priority')
+    expect(priority).toHaveValue('none')
+    expect(
+      priority.closest('.task-detail-rail-value')?.querySelector('.task-detail-workspace-tag')
+    ).toHaveTextContent(/^无$/)
+  })
+
+  it('uses English accessible names throughout Issue reading controls', async () => {
+    const language = i18n.language
+    await act(async () => {
+      await i18n.changeLanguage('en')
+    })
+    try {
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation="workspace-panel"
+          readFirst
+          showPanelControls
+          showFullscreenControl
+          item={baseItem}
+          project={project}
+          allItems={[baseItem]}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          api={api}
+        />
+      )
+      expect(screen.getByTestId('cloud-todo-detail-fullscreen')).toHaveAccessibleName(
+        'Expand details'
+      )
+      expect(screen.getByTestId('cloud-todo-state-summary')).toHaveAccessibleName('Current status')
+      expect(screen.getByTestId('cloud-todo-more-properties-popover')).toHaveAttribute(
+        'aria-label',
+        'More properties'
+      )
+      expect(await screen.findByRole('textbox', { name: 'Description' })).toBeVisible()
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage(language)
+      })
+    }
+  })
+
+  it('offers a keyboard action for editing a read-only description', async () => {
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        readFirst
+        item={baseItem}
+        project={project}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={api}
+      />
+    )
+    const editor = await screen.findByTestId('cloud-todo-detail-description')
+    expect(editor).toHaveAttribute('contenteditable', 'false')
+    const edit = screen.getByRole('button', { name: '编辑描述' })
+    edit.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(editor).toHaveAttribute('contenteditable', 'true')
+    expect(editor).toHaveFocus()
+    expect(screen.getByTestId('cloud-todo-save')).toBeDisabled()
+  })
+
   it.each([true, false])('shows an empty description hint with can_edit=%s', async canEdit => {
     const item = { ...baseItem, description: '', can_edit: canEdit }
     render(
@@ -500,7 +698,45 @@ describe('TodoEditor external item sync', () => {
     expect(onCreateTask).toHaveBeenCalledOnce()
   })
 
+  it.each([true, false])(
+    'shows existing-task linking only for editable Issues (%s)',
+    async canEdit => {
+      const item = {
+        ...baseItem,
+        project_store: 'backend' as const,
+        can_edit: canEdit,
+        can_view_detail: true,
+      }
+      const onLink = vi.fn().mockResolvedValue(undefined)
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation="workspace-panel"
+          item={item}
+          project={project}
+          allItems={[item]}
+          api={api}
+          currentUserId={1}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          existingTaskSource={{ port: { bindTask: onLink, unbindTask: vi.fn() } }}
+        />
+      )
+      if (canEdit) expect(await screen.findByTestId('issue-link-existing-task')).toBeVisible()
+      else expect(screen.queryByTestId('issue-link-existing-task')).not.toBeInTheDocument()
+    }
+  )
+
   it('shows only the linked-task create button until that section scrolls above the viewport', async () => {
+    let anchorBottom = 1000
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      return {
+        top: 0,
+        bottom: this.dataset.testid === 'cloud-todo-create-task' ? anchorBottom : 0,
+      } as DOMRect
+    })
     let onIntersection!: IntersectionObserverCallback
     const observe = vi.fn()
     const disconnect = vi.fn()
@@ -551,6 +787,7 @@ describe('TodoEditor external item sync', () => {
 
     const reportPosition = (bottom: number) =>
       act(() => {
+        anchorBottom = bottom
         onIntersection(
           [
             {
@@ -563,16 +800,20 @@ describe('TodoEditor external item sync', () => {
       })
     reportPosition(1000)
     expect(screen.queryByTestId('issue-persistent-task-action')).not.toBeInTheDocument()
-    reportPosition(-1)
-    expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
-      '让 AI 帮我处理'
-    )
-    expect(screen.getByTestId('cloud-todo-personal-task-action')).toHaveTextContent(
-      '基于当前 Issue 创建任务，并在当前电脑上运行'
+    // Jump from below to above without an intersection notification.
+    act(() => {
+      anchorBottom = -1
+      fireEvent.scroll(screen.getByTestId('cloud-todo-detail-scroll'))
+    })
+    expect(screen.getByTestId('cloud-todo-personal-task-start')).toHaveAccessibleName('创建任务')
+    expect(screen.getByTestId('cloud-todo-personal-task-start')).toHaveAttribute(
+      'title',
+      '让 AI 帮我处理 · 基于当前 Issue 创建任务，并在当前电脑上运行'
     )
     const persistentAction = screen.getByTestId('issue-persistent-task-action')
     expect(persistentAction).toContainElement(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(screen.getByTestId('cloud-todo-detail-scroll')).not.toContainElement(persistentAction)
+    expect(persistentAction.closest('header')).not.toBeNull()
     expect(screen.getAllByTestId('cloud-todo-personal-task-start')).toHaveLength(1)
     await userEvent.click(screen.getByTestId('cloud-todo-personal-task-start'))
     expect(onCreateTask).toHaveBeenCalledOnce()

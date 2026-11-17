@@ -19,6 +19,7 @@ import { activityMessages } from "./issue-detail/activityMessages";
 
 import { runtimeProfileMessages } from "./runtime-profile/messages";
 import { executionEnvironmentMessages } from "./execution-environment/messages";
+import { settingsMessages } from "./project-manage/settingsMessages";
 
 export type CollaborationLocale = "zh-CN" | "en";
 
@@ -325,7 +326,7 @@ const sharedMessages: Record<
     "todo.agent_picker_workspace_share":
       "添加后分组内项目可复用此智能体。原定义和私人凭据仍按原权限管理。",
     "common.actions": "操作",
-    "standIn.start_failed": "任务已创建，分身未能启动：",
+    "standIn.start_failed": "任务已创建，助理未能启动：",
     "standIn.retry": "重试处理",
     "issue_creation.do_myself": "我",
     "issue_creation.owner": "分配给",
@@ -342,6 +343,7 @@ const sharedMessages: Record<
     "common.create": "创建",
     "common.delete": "删除",
     "common.remove": "移除",
+    "common.more": "更多",
     "common.retry": "重试",
     "common.loading": "正在加载…",
     "common.save": "保存",
@@ -438,6 +440,40 @@ const sharedMessages: Record<
     "todo.file_move_failed": "重命名或移动失败",
     "todo.manage_project": "管理项目",
     "todo.manage_project_description": "管理项目成员、标签和看板布局。",
+    "todo.execution_environment_configuration_conflict":
+      "配置已在别处更新，草稿尚未保存。载入最新配置会替换草稿；也可保留草稿并刷新版本，检查后再保存。保存会替换最新的执行环境配置。",
+    "todo.execution_environment_draft_rebased":
+      "已读取最新版本。草稿尚未保存，请检查后再保存。",
+    "todo.execution_environment_configuration_reloaded": "已载入最新配置。",
+    "todo.execution_environment_refresh_failed":
+      "读取最新配置失败，草稿已保留。请重试读取。",
+    "todo.execution_environment_reload_configuration": "载入最新配置",
+    "todo.execution_environment_rebase_configuration": "保留草稿并刷新版本",
+    "todo.settings_connection_failed": "无法连接服务，请检查连接后重试。",
+    "todo.execution_environment_setup_exit":
+      "第 {{step}} 个初始化步骤失败（退出码 {{code}}）。请检查命令后重新准备项目目录。",
+    "todo.execution_environment_setup_timeout":
+      "第 {{step}} 个初始化步骤超时。请检查命令后重新准备项目目录。",
+    "todo.execution_environment_setup_failed":
+      "第 {{step}} 个初始化步骤失败。请检查命令和工作目录后重新准备。",
+    "todo.event_sources_empty":
+      "当前项目尚未接入事件来源。请由项目管理员完成来源接入，再刷新列表。",
+    "todo.event_sources_setup_help": "查看接入说明",
+    "todo.event_sources_refresh": "刷新来源",
+    "todo.event_sources_load_failed": "读取事件来源失败，请重试。",
+    "todo.automatic_processing_issue_description": "新 Issue 说明（可选）",
+    "todo.automatic_processing_human_description_hint":
+      "触发后创建新 Issue，并将此内容写入事项说明，再指派给所选成员。",
+    "todo.automatic_processing_group_prompt_hint":
+      "新建 Issue 时写入事项说明。已有 Issue 的处理要求请写在 Issue 内容或小组协作规则中。",
+    "todo.automatic_processing_human_hint":
+      "触发后将 Issue 指派给所选成员。成员按 Issue 内容处理，此规则不会启动 AI 执行。",
+    "todo.automatic_processing_group_runner_hint":
+      "由小组负责人协调处理；AI 执行时使用小组与成员已配置的运行方式。",
+    "todo.automatic_processing_agent_runner_hint":
+      "AI 按智能体已保存的执行环境与模型策略运行，同一 Issue 的后续执行会沿用其绑定关系。",
+    "todo.ai_configuration": "AI 配置",
+    "todo.execution_environment_ready": "项目目录已准备好",
     "todo.ai_team": "AI 团队",
     "todo.ai_team_members": "成员",
     "todo.ai_team_groups": "协作团队",
@@ -472,6 +508,21 @@ const sharedMessages: Record<
     "todo.project_tags_description": "用于区分任务类型并筛选看板。",
     "todo.create_tag": "新建标签",
     "todo.tag_name_placeholder": "输入标签名称",
+    "todo.tag_name": "标签名称",
+    "todo.matching_tag": "标签",
+    "todo.matching_tag_placeholder": "输入需要匹配的标签",
+    "todo.trigger_tag_added": "添加标签后",
+    "todo.delete_automatic_rule": "删除自动处理规则",
+    "todo.delete_automatic_rule_description":
+      "删除后将停止此规则的后续自动处理，且无法恢复。",
+    "todo.view_automatic_processing": "查看自动处理",
+    "todo.automatic_rule_read_only":
+      "只读：你可以查看规则，只有项目管理者可以修改。",
+    "todo.execution_environment_setup_command": "初始化命令",
+    "todo.execution_environment_setup_directory_label": "工作目录（可选）",
+    "common.deleting": "删除中…",
+    "todo.project_settings_refresh_failed":
+      "配置已保存，但项目信息刷新失败。请重试刷新。",
     "todo.tag_name_too_long": "标签名称不能超过 32 个字符",
     "todo.tag_limit_exceeded": "最多添加 20 个不同标签",
     "todo.confirm_rename": "确认重命名",
@@ -485,6 +536,8 @@ const sharedMessages: Record<
     "todo.keep_existing_token": "留空保留当前令牌",
     "todo.access_token": "访问令牌",
     "todo.saved": "已保存",
+    "todo.save_failed": "保存失败，请重试",
+    "todo.unsaved_changes": "有未保存的修改",
     "todo.save_assignment": "保存分配",
     "todo.notify_assignee": "通知负责人",
     "todo.search_milestone": "搜索里程碑",
@@ -634,6 +687,7 @@ const sharedMessages: Record<
     "todo.add_collaborator": "添加参与者",
     "todo.none": "暂无",
     "todo.select_project_member": "选择项目空间成员",
+    "todo.collaborators_unavailable": "此项目暂不支持编辑参与者",
     "todo.new_issue": "新建任务",
     "todo.issue_markdown_hint": "支持 Markdown，可拖拽文件到编辑器添加附件",
     "todo.created_at_short": "创建于 {{date}}",
@@ -644,6 +698,10 @@ const sharedMessages: Record<
     "todo.copy_issue_id": "复制任务编号",
     "todo.saving": "保存中…",
     "todo.exit_full_screen": "退出全屏",
+    "todo.restore_issue_sidebar": "还原侧边栏",
+    "todo.expand_issue_detail": "展开详情",
+    "todo.current_state": "当前状态",
+    "todo.more_properties": "更多信息",
     "todo.full_screen": "全屏显示",
     "todo.issue_details": "任务详情",
     "todo.close_issue_detail": "关闭任务详情",
@@ -655,11 +713,13 @@ const sharedMessages: Record<
       "按北京时间日期跳过法定休息日，包含补班周末。选择“每天”可覆盖全部补班日；其他重复规则仍限制执行日期。",
     "todo.unassigned": "未指派",
     "todo.issue_title": "任务标题",
+    "todo.title_required": "请输入事项标题",
     "todo.issue_title_placeholder": "目标或事项标题",
     "todo.issue_description": "任务描述",
     "todo.issue_description_placeholder": "添加描述，说明背景、目标或处理要求…",
     "todo.no_issue_description": "暂无描述",
     "todo.expand_description": "展开描述",
+    "todo.edit_description": "编辑描述",
     "todo.current_conversation": "当前会话",
     "todo.expand_conversation": "点击展开会话",
     "todo.assignment": "指派",
@@ -924,6 +984,7 @@ const sharedMessages: Record<
     "common.create": "Create",
     "common.delete": "Delete",
     "common.remove": "Remove",
+    "common.more": "More",
     "common.retry": "Retry",
     "common.loading": "Loading…",
     "common.save": "Save",
@@ -1023,6 +1084,46 @@ const sharedMessages: Record<
     "todo.manage_project": "Manage project",
     "todo.manage_project_description":
       "Manage project members, tags, and board layout.",
+    "todo.execution_environment_configuration_conflict":
+      "Configuration changed elsewhere. Your draft is unsaved. Loading the latest configuration replaces your draft. Alternatively, keep your draft and refresh the version, then review it before saving. Saving replaces the latest environment configuration.",
+    "todo.execution_environment_draft_rebased":
+      "Latest version loaded. Your draft is unsaved; review it before saving.",
+    "todo.execution_environment_configuration_reloaded":
+      "Latest configuration loaded.",
+    "todo.execution_environment_refresh_failed":
+      "Could not read the latest configuration. Your draft is preserved. Retry reading.",
+    "todo.execution_environment_reload_configuration":
+      "Load latest configuration",
+    "todo.execution_environment_rebase_configuration":
+      "Keep draft and refresh version",
+    "todo.settings_connection_failed":
+      "Could not connect to the service. Check the connection and retry.",
+    "todo.execution_environment_setup_exit":
+      "Setup step {{step}} failed (exit code {{code}}). Check the command, then prepare the project directory again.",
+    "todo.execution_environment_setup_timeout":
+      "Setup step {{step}} timed out. Check the command, then prepare the project directory again.",
+    "todo.execution_environment_setup_failed":
+      "Setup step {{step}} failed. Check its command and working directory, then prepare again.",
+    "todo.event_sources_empty":
+      "No event sources are connected to this project. Ask a project administrator to connect a source, then refresh the list.",
+    "todo.event_sources_setup_help": "Setup instructions",
+    "todo.event_sources_refresh": "Refresh sources",
+    "todo.event_sources_load_failed":
+      "Could not load event sources. Please retry.",
+    "todo.automatic_processing_issue_description":
+      "New Issue description (optional)",
+    "todo.automatic_processing_human_description_hint":
+      "When triggered, create a new Issue with this description and assign it to the selected member.",
+    "todo.automatic_processing_group_prompt_hint":
+      "Used as the description when creating an Issue. For an existing Issue, put handling requirements in its content or the collaboration group rules.",
+    "todo.automatic_processing_human_hint":
+      "Assign the Issue to the selected member. They work from the Issue content; this rule does not start an AI execution.",
+    "todo.automatic_processing_group_runner_hint":
+      "The group leader coordinates the work. AI execution uses the group and members’ configured runtime policies.",
+    "todo.automatic_processing_agent_runner_hint":
+      "AI uses the Agent’s saved environment and model policies. Follow-up execution for the same Issue retains its bindings.",
+    "todo.ai_configuration": "AI configuration",
+    "todo.execution_environment_ready": "Project directory ready",
     "todo.ai_team": "AI team",
     "todo.ai_team_members": "Members",
     "todo.ai_team_groups": "Collaboration teams",
@@ -1060,6 +1161,22 @@ const sharedMessages: Record<
     "todo.project_tags_description": "Classify issues and filter the board.",
     "todo.create_tag": "New tag",
     "todo.tag_name_placeholder": "Tag name",
+    "todo.tag_name": "Tag name",
+    "todo.matching_tag": "Tag",
+    "todo.matching_tag_placeholder": "Enter the tag to match",
+    "todo.trigger_tag_added": "Tag added",
+    "todo.delete_automatic_rule": "Delete automatic rule",
+    "todo.delete_automatic_rule_description":
+      "Deleting stops future processing by this rule and cannot be undone.",
+    "todo.view_automatic_processing": "View automatic rule",
+    "todo.automatic_rule_read_only":
+      "Read only: you can view this rule. Project managers can change it.",
+    "todo.execution_environment_setup_command": "Setup command",
+    "todo.execution_environment_setup_directory_label":
+      "Working directory (optional)",
+    "common.deleting": "Deleting…",
+    "todo.project_settings_refresh_failed":
+      "Configuration saved, but project details could not be refreshed. Retry the refresh.",
     "todo.tag_name_too_long": "Tag names cannot exceed 32 characters",
     "todo.tag_limit_exceeded": "Cannot have more than 20 distinct tags",
     "todo.confirm_rename": "Confirm rename",
@@ -1074,6 +1191,8 @@ const sharedMessages: Record<
     "todo.keep_existing_token": "Leave empty to keep the current token",
     "todo.access_token": "Access token",
     "todo.saved": "Saved",
+    "todo.save_failed": "Save failed. Try again.",
+    "todo.unsaved_changes": "Unsaved changes",
     "todo.save_assignment": "Save assignment",
     "todo.notify_assignee": "Notify assignee",
     "todo.search_milestone": "Search milestones",
@@ -1228,6 +1347,8 @@ const sharedMessages: Record<
     "todo.add_collaborator": "Add participant",
     "todo.none": "None",
     "todo.select_project_member": "Select a project member",
+    "todo.collaborators_unavailable":
+      "Editing participants is not available for this project yet",
     "todo.new_issue": "New issue",
     "todo.issue_markdown_hint":
       "Markdown supported. Drop files into the editor to attach them.",
@@ -1239,6 +1360,10 @@ const sharedMessages: Record<
     "todo.copy_issue_id": "Copy issue ID",
     "todo.saving": "Saving…",
     "todo.exit_full_screen": "Exit full screen",
+    "todo.restore_issue_sidebar": "Restore sidebar",
+    "todo.expand_issue_detail": "Expand details",
+    "todo.current_state": "Current status",
+    "todo.more_properties": "More properties",
     "todo.full_screen": "Full screen",
     "todo.issue_details": "Issue details",
     "todo.close_issue_detail": "Close issue details",
@@ -1251,12 +1376,14 @@ const sharedMessages: Record<
       "Uses Beijing dates, excludes statutory days off and includes make-up working weekends. Choose Daily to include every make-up workday; other recurrence rules still limit dates.",
     "todo.unassigned": "Unassigned",
     "todo.issue_title": "Issue title",
+    "todo.title_required": "Enter an issue title",
     "todo.issue_title_placeholder": "Goal or issue title",
     "todo.issue_description": "Issue description",
     "todo.issue_description_placeholder":
       "Add a description with background, goals, or requirements…",
     "todo.no_issue_description": "No description yet",
     "todo.expand_description": "Expand description",
+    "todo.edit_description": "Edit description",
     "todo.current_conversation": "Current conversation",
     "todo.expand_conversation": "Expand conversation",
     "todo.assignment": "Assignment",
@@ -1479,6 +1606,7 @@ export function createCollaborationTranslator(
       markdownMessages[locale][key as keyof typeof markdownMessages.en] ??
       runtimeProfileMessages[locale][key] ??
       executionEnvironmentMessages[locale][key] ??
+      settingsMessages[locale][key] ??
       messages[key] ??
       fallback ??
       key;

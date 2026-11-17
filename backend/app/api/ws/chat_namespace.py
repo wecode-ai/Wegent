@@ -933,11 +933,19 @@ class ChatNamespace(socketio.AsyncNamespace):
                 from app.services.chat.interactive_forms import (
                     validate_interactive_form_answer,
                 )
+                from app.services.subscription.history_window import (
+                    is_subscription_task,
+                )
 
                 form_validation = validate_interactive_form_answer(
                     db,
                     task_id=payload.task_id,
                     answer=payload.interactive_form_answer,
+                    subscription_owner_user_id=(
+                        existing_task.user_id
+                        if existing_task and is_subscription_task(existing_task)
+                        else None
+                    ),
                 )
                 if not form_validation.ok:
                     logger.warning(

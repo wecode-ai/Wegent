@@ -7,8 +7,12 @@ import { expect, test } from '../../fixtures/executor-test'
 import { REGULAR_USER } from '../../config/test-users'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
+// The web application defaults to English; persistence follows the localized builtin document.
 const definitions = JSON.parse(
-  readFileSync(resolve(__dirname, '../../../../shared/data/collaboration-templates.json'), 'utf8')
+  readFileSync(
+    resolve(__dirname, '../../../../packages/collaboration/src/templates/builtins.en.json'),
+    'utf8'
+  )
 )
 
 for (const destination of ['existing', 'new'] as const) {
@@ -91,7 +95,12 @@ for (const destination of ['existing', 'new'] as const) {
         if (await picker.isVisible()) await picker.click()
         await expect(nameInput).toHaveValue(configuration.project.name)
         await nameInput.fill(name)
+        await page.getByTestId('project-create-configure-template').click()
+        await expect(page.getByTestId('project-create-template-configuration')).toBeVisible()
         await bindMembers()
+        await page.getByTestId('project-create-template-configuration-apply').click()
+        await expect(page.getByTestId('project-create-template-configuration')).toBeHidden()
+        await expect(nameInput).toHaveValue(name)
         const created = page.waitForResponse(
           response =>
             response.request().method() === 'POST' &&

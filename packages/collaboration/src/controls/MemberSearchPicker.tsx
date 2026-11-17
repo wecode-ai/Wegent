@@ -6,7 +6,7 @@ import { Search } from 'lucide-react'
 import type { ReactNode, Ref } from 'react'
 
 const focus =
-  'focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 keyboard:focus-visible:ring-offset-2'
+  'focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] keyboard:focus-visible:ring-offset-2'
 
 /** Shared member search fields used by project creation and project settings. */
 export function MemberSearchPicker<User extends { id: number; user_name: string }>({
@@ -47,7 +47,7 @@ export function MemberSearchPicker<User extends { id: number; user_name: string 
   return (
     <>
       {searchable && (
-        <label className="flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/70 md:min-h-9">
+        <label className="flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 keyboard:focus-within:ring-2 keyboard:focus-within:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:min-h-9">
           <Search className="h-4 w-4 shrink-0 text-text-muted" />
           <input
             ref={inputRef}

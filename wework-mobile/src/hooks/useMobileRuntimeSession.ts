@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, type RefObject } from 'react'
+import { useLayoutEffect, useMemo, useRef, useSyncExternalStore, type RefObject } from 'react'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import type { LocalRuntime } from '@/services/localRuntime'
 import { LocalRuntimeApi } from '@/services/localRuntimeApi'
@@ -39,6 +39,10 @@ export function useMobileRuntimeSession(
     [local, localOptions?.models]
   )
   const stream = useMemo(() => new RuntimeStream(config, () => inventory.current, local), [local])
+  const cloudConnection = useSyncExternalStore(
+    stream.subscribeCloudConnection,
+    stream.getCloudConnection
+  )
   const api = useMemo(
     () => new RuntimeApi(config, undefined, () => token.current, stream, localApi),
     [stream, localApi]
@@ -67,5 +71,5 @@ export function useMobileRuntimeSession(
     config?.accessToken,
     userId,
   ])
-  return { api, stream, cache, local }
+  return { api, stream, cache, local, cloudConnection }
 }

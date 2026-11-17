@@ -39,6 +39,7 @@ interface ReasoningSliderProps {
   selectedStepValue?: string;
   onSelectStep?: (value: string) => void;
   accentPulse?: boolean;
+  describedBy?: string;
 }
 
 export interface ReasoningSliderStep {
@@ -68,6 +69,7 @@ export function ReasoningSlider({
   selectedStepValue,
   onSelectStep,
   accentPulse = false,
+  describedBy,
 }: ReasoningSliderProps) {
   const dragActiveRef = useRef(false);
   const dragMovedRef = useRef(false);
@@ -212,18 +214,25 @@ export function ReasoningSlider({
       data-interacting={interacting ? "true" : "false"}
       onMouseEnter={clearHoverSubmenu}
       onPointerEnter={clearHoverSubmenu}
-      className={compact ? "relative h-9 px-0" : "relative h-10 px-0"}
+      className={
+        compact ? "relative h-12 px-0 md:h-9" : "relative h-12 px-0 md:h-10"
+      }
     >
       <div
         data-testid="model-control-reasoning-track"
         role="slider"
+        aria-label={
+          control.labelKey ? t(control.labelKey, control.label) : control.label
+        }
+        aria-describedby={describedBy}
         tabIndex={0}
         aria-valuemin={0}
         aria-valuemax={steps.length - 1}
         aria-valuenow={selectedIndex}
         aria-valuetext={selectedStep?.label}
         className={[
-          "absolute inset-x-0 h-8 cursor-pointer touch-none rounded-full outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30",
+          styles.focusTarget,
+          "absolute inset-x-0 h-11 cursor-pointer touch-none rounded-full md:h-8",
           compact ? "top-0.5" : "top-1",
         ].join(" ")}
         onPointerDown={handlePointerDown}
@@ -287,7 +296,7 @@ export function ReasoningSlider({
               aria-label={step.label}
               onFocus={clearHoverSubmenu}
               onClick={() => selectValue(step.value)}
-              className="absolute top-1/2 z-10 h-8 w-8 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-full outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
+              className={`${styles.focusTarget} absolute top-1/2 z-10 h-11 w-11 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-full md:h-8 md:w-8`}
               style={{ left: getSliderPosition(index, steps.length) }}
             >
               <span

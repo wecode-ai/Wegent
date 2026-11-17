@@ -376,6 +376,8 @@ pub struct RuntimeRouteIdentity {
     /// `runtime_device_id`: the transport identity used for the Redis online
     /// key and the Socket.IO room (`_runtime_device_id`).
     pub runtime_device_id: String,
+    /// The local executor identity reported by an App installation.
+    pub app_device_id: Option<String>,
     /// `runtime_instance_id`: the pinned installation identity, when the
     /// device registered one.
     pub runtime_instance_id: Option<String>,
@@ -414,6 +416,10 @@ pub(crate) fn identity_from_device(device: &DeviceKindRow) -> Option<RuntimeRout
         logical_device_id: record_route_id(device),
         device_type: DeviceType::from_spec(&device.spec()),
         runtime_device_id,
+        app_device_id: device
+            .spec()
+            .app_device_id
+            .filter(|id| !id.trim().is_empty()),
         runtime_instance_id: runtime_instance_id(device),
     })
 }
@@ -702,16 +708,18 @@ pub(crate) trait LeaseCheck: Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = MysqlResult<()>> + Send + 'a>>;
 }
 
-pub(crate) async fn reconcile_plugin_device_rows_on<Q, R>(
+pub(crate) async fn reconcile_plugin_device_rows_for_installs_on<Q, R>(
     query: &mut Q,
     user_id: i64,
     guard: Option<&dyn LeaseCheck>,
+    installed_ids: Option<&[i64]>,
 ) -> MysqlResult<Vec<R>>
 where
     Q: PluginQuery,
     R: ReconcileRow + Clone + FromMysqlRow + Send,
 {
-    let rows: Vec<R> = query.fetch_all(RECONCILE_SELECT_QUERY, (user_id,)).await?;
+    let mut rows: Vec<R> = query.fetch_all(RECONCILE_SELECT_QUERY, (user_id,)).await?;
+    rows.retain(|row| installed_ids.is_none_or(|ids| ids.contains(&row.installed_kind_id())));
     let selected = coalesce_plugin_device_rows_on(query, rows.clone()).await?;
     converge_plugin_device_rows(query, rows, &selected, guard).await
 }
@@ -984,11 +992,12 @@ mod tests {
         let app = DeviceKindRow {
             id: 268663,
             name: "local-device".to_string(),
-            json: serde_json::json!({"spec": {"deviceType": "app"}}),
+            json: serde_json::json!({"spec": {"deviceType": "app", "appDeviceId": "electron-host"}}),
         };
         let identity = identity_from_device(&app).expect("app identity");
         assert_eq!(identity.logical_device_id, "app-record-268663");
         assert_eq!(identity.runtime_device_id, "app-record-268663");
+        assert_eq!(identity.app_device_id.as_deref(), Some("electron-host"));
         assert_eq!(identity.device_type, DeviceType::App);
 
         // No runtime route id means no identity, like `_identity_from_device`.

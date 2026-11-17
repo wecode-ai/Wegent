@@ -117,6 +117,8 @@ pub struct DispatchInput<'a> {
     pub enable_web_search: bool,
     /// The API `reasoning` selection (`ReasoningConfig`).
     pub reasoning: Option<&'a super::reasoning::ReasoningConfig>,
+    /// The request's validated attachment ids, in caller-defined order.
+    pub attachment_ids: &'a [i64],
 }
 
 /// Which response branch one routed create request takes.
@@ -182,6 +184,7 @@ pub async fn dispatch_create(
             knowledge_base_names: input.knowledge_base_names,
             web_runtime_guidance: false,
             subtask_bot_resolved: false,
+            attachment_ids: input.attachment_ids,
             enable_web_search: input.enable_web_search,
             enable_deep_thinking: input.enable_chat_bot,
             reasoning: input.reasoning,

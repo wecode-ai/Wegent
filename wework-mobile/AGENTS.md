@@ -127,10 +127,17 @@ or silent fallbacks. Diagnose the primary flow from actual code, logs, and paylo
 
 ## Error presentation
 
-- Background discovery, connection and list-read failures use `connectionError` and only the sidebar
-  avatar retry badge. Never surface them through a global alert or another screen notice. Preserve
-  the visible snapshot while disconnected; clicking the avatar badge retries reads without
-  resubmitting mutations. Explicit operation failures retain their existing actionable boundary.
+- Background connection, discovery, list and transcript read failures use source-owned entries in
+  `useRuntimeFailures` and only the sidebar avatar badge. The native avatar menu distinguishes
+  cloud connection, device discovery, device work lists and individual transcript pages. Each
+  retry repeats only its own operation; it must not chain unrelated reads or restart the executor.
+  Keep other sources and settings usable while a retry is pending. A successful read clears only
+  its own failure; account changes revoke only remote failures and pending responses.
+- The shared authenticated socket snapshot gates cloud device visibility. Phone-local readiness,
+  reads and subscriptions remain independent. Cloud reconnection must not reload phone history.
+  Preserve cached remote data while hidden, and keep the phone list selectable without waiting
+  for cloud recovery. Pull-to-refresh reads the selected work list; device discovery has its own
+  explicit action. Explicit operation failures retain their existing actionable boundary.
 - List snapshots load initially or after an explicit selection, manual refresh or accepted user
   mutation. Do not refresh them on foreground, socket reconnect, token renewal or task events.
   Keep the active conversation's realtime events and lifecycle updates working independently.

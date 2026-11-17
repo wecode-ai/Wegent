@@ -125,6 +125,8 @@ pub struct ConnectorTool {
 #[derive(Debug, Serialize)]
 pub struct ConnectorToolListResponse {
     pub tools: Vec<ConnectorTool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deferred_tools: Option<Vec<serde_json::Value>>,
 }
 
 /// `ConnectorTokenResponse` (`app/schemas/connector.py`).

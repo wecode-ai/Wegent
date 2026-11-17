@@ -4,6 +4,7 @@
 
 import { ArrowRightLeft, CalendarClock, Sparkles, Tag, Webhook } from 'lucide-react'
 import type { AutomationEventType } from '../automation/types'
+import type { CollaborationTranslate } from '../i18n'
 import type {
   WorkspaceAutomationInput,
   WorkspaceAutomationRule,
@@ -12,6 +13,23 @@ import type {
 
 export type TriggerKind = 'created' | 'tag_added' | 'status_changed' | 'external' | 'schedule'
 export type TargetKind = 'human' | 'agent' | 'collaboration_group'
+
+export function automaticProcessingSaveError(error: unknown, translate: CollaborationTranslate) {
+  const message = error instanceof Error ? error.message : ''
+  // These messages are emitted by the executor's Cron validation contract.
+  const cronInvalid = /(?:^|:\s)(?:invalid cron expression\b|cron expression must contain\b)/i.test(
+    message
+  )
+  return {
+    cronInvalid,
+    message: cronInvalid
+      ? translate(
+          'todo.invalid_cron_expression',
+          'Cron 表达式无效。请检查字段、取值范围和格式后重试。'
+        )
+      : message || translate('todo.automatic_processing_save_failed', '保存自动处理失败'),
+  }
+}
 export type ScheduleFrequency = 'daily' | 'weekdays' | 'weekly' | 'custom'
 
 interface ScheduleValue {
@@ -40,8 +58,8 @@ export const TRIGGER_OPTIONS = [
   {
     kind: 'tag_added',
     icon: Tag,
-    title: ['添加 Tag 后', 'Tag added'],
-    description: ['Issue 添加指定 Tag 时', 'When a matching tag is added'],
+    title: ['添加标签后', 'Tag added'],
+    description: ['Issue 添加指定标签时', 'When a matching tag is added'],
   },
   {
     kind: 'status_changed',

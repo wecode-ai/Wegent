@@ -1,4 +1,4 @@
-import type { Ref } from "react";
+import { useId, type Ref } from "react";
 import type { CollaborationTranslate } from "../i18n";
 import type { ModelSelectorProps } from "./model-selector-types";
 import type { ModelControlConfig } from "./model-ui";
@@ -55,6 +55,7 @@ export function ModelSelectorSimplePanel({
   onSelectModelAndOptions,
   onSelectModelOption,
 }: ModelSelectorSimplePanelProps) {
+  const descriptionId = useId();
   const powerSettings = preset?.settings ?? [];
   const usePowerSlider = presetSelected && powerSettings.length >= 2;
   const presetLabel =
@@ -69,7 +70,7 @@ export function ModelSelectorSimplePanel({
       ref={panelRef}
       data-model-picker-panel="simple"
       style={{ maxHeight }}
-      className="flex w-full flex-col overflow-y-auto p-1"
+      className="flex w-full flex-col overflow-y-auto p-1 max-md:px-4"
     >
       <ModelSelectorSummary
         translate={t}
@@ -88,6 +89,7 @@ export function ModelSelectorSimplePanel({
       <div data-testid="model-advanced-panel" className="min-h-9">
         {usePowerSlider ? (
           <ModelPowerSlider
+            describedBy={selectedModel ? descriptionId : undefined}
             translate={t}
             powerSettings={powerSettings}
             selectedModel={selectedModel}
@@ -101,6 +103,7 @@ export function ModelSelectorSimplePanel({
           />
         ) : control ? (
           <ReasoningSlider
+            describedBy={selectedModel ? descriptionId : undefined}
             translate={t}
             control={control}
             selectedModelOptions={selectedModelOptions}
@@ -114,8 +117,9 @@ export function ModelSelectorSimplePanel({
       </div>
       {selectedModel && (
         <p
+          id={descriptionId}
           data-testid="model-slider-description"
-          className="px-3 pb-2 pt-1 text-center text-xs text-text-muted text-balance"
+          className="px-3 pb-2 pt-1 text-center text-xs text-text-secondary text-balance"
         >
           {presetSelected
             ? t(

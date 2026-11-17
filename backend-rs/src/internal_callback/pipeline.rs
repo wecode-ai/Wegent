@@ -169,6 +169,7 @@ async fn prepare_dispatch(
             knowledge_base_names: &[],
             web_runtime_guidance: false,
             subtask_bot_resolved: false,
+            attachment_ids: &[],
         },
     )
     .await?;

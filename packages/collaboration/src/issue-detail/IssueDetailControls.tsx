@@ -2,28 +2,76 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  useRef,
-  useState,
-  type ChangeEventHandler,
-  type ReactNode,
-} from "react";
-import * as Popover from "@radix-ui/react-popover";
-import { Check, Search } from "lucide-react";
+import { useRef, useState, type ChangeEventHandler, type ReactNode } from 'react'
+import * as Popover from '@radix-ui/react-popover'
+import { Check, Search } from 'lucide-react'
 
-import type { CollaborationPriority, CollaborationStatus } from "../types";
-import { useCollaborationPortalTheme } from "../theme";
+import type { CollaborationPriority, CollaborationStatus } from '../types'
+import { useCollaborationPortalTheme } from '../theme'
+import { useEscapeKey } from '../markdown/useEscapeKey'
+import { isImeComposingEvent } from '@wegent/chat-core/ime'
+
+export function IssueDetailCollaboratorPicker({
+  value,
+  members,
+  onChange,
+  onAdd,
+  busy,
+  label,
+  addLabel,
+  compact = false,
+  className,
+}: {
+  value: number | null
+  members: ReadonlyArray<{ user_id: number; user_name: string }>
+  onChange(value: number | null): void
+  onAdd(): void
+  busy: boolean
+  label: string
+  addLabel: string
+  compact?: boolean
+  className?: string
+}) {
+  const desktopHeight = compact ? 'md:h-8' : 'md:h-9'
+  return (
+    <div className={`flex items-center gap-2 ${className ?? ''}`}>
+      <select
+        data-testid="cloud-todo-collaborator-select"
+        aria-label={label}
+        value={value ?? ''}
+        onChange={event => onChange(event.target.value === '' ? null : Number(event.target.value))}
+        className={`h-11 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-text-muted ${desktopHeight}`}
+      >
+        <option value="">{label}</option>
+        {members.map(member => (
+          <option key={member.user_id} value={member.user_id}>
+            {member.user_name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        data-testid="cloud-todo-confirm-collaborator"
+        disabled={value === null || busy}
+        onClick={onAdd}
+        className={`h-11 shrink-0 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-40 ${desktopHeight}`}
+      >
+        {addLabel}
+      </button>
+    </div>
+  )
+}
 
 export interface IssueDetailSelectProps<TValue extends string> {
-  value: TValue;
-  options: Array<{ value: TValue; label: string }>;
-  testId: string;
-  accessibleLabel: string;
-  className?: string;
-  disabled?: boolean;
-  includeUnset?: boolean;
-  unsetLabel?: string;
-  onChange(value: TValue): void;
+  value: TValue
+  options: Array<{ value: TValue; label: string }>
+  testId: string
+  accessibleLabel: string
+  className?: string
+  disabled?: boolean
+  includeUnset?: boolean
+  unsetLabel?: string
+  onChange(value: TValue): void
 }
 
 export function IssueDetailSelect<TValue extends string>({
@@ -34,12 +82,12 @@ export function IssueDetailSelect<TValue extends string>({
   className,
   disabled,
   includeUnset,
-  unsetLabel = "未设置",
+  unsetLabel = '未设置',
   onChange,
 }: IssueDetailSelectProps<TValue>) {
-  const handleChange: ChangeEventHandler<HTMLSelectElement> = (event) => {
-    onChange(event.target.value as TValue);
-  };
+  const handleChange: ChangeEventHandler<HTMLSelectElement> = event => {
+    onChange(event.target.value as TValue)
+  }
   return (
     <select
       data-testid={testId}
@@ -50,84 +98,84 @@ export function IssueDetailSelect<TValue extends string>({
       className={className}
     >
       {includeUnset ? <option value="">{unsetLabel}</option> : null}
-      {options.map((option) => (
+      {options.map(option => (
         <option key={option.value} value={option.value}>
           {option.label}
         </option>
       ))}
     </select>
-  );
+  )
 }
 
 export function IssueDetailStatusSelect({
   statuses,
   ...props
-}: Omit<IssueDetailSelectProps<string>, "options"> & {
-  statuses: Array<Pick<CollaborationStatus, "id" | "name">>;
+}: Omit<IssueDetailSelectProps<string>, 'options'> & {
+  statuses: Array<Pick<CollaborationStatus, 'id' | 'name'>>
 }) {
   return (
     <IssueDetailSelect
       {...props}
-      options={statuses.map((status) => ({
+      options={statuses.map(status => ({
         value: status.id,
         label: status.name,
       }))}
     />
-  );
+  )
 }
 
 export function IssueDetailPrioritySelect({
   labels,
   ...props
-}: Omit<IssueDetailSelectProps<CollaborationPriority>, "options"> & {
-  labels: Record<CollaborationPriority, string>;
+}: Omit<IssueDetailSelectProps<CollaborationPriority>, 'options'> & {
+  labels: Record<CollaborationPriority, string>
 }) {
   return (
     <IssueDetailSelect
       {...props}
-      options={(["none", "low", "medium", "high", "urgent"] as const).map(
-        (value) => ({
-          value,
-          label: labels[value],
-        }),
-      )}
+      options={(['none', 'low', 'medium', 'high', 'urgent'] as const).map(value => ({
+        value,
+        label: labels[value],
+      }))}
     />
-  );
+  )
 }
 
-export interface IssueDetailSearchableSelectOption<
-  TValue extends string = string,
-> {
-  value: TValue;
-  label: string;
-  group?: string;
-  section?: string;
-  searchText?: string;
+export interface IssueDetailSearchableSelectOption<TValue extends string = string> {
+  value: TValue
+  label: string
+  description?: string
+  group?: string
+  section?: string
+  searchText?: string
 }
 
 export interface IssueDetailSearchableSelectAction {
-  label: string;
-  icon?: ReactNode;
-  testId: string;
-  onSelect(): void;
+  label: string
+  icon?: ReactNode
+  testId: string
+  onSelect(): void
 }
 
 export interface IssueDetailSearchableSelectProps<TValue extends string> {
-  value: TValue;
-  options: IssueDetailSearchableSelectOption<TValue>[];
-  actions?: IssueDetailSearchableSelectAction[];
-  testId: string;
-  accessibleLabel: string;
-  className?: string;
-  disabled?: boolean;
-  searchPlaceholder: string;
-  emptyLabel: string;
-  triggerContent?: ReactNode;
-  footer?: ReactNode;
-  contentClassName?: string;
-  groupLimit?: number;
-  showAllLabel?(group: string, count: number): string;
-  onChange(value: TValue): void;
+  value: TValue
+  options: IssueDetailSearchableSelectOption<TValue>[]
+  actions?: IssueDetailSearchableSelectAction[]
+  testId: string
+  accessibleLabel: string
+  className?: string
+  disabled?: boolean
+  searchPlaceholder: string
+  emptyLabel: string
+  triggerContent?: ReactNode
+  footer?: ReactNode
+  contentClassName?: string
+  modal?: boolean
+  groupLimit?: number
+  open?: boolean
+  onOpenChange?(open: boolean): void
+  showAllLabel?(group: string, count: number): string
+  onChange(value: TValue): void
 }
 
 function visibleSearchableSelectOptions<TValue extends string>(
@@ -135,27 +183,27 @@ function visibleSearchableSelectOptions<TValue extends string>(
   value: TValue,
   normalizedQuery: string,
   groupLimit: number | undefined,
-  expandedGroups: Set<string>,
+  expandedGroups: Set<string>
 ) {
   if (normalizedQuery) {
-    return options.filter((option) =>
-      `${option.label} ${option.searchText ?? ""} ${option.group ?? ""} ${option.section ?? ""}`
+    return options.filter(option =>
+      `${option.label} ${option.description ?? ''} ${option.searchText ?? ''} ${option.group ?? ''} ${option.section ?? ''}`
         .toLocaleLowerCase()
-        .includes(normalizedQuery),
-    );
+        .includes(normalizedQuery)
+    )
   }
-  if (!groupLimit) return options;
+  if (!groupLimit) return options
 
-  const groupCounts = new Map<string, number>();
-  return options.filter((option) => {
-    if (!option.group || expandedGroups.has(option.group)) return true;
-    const visibleCount = groupCounts.get(option.group) ?? 0;
+  const groupCounts = new Map<string, number>()
+  return options.filter(option => {
+    if (!option.group || expandedGroups.has(option.group)) return true
+    const visibleCount = groupCounts.get(option.group) ?? 0
     if (visibleCount < groupLimit || option.value === value) {
-      groupCounts.set(option.group, visibleCount + 1);
-      return true;
+      groupCounts.set(option.group, visibleCount + 1)
+      return true
     }
-    return false;
-  });
+    return false
+  })
 }
 
 export function IssueDetailSearchableSelect<TValue extends string>({
@@ -171,40 +219,60 @@ export function IssueDetailSearchableSelect<TValue extends string>({
   triggerContent,
   footer,
   contentClassName,
+  modal = false,
   groupLimit,
   showAllLabel,
+  open: controlledOpen,
+  onOpenChange,
   onChange,
 }: IssueDetailSearchableSelectProps<TValue>) {
-  const portalTheme = useCollaborationPortalTheme();
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const effectiveGroupLimit = showAllLabel ? groupLimit : undefined;
+  const portalTheme = useCollaborationPortalTheme()
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const setOpen = (value: boolean) => {
+    setInternalOpen(value)
+    onOpenChange?.(value)
+  }
+  useEscapeKey(() => setOpen(false), open, contentRef)
+  const [activeValue, setActiveValue] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set())
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const effectiveGroupLimit = showAllLabel ? groupLimit : undefined
   const visibleOptions = visibleSearchableSelectOptions(
     options,
     value,
     normalizedQuery,
     effectiveGroupLimit,
-    expandedGroups,
-  );
-  const groupCounts = new Map<string, number>();
-  options.forEach((option) => {
-    if (!option.group) return;
-    groupCounts.set(option.group, (groupCounts.get(option.group) ?? 0) + 1);
-  });
+    expandedGroups
+  )
+  const groupCounts = new Map<string, number>()
+  const tabValue = visibleOptions.some(option => option.value === activeValue)
+    ? activeValue
+    : (visibleOptions.find(option => option.value === value)?.value ?? visibleOptions[0]?.value)
+  const selectedOption = options.find(option => option.value === value)
+  const selectedDescription = selectedOption
+    ? [selectedOption.group, selectedOption.label, selectedOption.description]
+        .filter(Boolean)
+        .join(' · ')
+    : value
+  options.forEach(option => {
+    if (!option.group) return
+    groupCounts.set(option.group, (groupCounts.get(option.group) ?? 0) + 1)
+  })
 
   return (
     <Popover.Root
+      modal={modal}
       open={open}
-      onOpenChange={(nextOpen) => {
-        setOpen(nextOpen);
+      onOpenChange={nextOpen => {
+        setOpen(nextOpen)
         if (nextOpen) {
-          setQuery("");
-          setExpandedGroups(new Set());
+          setQuery('')
+          setExpandedGroups(new Set())
+          setActiveValue(value)
         }
       }}
     >
@@ -214,7 +282,8 @@ export function IssueDetailSearchableSelect<TValue extends string>({
           data-testid={testId}
           data-value={value}
           aria-label={accessibleLabel}
-          aria-haspopup="listbox"
+          title={selectedDescription}
+          aria-haspopup="dialog"
           disabled={disabled}
           className={className}
         >
@@ -224,26 +293,67 @@ export function IssueDetailSearchableSelect<TValue extends string>({
       <Popover.Portal>
         <Popover.Content
           {...portalTheme}
+          ref={contentRef}
+          aria-label={accessibleLabel}
           data-testid={`${testId}-menu`}
           sideOffset={4}
           collisionPadding={8}
-          style={{ ...portalTheme.style, maxWidth: "calc(100vw - 16px)" }}
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            searchInputRef.current?.focus({ preventScroll: true });
+          style={{ ...portalTheme.style, maxWidth: 'calc(100vw - 16px)' }}
+          onOpenAutoFocus={event => {
+            event.preventDefault()
+            searchInputRef.current?.focus({ preventScroll: true })
           }}
-          className={`${portalTheme.className} z-system-popover flex max-h-[min(320px,var(--radix-popover-content-available-height))] w-72 flex-col overflow-hidden rounded-xl border border-border bg-background p-1.5 text-text-primary shadow-lg ${contentClassName ?? ""}`}
+          onEscapeKeyDown={event => {
+            event.preventDefault()
+            event.stopPropagation()
+            if (!isImeComposingEvent(event)) setOpen(false)
+          }}
+          onKeyDown={event => {
+            if (isImeComposingEvent(event)) {
+              event.stopPropagation()
+              return
+            }
+            const searching = event.target === searchInputRef.current
+            if (searching && event.key === 'Enter') {
+              event.preventDefault()
+              event.stopPropagation()
+              return
+            }
+            if (
+              !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) ||
+              (searching && ['Home', 'End'].includes(event.key))
+            )
+              return
+            const options = Array.from(
+              contentRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []
+            )
+            if (!options.length) return
+            event.preventDefault()
+            const current = options.indexOf(document.activeElement as HTMLButtonElement)
+            const next =
+              event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? options.length - 1
+                  : event.key === 'ArrowDown'
+                    ? (current + 1) % options.length
+                    : current <= 0
+                      ? options.length - 1
+                      : current - 1
+            options[next]?.focus()
+          }}
+          className={`${portalTheme.className} z-system-popover flex max-h-[min(320px,var(--radix-popover-content-available-height))] w-72 flex-col overflow-hidden rounded-xl border border-border bg-background p-1.5 text-text-primary shadow-lg ${contentClassName ?? ''}`}
         >
-          <label className="flex h-8 shrink-0 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-muted">
+          <label className="flex min-h-11 shrink-0 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-secondary md:min-h-8">
             <Search className="h-3.5 w-3.5 shrink-0" />
             <input
               ref={searchInputRef}
               data-testid={`${testId}-search`}
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={event => setQuery(event.target.value)}
               placeholder={searchPlaceholder}
               aria-label={searchPlaceholder}
-              className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+              className="min-h-11 min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary md:min-h-8"
             />
           </label>
           <div
@@ -253,23 +363,18 @@ export function IssueDetailSearchableSelect<TValue extends string>({
           >
             {visibleOptions.map((option, index) => {
               const showSection =
-                option.section &&
-                option.section !== visibleOptions[index - 1]?.section;
-              const previousGroup = visibleOptions[index - 1]?.group;
-              const nextGroup = visibleOptions[index + 1]?.group;
-              const showGroup = Boolean(
-                option.group && option.group !== previousGroup,
-              );
-              const totalInGroup = option.group
-                ? (groupCounts.get(option.group) ?? 0)
-                : 0;
+                option.section && option.section !== visibleOptions[index - 1]?.section
+              const previousGroup = visibleOptions[index - 1]?.group
+              const nextGroup = visibleOptions[index + 1]?.group
+              const showGroup = Boolean(option.group && option.group !== previousGroup)
+              const totalInGroup = option.group ? (groupCounts.get(option.group) ?? 0) : 0
               const showAll =
                 !normalizedQuery &&
                 Boolean(option.group) &&
                 option.group !== nextGroup &&
                 Boolean(effectiveGroupLimit) &&
                 totalInGroup > (effectiveGroupLimit ?? 0) &&
-                !expandedGroups.has(option.group!);
+                !expandedGroups.has(option.group!)
               return (
                 <div key={option.value}>
                   {showSection ? (
@@ -279,7 +384,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                   ) : null}
                   {showGroup ? (
                     <p
-                      className={`px-2.5 pb-1 pt-2 text-xs font-medium text-text-muted ${option.section ? "pl-5" : ""}`}
+                      className={`px-2.5 pb-1 pt-2 text-xs font-medium text-text-secondary ${option.section ? 'pl-5' : ''}`}
                     >
                       {option.group}
                     </p>
@@ -288,59 +393,64 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                     type="button"
                     role="option"
                     aria-selected={option.value === value}
-                    data-testid={`${testId}-option-${option.value || "empty"}`}
+                    tabIndex={option.value === tabValue ? 0 : -1}
+                    onFocus={() => setActiveValue(option.value)}
+                    data-testid={`${testId}-option-${option.value || 'empty'}`}
                     onClick={() => {
-                      onChange(option.value);
-                      setOpen(false);
+                      onChange(option.value)
+                      setOpen(false)
                     }}
-                    className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted ${option.section ? "pl-7" : ""} ${
-                      option.value === value ? "bg-muted font-medium" : ""
+                    className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-9 ${option.section ? 'pl-7' : ''} ${
+                      option.value === value ? 'bg-muted font-medium' : ''
                     }`}
                   >
-                    <span className="min-w-0 flex-1 truncate">
-                      {option.label}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{option.label}</span>
+                      {option.description && (
+                        <span className="block truncate text-xs text-text-secondary">
+                          {option.description}
+                        </span>
+                      )}
                     </span>
-                    {option.value === value ? (
-                      <Check className="h-3.5 w-3.5 shrink-0" />
-                    ) : null}
+                    {option.value === value ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
                   </button>
                   {showAll && option.group ? (
                     <button
                       type="button"
                       data-testid={`${testId}-show-all-${option.group}`}
                       onClick={() =>
-                        setExpandedGroups((current) => {
-                          const next = new Set(current);
-                          next.add(option.group!);
-                          return next;
+                        setExpandedGroups(current => {
+                          const next = new Set(current)
+                          next.add(option.group!)
+                          return next
                         })
                       }
-                      className="flex min-h-9 w-full items-center rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                      className="flex min-h-11 w-full items-center rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-9"
                     >
                       {showAllLabel?.(option.group, totalInGroup)}
                     </button>
                   ) : null}
                 </div>
-              );
+              )
             })}
             {visibleOptions.length === 0 ? (
-              <p className="px-3 py-6 text-center text-xs text-text-muted">
+              <p role="status" className="px-3 py-6 text-center text-xs text-text-secondary">
                 {emptyLabel}
               </p>
             ) : null}
           </div>
           {actions.length > 0 ? (
             <div className="mt-1 shrink-0 border-t border-border pt-1">
-              {actions.map((action) => (
+              {actions.map(action => (
                 <button
                   key={action.testId}
                   type="button"
                   data-testid={action.testId}
                   onClick={() => {
-                    setOpen(false);
-                    action.onSelect();
+                    setOpen(false)
+                    action.onSelect()
                   }}
-                  className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+                  className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-9"
                 >
                   {action.icon ? (
                     <span
@@ -350,20 +460,16 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                       {action.icon}
                     </span>
                   ) : null}
-                  <span className="min-w-0 flex-1 truncate">
-                    {action.label}
-                  </span>
+                  <span className="min-w-0 flex-1 truncate">{action.label}</span>
                 </button>
               ))}
             </div>
           ) : null}
           {footer ? (
-            <div className="mt-1 shrink-0 border-t border-border pt-1">
-              {footer}
-            </div>
+            <div className="mt-1 shrink-0 border-t border-border pt-1">{footer}</div>
           ) : null}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
-  );
+  )
 }

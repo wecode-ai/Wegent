@@ -26,6 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IssueAssignmentReceiptState } from './IssueAssignmentReceipts'
 import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 import { TaskActivityView } from './TaskActivityView'
+import { clearIssueCommentDraftsForTests } from './useIssueCommentDraft'
 
 const createProjectRuntimeTask = vi.fn()
 const sendRuntimePaneMessage = vi.fn()
@@ -131,6 +132,17 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
       devices: devicesMock.value,
     },
     services: workbenchServices,
+    projectChat: {
+      attachmentStateByScope: new Proxy({}, { get: () => attachmentSelectionMock }),
+      handleFileSelectForScope: (_scope: string, files: File | File[]) =>
+        attachmentSelectionMock.handleFileSelect(files),
+      addExistingAttachmentForScope: (_scope: string, attachment: Attachment) =>
+        attachmentSelectionMock.addExistingAttachment(attachment),
+      removeAttachmentForScope: (_scope: string, id: number) =>
+        attachmentSelectionMock.removeAttachment(id),
+      dismissAttachmentErrorForScope: vi.fn(),
+      resetAttachmentsForScope: () => attachmentSelectionMock.resetAttachments(),
+    },
     createProjectRuntimeTask,
     sendRuntimePaneMessage,
     openRuntimeTask,
@@ -241,6 +253,83 @@ const agentMessage: ProjectChatMessage = {
 }
 
 describe('TaskActivityView', () => {
+  it('updates an open discussion reply when its execution arrives without losing the draft', async () => {
+    const user = userEvent.setup()
+    let emit!: (message: ProjectChatMessage) => void
+    const client = {
+      subscribe: vi.fn(async (_project, _issue, _after, onMessage) => {
+        emit = onMessage
+        return {
+          snapshot: { messages: [userMessage], latestSequence: 1, currentUserId: '1' },
+          unsubscribe: vi.fn(),
+        }
+      }),
+      send: vi.fn(async () => userMessage),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Local', project_store: 'local' } as never}
+        task={{ id: 'WEG-1', title: 'Discuss', status: 'inbox', version: 1 } as never}
+        issueTimeline
+        linear
+      />
+    )
+    await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
+    const composer = screen.getByTestId('issue-reply-composer')
+    expect(composer).toHaveTextContent('继续此讨论')
+    const input = within(composer).getByTestId('cloud-task-activity-composer')
+    await user.type(input, 'Keep the unfinished reply')
+    await act(async () =>
+      emit({
+        ...agentMessage,
+        content: 'Execution ready',
+        status: 'completed',
+        runtimeAddress: { deviceId: 'device-1', taskId: 'discussion-session' },
+        rootMessageId: userMessage.messageId,
+        replyToMessageId: userMessage.messageId,
+      })
+    )
+    expect(composer).toHaveTextContent('将继续原执行任务')
+    expect(input).toHaveValue('Keep the unfinished reply')
+    expect(client.send).not.toHaveBeenCalled()
+  })
+
+  it('labels a discussion reply without promising an unbound execution', async () => {
+    const user = userEvent.setup()
+    const comment = { ...userMessage, content: 'A local discussion', metadata: {} }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [comment], latestSequence: 1, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => comment),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Local', project_store: 'local' } as never}
+        task={{ id: 'WEG-1', title: 'Discuss', status: 'inbox', version: 1 } as never}
+        issueTimeline
+        linear
+      />
+    )
+    await user.click(await screen.findByTestId('cloud-task-activity-reply-toggle-message-1'))
+    const composer = screen.getByTestId('issue-reply-composer')
+    expect(composer).toHaveTextContent('正在回复 Ada · 继续此讨论')
+    expect(within(composer).getByText('回复此讨论…')).toBeInTheDocument()
+    expect(composer).not.toHaveTextContent('原执行任务')
+    expect(screen.getByTestId('issue-reply-cancel')).toHaveAccessibleName('取消回复')
+    await user.click(screen.getByTestId('issue-reply-cancel'))
+    expect(screen.queryByTestId('issue-reply-composer')).not.toBeInTheDocument()
+    expect(client.send).not.toHaveBeenCalled()
+    expect(createProjectRuntimeTask).not.toHaveBeenCalled()
+  })
+
   it('opens a notification at its own AI message without focusing the reply composer', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
       new DOMRect(0, 100, 800, 100)
@@ -395,6 +484,7 @@ describe('TaskActivityView', () => {
     )
   })
   beforeEach(() => {
+    clearIssueCommentDraftsForTests()
     HTMLElement.prototype.scrollTo = vi.fn()
     paneExecution.running = false
     clearRuntimeConversationCacheForTests()
@@ -1428,6 +1518,84 @@ describe('TaskActivityView', () => {
     await user.click(screen.getByTestId('issue-reply-cancel'))
     expect(replyToggle).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByTestId('issue-reply-composer')).toBeNull()
+  })
+
+  it('describes a reply to an unbound human discussion without promising execution', async () => {
+    const root = { ...userMessage, rootMessageId: null }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [root], latestSequence: 1, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => root),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => agentMessage),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: '讨论', status: 'inbox', version: 1 } as never}
+        issueTimeline
+        linear
+      />
+    )
+    await userEvent.click(
+      await screen.findByTestId(`cloud-task-activity-reply-toggle-${root.messageId}`)
+    )
+    const composer = screen.getByTestId('issue-reply-composer')
+    expect(composer).toHaveTextContent('继续此讨论')
+    expect(composer).not.toHaveTextContent('继续原执行任务')
+    expect(within(composer).getByRole('textbox', { name: '回复此讨论…' })).toBeVisible()
+    expect(client.startAgentResponse).not.toHaveBeenCalled()
+  })
+
+  it('refreshes reply guidance when execution arrives while composing', async () => {
+    let emitMessage: ((message: ProjectChatMessage) => void) | undefined
+    const root = { ...userMessage, rootMessageId: null }
+    const client = {
+      subscribe: vi.fn(async (_projectId, _taskId, _afterSequence, onMessage) => {
+        emitMessage = onMessage
+        return {
+          snapshot: { messages: [root], latestSequence: 1, currentUserId: '1' },
+          unsubscribe: vi.fn(),
+        }
+      }),
+      send: vi.fn(async () => root),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => agentMessage),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: '讨论', status: 'inbox', version: 1 } as never}
+        issueTimeline
+        linear
+      />
+    )
+    fireEvent.click(await screen.findByTestId(`cloud-task-activity-reply-toggle-${root.messageId}`))
+    const composer = screen.getByTestId('issue-reply-composer')
+    expect(composer).toHaveTextContent('继续此讨论')
+    act(() => emitMessage?.({ ...agentMessage, rootMessageId: root.messageId }))
+    expect(composer).toHaveTextContent('继续此讨论')
+    act(() =>
+      emitMessage?.({
+        ...agentMessage,
+        messageId: 'late-execution',
+        sequenceNumber: 3,
+        rootMessageId: root.messageId,
+        runtimeAddress: { deviceId: 'device-1', taskId: 'late-session' },
+      })
+    )
+    expect(composer).toHaveTextContent('将继续原执行任务')
+    expect(
+      within(composer).getByRole('textbox', { name: '回复此讨论（继续原执行任务）…' })
+    ).toBeVisible()
   })
 
   function humanAssignmentMessages(humanUserId: number): ProjectChatMessage[] {

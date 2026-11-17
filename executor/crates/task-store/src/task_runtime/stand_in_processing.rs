@@ -56,7 +56,7 @@ pub(super) fn update_processing_configuration(
     state["error"] = Value::Null;
     state["nextCheckAt"] = json!((Utc::now() + chrono::Duration::minutes(5)).to_rfc3339());
     write(connection, STATE, &state)?;
-    for mut action in rows(connection, ACTION, user)?
+    for mut action in super::stand_in_processing_queries::pending_actions(connection, user)?
         .into_iter()
         .filter(|action| matches!(action["status"].as_str(), Some("pending" | "sending")))
     {
@@ -331,11 +331,13 @@ impl LocalTaskStore {
             return Ok(existing.metadata);
         }
         if kind == "continue_work"
-            && rows(&connection, ACTION, user)?.iter().any(|action| {
-                matches!(action["status"].as_str(), Some("pending" | "sending"))
-                    && action["kind"] == kind
-                    && action["arguments"]["taskId"] == arguments["taskId"]
-            })
+            && super::stand_in_processing_queries::pending_actions(&connection, user)?
+                .iter()
+                .any(|action| {
+                    matches!(action["status"].as_str(), Some("pending" | "sending"))
+                        && action["kind"] == kind
+                        && action["arguments"]["taskId"] == arguments["taskId"]
+                })
         {
             return Err(TaskRuntimeError::Invalid(
                 "A follow-up for this work is already waiting".into(),

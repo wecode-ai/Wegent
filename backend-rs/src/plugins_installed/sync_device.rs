@@ -27,9 +27,7 @@ use brz_redis::Redis;
 use chrono::Local;
 use serde_json::Value;
 
-use crate::device_identity::{
-    PluginDeviceInstallationRow, plugin_device_id_on, reconcile_plugin_device_rows_on,
-};
+use crate::device_identity::{PluginDeviceInstallationRow, plugin_device_id_on};
 use crate::http_compat::FastApiError;
 use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
@@ -565,16 +563,32 @@ pub(super) async fn ensure_pending_for_device<Q>(
 where
     Q: PluginQuery,
 {
-    let identity_map =
-        reconcile_plugin_device_rows_on::<_, PluginDeviceInstallationRow>(session, user_id, guard)
-            .await?;
+    ensure_pending_for_installs(session, user_id, device_id, guard, None).await
+}
+
+pub(super) async fn ensure_pending_for_installs<Q>(
+    session: &mut Q,
+    user_id: i64,
+    device_id: &str,
+    guard: Option<&dyn crate::device_identity::LeaseCheck>,
+    installed_ids: Option<&[i64]>,
+) -> MysqlResult<usize>
+where
+    Q: PluginQuery,
+{
+    let identity_map = crate::device_identity::reconcile_plugin_device_rows_for_installs_on::<
+        _,
+        PluginDeviceInstallationRow,
+    >(session, user_id, guard, installed_ids)
+    .await?;
     let normalized_device_id = plugin_device_id_on(session, user_id, device_id).await?;
     if normalized_device_id.is_empty() {
         return Ok(0);
     }
-    let desired: Vec<DesiredInstalledKind> = session
+    let mut desired: Vec<DesiredInstalledKind> = session
         .fetch_all(DESIRED_INSTALLS_QUERY, (user_id,))
         .await?;
+    desired.retain(|row| installed_ids.is_none_or(|ids| ids.contains(&row.id)));
     let mut changed = 0usize;
     // The session's identity map is seeded by `reconcile_plugin_device_rows`'s
     // leading read (primary-key ascending), so the flush emits the UPDATE

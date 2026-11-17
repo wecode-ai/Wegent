@@ -123,7 +123,7 @@ it('retains the assistant business result after the host activity marker', () =>
       />
     </>
   )
-  expect(container.textContent).not.toContain('分身主动更新')
+  expect(container.textContent).not.toContain('助理主动更新')
   expect(container.textContent).toContain(
     '会议简报已完成：明天十点讨论发布计划，需确认回滚负责人。'
   )

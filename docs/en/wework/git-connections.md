@@ -43,6 +43,8 @@ Select an execution device and GitHub or GitLab. A self-managed GitLab instance 
 - **All personal events** receives visible account activity, notifications, assignments and review requests, and tracks comments, reviews and CI state for discovered work.
 - **Follow a specific repository** receives activity from selected repositories and tracks subsequent changes to discovered work.
 
+After choosing **Read signed-in account** or **Search repositories**, the results area shows progress. A successful empty result explains whether to check sign-in or adjust the search. Changing the instance, scope or query clears the previous feedback. Loading another page keeps the repositories already found.
+
 Both scopes use the execution device's existing gh / glab account. Collection begins at activation rather than importing complete history. Bindings include the instance and stable user ID; switching the CLI account stops reads instead of silently rebinding. The current UI exposes no Webhook configuration and adding a repository creates no cloud receiver.
 
 Provider activity APIs determine event coverage, visibility, retention and latency; their events are not equivalent to all Webhook types. Unknown types retain their original JSON. GitHub returns up to 300 events from the past 30 days and may publish events late. Each collection rescans the available window with deduplication instead of advancing a receipt-time watermark that could lose delayed events. Activity deduplication IDs survive generic thirty-day cleanup; the 20,000-ID budget pauses collection explicitly instead of silently dropping or replaying old events. See [GitHub Events API](https://docs.github.com/en/rest/activity/events) and [GitLab Events API](https://docs.gitlab.com/api/events/).
