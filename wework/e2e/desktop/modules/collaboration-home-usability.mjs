@@ -252,6 +252,23 @@ async function verifyTaskLabels(control, home) {
   )
 }
 
+async function verifyAssistantSetupTouchTarget(control, home) {
+  await control.command('click', `${home} [data-testid="personal-home-tab-stand-in"]`)
+  const toggle = `${home} [data-testid="personal-home-assistant-view-toggle"]`
+  await control.command('scrollIntoViewAsUser', toggle)
+  await control.command('click', toggle)
+  const connect = `${home} [data-testid="personal-home-setup-assistant"]`
+  await control.command('scrollIntoViewAsUser', connect)
+  await control.command('waitFor', connect, { visible: true })
+  const [target] = JSON.parse(await control.command('getElementMetrics', connect))
+  assert.ok(
+    target.width >= 44 && target.height >= 44 && target.hitTestVisible,
+    'The mobile assistant connection action must provide a visible 44px touch target'
+  )
+  await control.command('scrollIntoViewAsUser', toggle)
+  await control.command('click', toggle)
+}
+
 async function verifyRecordDraftNavigation(control, home) {
   const record = `${home} [data-testid="collaboration-home-issue-content"]`
   const previous = await control.command('getValue', record)
@@ -575,6 +592,7 @@ export async function verifyCollaborationHomeUsability(
 
     await resizeHome(control, home, 390, 900, timeoutMs)
     await verifyCompactNavigation(control, home, timeoutMs)
+    await verifyAssistantSetupTouchTarget(control, home)
     for (const selector of [
       '[data-testid="workspace-tab-strip"] [role="tab"][aria-selected="true"]',
       '[data-testid="workspace-tab-add"]',

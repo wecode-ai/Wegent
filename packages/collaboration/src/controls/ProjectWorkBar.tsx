@@ -865,7 +865,7 @@ export function ProjectWorkBar({
               data-testid="project-work-button"
               onClick={handleToggleMenu}
               className={cn(
-                'flex h-11 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30',
+                'flex h-11 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]',
                 open && 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
                 buttonClassName
               )}
@@ -894,7 +894,7 @@ export function ProjectWorkBar({
                   onClick={handleClearProject}
                   title={menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
                   aria-label={menuLabels?.clear ?? t('workbench.no_project', '不使用项目')}
-                  className="group flex h-8 max-md:min-h-11 w-8 max-md:min-w-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
+                  className="group flex h-8 max-md:min-h-11 w-8 max-md:min-w-11 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]"
                 >
                   <ProjectFolderIcon
                     project={currentProject}
@@ -914,7 +914,7 @@ export function ProjectWorkBar({
                 onClick={handleToggleMenu}
                 title={t('workbench.change_project', '更改项目')}
                 className={cn(
-                  'flex h-11 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30 md:h-8',
+                  'flex h-11 w-full min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:h-8',
                   open && 'bg-background/70 text-text-primary',
                   buttonClassName
                 )}
@@ -939,7 +939,7 @@ export function ProjectWorkBar({
               data-testid="project-work-button"
               onClick={handleToggleMenu}
               className={cn(
-                'flex h-11 w-full min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30 md:h-8',
+                'flex h-11 w-full min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:h-8',
                 open && 'bg-background/70 text-text-primary',
                 buttonClassName
               )}

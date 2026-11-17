@@ -228,7 +228,7 @@ export function ReasoningSlider({
         aria-valuenow={selectedIndex}
         aria-valuetext={selectedStep?.label}
         className={[
-          "absolute inset-x-0 h-11 cursor-pointer touch-none rounded-full outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30 md:h-8",
+          "absolute inset-x-0 h-11 cursor-pointer touch-none rounded-full outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:h-8",
           compact ? "top-0.5" : "top-1",
         ].join(" ")}
         onPointerDown={handlePointerDown}
@@ -292,7 +292,7 @@ export function ReasoningSlider({
               aria-label={step.label}
               onFocus={clearHoverSubmenu}
               onClick={() => selectValue(step.value)}
-              className="absolute top-1/2 z-10 h-11 w-11 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-full outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30 md:h-8 md:w-8"
+              className="absolute top-1/2 z-10 h-11 w-11 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-full outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:h-8 md:w-8"
               style={{ left: getSliderPosition(index, steps.length) }}
             >
               <span
