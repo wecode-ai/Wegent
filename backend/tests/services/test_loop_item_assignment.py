@@ -1905,6 +1905,8 @@ def _external_issue(*labels: str) -> dict[str, object]:
         "title": "External issue",
         "state": "open",
         "labels": list(labels),
+        "created_at": "2026-11-17T00:00:00Z",
+        "updated_at": "2026-11-17T00:00:00Z",
     }
 
 
@@ -2019,6 +2021,19 @@ def test_external_assign_preserves_creator_label(
     )
     monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
 
+    # Provider versions must remain stable while the local clock advances.
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_now",
+        MagicMock(
+            side_effect=[
+                "2026-11-18T00:00:00Z",
+                "2026-11-18T00:00:01Z",
+                "2026-11-18T00:00:02Z",
+                "2026-11-18T00:00:03Z",
+            ]
+        ),
+    )
     external_loop_item_provider.assign(
         test_db,
         f"{project.project_key}-7",
