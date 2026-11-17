@@ -9,7 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CollaborationParticipantsTabs } from "./ProjectCollaborationParticipants";
-import { createProjectAiTeamSections } from "./projectAiTeamSections";
+import { createProjectParticipantSections, projectAiSettingsGroup } from "./projectSettingsSections";
 import { ProjectSettingsShell } from "./ProjectSettingsShell";
 
 describe("CollaborationParticipantsTabs", () => {
@@ -94,7 +94,7 @@ describe("CollaborationParticipantsTabs", () => {
   });
 
   it("opens AI team pages directly from a separate sidebar group without tabs", async () => {
-    const sections = createProjectAiTeamSections({
+    const sections = createProjectParticipantSections({
       agentsContent: <div>Agents content</div>,
       groupsContent: <div>Groups content</div>,
       membersContent: <div>Members content</div>,
@@ -113,6 +113,9 @@ describe("CollaborationParticipantsTabs", () => {
               content: <div>Overview content</div>,
             },
             ...sections,
+            { id: "environments", label: "执行环境", testId: "project-environments",
+              group: projectAiSettingsGroup((_key, fallback) => fallback ?? ""),
+              content: <div>Environment content</div> },
           ]}
         />,
       );
@@ -121,12 +124,12 @@ describe("CollaborationParticipantsTabs", () => {
       Array.from(container.querySelectorAll("aside h2")).map(
         (node) => node.textContent,
       ),
-    ).toEqual(["项目设置", "AI 团队"]);
+    ).toEqual(["项目设置", "AI 配置"]);
     expect(
       Array.from(
-        container.querySelectorAll('nav[aria-label="AI 团队"] button'),
+        container.querySelectorAll('nav[aria-label="AI 配置"] button'),
       ).map((node) => node.textContent),
-    ).toEqual(["智能体", "协作小组"]);
+    ).toEqual(["智能体", "协作小组", "执行环境"]);
     expect(container.querySelector('nav[aria-label="项目设置"]')?.textContent).toContain('项目成员');
     for (const [id, text] of [
       ["agents", "Agents content"],

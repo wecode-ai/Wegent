@@ -1,4 +1,5 @@
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { verifyExecutionEnvironmentConflict } from '../modules/execution-environment-conflict.mjs'
 import assert from 'node:assert/strict'
 import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue-boundary.mjs'
 
@@ -356,6 +357,7 @@ async function verifyConfiguredExecutionEnvironment(
     scoped('[data-testid="collaboration-project-settings-environments"]')
   )
   const repositoryUrl = pathToFileURL(join(resultDir, 'workspace')).href
+  await verifyExecutionEnvironmentConflict(control, request, projectId, CONTENT)
   await control.command(
     'waitFor',
     scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation"]:not([open])`)

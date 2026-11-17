@@ -1013,7 +1013,7 @@ component-level validation outlines to override the native-outline reset.
 
 - Project settings share a `20px` horizontal gutter, `24px` top inset, a
   `max-w-4xl` reading width and the small heading role. Human access belongs
-  under Project members; AI team groups Agents and Collaboration groups.
+  under Project members; AI configuration groups Agents, Collaboration groups and execution environments.
 - Preserve drafts when moving between settings sections within one project.
   Mount sections on first visit and suspend hidden effects; do not preload
   unrelated settings or keep their requests active. Project changes reset

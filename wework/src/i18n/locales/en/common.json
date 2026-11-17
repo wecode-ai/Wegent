@@ -115,7 +115,6 @@
     "configure_devices": "Choose or add a device",
     "runtime_label": "Runtime (optional)",
     "runtime_optional_hint": "You can create the Issue now and configure a runtime when starting an Agent.",
-
     "add_participants": "Add participants",
     "participant_type": "Participant type",
     "participant_human": "People",
@@ -5515,6 +5514,8 @@
     "workflow_branch_collector_poll": "Polling collector active",
     "workflow_branch_collector_webhook": "Webhook pending registration",
     "workflow_branch_collector_error": "Collector unavailable",
+    "ai_configuration": "AI configuration",
+    "execution_environment_ready": "Project directory ready",
     "ai_team": "AI team",
     "ai_team_members": "Members",
     "ai_team_groups": "Collaboration teams",
@@ -5557,7 +5558,13 @@
     "parent_board_summary_with_other": "{{parents}} parent issues · {{standalone}} standalone issues · {{other}} other issues",
     "parent_board_direct_children": "Direct sub-issues",
     "parent_board_other": "Other issues",
-    "assistant_task_pending": "Waiting for assistant"
+    "assistant_task_pending": "Waiting for assistant",
+    "execution_environment_configuration_conflict": "Configuration changed elsewhere. Your draft is unsaved. Loading the latest configuration replaces your draft. Alternatively, keep your draft and refresh the version, then review it before saving. Saving replaces the latest environment configuration.",
+    "execution_environment_draft_rebased": "Latest version loaded. Your draft is unsaved; review it before saving.",
+    "execution_environment_configuration_reloaded": "Latest configuration loaded.",
+    "execution_environment_refresh_failed": "Could not read the latest configuration. Your draft is preserved. Retry reading.",
+    "execution_environment_reload_configuration": "Load latest configuration",
+    "execution_environment_rebase_configuration": "Keep draft and refresh version"
   },
   "collaboration": {
     "all_workspaces": "All groups",

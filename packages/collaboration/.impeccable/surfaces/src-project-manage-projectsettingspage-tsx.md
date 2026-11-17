@@ -19,6 +19,8 @@ OWN-WORLD: 继承 Wework 中性色、系统字体、语义字号、细分隔线�
 
 STORY: 管理者查看身份和配置摘要，展开成员、规则、环境或共享，明确保存。草稿在设置页间保留；业务错误保留可恢复入口。
 
+NAVIGATION: 人的访问权限留在项目设置；智能体、协作小组和执行环境同属 AI 配置。自动处理支持分配给人，配置共享包含项目看板和角色映射，两者保留项目层入口。设备、代码仓库和初始化命令服务于 AI 执行。
+
 FIRST VIEWPORT: 保留应用与设置侧栏；居中单内容列，紧凑名称与目标字段，下面是成员、协作规则、环境、共享的纵向摘要行。成员初始展开。保存动作位于内容底部的可见粘性操作栏。Signature interaction: independently expand configuration rows; native immediate disclosure, no decorative motion.
 
 FORM: Ranked structure 7, configuration summaries with inline editing. seed:be2beafbfa1d7230. Chosen sketch: inline-maintenance; code-led. Summary patterns also guide execution environments, automation and template editing without inventing data or forcing setup order.

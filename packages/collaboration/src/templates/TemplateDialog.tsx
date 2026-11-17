@@ -72,6 +72,7 @@ export function TemplateDialog({
       data-testid="collaboration-template-dialog"
       onCancel={event => {
         event.preventDefault()
+        event.stopPropagation()
         if (!busy) onClose()
       }}
     >

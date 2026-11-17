@@ -131,6 +131,17 @@
   border: 1px solid rgb(var(--color-border));
   border-radius: 12px;
 }
+.collaboration-template-card footer {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.collaboration-template-card footer > span {
+  flex-basis: 100%;
+}
+.collaboration-template-card footer > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 .collaboration-template-card h3 {
   margin: 16px 0 8px;
   font-weight: 500;

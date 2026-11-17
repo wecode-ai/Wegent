@@ -229,11 +229,13 @@ export function ProjectEnvironmentDevices({
                       {executionEnvironmentStatusLabel(environment.status, translate)}
                     </span>
                   </span>
-                  {instanceStatus === 'preparing' || instanceStatus === 'error' ? (
+                  {instanceStatus !== 'uninitialized' ? (
                     <span className="text-xs text-text-secondary" role="status">
                       {instanceStatus === 'preparing'
                         ? translate('todo.execution_environment_preparing', '正在准备项目目录')
-                        : translate(
+                        : instanceStatus === 'ready'
+                          ? translate('todo.execution_environment_ready', '项目目录已准备好')
+                          : translate(
                             'todo.execution_environment_initialization_error',
                             '项目准备失败'
                           )}

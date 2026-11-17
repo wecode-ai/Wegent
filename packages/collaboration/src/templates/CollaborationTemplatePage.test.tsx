@@ -55,6 +55,32 @@ function remote(): CollaborationTemplateRemote {
   }
 }
 
+it('cancels only the nested template dialog and restores its trigger', async () => {
+  const parentClosed = vi.fn()
+  const childClosed = vi.fn()
+  const render = (nested: boolean) => (
+    <TemplateDialog title="Template library" closeLabel="Close" onClose={parentClosed}>
+      <button data-testid="import-trigger">Import YAML</button>
+      {nested && (
+        <TemplateDialog title="Import YAML" closeLabel="Close" onClose={childClosed}>
+          <textarea aria-label="YAML" />
+        </TemplateDialog>
+      )}
+    </TemplateDialog>
+  )
+  await act(async () => root.render(render(false)))
+  const trigger = container.querySelector<HTMLButtonElement>('[data-testid="import-trigger"]')!
+  trigger.focus()
+  await act(async () => root.render(render(true)))
+  const nested = container.querySelectorAll('dialog')[1]
+  await act(async () => nested.dispatchEvent(new Event('cancel', { cancelable: true })))
+  expect(childClosed).toHaveBeenCalledOnce()
+  expect(parentClosed).not.toHaveBeenCalled()
+  await act(async () => root.render(render(false)))
+  expect(document.activeElement).toBe(trigger)
+  expect(container.querySelector('dialog')!.open).toBe(true)
+})
+
 async function click(testId: string) {
   const target = container.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)
   expect(target).not.toBeNull()

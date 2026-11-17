@@ -34,7 +34,7 @@ When creating a cloud project, open **Project collaborators → Add collaborator
 
 Select a group name to open its home and review cross-project operations and items needing attention. When the content exceeds the window height, scroll down in the main content area on the right to reach the remaining projects and items.
 
-Global catalogs, group settings, and project settings remain separate levels. Code directories are separate resources, and project AI team settings do not replace group membership management.
+Global catalogs, group settings, and project settings remain separate levels. Code directories are separate resources, and project AI configuration settings do not replace group membership management.
 
 | Feature                           | Entry and steps                                                                                                                              | Conditions and limits                                                                                                       |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -252,7 +252,7 @@ When two or more agents are selected, the creation flow recommends organizing th
 
 ### Use workspace agents in a project
 
-After creating or adding an agent under **Project settings → AI team → Agents**, an administrator can select it under **Assignee → Workspace agents** on a new or existing Issue. Assignment executes according to project configuration. Use **Add agent → Existing agents** on that settings page to enable it beforehand. Catalogs show the configured display name or the resource name when no display name is set.
+After creating or adding an agent under **Project settings → AI configuration → Agents**, an administrator can select it under **Assignee → Workspace agents** on a new or existing Issue. Assignment executes according to project configuration. Use **Add agent → Existing agents** on that settings page to enable it beforehand. Catalogs show the configured display name or the resource name when no display name is set.
 
 Local spaces save the agent configuration in the project, preserving its resource name, display name, model policy, and tools. In cloud spaces, workspace sharing grants use permission, while a project binding determines where the agent is available. Sharing does not grant permission to edit its source definition. Execution still requires an authorized project device and model.
 
@@ -260,7 +260,7 @@ Local spaces save the agent configuration in the project, preserving its resourc
 
 ### Agent capabilities and disabled state
 
-Open **Project settings → AI team → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. Project Maintainers can edit project-owned definitions, including entries created by other members; explicitly private definitions remain creator-only. Shared and personal Agent source definitions still require their original editing permission. Unchanged hidden MCP configuration is preserved; editing a project definition does not grant access to another person's private credentials. Click **Save** to apply changes and refresh the project list. A failed write keeps the form open with its values and an error. If the write succeeds but refreshing the list fails, the editor closes and the list offers a retry that only reloads data. Saving other fields preserves untouched routing; older Agents do not need a model-policy upgrade first.
+Open **Project settings → AI configuration → Agents → Edit** on the relevant entry. Template-imported and manually created Agents use the same editing entry in both local and cloud projects. Project Maintainers can edit project-owned definitions, including entries created by other members; explicitly private definitions remain creator-only. Shared and personal Agent source definitions still require their original editing permission. Unchanged hidden MCP configuration is preserved; editing a project definition does not grant access to another person's private credentials. Click **Save** to apply changes and refresh the project list. A failed write keeps the form open with its values and an error. If the write succeeds but refreshing the list fails, the editor closes and the list offers a retry that only reloads data. Saving other fields preserves untouched routing; older Agents do not need a model-policy upgrade first.
 
 Assignment errors identify the Agent, the Issue's bound environment, the policy environment and the denial reason. For a policy conflict, open **Runtime settings** in the editor above and configure the Agent to use the Issue's bound device. For missing workspace or project authorization, restore the grant on the indicated **Execution environments** page, then assign again. When group members have no common runner, the error lists each member and its eligible devices. Rejected assignments preserve the saved assignee and do not automatically move historical sessions to another device.
 
@@ -445,7 +445,7 @@ In narrow windows, **Collaboration navigation** above project settings expands H
 
 Each setup step has **Setup command** and **Working directory (optional)** fields. An incomplete repository associates the validation error with its empty fields and focuses the error message. Complete or remove the repository and save again. Editing or saving configuration in settings does not execute setup commands. Initialize starts environment preparation.
 
-**Project members** manages human access. **AI team → Agents / Collaboration groups** manages execution and coordination. **Basic information → Tags → New tag** provides a persistent **Tag name** label; enter the name and submit **New tag**.
+**Project members** manages human access. **AI configuration → Agents / Collaboration groups / Execution environments** manages execution and coordination. **Basic information → Tags → New tag** provides a persistent **Tag name** label; enter the name and submit **New tag**.
 
 After saving a collaboration group or automatic rule, you can return directly to Basic information without reloading. If **Configuration saved, but project details could not be refreshed. Retry the refresh.** appears, **Retry** only reads project details again; it never repeats the configuration write.
 
@@ -635,4 +635,6 @@ In the Issue comment composer toolbar, use the **Assignment mode** branch icon a
 
 Use **Create child Issue** beside any existing visible comment, including comments with or without mentions. Confirming the assignee also adds a discussion reply linking to the new child. Current Issue edit and comment permissions apply; mentions grant no additional access. Children retain the stricter of parent visibility and the project default so copied comments do not become project-public.
 
-Project maintainers can choose **Project settings → AI team → Agents → Delete** and confirm removal. Existing tasks, execution history and shared source resources remain intact. Replace or remove all leader, member and stage references in collaboration groups first. System-managed current-device Agents cannot be deleted. Removing a collaboration group also requires confirmation; Cancel leaves it unchanged.
+Project maintainers can choose **Project settings → AI configuration → Agents → Delete** and confirm removal. Existing tasks, execution history and shared source resources remain intact. Replace or remove all leader, member and stage references in collaboration groups first. System-managed current-device Agents cannot be deleted. Removing a collaboration group also requires confirmation; Cancel leaves it unchanged.
+
+Use **Project settings → AI configuration → Execution environments** to maintain AI devices, repositories and setup steps. Explicit preparation shows **Project directory ready** on completion. Version conflicts preserve your draft. **Load latest configuration** replaces the draft with server values; **Keep draft and refresh version** retains your input without submitting it. Review it before clicking **Save configuration**, which replaces the latest environment configuration. A failed read can be retried without repeating a write.

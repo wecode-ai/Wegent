@@ -10,7 +10,14 @@ import {
   projectSettingsPageClassName,
 } from './ProjectSettingsPage'
 
-export function createProjectAiTeamSections({
+export function projectAiSettingsGroup(translate: CollaborationTranslate) {
+  return {
+    id: 'ai-team',
+    label: translate('todo.ai_configuration', 'AI 配置'),
+  }
+}
+
+export function createProjectParticipantSections({
   agentsContent,
   groupsContent,
   membersContent,
@@ -23,7 +30,7 @@ export function createProjectAiTeamSections({
   testIdPrefix: string
   translate: CollaborationTranslate
 }): ProjectSettingsSection[] {
-  const group = { id: 'ai-team', label: translate('todo.ai_team', 'AI 团队') }
+  const group = projectAiSettingsGroup(translate)
   const pages = [
     {
       id: 'agents',

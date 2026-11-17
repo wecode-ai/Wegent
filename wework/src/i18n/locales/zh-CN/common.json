@@ -115,7 +115,6 @@
     "configure_devices": "选择或添加设备",
     "runtime_label": "运行环境（可选）",
     "runtime_optional_hint": "可先创建事项，运行智能体时再配置。",
-
     "add_participants": "添加参与者",
     "participant_type": "参与者类型",
     "participant_human": "人员",
@@ -5510,6 +5509,8 @@
     "workflow_branch_collector_poll": "轮询采集中",
     "workflow_branch_collector_webhook": "webhook 待注册",
     "workflow_branch_collector_error": "采集器不可用",
+    "ai_configuration": "AI 配置",
+    "execution_environment_ready": "项目目录已准备好",
     "ai_team": "AI 团队",
     "ai_team_members": "成员",
     "ai_team_groups": "协作团队",
@@ -5552,7 +5553,13 @@
     "parent_board_summary_with_other": "{{parents}} 个父事项 · {{standalone}} 个独立事项 · {{other}} 个其他事项",
     "parent_board_direct_children": "直属子事项",
     "parent_board_other": "其他事项",
-    "assistant_task_pending": "等待助理处理"
+    "assistant_task_pending": "等待助理处理",
+    "execution_environment_configuration_conflict": "配置已在别处更新，草稿尚未保存。载入最新配置会替换草稿；也可保留草稿并刷新版本，检查后再保存。保存会替换最新的执行环境配置。",
+    "execution_environment_draft_rebased": "已读取最新版本。草稿尚未保存，请检查后再保存。",
+    "execution_environment_configuration_reloaded": "已载入最新配置。",
+    "execution_environment_refresh_failed": "读取最新配置失败，草稿已保留。请重试读取。",
+    "execution_environment_reload_configuration": "载入最新配置",
+    "execution_environment_rebase_configuration": "保留草稿并刷新版本"
   },
   "collaboration": {
     "all_workspaces": "所有分组",
@@ -5877,7 +5884,7 @@
       "proposal_accept": "确认并应用",
       "remove_role": "移除角色：{{name}}",
       "dingtalk": "钉钉",
-      "group_mentions": "群聊中 @我",
+      "group_mentions": "仅接收 @我",
       "direct_messages": "私聊消息",
       "policy_manual": "手动交给角色",
       "policy_confirm": "执行操作前问我",
@@ -6025,7 +6032,6 @@
       "blacklisted": "已在黑名单",
       "group_message_scope": "接收消息",
       "group_message_scope_for": "{{name}}的消息接收范围",
-      "group_mentions": "仅接收 @我",
       "group_all_messages": "接收全部消息",
       "select_results": "全选当前结果",
       "resource_selected": "已选择",

@@ -7,7 +7,7 @@ export * from "./ProjectSettingsShell";
 export * from "./ProjectSettingsPages";
 export * from "./ProjectSettingsPage";
 export * from "./ProjectCollaborationParticipants";
-export * from "./projectAiTeamSections";
+export * from "./projectSettingsSections";
 export * from "./ProjectBoardSettingsDialog";
 export * from "./ProjectExecutionEnvironments";
 export * from "./ProjectCollaborationGroups";

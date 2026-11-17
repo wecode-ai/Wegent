@@ -50,6 +50,7 @@ The existing implementation, bilingual project manuals, and isolated ai:verify E
 
 - 同一项目的配置工作可以连续进行，跨页不丢草稿。 / Keep configuration continuous within a project.
 - 区分人的访问权限与 AI 的执行、协作配置。 / Distinguish human access from AI execution and coordination.
+- 执行环境属于 AI 配置，与智能体和协作小组同组；自动处理也可分配给人，保留在项目设置。 / Group execution environments with Agents and collaboration groups under AI configuration; automation also routes work to people and stays in project settings.
 - 保存结果真实明确；刷新失败可以重试读取，不重复提交。 / Report writes truthfully and retry failed reads without repeating writes.
 - 可选能力按需展开，不限制用户已有工作方式。 / Reveal optional capability without prescribing a workflow.
 

@@ -325,9 +325,25 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
               scoped('[data-testid="project-settings-shell-group-ai-team"] + nav button')
             )
           ),
-          2,
-          'AI team navigation must expose agents and collaboration groups'
+          3,
+          'AI configuration must expose agents, collaboration groups and execution environments'
         )
+        for (const section of ['agents', 'groups', 'environments']) {
+          assert.equal(
+            Number(
+              await control.command(
+                'getElementCount',
+                scoped(
+                  '[data-testid="project-settings-shell-group-ai-team"] + nav [data-testid="collaboration-project-settings-' +
+                    section +
+                    '"]'
+                )
+              )
+            ),
+            1,
+            'AI configuration must contain ' + section
+          )
+        }
         assert.equal(
           Number(
             await control.command(

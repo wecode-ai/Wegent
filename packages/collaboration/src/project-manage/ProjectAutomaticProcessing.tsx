@@ -614,7 +614,7 @@ export function ProjectAutomaticProcessing({
                           />
                           <button
                             aria-label={translate('common.edit', '编辑')}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
+                            className="flex h-11 w-11 items-center justify-center rounded-lg md:h-8 md:w-8 text-text-secondary hover:bg-muted"
                             data-testid={`automatic-processing-edit-${rule.id}`}
                             onClick={() => {
                               setDraft(ruleDraft)
@@ -627,7 +627,7 @@ export function ProjectAutomaticProcessing({
                           </button>
                           <button
                             aria-label={translate('common.delete', '删除')}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+                            className="flex h-11 w-11 items-center justify-center rounded-lg md:h-8 md:w-8 text-red-500 hover:bg-red-500/10 disabled:opacity-50"
                             data-testid={`automatic-processing-delete-${rule.id}`}
                             disabled={saving}
                             onClick={() => setPendingRemoval(rule)}
@@ -676,7 +676,7 @@ export function ProjectAutomaticProcessing({
               <button
                 data-testid="automatic-processing-close"
                 aria-label={translate('common.close', '关闭')}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted"
+                className="flex h-11 w-11 items-center justify-center rounded-lg md:h-8 md:w-8 text-text-secondary hover:bg-muted"
                 disabled={saving}
                 onClick={closeEditor}
                 type="button"

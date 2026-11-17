@@ -73,7 +73,8 @@ import { canEditCollaborationIssue } from "./permissions";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
 import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
 import {
-  createProjectAiTeamSections,
+  createProjectParticipantSections,
+  projectAiSettingsGroup,
   ProjectCollaborationGroups,
   ProjectAutomaticProcessing,
   ProjectExecutionEnvironments,
@@ -1173,7 +1174,7 @@ export function CollaborationApp({
                             },
                           ]
                         : []),
-                      ...createProjectAiTeamSections({
+                      ...createProjectParticipantSections({
                         translate: translate,
                         membersContent: (
                           <CollaborationSettings
@@ -1249,6 +1250,7 @@ export function CollaborationApp({
                       }),
                       {
                         id: "environments",
+                        group: projectAiSettingsGroup(translate),
                         label: messages.projectEnvironments,
                         testId: "collaboration-project-settings-environments",
                         content: (
