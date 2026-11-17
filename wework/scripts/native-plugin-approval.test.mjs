@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { afterEach, expect, test, vi } from 'vitest'
-import { withNativePluginDecision } from '../e2e/desktop/modules/native-plugin-approval.mjs'
+import {
+  NATIVE_PLUGIN_DECISION_TIMEOUT_MS,
+  withNativePluginDecision,
+} from '../e2e/desktop/modules/native-plugin-approval.mjs'
 
 const native = vi.hoisted(() => ({ execute: vi.fn() }))
 vi.mock('node:child_process', () => ({
@@ -463,7 +466,7 @@ test('rejects at the unchanged deadline when only the owned main window exists',
     const rejected = expect(decision).rejects.toThrow(
       'did not display its native Core plugin decision'
     )
-    await vi.advanceTimersByTimeAsync(12_000)
+    await vi.advanceTimersByTimeAsync(NATIVE_PLUGIN_DECISION_TIMEOUT_MS + 1)
     await rejected
     expect(native.execute.mock.calls.some(([, args]) => args[0] === 'windowfocus')).toBe(false)
   } finally {
