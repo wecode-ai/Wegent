@@ -40,10 +40,7 @@ function createFieldSaves<T extends VersionedIssue>(initial: T | null) {
           failures.delete(key)
           if (updated.version >= source.version) {
             source = updated
-            // The parent owns the canonical Issue state. A field save can outlive
-            // the editor surface after an autosave closes it, so successful
-            // writes must still propagate even when this render scope is inactive.
-            accept?.(updated)
+            if (active) accept?.(updated)
           }
           return source
         },
