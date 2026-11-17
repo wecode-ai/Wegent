@@ -319,12 +319,8 @@ run_wework_unit_tests() {
 
     if [ "$WEWORK_SCRIPTS_CHANGED" -eq 1 ]; then
         echo -e "   Running Wework script unit tests..."
-        SCRIPT_TEST_FILES=()
-        while IFS= read -r test_file; do
-            SCRIPT_TEST_FILES+=("${test_file#wework/}")
-        done < <(collect_node_test_files "wework/scripts")
-        if ! pnpm --filter wework test \
-            "${SCRIPT_TEST_FILES[@]}" >> "$TEMP_DIR/wework_test.log" 2>&1; then
+        if ! pnpm --filter wework test --suite=scripts \
+            >> "$TEMP_DIR/wework_test.log" 2>&1; then
             test_exit=1
         fi
     fi
