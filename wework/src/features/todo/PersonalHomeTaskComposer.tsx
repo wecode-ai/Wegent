@@ -12,7 +12,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { resolveProjectRuntimeWorkspaceTarget } from '@/lib/workspace-target'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
-import { updateIssueWhenPersonalTaskStarts } from './workItemTaskInput'
 import { issueRuntimePort } from './issueRuntimePort'
 import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
 import { LOCAL_USER } from '@/api/local/localSession'
@@ -347,21 +346,17 @@ function ProjectTaskComposer({
           generatedIssueTitle: issue.title,
         },
         onError: setError,
-        prepareRuntimeTask: async address => {
-          const rollback = await prepareIssueRuntimeTask({
+        prepareRuntimeTask: address =>
+          prepareIssueRuntimeTask({
             port,
             project,
             address,
             issueId: issue.id,
             title: issue.title,
-          })
-          const statusError = await updateIssueWhenPersonalTaskStarts(api.issues, issue.id, {
-            projectStore: project.project_store,
             dispatchRoundId: issue.human_task_binding?.dispatchRoundId,
-          })
-          if (statusError !== null) setError(statusError || t('task_board_status_update_failed'))
-          return rollback
-        },
+            issues: api.issues,
+            onStatusError: error => setError(error || t('task_board_status_update_failed')),
+          }),
       })
       if (!address) return false
       draft.onTaskCreated?.(issue, toWorkspaceRuntimeTaskAddress(address))

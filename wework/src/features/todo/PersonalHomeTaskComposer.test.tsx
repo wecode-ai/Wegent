@@ -503,7 +503,10 @@ it('preserves a manual title change when retrying an unchanged saved request', a
 })
 
 it('retains the saved Issue and unbinds when Runtime rejects a prepared request', async () => {
-  const { createProjectRuntimeTask, api, draft, address, port } = setup()
+  const { createProjectRuntimeTask, api, draft, address, port, issue } = setup()
+  api.issues.get
+    .mockResolvedValueOnce(issue)
+    .mockResolvedValueOnce({ ...issue, status: 'in_progress', version: 2 })
   createProjectRuntimeTask.mockImplementationOnce(async (_message, options) => {
     const rollback = await options.prepareRuntimeTask(address)
     await rollback()
@@ -513,10 +516,11 @@ it('retains the saved Issue and unbinds when Runtime rejects a prepared request'
   await waitFor(() => expect(draft.onPendingChange).toHaveBeenLastCalledWith(false))
   expect(port.bindTask).toHaveBeenCalledOnce()
   expect(port.unbindTask).toHaveBeenCalledOnce()
-  expect(api.issues.update).toHaveBeenCalledExactlyOnceWith(
-    'issue',
-    expect.objectContaining({ status: 'in_progress', version: 1 })
-  )
+  expect(api.issues.update).toHaveBeenNthCalledWith(1, 'issue', {
+    status: 'in_progress',
+    version: 1,
+  })
+  expect(api.issues.update).toHaveBeenNthCalledWith(2, 'issue', { status: 'pending', version: 2 })
   expect(draft.onTaskCreated).not.toHaveBeenCalled()
   expect(draft.onResetDraft).not.toHaveBeenCalled()
 })
