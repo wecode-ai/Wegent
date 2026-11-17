@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
     if schema_is_current(connection)? {
+        stand_in_history_index::ensure_schema(connection)?;
         ensure_default_work_item_project(connection)?;
         return Ok(());
     }
@@ -291,6 +292,7 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
          END;",
     )?;
     stand_in_telemetry::migrate(connection)?;
+    stand_in_history_index::ensure_schema(connection)?;
     ensure_default_work_item_project(connection)?;
     local_execution_activity::repair_missing_execution_activity(connection)?;
     connection.execute(
