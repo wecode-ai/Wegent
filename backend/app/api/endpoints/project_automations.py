@@ -29,6 +29,7 @@ from app.schemas.workspace import (
 from app.services.project_automations import (
     project_automation_service,
 )
+from app.services.template_imports import TemplateImportDependency
 from app.services.workspaces.service import workspace_service
 from shared.telemetry.decorators import trace_sync
 
@@ -68,12 +69,13 @@ def create_project_collaboration_group(
     values: CollaborationGroupCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    template_import: TemplateImportDependency = None,
 ) -> CollaborationGroupResponse:
     stage = "create"
     group_id: object | None = None
     try:
         group = workspace_service.create_project_collaboration_group(
-            db, project_id, current_user.id, values
+            db, project_id, current_user.id, values, template_import=template_import
         )
         group_id = group["id"]
         stage = "response"
@@ -192,8 +194,11 @@ def create_automation(
     values: ProjectAutomationCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    template_import: TemplateImportDependency = None,
 ) -> ProjectAutomationView:
-    return project_automation_service.create(db, project_id, current_user.id, values)
+    return project_automation_service.create(
+        db, project_id, current_user.id, values, template_import=template_import
+    )
 
 
 @router.patch(

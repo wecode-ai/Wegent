@@ -68,6 +68,18 @@ export function templateAgentBindings(document: CollaborationTemplate): Template
   )
 }
 
+export function templateAgentCreateInput(agent: TemplateAgent, routing: TemplateAgentRouting) {
+  const { key: _, ...configuration } = agent
+  return {
+    ...configuration,
+    ...routing,
+    capabilityMode: 'follow_device',
+    executionEnvironment: 'local',
+    executionMode: agent.executionMode ?? 'auto',
+    workspacePolicy: agent.workspacePolicy ?? 'project',
+  }
+}
+
 /** Create only referenced definitions; live identities are always owned by the destination. */
 export async function materializeTemplateAgents(
   api: Pick<SharedWorkspaceApi, 'agents'>,
@@ -90,17 +102,12 @@ export async function materializeTemplateAgents(
   try {
     for (const agent of definitions) {
       const id = templateAgentId(agent.key)
-      const { key: _, ...configuration } = agent
       const created = createAgent
         ? await createAgent(agent, routings.get(agent.runtime)!)
-        : await api.agents.create(projectId, {
-            ...configuration,
-            ...routings.get(agent.runtime),
-            capabilityMode: 'follow_device',
-            executionEnvironment: 'local',
-            executionMode: agent.executionMode ?? 'auto',
-            workspacePolicy: agent.workspacePolicy ?? 'project',
-          })
+        : await api.agents.create(
+            projectId,
+            templateAgentCreateInput(agent, routings.get(agent.runtime)!)
+          )
       bindings.set(id, String(created.team_id ?? created.id))
     }
   } catch (cause) {

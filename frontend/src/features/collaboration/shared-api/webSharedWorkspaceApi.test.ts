@@ -16,6 +16,31 @@ function createClient() {
 }
 
 describe('workspace resource configuration adapter', () => {
+  it('forwards receipt identity through the board and automation host adapters', async () => {
+    const client = createClient()
+    client.patch.mockResolvedValue({})
+    client.post.mockResolvedValue({})
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+    const context = { operationId: 'operation', stepKey: 'board:project-board' }
+    const options = {
+      headers: {
+        'X-Template-Import-Id': 'operation',
+        'X-Template-Import-Step': 'board:project-board',
+      },
+    }
+    await api.projects.update('project', { version: 1 }, context)
+    expect(client.patch).toHaveBeenCalledWith('/v1/cloud-projects/project', { version: 1 }, options)
+    const automation = { name: 'Imported' } as Parameters<
+      NonNullable<typeof api.automations>['create']
+    >[1]
+    await api.automations!.create('project', automation, context)
+    expect(client.post).toHaveBeenCalledWith(
+      '/v1/cloud-projects/project/automations',
+      { name: 'Imported' },
+      options
+    )
+  })
+
   it('forwards the observed content revision with an Issue read receipt', async () => {
     const client = createClient()
     client.post.mockResolvedValue({ id: 'issue-1', is_unread: true })

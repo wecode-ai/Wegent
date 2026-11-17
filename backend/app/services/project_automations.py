@@ -60,6 +60,7 @@ from app.services.project_automation_execution import (
     project_automation_execution,
 )
 from app.services.project_event_sources import EXECUTION_TARGETS, event_source
+from app.services.template_imports import TemplateImportRequest, lock_template_import
 
 logger = logging.getLogger(__name__)
 
@@ -105,8 +106,22 @@ class ProjectAutomationService:
         project_id: str,
         user_id: int,
         values: ProjectAutomationCreate,
+        *,
+        template_import: TemplateImportRequest | None = None,
     ) -> dict:
+        template_write = lock_template_import(
+            db,
+            template_import,
+            project_id=project_id,
+            user_id=user_id,
+            kind="automation",
+            payload=values,
+        )
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
+        if template_write is not None and template_write.resource_id is not None:
+            row = self._rule(db, project_id, template_write.resource_id)
+            db.commit()
+            return self._rule_view(db, row)
         db.query(CloudProject).filter(
             CloudProject.id == project_id
         ).with_for_update().one()
@@ -116,6 +131,8 @@ class ProjectAutomationService:
             user_id=user_id,
             values=values,
         )
+        if template_write is not None:
+            template_write.record(row.id)
         db.commit()
         db.refresh(row)
         return self._rule_view(db, row)

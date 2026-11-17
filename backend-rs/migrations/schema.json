@@ -1,6 +1,18 @@
 {
-  "revision": "b1c2d3e4f5a6",
+  "revision": "b7e8f9a0c1d2",
   "tables": [
+    {
+      "table": "template_import_operations",
+      "statements": [
+        "CREATE TABLE template_import_operations (id VARCHAR(64) NOT NULL, project_id VARCHAR(255) NOT NULL, actor_user_id BIGINT NOT NULL, protocol_version INT NOT NULL, intent_sha256 CHAR(64) NOT NULL, intent_encrypted LONGTEXT NOT NULL, manifest JSON NOT NULL, created_at DATETIME(6) NOT NULL, updated_at DATETIME(6) NOT NULL, PRIMARY KEY (id), CONSTRAINT uq_template_import_identity UNIQUE (actor_user_id, project_id, protocol_version, intent_sha256)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+      ]
+    },
+    {
+      "table": "template_import_receipts",
+      "statements": [
+        "CREATE TABLE template_import_receipts (operation_id VARCHAR(64) NOT NULL, step_key VARCHAR(200) NOT NULL, kind VARCHAR(20) NOT NULL, request_sha256 CHAR(64) NOT NULL, resource_id VARCHAR(255) NOT NULL, completed_at DATETIME(6) NOT NULL, PRIMARY KEY (operation_id, step_key), CONSTRAINT fk_template_import_receipt_operation FOREIGN KEY (operation_id) REFERENCES template_import_operations (id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+      ]
+    },
     {
       "table": "background_executions",
       "statements": [

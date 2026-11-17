@@ -7,7 +7,7 @@ import { applyWorkspaceTemplate } from "../templates/workspaceConfiguration";
 import {
   readTemplateAgents,
   templateRoutingResolver,
-  materializeTemplateAgents,
+  templateAgentId,
 } from "../templates/agents";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -31,10 +31,7 @@ import {
 import { CollaborationTemplateContext } from "../templates/context";
 import { CollaborationTemplatePage } from "../templates/CollaborationTemplatePage";
 import type { CollaborationTemplate } from "../templates/types";
-import {
-  prepareTemplateProject,
-  configureTemplateProject,
-} from "../templates/projectConfiguration";
+import { applyProjectTemplate } from "../templates/projectConfiguration";
 import { useDeviceCatalog } from "./useDeviceCatalog";
 import { ensureWorkspaceEnvironmentSharing } from "../execution-environment/ensureWorkspaceEnvironmentSharing";
 
@@ -74,6 +71,7 @@ import {
   normalizeCollaborationGroupDraftForPersistence,
   ProjectCreateDialog,
   projectCreateLabels,
+  type ProjectCreateCollaborationGroupDraft,
 } from "../project-create";
 import {
   CollaborationParticipantsTabs,
@@ -3021,14 +3019,6 @@ function CollaborationPlatformAppContent({
             generateCollaborationGroupDraft:
               host.generateProjectCollaborationGroupDraft,
             configure: async (project, selection) => {
-              if (selection.template) {
-                await prepareTemplateProject(
-                  api,
-                  project.id,
-                  selection.template,
-                  locale,
-                );
-              }
               const existingMembers = await api.members.list(project.id);
               const existingMemberIds = new Set(
                 existingMembers.map((member) => member.user_id),
@@ -3105,22 +3095,56 @@ function CollaborationPlatformAppContent({
                     })),
                 )),
               ];
-              const resolvedTemplate = selection.template
-                ? await materializeTemplateAgents(
-                    api,
-                    project.id,
-                    selection.template,
-                    selection.collaborationGroupDrafts,
-                    templateMessages[locale].partial,
-                    undefined,
-                    templateRoutingResolver(),
-                  )
-                : {
-                    drafts: selection.collaborationGroupDrafts,
-                    agentIds: new Set<string>(),
-                  };
-              const templateGroups: CollaborationGroup[] = [];
-              for (const rawGroupDraft of resolvedTemplate.drafts) {
+              const templateReferences = new Set(
+                (
+                  selection.template?.spec.resources.collaboration.agents ?? []
+                ).map((agent) => templateAgentId(agent.key)),
+              );
+              const mapParticipant = (
+                participant: ProjectCreateCollaborationGroupDraft["leader"],
+              ) => {
+                if (
+                  participant.kind === "human" ||
+                  templateReferences.has(participant.id)
+                )
+                  return participant;
+                const projectAgent = createdAgents.find(
+                  ({ resourceId }) => resourceId === participant.id,
+                )?.projectAgent;
+                if (!projectAgent)
+                  throw new Error(
+                    locale === "zh-CN"
+                      ? "协作小组中的智能体未成功加入项目"
+                      : "An Agent in the group was not added to the project",
+                  );
+                return { ...participant, id: String(projectAgent.id) };
+              };
+              const drafts = selection.collaborationGroupDrafts.map(
+                (group) => ({
+                  ...group,
+                  leader: mapParticipant(group.leader),
+                  members: group.members.map(mapParticipant),
+                  stages: group.stages.map((stage) => ({
+                    ...stage,
+                    assignee: stage.assignee
+                      ? mapParticipant(stage.assignee)
+                      : null,
+                  })),
+                }),
+              );
+              if (selection.template) {
+                await applyProjectTemplate(
+                  api,
+                  project.id,
+                  selection.template,
+                  drafts,
+                  locale,
+                  templateMessages[locale].partial,
+                  templateRoutingResolver(),
+                );
+                return api.projects.get(project.id);
+              }
+              for (const rawGroupDraft of drafts) {
                 const groupDraft =
                   normalizeCollaborationGroupDraftForPersistence(rawGroupDraft);
                 if (!api.projects.createCollaborationGroup) {
@@ -3130,30 +3154,7 @@ function CollaborationPlatformAppContent({
                       : "This project does not support collaboration groups",
                   );
                 }
-                const mapParticipant = (
-                  participant: typeof groupDraft.leader,
-                ) => {
-                  if (participant.kind === "human") {
-                    return participant;
-                  }
-                  const projectAgent = createdAgents.find(
-                    ({ resourceId }) => resourceId === participant.id,
-                  )?.projectAgent;
-                  if (resolvedTemplate.agentIds.has(participant.id))
-                    return participant;
-                  if (!projectAgent) {
-                    throw new Error(
-                      locale === "zh-CN"
-                        ? "协作小组中的智能体未成功加入项目"
-                        : "An Agent in the group was not added to the project",
-                    );
-                  }
-                  return {
-                    ...participant,
-                    id: String(projectAgent.id),
-                  };
-                };
-                const leader = mapParticipant(groupDraft.leader);
+                const leader = groupDraft.leader;
                 if (!leader.id) {
                   throw new Error(
                     locale === "zh-CN"
@@ -3161,33 +3162,16 @@ function CollaborationPlatformAppContent({
                       : "The owner is not a current collaborator",
                   );
                 }
-                const createdGroup =
-                  await api.projects.createCollaborationGroup(project.id, {
-                    name: groupDraft.name,
-                    description: groupDraft.description,
-                    instructions: groupDraft.instructions,
-                    leader,
-                    members: groupDraft.members.map(mapParticipant),
-                    coordinationMode: "manager",
-                    stages: groupDraft.stages.map((stage) => ({
-                      ...stage,
-                      assignee: stage.assignee
-                        ? mapParticipant(stage.assignee)
-                        : null,
-                    })),
-                    executionRequirements: groupDraft.executionRequirements,
-                  });
-                templateGroups.push(createdGroup);
-              }
-              if (selection.template) {
-                await configureTemplateProject(
-                  api,
-                  project.id,
-                  selection.template,
-                  templateGroups,
-                  locale,
-                );
-                return api.projects.get(project.id);
+                await api.projects.createCollaborationGroup(project.id, {
+                  name: groupDraft.name,
+                  description: groupDraft.description,
+                  instructions: groupDraft.instructions,
+                  leader,
+                  members: groupDraft.members,
+                  coordinationMode: "manager",
+                  stages: groupDraft.stages,
+                  executionRequirements: groupDraft.executionRequirements,
+                });
               }
             },
           }}

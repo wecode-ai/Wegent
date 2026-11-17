@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { SharedWorkspaceApi, WorkspaceAutomationInput } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import type { TemplateRoutingResolver, CollaborationTemplate } from './types'
@@ -10,6 +10,8 @@ import { normalizeCollaborationGroupDraftForPersistence } from '../project-creat
 import { materializeTemplateAgents, templateAgentId, templateAgentReferences } from './agents'
 import { applyTemplateGroups, TemplateConfigurationError } from './apply'
 import { reconcileProjectTemplateFailure } from './projectApplyRecovery'
+import type { TemplateProjectConfigurationOptions } from './projectTemplateImportTypes'
+import { applyDurableProjectTemplate, resumeDurableProjectTemplate } from './projectTemplateImport'
 
 export async function prepareTemplateProject(
   api: SharedWorkspaceApi,
@@ -44,11 +46,12 @@ export async function configureTemplateProject(
   projectId: string,
   document: CollaborationTemplate,
   groups: CollaborationGroup[],
-  locale: CollaborationLocale
+  locale: CollaborationLocale,
+  options: TemplateProjectConfigurationOptions = {}
 ) {
   const configuration = document.spec.resources.collaboration
   const { taskAssignment, board } = configuration.project
-  if (taskAssignment) {
+  if (taskAssignment && !options.isCompleted?.('automation')) {
     const index = configuration.groups.findIndex(group => group.key === taskAssignment.groupKey)
     const group = groups[index]
     if (!group || !api.automations) throw new Error('template_group_unavailable')
@@ -67,7 +70,7 @@ export async function configureTemplateProject(
         agent.modelPolicy?.mode === 'fixed'
       )
     })
-    await api.automations.create(projectId, {
+    const input: WorkspaceAutomationInput = {
       name: locale === 'zh-CN' ? `新任务 → ${group.name}` : `New issues → ${group.name}`,
       prompt:
         group.instructions ||
@@ -87,12 +90,17 @@ export async function configureTemplateProject(
       targetKind: 'collaboration_group',
       targetId: group.id,
       enabled: taskAssignment.enabled && routingReady,
-    })
+    }
+    const context = options.context?.('automation')
+    const created = context
+      ? await api.automations.create(projectId, input, context)
+      : await api.automations.create(projectId, input)
+    await options.onStepCompleted?.('automation', created.id)
   }
-  if (!board) return
+  if (!board || options.isCompleted?.('board')) return
   const latest = await api.projects.get(projectId)
-  const id = crypto.randomUUID()
-  await api.projects.update(projectId, {
+  const id = options.boardId?.('view') ?? crypto.randomUUID()
+  const input: Parameters<SharedWorkspaceApi['projects']['update']>[1] = {
     version: latest.version,
     tags: [...new Set([...latest.tags, ...board.tags])],
     ...(latest.board_config ? { boardConfig: { ...latest.board_config, group_by: 'tag' } } : {}),
@@ -101,18 +109,18 @@ export async function configureTemplateProject(
       schema_version: 1,
       default_view_id: id,
       views: [
-        ...(latest.board_views?.views ?? []),
+        ...(latest.board_views?.views ?? []).filter(view => view.id !== id),
         {
           id,
           name: board.name,
           columns: [
             {
-              id: crypto.randomUUID(),
+              id: options.boardId?.('unmatched') ?? crypto.randomUUID(),
               type: 'unmatched',
               value: locale === 'zh-CN' ? '待分派' : 'Backlog',
             },
-            ...board.tags.map(tag => ({
-              id: crypto.randomUUID(),
+            ...board.tags.map((tag, index) => ({
+              id: options.boardId?.(`tag-${index}`) ?? crypto.randomUUID(),
               type: 'tag' as const,
               value: tag,
             })),
@@ -121,7 +129,12 @@ export async function configureTemplateProject(
         },
       ],
     },
-  })
+  }
+  const context = options.context?.('board')
+  const updated = context
+    ? await api.projects.update(projectId, input, context)
+    : await api.projects.update(projectId, input)
+  await options.onStepCompleted?.('board', updated.id)
 }
 
 export async function applyProjectTemplate(
@@ -134,6 +147,19 @@ export async function applyProjectTemplate(
   resolveRouting?: TemplateRoutingResolver,
   onGroupsRefreshed?: (groups: CollaborationGroup[]) => void
 ) {
+  if (api.templateImports && ((await api.templateImports.supports?.(projectId)) ?? true)) {
+    return applyDurableProjectTemplate(
+      api,
+      projectId,
+      document,
+      drafts,
+      locale,
+      partialMessage,
+      resolveRouting,
+      onGroupsRefreshed,
+      { prepare: prepareTemplateProject, configure: configureTemplateProject }
+    )
+  }
   if (!api.projects.createCollaborationGroup) throw new Error('template_group_unavailable')
   const references = templateAgentReferences(drafts)
   const agentNames = (document.spec.resources.collaboration.agents ?? [])
@@ -199,4 +225,17 @@ export async function applyProjectTemplate(
   } catch (cause) {
     throw await reconcileProjectTemplateFailure(cause, recovery)
   }
+}
+
+export async function resumeProjectTemplateImport(
+  api: SharedWorkspaceApi,
+  projectId: string,
+  operationId: string,
+  locale: CollaborationLocale,
+  onGroupsRefreshed?: (groups: CollaborationGroup[]) => void
+) {
+  return resumeDurableProjectTemplate(api, projectId, operationId, locale, onGroupsRefreshed, {
+    prepare: prepareTemplateProject,
+    configure: configureTemplateProject,
+  })
 }

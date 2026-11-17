@@ -82,6 +82,19 @@ function fixture() {
 }
 
 describe('template execution defaults', () => {
+  it('uses the local capability route when durable imports do not support this project', async () => {
+    const { api, document, drafts } = fixture()
+    api.templateImports = {
+      supports: vi.fn(async () => false),
+      begin: vi.fn(),
+      get: vi.fn(),
+      list: vi.fn(),
+    }
+    await applyProjectTemplate(api, 'project-1', document, drafts, 'zh-CN', 'Partial')
+    expect(api.templateImports.begin).not.toHaveBeenCalled()
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  })
+
   it('routes new tasks to the persisted group and makes stage tags the default board without removing existing views', async () => {
     const { api, document, drafts, group, project } = fixture()
     await applyProjectTemplate(api, project.id, document, drafts, 'zh-CN', 'Partial')

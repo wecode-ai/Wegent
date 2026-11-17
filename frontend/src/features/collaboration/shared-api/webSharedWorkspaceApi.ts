@@ -6,6 +6,8 @@ import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-
 import {
   createAutomationExecutionCatalogApi,
   createSharedWorkspaceHttpApi,
+  templateImportPatch,
+  templateImportPost,
   mapCollaborationExecutionDto,
   mapWorkspaceDeliveryAssetDto,
   mapWorkspaceDeliveryDto,
@@ -30,10 +32,18 @@ import { getApiBaseUrl } from '@/lib/runtime-config'
 
 export interface WebWorkspaceHttpClient {
   get<T>(endpoint: string, options?: { cache?: RequestCache }): Promise<T>
-  post<T>(endpoint: string, data?: unknown): Promise<T>
+  post<T>(
+    endpoint: string,
+    data?: unknown,
+    options?: { headers?: Record<string, string> }
+  ): Promise<T>
   postForm<T>(endpoint: string, data: FormData): Promise<T>
   put<T>(endpoint: string, data?: unknown): Promise<T>
-  patch<T>(endpoint: string, data?: unknown): Promise<T>
+  patch<T>(
+    endpoint: string,
+    data?: unknown,
+    options?: { headers?: Record<string, string> }
+  ): Promise<T>
   delete<T>(endpoint: string, data?: unknown): Promise<T>
 }
 
@@ -522,6 +532,7 @@ export function createWebSharedWorkspaceApi(
   const sharedHttpApi = createSharedWorkspaceHttpApi(client)
 
   return {
+    templateImports: sharedHttpApi.templateImports,
     workspaces: sharedHttpApi.workspaces,
     resources: sharedHttpApi.resources,
     gitRepositories: sharedHttpApi.gitRepositories,
@@ -544,8 +555,13 @@ export function createWebSharedWorkspaceApi(
           keysToSnakeCase(projectInput)
         )
       },
-      update(projectId, input) {
-        return client.patch(`/v1/cloud-projects/${encoded(projectId)}`, keysToSnakeCase(input))
+      update(projectId, input, context) {
+        return templateImportPatch(
+          client,
+          `/v1/cloud-projects/${encoded(projectId)}`,
+          keysToSnakeCase(input),
+          context
+        )
       },
       archive(projectId, version) {
         return client.delete(`/v1/cloud-projects/${encoded(projectId)}?version=${version}`)
@@ -907,10 +923,12 @@ export function createWebSharedWorkspaceApi(
       list(projectId) {
         return client.get(`/v1/cloud-projects/${encoded(projectId)}/automations`)
       },
-      create(projectId, input) {
-        return client.post(
+      create(projectId, input, context) {
+        return templateImportPost(
+          client,
           `/v1/cloud-projects/${encoded(projectId)}/automations`,
-          keysToSnakeCase(input)
+          keysToSnakeCase(input),
+          context
         )
       },
       migrateWorkflow(projectId, input) {

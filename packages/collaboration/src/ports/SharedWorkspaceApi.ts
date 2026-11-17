@@ -445,7 +445,9 @@ export interface SharedWorkspaceAutomationExecutionCatalogApi {
 export interface WorkspaceProjectAgent extends CollaborationAgent {
   status?: string;
   systemPrompt?: string;
-  executionPolicy?: import("../agent-form/runnerRouting").AgentExecutionPolicy | null;
+  executionPolicy?:
+    | import("../agent-form/runnerRouting").AgentExecutionPolicy
+    | null;
   modelPolicy?: import("../agent-form/runnerRouting").AgentModelPolicy | null;
   [key: string]: unknown;
 }
@@ -457,6 +459,7 @@ export interface SharedWorkspaceProjectsApi {
   update(
     projectId: string,
     input: WorkspaceProjectUpdateInput,
+    templateImport?: import("../templates/projectTemplateImportTypes").TemplateImportContext,
   ): Promise<CollaborationProject>;
   archive(projectId: string, version: number): Promise<void>;
   listExecutionEnvironments(
@@ -488,6 +491,7 @@ export interface SharedWorkspaceProjectsApi {
   createCollaborationGroup?(
     projectId: string,
     input: CollaborationGroupCreateInput,
+    templateImport?: import("../templates/projectTemplateImportTypes").TemplateImportContext,
   ): Promise<import("../types").CollaborationGroup>;
   updateCollaborationGroup?(
     projectId: string,
@@ -853,6 +857,7 @@ export interface SharedWorkspaceAutomationsApi {
   create(
     projectId: string,
     input: WorkspaceAutomationInput,
+    templateImport?: import("../templates/projectTemplateImportTypes").TemplateImportContext,
   ): Promise<WorkspaceAutomationRule>;
   migrateWorkflow(
     projectId: string,
@@ -938,6 +943,7 @@ export interface SharedWorkspaceAgentsApi {
   create(
     projectId: string,
     input: Record<string, unknown>,
+    templateImport?: import("../templates/projectTemplateImportTypes").TemplateImportContext,
   ): Promise<WorkspaceProjectAgent>;
   update(
     projectId: string,
@@ -1014,6 +1020,7 @@ export interface WorkspaceStandInSettings {
 }
 
 export interface SharedWorkspaceApi {
+  templateImports?: import("../templates/projectTemplateImportTypes").SharedWorkspaceTemplateImportsApi;
   milestones?: import("../milestones/types").MilestonesApi;
   standIn?: {
     run?(

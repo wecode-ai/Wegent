@@ -353,6 +353,8 @@ export function TemplateBindingsDialog({
   onClose,
   renderConfiguration,
   modelConfiguration,
+  renderRecovery,
+  recoveryBusy = false,
 }: {
   document: CollaborationTemplate
   locale: CollaborationLocale
@@ -367,13 +369,16 @@ export function TemplateBindingsDialog({
   onClose(): void
   renderConfiguration?(disabled: boolean): ReactNode
   modelConfiguration?: TemplateModelConfiguration
+  renderRecovery?(busy: boolean): ReactNode
+  recoveryBusy?: boolean
 }) {
   const m = templateMessages[locale]
   const [selection, setSelection] = useState<{
     drafts: ProjectCreateCollaborationGroupDraft[]
     document: CollaborationTemplate
   } | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [saving, setBusy] = useState(false)
+  const busy = saving || recoveryBusy
   const [failure, setFailure] = useState<unknown>(null)
   const error = failure ? templateFailureMessage(failure, locale) : null
   const recovery = failure instanceof TemplateApplyRecoveryError ? failure : null
@@ -473,6 +478,7 @@ export function TemplateBindingsDialog({
         </>
       }
     >
+      {renderRecovery?.(busy)}
       <p className="collaboration-template-muted">{m.existingHint}</p>
       <TemplateBindings
         document={document}

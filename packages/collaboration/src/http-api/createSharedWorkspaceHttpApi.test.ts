@@ -8,6 +8,8 @@ import {
   createSharedWorkspaceHttpApi,
   type SharedWorkspaceHttpTransport,
   workspaceHttpRequestBody,
+  templateImportPatch,
+  templateImportPost,
 } from "./createSharedWorkspaceHttpApi";
 
 function createTransport(): {
@@ -31,6 +33,100 @@ function createTransport(): {
 }
 
 describe("createSharedWorkspaceHttpApi", () => {
+  it("preserves opaque resumable intent and discovers the same operation from another client", async () => {
+    const { transport, get, post } = createTransport();
+    const intent = {
+      document: {
+        mcpServers: { Review_Server: { env: { API_KEY_NAME: "synthetic" } } },
+      },
+      drafts: [],
+    };
+    const operation = {
+      id: "import-1",
+      projectId: "project",
+      protocolVersion: 1,
+      status: "pending",
+      steps: [],
+      intent,
+    };
+    post.mockResolvedValue(operation);
+    get.mockImplementation(async (path) =>
+      path.endsWith("template-imports") ? { items: [operation] } : operation,
+    );
+    const first = createSharedWorkspaceHttpApi(transport).templateImports;
+    const second = createSharedWorkspaceHttpApi(transport).templateImports;
+    const input = {
+      protocolVersion: 1 as const,
+      intent,
+      steps: [{ key: "group:main", kind: "group" as const }],
+    };
+    await expect(first.begin("project", input)).resolves.toEqual(operation);
+    expect(post).toHaveBeenCalledExactlyOnceWith(
+      "/v1/cloud-projects/project/template-imports",
+      input,
+    );
+    await expect(second.list("project")).resolves.toEqual([operation]);
+    await expect(second.get("project", "import-1")).resolves.toEqual(operation);
+  });
+
+  it("sends the operation and step headers for each template write without changing ordinary CRUD", async () => {
+    const { transport, post, patch } = createTransport();
+    post.mockResolvedValue({
+      id: "created",
+      name: "Imported",
+      members: [],
+      stages: [],
+    });
+    patch.mockResolvedValue({ id: "project" });
+    const api = createSharedWorkspaceHttpApi(transport);
+    const context = { operationId: "operation", stepKey: "agent:reviewer" };
+    const options = {
+      headers: {
+        "X-Template-Import-Id": "operation",
+        "X-Template-Import-Step": "agent:reviewer",
+      },
+    };
+    await api.agents.create("project", { name: "Imported" }, context);
+    expect(post).toHaveBeenLastCalledWith(
+      "/v1/cloud-projects/project/chat-agents",
+      { name: "Imported" },
+      options,
+    );
+    await api.projects.createCollaborationGroup!(
+      "project",
+      {
+        name: "Imported",
+        members: [],
+        stages: [],
+        leader: { kind: "human", id: "1" },
+      },
+      context,
+    );
+    expect(post).toHaveBeenLastCalledWith(
+      "/v1/cloud-projects/project/collaboration-groups",
+      expect.any(Object),
+      options,
+    );
+    await templateImportPost(
+      transport,
+      "/automations",
+      { target_id: "created" },
+      context,
+    );
+    expect(post).toHaveBeenLastCalledWith(
+      "/automations",
+      { target_id: "created" },
+      options,
+    );
+    await templateImportPatch(transport, "/project", { version: 1 }, context);
+    expect(patch).toHaveBeenLastCalledWith("/project", { version: 1 }, options);
+    await api.agents.create("project", { name: "Manual" });
+    expect(post).toHaveBeenLastCalledWith(
+      "/v1/cloud-projects/project/chat-agents",
+      { name: "Manual" },
+    );
+  });
+
   it("round-trips opaque MCP server names and options through project Agent editing", async () => {
     const { transport, get, patch } = createTransport();
     const mcpServers = {

@@ -187,6 +187,7 @@ mod mcp;
 mod milestones;
 mod personal_issues;
 mod project_coordination;
+mod template_imports;
 pub use wegent_task_store::task_store_background;
 pub use wegent_task_store::task_store_maintenance;
 
