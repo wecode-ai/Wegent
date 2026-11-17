@@ -251,6 +251,48 @@ describe('useWorkbenchDataRefresh', () => {
     }
   )
 
+  test('keeps fresh cloud device status during polling while task inventory is pending', async () => {
+    const pendingWork = deferred<RuntimeWorkListResponse>()
+    const pendingDevices = deferred<DeviceInfo[]>()
+    const cloudDevice: DeviceInfo = {
+      ...devices[0],
+      device_id: 'cloud-device',
+      device_type: 'remote',
+      is_default: false,
+    }
+    const cloudApi = {
+      listTeams: vi.fn().mockResolvedValue([]),
+      listDevices: vi
+        .fn()
+        .mockResolvedValueOnce([cloudDevice])
+        .mockResolvedValueOnce([{ ...cloudDevice, status: 'offline' }])
+        .mockReturnValue(pendingDevices.promise),
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce({ projects: [], chats: [], totalTasks: 0 })
+        .mockReturnValue(pendingWork.promise),
+    }
+    const hook = setup(undefined, undefined, {
+      cloudBackgroundApi: cloudApi,
+    } as WorkbenchServices)
+    const cloudStatus = () =>
+      hook.result.current.state.devices.find(device => device.device_id === 'cloud-device')?.status
+    await waitFor(() => expect(hook.result.current.cloudWorkStatus.availability).toBe('available'))
+    expect(cloudStatus()).toBe('online')
+
+    await act(async () => hook.result.current.refreshDevices())
+    await waitFor(() => expect(cloudStatus()).toBe('offline'))
+    await act(async () => hook.result.current.refreshDevices())
+    expect(cloudStatus()).toBe('offline')
+
+    await act(async () => {
+      pendingDevices.resolve([{ ...cloudDevice, status: 'offline' }])
+      pendingWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+    })
+    await waitFor(() => expect(hook.result.current.cloudWorkStatus.availability).toBe('available'))
+    expect(cloudStatus()).toBe('offline')
+  })
+
   test('keeps cloud navigation while refreshing only the changed work inventory', async () => {
     const cloudDevice = {
       ...devices[0],

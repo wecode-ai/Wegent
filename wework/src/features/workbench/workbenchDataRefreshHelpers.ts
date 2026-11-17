@@ -1,4 +1,5 @@
-import type { CloudRuntimeState } from '@/types/workbench'
+import type { Dispatch } from 'react'
+import type { CloudRuntimeState, WorkbenchState } from '@/types/workbench'
 import type { ExecutorClient } from '@/api/executorAccess'
 import type {
   DeviceInfo,
@@ -6,6 +7,7 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
+  User,
 } from '@/types/api'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { isRemoteTaskDevice } from '@/lib/device-capabilities'
@@ -16,6 +18,17 @@ import {
   readCachedDeviceList,
 } from './workbenchCloudStatus'
 import { getRuntimeTaskRouteKey, removeRuntimeTasks } from './workbenchRuntimeHelpers'
+import type { WorkbenchAction } from './workbenchReducer'
+import type { WorkbenchServices } from './workbenchServices'
+
+export interface UseWorkbenchDataRefreshOptions {
+  user: User
+  ownershipKey?: string
+  state: WorkbenchState
+  dispatch: Dispatch<WorkbenchAction>
+  executorClient: ExecutorClient
+  services: WorkbenchServices
+}
 
 export interface CloudBackgroundRequest {
   controller: AbortController

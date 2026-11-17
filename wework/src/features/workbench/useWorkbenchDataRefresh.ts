@@ -2,9 +2,7 @@ import { updateRuntimeWorkProject, type RuntimeProjectUpdate } from '@/lib/runti
 import { mergeDeviceLists } from '@/lib/workbench-device'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { Dispatch } from 'react'
 import { createModelLoadingTrace, logModelLoading } from '@/lib/model-loading-diagnostics'
-import type { ExecutorClient } from '@/api/executorAccess'
 import type {
   DeviceInfo,
   RuntimeSupervisorState,
@@ -12,11 +10,10 @@ import type {
   RuntimeTaskPinRequest,
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
-  User,
 } from '@/types/api'
 import { isRemoteTaskDevice } from '@/lib/device-capabilities'
 import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
-import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/types/workbench'
+import type { CloudRuntimeState, CloudWorkCheckKey } from '@/types/workbench'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
   EMPTY_RUNTIME_WORK,
@@ -25,6 +22,7 @@ import {
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
   nowMs,
+  publishCloudRuntimeDevices,
   resolveDeviceListWithCache,
   selectCloudWorkStatus,
   selectRuntimeWorkView,
@@ -32,7 +30,6 @@ import {
   startCloudRuntimeSync,
   timedWorkbenchBootstrapRequest,
 } from './workbenchCloudStatus'
-import type { WorkbenchAction } from './workbenchReducer'
 import {
   findRuntimeTask,
   findRuntimeTaskForPinRequest,
@@ -44,7 +41,6 @@ import {
   updateRuntimeWorkTaskPinned,
   updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
-import type { WorkbenchServices } from './workbenchServices'
 import type { RefreshWorkLists } from './workbenchContextTypes'
 import { RuntimeSupervisorSnapshots } from './runtimeSupervisorSnapshots'
 import {
@@ -57,6 +53,7 @@ import {
 import {
   type CloudBackgroundRequest,
   type CloudBackgroundRefreshOptions,
+  type UseWorkbenchDataRefreshOptions,
   queueWorkRefreshAfterInventory,
   createCloudRuntimeStateWithCache,
   localDeviceSnapshot,
@@ -67,15 +64,6 @@ import {
   removeRuntimeTasksFromCloudState,
   resolveStandaloneDeviceIdForRefresh,
 } from './workbenchDataRefreshHelpers'
-
-interface UseWorkbenchDataRefreshOptions {
-  user: User
-  ownershipKey?: string
-  state: WorkbenchState
-  dispatch: Dispatch<WorkbenchAction>
-  executorClient: ExecutorClient
-  services: WorkbenchServices
-}
 
 // Cloud synchronization is detached from the local workbench bootstrap. Give
 // authenticated intranet requests enough time to complete without turning a
@@ -380,6 +368,9 @@ export function useWorkbenchDataRefresh({
           cloudBackgroundApiRef.current === backgroundApi &&
           devicesResult?.status === 'fulfilled'
         ) {
+          updateCloudRuntimeState(
+            publishCloudRuntimeDevices(cloudRuntimeStateRef.current, revision, devicesResult.value)
+          )
           const devices = resolveDeviceListWithCache(
             cacheScope,
             mergeDeviceLists(localDeviceSnapshot(baseDevices), devicesResult.value),
