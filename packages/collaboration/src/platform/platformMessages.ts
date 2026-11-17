@@ -19,6 +19,7 @@ export const platformMessages = {
     createRemoteProject: "新建远程项目",
     home: "新建 Issue",
     personalHome: "首页",
+    navigation: "协作导航",
     myIssues: "我的事项",
     assignedIssues: "待我处理",
     createdIssues: "我创建的",
@@ -183,6 +184,9 @@ export const platformMessages = {
     createProject: "创建项目",
     createCollaborationProject: "创建项目",
     firstProjectHomeTitle: "开始第一个协作项目",
+    firstIssueHomeTitle: "从第一件事开始",
+    firstIssueHomeHint:
+      "记录要推进的目标或问题，按需邀请协作者，不必先创建项目。独立事项保存在云端，未连接时需先登录。",
     firstProjectHomeHint: "把一个目标交给成员和智能体，并持续看到推进过程。",
     firstProjectGuideCapture: "记录目标",
     firstProjectGuideAssign: "分配协作",
@@ -209,13 +213,9 @@ export const platformMessages = {
     navigationLoadFailed: "部分分组或项目加载失败，列表可能不完整。",
     retryNavigation: "重试",
     searchSpaces: "搜索分组",
-    firstUseProgress: "开始协作",
-    firstProjectTitle: "创建第一个项目",
+    firstProjectTitle: "创建第一个协作项目",
     firstProjectHint:
       "项目负责组织 Issue、成员和分配方式；智能体与执行环境可以稍后配置。",
-    firstLocalProjectTitle: "导入第一个本地项目",
-    firstLocalProjectHint:
-      "选择当前设备上的项目文件夹，在个人分组中组织 Issue 和智能体协作。",
     configureAgents: "配置智能体",
     createCollaborationGroup: "创建协作小组",
     inviteMembers: "邀请成员",
@@ -255,6 +255,7 @@ export const platformMessages = {
     createRemoteProject: "New remote project",
     home: "New Issue",
     personalHome: "Home",
+    navigation: "Collaboration navigation",
     myIssues: "My issues",
     assignedIssues: "Needs my action",
     createdIssues: "Created by me",
@@ -442,6 +443,9 @@ export const platformMessages = {
     createProject: "Create project",
     createCollaborationProject: "Create project",
     firstProjectHomeTitle: "Start your first collaboration project",
+    firstIssueHomeTitle: "Start with your first issue",
+    firstIssueHomeHint:
+      "Capture a goal or question and invite collaborators as needed. No project required. Independent issues are saved in the cloud; sign in if you are not connected.",
     firstProjectHomeHint:
       "Give a goal to members and agents, then follow its progress through delivery.",
     firstProjectGuideCapture: "Capture the goal",
@@ -474,13 +478,9 @@ export const platformMessages = {
       "Some groups or projects could not load. The list may be incomplete.",
     retryNavigation: "Retry",
     searchSpaces: "Search groups",
-    firstUseProgress: "Getting started",
-    firstProjectTitle: "Create your first project",
+    firstProjectTitle: "Create your first collaboration project",
     firstProjectHint:
       "Projects organize issues, members, and assignments. Agents and execution environments can be configured later.",
-    firstLocalProjectTitle: "Import your first local project",
-    firstLocalProjectHint:
-      "Choose a project folder on this device to organize issues and agent collaboration in your personal group.",
     configureAgents: "Configure agents",
     createCollaborationGroup: "Create collaboration group",
     inviteMembers: "Invite members",

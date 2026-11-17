@@ -21,6 +21,7 @@ Usage:
 """
 
 import logging
+from itertools import chain
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
@@ -46,6 +47,7 @@ from app.services.subscription.notification_dispatcher import (
 )
 from app.services.subscription.state_machine import is_terminal_state
 from app.stores.tasks import subtask_store, task_store
+from app.stores.tasks.runtime_reads import RUNTIME_READ_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -399,12 +401,13 @@ class SubscriptionTaskCompletionHandler:
             )
             return
 
-        subtasks = subtask_store.list_not_executor_deleted_by_task(
+        subtasks = subtask_store.iter_runtime_cleanup_rows(
             db,
             task_id=task_id,
             owner_user_id=task.user_id,
         )
-        if not subtasks:
+        first = next(subtasks, None)
+        if first is None:
             logger.info(
                 "[TaskCompletionHandler] No undeleted subtasks found for %s task_id=%s",
                 cleanup_source,
@@ -412,7 +415,7 @@ class SubscriptionTaskCompletionHandler:
             )
             return
 
-        executor_subtasks = [subtask for subtask in subtasks if subtask.executor_name]
+        executor_subtasks = chain([first], subtasks)
         successful_keys = set()
         unique_executors = {
             ((subtask.executor_namespace or ""), subtask.executor_name)
@@ -494,7 +497,12 @@ class SubscriptionTaskCompletionHandler:
             )
             return
 
-        for subtask in subtasks:
+        for index, subtask in enumerate(
+            subtask_store.iter_runtime_cleanup_rows(
+                db, task_id=task_id, owner_user_id=task.user_id
+            ),
+            start=1,
+        ):
             executor_key = ((subtask.executor_namespace or ""), subtask.executor_name)
             if sandbox_deleted or executor_key in successful_keys:
                 subtask_store.update_fields(
@@ -502,6 +510,8 @@ class SubscriptionTaskCompletionHandler:
                     subtask=subtask,
                     executor_deleted_at=True,
                 )
+            if index % RUNTIME_READ_BATCH_SIZE == 0:
+                db.flush()
 
         db.commit()
         logger.info(

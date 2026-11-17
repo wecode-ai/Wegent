@@ -33,6 +33,7 @@ import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
 import { resolveWorkbenchOwnership } from '@/features/workbench/workbenchOwnership'
 import {
   registerRuntimeTaskLifecycleAutomation,
@@ -513,6 +514,10 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
           )}
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}
+          id={`workspace-tab-content-${tab.id}`}
+          role="tabpanel"
+          aria-labelledby={`workspace-tab-select-${tab.id}`}
+          tabIndex={active ? 0 : -1}
           aria-hidden={!active}
         >
           {renderProvider ? (
@@ -793,6 +798,10 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
               className={cn('h-full', tab.id !== workspaceTabs.activeTabId && 'hidden')}
               data-testid={`workspace-tab-content-${tab.id}`}
               data-workspace-tab-content={tab.id}
+              id={`workspace-tab-content-${tab.id}`}
+              role="tabpanel"
+              aria-labelledby={`workspace-tab-select-${tab.id}`}
+              tabIndex={tab.id === workspaceTabs.activeTabId ? 0 : -1}
               aria-hidden={tab.id !== workspaceTabs.activeTabId}
             >
               <WorkbenchProvider
@@ -938,6 +947,18 @@ function browserWorkspaceTabStorageScope(): string {
 }
 
 function AppShell() {
+  const { user } = useAuth()
+  const connection = useCloudConnection()
+  const { key } = resolveWorkbenchOwnership(connection, user)
+  return (
+    <>
+      {user && <RunnerSelectionHost key={key} />}
+      <AppShellContent />
+    </>
+  )
+}
+
+function AppShellContent() {
   const { t } = useTranslation('common')
   const dshContext = useDshClientContext()
   const appearanceContext = useOptionalAppearance()

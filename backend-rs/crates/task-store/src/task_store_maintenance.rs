@@ -79,7 +79,19 @@ pub fn maintenance_statement(table: &str, scan: &MaintenanceScan) -> String {
         MaintenanceScan::CleanupPrimary { limit, .. } => format!("id > ? AND created_at <= ? ORDER BY id LIMIT {limit}"),
         MaintenanceScan::CleanupLookback { limit, .. } => format!("status IN ('PENDING', 'COMPLETED', 'FAILED', 'CANCELLED') AND created_at > ? AND created_at <= ? AND executor_name IS NOT NULL AND executor_name != '' AND executor_deleted_at = false ORDER BY created_at, id LIMIT {limit}"),
     };
-    format!("SELECT {SUBTASK_COLUMNS} FROM `{table}` WHERE {condition}")
+    let projection = if matches!(
+        scan,
+        MaintenanceScan::RuntimeExecutors
+            | MaintenanceScan::CleanupPrimary { .. }
+            | MaintenanceScan::CleanupLookback { .. }
+            | MaintenanceScan::CursorRecent { .. }
+            | MaintenanceScan::CursorLatest
+    ) {
+        "id, task_id, status, executor_name, executor_namespace, executor_deleted_at, updated_at, created_at"
+    } else {
+        SUBTASK_COLUMNS
+    };
+    format!("SELECT {projection} FROM `{table}` WHERE {condition}")
 }
 
 pub async fn scan_table<M: Mysql>(

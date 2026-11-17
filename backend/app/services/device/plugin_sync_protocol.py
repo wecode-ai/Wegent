@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
-from contextlib import AbstractContextManager
+import logging
+import time
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from copy import deepcopy
 from typing import Any
 
@@ -25,6 +27,38 @@ PLUGIN_SYNC_VERSION = 2
 PLUGIN_SYNC_STATE_KIND = "PluginSyncState"
 PLUGIN_SYNC_STATE_NAMESPACE = "plugin-sync"
 PLUGIN_SYNC_STATE_NAME = "account"
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _snapshot_stage(db: Session, user_id: int, stage: str) -> Iterator[None]:
+    """Identify the snapshot transaction phase without logging payloads."""
+    started = time.monotonic()
+    try:
+        yield
+    except Exception:
+        logger.exception(
+            "Plugin snapshot stage failed user_id=%s session_id=%s "
+            "operation=%s stage=%s elapsed_ms=%d",
+            user_id,
+            id(db),
+            db.info.get("plugin_write_operation"),
+            stage,
+            int((time.monotonic() - started) * 1000),
+        )
+        raise
+    else:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        if elapsed_ms >= 500:
+            logger.warning(
+                "Plugin snapshot stage slow user_id=%s session_id=%s "
+                "operation=%s stage=%s elapsed_ms=%d",
+                user_id,
+                id(db),
+                db.info.get("plugin_write_operation"),
+                stage,
+                elapsed_ms,
+            )
 
 
 def supports_plugin_sync_v2(runtime_features: Any) -> bool:
@@ -55,13 +89,16 @@ def load_versioned_plugin_payload(
     from app.services.plugin_write_operations import run_plugin_transaction
 
     def build(db: Session) -> tuple[dict[str, Any], int]:
+        db.info["plugin_write_operation"] = "plugin_sync.snapshot"
         state = lock_plugin_sync_state(db, user_id)
         generation = _next_generation(state)
-        payload = dict(load_payload(db))
+        with _snapshot_stage(db, user_id, "payload"):
+            payload = dict(load_payload(db))
         document = deepcopy(state.json)
         document.setdefault("spec", {})["generation"] = generation
         state.json = document
-        db.commit()
+        with _snapshot_stage(db, user_id, "commit"):
+            db.commit()
         return payload, generation
 
     payload, generation = run_plugin_transaction(
@@ -90,6 +127,7 @@ def register_plugin_snapshot_intent(
     from app.services.plugin_write_operations import run_plugin_transaction
 
     def register(db: Session) -> None:
+        db.info["plugin_write_operation"] = "plugin_sync.intent"
         state = lock_plugin_sync_state(db, user_id, merge=True)
         canonical_device_id = plugin_device_id(db, user_id, device_id)
         advance_plugin_snapshot_watermark(
@@ -111,6 +149,7 @@ def register_plugin_snapshot_intent(
 def lock_plugin_sync_state(db: Session, user_id: int, *, merge: bool = False) -> Kind:
     """Read the protocol CAS fence before any desired-state snapshot reads."""
     configure_plugin_session(db)
+    db.info.setdefault("plugin_write_operation", "plugin_sync.record")
     pending = [
         row
         for row in set(db.new) | set(db.dirty)
