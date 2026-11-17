@@ -4,9 +4,15 @@ fn with_other_writer(operation: impl FnOnce(&LocalTaskStore)) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("tasks.sqlite");
     let store = LocalTaskStore::open(&path).unwrap();
-    store.connection().unwrap().busy_timeout(Duration::ZERO).unwrap();
+    store
+        .connection()
+        .unwrap()
+        .busy_timeout(Duration::ZERO)
+        .unwrap();
     let mut writer = Connection::open(&path).unwrap();
-    let transaction = writer.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
+    let transaction = writer
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
     operation(&store);
     transaction.rollback().unwrap();
 }
@@ -14,14 +20,19 @@ fn with_other_writer(operation: impl FnOnce(&LocalTaskStore)) {
 #[test]
 fn standalone_runtime_start_does_not_compete_with_an_unrelated_writer() {
     with_other_writer(|store| {
-        assert!(store.mark_runtime_running("standalone-runtime").unwrap().is_none());
+        assert!(store
+            .mark_runtime_running("standalone-runtime")
+            .unwrap()
+            .is_none());
     });
 }
 
 #[test]
 fn absent_runtime_comment_completion_does_not_compete_with_an_unrelated_writer() {
     with_other_writer(|store| {
-        store.finish_runtime_comment("standalone-runtime", "completed", "Result").unwrap();
+        store
+            .finish_runtime_comment("standalone-runtime", "completed", "Result")
+            .unwrap();
     });
 }
 

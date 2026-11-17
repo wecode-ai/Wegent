@@ -376,7 +376,10 @@ impl LocalTaskStore {
         &self,
         runtime_task_id: &str,
     ) -> Result<Option<LocalExecution>, TaskRuntimeError> {
-        if self.execution_by_runtime_task_id(runtime_task_id)?.is_none() {
+        if self
+            .execution_by_runtime_task_id(runtime_task_id)?
+            .is_none()
+        {
             return Ok(None);
         }
         let mut guard = self.connection()?;
