@@ -234,6 +234,28 @@ describe("useCollaborationWorkspaceController location effects", () => {
     hookRuntime.reset();
   });
 
+  it("loads an invited Issue without requesting project authority", async () => {
+    const api = createApi();
+    const invited = { ...issueA, invited_only: true, can_edit: true };
+    api.issues.get = vi.fn().mockResolvedValue(invited);
+    const location = {
+      projectId: projectA.id,
+      issueId: issueA.id,
+      view: "board" as const,
+    };
+    renderController(api, location);
+    await vi.waitFor(() =>
+      expect(renderController(api, location).state.loading).toBe(false),
+    );
+    expect(renderController(api, location).state.selectedIssue).toEqual(
+      invited,
+    );
+    expect(api.projects.get).not.toHaveBeenCalled();
+    expect(api.projects.list).not.toHaveBeenCalled();
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
+    expect(renderController(api, location).state.error).toBeNull();
+  });
+
   it("keeps a host-managed project catalog loaded when switching between board and settings", async () => {
     const api = createApi();
     const location = {

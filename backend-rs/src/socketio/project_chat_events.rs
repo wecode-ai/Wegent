@@ -211,7 +211,7 @@ pub(crate) async fn subscribe(
         Ok(request) => request,
         Err(message) => return Ok(Reply::payload(ack_error("INVALID_MESSAGE", &message))),
     };
-    if let Err(scope) = require_comment_scope(
+    let (access, _) = match require_comment_scope(
         state,
         user_id,
         &request.project_id,
@@ -220,8 +220,9 @@ pub(crate) async fn subscribe(
     )
     .await
     {
-        return Ok(Reply::payload(scope.ack()));
-    }
+        Ok(scope) => scope,
+        Err(scope) => return Ok(Reply::payload(scope.ack())),
+    };
     let messages = match load_messages(
         state,
         &request.project_id,
@@ -240,7 +241,7 @@ pub(crate) async fn subscribe(
         .and_then(Value::as_i64)
         .unwrap_or(request.after_sequence);
     let room = project_chat_room(&request.project_id, request.task_id.as_deref());
-    Ok(Reply::payload(json!({
+    let reply = Reply::payload(json!({
         "ok": true,
         "result": {
             "messages": messages,
@@ -248,7 +249,12 @@ pub(crate) async fn subscribe(
             "latestSequence": latest_sequence,
         },
     }))
-    .join(room))
+    .join(room.clone());
+    Ok(if access.role == "IssueManager" {
+        reply.join(invitation_room(&room, user_id))
+    } else {
+        reply.leave(invitation_room(&room, user_id))
+    })
 }
 
 /// `ProjectChatSubscribe`.
@@ -273,7 +279,7 @@ impl SubscribeRequest {
 }
 
 /// `on_project_chat_unsubscribe`.
-pub(crate) async fn unsubscribe(data: Value) -> Result<Reply<Value>, ClientError> {
+pub(crate) async fn unsubscribe(user_id: i64, data: Value) -> Result<Reply<Value>, ClientError> {
     let payload = payload(&data);
     let (Ok(project_id), task_id) = (
         required_identifier(&payload, "project_id"),
@@ -281,8 +287,10 @@ pub(crate) async fn unsubscribe(data: Value) -> Result<Reply<Value>, ClientError
     ) else {
         return Ok(Reply::payload(ack_error("INVALID_MESSAGE", "project_id")));
     };
+    let room = project_chat_room(&project_id, task_id.as_deref());
     Ok(Reply::payload(json!({"ok": true}))
-        .leave(project_chat_room(&project_id, task_id.as_deref())))
+        .leave(invitation_room(&room, user_id))
+        .leave(room))
 }
 
 /// `on_project_chat_message_send`.
@@ -971,6 +979,22 @@ pub(crate) fn optional_i64(payload: &Map<String, Value>, key: &str) -> Option<i6
         Value::String(text) => text.trim().parse().ok(),
         _ => None,
     }
+}
+
+/// Mark guest subscriptions for revalidation before each outbound message.
+pub(crate) fn invitation_room(room: &str, user_id: i64) -> String {
+    format!("issue-invitation:{room}:{user_id}")
+}
+
+pub(crate) async fn permits_comment(
+    state: &AppState,
+    user_id: i64,
+    project_id: &str,
+    issue_id: &str,
+) -> bool {
+    require_comment_scope(state, user_id, project_id, Some(issue_id), false)
+        .await
+        .is_ok()
 }
 
 #[cfg(test)]

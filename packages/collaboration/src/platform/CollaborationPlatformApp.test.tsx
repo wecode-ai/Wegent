@@ -6736,6 +6736,45 @@ describe("CollaborationPlatformApp real component flow", () => {
     },
   );
 
+  it.each(["pending", "denied"])(
+    "opens an invited Issue while project navigation is %s",
+    async (mode) => {
+      const invited = { ...issue, invited_only: true, can_edit: true };
+      const { api } = createApi({
+        initialWorkspaces: [],
+        initialProjects: [],
+        initialIssues: [invited],
+      });
+      api.issues.get = vi.fn().mockResolvedValue(invited);
+      api.issues.markRead = vi.fn().mockResolvedValue(invited);
+      api.workspaces!.get = vi.fn(() =>
+        mode === "pending"
+          ? new Promise<CollaborationWorkspace>(() => {})
+          : Promise.reject(new Error("Workspace access denied")),
+      );
+      api.projects.get = vi
+        .fn()
+        .mockRejectedValue(new Error("Project access denied"));
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{
+            ...initialLocation,
+            workspaceId: workspace.id,
+            projectId: project.id,
+            issueId: issue.id,
+          }}
+        />,
+      );
+      expect(
+        byTestId("cloud-todo-add-collaborator").hasAttribute("disabled"),
+      ).toBe(false);
+      expect(byTestId("collaboration-issue-comment")).toBeTruthy();
+      expect(api.issues.get).toHaveBeenCalledWith(issue.id);
+      expect(api.executions.list).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     { role: "Viewer" as const, visibility: "public" as const },
     { role: "Viewer" as const, visibility: "private" as const },

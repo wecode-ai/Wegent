@@ -2390,7 +2390,9 @@ export function TodoEditor(props: TodoEditorProps) {
           onItemChange: editProps.onUpdated,
         })
       : null;
-  const twoColumn = item !== null && editProps?.project !== undefined;
+  const twoColumn =
+    item !== null &&
+    (editProps?.project !== undefined || item.invited_only === true);
 
   // Property controls, shared by the single-column chip row and the
   // two-column Xiaohongshu-style rail cells. The overlay select/input keeps
@@ -2784,7 +2786,7 @@ export function TodoEditor(props: TodoEditorProps) {
     retryLabel: t("common.retry", "重试"),
     confirmLabel: confirmPersonLabel,
     cancelLabel: t("common.cancel", "取消"),
-    emptyLabel: t("todo.no_matching_assignee", "没有匹配的负责人"),
+    emptyLabel: t("todo.no_matching_collaborator", "没有匹配的参与者"),
     busy: collaboratorBusy,
     label: t("todo.select_project_member", "搜索并选择参与者"),
     addLabel: t("common.add", "添加"),

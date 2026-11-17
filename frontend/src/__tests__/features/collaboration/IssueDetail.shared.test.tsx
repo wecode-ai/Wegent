@@ -1448,8 +1448,9 @@ describe('shared IssueDetail', () => {
     expect(await screen.findByTitle('张三')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cloud-todo-add-collaborator'))
     fireEvent.change(screen.getByTestId('cloud-todo-collaborator-select'), {
-      target: { value: '6' },
+      target: { value: '李四' },
     })
+    fireEvent.click(await screen.findByTestId('cloud-todo-collaborator-option-6'))
     fireEvent.click(screen.getByTestId('cloud-todo-confirm-collaborator'))
     await waitFor(() => expect(api.collaborators.add).toHaveBeenCalledWith(issue.id, 6))
     expect(await screen.findByTitle('李四')).toBeInTheDocument()

@@ -39,8 +39,11 @@ async fn subscribe(
 
 /// `on_project_chat_unsubscribe`.
 #[brz_socket_io::event("wework:project_chat:unsubscribe", namespace = "/wework-runtime")]
-async fn unsubscribe(#[payload] data: Value) -> Result<Reply<Value>, ClientError> {
-    project_chat_events::unsubscribe(data).await
+async fn unsubscribe(
+    #[payload] data: Value,
+    #[auth] user: &super::AuthenticatedUser,
+) -> Result<Reply<Value>, ClientError> {
+    project_chat_events::unsubscribe(user.identity().user_id, data).await
 }
 
 /// `on_project_chat_message_send`.

@@ -1426,8 +1426,13 @@ function CollaborationPlatformAppContent({
     !host.location.workspaceId &&
     Boolean(host.renderIssueList) &&
     Boolean(host.location.rootView?.startsWith("issues-"));
+  const isIssuePage = Boolean(host.location.projectId && host.location.issueId);
   const ownsPageRequests =
-    isDevicePage || isStandInPage || isTemplatePage || isPersonalIssuesPage;
+    isDevicePage ||
+    isStandInPage ||
+    isTemplatePage ||
+    isPersonalIssuesPage ||
+    isIssuePage;
   const deviceCatalog = useDeviceCatalog(
     api,
     isDevicePage,
@@ -2099,7 +2104,8 @@ function CollaborationPlatformAppContent({
     );
   } else if (
     host.location.projectId &&
-    (state.workspace ||
+    (isIssuePage ||
+      state.workspace ||
       state.workspaceNavigationContext ||
       state.projects.some(
         (project) =>

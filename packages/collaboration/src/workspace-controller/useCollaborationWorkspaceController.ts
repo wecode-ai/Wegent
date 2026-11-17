@@ -1690,14 +1690,25 @@ export function useCollaborationWorkspaceController({
     const isCurrent = () => locationLoadRevisionRef.current === revision;
     if (location.projectId) {
       const projectId = location.projectId;
-      if (loadProjectOnLocation) {
-        void commands.loadProject(projectId, true, {
-          isCurrent,
-          loadSnapshot: loadProjectSnapshotOnLocation,
-        });
-      } else {
-        void commands.loadProjectCatalog({ isCurrent });
-      }
+      const loadProject = async () => {
+        if (location.issueId) {
+          const issue = await commands.loadSelectedIssue(location.issueId);
+          if (!isCurrent()) return;
+          if (issue?.invited_only) {
+            dispatch({ type: "loading", value: false });
+            return;
+          }
+        }
+        if (loadProjectOnLocation) {
+          await commands.loadProject(projectId, true, {
+            isCurrent,
+            loadSnapshot: loadProjectSnapshotOnLocation,
+          });
+        } else {
+          await commands.loadProjectCatalog({ isCurrent });
+        }
+      };
+      void loadProject();
       if (myWorkEnabled && location.rootView === "my-work")
         void commands.loadMyWork();
     } else if (myWorkEnabled && location.rootView === "my-work") {
@@ -1715,29 +1726,43 @@ export function useCollaborationWorkspaceController({
     loadProjectOnLocation,
     loadProjectSnapshotOnLocation,
     location.projectId,
+    location.issueId,
     location.rootView,
     myWorkEnabled,
+    dispatch,
   ]);
 
   useEffect(() => {
     if (!commands) return;
     const projectId = location.projectId;
-    if (!projectId || !loadBoardOnLocation || pollIntervalMs <= 0) return;
+    if (
+      !projectId ||
+      !loadBoardOnLocation ||
+      pollIntervalMs <= 0 ||
+      state.selectedIssue?.invited_only
+    )
+      return;
     const timer = window.setInterval(
       () => void commands.loadProject(projectId, false),
       pollIntervalMs,
     );
     return () => window.clearInterval(timer);
-  }, [commands, loadBoardOnLocation, location.projectId, pollIntervalMs]);
+  }, [
+    commands,
+    loadBoardOnLocation,
+    location.projectId,
+    pollIntervalMs,
+    state.selectedIssue?.invited_only,
+  ]);
 
   useEffect(() => {
     if (!commands) return;
-    if (location.issueId) {
+    if (location.issueId && !location.projectId) {
       void commands.loadSelectedIssue(location.issueId);
-    } else {
+    } else if (!location.issueId) {
       commands.clearSelectedIssue();
     }
-  }, [commands, location.issueId]);
+  }, [commands, location.issueId, location.projectId]);
 
   const selectedIssue =
     state.selectedIssue?.id === location.issueId

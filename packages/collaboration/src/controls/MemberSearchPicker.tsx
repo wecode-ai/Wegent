@@ -78,10 +78,12 @@ export function MemberSearchPicker<User extends { id: number; user_name: string 
             onClick={() => onSelect(user)}
             className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-muted disabled:opacity-40 ${focus}`}
           >
-            <span className="min-w-0 flex-1 truncate text-sm">
-              {user.user_name}
+            <span className="min-w-0 flex-1 text-sm">
+              <span className="block truncate">{user.user_name}</span>
               {userDescription?.(user) && (
-                <span className="block text-xs text-text-muted">{userDescription(user)}</span>
+                <span className="block whitespace-normal break-words text-xs text-text-muted">
+                  {userDescription(user)}
+                </span>
               )}
             </span>
             <span className="text-xs text-text-muted">

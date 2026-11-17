@@ -7,6 +7,8 @@ import { webApi, writeSharedComposer } from '../../utils/collaboration-test-supp
 import { REGULAR_USER } from '../../config/test-users'
 import { buildStorageState, getJwtExpiryMs } from '../../utils/auth-state'
 import { createApiClient } from '../../utils/api-client'
+import type { ProjectChatMessage } from '../../../../packages/chat-core/src/project-chat'
+import { connectChat } from '../../utils/project-mention-test-support'
 
 projectTest(
   'invites and assigns an outsider with confirmation and revocable Issue-only management',
@@ -35,8 +37,7 @@ projectTest(
     const login = await guest.login(REGULAR_USER.username, REGULAR_USER.password, 1)
     expect(login.status).toBe(200)
     expect((await guest.get(issuePath)).status).toBe(404)
-    await page.goto(path)
-    await page.getByTestId(`cloud-todo-card-${issueId}`).click()
+    await page.goto(`${path}/issues/${issueId}`)
     await page.getByTestId('cloud-todo-add-collaborator').click()
     const members = await webApi<Array<{ user_id: number; user_name: string }>>(
       page,
@@ -61,99 +62,175 @@ projectTest(
     await page.getByTestId('cloud-todo-confirm-collaborator').click()
     await page.getByTestId('issue-outside-collaborator-confirm').click()
     await expect.poll(async () => (await guest.get(issuePath)).status).toBe(200)
-    const invited = await guest.get<Resource & { invited_only: boolean }>(issuePath)
-    expect(invited.data!.invited_only).toBe(true)
-    expect((await guest.get(projectPath)).status).toBe(404)
-    expect((await guest.get(`/api/v1/loop-items/${sibling.id}`)).status).toBe(404)
-    expect(
-      (
-        await guest.patch(issuePath, {
-          version: invited.data!.version,
-          title: 'Managed by invited participant',
-        })
-      ).status
-    ).toBe(200)
-    const guestContext = await browser.newContext({
-      storageState: buildStorageState(
-        new URL(page.url()).origin,
-        login.data!.access_token,
-        getJwtExpiryMs(login.data!.access_token)
-      ),
-    })
+    const ownerToken = (await page.context().cookies()).find(
+      cookie => cookie.name === 'auth_token'
+    )!.value
+    const guestChat = connectChat(login.data!.access_token)
+    const ownerChat = connectChat(ownerToken)
+    const received: ProjectChatMessage[] = []
+    const ownerReceived: ProjectChatMessage[] = []
     try {
-      const guestPage = await guestContext.newPage()
-      await guestPage.goto(page.url())
-      await expect(guestPage.getByTestId('cloud-todo-add-collaborator')).toBeEnabled()
-      await expect(guestPage.getByTestId('cloud-todo-detail-assignee')).toBeEnabled()
-      const comment = `Invited participant comment ${crypto.randomUUID()}`
-      await writeSharedComposer(guestPage.getByTestId('collaboration-issue-comment'), comment)
-      await guestPage.getByTestId('collaboration-issue-comment-submit').click()
-      await expect(guestPage.getByTestId('collaboration-comments')).toContainText(comment)
-      await guestPage.reload()
-      await expect(guestPage.getByTestId('collaboration-comments')).toContainText(comment)
-      await guestPage.screenshot({
-        path: testInfo.outputPath('invited-issue-desktop.png'),
-        fullPage: true,
-      })
-      await guestPage.setViewportSize({ width: 390, height: 844 })
-      await expect(guestPage.getByTestId('cloud-todo-add-collaborator')).toBeVisible()
-      expect(
-        await guestPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
-      ).toBe(true)
-      await guestPage.screenshot({
-        path: testInfo.outputPath('invited-issue-mobile.png'),
-        fullPage: true,
-      })
-      const current = await guest.get<Resource>(issuePath)
+      await guestChat.subscribe(projectId, issueId, 0, message => received.push(message))
+      await ownerChat.subscribe(projectId, issueId, 0, message => ownerReceived.push(message))
+      const invited = await guest.get<Resource & { invited_only: boolean }>(issuePath)
+      expect(invited.data!.invited_only).toBe(true)
+      expect((await guest.get(`${issuePath}/deliveries`)).status).toBe(200)
+      expect((await guest.get(projectPath)).status).toBe(404)
+      expect((await guest.get(`/api/v1/loop-items/${sibling.id}`)).status).toBe(404)
       expect(
         (
-          await guest.post(`${projectPath}/loop-items/${issueId}/assign`, {
-            version: current.data!.version,
-            assignee_type: 'user',
-            assignee_id: String(owner.user_id),
-            notify_assignee: false,
+          await guest.patch(issuePath, {
+            version: invited.data!.version,
+            title: 'Managed by invited participant',
           })
         ).status
       ).toBe(200)
-      expect((await guest.delete(`${issuePath}/collaborators/${owner.user_id}`)).status).toBe(204)
-      await guestPage.reload()
-      await guestPage.getByTestId('cloud-todo-add-collaborator').click()
-      await guestPage.getByTestId('cloud-todo-collaborator-select').fill(owner.user_name)
-      await guestPage.getByTestId(`cloud-todo-collaborator-option-${owner.user_id}`).click()
-      await guestPage.getByTestId('cloud-todo-confirm-collaborator').click()
-      await guestPage.getByTestId('issue-outside-collaborator-confirm').click()
-      await expect
-        .poll(async () =>
-          (await guest.get<Array<{ user_id: number }>>(`${issuePath}/collaborators`)).data!.some(
-            user => user.user_id === owner.user_id
-          )
-        )
-        .toBe(true)
-    } finally {
-      await guestContext.close()
-    }
-    await page.reload()
-    await page.getByTestId(`cloud-todo-card-${issueId}`).click()
-    await page
-      .getByRole('button', {
-        name: new RegExp(`移除参与者.*${outsider.user_name}|Remove.*${outsider.user_name}`),
+      const guestContext = await browser.newContext({
+        storageState: buildStorageState(
+          new URL(page.url()).origin,
+          login.data!.access_token,
+          getJwtExpiryMs(login.data!.access_token)
+        ),
       })
-      .click()
-    await expect.poll(async () => (await guest.get(issuePath)).status).toBe(404)
-    await page.getByTestId('cloud-todo-detail-assignee').click()
-    await page.getByTestId('cloud-todo-detail-assignee-search').fill(outsider.user_name)
-    await page.getByTestId(`cloud-todo-detail-assignee-option-user:${outsider.id}`).click()
-    await page.getByTestId('issue-outside-assignee-cancel').click()
-    expect((await guest.get(issuePath)).status).toBe(404)
-    await page.getByTestId('cloud-todo-detail-assignee').click()
-    await page.getByTestId('cloud-todo-detail-assignee-search').fill(outsider.user_name)
-    await page.getByTestId(`cloud-todo-detail-assignee-option-user:${outsider.id}`).click()
-    await page.getByTestId('issue-outside-assignee-confirm').click()
-    await expect.poll(async () => (await guest.get(issuePath)).status).toBe(200)
-    expect((await guest.get(projectPath)).status).toBe(404)
-    await page.screenshot({ path: testInfo.outputPath('outside-assignee.png'), fullPage: true })
-    await page.getByTestId('cloud-todo-detail-assignee').click()
-    await page.getByTestId('cloud-todo-detail-assignee-option-empty').click()
-    await expect.poll(async () => (await guest.get(issuePath)).status).toBe(404)
+      try {
+        const guestPage = await guestContext.newPage()
+        await guestPage.goto(page.url())
+        await expect(
+          guestPage.getByTestId('issue-primary-metadata').getByTestId('cloud-todo-add-collaborator')
+        ).toBeEnabled()
+        await expect(guestPage.getByTestId('cloud-todo-detail-assignee')).toBeEnabled()
+        const comment = `Invited participant comment ${crypto.randomUUID()}`
+        await writeSharedComposer(guestPage.getByTestId('collaboration-issue-comment'), comment)
+        await guestPage.getByTestId('collaboration-issue-comment-submit').click()
+        await expect(guestPage.getByTestId('collaboration-comments')).toContainText(comment)
+        await expect.poll(() => received.some(message => message.content === comment)).toBe(true)
+        await guestPage.reload()
+        await expect(guestPage.getByTestId('collaboration-comments')).toContainText(comment)
+        await expect(
+          guestPage.getByRole('button', {
+            name: new RegExp(`移除参与者.*${outsider.user_name}|Remove.*${outsider.user_name}`),
+          })
+        ).toBeVisible()
+        for (const testId of [
+          'cloud-todo-detail-title',
+          'cloud-todo-detail-close',
+          'collaboration-issue-comment',
+        ]) {
+          await expect
+            .poll(async () => {
+              const bounds = await guestPage.getByTestId(testId).boundingBox()
+              return Boolean(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 1281)
+            })
+            .toBe(true)
+        }
+        await guestPage.screenshot({
+          path: testInfo.outputPath('invited-issue-desktop.png'),
+          fullPage: true,
+        })
+        await guestPage.setViewportSize({ width: 390, height: 844 })
+        await expect(
+          guestPage.getByTestId('issue-primary-metadata').getByTestId('cloud-todo-add-collaborator')
+        ).toBeVisible()
+        expect(
+          await guestPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
+        ).toBe(true)
+        for (const testId of [
+          'cloud-todo-detail-title',
+          'cloud-todo-detail-close',
+          'collaboration-issue-comment',
+        ]) {
+          await expect
+            .poll(async () => {
+              const bounds = await guestPage.getByTestId(testId).boundingBox()
+              return Boolean(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 391)
+            })
+            .toBe(true)
+        }
+        await guestPage.screenshot({
+          path: testInfo.outputPath('invited-issue-mobile.png'),
+          fullPage: true,
+        })
+        const current = await guest.get<Resource>(issuePath)
+        expect(
+          (
+            await guest.post(`${projectPath}/loop-items/${issueId}/assign`, {
+              version: current.data!.version,
+              assignee_type: 'user',
+              assignee_id: String(owner.user_id),
+              notify_assignee: false,
+            })
+          ).status
+        ).toBe(200)
+        expect((await guest.delete(`${issuePath}/collaborators/${owner.user_id}`)).status).toBe(204)
+        await guestPage.reload()
+        await guestPage
+          .getByTestId('issue-primary-metadata')
+          .getByTestId('cloud-todo-add-collaborator')
+          .click()
+        await guestPage.getByTestId('cloud-todo-collaborator-select').fill(owner.user_name)
+        await guestPage.getByTestId(`cloud-todo-collaborator-option-${owner.user_id}`).click()
+        await guestPage.getByTestId('cloud-todo-confirm-collaborator').click()
+        await guestPage.getByTestId('issue-outside-collaborator-confirm').click()
+        await expect
+          .poll(async () =>
+            (await guest.get<Array<{ user_id: number }>>(`${issuePath}/collaborators`)).data!.some(
+              user => user.user_id === owner.user_id
+            )
+          )
+          .toBe(true)
+      } finally {
+        await guestContext.close()
+      }
+      await page.reload()
+      await page
+        .getByRole('button', {
+          name: new RegExp(`移除参与者.*${outsider.user_name}|Remove.*${outsider.user_name}`),
+        })
+        .click()
+      await expect.poll(async () => (await guest.get(issuePath)).status).toBe(404)
+      const privateFollowup = 'After revocation ' + crypto.randomUUID()
+      await ownerChat.send({
+        projectId,
+        taskId: issueId,
+        clientMessageId: crypto.randomUUID(),
+        text: privateFollowup,
+      })
+      await expect
+        .poll(() => ownerReceived.some(message => message.content === privateFollowup))
+        .toBe(true)
+      await expect(
+        guestChat.subscribe(projectId, issueId, 0, message => received.push(message))
+      ).rejects.toThrow()
+      expect(received.some(message => message.content === privateFollowup)).toBe(false)
+      await expect(
+        guestChat.send({
+          projectId,
+          taskId: issueId,
+          clientMessageId: crypto.randomUUID(),
+          text: 'No longer authorized',
+        })
+      ).rejects.toThrow()
+      await page.getByTestId('cloud-todo-detail-assignee').click()
+      await page.getByTestId('cloud-todo-detail-assignee-search').fill(outsider.user_name)
+      await expect(
+        page.getByTestId(`cloud-todo-detail-assignee-option-user:${outsider.id}`)
+      ).toContainText(/非项目成员|Outside this project/)
+      await page.getByTestId(`cloud-todo-detail-assignee-option-user:${outsider.id}`).click()
+      await page.getByTestId('issue-outside-assignee-cancel').click()
+      expect((await guest.get(issuePath)).status).toBe(404)
+      await page.getByTestId('cloud-todo-detail-assignee').click()
+      await page.getByTestId('cloud-todo-detail-assignee-search').fill(outsider.user_name)
+      await page.getByTestId(`cloud-todo-detail-assignee-option-user:${outsider.id}`).click()
+      await page.getByTestId('issue-outside-assignee-confirm').click()
+      await expect.poll(async () => (await guest.get(issuePath)).status).toBe(200)
+      expect((await guest.get(projectPath)).status).toBe(404)
+      await page.screenshot({ path: testInfo.outputPath('outside-assignee.png'), fullPage: true })
+      await page.getByTestId('cloud-todo-detail-assignee').click()
+      await page.getByTestId('cloud-todo-detail-assignee-option-empty').click()
+      await expect.poll(async () => (await guest.get(issuePath)).status).toBe(404)
+    } finally {
+      guestChat.dispose()
+      ownerChat.dispose()
+    }
   }
 )

@@ -40,6 +40,7 @@ impl Drop for TerminalRoomBinding {
 
 /// The startup-built outgoing events used by device handlers.
 pub struct SocketEmitters {
+    state: std::sync::Weak<crate::state::AppState>,
     /// The native handle ordinary inbound adapter broadcasts are delivered
     /// through: one room per frame, never re-published.
     io: SocketIo,
@@ -124,8 +125,12 @@ impl SocketEmitters {
         })
     }
 
-    pub(super) fn new(server: &Server) -> Result<Self, EmitterError> {
+    pub(super) fn new(
+        server: &Server,
+        state: std::sync::Weak<crate::state::AppState>,
+    ) -> Result<Self, EmitterError> {
         Ok(Self {
+            state,
             io: server.io().clone(),
             online: server.emitter(CHAT_NAMESPACE, "device:online")?,
             offline: server.emitter(CHAT_NAMESPACE, "device:offline")?,
@@ -205,6 +210,9 @@ impl SocketEmitters {
         skip_sid: Option<&str>,
         args: &crate::socketio::device_sync::ArgsTuple<'_>,
     ) -> (usize, usize) {
+        if namespace == crate::socketio::device_runtime_event::RUNTIME_NAMESPACE {
+            self.prune_issue_invitations(room).await;
+        }
         let Some(operators) = self.io.of(namespace) else {
             // No such local namespace: the frame is not delivered anywhere.
             return (0, 1);
@@ -418,12 +426,53 @@ impl SocketEmitters {
         delta: bool,
         data: &Value,
     ) -> Result<(), EmitterError> {
+        self.prune_issue_invitations(room).await;
         let emitter = if delta {
             &self.project_chat_chunk
         } else {
             &self.project_chat_created
         };
         emitter.clone().to(room.to_owned()).emit(data).await
+    }
+
+    /// Room membership is transport state, never a durable invitation grant.
+    async fn prune_issue_invitations(&self, room: &str) {
+        let Some(scope) = room.strip_prefix("wework-project-chat:task:") else {
+            return;
+        };
+        let Some((project_id, issue_id)) = scope.split_once(':') else {
+            return;
+        };
+        let Some(namespace) = self
+            .io
+            .of(crate::socketio::device_runtime_event::RUNTIME_NAMESPACE)
+        else {
+            return;
+        };
+        let prefix = format!("issue-invitation:{room}:");
+        for socket in namespace.to(room.to_owned()).sockets() {
+            for marker in socket.rooms() {
+                let Some(user_id) = marker
+                    .strip_prefix(&prefix)
+                    .and_then(|id| id.parse::<i64>().ok())
+                else {
+                    continue;
+                };
+                let authorized = match self.state.upgrade() {
+                    Some(state) => {
+                        crate::socketio::project_chat_events::permits_comment(
+                            &state, user_id, project_id, issue_id,
+                        )
+                        .await
+                    }
+                    None => false,
+                };
+                if !authorized {
+                    socket.leave(room.to_owned());
+                    socket.leave(marker);
+                }
+            }
+        }
     }
 
     /// `wework:loop_item:changed` to one Wework Runtime user room.
@@ -514,6 +563,6 @@ impl SocketEmitters {
     /// Test-only constructor: the wire tests need the production emitter
     /// handles without widening the production constructor's visibility.
     pub(crate) fn for_test(server: &Server) -> Result<Self, EmitterError> {
-        Self::new(server)
+        Self::new(server, std::sync::Weak::new())
     }
 }

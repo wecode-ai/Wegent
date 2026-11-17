@@ -13,6 +13,7 @@ from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem
 from app.models.user import User
 from app.services.cloud_projects.access import IssueAction, require_cloud_project_role
+from app.services.delivery.service import delivery_service
 from app.services.loop_items.service import loop_item_service
 from tests.api.test_deliveries_api import delivery_project
 
@@ -60,6 +61,7 @@ def test_cp14_current_invitation_is_issue_scoped_and_revocable(
         item.assignee_user_id = outsider.id
         test_db.commit()
     assert loop_item_service.get(test_db, item.id, outsider.id).id == item.id
+    assert delivery_service.list_deliveries(test_db, item.id, outsider.id) == []
     response = loop_item_service.response_values(test_db, item, outsider.id)
     assert (
         response["can_view_detail"]
@@ -172,3 +174,25 @@ def test_external_provider_does_not_receive_native_issue_invitations(
         loop_item_service.add_collaborator(test_db, item.id, outsider.id, test_user.id)
     assert denied.value.status_code == 404
     assert loop_item_service.list_collaborators(test_db, item.id, test_user.id) == []
+
+
+def test_cp14_removing_participant_retains_current_assignee_access(
+    test_db: Session,
+    test_user: User,
+    delivery_project: CloudProject,
+    outsider: User,
+) -> None:
+    item = make_issue(test_db, delivery_project, test_user)
+    item.assignee_user_id = outsider.id
+    test_db.commit()
+    loop_item_service.add_collaborator(test_db, item.id, outsider.id, test_user.id)
+
+    loop_item_service.remove_collaborator(test_db, item.id, outsider.id, test_user.id)
+
+    assert loop_item_service.list_collaborators(test_db, item.id, test_user.id) == []
+    assert loop_item_service.get(test_db, item.id, outsider.id).id == item.id
+    item.assignee_user_id = None
+    test_db.commit()
+    with pytest.raises(HTTPException) as denied:
+        loop_item_service.get(test_db, item.id, outsider.id)
+    assert denied.value.status_code == 404
