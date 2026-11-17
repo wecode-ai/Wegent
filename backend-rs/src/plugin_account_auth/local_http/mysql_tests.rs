@@ -8,6 +8,7 @@ use base64::{
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+mod grant_scopes;
 mod recovery;
 
 const SIGNING: &str = "native-plugin-contract-test";
@@ -35,8 +36,10 @@ impl Api {
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status().as_u16(), status, "{operation}");
-        response.json().await.unwrap()
+        let actual = response.status().as_u16();
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(actual, status, "{operation}: {}", body["detail"]);
+        body
     }
     async fn session(&self, data: Value, status: u16) -> Value {
         self.call("", "session", data, status).await
@@ -140,6 +143,24 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     let opened = api.session(proof.clone(), 200).await;
     api.session(proof, 401).await;
     let token = opened["native_token"].as_str().unwrap();
+    let missing = api
+        .call(
+            token,
+            "plugin.auth.oauth.revoke.begin",
+            json!({"connection_id": "c".repeat(64)}),
+            409,
+        )
+        .await;
+    assert_eq!(missing["detail"], "plugin_auth_connection_not_found");
+    let expired = api
+        .call(
+            token,
+            "plugin.auth.transfer.finish",
+            json!({"migration_id": "d".repeat(64)}),
+            409,
+        )
+        .await;
+    assert_eq!(expired["detail"], "plugin_auth_migration_expired");
     assert_eq!(opened["account_id"], OWNER);
     assert!(
         crate::auth::verify_token(&state.auth, token).is_err(),
@@ -383,6 +404,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
             .n,
         0
     );
+    grant_scopes::verify(&api, token, &state).await?;
     mysql
         .execute("UPDATE users SET is_active=0 WHERE id=?", (OWNER,))
         .await?;

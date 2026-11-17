@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { newStandInRole } from '@/api/personalStandIn'
@@ -15,6 +15,113 @@ const provider = {
 const profile = JSON.stringify(['https://github.com', '7'])
 
 describe('Git source connections', () => {
+  type SearchResult = Awaited<ReturnType<StandInExecutorApi['searchConnectionResources']>>
+  function renderDiscovery(
+    searchConnectionResources: StandInExecutorApi['searchConnectionResources']
+  ) {
+    const onChange = vi.fn()
+    render(
+      <StandInGitConnections
+        role={newStandInRole('mac', 'developer')}
+        provider={provider}
+        api={{ searchConnectionResources } as unknown as StandInExecutorApi}
+        deviceId="mac"
+        disabled={false}
+        onChange={onChange}
+      />
+    )
+    return onChange
+  }
+
+  it.each(['personal', 'repository'])(
+    'shows query feedback for pending and empty %s discovery',
+    async kind => {
+      let finish!: (value: SearchResult) => void
+      const search = vi.fn(
+        () =>
+          new Promise<SearchResult>(resolve => {
+            finish = resolve
+          })
+      )
+      const onChange = renderDiscovery(search)
+      if (kind === 'repository')
+        fireEvent.change(screen.getByTestId('stand-in-git-kind'), { target: { value: kind } })
+      expect(screen.queryByTestId('stand-in-git-query-status')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('stand-in-git-search'))
+      expect(screen.getByTestId('stand-in-git-query-status')).toHaveTextContent(
+        kind === 'personal' ? '正在读取账号' : '正在搜索仓库'
+      )
+      expect(screen.getByTestId('stand-in-git-search')).toBeDisabled()
+      await act(async () => finish({ items: [], hasMore: false }))
+      expect(screen.getByTestId('stand-in-git-query-status')).toHaveTextContent(
+        kind === 'personal' ? '未读取到可用账号' : '未找到匹配仓库'
+      )
+      expect(screen.getByTestId('stand-in-git-search')).toBeEnabled()
+      expect(onChange).not.toHaveBeenCalled()
+      if (kind === 'repository')
+        fireEvent.change(screen.getByTestId('stand-in-git-query'), { target: { value: 'updated' } })
+      else
+        fireEvent.change(screen.getByTestId('stand-in-git-kind'), {
+          target: { value: 'repository' },
+        })
+      expect(screen.queryByTestId('stand-in-git-query-status')).not.toBeInTheDocument()
+    }
+  )
+
+  it('keeps failed discovery distinct from a successful empty result and permits retry', async () => {
+    const search = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Unavailable'))
+      .mockResolvedValueOnce({ items: [], hasMore: false })
+    renderDiscovery(search)
+    fireEvent.click(screen.getByTestId('stand-in-git-search'))
+    await screen.findByRole('alert')
+    expect(screen.queryByTestId('stand-in-git-query-status')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('stand-in-git-search'))
+    await waitFor(() =>
+      expect(screen.getByTestId('stand-in-git-query-status')).toHaveTextContent('未读取到可用账号')
+    )
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(search).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains found repositories while a later page is pending and empty', async () => {
+    let finish!: (value: SearchResult) => void
+    const search = vi
+      .fn()
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 'repo',
+            name: 'Existing repository',
+            profile,
+            kind: 'repository',
+            providerId: provider.id,
+          },
+        ],
+        hasMore: true,
+        nextCursor: 'page-2',
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise<SearchResult>(resolve => {
+            finish = resolve
+          })
+      )
+    const onChange = renderDiscovery(search)
+    fireEvent.change(screen.getByTestId('stand-in-git-kind'), { target: { value: 'repository' } })
+    fireEvent.click(screen.getByTestId('stand-in-git-search'))
+    await screen.findByTestId('stand-in-git-more')
+    fireEvent.click(screen.getByTestId('stand-in-git-more'))
+    expect(screen.getByTestId('stand-in-git-query-status')).toHaveTextContent('正在搜索仓库')
+    expect(screen.getByTestId('stand-in-git-select-repo')).toBeInTheDocument()
+    await act(async () => finish({ items: [], hasMore: false }))
+    expect(screen.getByTestId('stand-in-git-select-repo')).toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-git-query-status')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-git-more')).not.toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   const gitlabTarget = {
     pluginKey: 'gitlab',
     connectorSlug: `wework-gitlab-cli-${'a'.repeat(64)}`,

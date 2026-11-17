@@ -167,7 +167,7 @@ export function StandInOnboarding({
                     disabled={saving || setupBusy}
                     onClick={close}
                   >
-                    {t('standIn.close')}
+                    {t(guideOpen ? 'standIn.close' : 'standIn.onboarding.exit')}
                   </Button>
                 </div>
                 {result && !guideOpen ? (
@@ -216,7 +216,7 @@ export function StandInOnboarding({
                           </button>
                         ))}
                       </div>
-                      <p className="text-xs leading-relaxed text-text-muted">
+                      <p className="text-xs leading-relaxed text-text-secondary">
                         {t('standIn.onboarding.examples_scope')}
                       </p>
                     </section>

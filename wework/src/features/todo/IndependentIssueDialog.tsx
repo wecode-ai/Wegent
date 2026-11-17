@@ -49,6 +49,11 @@ export function IndependentIssueDialog({
   const [comments, setComments] = useState<IndependentIssueComment[]>([])
   const [loading, setLoading] = useState(Boolean(issueId))
   const [error, setError] = useState('')
+  const [errorKind, setErrorKind] = useState<'default' | 'conflict' | 'unconfirmed'>('default')
+  const conflicted = errorKind === 'conflict'
+  const saveUnconfirmed = errorKind === 'unconfirmed'
+  const [reloadIssueId, setReloadIssueId] = useState<string | null>(null)
+  const loadId = issueId ?? reloadIssueId
   const [commentError, setCommentError] = useState('')
   const [editing, setEditing] = useState(!issueId)
   const [busy, setBusy] = useState(false)
@@ -56,30 +61,49 @@ export function IndependentIssueDialog({
   const [deleting, setDeleting] = useState(false)
   const [body, setBody] = useState('')
   const [retry, setRetry] = useState(0)
+  const [dirty, setDirty] = useState(false)
+  const [discarding, setDiscarding] = useState<'close' | 'edit' | 'reload' | null>(null)
+  const [associationPending, setAssociationPending] = useState(false)
+  const refreshSavedIssue = () => {
+    if (associationPending && issue) onSaved(issue)
+  }
+  const reloadLatest = () => {
+    if (!issue) return
+    refreshSavedIssue()
+    setReloadIssueId(issue.id)
+    setEditing(false)
+    setLoading(true)
+    setDirty(false)
+    setError('')
+    setErrorKind('default')
+    setAssociationPending(false)
+    setRetry(value => value + 1)
+  }
+  const requestClose = () => {
+    if (busy) return
+    if (editing && dirty) setDiscarding('close')
+    else {
+      refreshSavedIssue()
+      onClose()
+    }
+  }
   const ref = useDialogKeyboard<HTMLDivElement>(
-    () => {
-      if (!busy) onClose()
-    },
-    presentation === 'dialog' && !deleting,
-    'input, button'
+    requestClose,
+    presentation === 'dialog' && !deleting && !discarding,
+    '[data-testid="independent-issue-title"]'
   )
-  useEscapeKey(
-    () => {
-      if (!busy) onClose()
-    },
-    presentation === 'drawer' && !deleting,
-    ref
-  )
+  useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)
   useEffect(() => {
-    if (!issueId) return
+    if (!loadId) return
     let active = true
     void api
-      .get(issueId)
+      .get(loadId)
       .then(
         row => {
           if (active) {
             setIssue(row)
             setError('')
+            setErrorKind('default')
           }
         },
         reason => {
@@ -96,7 +120,7 @@ export function IndependentIssueDialog({
       .finally(() => {
         if (active) setLoading(false)
       })
-    void api.comments(issueId).then(
+    void api.comments(loadId).then(
       rows => {
         if (active) {
           setComments(rows)
@@ -110,25 +134,40 @@ export function IndependentIssueDialog({
     return () => {
       active = false
     }
-  }, [api, issueId, retry])
+  }, [api, loadId, retry])
   const run = async (operation: () => Promise<void>) => {
     if (busy) return
     setBusy(true)
     setError('')
+    setErrorKind('default')
     try {
       await operation()
     } catch (reason) {
+      const unconfirmed =
+        editing &&
+        (reason instanceof TypeError || (reason instanceof ApiError && reason.status >= 500))
       setError(reason instanceof Error ? reason.message : String(reason))
+      setErrorKind(
+        unconfirmed
+          ? 'unconfirmed'
+          : editing && reason instanceof ApiError && reason.status === 409
+            ? 'conflict'
+            : 'default'
+      )
     } finally {
       setBusy(false)
     }
   }
   const save = ({ project_id, project_status, ...input }: IssueCreationInput) =>
     run(async () => {
-      const row = issue ? await api.update(issue.id, input) : await api.create(input)
+      const row = issue
+        ? await api.update(issue.id, { ...input, version: issue.version })
+        : await api.create(input)
       setIssue(row)
+      setAssociationPending(Boolean(project_id))
       if (project_id) {
         const target = await api.associate(row.id, project_id, row.version, project_status ?? '')
+        setAssociationPending(false)
         onSaved(null)
         onOpenProjectIssue?.(target.project_id, target.issue_id)
         onClose()
@@ -161,10 +200,14 @@ export function IndependentIssueDialog({
   const content = (
     <>
       <div
+        hidden={Boolean(discarding)}
+        inert={Boolean(discarding)}
         className={
-          presentation === 'drawer'
-            ? `relative flex h-full min-h-0 min-w-0 shrink-0 border-l border-border ${expanded ? 'w-[min(75%,72rem)]' : 'w-[min(44%,32rem)]'}`
-            : 'fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4'
+          discarding
+            ? 'hidden'
+            : presentation === 'drawer'
+              ? `relative flex h-full min-h-0 min-w-0 shrink-0 border-l border-border ${expanded ? 'w-[min(75%,72rem)]' : 'w-[min(44%,32rem)]'}`
+              : 'fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4'
         }
       >
         <div
@@ -174,16 +217,21 @@ export function IndependentIssueDialog({
           aria-labelledby="independent-issue-dialog-title"
           inert={deleting}
           data-testid="independent-issue-dialog"
-          className={`flex w-full max-w-3xl flex-col border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] rounded-xl'}`}
+          className={`flex w-full max-w-[680px] flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] rounded-[20px]'}`}
         >
-          <header className="flex shrink-0 items-start justify-between gap-4 border-b border-border p-5">
-            <div>
-              <h2 id="independent-issue-dialog-title" className="text-heading-sm font-medium">
+          <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-3">
+            <div className="min-w-0">
+              <h2
+                id="independent-issue-dialog-title"
+                className="truncate text-heading-sm font-medium"
+              >
                 {issue?.title ?? t('independentIssues.create')}
               </h2>
-              <p className="mt-1 text-sm text-text-secondary">
-                {t(!issueId ? 'issue_creation.generic_scope_hint' : 'independentIssues.noProject')}
-              </p>
+              {issueId && (
+                <p className="mt-1 text-sm text-text-secondary">
+                  {t('independentIssues.noProject')}
+                </p>
+              )}
             </div>
             <div className="flex shrink-0 gap-1">
               {presentation === 'drawer' && onExpandedChange && (
@@ -207,20 +255,35 @@ export function IndependentIssueDialog({
                 disabled={busy}
                 data-testid="independent-issue-close"
                 aria-label={t('independentIssues.close')}
-                onClick={onClose}
+                onClick={requestClose}
                 className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
           </header>
-          <div className="min-h-0 overflow-auto p-5">
-            {error ? (
+          <div
+            className={
+              editing ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'min-h-0 overflow-auto p-5'
+            }
+          >
+            {error || errorKind !== 'default' ? (
               <div
                 role="alert"
-                className="mb-4 flex flex-wrap items-center gap-3 text-sm text-error"
+                className={`mb-4 flex shrink-0 flex-wrap items-center gap-3 text-sm text-destructive ${editing ? 'mx-5 mt-4' : ''}`}
               >
-                <span>{error}</span>
+                {associationPending && (
+                  <p data-testid="independent-issue-association-pending" className="w-full">
+                    {t('issue_creation.association_pending')}
+                  </p>
+                )}
+                <span>
+                  {conflicted
+                    ? t('issue_creation.conflict_hint')
+                    : saveUnconfirmed
+                      ? t('issue_creation.save_unconfirmed')
+                      : error}
+                </span>
                 {!editing ? (
                   <button
                     type="button"
@@ -230,21 +293,38 @@ export function IndependentIssueDialog({
                   >
                     {t('independentIssues.retry')}
                   </button>
+                ) : conflicted && issue ? (
+                  <button
+                    type="button"
+                    data-testid="independent-issue-reload"
+                    onClick={() => (dirty ? setDiscarding('reload') : reloadLatest())}
+                    className={action}
+                  >
+                    {t('issue_creation.reload_latest')}
+                  </button>
                 ) : null}
               </div>
             ) : null}
-            {loading && !issue ? (
+            {loading ? (
               <p role="status">{t('independentIssues.loading')}</p>
             ) : editing ? (
               <IndependentIssueEditor
+                autoFocus={presentation === 'drawer' || Boolean(issue)}
                 api={api}
                 collaborationApi={collaborationApi}
                 allowProjectSelection={!issueId}
                 issue={issue}
                 userId={userId}
                 busy={busy}
+                onDirtyChange={setDirty}
                 onSave={save}
-                onCancel={() => (issue ? setEditing(false) : onClose())}
+                onCancel={() => {
+                  if (dirty) setDiscarding(issue ? 'edit' : 'close')
+                  else if (issue) {
+                    refreshSavedIssue()
+                    setEditing(false)
+                  } else onClose()
+                }}
               />
             ) : issue ? (
               <>
@@ -297,7 +377,7 @@ export function IndependentIssueDialog({
                       type="button"
                       disabled={busy}
                       data-testid="independent-issue-delete"
-                      className={`${action} text-error`}
+                      className={`${action} text-destructive`}
                       onClick={() => {
                         setError('')
                         setDeleting(true)
@@ -373,7 +453,7 @@ export function IndependentIssueDialog({
                   {t('independentIssues.discussion')}
                 </h3>
                 {commentError ? (
-                  <p role="alert" className="mb-3 text-sm text-error">
+                  <p role="alert" className="mb-3 text-sm text-destructive">
                     {commentError}
                     <button
                       type="button"
@@ -426,6 +506,46 @@ export function IndependentIssueDialog({
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={Boolean(discarding)}
+        title={t(
+          discarding === 'reload'
+            ? 'issue_creation.reload_latest'
+            : saveUnconfirmed
+              ? 'issue_creation.unconfirmed_discard_title'
+              : 'issue_creation.discard_title'
+        )}
+        description={t(
+          discarding === 'reload'
+            ? 'issue_creation.reload_hint'
+            : associationPending
+              ? 'issue_creation.saved_issue_discard_hint'
+              : saveUnconfirmed
+                ? 'issue_creation.unconfirmed_discard_hint'
+                : 'issue_creation.discard_hint'
+        )}
+        cancelLabel={t('issue_creation.keep_editing')}
+        confirmLabel={t(
+          discarding === 'reload' ? 'issue_creation.reload_confirm' : 'issue_creation.discard'
+        )}
+        confirmTestId="independent-issue-discard-confirm"
+        dialogTestId="independent-issue-discard-dialog"
+        destructive
+        onClose={() => setDiscarding(null)}
+        onConfirm={() => {
+          const action = discarding
+          setDiscarding(null)
+          if (action === 'reload') {
+            reloadLatest()
+            return
+          }
+          refreshSavedIssue()
+          if (action === 'edit') setEditing(false)
+          else {
+            onClose()
+          }
+        }}
+      />
       <ConfirmDialog
         open={deleting}
         title={t('independentIssues.delete')}

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -8,8 +9,32 @@ import { until } from './plugin-regression-fixture.mjs'
 const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
 /** A separate process owns a real token-checked lease, never a fake response. */
-export async function holdPluginWriteLease(cloud, userId = 1) {
-  return holdPluginCoordinationFault(cloud, 'lease', userId)
+export async function holdPluginWriteLease(cloud, item, userId = 1) {
+  const installedId = typeof item === 'number' ? item : item?.installedId
+  let name
+  if (installedId) {
+    const rows = await cloud.queryDatabase(
+      "SELECT name FROM kinds WHERE id=%s AND user_id=%s AND kind='InstalledPlugin' AND namespace='default'",
+      [installedId, userId]
+    )
+    assert.equal(rows.length, 1)
+    name = rows[0].name
+  } else {
+    assert.ok(item?.pluginId, 'A lease fixture needs its target plugin')
+    const rows = await cloud.queryDatabase(
+      'SELECT catalog_namespace,slug FROM plugins WHERE id=%s',
+      [item.pluginId]
+    )
+    assert.equal(rows.length, 1)
+    const { catalog_namespace: namespace, slug } = rows[0]
+    const digest = createHash('sha256').update(`${namespace}:${slug}`).digest('hex').slice(0, 10)
+    name = `${slug.slice(0, 89)}-${digest}`
+  }
+  return holdPluginCoordinationFault(cloud, 'lease', userId, name)
+}
+
+export async function holdInstalledPluginRow(cloud, installedId, userId = 1) {
+  return holdPluginCoordinationFault(cloud, 'plugin-row', userId, installedId)
 }
 
 export async function holdDeviceRegistrationRow(cloud, userId, recordId) {
@@ -17,8 +42,16 @@ export async function holdDeviceRegistrationRow(cloud, userId, recordId) {
   return holdPluginCoordinationFault(cloud, 'device-row', userId, recordId)
 }
 
-export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recordId) {
-  assert.ok(['lease', 'user-row', 'device-row', 'redis-unavailable'].includes(mode))
+export async function holdPluginScanLock(cloud, path, executorHome) {
+  return holdPluginCoordinationFault(cloud, 'scan-lock', 1, undefined, { path, executorHome })
+}
+
+export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recordId, scan) {
+  assert.ok(
+    ['lease', 'user-row', 'device-row', 'plugin-row', 'redis-unavailable', 'scan-lock'].includes(
+      mode
+    )
+  )
   const redisUrl = `redis://127.0.0.1:${cloud.redisPort}/0`
   assert.equal(cloud.backendEnv.REDIS_URL, redisUrl)
   const child = spawn(
@@ -38,7 +71,14 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
         WEWORK_E2E_PLUGIN_REDIS_PORT: String(cloud.redisPort),
         WEWORK_E2E_PLUGIN_USER_ID: String(userId),
         ...(recordId ? { WEWORK_E2E_DEVICE_RECORD_ID: String(recordId) } : {}),
+        ...(mode === 'lease' ? { WEWORK_E2E_PLUGIN_NAME: String(recordId) } : {}),
         WEWORK_E2E_PLUGIN_FAULT: mode,
+        ...(scan
+          ? {
+              WEWORK_E2E_PLUGIN_SCAN_LOCK: scan.path,
+              WEWORK_E2E_EXECUTOR_HOME: scan.executorHome,
+            }
+          : {}),
         WEWORK_E2E_PLUGIN_MYSQL: JSON.stringify({
           ...cloud.mysqlConnectionOptions,
           database: cloud.databaseName,

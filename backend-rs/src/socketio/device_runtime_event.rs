@@ -121,7 +121,7 @@ pub fn working_envelope(data: &Map<String, Value>, logical_device_id: &str) -> V
 /// `_forward_runtime_event`: project, relay to the Runtime namespace room,
 /// publish on the Task live channel, then run the IM-only side effects.
 pub async fn forward(
-    state: &AppState,
+    state: &std::sync::Arc<AppState>,
     runtime: &std::sync::Arc<SocketRuntime>,
     session: &super::session::SessionSnapshot,
     data: &Map<String, Value>,
@@ -355,11 +355,30 @@ async fn forward_channel_event(state: &AppState, device_id: &str, envelope: &Val
     forward_local_task_callbacks(state, device_id, &task_id, source, &event).await;
 }
 
-/// Best-effort notification for terminal events from non-IM Runtime turns.
-async fn notify_runtime_event(state: &AppState, user_id: i64, device_id: &str, envelope: &Value) {
+/// Notify task updates and schedule business questions outside the ordered event turn.
+async fn notify_runtime_event(
+    state: &std::sync::Arc<AppState>,
+    user_id: i64,
+    device_id: &str,
+    envelope: &Value,
+) {
     let Some(payload) = envelope.get("payload").and_then(Value::as_object) else {
         return;
     };
+    if runtime_questions::question(payload).is_some() {
+        let state = state.clone();
+        let device_id = device_id.to_owned();
+        let payload = payload.clone();
+        // Provider retries must not hold the connection's ordered event turn.
+        tokio::spawn(async move {
+            if let Err(error) =
+                runtime_questions::deliver(&state, user_id, &device_id, &payload).await
+            {
+                tracing::warn!(%error, user_id, device_id, "Runtime question IM delivery failed");
+            }
+        });
+        return;
+    }
     let Some(plan) = notification_plan(user_id, device_id, payload) else {
         return;
     };
@@ -373,6 +392,9 @@ async fn notify_runtime_event(state: &AppState, user_id: i64, device_id: &str, e
 
 #[path = "device_runtime_im_notification.rs"]
 mod runtime_im_notification;
+
+#[path = "device_runtime_questions.rs"]
+mod runtime_questions;
 
 /// `RUNTIME_VALUE_ORIGINS`: the `valueOrigin` values the runtime terminal event
 /// keeps.

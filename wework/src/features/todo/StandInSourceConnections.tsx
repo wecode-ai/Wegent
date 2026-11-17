@@ -268,7 +268,7 @@ export function StandInSourceConnections({
         >
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm">{row.name}</p>
-            <p className="text-xs text-text-muted">
+            <p className="text-xs text-text-secondary">
               {provider.resourceLabels?.[row.kind] ?? row.kind}
               {' · '}
               {row.configurationSummary ?? t('standIn.workspace.connection_default_configuration')}
@@ -381,13 +381,16 @@ export function StandInSourceConnections({
   )
   if (authorizationRequired)
     return (
-      <section className="space-y-4" data-testid={`${prefix}-authorization`}>
+      <section
+        className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
+        data-testid={`${prefix}-authorization`}
+      >
         <StandInConnectionHeader
           icon={MessageSquare}
           title={provider.displayName}
           description={t('standIn.workspace.message_connection_help')}
         />
-        <p role="alert" className="text-sm text-text-muted">
+        <p role="alert" className="text-sm text-text-secondary">
           {t('standIn.errors.connector_auth_required')}
         </p>
         {provider.authTarget && deviceId === localDeviceId ? (
@@ -401,7 +404,9 @@ export function StandInSourceConnections({
             {t('standIn.workspace.connect_source', { name: provider.displayName })}
           </button>
         ) : (
-          <p className="text-sm text-text-muted">{t('standIn.workspace.authorize_on_device')}</p>
+          <p className="text-sm text-text-secondary">
+            {t('standIn.workspace.authorize_on_device')}
+          </p>
         )}
         {connectedScope}
         {authorization}
@@ -409,7 +414,10 @@ export function StandInSourceConnections({
     )
   const showAdding = excluding || adding || rows.length === 0
   return (
-    <section className="space-y-4" data-testid={`${prefix}-connections`}>
+    <section
+      className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
+      data-testid={`${prefix}-connections`}
+    >
       <StandInConnectionHeader
         icon={MessageSquare}
         title={provider.displayName}
@@ -470,7 +478,7 @@ export function StandInSourceConnections({
                   setNextCursor(undefined)
                   setSearched(false)
                 }}
-                className="min-h-9 rounded-md border border-border bg-background px-2 text-sm"
+                className="min-h-11 rounded-md border border-border bg-background px-2 text-sm md:min-h-9"
               >
                 {provider.resourceKinds.map(resourceKind => (
                   <option key={resourceKind} value={resourceKind}>
@@ -492,7 +500,7 @@ export function StandInSourceConnections({
                     setNextCursor(undefined)
                     setSearched(false)
                   }}
-                  className="min-h-9 min-w-0 flex-1 rounded-md border border-border bg-transparent px-3 text-sm"
+                  className="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-transparent px-3 text-sm md:min-h-9"
                   placeholder={t('standIn.workspace.search_connections')}
                 />
                 <button
@@ -513,7 +521,7 @@ export function StandInSourceConnections({
                 {t('standIn.workspace.connection_scope')}
               </legend>
               {(['all', 'selected'] as const).map(value => (
-                <label key={value} className="flex min-h-8 items-center gap-2 text-sm">
+                <label key={value} className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
                   <input
                     type="radio"
                     name={`${prefix}-scope`}
@@ -534,7 +542,7 @@ export function StandInSourceConnections({
           )}
           {scope === 'all' && (
             <div className="space-y-3">
-              <p className="text-sm text-text-muted">
+              <p className="text-sm text-text-secondary">
                 {t('standIn.workspace.all_resources_help')}{' '}
                 {new Intl.ListFormat(i18n.language, { style: 'long', type: 'conjunction' }).format(
                   (provider.allResourceKinds ?? []).map(
@@ -558,7 +566,7 @@ export function StandInSourceConnections({
             </div>
           )}
           {busy && (
-            <p role="status" className="text-sm text-text-muted">
+            <p role="status" className="text-sm text-text-secondary">
               {t('standIn.loading')}
             </p>
           )}
@@ -568,7 +576,9 @@ export function StandInSourceConnections({
             </div>
           )}
           {scope === 'selected' && searched && !results.length && (
-            <p className="text-sm text-text-muted">{t('standIn.workspace.no_connections_found')}</p>
+            <p className="text-sm text-text-secondary">
+              {t('standIn.workspace.no_connections_found')}
+            </p>
           )}
           {scope === 'selected' && (
             <>
@@ -665,7 +675,7 @@ export function StandInSourceConnections({
               )}
             </>
           )}
-          <p className="text-xs text-text-muted">{t('standIn.workspace.connection_help')}</p>
+          <p className="text-xs text-text-secondary">{t('standIn.workspace.connection_help')}</p>
         </form>
       )}
       <StandInProcessingSettings

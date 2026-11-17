@@ -1183,6 +1183,10 @@ path = "/api/plugins/local-sync"
 
 [[routes]]
 methods = ["POST"]
+path = "/api/plugins/local-sync/complete"
+
+[[routes]]
+methods = ["POST"]
 path = "/api/plugins/native-auth/exchange"
 
 # First-class independent Issues have no project or space.
