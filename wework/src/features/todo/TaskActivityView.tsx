@@ -1561,7 +1561,7 @@ export function TaskActivityView({
                         >
                           <IssueAssignmentReceiptStatus
                             {...currentReceipts}
-                            currentUserId={activeUserId}
+                            currentUserId={activeUserId ?? undefined}
                           />
                         </span>
                       ) : null

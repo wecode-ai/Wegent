@@ -129,10 +129,13 @@ impl RuntimeWorkRpcHandler {
             AppIpcError::new("permission_denied", "Cannot verify assignment recipient")
         })?;
         if identity["id"] != context["userId"] {
-            return Err(AppIpcError::new(
-                "permission_denied",
-                "Assignment recipient changed",
-            ));
+            self.log_stand_in_decision(
+                context,
+                &json!({"id":issue,"human_task_binding":{"assignmentId":assignment}}),
+                "notification_account_mismatch",
+                json!({}),
+            );
+            return Ok(());
         }
         LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?
             .queue_assignment_receipt(&json!({
