@@ -949,6 +949,45 @@ describe('Electron desktop E2E automation', () => {
     }
   })
 
+  test.each([true, false])(
+    'waits for a fill target without accepting a missing one: %s',
+    async mount => {
+      const input = document.createElement('input')
+      input.dataset.testid = 'delayed-fill-target'
+      const results: Array<{ ok: boolean; error?: string }> = []
+      let polls = 0
+      const timer = window.setTimeout(() => {
+        if (mount) document.body.append(input)
+      }, 30)
+      vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          if (++polls > 1) return new Response(null, { status: 410 })
+          return new Response(
+            JSON.stringify({
+              id: 'delayed-fill',
+              action: 'fill',
+              selector: '[data-testid="delayed-fill-target"]',
+              value: 'ready',
+              timeoutMs: 100,
+            })
+          )
+        }
+        if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+        return new Response('{}')
+      })
+      try {
+        await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+        expect(results).toHaveLength(1)
+        expect(results[0].ok).toBe(mount)
+        if (mount) expect(input.value).toBe('ready')
+        else expect(results[0].error).toContain('Timed out waiting for selector')
+      } finally {
+        window.clearTimeout(timer)
+        input.remove()
+      }
+    }
+  )
+
   test('is enabled by an injected runtime control URL', () => {
     window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
       controlUrl: 'http://127.0.0.1:43111',

@@ -1757,7 +1757,7 @@ function desktopControlElementValue(element: HTMLElement): string {
 
 async function waitForDesktopControlElement(
   command: DesktopControlCommand,
-  onMatch?: (element: HTMLElement) => string
+  onMatch?: (element: HTMLElement) => string | Promise<string>
 ): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
@@ -3606,10 +3606,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     }
     case 'fill': {
-      const element = findDesktopControlElements(command.selector)[0]
-      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
-      await fillDesktopControlElement(element, command.value ?? '')
-      return element.textContent?.trim() ?? ''
+      return waitForDesktopControlElement(command, async element => {
+        await fillDesktopControlElement(element, command.value ?? '')
+        return element.textContent?.trim() ?? ''
+      })
     }
     case 'composeInput': {
       const element = findDesktopControlElements(command.selector)[0]
