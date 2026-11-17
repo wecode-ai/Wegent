@@ -5587,7 +5587,7 @@
     "search_existing_task": "Search task title or ID",
     "no_existing_tasks": "No available tasks match.",
     "link_existing_failed": "Could not link task. Try again.",
-    "link_existing_hint": "Choose a task. Linking does not start a new run.",
+    "link_existing_hint": "Link to this Issue without starting a run. Any existing Issue link will be replaced.",
     "no_available_tasks": "No tasks available to link.",
     "existing_task_device": "Task device",
     "linking_task": "Linking task…"

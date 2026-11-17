@@ -5582,7 +5582,7 @@
     "search_existing_task": "搜索任务标题或编号",
     "no_existing_tasks": "暂无匹配的可关联任务",
     "link_existing_failed": "关联任务失败，请重试。",
-    "link_existing_hint": "选择已有任务，仅建立关联，不会重新运行。",
+    "link_existing_hint": "关联到当前 Issue，不会重新运行；若已关联其他 Issue，将转移原关联。",
     "no_available_tasks": "暂无可关联的任务，可先在“任务”中创建。",
     "existing_task_device": "任务所在设备",
     "linking_task": "正在关联任务…"

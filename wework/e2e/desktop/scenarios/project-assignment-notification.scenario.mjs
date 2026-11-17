@@ -905,6 +905,7 @@ export function createDesktopScenario({
         owner,
         projectId: project.id,
         taskId: runtimeTaskId,
+        originalIssueId: issue.id,
         uiTimeoutMs,
       })
       assert.equal(

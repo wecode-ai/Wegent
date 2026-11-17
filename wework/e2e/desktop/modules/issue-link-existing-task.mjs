@@ -9,8 +9,12 @@ export async function verifyLinkExistingTask({
   owner,
   projectId,
   taskId,
+  originalIssueId,
   uiTimeoutMs,
 }) {
+  const originalBindings = await request(`/api/v1/loop-items/${originalIssueId}/tasks`)
+  const original = originalBindings.find(binding => binding.task_id === taskId)
+  assert.ok(original, 'The checkpoint must supply the existing task binding')
   await control.command('click', '[data-testid="cloud-todo-detail-close"]')
   const issue = await createIssue(
     control,
@@ -60,5 +64,15 @@ export async function verifyLinkExistingTask({
     (await request(`/api/v1/loop-items/${issue.id}/tasks`)).length,
     1,
     'The saved binding survives navigation between home and board'
+  )
+  // Restore the borrowed task so later privacy checks keep their own prerequisites.
+  await request(`/api/v1/loop-items/${originalIssueId}/tasks`, {
+    method: 'POST',
+    body: JSON.stringify({ deviceId: original.device_id, taskId, taskTitle: original.task_title }),
+  })
+  const restored = await request(`/api/v1/loop-items/${originalIssueId}/tasks`)
+  assert.ok(
+    restored.some(binding => binding.task_id === taskId),
+    'Restore the original binding after testing the move'
   )
 }
