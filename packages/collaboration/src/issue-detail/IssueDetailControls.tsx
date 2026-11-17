@@ -11,6 +11,57 @@ import { useCollaborationPortalTheme } from '../theme'
 import { useEscapeKey } from '../markdown/useEscapeKey'
 import { isImeComposingEvent } from '@wegent/chat-core/ime'
 
+export function IssueDetailCollaboratorPicker({
+  value,
+  members,
+  onChange,
+  onAdd,
+  busy,
+  label,
+  addLabel,
+  compact = false,
+  className,
+}: {
+  value: number | null
+  members: ReadonlyArray<{ user_id: number; user_name: string }>
+  onChange(value: number | null): void
+  onAdd(): void
+  busy: boolean
+  label: string
+  addLabel: string
+  compact?: boolean
+  className?: string
+}) {
+  const desktopHeight = compact ? 'md:h-8' : 'md:h-9'
+  return (
+    <div className={`flex items-center gap-2 ${className ?? ''}`}>
+      <select
+        data-testid="cloud-todo-collaborator-select"
+        aria-label={label}
+        value={value ?? ''}
+        onChange={event => onChange(event.target.value === '' ? null : Number(event.target.value))}
+        className={`h-11 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-text-muted ${desktopHeight}`}
+      >
+        <option value="">{label}</option>
+        {members.map(member => (
+          <option key={member.user_id} value={member.user_id}>
+            {member.user_name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        data-testid="cloud-todo-confirm-collaborator"
+        disabled={value === null || busy}
+        onClick={onAdd}
+        className={`h-11 shrink-0 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-40 ${desktopHeight}`}
+      >
+        {addLabel}
+      </button>
+    </div>
+  )
+}
+
 export interface IssueDetailSelectProps<TValue extends string> {
   value: TValue
   options: Array<{ value: TValue; label: string }>

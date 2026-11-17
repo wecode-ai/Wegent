@@ -26,7 +26,11 @@ def setup(monkeypatch, fake_im_session_cache):
     user = SimpleNamespace(id=7, preferences={"default_execution_target": "mac"})
     session = IMPrivateSession("session", 7, "telegram", 3, "chat", "sender")
     context = SimpleNamespace(
-        content="hello", images=[], files=[], extra_data={"message_id": "message"}
+        content="hello",
+        sender_id="sender",
+        images=[],
+        files=[],
+        extra_data={"message_id": "message"},
     )
     port = SimpleNamespace(
         send_text_reply=AsyncMock(),

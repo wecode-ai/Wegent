@@ -43,6 +43,7 @@ export interface ComposerAttachmentBadgesProps<T extends ComposerAttachment> {
   onShowTextAttachment?(attachment: T): void;
   imageServices: AttachmentImageServices<T>;
   labels: {
+    removeAttachment: string;
     showText: string;
     appshot: string;
     pastedText: string;
@@ -104,10 +105,12 @@ function PendingImageAttachment({
 function RemoveAttachmentButton<Id extends string | number>({
   attachmentId,
   onRemoveAttachment,
+  label,
   tile = false,
 }: {
   attachmentId: Id;
   onRemoveAttachment: (attachmentId: Id) => void;
+  label: string;
   tile?: boolean;
 }) {
   return (
@@ -115,8 +118,8 @@ function RemoveAttachmentButton<Id extends string | number>({
       type="button"
       data-testid="remove-attachment-button"
       onClick={() => onRemoveAttachment(attachmentId)}
-      className={`absolute flex h-6 w-6 items-center justify-center rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2 ${tile ? "-right-1.5 -top-1.5 [@media(hover:hover)]:opacity-0 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100 focus-visible:opacity-100" : "right-1 top-1"}`}
-      aria-label="Remove attachment"
+      className={`absolute flex h-11 w-11 items-center justify-center rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2 md:h-6 md:w-6 ${tile ? "-right-1.5 -top-1.5 [@media(hover:hover)]:opacity-0 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100 focus-visible:opacity-100" : "right-1 top-1"}`}
+      aria-label={label}
     >
       <X
         className={`h-4 w-4 rounded-full bg-text-primary p-0.5 text-background ${tile ? "ring-2 ring-background" : ""}`}
@@ -206,7 +209,7 @@ function TextAttachmentCard({
     <div
       data-testid={pending ? "uploading-attachment-badge" : "attachment-badge"}
       aria-busy={pending || undefined}
-      className="relative inline-flex w-fit max-w-64 shrink-0 items-center gap-2.5 rounded-lg border border-border bg-background p-3 pr-8 text-left"
+      className="relative inline-flex w-fit max-w-64 shrink-0 items-center gap-2.5 rounded-lg border border-border bg-background p-3 pr-14 text-left md:pr-8"
     >
       <span
         data-testid="attachment-text-icon"
@@ -229,7 +232,7 @@ function TextAttachmentCard({
             <button
               type="button"
               data-testid="show-text-attachment-button"
-              className="relative z-10 inline-flex max-w-full items-center gap-1 underline underline-offset-2 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
+              className="relative z-10 inline-flex min-h-11 min-w-11 max-w-full items-center gap-1 underline underline-offset-2 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary md:min-h-0 md:min-w-0"
               onClick={onShowText}
             >
               <span className="truncate">{labels.showText}</span>
@@ -338,6 +341,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
                 </span>
               )}
               <RemoveAttachmentButton
+                label={labels.removeAttachment}
                 attachmentId={attachment.id}
                 onRemoveAttachment={onRemoveAttachment}
                 tile
@@ -354,6 +358,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
               }
             >
               <RemoveAttachmentButton
+                label={labels.removeAttachment}
                 attachmentId={attachment.id}
                 onRemoveAttachment={onRemoveAttachment}
                 tile
@@ -405,6 +410,7 @@ export function ComposerAttachmentBadges<T extends ComposerAttachment>({
             }
           >
             <RemoveAttachmentButton
+              label={labels.removeAttachment}
               attachmentId={attachment.id}
               onRemoveAttachment={onRemoveAttachment}
             />

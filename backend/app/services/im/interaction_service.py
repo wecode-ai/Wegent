@@ -11,6 +11,10 @@ from app.models.im_session import IMPrivateSession, IMSessionMode
 from app.models.user import User
 from app.services.channels.commands import CommandType, ParsedCommand, parse_command
 from app.services.channels.device_selection import device_selection_manager
+from app.services.im.runtime_questions import (
+    answer_runtime_question,
+    has_pending_question,
+)
 from app.services.im.session_service import im_session_service
 from app.services.im.stand_in_service import send_stand_in_message
 from shared.telemetry.decorators import trace_async
@@ -41,6 +45,18 @@ class IMInteractionService:
         port: Any,
     ) -> bool:
         command = parse_command(message_context.content)
+        quoted = (
+            getattr(message_context, "extra_data", {}).get("reply_to_message_id")
+            is not None
+        )
+        if quoted and await answer_runtime_question(
+            db=db,
+            user_id=user.id,
+            session=im_session,
+            context=message_context,
+            port=port,
+        ):
+            return True
         if command:
             if command.command == CommandType.NOTIFY:
                 reply = await self._notification_command(
@@ -70,7 +86,9 @@ class IMInteractionService:
                 return False
             await port.send_text_reply(message_context, reply)
             return True
-        if await im_session_service.get_mode(im_session) == IMSessionMode.CHAT:
+        if await im_session_service.get_mode(
+            im_session
+        ) == IMSessionMode.CHAT and not await has_pending_question(im_session):
             return False
         await send_stand_in_message(db, user, im_session, message_context, port)
         return True

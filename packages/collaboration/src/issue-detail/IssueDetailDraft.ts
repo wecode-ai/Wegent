@@ -73,6 +73,7 @@ export interface IssueDetailDraftOptions<TWorkflow = unknown> {
   normalizeDescription?: (description: string) => string;
   startDateFromSource?: (startAt: string | null) => string;
   dueDateFromSource?: (dueAt: string | null) => string;
+  pendingFields?: ReadonlySet<string>;
 }
 
 type CachedIssueDraft = {
@@ -170,6 +171,7 @@ function draftFromSource<TWorkflow>(
 export function useIssueDetailDraft<TWorkflow = unknown>({
   source,
   initial,
+  pendingFields,
   normalizeDescription = identityDescription,
   startDateFromSource = defaultDueDate,
   dueDateFromSource = defaultDueDate,
@@ -258,50 +260,68 @@ export function useIssueDetailDraft<TWorkflow = unknown>({
       startDateFromSource,
       dueDateFromSource,
     );
+    const maySync = (
+      field: keyof IssueDetailDraftValue<TWorkflow>,
+      unchanged: boolean,
+    ) => !sameIssue || (!pendingFields?.has(field) && unchanged);
     setDraft((current) => ({
-      title:
-        !sameIssue || current.title === previousDraft?.title
-          ? nextDraft.title
-          : current.title,
-      description:
-        !sameIssue || current.description === previousDraft?.description
-          ? nextDraft.description
-          : current.description,
-      status:
-        !sameIssue || current.status === previousDraft?.status
-          ? nextDraft.status
-          : current.status,
-      priority:
-        !sameIssue || current.priority === previousDraft?.priority
-          ? nextDraft.priority
-          : current.priority,
-      parentId:
-        !sameIssue || current.parentId === previousDraft?.parentId
-          ? nextDraft.parentId
-          : current.parentId,
-      startDate:
-        !sameIssue || current.startDate === previousDraft?.startDate
-          ? nextDraft.startDate
-          : current.startDate,
-      dueDate:
-        !sameIssue || current.dueDate === previousDraft?.dueDate
-          ? nextDraft.dueDate
-          : current.dueDate,
-      tags:
-        !sameIssue || equalTags(current.tags, previousDraft?.tags ?? [])
-          ? nextDraft.tags
-          : current.tags,
-      assigneeTarget:
-        !sameIssue || current.assigneeTarget === previousDraft?.assigneeTarget
-          ? nextDraft.assigneeTarget
-          : current.assigneeTarget,
-      workflow:
-        !sameIssue || current.workflow === previousDraft?.workflow
-          ? nextDraft.workflow
-          : current.workflow,
+      title: maySync("title", current.title === previousDraft?.title)
+        ? nextDraft.title
+        : current.title,
+      description: maySync(
+        "description",
+        current.description === previousDraft?.description,
+      )
+        ? nextDraft.description
+        : current.description,
+      status: maySync("status", current.status === previousDraft?.status)
+        ? nextDraft.status
+        : current.status,
+      priority: maySync(
+        "priority",
+        current.priority === previousDraft?.priority,
+      )
+        ? nextDraft.priority
+        : current.priority,
+      parentId: maySync(
+        "parentId",
+        current.parentId === previousDraft?.parentId,
+      )
+        ? nextDraft.parentId
+        : current.parentId,
+      startDate: maySync(
+        "startDate",
+        current.startDate === previousDraft?.startDate,
+      )
+        ? nextDraft.startDate
+        : current.startDate,
+      dueDate: maySync("dueDate", current.dueDate === previousDraft?.dueDate)
+        ? nextDraft.dueDate
+        : current.dueDate,
+      tags: maySync("tags", equalTags(current.tags, previousDraft?.tags ?? []))
+        ? nextDraft.tags
+        : current.tags,
+      assigneeTarget: maySync(
+        "assigneeTarget",
+        current.assigneeTarget === previousDraft?.assigneeTarget,
+      )
+        ? nextDraft.assigneeTarget
+        : current.assigneeTarget,
+      workflow: maySync(
+        "workflow",
+        current.workflow === previousDraft?.workflow,
+      )
+        ? nextDraft.workflow
+        : current.workflow,
     }));
     syncedSourceRef.current = source;
-  }, [dueDateFromSource, normalizeDescription, source, startDateFromSource]);
+  }, [
+    dueDateFromSource,
+    normalizeDescription,
+    pendingFields,
+    source,
+    startDateFromSource,
+  ]);
 
   const sourceDraft = source
     ? draftFromSource(
