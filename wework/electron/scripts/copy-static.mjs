@@ -38,6 +38,10 @@ await cp(resolve(root, 'src/shell'), resolve(root, 'dist/shell'), {
 })
 await mkdir(resolve(root, 'dist/host/browser-runtime'), { recursive: true })
 await cp(
+  resolve(root, '../dsh/electron-host/json-line-reader.js'),
+  resolve(root, 'dist/host/json-line-reader.mjs')
+)
+await cp(
   resolve(root, 'src/host/macos-quit-workaround.mjs'),
   resolve(root, 'dist/host/macos-quit-workaround.mjs')
 )

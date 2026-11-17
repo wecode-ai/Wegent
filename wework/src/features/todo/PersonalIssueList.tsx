@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef } from 'react'
+import { composerMarkdownText } from '@wegent/collaboration/composer'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { Bell, FolderOpen } from 'lucide-react'
 import type {
   CollaborationProject,
@@ -32,6 +33,7 @@ export function PersonalIssueList({
   onOpenTask,
   recentIssue,
   hideEmpty = false,
+  emptyState,
   order,
 }: {
   userId: number
@@ -39,6 +41,7 @@ export function PersonalIssueList({
   active: boolean
   onOpenTask(issue: WorkspaceMyWorkItem, binding: WorkspaceTaskBinding): void
   hideEmpty?: boolean
+  emptyState?: ReactNode
   recentIssue?: WorkspaceMyWorkItem
   order: PersonalHomeIssueOrder
   state: ReturnType<typeof usePersonalHomeIssues>
@@ -132,13 +135,17 @@ export function PersonalIssueList({
   return (
     <>
       {state.loading && (
-        <p role="status" className="py-4 text-sm text-text-muted">
+        <p role="status" className="py-4 text-sm text-text-secondary">
           {t('personalHome.loading')}
         </p>
       )}
-      {!hideEmpty && !state.loading && !state.error && !groups.length && (
-        <p className="py-8 text-sm text-text-muted">{t('personalHome.empty')}</p>
-      )}
+      {!hideEmpty &&
+        !state.loading &&
+        !state.error &&
+        !groups.length &&
+        (emptyState ?? (
+          <p className="py-8 text-sm text-text-secondary">{t('personalHome.empty')}</p>
+        ))}
       {groups.map(({ project, items }) => (
         <section
           key={project.id}
@@ -159,11 +166,21 @@ export function PersonalIssueList({
             ) : (
               project.name
             )}
-            <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-muted">
+            <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-secondary">
               {items.length}
             </span>
           </h3>
           {items.map(item => {
+            const description = composerMarkdownText(item.description ?? '')
+            const titlePrefix = item.title.trim().replace(/\s+/g, ' ')
+            const completeTitle = !titlePrefix.endsWith('…')
+            const following = description.slice(titlePrefix.length, titlePrefix.length + 1)
+            const summary =
+              completeTitle &&
+              description.startsWith(titlePrefix) &&
+              (!following || /\s/.test(following))
+                ? description.slice(titlePrefix.length).trim()
+                : description
             const viewerIds =
               project.project_store === 'local'
                 ? (localUserIds ?? [userId])
@@ -215,7 +232,7 @@ export function PersonalIssueList({
                       : undefined,
                 }}
                 cardClassName="cursor-pointer focus-within:bg-text-primary/[0.025] aria-[current=true]:bg-muted"
-                detailButtonClassName="cursor-pointer keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+                detailButtonClassName="cursor-pointer keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]"
                 onOpen={() => onOpenIssue(item)}
                 titleTrailing={
                   <>
@@ -229,7 +246,7 @@ export function PersonalIssueList({
                       <span
                         data-testid={`personal-home-assignment-age-${item.id}`}
                         title={new Date(assignedAt).toLocaleString(i18n.language)}
-                        className="shrink-0 text-xs font-normal text-text-muted"
+                        className="shrink-0 text-xs font-normal text-text-secondary"
                       >
                         {t('personalHome.assignedFor', {
                           duration: personalHomeAssignmentDuration(assignedAt, i18n.language),
@@ -239,24 +256,20 @@ export function PersonalIssueList({
                   </>
                 }
                 summary={
-                  <>
-                    <PersonalHomeIssueActivity
-                      summary={
-                        <>
-                          {item.description ? (
-                            <p className="line-clamp-1 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
-                              {item.description}
-                            </p>
-                          ) : undefined}
-                        </>
-                      }
-                      assignment={item.assignment_context}
-                      bindings={item.task_bindings}
-                      onOpenTask={binding => onOpenTask(item, binding)}
-                      issueId={item.id}
-                      active={active}
-                    />
-                  </>
+                  <PersonalHomeIssueActivity
+                    summary={
+                      summary ? (
+                        <p className="line-clamp-1 max-w-3xl whitespace-pre-wrap text-base leading-6 text-text-secondary">
+                          {summary}
+                        </p>
+                      ) : undefined
+                    }
+                    assignment={item.assignment_context}
+                    bindings={item.task_bindings}
+                    onOpenTask={binding => onOpenTask(item, binding)}
+                    issueId={item.id}
+                    active={active}
+                  />
                 }
               />
             )

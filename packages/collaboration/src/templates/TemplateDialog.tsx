@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, type ReactNode } from 'react'
 import { X } from 'lucide-react'
+import { useEscapeKey } from '../markdown/useEscapeKey'
 
 export function TemplateDialog({
   title,
@@ -22,6 +23,13 @@ export function TemplateDialog({
   busy?: boolean
 }) {
   const ref = useRef<HTMLDialogElement>(null)
+  useEscapeKey(
+    () => {
+      if (!busy) onClose()
+    },
+    true,
+    ref
+  )
   useEffect(() => {
     const previous = document.activeElement
     const dialog = ref.current!

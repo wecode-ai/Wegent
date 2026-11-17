@@ -111,6 +111,9 @@ class TaskCreationParams:
     generate_params: Optional[Dict[str, Any]] = None
     # Message source metadata for user subtask persistence.
     message_source: Optional[Dict[str, Any]] = None
+    # Optional DB-level window for callers that only consume recent history.
+    # A null value preserves the existing full-history behavior.
+    history_window: Optional[int] = None
 
     def __post_init__(self) -> None:
         """Treat an explicit model_id as an override selection."""
@@ -854,7 +857,9 @@ async def create_task_and_subtasks(
     if assistant_subtask:
         db.refresh(assistant_subtask)
 
-    schedule_chat_memory_save(db, task, user_subtask, user, team, existing_subtasks)
+    schedule_chat_memory_save(
+        db, task, user_subtask, user, team, session.memory_history
+    )
 
     # Initialize Redis chat history from existing subtasks if needed
     if existing_subtasks:
@@ -879,7 +884,7 @@ def schedule_chat_memory_save(
     user_subtask: Subtask,
     user: User,
     team: Kind,
-    existing_subtasks: list[Subtask],
+    memory_history: list[Subtask],
 ) -> None:
     """Schedule the existing long-term memory write for a committed user message."""
     # Store user message in long-term memory (fire-and-forget)
@@ -914,7 +919,7 @@ def schedule_chat_memory_save(
             # Build context messages using shared utility
             context_messages = build_context_messages(
                 db=db,
-                existing_subtasks=existing_subtasks,
+                existing_subtasks=memory_history,
                 current_message=user_subtask.prompt,
                 current_user=user,
                 is_group_chat=is_group_chat,

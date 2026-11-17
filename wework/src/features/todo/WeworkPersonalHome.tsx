@@ -2,8 +2,16 @@ import { useIndependentIssuePage } from './useIndependentIssuePage'
 import { IndependentIssueList } from './IndependentIssueList'
 import { PersonalIssueList } from './PersonalIssueList'
 import { PersonalIssueErrors } from './PersonalIssueErrors'
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { Circle, UserRound } from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { ArrowLeft, Circle, PanelRightClose, PanelRightOpen, UserRound } from 'lucide-react'
 import type {
   CollaborationIssue,
   CollaborationProject,
@@ -18,6 +26,7 @@ import {
   IssueDetailDraftProvider,
 } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useIsDesktop } from '@/hooks/useIsDesktop'
 import { usePersonalHomeIssues, type PersonalHomeIssueOrder } from './usePersonalHomeIssues'
 import { WorkspaceTitleTab } from '@/components/layout/workspace-panels/WorkspaceTitleTab'
 import { revealWorkspaceTab } from '@/components/layout/workspace-panels/revealWorkspaceTab'
@@ -82,17 +91,30 @@ export function WeworkPersonalHome({
   conversation(active: boolean, work: PersonalHomeCollaborationWork): ReactNode
 }) {
   const { t } = useTranslation('common')
+  const isDesktop = useIsDesktop(1024)
   const panelId = useId()
   const composerRegion = useRef<HTMLDivElement>(null)
+  const focusComposer = useCallback(() => {
+    const region = composerRegion.current
+    const taskMode = region?.querySelector(
+      '[data-testid="personal-home-new-issue"][aria-selected="true"]'
+    )
+    region
+      ?.querySelector<HTMLElement>(
+        taskMode
+          ? '[data-testid="personal-home-task-content"]'
+          : '[data-testid="collaboration-home-issue-content"]'
+      )
+      ?.focus()
+  }, [])
   useEffect(() => {
-    if (entryRequestKey)
-      composerRegion.current
-        ?.querySelector<HTMLElement>('[data-testid="collaboration-home-issue-content"]')
-        ?.focus()
-  }, [entryRequestKey])
+    if (entryRequestKey) focusComposer()
+  }, [entryRequestKey, focusComposer])
   const [showCompleted, setShowCompleted] = useState(false)
   const [assignedOnly, setAssignedOnly] = useState(true)
   const [order, setOrder] = useState<PersonalHomeIssueOrder>('attention')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const sidebarVisible = !isDesktop || !sidebarCollapsed
   const [issueTabs, setIssueTabs] = useState<
     Array<{
       id: string
@@ -102,12 +124,43 @@ export function WeworkPersonalHome({
     }>
   >([])
   const [activeTab, setActiveTab] = useState('stand-in')
+  const viewport = useRef<HTMLDivElement>(null)
+  const sidebar = useRef<HTMLElement>(null)
+  const [workspaceFocus, setWorkspaceFocus] = useState<{
+    target: 'detail' | 'list'
+    captureList?: boolean
+  } | null>(null)
+  const handledWorkspaceFocus = useRef<typeof workspaceFocus>(null)
+  const listPosition = useRef(0)
+  const returnFocus = useRef<HTMLElement | null>(null)
   const [detailExpanded, setDetailExpanded] = useState(false)
   const [expandedTabs, setExpandedTabs] = useState<ReadonlySet<string>>(new Set())
   const tabsViewport = useRef<HTMLElement>(null)
   useLayoutEffect(() => {
     revealWorkspaceTab(tabsViewport.current)
   }, [activeTab, issueTabs.length])
+  useLayoutEffect(() => {
+    const root = viewport.current
+    const panel = sidebar.current
+    if (!workspaceFocus || handledWorkspaceFocus.current === workspaceFocus) return
+    handledWorkspaceFocus.current = workspaceFocus
+    if (isDesktop || !root || !panel) return
+    if (workspaceFocus.target === 'detail') {
+      if (workspaceFocus.captureList) {
+        listPosition.current = root.scrollTop
+        returnFocus.current = root.querySelector<HTMLElement>('[aria-current="true"] button')
+      }
+      root.scrollTop += panel.getBoundingClientRect().top - root.getBoundingClientRect().top
+      panel
+        .querySelector<HTMLElement>('[role="tabpanel"]:not([inert])')
+        ?.focus({ preventScroll: true })
+    } else {
+      root.scrollTop = listPosition.current
+      const list = composerRegion.current?.closest('main')
+      const target = returnFocus.current?.isConnected ? returnFocus.current : list
+      target?.focus({ preventScroll: true })
+    }
+  }, [workspaceFocus, isDesktop])
   const independent = useIndependentIssuePage(
     assignedOnly ? 'assigned' : 'participating',
     showCompleted,
@@ -125,7 +178,8 @@ export function WeworkPersonalHome({
   )
   const openIssue = (
     issue: CollaborationIssue,
-    taskRequest?: PersonalHomeIssueDetailContext['taskRequest']
+    taskRequest?: PersonalHomeIssueDetailContext['taskRequest'],
+    captureList = false
   ) => {
     const project = projects.find(project => project.id === issue.cloud_project_id)
     if (!project) return
@@ -142,6 +196,8 @@ export function WeworkPersonalHome({
         : [{ id, issue: summary, project, taskRequest }]
     )
     setExpandedTabs(current => (current.has(id) ? current : new Set()))
+    setSidebarCollapsed(false)
+    setWorkspaceFocus({ target: 'detail', captureList })
     setActiveTab(id)
   }
   const [handledCreation, setHandledCreation] = useState<string>()
@@ -159,11 +215,14 @@ export function WeworkPersonalHome({
   ) {
     setDetailScope({ userId, sources })
     setIssueTabs([])
+    setWorkspaceFocus(null)
     setActiveTab('stand-in')
     setExpandedTabs(new Set())
     setRecentCreation(undefined)
   }
   if (createdIssue && createdIssue.key !== handledCreation) {
+    setWorkspaceFocus({ target: 'detail', captureList: true })
+    setSidebarCollapsed(false)
     setHandledCreation(createdIssue.key)
     const ownIds =
       createdIssue.project.project_store === 'local'
@@ -204,30 +263,57 @@ export function WeworkPersonalHome({
     const index = issueTabs.findIndex(tab => tab.id === id)
     const remaining = issueTabs.filter(tab => tab.id !== id)
     setIssueTabs(remaining)
-    if (activeTab === id) setActiveTab(remaining[Math.max(0, index - 1)]?.id ?? 'stand-in')
+    if (activeTab === id) {
+      const next = remaining[Math.max(0, index - 1)]?.id ?? 'stand-in'
+      setActiveTab(next)
+      setWorkspaceFocus({ target: next === 'stand-in' ? 'list' : 'detail' })
+    }
   }
+  const firstUse = !projects.length && !independent.context?.api
   return (
     <IssueDetailDraftProvider key={userId} scope={draftScope}>
       <div
-        className="flex h-full min-h-0 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
+        ref={viewport}
+        className="isolate flex h-full min-h-0 flex-col overflow-auto lg:flex-row lg:overflow-hidden"
         data-testid="personal-home"
       >
         <main
+          tabIndex={-1}
           aria-busy={state.loading}
           data-testid="personal-home-items-region"
-          className="flex min-w-0 flex-1 flex-col p-5 lg:overflow-auto lg:p-8"
+          className="flex min-w-0 flex-1 flex-col p-5 lg:overflow-auto"
         >
           <div className="w-full max-w-6xl">
-            <header className="mb-7 flex items-start justify-between gap-4">
+            <header className="mb-5 flex items-start justify-between gap-4">
               <div>
                 <h1 className="text-heading-md font-medium">{t('personalHome.title')}</h1>
                 <p className="mt-2 text-base text-text-secondary">{t('personalHome.subtitle')}</p>
               </div>
+              <button
+                type="button"
+                data-testid="personal-home-toggle-sidebar"
+                aria-expanded={!sidebarCollapsed}
+                aria-controls={`${panelId}-sidebar`}
+                onClick={() => setSidebarCollapsed(value => !value)}
+                className="hidden h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] lg:inline-flex"
+              >
+                {sidebarCollapsed ? (
+                  <PanelRightOpen aria-hidden="true" className="h-4 w-4" />
+                ) : (
+                  <PanelRightClose aria-hidden="true" className="h-4 w-4" />
+                )}
+                {t(sidebarCollapsed ? 'personalHome.showSidebar' : 'personalHome.hideSidebar')}
+              </button>
             </header>
-            <div ref={composerRegion} className="mb-7" data-testid="personal-home-create">
+            <div ref={composerRegion} className="mb-5" data-testid="personal-home-create">
               {createIssue}
             </div>
-            <div className="mb-5 flex items-center justify-between gap-3">
+            <div
+              hidden={firstUse}
+              className={
+                firstUse ? 'hidden' : 'mb-3 flex flex-wrap items-center justify-between gap-3'
+              }
+            >
               <div
                 role="group"
                 aria-label={t('personalHome.issueScope')}
@@ -278,7 +364,44 @@ export function WeworkPersonalHome({
             <PersonalIssueErrors projects={state} independent={independent} />
             <IndependentIssueList state={independent} hideWhenEmpty />
             <PersonalIssueList
-              hideEmpty={independent.loading || independent.items.length > 0}
+              hideEmpty={
+                firstUse ||
+                independent.loading ||
+                Boolean(independent.error) ||
+                independent.items.length > 0
+              }
+              emptyState={
+                <div data-testid="personal-home-empty" className="py-6">
+                  <p className="text-base text-text-secondary">
+                    {t(
+                      assignedOnly
+                        ? 'personalHome.emptyAssigned'
+                        : showCompleted
+                          ? 'personalHome.emptyParticipation'
+                          : 'personalHome.emptyUnfinished'
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    data-testid="personal-home-empty-action"
+                    className="mt-2 min-h-11 rounded-md px-2 text-sm text-text-primary hover:bg-muted md:min-h-8"
+                    onClick={() => {
+                      if (assignedOnly || !showCompleted) {
+                        setAssignedOnly(false)
+                        setShowCompleted(true)
+                      } else {
+                        focusComposer()
+                      }
+                    }}
+                  >
+                    {t(
+                      assignedOnly || !showCompleted
+                        ? 'personalHome.viewAllParticipation'
+                        : 'personalHome.startWriting'
+                    )}
+                  </button>
+                </div>
+              }
               recentIssue={
                 recentCreation &&
                 recentCreation.assignedOnly === assignedOnly &&
@@ -297,11 +420,11 @@ export function WeworkPersonalHome({
               projects={projects}
               showCompleted={showCompleted}
               assignedOnly={assignedOnly}
-              onOpenIssue={openIssue}
+              onOpenIssue={issue => openIssue(issue, undefined, true)}
               selectedIssue={issueTabs.find(tab => tab.id === activeTab)?.issue}
               active={active}
               onOpenTask={(issue, binding) =>
-                openIssue(issue, { key: crypto.randomUUID(), binding })
+                openIssue(issue, { key: crypto.randomUUID(), binding }, true)
               }
             />
             {state.hasMore && (
@@ -318,35 +441,32 @@ export function WeworkPersonalHome({
           </div>
         </main>
         <aside
+          ref={sidebar}
+          id={`${panelId}-sidebar`}
           aria-label={t('personalHome.standIn')}
-          className={`flex min-h-96 min-w-0 flex-col border-t border-border lg:h-full lg:shrink-0 lg:border-l lg:border-t-0 ${detailExpanded || expandedTabs.has(activeTab) ? 'lg:w-[min(75%,72rem)]' : 'lg:w-96 xl:w-[28rem]'}`}
+          className={`flex ${!isDesktop && activeTab !== 'stand-in' ? 'min-h-full' : 'min-h-96'} min-w-0 flex-col border-t border-border lg:h-full lg:shrink-0 lg:border-l lg:border-t-0 ${sidebarCollapsed ? 'lg:hidden' : ''} ${detailExpanded || expandedTabs.has(activeTab) ? 'lg:w-[min(75%,72rem)]' : activeTab === 'stand-in' ? 'lg:w-80 xl:w-96' : 'lg:w-96 xl:w-[28rem]'}`}
           data-testid="personal-home-stand-in"
         >
+          {!isDesktop && activeTab !== 'stand-in' && (
+            <button
+              type="button"
+              data-testid="personal-home-back-to-issues"
+              onClick={() => {
+                setWorkspaceFocus({ target: 'list' })
+                setActiveTab('stand-in')
+              }}
+              className="flex min-h-11 items-center gap-2 border-b border-border px-3 text-sm text-text-secondary hover:bg-muted"
+            >
+              <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+              {t('personalHome.backToIssues')}
+            </button>
+          )}
           <header
             ref={tabsViewport}
             role="tablist"
             aria-label={t('personalHome.workspaceTabs')}
             data-testid="personal-home-tabs"
-            className="flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3"
-            onKeyDown={event => {
-              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-              const tabs = Array.from(
-                event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')
-              )
-              const index = tabs.indexOf(event.target as HTMLElement)
-              if (index < 0) return
-              event.preventDefault()
-              const target =
-                event.key === 'Home'
-                  ? tabs[0]
-                  : event.key === 'End'
-                    ? tabs.at(-1)
-                    : tabs[
-                        (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
-                      ]
-              target?.click()
-              target?.focus()
-            }}
+            className="flex h-12 min-h-12 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3 lg:h-10 lg:min-h-10"
           >
             <WorkspaceTitleTab
               id={`${panelId}-stand-in-tab`}
@@ -355,7 +475,10 @@ export function WeworkPersonalHome({
               active={activeTab === 'stand-in'}
               label={t('personalHome.standInTab')}
               icon={<UserRound aria-hidden="true" className="h-4 w-4" />}
-              onSelect={() => setActiveTab('stand-in')}
+              onSelect={() => {
+                setWorkspaceFocus(null)
+                setActiveTab('stand-in')
+              }}
             />
             {issueTabs.map(tab => (
               <WorkspaceTitleTab
@@ -367,7 +490,10 @@ export function WeworkPersonalHome({
                 label={tab.issue.title}
                 title={`${tab.project.name} · #${tab.issue.sequence_number} ${tab.issue.title}`}
                 icon={<Circle aria-hidden="true" className="h-4 w-4" />}
-                onSelect={() => setActiveTab(tab.id)}
+                onSelect={() => {
+                  setWorkspaceFocus(null)
+                  setActiveTab(tab.id)
+                }}
                 onClose={() => closeIssue(tab.id)}
               />
             ))}
@@ -380,7 +506,7 @@ export function WeworkPersonalHome({
             className={activeTab === 'stand-in' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
             inert={activeTab !== 'stand-in'}
           >
-            {conversation(active && activeTab === 'stand-in', {
+            {conversation(active && sidebarVisible && activeTab === 'stand-in', {
               pendingIssues: state.items.flatMap(item => {
                 const project = projects.find(project => project.id === item.cloud_project_id)
                 if (
@@ -408,13 +534,14 @@ export function WeworkPersonalHome({
               role="tabpanel"
               aria-labelledby={`${panelId}-${tab.id}-tab`}
               aria-label={tab.issue.title}
+              tabIndex={-1}
               className={activeTab === tab.id ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
               inert={activeTab !== tab.id}
             >
               {renderIssueDetail({
                 issue: tab.issue,
                 project: tab.project,
-                active: active && activeTab === tab.id,
+                active: active && sidebarVisible && activeTab === tab.id,
                 taskRequest: tab.taskRequest,
                 detailExpanded,
                 onDetailExpandedChange: setDetailExpanded,

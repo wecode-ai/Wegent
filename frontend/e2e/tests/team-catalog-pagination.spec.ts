@@ -1,6 +1,7 @@
 import { test, expect } from '../fixtures/test-fixtures'
 import { ADMIN_USER } from '../config/test-users'
 import { createApiClient } from '../utils/api-client'
+import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
 
 const FIXTURE_CONCURRENCY = 16
 
@@ -14,26 +15,54 @@ async function runInBatches<T, R>(values: T[], operation: (value: T) => Promise<
 }
 
 test('finds older agents in management and chat after creating 205 agents', async ({
-  page,
+  browser,
+  baseURL,
   request,
   testPrefix,
 }) => {
   test.setTimeout(180_000)
-  const api = createApiClient(request)
-  const login = await api.login(ADMIN_USER.username, ADMIN_USER.password, 1)
-  expect(login.status).toBe(200)
-  const created: Array<{ id: number; name: string }> = []
-  const bot = await api.createBot({
-    name: `${testPrefix}-pagination-bot`,
-    shell_name: 'Chat',
-    agent_config: {},
-    system_prompt: 'Agent catalog pagination fixture.',
-    namespace: 'default',
+  const admin = createApiClient(request)
+  expect((await admin.login(ADMIN_USER.username, ADMIN_USER.password, 1)).status).toBe(200)
+  // Other workers mutate the shared admin catalog; fixed page counts need a dedicated owner.
+  const username = `${testPrefix}-pagination-owner`
+  const password = 'E2E-pagination-123!'
+  const owner = await admin.adminCreateUser({
+    user_name: username,
+    password,
+    role: 'user',
+    auth_source: 'password',
   })
-  expect(bot.status).toBe(201)
-  const botId = (bot.data as { id: number }).id
+  expect(owner.status).toBe(201)
+  const ownerId = (owner.data as { id: number }).id
+  const api = createApiClient(request)
+  const created: Array<{ id: number; name: string }> = []
+  let context: Awaited<ReturnType<typeof browser.newContext>> | undefined
+  let botId: number | undefined
 
   try {
+    const login = await api.login(username, password, 1)
+    expect(login.status).toBe(200)
+    const token = login.data?.access_token
+    expect(token).toBeTruthy()
+    const appBaseUrl = baseURL || 'http://localhost:3000'
+    context = await browser.newContext({
+      baseURL: appBaseUrl,
+      storageState: buildStorageState(appBaseUrl, token!, getJwtExpiryMs(token!)),
+    })
+    await context.addInitScript(() => {
+      localStorage.setItem('user_onboarding_completed', 'true')
+    })
+    const page = await context.newPage()
+    const bot = await api.createBot({
+      name: `${testPrefix}-pagination-bot`,
+      shell_name: 'Chat',
+      agent_config: {},
+      system_prompt: 'Agent catalog pagination fixture.',
+      namespace: 'default',
+    })
+    expect(bot.status).toBe(201)
+    botId = (bot.data as { id: number }).id
+
     const teamResults = await runInBatches(
       Array.from({ length: 205 }, (_, index) => index),
       index =>
@@ -118,8 +147,13 @@ test('finds older agents in management and chat after creating 205 agents', asyn
     const cleanupErrors = cleanupResults.flatMap(({ team, result }) =>
       result.status === 200 ? [] : [`Team ${team.id}: ${result.status}`]
     )
-    const result = await api.delete(`/api/bots/${botId}?force=true`)
-    if (result.status !== 200) cleanupErrors.push(`Bot ${botId}: ${result.status}`)
+    if (botId !== undefined) {
+      const result = await api.delete(`/api/bots/${botId}?force=true`)
+      if (result.status !== 200) cleanupErrors.push(`Bot ${botId}: ${result.status}`)
+    }
+    await context?.close()
+    const deletedOwner = await admin.adminDeleteUser(ownerId)
+    if (deletedOwner.status !== 204) cleanupErrors.push(`Owner ${ownerId}: ${deletedOwner.status}`)
     expect(cleanupErrors, 'Pagination fixtures must be removed').toEqual([])
   }
 })

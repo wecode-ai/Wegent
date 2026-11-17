@@ -7,6 +7,8 @@ import type {
   WorkspaceMyWorkItem,
 } from '@wegent/collaboration'
 import i18n from '@/i18n'
+import type { PersonalIssuesApi } from '@/api/personalIssues'
+import { IndependentIssuesContext } from './independentIssuesContext'
 import { useIssueDetailDraft } from '@wegent/collaboration'
 import { WeworkPersonalHome, type PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
 import {
@@ -16,6 +18,73 @@ import {
 import type { ReactNode } from 'react'
 
 afterEach(cleanup)
+
+it('restores the sidebar draft and opens Issue details when the sidebar was collapsed', async () => {
+  await setup([source(vi.fn().mockResolvedValue([issue('visible')]))])
+  const draft = screen.getByLabelText('Stand-in draft')
+  fireEvent.change(draft, { target: { value: 'Keep this discussion' } })
+  const toggle = screen.getByTestId('personal-home-toggle-sidebar')
+  fireEvent.click(toggle)
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  expect(draft).toHaveAttribute('data-active', 'false')
+  fireEvent.click(toggle)
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByLabelText('Stand-in draft')).toBe(draft)
+  expect(draft).toHaveValue('Keep this discussion')
+  expect(draft).toHaveAttribute('data-active', 'true')
+  fireEvent.click(toggle)
+  fireEvent.click(await screen.findByTestId('personal-home-issue-visible'))
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByTestId('personal-home-tab-visible')).toHaveAttribute('aria-selected', 'true')
+})
+
+it('recovers from an empty assigned scope by showing all participating work', async () => {
+  const api = source()
+  vi.mocked(api.myWork!.page).mockImplementation(async input => ({
+    items: input.scope === 'assigned' ? [] : [issue('participating')],
+    nextCursor: null,
+  }))
+  await setup([api])
+  await screen.findByTestId('personal-home-empty')
+  expect(screen.getByTestId('personal-home-empty')).toHaveTextContent('No assigned items')
+  fireEvent.click(screen.getByTestId('personal-home-empty-action'))
+  await screen.findByTestId('personal-home-issue-participating')
+  expect(api.myWork!.page).toHaveBeenLastCalledWith(
+    expect.objectContaining({ scope: 'participating', includeCompleted: true })
+  )
+  expect(screen.queryByTestId('personal-home-empty')).not.toBeInTheDocument()
+})
+
+it.each([false, true])(
+  'focuses the current input mode from a confirmed empty participation list, task mode: %s',
+  async taskMode => {
+    const { props, rerender } = await setup([source()])
+    rerender(
+      <WeworkPersonalHome
+        {...props}
+        createIssue={
+          <>
+            <button role="tab" data-testid="personal-home-new-issue" aria-selected={taskMode}>
+              Create task
+            </button>
+            <textarea data-testid="collaboration-home-issue-content" hidden={taskMode} />
+            <textarea data-testid="personal-home-task-content" hidden={!taskMode} />
+          </>
+        }
+      />
+    )
+    await screen.findByTestId('personal-home-empty')
+    fireEvent.click(screen.getByTestId('personal-home-empty-action'))
+    await screen.findByText('No items you participate in yet')
+    expect(screen.getByTestId('personal-home-empty-action')).toHaveTextContent('Start writing')
+    fireEvent.click(screen.getByTestId('personal-home-empty-action'))
+    expect(
+      screen.getByTestId(
+        taskMode ? 'personal-home-task-content' : 'collaboration-home-issue-content'
+      )
+    ).toHaveFocus()
+  }
+)
 
 it('derives related Issue summary fields from its own project without copying the previous Issue', async () => {
   const original = { ...issue('original'), task_bindings: [] }
@@ -450,7 +519,7 @@ it('keeps recording inline without replacing My work or the assistant', async ()
   expect(screen.getByText('Existing issue composer')).toBeInTheDocument()
   expect(screen.getByTestId('personal-home')).toBeInTheDocument()
   expect(screen.getByText('Embedded conversation')).toBeInTheDocument()
-  await waitFor(() => expect(screen.getByText('No matching issues')).toBeInTheDocument())
+  await screen.findByText('No assigned items in this view')
 })
 
 it('keeps human handoffs in the issue row without a duplicate pending-work section', async () => {
@@ -535,3 +604,159 @@ it.each([false, true])(
     expect(screen.getAllByRole('tab')).toHaveLength(2)
   }
 )
+
+it('keeps recovery available for a connected account without collaboration projects', async () => {
+  const { props, rerender } = await setup([])
+  const list = vi.fn().mockResolvedValue({ items: [], next_cursor: null })
+  rerender(
+    <IndependentIssuesContext.Provider
+      value={{
+        api: { list } as unknown as PersonalIssuesApi,
+        userId: 7,
+        revision: 0,
+        create: vi.fn(),
+        open: vi.fn(),
+      }}
+    >
+      <WeworkPersonalHome {...props} projects={[]} />
+    </IndependentIssuesContext.Provider>
+  )
+  fireEvent.click(await screen.findByTestId('personal-home-empty-action'))
+  await waitFor(() =>
+    expect(list).toHaveBeenLastCalledWith('participating', true, undefined, false, 'attention')
+  )
+})
+
+it.each([
+  [
+    'Investigate timeout',
+    'Investigate timeout\nOnly Windows clients are affected; collect executor logs.',
+    'Only Windows clients are affected; collect executor logs.',
+  ],
+  ['Investigate timeout', 'Investigate timeout', null],
+  [
+    'Review keyboard navigation Check directional navigation, fi…',
+    'Review keyboard navigation\n\nCheck directional navigation, filters, and empty-state recovery.',
+    'Review keyboard navigation Check directional navigation, filters, and empty-state recovery.',
+  ],
+  [
+    'Review',
+    'Reviewer feedback remains useful context.',
+    'Reviewer feedback remains useful context.',
+  ],
+  [
+    'Investigate timeout',
+    'Investigate timeout\\\n**Only Windows** clients: [collect logs](https://example.com/logs).',
+    'Only Windows clients: collect logs.',
+  ],
+  [
+    'Investigate timeout',
+    'Investigate timeout\nLiteral path: `C:\\logs\\executor`.',
+    'Literal path: C:\\logs\\executor.',
+  ],
+])(
+  'preserves useful context after a repeated title: %s / %s',
+  async (title, description, summary) => {
+    await setup([source(vi.fn().mockResolvedValue([{ ...issue('context'), title, description }]))])
+    const card = (await screen.findByTestId('personal-home-issue-context')).closest('article')!
+    if (summary) expect(card).toHaveTextContent(summary)
+    else expect(card.textContent?.match(/Investigate timeout/g)).toHaveLength(1)
+  }
+)
+
+it('reveals and focuses a narrow Issue and restores its list position on return', async () => {
+  const originalWidth = window.innerWidth
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 768 })
+  try {
+    await setup([source(vi.fn().mockResolvedValue([issue('narrow')]))])
+    const root = screen.getByTestId('personal-home')
+    const side = screen.getByTestId('personal-home-stand-in')
+    vi.spyOn(root, 'getBoundingClientRect').mockReturnValue({ top: 0 } as DOMRect)
+    vi.spyOn(side, 'getBoundingClientRect').mockReturnValue({ top: 888 } as DOMRect)
+    root.scrollTop = 112
+    fireEvent.click(await screen.findByTestId('personal-home-issue-narrow'))
+    expect(screen.getByRole('tabpanel', { name: 'Issue narrow' })).toHaveFocus()
+    expect(root.scrollTop).toBe(1000)
+    fireEvent.click(screen.getByTestId('personal-home-back-to-issues'))
+    expect(root.scrollTop).toBe(112)
+    expect(screen.getByTestId('personal-home-issue-narrow')).toHaveFocus()
+  } finally {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+  }
+})
+
+it('keeps narrow workspace keyboard focus in its tablist until an explicit return', async () => {
+  const originalWidth = window.innerWidth
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 768 })
+  try {
+    await setup([source(vi.fn().mockResolvedValue([issue('keyboard')]))])
+    fireEvent.click(await screen.findByTestId('personal-home-issue-keyboard'))
+    const detailTab = screen.getByTestId('personal-home-tab-keyboard')
+    const assistantTab = screen.getByTestId('personal-home-tab-stand-in')
+    fireEvent.keyDown(detailTab, { key: 'Home' })
+    expect(assistantTab).toHaveFocus()
+    expect(assistantTab).toHaveAttribute('tabindex', '0')
+    expect(detailTab).toHaveAttribute('tabindex', '-1')
+    fireEvent.keyDown(assistantTab, { key: 'ArrowRight' })
+    expect(detailTab).toHaveFocus()
+    fireEvent.click(screen.getByTestId('personal-home-back-to-issues'))
+    expect(screen.getByTestId('personal-home-issue-keyboard')).toHaveFocus()
+  } finally {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+  }
+})
+
+it('consumes a completed return request before resizing across the desktop breakpoint', async () => {
+  const originalWidth = window.innerWidth
+  let resize!: () => void
+  const media = vi.spyOn(window, 'matchMedia').mockImplementation(
+    query =>
+      ({
+        media: query,
+        matches: false,
+        addEventListener: (_type: string, listener: () => void) => {
+          resize = listener
+        },
+        removeEventListener: vi.fn(),
+      }) as unknown as MediaQueryList
+  )
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 768 })
+  try {
+    const { props, rerender } = await setup([source(vi.fn().mockResolvedValue([issue('resize')]))])
+    rerender(<WeworkPersonalHome {...props} createIssue={<input aria-label="Composer" />} />)
+    const root = screen.getByTestId('personal-home')
+    root.scrollTop = 112
+    fireEvent.click(await screen.findByTestId('personal-home-issue-resize'))
+    fireEvent.click(screen.getByTestId('personal-home-back-to-issues'))
+    const composer = screen.getByRole('textbox', { name: 'Composer' })
+    composer.focus()
+    root.scrollTop = 25
+    for (const width of [1100, 768]) {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+      act(() => resize())
+    }
+    expect(composer).toHaveFocus()
+    expect(root.scrollTop).toBe(25)
+  } finally {
+    media.mockRestore()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+  }
+})
+
+it('captures the actual list row on every narrow opening even while a detail remains selected', async () => {
+  const originalWidth = window.innerWidth
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 768 })
+  try {
+    await setup([source(vi.fn().mockResolvedValue([issue('first'), issue('second')]))])
+    const root = screen.getByTestId('personal-home')
+    root.scrollTop = 112
+    fireEvent.click(await screen.findByTestId('personal-home-issue-first'))
+    root.scrollTop = 245
+    fireEvent.click(await screen.findByTestId('personal-home-issue-second'))
+    fireEvent.click(screen.getByTestId('personal-home-back-to-issues'))
+    expect(root.scrollTop).toBe(245)
+    expect(screen.getByTestId('personal-home-issue-second')).toHaveFocus()
+  } finally {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+  }
+})

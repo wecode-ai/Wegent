@@ -23,18 +23,37 @@ afterEach(() => {
   document.documentElement.classList.remove('dark')
 })
 
-test.each(['light', 'dark'] as const)('restores the original Wework %s tokens', mode => {
-  const variables = resolveAppearanceThemeVariables(defaultAppearance, mode)
-  for (const token of ['focus', 'focus-ring', 'link']) {
-    expect(variables[`--color-${token}`]).toBe('51 156 255')
+function contrastRatio(foreground: string, background: string) {
+  const luminance = (color: string) =>
+    color.split(' ').reduce((sum, value, index) => {
+      const channel = Number(value) / 255
+      const linear = channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+      return sum + linear * [0.2126, 0.7152, 0.0722][index]
+    }, 0)
+  const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a)
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+test.each(['light', 'dark'] as const)(
+  'keeps Wework %s focus and links visible on its surfaces',
+  mode => {
+    const variables = resolveAppearanceThemeVariables(defaultAppearance, mode)
+    for (const token of ['focus', 'focus-ring', 'link']) {
+      for (const surface of ['bg-base', 'bg-surface']) {
+        expect(
+          contrastRatio(variables[`--color-${token}`], variables[`--color-${surface}`]),
+          `${mode}/${token}/${surface}`
+        ).toBeGreaterThanOrEqual(token === 'link' ? 4.5 : 3)
+      }
+    }
+    expect(variables['--color-scrollbar-thumb']).toBe(
+      mode === 'light' ? '0 0 0 / 0.08' : '255 255 255 / 0.36'
+    )
+    expect(variables['--color-scrollbar-thumb-hover']).toBe(
+      mode === 'light' ? '0 0 0 / 0.12' : '255 255 255 / 0.5'
+    )
   }
-  expect(variables['--color-scrollbar-thumb']).toBe(
-    mode === 'light' ? '0 0 0 / 0.08' : '255 255 255 / 0.36'
-  )
-  expect(variables['--color-scrollbar-thumb-hover']).toBe(
-    mode === 'light' ? '0 0 0 / 0.12' : '255 255 255 / 0.5'
-  )
-})
+)
 
 test('preserves explicit Wework overrides and all non-color preferences', () => {
   const appearance = mergeAppearance({

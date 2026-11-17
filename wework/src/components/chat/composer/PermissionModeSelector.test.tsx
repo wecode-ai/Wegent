@@ -3,8 +3,35 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { PermissionModeSelector } from './PermissionModeSelector'
+import { PermissionModeSelector as SharedPermissionModeSelector } from '@wegent/collaboration/controls'
+import { createInstance } from 'i18next'
+import enCommon from '@/i18n/locales/en/common.json'
 
 describe('PermissionModeSelector', () => {
+  test('uses English host resources for labels and the full-access confirmation', async () => {
+    const i18n = createInstance()
+    await i18n.init({
+      lng: 'en',
+      ns: 'common',
+      defaultNS: 'common',
+      resources: { en: { common: enCommon } },
+    })
+    const onChange = vi.fn()
+    render(
+      <SharedPermissionModeSelector
+        value="workspace-write"
+        onChange={onChange}
+        translate={(key, fallback) => i18n.t(key, { defaultValue: fallback })}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Permission mode: Workspace' }))
+    expect(screen.getByTestId('permission-mode-read-only')).toHaveTextContent('Read only')
+    fireEvent.click(screen.getByTestId('permission-mode-full-access'))
+    expect(screen.getByRole('dialog', { name: 'Turn on Full access?' })).toBeInTheDocument()
+    expect(screen.getByTestId('full-access-confirm-cancel')).toHaveTextContent('Cancel')
+    fireEvent.click(screen.getByTestId('full-access-confirm-cancel'))
+    expect(onChange).not.toHaveBeenCalled()
+  })
   afterEach(() => {
     vi.useRealTimers()
   })
