@@ -313,7 +313,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                           idempotencyKey: input.clientUserMessageId,
                           projectId: project.id,
                           issueId: issue.id,
-                          senderUserId: Number(actorId),
+                          senderUserId: conversation.ownerUserId,
                           visibility: 'private',
                           message: input.message,
                           attachmentIds: input.attachmentIds,

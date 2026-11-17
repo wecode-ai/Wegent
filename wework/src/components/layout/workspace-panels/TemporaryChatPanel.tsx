@@ -581,10 +581,7 @@ export function TemporaryChatPanel({
     const syncMessages = () => {
       const nextMessages = getRuntimeConversationMessages(address)
       setTurns(getRuntimeConversationTurns(address))
-      if (nextMessages.length > 0) {
-        setMessages(nextMessages)
-        setError(null)
-      }
+      if (nextMessages.length > 0) setMessages(nextMessages)
     }
     syncMessages()
     return subscribeRuntimeConversation(address, syncMessages)

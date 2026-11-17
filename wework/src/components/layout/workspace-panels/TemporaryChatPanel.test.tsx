@@ -143,6 +143,7 @@ const mocks = vi.hoisted(() => ({
   syncTranscript: vi.fn(),
   conversationMessages: [] as WorkbenchMessage[],
   conversationTurns: [] as RuntimeConversationTurn[],
+  conversationListeners: [] as Array<() => void>,
   lifecycleSnapshot: null as {
     task?: { threadId?: string; modelSelection?: ModelSelectionConfig }
     unread?: boolean
@@ -598,7 +599,14 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   getRuntimeConversationMessages: () => mocks.conversationMessages,
   getRuntimeConversationTurns: () => mocks.conversationTurns,
   removeRuntimeConversationTurn: () => [],
-  subscribeRuntimeConversation: () => () => undefined,
+  subscribeRuntimeConversation: (_address: RuntimeTaskAddress, listener: () => void) => {
+    mocks.conversationListeners.push(listener)
+    return () => {
+      mocks.conversationListeners = mocks.conversationListeners.filter(
+        candidate => candidate !== listener
+      )
+    }
+  },
   updateRuntimeConversationBlocks: () => mocks.conversationMessages,
 }))
 
@@ -1030,6 +1038,7 @@ describe('TemporaryChatPanel', () => {
     mocks.cancelRuntimePaneTask.mockResolvedValue(true)
     mocks.conversationMessages = []
     mocks.conversationTurns = []
+    mocks.conversationListeners = []
     mocks.lifecycleSnapshot = null
     mocks.activeModelSelection = null
     mocks.isBootstrapping = false
@@ -3435,6 +3444,29 @@ describe('TemporaryChatPanel', () => {
       await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
     }
   )
+  it('keeps a native send error visible across transcript synchronization', async () => {
+    mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+    mocks.conversationMessages = [
+      { id: 'earlier-user', role: 'user', content: 'Earlier private message', status: 'done' },
+    ]
+    mocks.sendRuntimePaneMessage.mockResolvedValueOnce(false)
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="persistent-send-error"
+        nativeConversation
+      />
+    )
+    await userEvent.click(screen.getByTestId('mock-send'))
+    await waitFor(() => expect(screen.getByTestId('mock-error')).toHaveTextContent('消息发送失败'))
+    act(() => {
+      for (const listener of mocks.conversationListeners) listener()
+    })
+    expect(screen.getByTestId('mock-error')).toHaveTextContent('消息发送失败')
+  })
+
   it('preserves the task queue when its drawer closes and reopens', async () => {
     mocks.busy = true
     mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }

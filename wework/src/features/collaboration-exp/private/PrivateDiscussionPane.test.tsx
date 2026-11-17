@@ -170,6 +170,27 @@ describe('private discussion pane', () => {
     })
   })
 
+  it('sends as the verified local conversation owner instead of the signed-in profile', async () => {
+    const localProject = project({ project_store: 'local', current_user_id: 7 })
+    const { props } = fixture({ project: localProject, participationViewer: [0, 7] })
+    props.conversation.ownerUserId = 0
+    render(<PrivateDiscussionPane {...props} />)
+    const panelProps = mocks.panel.mock.calls.at(-1)?.[0]
+    await expect(
+      panelProps.assistantSend({
+        message: 'Continue the verified local turn',
+        clientUserMessageId: 'local-owner-request',
+      })
+    ).resolves.toEqual({ sent: true })
+    expect(mocks.runtimeApiSend).toHaveBeenCalledWith({
+      address: props.conversation.address,
+      message: 'Continue the verified local turn',
+      clientUserMessageId: 'local-owner-request',
+      conversationContext: 'private_discussion',
+      queueIfBusy: true,
+    })
+  })
+
   it('forwards interrupt intent to the Runtime interrupt-and-send operation', async () => {
     const { props } = fixture()
     render(<PrivateDiscussionPane {...props} />)
