@@ -1,6 +1,113 @@
 use super::*;
 
 #[tokio::test]
+async fn settled_async_answer_is_admitted_after_local_cleanup() {
+    for (cleanup_before_answer, queue_if_busy) in
+        [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let (handler, root, execution) = completed_async_question();
+        if cleanup_before_answer {
+            assert!(handler.finish_local_task("task", execution, None, "done"));
+            assert!(!handler.is_active_local_task("task"));
+            handler
+                .finish_command_execution("task", execution, None, None)
+                .await;
+        }
+
+        let answer = handler
+            .send_message(json!({
+                "taskId": "task", "message": "Complete", "queueIfBusy": queue_if_busy,
+                "executionRequest": {
+                    "task_id": "task", "subtask_id": "answer", "prompt": "Complete"
+                }
+            }))
+            .await
+            .unwrap();
+        assert_eq!(answer["accepted"], true);
+        if !cleanup_before_answer {
+            assert_eq!(answer["status"], "queued");
+            assert_eq!(handler.queued_local_task_position("task"), Some(0));
+            assert!(handler.finish_local_task("task", execution, None, "done"));
+            assert!(!handler.is_active_local_task("task"));
+            handler
+                .finish_command_execution("task", execution, None, None)
+                .await;
+        }
+
+        assert_eq!(handler.queued_local_task_position("task"), None);
+        assert!(handler.is_active_local_task("task"));
+        assert!(!handler.is_current_local_task_execution("task", execution));
+        assert!(handler
+            .local_task_link("task")
+            .unwrap()
+            .interaction_status
+            .is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+fn completed_async_question() -> (RuntimeWorkRpcHandler, PathBuf, u64) {
+    let (handler, root) = isolated_runtime_work_handler("async-answer-cleanup");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task".into(),
+        root.to_string_lossy().into_owned(),
+        "Async question".into(),
+    );
+    link.thread_id = Some("thread".into());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread", "task".into(), ExecutionRequest::default(), true);
+    handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .active_task_ids
+        .insert("task".into(), RuntimeTaskKind::Personal);
+    let execution = start_test_execution(&handler, "task");
+    handler.route_codex_notification(
+        CodexNotification::from(json!({"method":"turn/started", "params": {
+            "threadId":"thread", "turn":{"id":"turn", "status":"inProgress"}
+        }}))
+        .with_process_generation(5),
+    );
+    handler.route_codex_notification(
+        CodexNotification::from(json!({"method":"item/completed", "params": {
+            "threadId":"thread", "turnId":"turn", "item": {
+                "id":"question", "type":"agentMessage", "questions":[{
+                    "title":"Which async implementation direction should be used?",
+                    "options":["Complete", "Investigate"]
+                }]
+            }
+        }}))
+        .with_process_generation(5),
+    );
+    handler.route_codex_notification(
+        CodexNotification::from(json!({"method":"turn/completed", "params": {
+            "threadId":"thread", "turn":{"id":"turn", "status":"completed"}
+        }}))
+        .with_process_generation(5),
+    );
+    assert_eq!(
+        handler
+            .local_task_link("task")
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        Some(INTERACTION_AWAITING_USER_REPLY)
+    );
+    let link = handler.local_task_link("task").unwrap();
+    let state = crate::runtime_work::lifecycle::native_execution_state(&link).unwrap();
+    assert!(!link.running);
+    assert_eq!(
+        state.phase,
+        crate::runtime_work::lifecycle::NativeExecutionPhase::Idle
+    );
+    assert_eq!(state.process_generation, Some(5));
+    assert_eq!(state.execution_outcome.as_deref(), Some("succeeded"));
+    assert!(handler.is_current_local_task_execution("task", execution));
+    (handler, root, execution)
+}
+
+#[tokio::test]
 async fn global_router_persists_async_question_after_execution_settles() {
     let root = tempfile::tempdir().unwrap();
     let (event_tx, mut event_rx) = broadcast::channel(16);

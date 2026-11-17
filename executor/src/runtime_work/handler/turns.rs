@@ -573,7 +573,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let (previous, turn_to_start, queued_turns) = {
+        let (previous, turn_to_start, queued_turns, mut admission_diagnostics) = {
             let mut scheduler = self
                 .turn_scheduler
                 .lock()
@@ -586,6 +586,14 @@ impl RuntimeWorkRpcHandler {
                         || !queued.request.extra.contains_key(quota_recovery::MARKER)
                 });
             }
+            let kind = turn.task_kind();
+            let task_reserved = scheduler.active_task_ids.contains_key(&local_task_id);
+            let active_kind_count = scheduler.active(kind);
+            let kind_limit = scheduler.settings.limit(kind);
+            let ready_predecessor = scheduler.has_ready_queued_kind(kind);
+            let quota_ready = quota_recovery::is_ready(&turn, now_ms());
+            let automatic_input =
+                turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true));
             let turn_to_start = if queue_only {
                 scheduler.enqueue_queued(turn);
                 None
@@ -594,9 +602,31 @@ impl RuntimeWorkRpcHandler {
             } else {
                 scheduler.enqueue(turn)
             };
+            let admission_diagnostics = turn_to_start.is_none().then(|| {
+                json!({
+                    "method": match admission {
+                        TurnAdmission::Normal => "normal",
+                        TurnAdmission::Forced => "forced",
+                        TurnAdmission::Queue => "queue",
+                        TurnAdmission::Continuation => "continuation",
+                    },
+                    "queueOnly": queue_only,
+                    "taskReserved": task_reserved,
+                    "activeKindCount": active_kind_count,
+                    "kindLimit": kind_limit,
+                    "readyPredecessor": ready_predecessor,
+                    "quotaReady": quota_ready,
+                    "automaticInput": automatic_input,
+                })
+            });
             let queued_turns = scheduler.queued_turns.clone();
-            (previous, turn_to_start, queued_turns)
+            (previous, turn_to_start, queued_turns, admission_diagnostics)
         };
+        if let Some(diagnostics) = admission_diagnostics.as_mut() {
+            // Read ownership without the scheduler mutex, before persistence
+            // projects the queued follow-up onto native execution state.
+            diagnostics["ownership"] = self.turn_admission_ownership(&local_task_id);
+        }
         if let Err(error) = self
             .persist_turn_queue(
                 queued_turns,
@@ -643,10 +673,61 @@ impl RuntimeWorkRpcHandler {
         } else {
             log_executor_event(
                 "runtime work turn queued",
-                &[("local_task_id", local_task_id)],
+                &[
+                    ("local_task_id", local_task_id),
+                    (
+                        "admission",
+                        admission_diagnostics
+                            .expect("queued turn has admission facts")
+                            .to_string(),
+                    ),
+                ],
             );
         }
         Ok(true)
+    }
+
+    fn turn_admission_ownership(&self, local_task_id: &str) -> Value {
+        let (native, interaction_waiting) = self
+            .store
+            .read_task(local_task_id, |link| {
+                (
+                    crate::runtime_work::lifecycle::native_execution_state(link),
+                    link.interaction_status
+                        .as_deref()
+                        .is_some_and(|status| !status.is_empty()),
+                )
+            })
+            .unwrap_or_default();
+        let preparing = self
+            .preparing_turns
+            .lock()
+            .expect("preparation map poisoned")
+            .contains_key(local_task_id);
+        json!({
+            "localExecutionActive": self.is_active_local_task(local_task_id),
+            "localPreparationActive": preparing,
+            "localCodexTurnPresent": self.active_codex_turn(local_task_id).is_some(),
+            "nativePhase": native.as_ref().map(|state| state.phase),
+            "nativeGenerationPresent": native.as_ref().is_some_and(|state| state.process_generation.is_some()),
+            "nativeOutcome": native.as_ref().and_then(|state| state.execution_outcome.as_ref().or(state.outcome.as_ref())),
+            "interactionWaiting": interaction_waiting,
+        })
+    }
+
+    fn log_turn_cleanup_stage(&self, task_id: &str, execution_id: u64, stage: &str) {
+        log_executor_event(
+            "runtime work turn cleanup",
+            &[
+                ("local_task_id", task_id.to_owned()),
+                ("stage", stage.to_owned()),
+                (
+                    "local_execution_owned",
+                    self.is_current_local_task_execution(task_id, execution_id)
+                        .to_string(),
+                ),
+            ],
+        );
     }
 
     fn turn_runs_active_goal(&self, turn: &SpawnTurnRequest) -> bool {
@@ -1718,6 +1799,7 @@ impl RuntimeWorkRpcHandler {
                     .await
             }
             .await;
+            handler.log_turn_cleanup_stage(&turn_local_task_id, execution_id, "result_received");
             let runtime_was_stopped = interrupted_by_runtime_stop(&result);
             scheduled_turn_guard.command_outcome = Some(match result.as_ref() {
                 Ok(turn) => command_journal::CommandState::from_execution(&turn.outcome),
@@ -1739,7 +1821,16 @@ impl RuntimeWorkRpcHandler {
                 restore_startup.finish();
             }
 
-            let _ = mapper_handle.await;
+            let mapper_result = mapper_handle.await;
+            handler.log_turn_cleanup_stage(
+                &turn_local_task_id,
+                execution_id,
+                if mapper_result.is_ok() {
+                    "observer_drained"
+                } else {
+                    "observer_failed"
+                },
+            );
             if let Some(recovery) = result
                 .as_mut()
                 .ok()
@@ -1863,6 +1954,11 @@ impl RuntimeWorkRpcHandler {
                 &request,
                 active_turn.as_ref(),
                 result,
+            );
+            handler.log_turn_cleanup_stage(
+                &turn_local_task_id,
+                execution_id,
+                "local_result_settled",
             );
             handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
             handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
