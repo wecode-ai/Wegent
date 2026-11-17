@@ -901,12 +901,6 @@ async fn call_tool_with_context(
 }
 
 #[cfg(test)]
-async fn call_tool(runtime: &TaskRuntime, name: &str, arguments: Value) -> Value {
-    let context = SpaceMcpRequestContext::from_env();
-    call_tool_with_context(runtime, name, arguments, &context).await
-}
-
-#[cfg(test)]
 async fn call_tool_with_grant(
     runtime: &TaskRuntime,
     name: &str,
@@ -2963,7 +2957,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "get_current_context",
-            "Resolve the conversation's optional default project and Issue (事项). Read get_board_item and list_board_item_comments before interpreting a bound Issue; comments include PR links, follow-up requirements and review feedback. Inspect attachments with list_item_attachments and read_item_attachment. Reuse the returned IDs instead of asking the user to repeat them. bound:false means no complete Issue binding; when space_id is present, use that project for list_board_items or search_board_items. Only when no project is bound, discover accessible projects with list_spaces. Project Issues are distinct from standalone personal tasks and conversations queried with wework_control. Personal bindings are defaults, while dispatched agents must stay within their assigned scope.",
+            "Resolve the conversation's optional default project and Issue (事项). Read get_board_item and list_board_item_comments before interpreting a bound Issue; comments include PR links, follow-up requirements and review feedback. Inspect attachments with list_item_attachments and read_item_attachment. Reuse the returned IDs instead of asking the user to repeat them. bound:false means no complete Issue binding; when space_id is present, keep that project as the default target. Pass space_id to list_board_items. For search_board_items, use scope:{kind:projects,spaces:[space]} with query and structured filters at the top level; never pass a top-level space_id. Reuse an explicit space reference with project_store and space_id, plus the actual device_id for local spaces only. When no project is bound or an explicit source reference is needed, read list_spaces items and reuse their space references. Both discovery and search return paginated objects; follow next_cursor until null and inspect coverage.complete before claiming complete or empty results. Project Issues are distinct from standalone personal tasks and conversations queried with wework_control. Personal bindings are defaults, while dispatched agents must stay within their assigned scope.",
             json!({"type": "object", "properties": {}}),
         ),
         tool(
@@ -4080,8 +4074,12 @@ mod tests {
             .unwrap()["description"]
             .as_str()
             .unwrap();
-        assert!(context.contains("when space_id is present, use that project"));
-        assert!(context.contains("Only when no project is bound"));
+        assert!(context.contains("when space_id is present, keep that project"));
+        assert!(context.contains("Pass space_id to list_board_items"));
+        assert!(context.contains("scope:{kind:projects,spaces:[space]}"));
+        assert!(context.contains("never pass a top-level space_id"));
+        assert!(context.contains("actual device_id for local spaces only"));
+        assert!(context.contains("follow next_cursor until null and inspect coverage.complete"));
         let skill = include_str!("../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-space/skills/wework-project-space/SKILL.md");
         for term in [
             "查一下事项",

@@ -87,6 +87,9 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       await createLocalCollaborationProject(control, CONTENT, PROJECT)
       project = (await rpc('projects.list', {})).find(row => row.name === PROJECT)
       assert.ok(project)
+      const { deviceId } = await rpc('runtime.stand_in.device_identity', {})
+      assert.ok(deviceId)
+      const space = { project_store: 'local', space_id: project.id, device_id: deviceId }
       issue = await rpc('todos.create', {
         project_id: project.id,
         todo: { title: ISSUE_TITLE },
@@ -120,8 +123,16 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
           prompt: `查一下事项 ${MISSING}`,
           server: 'wework_space',
           tool: 'search_board_items',
-          args: { space_id: project.id, query: MISSING },
-          verify: output => assert.deepEqual(JSON.parse(output), []),
+          args: { scope: { kind: 'projects', spaces: [space] }, query: MISSING },
+          verify: output => {
+            const page = JSON.parse(output)
+            assert.deepEqual(page.items, [])
+            assert.equal(page.matched_total, 0)
+            assert.equal(page.next_cursor, null)
+            assert.equal(page.coverage.complete, true)
+            assert.deepEqual(page.coverage.sources, [{ space, state: 'complete', reason: null }])
+            assert.equal(typeof page.query_id, 'string')
+          },
           reply: `当前项目“${PROJECT}”未找到匹配事项（Issue）：${MISSING}`,
         },
         {

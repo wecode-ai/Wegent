@@ -80,7 +80,12 @@ async function assertConnectorCallable(mcp, name) {
     .filter(item => item.type === 'text')
     .map(item => item.text)
     .join('\n')
-  assert.ok(Array.isArray(JSON.parse(text)), 'The real project-space tool did not return a list')
+  const page = JSON.parse(text)
+  assert.ok(Array.isArray(page.items), 'The real project-space tool did not return page items')
+  assert.ok(Number.isInteger(page.matched_total) && page.matched_total >= page.items.length)
+  if (page.matched_total > page.items.length) assert.equal(typeof page.next_cursor, 'string')
+  else assert.equal(page.next_cursor, null)
+  assert.equal(page.coverage.complete, true)
 }
 
 function connectorRuntime(control, cloud, request, resultDir, timeoutMs) {
