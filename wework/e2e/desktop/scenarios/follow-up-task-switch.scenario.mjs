@@ -307,6 +307,8 @@ export function createDesktopScenario(options) {
         await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       }
       const createTask = async text => {
+        // Each new conversation must use the model whose code_mode override this fixture owns.
+        await selectE2EModel(control)
         await send(text)
         const state = await waitForWorkbenchDebugState(
           control,

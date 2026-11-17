@@ -197,6 +197,8 @@ Session 的网络失败记录补充 `sinceSendHeadersMs`（首次发送请求头
 
 MCP App 目录失败保留任务与线程标识、来源读取状态、是否执行恢复及来源读取后的耗时，不记录工具参数或凭据；Windows 原生插件确认失败保留固定 UI Automation 阶段、退出信号和终止状态，不输出任意子进程内容。这些诊断用于后续定位，不能作为故障修复或官方 runtime 已兼容的证明。
 
+流式文本替身复用 `modelTextStream`，与单次 Chat Completions／Anthropic 文本回复共用帧格式，保持原有分块和节奏，按请求协议输出结束事件。不能在 Responses SSE 发送给其他协议后继续推进场景：原生重试可能在下一阶段被误认为新的业务请求。依赖指定模型目录能力的 fixture（如 `code_mode`）必须在每个新会话建立该前置条件，不能从前一个任务的选择推断新会话模型；通用文本场景继续覆盖当前有效协议。
+
 自定义场景需要原生云凭据时，必须声明 `requiresNativeCloudAuthorization`，由共享 runner 在隔离 Electron 连接后完成真实 Backend 授权。自行管理多设备授权的场景声明 `requiresNativeCloudInspector`，并把当前 `control` 传给授权 fixture；首次启动与新设备重启均在连接完成后授权，不能在 `prepareApp` 或 `afterStop` 中使用尚未启动的原生进程。
 
 模型替身中的协议无关文本回复必须复用 `writeLocalAssistantMessage`，按当前请求的 Responses、Chat Completions 或 Anthropic 协议发送完整结束事件。不要通过重置用户模型选择来迁就固定协议的替身，也不要将替身返回错误 SSE 格式造成的断流归因于官方 runtime。

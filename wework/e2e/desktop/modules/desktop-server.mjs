@@ -1,3 +1,4 @@
+import { modelTextStream } from './model-text-stream.mjs'
 import { handleModelSubscriptionUsage } from './model-subscription-usage.mjs'
 import { selectedToolCall } from './model-tool-calls.mjs'
 import { completeCommandOnProcessExit } from './process-exit-command.mjs'
@@ -3380,7 +3381,8 @@ class DesktopE2EServer {
         JSON.stringify(body).includes('WEWORK_DESKTOP_E2E_WORKSPACE_SELECTION_STREAMING'),
         'The real Codex request did not contain the workspace-selection streaming prompt'
       )
-      const stream = streamingTextEvents(
+      const stream = modelTextStream(
+        protocol,
         responseId,
         Array.from(
           { length: 40 },
@@ -3393,25 +3395,12 @@ class DesktopE2EServer {
         Connection: 'keep-alive',
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
-      response.write(createSse(stream.start))
-      let offset = 0
-      for (const delta of stream.chunks) {
-        response.write(
-          createSse([
-            {
-              type: 'response.output_text.delta',
-              item_id: stream.itemId,
-              output_index: 0,
-              content_index: 0,
-              delta,
-              offset,
-            },
-          ])
-        )
-        offset += [...delta].length
+      if (stream.start) response.write(stream.start)
+      for (const frame of stream.chunks) {
+        response.write(frame)
         await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
       }
-      response.end(createSse(stream.finish))
+      response.end(stream.finish)
       return
     }
 
@@ -5722,12 +5711,8 @@ class DesktopE2EServer {
   }
 
   writeChatMessage(response, text) {
-    const chunk = {
-      id: 'chat-local-message',
-      object: 'chat.completion.chunk',
-      choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: 'stop' }],
-    }
-    this.writeRawSse(response, `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`)
+    const stream = modelTextStream('chat', 'chat-local-message', text, [text])
+    this.writeRawSse(response, stream.start + stream.chunks.join('') + stream.finish)
   }
 
   writeAnthropicToolCall(
@@ -5826,49 +5811,8 @@ class DesktopE2EServer {
   }
 
   writeAnthropicMessage(response, text) {
-    this.writeAnthropicSse(response, [
-      [
-        'message_start',
-        {
-          type: 'message_start',
-          message: {
-            id: 'anthropic-local-message',
-            type: 'message',
-            role: 'assistant',
-            content: [],
-            model: 'desktop-e2e-anthropic-model',
-            stop_reason: null,
-            usage: { input_tokens: 1, output_tokens: 0 },
-          },
-        },
-      ],
-      [
-        'content_block_start',
-        {
-          type: 'content_block_start',
-          index: 0,
-          content_block: { type: 'text', text: '' },
-        },
-      ],
-      [
-        'content_block_delta',
-        {
-          type: 'content_block_delta',
-          index: 0,
-          delta: { type: 'text_delta', text },
-        },
-      ],
-      ['content_block_stop', { type: 'content_block_stop', index: 0 }],
-      [
-        'message_delta',
-        {
-          type: 'message_delta',
-          delta: { stop_reason: 'end_turn', stop_sequence: null },
-          usage: { output_tokens: text ? 1 : 0 },
-        },
-      ],
-      ['message_stop', { type: 'message_stop' }],
-    ])
+    const stream = modelTextStream('anthropic', 'anthropic-local-message', text, [text])
+    this.writeRawSse(response, stream.start + stream.chunks.join('') + stream.finish)
   }
 
   writeAnthropicSse(response, events) {
