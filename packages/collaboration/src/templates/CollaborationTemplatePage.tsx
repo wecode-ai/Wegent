@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import { Layers3, RefreshCw } from 'lucide-react'
 import type { CollaborationLocale } from '../i18n'
 import {
@@ -12,8 +12,9 @@ import {
 } from './types'
 import type { CollaborationTemplateStore } from './store'
 import { useTemplateRecords } from './context'
+import { localizeBuiltinTemplateRecord } from './builtins'
 import { templateMessages } from './messages'
-import { TemplateDialog } from './TemplateDialog'
+import { TemplatePanel } from './TemplatePanel'
 import { TemplateImportDialog } from './TemplateImportDialog'
 import { TemplatePreview } from './TemplatePreview'
 
@@ -41,12 +42,16 @@ function ScopedCollaborationTemplatePage({
   mode = 'desktop',
   onUse,
   embedded = false,
+  onDetailChange,
+  footerTarget,
 }: {
   store: CollaborationTemplateStore
   locale: CollaborationLocale
   mode?: 'desktop' | 'marketplace'
   onUse?(record: TemplateRecord): void
   embedded?: boolean
+  onDetailChange?(detail: { title: string; onBack(): void } | null): void
+  footerTarget?: HTMLElement | null
 }) {
   const m = templateMessages[locale]
   const local = useTemplateRecords(store)
@@ -57,13 +62,61 @@ function ScopedCollaborationTemplatePage({
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [remoteError, setRemoteError] = useState<string | null>(null)
   const [remoteLoading, setRemoteLoading] = useState(false)
-  const [selected, setSelected] = useState<TemplateRecord | null>(null)
+  const [rawSelected, setSelected] = useState<TemplateRecord | null>(null)
+  const selected = useMemo(
+    () => rawSelected && localizeBuiltinTemplateRecord(rawSelected, locale),
+    [rawSelected, locale]
+  )
+  const localizedRecords = useMemo(
+    () => local.records.map(record => localizeBuiltinTemplateRecord(record, locale)),
+    [local.records, locale]
+  )
   const [selectedInstalled, setSelectedInstalled] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [importBusy, setImportBusy] = useState(false)
+  const pageRef = useRef<HTMLElement>(null)
+  const returnTrigger = useRef<HTMLElement | null>(null)
   const [deleting, setDeleting] = useState<Card | null>(null)
+  const detailChanged = useRef(onDetailChange)
+  useEffect(() => {
+    detailChanged.current = onDetailChange
+  }, [onDetailChange])
+  useEffect(() => {
+    if (!embedded) return
+    const panel = importOpen
+      ? {
+          title: m.importTitle,
+          onBack: () => {
+            if (!importBusy) setImportOpen(false)
+          },
+        }
+      : deleting
+        ? {
+            title: m.delete,
+            onBack: () => {
+              if (!busy) setDeleting(null)
+            },
+          }
+        : selected
+          ? {
+              title: selected.document.spec.displayName,
+              onBack: () => {
+                if (!busy) setSelected(null)
+              },
+            }
+          : null
+    detailChanged.current?.(panel)
+    if (!panel && !busy && !importBusy && returnTrigger.current) {
+      const trigger = returnTrigger.current.isConnected
+        ? returnTrigger.current
+        : pageRef.current?.querySelector<HTMLInputElement>('[data-testid="template-search"]')
+      trigger?.focus()
+      returnTrigger.current = null
+    }
+  }, [embedded, selected, deleting, importOpen, busy, importBusy, m.importTitle, m.delete])
   const generation = useRef(0)
   const refresh = useCallback(async () => {
     const remote = store.library.remote
@@ -106,11 +159,11 @@ function ScopedCollaborationTemplatePage({
   }, [refresh])
 
   const cards = new Map<string, Card>()
-  for (const record of local.records) {
+  for (const [index, record] of localizedRecords.entries()) {
     if (tab === 'mine' && record.source !== 'personal') continue
     cards.set(templateIdentity(record), {
       key: templateIdentity(record),
-      record,
+      record: local.records[index],
       id: record.id,
       ownerId: record.ownerId,
       namespace: record.document.metadata.namespace,
@@ -127,10 +180,16 @@ function ScopedCollaborationTemplatePage({
           (record.ownerId === 0 &&
             record.document.metadata.namespace === 'system' &&
             listing.publisher_namespace === 'system' &&
+            listing.publisher_user_id === 0 &&
             record.document.metadata.name === listing.name)
       )
       const key = cached ? templateIdentity(cached) : `listing:${listing.id}`
       const version = listing.current_version?.version ?? '1.0.0'
+      const localizedCached =
+        cached?.document.spec.version === version
+          ? localizeBuiltinTemplateRecord(cached, locale)
+          : undefined
+      const localizedBuiltin = localizedCached && localizedCached !== cached
       cards.set(key, {
         key,
         record:
@@ -138,8 +197,10 @@ function ScopedCollaborationTemplatePage({
         id: listing.id,
         ownerId: cached?.ownerId ?? listing.publisher_user_id,
         namespace: cached?.document.metadata.namespace ?? listing.publisher_namespace,
-        name: listing.display_name,
-        description: listing.description ?? '',
+        name: localizedBuiltin ? localizedCached.document.spec.displayName : listing.display_name,
+        description: localizedBuiltin
+          ? localizedCached.document.spec.description
+          : (listing.description ?? ''),
         version,
         installed: listing.is_installed,
       })
@@ -187,11 +248,20 @@ function ScopedCollaborationTemplatePage({
   }
 
   return (
-    <section className="collaboration-template-page" data-testid="collaboration-template-page">
-      <div hidden={embedded && selected !== null}>
+    <section
+      ref={pageRef}
+      className={`collaboration-template-page${embedded ? ' is-embedded' : ''}`}
+      data-testid="collaboration-template-page"
+    >
+      <div
+        hidden={embedded && Boolean(selected || deleting || importOpen)}
+        style={{
+          display: embedded && (selected || deleting || importOpen) ? 'none' : 'contents',
+        }}
+      >
         <header className="collaboration-template-page-heading">
           <div>
-            <h2>{m.title}</h2>
+            {!embedded && <h2>{m.title}</h2>}
             <p>{m.description}</p>
           </div>
           <div className="collaboration-template-actions">
@@ -207,7 +277,11 @@ function ScopedCollaborationTemplatePage({
             <button
               type="button"
               data-testid="template-import-open"
-              onClick={() => setImportOpen(true)}
+              disabled={busy}
+              onClick={event => {
+                returnTrigger.current = event.currentTarget
+                setImportOpen(true)
+              }}
             >
               {m.import}
             </button>
@@ -311,7 +385,8 @@ function ScopedCollaborationTemplatePage({
                       className="collaboration-danger-button"
                       data-testid={`template-delete-${card.record?.document.metadata.name ?? card.id}`}
                       disabled={busy || local.syncing}
-                      onClick={() => {
+                      onClick={event => {
+                        returnTrigger.current = event.currentTarget
                         setError(null)
                         setDeleting(card)
                       }}
@@ -323,7 +398,10 @@ function ScopedCollaborationTemplatePage({
                   type="button"
                   data-testid={`template-details-${card.record?.document.metadata.name ?? card.id}`}
                   disabled={busy}
-                  onClick={() => void choose(card)}
+                  onClick={event => {
+                    returnTrigger.current = event.currentTarget
+                    void choose(card)
+                  }}
                 >
                   {m.details}
                 </button>
@@ -370,22 +448,25 @@ function ScopedCollaborationTemplatePage({
         )}
       </div>
       {selected && (
-        <TemplateDialog
+        <TemplatePanel
           embedded={embedded}
+          footerTarget={footerTarget}
           title={selected.document.spec.displayName}
           closeLabel={embedded ? m.backToTemplates : m.close}
           onClose={() => setSelected(null)}
           busy={busy}
           footer={
             <>
-              <button
-                type="button"
-                data-testid="template-detail-cancel"
-                disabled={busy}
-                onClick={() => setSelected(null)}
-              >
-                {embedded ? m.backToTemplates : m.cancel}
-              </button>
+              {!embedded && (
+                <button
+                  type="button"
+                  data-testid="template-detail-cancel"
+                  disabled={busy}
+                  onClick={() => setSelected(null)}
+                >
+                  {m.cancel}
+                </button>
+              )}
               {mode === 'marketplace' ? (
                 <button
                   type="button"
@@ -432,7 +513,7 @@ function ScopedCollaborationTemplatePage({
                       const record = cached ?? (await store.download(selected.id!))
                       if (onUse) {
                         setSelected(null)
-                        onUse(record)
+                        onUse(localizeBuiltinTemplateRecord(record, locale))
                       } else {
                         setStatus(m.added)
                       }
@@ -461,24 +542,28 @@ function ScopedCollaborationTemplatePage({
               {error}
             </p>
           )}
-        </TemplateDialog>
+        </TemplatePanel>
       )}
       {deleting && (
-        <TemplateDialog
+        <TemplatePanel
+          embedded={embedded}
+          footerTarget={footerTarget}
           title={m.delete}
           closeLabel={m.close}
           onClose={() => setDeleting(null)}
           busy={busy}
           footer={
             <>
-              <button
-                type="button"
-                data-testid="template-delete-cancel"
-                disabled={busy}
-                onClick={() => setDeleting(null)}
-              >
-                {m.cancel}
-              </button>
+              {!embedded && (
+                <button
+                  type="button"
+                  data-testid="template-delete-cancel"
+                  disabled={busy}
+                  onClick={() => setDeleting(null)}
+                >
+                  {m.cancel}
+                </button>
+              )}
               <button
                 type="button"
                 className="collaboration-danger-button"
@@ -516,10 +601,13 @@ function ScopedCollaborationTemplatePage({
           <p>{m.deleteHint.replace('{name}', deleting.name)}</p>
           {deleting.id !== null && !store.library.remote && <p>{m.deleteConnectionRequired}</p>}
           {error && <p role="alert">{error}</p>}
-        </TemplateDialog>
+        </TemplatePanel>
       )}
       {importOpen && (
         <TemplateImportDialog
+          embedded={embedded}
+          footerTarget={footerTarget}
+          onBusyChange={setImportBusy}
           store={store}
           locale={locale}
           onClose={() => setImportOpen(false)}

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { RotateCcw } from 'lucide-react'
+
 import type {
   ProjectManageHost,
   ProjectManageMember,
@@ -279,7 +281,7 @@ export function ProjectMembersSection<
                   </div>
                   <div role="cell" className="min-w-0">
                     <label>
-                      <span className="mb-1 block text-xs text-text-muted md:sr-only">
+                      <span className="collaboration-project-member-field-label mb-1 block text-xs text-text-secondary">
                         {host.translate('todo.project_member_capability', '职责与能力')}
                       </span>
                       <input
@@ -377,10 +379,14 @@ export function ProjectMembersSection<
                             data-testid={`cloud-project-member-remove-${member.user_id}`}
                             disabled={busy}
                             onClick={() => void removeMember(member)}
-                            className={`flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600 disabled:opacity-40 md:h-8 md:w-8 ${focus}`}
+                            className={`flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-muted disabled:opacity-40 md:h-8 md:w-8 ${member.inherited_role ? 'hover:text-text-primary' : 'hover:text-destructive'} ${focus}`}
                             aria-label={removeLabel}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            {member.inherited_role ? (
+                              <RotateCcw className="h-4 w-4" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
                           </button>
                         ),
                       })}

@@ -1,13 +1,15 @@
 import { useEffect, useRef } from 'react'
 import { useEscapeKey } from '../markdown/useEscapeKey'
+import { isolateModalBackground } from './dialogAccessibility'
 
 const focusableSelector =
-  'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"]:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])'
 
 function isFocusable(element: HTMLElement) {
   if (
     element.matches(':disabled') ||
-    element.tabIndex < 0 ||
+    (element.tabIndex < 0 &&
+      (!element.matches('[contenteditable="true"]') || element.hasAttribute('tabindex'))) ||
     element.closest('[hidden], [aria-hidden="true"], [inert]')
   )
     return false
@@ -21,20 +23,23 @@ function isFocusable(element: HTMLElement) {
 export function useDialogKeyboard<T extends HTMLElement>(
   onClose: () => void,
   open = true,
-  initialFocus?: string
+  initialFocus?: string,
+  trapFocus = true,
+  restoreFocus?: string
 ) {
   const ref = useRef<T>(null)
-  const restoreFocus = useRef<Element | null>(null)
+  const opener = useRef<Element | null>(null)
   const wasOpen = useRef(false)
   if (open && !wasOpen.current && typeof document !== 'undefined')
-    restoreFocus.current = document.activeElement
+    opener.current = document.activeElement
   wasOpen.current = open
   useEscapeKey(onClose, open, ref)
 
   useEffect(() => {
     const dialog = ref.current
     if (!open || !dialog) return
-    const previousFocus = restoreFocus.current
+    const previousFocus = opener.current
+    const focusContainer = dialog.closest('[role="dialog"]')
     if (!dialog.contains(document.activeElement)) {
       const preferred = Array.from(
         dialog.querySelectorAll<HTMLElement>(
@@ -48,6 +53,7 @@ export function useDialogKeyboard<T extends HTMLElement>(
         dialog
       target.focus()
     }
+    const restoreBackground = isolateModalBackground(dialog, trapFocus)
     const handleTab = (event: KeyboardEvent) => {
       if (event.key !== 'Tab' || event.defaultPrevented) return
       const boundary = document.activeElement?.closest('[role="dialog"], dialog[open]')
@@ -71,17 +77,31 @@ export function useDialogKeyboard<T extends HTMLElement>(
         first.focus()
       }
     }
-    dialog.addEventListener('keydown', handleTab)
+    if (trapFocus) dialog.addEventListener('keydown', handleTab)
     return () => {
+      restoreBackground?.()
       dialog.removeEventListener('keydown', handleTab)
-      if (
-        previousFocus instanceof HTMLElement &&
-        previousFocus.isConnected &&
-        (dialog.contains(document.activeElement) || document.activeElement === document.body)
-      )
-        previousFocus.focus()
+      // Nested modal owners release inert during the same cleanup pass.
+      queueMicrotask(() => {
+        const returnTarget =
+          previousFocus instanceof HTMLElement &&
+          previousFocus !== document.body &&
+          previousFocus.isConnected &&
+          !previousFocus.closest('[hidden], [inert]')
+            ? previousFocus
+            : restoreFocus
+              ? focusContainer?.querySelector<HTMLElement>(restoreFocus)
+              : null
+        if (
+          returnTarget &&
+          (dialog.contains(document.activeElement) ||
+            document.activeElement === document.body ||
+            (restoreFocus && focusContainer?.contains(document.activeElement)))
+        )
+          returnTarget.focus()
+      })
     }
-  }, [open, initialFocus])
+  }, [open, initialFocus, trapFocus, restoreFocus])
 
   return ref
 }

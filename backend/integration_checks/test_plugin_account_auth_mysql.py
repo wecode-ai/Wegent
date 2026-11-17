@@ -83,7 +83,7 @@ def test_simultaneous_first_policy_materialization_keeps_one_business_parent(
         thread_state.second = second
         with context.sessions.begin() as db:
             establish_snapshot(db, context)
-            acquire_plugin_write_lock(db, context.user_id)
+            acquire_plugin_write_lock(db, context.user_id, name="@account-policy")
             parent = policy_revision.read_policy_revision(db, context.user_id)
             if second:
                 second_locked.set()
@@ -104,7 +104,7 @@ def test_simultaneous_first_policy_materialization_keeps_one_business_parent(
         parents = [request.result(timeout=10) for request in (first, second)]
 
     assert parents[0][0] == parents[1][0]
-    assert [parent[1] for parent in parents] == [0, 1]
+    assert [parent[1] for parent in parents] == [0, 0]
     with context.sessions() as db:
         rows = (
             db.query(Kind)
@@ -118,7 +118,7 @@ def test_simultaneous_first_policy_materialization_keeps_one_business_parent(
         )
         assert len(rows) == 1 and rows[0].id == parents[0][0]
         assert rows[0].is_active is True
-        assert rows[0].json == {"spec": {"enabled": True, "revision": 2}}
+        assert rows[0].json == {"spec": {"enabled": True, "revision": 0}}
 
 
 def test_inactive_policy_row_is_reactivated_with_its_stored_preference(context):
@@ -277,7 +277,7 @@ def test_saturated_initial_policy_pool_returns_retryable_error_and_releases_redi
             assert failure.value.code == "plugin_write_unavailable"
             assert failure.value.status_code == 503
             assert not coordination._redis_client().exists(
-                f"wegent:plugin-write:{context.user_id}"
+                f"wegent:plugin-write:{context.user_id}:mysql-auth-fixture"
             )
 
 
@@ -286,7 +286,7 @@ def test_existing_policy_uses_no_connection_from_the_initial_policy_pool(
 ):
     sessions, policy_pool = single_connection_sessions
     with sessions.begin() as db:
-        acquire_plugin_write_lock(db, context.user_id)
+        acquire_plugin_write_lock(db, context.user_id, name="@account-policy")
 
     with ExitStack() as connections:
         for _ in range(4):
@@ -327,7 +327,9 @@ def test_uninstall_invalidates_plugin_loaded_before_coordination(context):
 
 def test_expired_worker_cannot_commit_after_successor_advances_parent_revision(context):
     with context.sessions() as stale:
-        acquire_plugin_write_lock(stale, context.user_id)
+        acquire_plugin_write_lock(
+            stale, context.user_id, installed_id=context.plugin_id
+        )
         stale.add(
             Kind(
                 user_id=context.user_id,
@@ -338,13 +340,21 @@ def test_expired_worker_cannot_commit_after_successor_advances_parent_revision(c
             )
         )
         stale.flush()
-        lease = stale.info["plugin_write_leases"][context.user_id]
-        observed_revision = lease.policy.revision
+        lease = stale.info["plugin_write_leases"][
+            (context.user_id, "mysql-auth-fixture")
+        ]
+        observed_revision = stale.info["plugin_installation_write_revisions"][
+            context.plugin_id
+        ].revision
         # Model a pause immediately after a successful Redis ownership check.
         lease.check = lambda: None
-        coordination._redis_client().delete(f"wegent:plugin-write:{context.user_id}")
+        coordination._redis_client().delete(
+            f"wegent:plugin-write:{context.user_id}:mysql-auth-fixture"
+        )
         with context.sessions.begin() as successor:
-            acquire_plugin_write_lock(successor, context.user_id)
+            acquire_plugin_write_lock(
+                successor, context.user_id, installed_id=context.plugin_id
+            )
             successor.add(
                 Kind(
                     user_id=context.user_id,
@@ -375,13 +385,13 @@ def test_expired_worker_cannot_commit_after_successor_advances_parent_revision(c
             db.query(Kind)
             .filter_by(
                 user_id=context.user_id,
-                kind="ConnectorAuthPolicy",
-                namespace="plugin-auth",
-                name="account",
+                kind="InstalledPlugin",
+                namespace="default",
+                name="mysql-auth-fixture",
             )
             .one()
         )
-        assert parent.json["spec"]["revision"] == observed_revision + 1
+        assert parent.json["spec"]["writeRevision"] == observed_revision + 1
 
 
 def test_simultaneous_device_registration_keeps_one_runtime_identity(context):

@@ -18,6 +18,10 @@
     gap: 16px;
   }
 
+  .collaboration-project-member-field-label {
+    display: none;
+  }
+
   .collaboration-project-member-heading {
     display: grid;
   }

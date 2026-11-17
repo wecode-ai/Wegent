@@ -155,7 +155,7 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
           data-testid={`collaboration-group-detail-${selectedGroup.id}`}
         >
           {detailPresentation === 'page' ? (
-            <div className="collaboration-resource-heading">
+            <div className="collaboration-resource-heading flex-wrap gap-y-3">
               <div>
                 <button
                   type="button"
@@ -466,7 +466,9 @@ export function GroupConfigurationView({ model }: { model: GroupConfigurationMod
                 <button
                   type="button"
                   className={
-                    workspace ? 'collaboration-primary-button' : 'collaboration-secondary-button'
+                    workspace
+                      ? 'collaboration-primary-button shrink-0 whitespace-nowrap'
+                      : 'collaboration-secondary-button shrink-0 whitespace-nowrap'
                   }
                   data-testid="collaboration-group-open-create"
                   onClick={() => setFormOpen(true)}

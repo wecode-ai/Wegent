@@ -1,11 +1,12 @@
 import { Loader2 } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 
 interface ConfirmDialogProps {
   open: boolean
   title: string
-  description: string
+  description: ReactNode
   cancelLabel: string
   confirmLabel: string
   confirmTestId: string
