@@ -61,3 +61,10 @@ it('reports failed Model cleanup instead of proceeding as though it succeeded', 
   await expect(deleteDedicatedBotModel(api, 'member', 'engineering')).rejects.toThrow()
   expect(remove).toHaveBeenCalledTimes(1)
 })
+
+it('accepts a Model already removed between lookup and deletion', async () => {
+  const { api, remove } = client('engineering')
+  remove.mockResolvedValue({ status: 404, data: { detail: 'Not found' } })
+  await expect(deleteDedicatedBotModel(api, 'member', 'engineering')).resolves.toBeUndefined()
+  expect(remove).toHaveBeenCalledTimes(1)
+})

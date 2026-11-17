@@ -21,5 +21,5 @@ export async function deleteDedicatedBotModel(
   expect(model.data?.metadata).toMatchObject({ name: `${name}-model`, namespace })
   expect(model.data?.spec.isCustomConfig).toBe(true)
   const removed = await api.delete(path)
-  expect(removed.status, JSON.stringify(removed.data)).toBe(200)
+  expect([200, 404], JSON.stringify(removed.data)).toContain(removed.status)
 }
