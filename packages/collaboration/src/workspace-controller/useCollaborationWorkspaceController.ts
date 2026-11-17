@@ -501,7 +501,11 @@ function reduceWorkspaceState(
         selectedIssue: state.selectedIssue
           ? (action.snapshot.items.find(
               (item) => item.id === state.selectedIssue?.id,
-            ) ?? null)
+            ) ??
+            (action.externalBoard &&
+            state.selectedIssue.cloud_project_id === action.project.id
+              ? state.selectedIssue
+              : null))
           : null,
         members: action.snapshot.members,
         agents: action.snapshot.agents,
@@ -1052,6 +1056,36 @@ export function createCollaborationWorkspaceControllerCommands({
         externalBoard?.snapshot ??
         homeSnapshot ??
         (await loadStandardSnapshot(projectId));
+      if (
+        !isCurrent() ||
+        mutationGeneration !== projectMutationGeneration(projectId)
+      )
+        return;
+      const selected = getSelectedIssue();
+      if (
+        externalBoard &&
+        selected?.cloud_project_id === project.id &&
+        !snapshot.items.some((item) => item.id === selected.id)
+      ) {
+        try {
+          const currentIssue = await api.issues.get(selected.id);
+          if (
+            !isCurrent() ||
+            mutationGeneration !== projectMutationGeneration(projectId)
+          )
+            return;
+          if (getSelectedIssue()?.id === selected.id)
+            dispatch({ type: "replace-issue", issue: currentIssue });
+        } catch {
+          if (
+            !isCurrent() ||
+            mutationGeneration !== projectMutationGeneration(projectId)
+          )
+            return;
+          if (getSelectedIssue()?.id === selected.id)
+            dispatch({ type: "clear-selected-issue" });
+        }
+      }
       if (
         !isCurrent() ||
         mutationGeneration !== projectMutationGeneration(projectId)

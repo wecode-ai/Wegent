@@ -50,6 +50,7 @@ export function useCommentAssignment(
   )
   const effectiveMode = assignment?.createChild ? mode : 'current'
   const [pendingChild, setPendingChild] = useState<CommentChildInput | null>(null)
+  const [childCancelled, setChildCancelled] = useState(false)
   const [sentSuggestion, setSentSuggestion] = useState('')
   const [dismissedSuggestion, setDismissedSuggestion] = useState('')
   const [focusedSuggestion, setFocusedSuggestion] = useState('')
@@ -74,6 +75,7 @@ export function useCommentAssignment(
   function setTarget(next: string) {
     setError(null)
     setSelectedTarget(next)
+    if (childCancelled) setPendingChild(current => (current ? { ...current, target: next } : null))
     if (next && actions?.assigneeMoves?.includes(moveTarget)) setMoveTarget('')
     if (!next && !moveTarget && pendingToggle === null) clearCommittedComment()
   }
@@ -139,7 +141,11 @@ export function useCommentAssignment(
           operation = { body, target, requestId: crypto.randomUUID() }
           setPendingChild(operation)
         }
-        if ((await assignment.createChild(operation)) === false) return
+        setChildCancelled(false)
+        if ((await assignment.createChild(operation)) === false) {
+          setChildCancelled(true)
+          return
+        }
         setPendingChild(null)
         setSelectedTarget('')
         setSentSuggestion('')
@@ -186,6 +192,7 @@ export function useCommentAssignment(
     mode: effectiveMode,
     setMode,
     pendingChild,
+    childTargetLocked: pendingChild !== null && !childCancelled,
     options,
     target,
     moveTarget,

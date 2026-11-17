@@ -46,7 +46,6 @@ from app.schemas.project_chat import (
 )
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
-    IssueAction,
     require_cloud_project_role,
 )
 from app.services.collaboration_permissions import (
@@ -1001,12 +1000,7 @@ class ProjectChatService:
         if request.task_id and any(
             mention.type == "agent" for mention in request.mentions
         ):
-            from app.services.loop_items.service import loop_item_service
-
-            item = loop_item_service.get(db, request.task_id, user_id)
-            loop_item_service._require_item_access(
-                db, item, user_id, action=IssueAction.EXECUTE
-            )
+            self._require_task_execution(db, user_id, project, request.task_id)
         existing = (
             db.query(ProjectChatMessage)
             .filter(
@@ -1640,6 +1634,9 @@ class ProjectChatService:
             execution_id = int(raw_execution_id)
         except (TypeError, ValueError):
             return None
+        from app.services.loop_items.locking import lock_existing_issue
+
+        lock_existing_issue(db, activity.task_id)
         return (
             db.query(LoopItemExecution)
             .filter(LoopItemExecution.id == execution_id)
@@ -1706,7 +1703,7 @@ class ProjectChatService:
         """Return the open streaming AI message for one runtime task."""
 
         candidate = (
-            db.query(ProjectChatMessage.id)
+            db.query(ProjectChatMessage.id, ProjectChatMessage.task_id)
             .filter(
                 ProjectChatMessage.runtime_device_id.in_(
                     device_ids or [runtime_device_id]
@@ -1726,6 +1723,11 @@ class ProjectChatService:
         )
         if candidate is None:
             return None
+        if candidate.task_id:
+            # Replies take Issue then message locks; runtime updates use the same order.
+            from app.services.loop_items.locking import lock_existing_issue
+
+            lock_existing_issue(db, candidate.task_id)
         # Lock only an existing primary key. A missing Runtime-index lookup
         # otherwise gap-locks unrelated members' first activity inserts.
         return (
@@ -2162,13 +2164,14 @@ class ProjectChatService:
         if not row.task_id:
             return
 
-        task = (
-            db.query(LoopItem)
-            .filter(LoopItem.id == row.task_id)
-            .populate_existing()
-            .with_for_update()
-            .one_or_none()
-        )
+        with db.no_autoflush:
+            task = (
+                db.query(LoopItem)
+                .filter(LoopItem.id == row.task_id)
+                .populate_existing()
+                .with_for_update()
+                .one_or_none()
+            )
         if task is None or not loop_datetime_value_is_unset(task.deleted_at):
             logger.warning(
                 "[ProjectChat] Task AI state update skipped because task was not found: "

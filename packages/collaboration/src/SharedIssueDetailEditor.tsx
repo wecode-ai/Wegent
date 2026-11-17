@@ -719,6 +719,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const showPanelControls = props.showPanelControls !== false;
   const showFullscreenControl = props.showFullscreenControl !== false;
   const item = editProps?.item ?? null;
+  const invitedOnly = item?.invited_only === true;
   const latestItemRef = useRef(item);
   latestItemRef.current = item;
   const creation = useIssueCreation(editorPort);
@@ -1368,8 +1369,14 @@ export function TodoEditor(props: TodoEditorProps) {
     };
   }, [description, descriptionExpanded, editItemId, workspacePanel]);
 
+  const editScope = useMemo(
+    () => ({}),
+    [editItemId, editProjectId, editorPort, invitedOnly],
+  );
+  const loadedEditScopeRef = useRef(editScope);
   useLayoutEffect(() => {
-    if (loadedEditItemIdRef.current === editItemId) return;
+    if (loadedEditScopeRef.current === editScope) return;
+    loadedEditScopeRef.current = editScope;
     loadedEditItemIdRef.current = editItemId;
     itemLoadGenerationRef.current += 1;
     taskBindingsRequestIdRef.current += 1;
@@ -1383,6 +1390,12 @@ export function TodoEditor(props: TodoEditorProps) {
     setTasks(initialTaskBindingsRef.current ?? []);
     setAttachments([]);
     setCollaborators([]);
+    setProjectMembers([]);
+    setProjectAgents([]);
+    setProjectGroups([]);
+    setWegentTeams([]);
+    loadedGroupProjectIdRef.current = null;
+    setAssigneeQuery("");
     outsideAssigneeConfirmationRef.current?.(false);
     outsideAssigneeConfirmationRef.current = null;
     setOutsideAssignee(null);
@@ -1391,7 +1404,7 @@ export function TodoEditor(props: TodoEditorProps) {
     setAttachmentBusy(false);
     setAttachmentError(null);
     setEditingContent(!readFirst);
-  }, [editItemId, readFirst]);
+  }, [editItemId, editScope, readFirst]);
 
   useLayoutEffect(() => {
     if (loadedEditItemIdRef.current !== editItemId) return;
@@ -1405,15 +1418,6 @@ export function TodoEditor(props: TodoEditorProps) {
   useEffect(() => {
     if (editItemId == null || editProjectId == null) return;
     let active = true;
-    const configuredGroups = project?.collaboration_groups ?? [];
-    if (loadedGroupProjectIdRef.current !== editProjectId) {
-      loadedGroupProjectIdRef.current = editProjectId;
-      setProjectGroups(configuredGroups);
-    } else if (configuredGroups.length > 0) {
-      setProjectGroups((current) =>
-        mergeCollaborationGroups(current, configuredGroups),
-      );
-    }
     const applyResult = <T,>(
       request: Promise<T>,
       apply: (value: T) => void,
@@ -1430,10 +1434,19 @@ export function TodoEditor(props: TodoEditorProps) {
     void refreshTaskBindings();
     void refreshAttachments();
     applyResult(editorPort.collaborators.list(editItemId), setCollaborators);
-    if (item?.invited_only)
+    if (invitedOnly)
       return () => {
         active = false;
       };
+    const configuredGroups = project?.collaboration_groups ?? [];
+    if (loadedGroupProjectIdRef.current !== editProjectId) {
+      loadedGroupProjectIdRef.current = editProjectId;
+      setProjectGroups(configuredGroups);
+    } else if (configuredGroups.length > 0) {
+      setProjectGroups((current) =>
+        mergeCollaborationGroups(current, configuredGroups),
+      );
+    }
     applyResult(editorPort.members.list(editProjectId), setProjectMembers);
     applyResult(editorPort.agents.list(String(editProjectId)), (agents) =>
       setProjectAgents(agents.filter((agent) => agent.status !== "inactive")),
@@ -1453,7 +1466,7 @@ export function TodoEditor(props: TodoEditorProps) {
     editItemId,
     editProjectId,
     item?.assignee_agent_id,
-    item?.invited_only,
+    invitedOnly,
     project?.collaboration_groups,
     props.loadTeams,
     props.taskRefreshKey,

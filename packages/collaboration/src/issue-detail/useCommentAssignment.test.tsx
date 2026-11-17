@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useCommentAssignment } from './useCommentAssignment'
 import type { CommentIssueActions } from './issueCommentActions'
+import type { CommentAssignment } from './useCommentAssignment'
 
 const mention = (id: number) => `[$@User ${id}](wework-member://${id})`
 const options = [
@@ -19,10 +20,16 @@ describe('comment assignment', () => {
   let draft: string
   let enabled: boolean
   let actions: CommentIssueActions | undefined
+  let createChild: CommentAssignment['createChild']
   const assign = vi.fn<(id: string) => Promise<void | boolean>>()
   const send = vi.fn<() => Promise<boolean>>()
   function Harness() {
-    transfer = useCommentAssignment(draft, enabled ? { options, assign } : undefined, send, actions)
+    transfer = useCommentAssignment(
+      draft,
+      enabled ? { options, assign, createChild } : undefined,
+      send,
+      actions
+    )
     return null
   }
   function render(value: string) {
@@ -34,6 +41,7 @@ describe('comment assignment', () => {
     root = createRoot(document.createElement('div'))
     enabled = true
     actions = undefined
+    createChild = undefined
     assign.mockReset().mockResolvedValue(undefined)
     send.mockReset().mockResolvedValue(true)
   })
@@ -164,6 +172,26 @@ describe('comment assignment', () => {
     expect(send).toHaveBeenCalledTimes(1)
     expect(assign).toHaveBeenCalledTimes(2)
     expect(transfer.target).toBe('')
+  })
+
+  it('uses a newly selected child target after cancelling invitation without reposting', async () => {
+    const create = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce({ id: 'child' })
+    createChild = create
+    render('Create a child')
+    act(() => {
+      transfer.setMode('child')
+      transfer.setTarget('1')
+    })
+    await act(() => transfer.submit(draft))
+    expect(transfer.childTargetLocked).toBe(false)
+    act(() => transfer.setTarget('2'))
+    await act(() => transfer.submit(''))
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(create).toHaveBeenNthCalledWith(2, {
+      ...create.mock.calls[0][0],
+      target: '2',
+    })
+    expect(transfer.pendingChild).toBeNull()
   })
 
   it('prevents duplicate submissions', async () => {

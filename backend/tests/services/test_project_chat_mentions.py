@@ -192,6 +192,47 @@ async def test_user_mentions_do_not_execute_assigned_agent(
     assert test_db.get(ProjectChatAgent, agent.id) is None
 
 
+@pytest.mark.parametrize("provider", ["github", "gitlab"])
+def test_external_agent_mention_does_not_require_a_native_issue_index(
+    test_db, test_user, assigned_mention_scope, monkeypatch, provider
+):
+    project, _, item, agent, _ = assigned_mention_scope
+    project.metadata_json = {"task_provider": provider}
+    task_id = f"{project.project_key}-12345"
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_get_issue",
+        lambda _project, _number: {
+            "number": 12345,
+            "title": "Provider-owned Issue",
+            "labels": [],
+            "state": "open" if provider == "github" else "opened",
+        },
+    )
+    test_db.commit()
+    try:
+        assert test_db.get(LoopItem, task_id) is None
+        result = project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=ProjectChatSend(
+                client_message_id=str(uuid.uuid4()),
+                project_id=project.id,
+                task_id=task_id,
+                content="Please help",
+                mentions=[
+                    ProjectChatMention(type="agent", id=agent.id, label=agent.name)
+                ],
+            ),
+        )
+        assert result.created
+        assert result.message.task_id == task_id
+        assert test_db.get(LoopItem, task_id) is None
+    finally:
+        manage_runner(test_db, item.id, "cleanup")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("include_member", [False, True])
 async def test_agent_mentions_enqueue_before_checking_issue_runner_binding(

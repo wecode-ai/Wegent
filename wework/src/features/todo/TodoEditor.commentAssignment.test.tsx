@@ -56,14 +56,17 @@ function setup(canAssign = true, editable = true, outside = false) {
   }
   let context: SharedIssueDetailExtensionContext
   const onUpdated = vi.fn()
-  render(
+  const editor = (
+    currentItem: SharedEditorIssue,
+    currentProject: SharedEditorProject | undefined
+  ) => (
     <SharedIssueDetailEditor
       mode="edit"
-      item={item}
-      project={project}
+      item={currentItem}
+      project={currentProject}
       editable={editable}
       canAssign={canAssign}
-      allItems={[item]}
+      allItems={[currentItem]}
       port={port as unknown as SharedIssueDetailPort}
       onUpdated={onUpdated}
       onClose={vi.fn()}
@@ -75,10 +78,47 @@ function setup(canAssign = true, editable = true, outside = false) {
       }}
     />
   )
-  return { port, item, onUpdated, getAssignment: () => context.commentAssignment }
+  const view = render(editor(item, project))
+  return {
+    port,
+    item,
+    onUpdated,
+    getAssignment: () => context.commentAssignment,
+    switchToInvited: () =>
+      view.rerender(
+        editor(
+          {
+            ...item,
+            id: 'invited',
+            cloud_project_id: 'another-project',
+            invited_only: true,
+            assignee_user_id: 1,
+            assignee_name: 'Member',
+          },
+          undefined
+        )
+      ),
+  }
 }
 
 describe('Issue comment assignment persistence', () => {
+  it('does not reuse another project roster to bypass a new Issue invitation confirmation', async () => {
+    const { port, getAssignment, switchToInvited } = setup()
+    await waitFor(() =>
+      expect(getAssignment()?.options.some(option => option.value === 'group:squad')).toBe(true)
+    )
+    switchToInvited()
+    await waitFor(() => expect(getAssignment()?.options.map(option => option.value)).toEqual(['1']))
+    let operation!: Promise<void | boolean>
+    act(() => {
+      operation = getAssignment()!.assign('1')
+    })
+    fireEvent.click(await screen.findByTestId('issue-outside-assignee-cancel'))
+    expect(await operation).toBe(false)
+    expect(port.issues.assign).not.toHaveBeenCalled()
+    expect(port.members.list).toHaveBeenCalledOnce()
+  })
+
   it('requires confirmation when comment assignment selects a non-project person', async () => {
     const { port, item, getAssignment } = setup(true, true, true)
     port.issues.get.mockResolvedValue({ ...item, assignee_user_id: null, version: 7 })

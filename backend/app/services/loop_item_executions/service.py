@@ -3274,10 +3274,18 @@ class LoopItemExecutionService:
         """Serialize Runtime observations with lease and cancellation writes.
 
         Refresh the execution under its lock so an acknowledgement cannot make
-        an observed event fail a stale version check. All activity writers keep
-        the execution -> activity lock order.
+        an observed event fail a stale version check. Writers lock Issue before
+        execution and activity so replies and cancellation cannot invert this order.
         """
 
+        from app.services.loop_items.locking import lock_existing_issue
+
+        item_id = (
+            db.query(LoopItemExecution.loop_item_id)
+            .filter(LoopItemExecution.id == execution_id)
+            .scalar()
+        )
+        lock_existing_issue(db, item_id)
         execution = (
             db.query(LoopItemExecution)
             .filter(LoopItemExecution.id == execution_id)

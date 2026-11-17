@@ -500,6 +500,11 @@ impl SocketEmitters {
                     return Vec::new();
                 }
             };
+        // External providers retain their existing subscription admission policy.
+        // Native invitations do not extend provider authority or add per-chunk HTTP calls.
+        if external.is_some() {
+            return sockets;
+        }
         let mut decisions = std::collections::HashMap::new();
         let mut recipients = Vec::new();
         for socket in sockets {
@@ -511,32 +516,10 @@ impl SocketEmitters {
             let permitted = if let Some(permitted) = decisions.get(&user_id) {
                 *permitted
             } else {
-                let permitted = if let Some(project) = &external {
-                    project.id == project_id
-                        && match project_id.parse::<i64>() {
-                            Ok(project_id) => {
-                                crate::board_snapshot::repository::BoardSnapshotRepository::new(
-                                    &state.mysql,
-                                )
-                                .require_cloud_project_role(project_id, user_id as i32)
-                                .await
-                                .is_ok_and(|access| {
-                                    access.is_some_and(|access| {
-                                        crate::cloud_projects::members::has_permission(
-                                            &access.role,
-                                            "Viewer",
-                                        )
-                                    })
-                                })
-                            }
-                            Err(_) => false,
-                        }
-                } else {
-                    crate::socketio::project_chat_events::permits_comment(
-                        &state, user_id, project_id, issue_id,
-                    )
-                    .await
-                };
+                let permitted = crate::socketio::project_chat_events::permits_comment(
+                    &state, user_id, project_id, issue_id,
+                )
+                .await;
                 decisions.insert(user_id, permitted);
                 permitted
             };

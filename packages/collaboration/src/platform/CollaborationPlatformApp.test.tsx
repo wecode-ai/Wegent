@@ -6833,6 +6833,37 @@ describe("CollaborationPlatformApp real component flow", () => {
     expect(renderProject).not.toHaveBeenCalled();
   });
 
+  it("reports and retries an invited Issue probe while project metadata stays pending", async () => {
+    const invited = { ...issue, invited_only: true, can_edit: true };
+    const { api } = createApi({
+      initialWorkspaces: [],
+      initialProjects: [],
+      initialIssues: [invited],
+    });
+    api.issues.get = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Issue temporarily unavailable"))
+      .mockResolvedValue(invited);
+    api.issues.markRead = vi.fn().mockResolvedValue(invited);
+    api.projects.get = vi.fn(() => new Promise(() => {}));
+    await render(
+      <PlatformHarness
+        api={api}
+        renderProject={() => <div>Host project</div>}
+        start={{
+          ...initialLocation,
+          projectId: project.id,
+          issueId: issue.id,
+        }}
+      />,
+    );
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "Issue temporarily unavailable",
+    );
+    await click(byTestId("collaboration-issue-access-retry"));
+    expect(byTestId("collaboration-issue-comment")).toBeTruthy();
+  });
+
   it.each([
     { role: "Viewer" as const, visibility: "public" as const },
     { role: "Viewer" as const, visibility: "private" as const },

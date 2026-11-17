@@ -1134,6 +1134,61 @@ describe("collaboration workspace controller", () => {
     ]);
   });
 
+  it.each([false, true])(
+    "revalidates an external child omitted from the root board (denied=%s)",
+    async (denied) => {
+      const externalProject = { ...project, task_provider: "github" as const };
+      const child = { ...issue, parent_id: "parent" };
+      const fresh = { ...child, version: 2, title: "Fresh child" };
+      state = { ...state, projects: [externalProject] };
+      const api = createApi();
+      api.projects.get = vi.fn().mockResolvedValue(externalProject);
+      api.issues.listPage = vi
+        .fn()
+        .mockResolvedValue({ items: [], taskBindings: [], nextCursor: null });
+      api.issues.get = vi.fn().mockResolvedValue(child);
+      const { commands } = createController(api);
+      await commands.loadSelectedIssue(child.id);
+      if (denied)
+        vi.mocked(api.issues.get).mockRejectedValueOnce(
+          new Error("Issue access revoked"),
+        );
+      else vi.mocked(api.issues.get).mockResolvedValueOnce(fresh);
+      await commands.loadProject(project.id, false);
+      expect(api.issues.get).toHaveBeenCalledTimes(2);
+      expect(state.selectedIssue).toEqual(denied ? null : fresh);
+      expect(state.issues).toEqual([]);
+    },
+  );
+
+  it.each([false, true])(
+    "preserves a concurrent child edit during external revalidation (denied=%s)",
+    async (denied) => {
+      const externalProject = { ...project, task_provider: "github" as const };
+      const child = { ...issue, parent_id: "parent" };
+      const saved = { ...child, version: 3, title: "Saved child" };
+      const pending = deferred<CollaborationIssue>();
+      state = { ...state, projects: [externalProject] };
+      const api = createApi();
+      api.projects.get = vi.fn().mockResolvedValue(externalProject);
+      api.issues.listPage = vi
+        .fn()
+        .mockResolvedValue({ items: [], taskBindings: [], nextCursor: null });
+      api.issues.get = vi.fn().mockResolvedValueOnce(child);
+      api.issues.update = vi.fn().mockResolvedValue(saved);
+      const { commands } = createController(api);
+      await commands.loadSelectedIssue(child.id);
+      vi.mocked(api.issues.get).mockReturnValueOnce(pending.promise);
+      const loading = commands.loadProject(project.id, false);
+      await vi.waitFor(() => expect(api.issues.get).toHaveBeenCalledTimes(2));
+      await commands.updateIssue(child.id, { version: 1, title: saved.title });
+      if (denied) pending.reject(new Error("Old request denied"));
+      else pending.resolve(child);
+      await loading;
+      expect(state.selectedIssue).toEqual(saved);
+    },
+  );
+
   it("owns external column cursors and appends one Wework page without duplicates", async () => {
     const externalProject = {
       ...project,
