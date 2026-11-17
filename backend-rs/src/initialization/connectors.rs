@@ -124,31 +124,37 @@ async fn seed(tx: &mut impl MysqlTransaction, definitions: &[Definition]) -> Mys
     Ok(())
 }
 
-pub(super) async fn apply(mysql: &MysqlService) -> Result<()> {
+async fn apply_transaction(
+    tx: &mut impl MysqlTransaction,
+    definitions: &[Definition],
+) -> MysqlResult<()> {
     #[derive(FromMysqlRow)]
     struct Completion {
         payload: Json<Value>,
     }
+    // Read the current marker and keep it locked until publication commits.
+    let completion: Option<Completion> = tx
+        .fetch_optional(
+            "SELECT config_value AS payload FROM system_configs WHERE config_key=? LIMIT 1 FOR UPDATE",
+            (COMPLETION_KEY,),
+        )
+        .await?;
+    if completion.is_some_and(|row| row.payload.0["completed"] == true) {
+        return Ok(());
+    }
+    // An incomplete marker remains retriable if this transaction fails.
+    tx.execute(
+        "DELETE FROM system_configs WHERE config_key=?",
+        (COMPLETION_KEY,),
+    )
+    .await?;
+    seed(tx, definitions).await
+}
+
+pub(super) async fn apply(mysql: &MysqlService) -> Result<()> {
     let definitions = definitions()?;
     mysql
-        .with_transaction(async |tx| {
-            let completion: Option<Completion> = tx
-                .fetch_optional(
-                    "SELECT config_value AS payload FROM system_configs WHERE config_key=? LIMIT 1",
-                    (COMPLETION_KEY,),
-                )
-                .await?;
-            if completion.is_some_and(|row| row.payload.0["completed"] == true) {
-                return Ok(());
-            }
-            // An incomplete marker remains retriable if this transaction fails.
-            tx.execute(
-                "DELETE FROM system_configs WHERE config_key=?",
-                (COMPLETION_KEY,),
-            )
-            .await?;
-            seed(tx, &definitions).await
-        })
+        .with_transaction(async |tx| apply_transaction(tx, &definitions).await)
         .await?;
     Ok(())
 }
@@ -156,6 +162,9 @@ pub(super) async fn apply(mysql: &MysqlService) -> Result<()> {
 #[cfg(test)]
 #[path = "connectors_tests.rs"]
 mod persistence_tests;
+
+#[cfg(test)]
+pub(crate) use persistence_tests::verify_concurrent_completion;
 
 #[cfg(test)]
 mod tests {

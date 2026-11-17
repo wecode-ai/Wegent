@@ -12,6 +12,9 @@ mod connectors;
 mod plugins;
 mod skills;
 
+#[cfg(test)]
+pub(crate) use connectors::verify_concurrent_completion;
+
 static DIRECTORIES: OnceLock<RwLock<Vec<PathBuf>>> = OnceLock::new();
 
 /// Extension-owned resources follow the public resource directory.

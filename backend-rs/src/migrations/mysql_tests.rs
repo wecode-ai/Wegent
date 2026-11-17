@@ -205,7 +205,7 @@ async fn verify_connector_failure_recovery(mysql: &MysqlService) -> Result<()> {
     mysql
         .execute("DROP TRIGGER reject_builtin_connector", ())
         .await?;
-    crate::initialization::connectors(mysql).await?;
+    crate::initialization::verify_concurrent_completion(mysql).await?;
     let marker: Count = mysql.fetch_one("SELECT COUNT(*) AS n FROM system_configs WHERE config_key='builtin_connector_apps_initialized' AND JSON_EXTRACT(config_value,'$.completed')=true", ()).await?;
     assert_eq!(marker.n, 1);
     Ok(())

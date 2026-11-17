@@ -1,6 +1,54 @@
 use super::*;
 use crate::sql_test_support::mysql_rows::{MysqlRows, Value as Column};
-use brz_mysql::{MysqlArgs, MysqlError, MysqlExecution};
+use brz_mysql::{
+    MysqlArgs, MysqlError, MysqlExecution, MysqlIsolationLevel, MysqlTransactionOptions,
+};
+
+pub(crate) async fn verify_concurrent_completion(mysql: &MysqlService) -> Result<()> {
+    #[derive(FromMysqlRow)]
+    struct Count {
+        n: i64,
+    }
+    #[derive(FromMysqlRow)]
+    struct Schema {
+        name: String,
+    }
+    let schema: Schema = mysql.fetch_one("SELECT DATABASE() AS name", ()).await?;
+    let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")?;
+    let writer = crate::migrations::connect(&format!(
+        "mysql://root@{address}/{}?ssl-mode=disabled",
+        schema.name
+    ))?;
+    let definitions = definitions()?;
+    let options = MysqlTransactionOptions::default()
+        .with_isolation_level(MysqlIsolationLevel::RepeatableRead);
+    let result = mysql
+        .with_transaction_options(options, async |tx| {
+            // Establish a snapshot before another initializer commits.
+            let before: Count = tx
+                .fetch_one(
+                    "SELECT COUNT(*) AS n FROM system_configs WHERE config_key=?",
+                    (COMPLETION_KEY,),
+                )
+                .await?;
+            assert_eq!(before.n, 0);
+            writer
+                .with_transaction(async |tx| apply_transaction(tx, &definitions).await)
+                .await?;
+            apply_transaction(tx, &definitions).await
+        })
+        .await;
+    writer.close().await;
+    result?;
+    let apps: Count = mysql
+        .fetch_one(
+            "SELECT COUNT(*) AS n FROM kinds WHERE kind='ConnectorApp' AND namespace='system' AND user_id=0",
+            (),
+        )
+        .await?;
+    assert_eq!(apps.n, 4);
+    Ok(())
+}
 
 #[derive(Default)]
 struct SeedTransaction {
