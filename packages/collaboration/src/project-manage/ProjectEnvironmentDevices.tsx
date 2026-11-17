@@ -229,14 +229,16 @@ export function ProjectEnvironmentDevices({
                       {executionEnvironmentStatusLabel(environment.status, translate)}
                     </span>
                   </span>
-                  {instanceStatus === 'preparing' || instanceStatus === 'error' ? (
+                  {instanceStatus !== 'uninitialized' ? (
                     <span className="text-xs text-text-secondary" role="status">
                       {instanceStatus === 'preparing'
                         ? translate('todo.execution_environment_preparing', '正在准备项目目录')
-                        : translate(
-                            'todo.execution_environment_initialization_error',
-                            '项目准备失败'
-                          )}
+                        : instanceStatus === 'ready'
+                          ? translate('todo.execution_environment_ready', '项目目录已准备好')
+                          : translate(
+                              'todo.execution_environment_initialization_error',
+                              '项目准备失败'
+                            )}
                     </span>
                   ) : null}
                   {canManage && environment.status === 'online' ? (
@@ -269,7 +271,7 @@ export function ProjectEnvironmentDevices({
                   {canManage ? (
                     <button
                       type="button"
-                      className="text-sm text-text-secondary hover:text-text-primary"
+                      className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8 md:min-w-8"
                       data-testid={`${testIdPrefix}-remove-${environment.device_id}`}
                       disabled={saving}
                       onClick={() => void removeEnvironment(environment)}

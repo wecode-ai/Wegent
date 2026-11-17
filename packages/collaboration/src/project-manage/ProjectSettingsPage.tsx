@@ -4,6 +4,9 @@
 
 import type { ReactNode } from "react";
 
+export const projectSettingsPageClassName = "min-h-0 flex-1 px-5 py-6 text-sm";
+export const projectSettingsContentClassName = "mx-auto max-w-4xl";
+
 export function ProjectSettingsPage({
   actions,
   children,
@@ -20,23 +23,20 @@ export function ProjectSettingsPage({
   title: string;
 }) {
   return (
-    <div
-      className="min-h-0 flex-1 overflow-y-auto px-8 py-7 text-sm"
-      data-testid={testId}
-    >
+    <div className={projectSettingsPageClassName} data-testid={testId}>
       <div
         className={
-          contentWidth === "wide" ? "mx-auto max-w-5xl" : "mx-auto max-w-3xl"
+          contentWidth === "wide"
+            ? "mx-auto max-w-5xl"
+            : projectSettingsContentClassName
         }
       >
-        <header className="mb-8 flex items-start justify-between gap-4">
+        <header className="mb-6 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="heading-base tracking-normal text-text-primary">
               {title}
             </h1>
-            <p className="mt-1 font-normal text-text-secondary">
-              {description}
-            </p>
+            <p className="mt-1 text-sm text-text-secondary">{description}</p>
           </div>
           {actions ? (
             <div className="flex shrink-0 items-center gap-2">{actions}</div>

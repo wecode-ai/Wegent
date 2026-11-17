@@ -85,6 +85,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   'select-file': 'selectFile',
   'drop-paths': 'dropPaths',
   fill: 'fill',
+  select: 'select',
   'get-attribute': 'getAttribute',
   hover: 'hover',
   metrics: 'getElementMetrics',
@@ -584,6 +585,7 @@ async function runServer(sessionPath, token) {
         return json(response, 200, {
           ready: Boolean(ready),
           readyInfo: ready,
+          windowClients: queue.windowClients,
           pid: app?.pid ?? null,
           appExited: appExit !== null,
           appExitCode: appExit?.code ?? null,
@@ -720,11 +722,17 @@ async function request(session, token, path, method = 'GET', body) {
   return value
 }
 
-async function waitForFreshControlClient(session, token, previousClientId, timeoutMs) {
+export async function waitForFreshControlClient(
+  session,
+  token,
+  previousClientId,
+  timeoutMs,
+  windowLabel = 'main'
+) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const status = await request(session, token, '/status')
-    const clientId = status.readyInfo?.clientId
+    const clientId = status.windowClients?.[windowLabel]
     if (clientId && clientId !== previousClientId) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -909,12 +917,15 @@ async function main() {
         : dropFileExtension === '.txt'
           ? 'text/plain'
           : 'application/octet-stream'
-  const previousReady =
-    command === 'reload' ? await request(session, session.token, '/status') : null
+  const requiresFreshClient = command === 'reload' || command === 'restart-core-dsh'
+  const windowLabel = options.window ?? 'main'
+  const previousReady = requiresFreshClient
+    ? await request(session, session.token, '/status')
+    : null
   const effectiveTimeoutMs = resolveCommandTimeout(options.timeout)
   const value = await request(session, session.token, '/command', 'POST', {
     action,
-    windowLabel: options.window ?? 'main',
+    windowLabel,
     selector,
     target: options.target,
     value: dropFilePath ? (await readFile(dropFilePath)).toString('base64') : options.value,
@@ -926,12 +937,13 @@ async function main() {
     stableMs: options.stable ? Number(options.stable) : undefined,
     timeoutMs: effectiveTimeoutMs,
   })
-  if (command === 'reload') {
+  if (requiresFreshClient) {
     await waitForFreshControlClient(
       session,
       session.token,
-      previousReady?.readyInfo?.clientId,
-      effectiveTimeoutMs
+      previousReady?.windowClients?.[windowLabel],
+      effectiveTimeoutMs,
+      windowLabel
     )
   }
   if (

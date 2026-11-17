@@ -4,7 +4,7 @@
 
 import { act, useState, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceCollaborationGroupsConfiguration } from '../platform/WorkspaceResourceConfiguration'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup, CollaborationMember, CollaborationProject } from '../types'
@@ -46,6 +46,10 @@ const agent = { id: 'agent-1', name: 'Reviewer' }
 let root: Root | undefined
 let container: HTMLDivElement
 
+beforeEach(() => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+})
+
 function apiFor(listMembers = vi.fn(async () => [member])) {
   return {
     projects: {
@@ -58,10 +62,27 @@ function apiFor(listMembers = vi.fn(async () => [member])) {
   } as unknown as SharedWorkspaceApi
 }
 
+function boundHumanTemplate() {
+  const document = structuredClone(builtinCollaborationTemplates()[0].document)
+  delete document.spec.resources.collaboration.project.taskAssignment
+  delete document.spec.resources.collaboration.project.board
+  const definition = document.spec.resources.collaboration.groups[0]
+  const drafts = bindTemplate(document, {
+    [definition.key]: Object.fromEntries(
+      definition.roles.map((role, index) => [
+        role.key,
+        { kind: 'human', id: String(index + 1), responsibility: '' },
+      ])
+    ),
+  })
+  return { document, definition, drafts }
+}
+
 async function render(
   api: SharedWorkspaceApi,
   projectId = 'project-1',
-  workspaceId = 'workspace-1'
+  workspaceId = 'workspace-1',
+  onProjectChanged?: (project: CollaborationProject) => void
 ) {
   if (!root) {
     container = document.createElement('div')
@@ -78,6 +99,7 @@ async function render(
         agents={[]}
         locale="en"
         canManage
+        onProjectChanged={onProjectChanged}
       />
     )
   )
@@ -93,18 +115,7 @@ afterEach(() => {
 describe('project collaboration-group loading', () => {
   it('refreshes the displayed groups after a template creation response is lost', async () => {
     const api = apiFor()
-    const document = structuredClone(builtinCollaborationTemplates()[0].document)
-    delete document.spec.resources.collaboration.project.taskAssignment
-    delete document.spec.resources.collaboration.project.board
-    const definition = document.spec.resources.collaboration.groups[0]
-    const drafts = bindTemplate(document, {
-      [definition.key]: Object.fromEntries(
-        definition.roles.map((role, index) => [
-          role.key,
-          { kind: 'human', id: String(index + 1), responsibility: '' },
-        ])
-      ),
-    })
+    const { document, definition, drafts } = boundHumanTemplate()
     const created = { ...group, id: 'new-group', name: definition.name }
     vi.mocked(api.projects.listCollaborationGroups!)
       .mockResolvedValueOnce([group])
@@ -117,13 +128,70 @@ describe('project collaboration-group loading', () => {
     await act(async () => {
       await expect(
         view.props!.commands.createTemplateGroups!(document, drafts)
-      ).rejects.toMatchObject({ outcome: 'partial', retryBlocked: true })
+      ).rejects.toMatchObject({ outcome: 'unknown', retryBlocked: true })
     })
     expect(view.props!.groups).toEqual([group, created])
     expect(container.textContent).toContain(created.name)
     expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
   })
 
+  it.each(['groups', 'project'] as const)(
+    'reconciles confirmed template groups when the final %s refresh fails',
+    async failureAt => {
+      const api = apiFor()
+      const { document, definition, drafts } = boundHumanTemplate()
+      const created = { ...group, id: 'created', name: definition.name }
+      const cause = Object.assign(new Error('Internal Server Error'), { status: 500 })
+      api.projects.get = vi.fn().mockRejectedValue(cause)
+      vi.mocked(api.projects.createCollaborationGroup!).mockResolvedValue(created)
+      const list = vi
+        .mocked(api.projects.listCollaborationGroups!)
+        .mockResolvedValueOnce([group])
+        .mockResolvedValueOnce([group])
+      if (failureAt === 'groups') list.mockRejectedValueOnce(cause)
+      else list.mockResolvedValueOnce([group, created])
+      list.mockResolvedValue([group, created])
+      const onProjectChanged = vi.fn()
+      await render(api, 'project-1', 'workspace-1', onProjectChanged)
+      await act(async () => {
+        await expect(
+          view.props!.commands.createTemplateGroups!(document, drafts)
+        ).rejects.toMatchObject({ outcome: 'partial', retryBlocked: true, cause })
+      })
+      expect(view.props!.groups).toEqual([group, created])
+      expect(view.props!.collectionState).toBe('ready')
+      expect(api.projects.listCollaborationGroups).toHaveBeenCalledTimes(4)
+      expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+      expect(onProjectChanged).not.toHaveBeenCalled()
+    }
+  )
+
+  it('publishes the advanced project version after group writes and retries refresh without repeating the write', async () => {
+    const api = apiFor()
+    const latest = { id: 'project-1', version: 5 } as CollaborationProject
+    api.projects.get = vi.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue(latest)
+    const onProjectChanged = vi.fn()
+    await render(api, 'project-1', 'workspace-1', onProjectChanged)
+    await act(async () =>
+      view.props!.commands.createCollaborationGroup!({
+        name: 'Delivery',
+        leader: { kind: 'agent', id: 'agent-1' },
+        members: [],
+      })
+    )
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    expect(
+      container.querySelector('[data-testid="project-groups-refresh-error"]')?.textContent
+    ).toContain('Configuration saved')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="project-groups-refresh-retry"]')!
+        .click()
+    )
+    expect(onProjectChanged).toHaveBeenCalledExactlyOnceWith(latest)
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    expect(container.querySelector('[data-testid="project-groups-refresh-error"]')).toBeNull()
+  })
   it('keeps groups and agents usable after members fail, completes mutations, and retries members', async () => {
     const listMembers = vi
       .fn()
@@ -177,6 +245,26 @@ describe('project collaboration-group loading', () => {
     await render(api, 'project-2')
     await act(async () => resolveOld([member]))
     expect(view.props!.members[0].user_name).toBe('Bob')
+  })
+
+  it('distinguishes a failed collection from an empty result and recovers with a read-only retry', async () => {
+    const api = apiFor()
+    vi.mocked(api.projects.listCollaborationGroups!)
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue([group])
+    await render(api)
+    expect(view.props!.collectionState).toBe('error')
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('connection')
+    expect(container.textContent).not.toContain('Failed to fetch')
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="project-groups-load-retry"]')!
+        .click()
+    )
+    expect(view.props!.collectionState).toBe('ready')
+    expect(view.props!.groups).toEqual([group])
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(api.projects.updateCollaborationGroup).not.toHaveBeenCalled()
   })
 
   it('reports initial group reload failures without discarding successfully loaded members', async () => {

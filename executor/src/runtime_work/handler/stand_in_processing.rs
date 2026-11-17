@@ -28,6 +28,14 @@ mod session_policy;
 mod tests;
 
 #[cfg(test)]
+#[path = "stand_in_scheduler_tests.rs"]
+mod scheduler_tests;
+
+#[cfg(test)]
+#[path = "stand_in_inventory_tests.rs"]
+mod inventory_tests;
+
+#[cfg(test)]
 #[path = "stand_in_blacklist_tests.rs"]
 mod blacklist_tests;
 
@@ -71,11 +79,8 @@ impl RuntimeWorkRpcHandler {
         state.as_object_mut().unwrap().remove("snapshot");
         state.as_object_mut().unwrap().remove("routerSnapshot");
         state["pendingCount"] = json!(store
-            .stand_in_events(user)
-            .map_err(settings_error)?
-            .iter()
-            .filter(|event| event["status"] == "pending")
-            .count());
+            .pending_stand_in_event_count(user)
+            .map_err(settings_error)?);
         state["running"] = json!(self.is_busy_local_task(&task_id(user)));
         state["awaitingUser"] = json!(self
             .local_task_link(&task_id(user))
@@ -89,7 +94,7 @@ impl RuntimeWorkRpcHandler {
                 state["error"] = json!({"code":"coordinator_failed","message":link.runtime_handle["lastError"].as_str().unwrap_or("The background coordinator failed. Review the handling history and try again.")});
             }
         }
-        state["actions"] = json!(store.stand_in_actions(user).map_err(settings_error)?.into_iter().rev().take(30).map(|action| json!({"id":action["id"],"kind":action["kind"],"status":action["status"],"error":action["error"],"result":action["result"],"createdAt":action["createdAt"]})).collect::<Vec<_>>());
+        state["actions"] = json!(store.recent_stand_in_actions(user, 30).map_err(settings_error)?.into_iter().map(|action| json!({"id":action["id"],"kind":action["kind"],"status":action["status"],"error":action["error"],"result":action["result"],"createdAt":action["createdAt"]})).collect::<Vec<_>>());
         Ok(state)
     }
 
@@ -138,23 +143,14 @@ impl RuntimeWorkRpcHandler {
         user: i64,
         settings: &Value,
     ) -> Result<Vec<Value>, AppIpcError> {
-        let outstanding: std::collections::HashSet<String> = store
-            .stand_in_actions(user)
-            .map_err(settings_error)?
-            .iter()
-            .filter(|action| {
-                action["kind"] != "run_arrangement"
-                    && matches!(action["status"].as_str(), Some("pending" | "sending"))
-            })
-            .flat_map(|action| {
-                action["arguments"]["eventIds"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|id| id.as_str().map(str::to_owned))
-            })
-            .collect();
-        let intake = store.stand_in_events(user).map_err(settings_error)?;
+        let _stage =
+            super::stand_in_diagnostics::CoordinationStage::start(user, "authorize_events");
+        let outstanding = store
+            .claimed_stand_in_event_ids(user)
+            .map_err(settings_error)?;
+        let intake = store
+            .pending_stand_in_events(user)
+            .map_err(settings_error)?;
         let mut busy_calendars: HashSet<String> = self
             .automation_store
             .list_runs(None)
@@ -313,14 +309,12 @@ impl RuntimeWorkRpcHandler {
         user: i64,
         settings: &Value,
     ) -> Result<(), AppIpcError> {
+        let _stage = super::stand_in_diagnostics::CoordinationStage::start(user, "execute_actions");
         for mut action in store
-            .stand_in_actions(user)
+            .pending_stand_in_actions(user)
             .map_err(settings_error)?
             .into_iter()
-            .filter(|action| {
-                action["kind"] != "run_arrangement"
-                    && matches!(action["status"].as_str(), Some("pending" | "sending"))
-            })
+            .filter(|action| action["kind"] != "run_arrangement")
         {
             action["status"] = json!("sending");
             store
@@ -390,18 +384,16 @@ impl RuntimeWorkRpcHandler {
                 .await;
         }
         let args = &action["arguments"];
-        let events = store.stand_in_events(user).map_err(settings_error)?;
         let roles = stand_in_identities(settings);
         let selected: Vec<Value> = args["eventIds"]
             .as_array()
             .into_iter()
             .flatten()
             .map(|id| {
-                events
-                    .iter()
-                    .find(|event| event["id"] == *id)
-                    .map(|event| self.resolve_connection_event_binding(event, &roles))
-                    .ok_or_else(|| AppIpcError::new("not_found", "Intake event no longer exists"))
+                store
+                    .stand_in_event(user, id.as_str().unwrap_or_default())
+                    .map(|event| self.resolve_connection_event_binding(&event, &roles))
+                    .map_err(settings_error)
             })
             .collect::<Result<_, _>>()?;
         let kind = required(action, "kind")?;

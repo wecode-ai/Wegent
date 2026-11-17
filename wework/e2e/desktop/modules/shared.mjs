@@ -277,6 +277,8 @@ const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 30
 const TURN_NAVIGATION_ONLY_TURN_COUNT = 55
 const TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN = 6
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
+const CANCELLATION_RUNNING_PROMPT =
+  'WEWORK_DESKTOP_E2E_CANCEL_RUNNING: keep this response open until cancellation is acknowledged.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const SEND_REJECTION_RUNNING_PROMPT =
   'WEWORK_DESKTOP_E2E_SEND_REJECTION_RUNNING: keep this turn active.'
@@ -1588,27 +1590,34 @@ async function selectE2EModel(
     label === DEFAULT_MODEL_LABEL ? [label, 'GPT-5.6 Luna'] : [label]
   )
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
-  await control.command('waitFor', modelSelectorButton, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    visible: true,
-  })
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const pickerOpen = initialSnapshot.testIds.includes('model-selector-menu')
+  if (!pickerOpen) {
+    await control.command('waitFor', modelSelectorButton, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      visible: true,
+    })
+  }
   if (expectedProviderId) {
     // The recovery control stays mounted while startup reconciles the local catalog.
     await control.command('ensureLocalModelCatalogReady', 'body', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
   }
-  const selectedModelLabel = await control.command('getText', modelSelectorButton, {
-    visible: true,
-  })
-  const selectedProviderId = await control.command('getAttribute', modelSelectorButton, {
-    value: 'data-model-provider-id',
-  })
-  if (
-    labels.some(label => selectedModelLabel.includes(label)) &&
-    (!expectedProviderId || selectedProviderId === expectedProviderId)
-  ) {
-    return
+  // An open modal picker isolates its background trigger, including retry entry points.
+  if (!pickerOpen) {
+    const selectedModelLabel = await control.command('getText', modelSelectorButton, {
+      visible: true,
+    })
+    const selectedProviderId = await control.command('getAttribute', modelSelectorButton, {
+      value: 'data-model-provider-id',
+    })
+    if (
+      labels.some(label => selectedModelLabel.includes(label)) &&
+      (!expectedProviderId || selectedProviderId === expectedProviderId)
+    ) {
+      return
+    }
   }
 
   await ensureModelOptionVisible(control, modelIds, modelSelectorButton, expectedProviderId)
@@ -1864,6 +1873,7 @@ export {
   TURN_NAVIGATION_ONLY_TURN_COUNT,
   TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN,
   CANCELLATION_PROMPT,
+  CANCELLATION_RUNNING_PROMPT,
   CANCELLATION_COMPLETION_TEXT,
   SEND_REJECTION_RUNNING_PROMPT,
   SEND_REJECTION_RETRY_PROMPT,

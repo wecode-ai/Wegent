@@ -71,10 +71,10 @@ describe('runtime human interactions', () => {
     const requests = await readRuntimeInteractions(interactionTask, reader(recent, older))
     expect(
       requests.find(item => item.requestKey === 'item:compatibility-choice')?.sourceMessageIds
-    ).toEqual(['original-comment', 'native-user-item'])
-    expect(
-      requests.find(item => item.requestKey === 'item:later')?.sourceMessageIds
-    ).toBeUndefined()
+    ).toEqual(['message-turn-1', 'original-comment', 'native-user-item'])
+    expect(requests.find(item => item.requestKey === 'item:later')?.sourceMessageIds).toEqual([
+      'message-turn-2',
+    ])
   })
   it('uses the native localized approval description rather than an internal reason enum', async () => {
     const [item] = await readRuntimeInteractions(

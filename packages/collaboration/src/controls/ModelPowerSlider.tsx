@@ -28,6 +28,7 @@ interface ModelPowerSliderProps {
   onInteractionChange?: (interacting: boolean) => void;
   compact?: boolean;
   accentPulse?: boolean;
+  describedBy?: string;
 }
 
 export function ModelPowerSlider({
@@ -41,6 +42,7 @@ export function ModelPowerSlider({
   onInteractionChange,
   compact = false,
   accentPulse = false,
+  describedBy,
 }: ModelPowerSliderProps) {
   const resolveLabel = useCallback(
     (key: string, fallback: string) => t(key, fallback),
@@ -147,6 +149,7 @@ export function ModelPowerSlider({
       selectedStepValue={selectedPowerSetting?.id}
       onSelectStep={steps.length > 0 ? selectPowerSetting : undefined}
       accentPulse={accentPulse}
+      describedBy={describedBy}
     />
   );
 }

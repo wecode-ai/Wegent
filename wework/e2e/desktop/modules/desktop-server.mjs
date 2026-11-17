@@ -114,6 +114,7 @@ import {
   BACKGROUND_GUIDANCE_CONTINUATION,
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
+  CANCELLATION_RUNNING_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
   CHECKPOINT_TASK_PROMPT,
   CLOUD_COMPLETION_TEXT,
@@ -4935,11 +4936,26 @@ class DesktopE2EServer {
     }
 
     if (this.scenario === 'cancellation') {
-      this.recordScenarioRequest('cancellation', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(CANCELLATION_PROMPT),
-        'The real Codex request did not contain the cancellation prompt'
-      )
+      const requestText = JSON.stringify(body)
+      const latestUserText = inputUserMessageTexts(body).at(-1) ?? ''
+      if (latestUserText.includes(CHECKPOINT_TASK_PROMPT)) {
+        this.recordScenarioRequest('cancellation_replacement', modelRequest)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(CHECKPOINT_TASK_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (latestUserText.includes(CANCELLATION_RUNNING_PROMPT)) {
+        this.recordScenarioRequest('cancellation_running', modelRequest)
+      } else {
+        this.recordScenarioRequest('cancellation', modelRequest)
+        assert.ok(
+          requestText.includes(CANCELLATION_PROMPT),
+          'The real Codex request did not contain the cancellation prompt'
+        )
+      }
       response.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache',

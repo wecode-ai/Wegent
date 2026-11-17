@@ -3,11 +3,21 @@
   overflow-y: auto;
 }
 
+@media (max-width: 767px) {
+  .surface > :global(.project-work-bar) button,
+  .toolbar button,
+  .toolbar [role="combobox"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 .inputViewport[data-composer-scroll-overflow] {
   mask-image: linear-gradient(
     to bottom,
     transparent,
-    black var(--composer-scroll-fade-top, 0px) calc(100% - var(--composer-scroll-fade-bottom, 0px)),
+    black var(--composer-scroll-fade-top, 0px)
+      calc(100% - var(--composer-scroll-fade-bottom, 0px)),
     transparent
   );
 }
@@ -30,7 +40,7 @@
       padding-top: 0;
     }
 
-    .form[data-short-collapse='true'] {
+    .form[data-short-collapse="true"] {
       min-height: 74px;
       transition:
         min-height 160ms cubic-bezier(0.2, 0, 0, 1),
@@ -39,7 +49,7 @@
         background-color 150ms ease;
     }
 
-    .form[data-short-collapse='true'][data-short-expanded='false'] .toolbar {
+    .form[data-short-collapse="true"][data-short-expanded="false"] .toolbar {
       position: absolute;
       right: 8px;
       bottom: 4px;
@@ -50,60 +60,65 @@
       transition: bottom 160ms cubic-bezier(0.2, 0, 0, 1);
     }
 
-    .form[data-short-collapse='true'] .toolbar [data-composer-toolbar-group='features'],
-    .form[data-short-collapse='true']
+    .form[data-short-collapse="true"]
       .toolbar
-      [data-composer-toolbar-group='actions']
+      [data-composer-toolbar-group="features"],
+    .form[data-short-collapse="true"]
+      .toolbar
+      [data-composer-toolbar-group="actions"]
       > :not(:last-child) {
       transition:
         opacity 120ms ease,
         transform 160ms cubic-bezier(0.2, 0, 0, 1);
     }
 
-    .form[data-short-collapse='true'] .toolbar [data-composer-toolbar-group='actions'] {
+    .form[data-short-collapse="true"]
+      .toolbar
+      [data-composer-toolbar-group="actions"] {
       margin-left: auto;
     }
 
-    .form[data-short-collapse='true'][data-short-expanded='false'] {
+    .form[data-short-collapse="true"][data-short-expanded="false"] {
       min-height: 36px;
       padding-top: 2px;
       padding-right: 42px;
       padding-bottom: 2px;
     }
 
-    .form[data-short-collapse='true'][data-short-expanded='false'] .toolbar {
+    .form[data-short-collapse="true"][data-short-expanded="false"] .toolbar {
       bottom: 6px;
       height: 24px;
       min-height: 24px !important;
       padding-top: 0;
     }
 
-    .form[data-short-collapse='true'][data-short-expanded='false'] .input {
+    .form[data-short-collapse="true"][data-short-expanded="false"] .input {
       min-height: 32px;
       padding-top: 6px;
       line-height: 20px;
     }
 
-    .form[data-short-collapse='true'][data-short-expanded='false'] .inputViewport {
+    .form[data-short-collapse="true"][data-short-expanded="false"]
+      .inputViewport {
       max-height: 32px;
     }
 
-    .form[data-short-collapse='true'][data-short-expanded='false']
-      [data-composer-primary-action='true'] {
+    .form[data-short-collapse="true"][data-short-expanded="false"]
+      [data-composer-primary-action="true"] {
       width: 24px;
       height: 24px;
     }
 
-    .form[data-short-collapse='true'][data-short-expanded='false']
-      [data-composer-primary-action='true']
+    .form[data-short-collapse="true"][data-short-expanded="false"]
+      [data-composer-primary-action="true"]
       > svg {
       width: 14px;
       height: 14px;
     }
 
-    .form[data-short-collapse='true'][data-short-expanded='false']
+    .form[data-short-collapse="true"][data-short-expanded="false"]
       .toolbar
-      [data-composer-toolbar-group='features'] {
+      [data-composer-toolbar-group="features"] {
       position: absolute;
       opacity: 0;
       pointer-events: none;
@@ -111,15 +126,15 @@
       visibility: hidden;
     }
 
-    .form[data-short-collapse='true'][data-short-expanded='false']
+    .form[data-short-collapse="true"][data-short-expanded="false"]
       .toolbar
-      [data-composer-toolbar-group='actions'] {
+      [data-composer-toolbar-group="actions"] {
       gap: 0;
     }
 
-    .form[data-short-collapse='true'][data-short-expanded='false']
+    .form[data-short-collapse="true"][data-short-expanded="false"]
       .toolbar
-      [data-composer-toolbar-group='actions']
+      [data-composer-toolbar-group="actions"]
       > :not(:last-child) {
       position: absolute;
       opacity: 0;
@@ -129,19 +144,21 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .form[data-short-collapse='true'],
-      .form[data-short-collapse='true'] .toolbar,
-      .form[data-short-collapse='true'] .toolbar [data-composer-toolbar-group='features'],
-      .form[data-short-collapse='true']
+      .form[data-short-collapse="true"],
+      .form[data-short-collapse="true"] .toolbar,
+      .form[data-short-collapse="true"]
         .toolbar
-        [data-composer-toolbar-group='actions']
+        [data-composer-toolbar-group="features"],
+      .form[data-short-collapse="true"]
+        .toolbar
+        [data-composer-toolbar-group="actions"]
         > :not(:last-child) {
         transition: none;
       }
     }
   }
 
-  .collapseWhenIdle[data-short-collapse='true'] {
+  .collapseWhenIdle[data-short-collapse="true"] {
     transition:
       min-height 160ms cubic-bezier(0.2, 0, 0, 1),
       padding 160ms cubic-bezier(0.2, 0, 0, 1),
@@ -149,28 +166,31 @@
       background-color 150ms ease;
   }
 
-  .collapseWhenIdle[data-short-collapse='true'] .toolbar {
+  .collapseWhenIdle[data-short-collapse="true"] .toolbar {
     transition: bottom 160ms cubic-bezier(0.2, 0, 0, 1);
   }
 
-  .collapseWhenIdle[data-short-collapse='true'] .toolbar [data-composer-toolbar-group='features'],
-  .collapseWhenIdle[data-short-collapse='true']
+  .collapseWhenIdle[data-short-collapse="true"]
     .toolbar
-    [data-composer-toolbar-group='actions']
+    [data-composer-toolbar-group="features"],
+  .collapseWhenIdle[data-short-collapse="true"]
+    .toolbar
+    [data-composer-toolbar-group="actions"]
     > :not(:last-child) {
     transition:
       opacity 120ms ease,
       transform 160ms cubic-bezier(0.2, 0, 0, 1);
   }
 
-  .collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false'] {
+  .collapseWhenIdle[data-short-collapse="true"][data-short-expanded="false"] {
     min-height: 36px;
     padding-top: 2px;
     padding-right: 42px;
     padding-bottom: 2px;
   }
 
-  .collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false'] .toolbar {
+  .collapseWhenIdle[data-short-collapse="true"][data-short-expanded="false"]
+    .toolbar {
     position: absolute;
     right: 8px;
     bottom: 6px;
@@ -182,32 +202,34 @@
     padding-top: 0;
   }
 
-  .collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false'] .input {
+  .collapseWhenIdle[data-short-collapse="true"][data-short-expanded="false"]
+    .input {
     min-height: 32px;
     padding-top: 6px;
     line-height: 20px;
   }
 
-  .collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false'] .inputViewport {
+  .collapseWhenIdle[data-short-collapse="true"][data-short-expanded="false"]
+    .inputViewport {
     max-height: 32px;
   }
 
-  .collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false']
-    [data-composer-primary-action='true'] {
+  .collapseWhenIdle[data-short-collapse="true"][data-short-expanded="false"]
+    [data-composer-primary-action="true"] {
     width: 24px;
     height: 24px;
   }
 
-  .collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false']
-    [data-composer-primary-action='true']
+  .collapseWhenIdle[data-short-collapse="true"][data-short-expanded="false"]
+    [data-composer-primary-action="true"]
     > svg {
     width: 14px;
     height: 14px;
   }
 
-  .collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false']
+  .collapseWhenIdle[data-short-collapse="true"][data-short-expanded="false"]
     .toolbar
-    [data-composer-toolbar-group='features'] {
+    [data-composer-toolbar-group="features"] {
     position: absolute;
     opacity: 0;
     pointer-events: none;
@@ -215,16 +237,16 @@
     visibility: hidden;
   }
 
-  .collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false']
+  .collapseWhenIdle[data-short-collapse="true"][data-short-expanded="false"]
     .toolbar
-    [data-composer-toolbar-group='actions'] {
+    [data-composer-toolbar-group="actions"] {
     margin-left: auto;
     gap: 0;
   }
 
-  .collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false']
+  .collapseWhenIdle[data-short-collapse="true"][data-short-expanded="false"]
     .toolbar
-    [data-composer-toolbar-group='actions']
+    [data-composer-toolbar-group="actions"]
     > :not(:last-child) {
     position: absolute;
     opacity: 0;
@@ -234,14 +256,43 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .collapseWhenIdle[data-short-collapse='true'],
-    .collapseWhenIdle[data-short-collapse='true'] .toolbar,
-    .collapseWhenIdle[data-short-collapse='true'] .toolbar [data-composer-toolbar-group='features'],
-    .collapseWhenIdle[data-short-collapse='true']
+    .collapseWhenIdle[data-short-collapse="true"],
+    .collapseWhenIdle[data-short-collapse="true"] .toolbar,
+    .collapseWhenIdle[data-short-collapse="true"]
       .toolbar
-      [data-composer-toolbar-group='actions']
+      [data-composer-toolbar-group="features"],
+    .collapseWhenIdle[data-short-collapse="true"]
+      .toolbar
+      [data-composer-toolbar-group="actions"]
       > :not(:last-child) {
       transition: none;
     }
+  }
+}
+
+@media (max-width: 767px) {
+  :is(
+      .form,
+      .collapseWhenIdle
+    )[data-short-collapse="true"][data-short-expanded="false"] {
+    min-height: 52px;
+    padding-right: 60px;
+  }
+  :is(
+      .form,
+      .collapseWhenIdle
+    )[data-short-collapse="true"][data-short-expanded="false"]
+    .toolbar {
+    bottom: 4px;
+    height: 44px;
+    min-height: 44px !important;
+  }
+  :is(
+      .form,
+      .collapseWhenIdle
+    )[data-short-collapse="true"][data-short-expanded="false"]
+    [data-composer-primary-action="true"] {
+    width: 44px;
+    height: 44px;
   }
 }

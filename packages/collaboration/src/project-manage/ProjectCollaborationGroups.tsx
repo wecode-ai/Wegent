@@ -19,6 +19,12 @@ import {
 import { applyProjectTemplate } from "../templates/projectConfiguration";
 import { templateMessages } from "../templates/messages";
 import { reconcileCreatedTemplateFailure } from "../templates/projectApplyRecovery";
+import { createCollaborationTranslator } from "../i18n";
+import { requestFailureMessage } from "../controls/requestFailure";
+import {
+  useProjectSettingsRefresh,
+  ProjectSettingsRefreshFeedback,
+} from "./useProjectSettingsRefresh";
 
 function ScopedProjectCollaborationGroups({
   api,
@@ -61,6 +67,15 @@ function ScopedProjectCollaborationGroups({
   const [membersError, setMembersError] = useState<string | null>(null);
   const [membersRevision, setMembersRevision] = useState(0);
   const [groupsError, setGroupsError] = useState<string | null>(null);
+  const [collectionState, setCollectionState] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
+  const projectRefresh = useProjectSettingsRefresh(
+    api,
+    projectId,
+    onProjectChanged,
+  );
+  const translate = createCollaborationTranslator(locale);
 
   const active = useRef(false);
   const reloadRevision = useRef(0);
@@ -74,6 +89,7 @@ function ScopedProjectCollaborationGroups({
   const reload = useCallback(async () => {
     if (!active.current || !api.projects.listCollaborationGroups) return [];
     const revision = ++reloadRevision.current;
+    setCollectionState("loading");
     const isCurrent = () =>
       active.current && revision === reloadRevision.current;
     try {
@@ -87,11 +103,13 @@ function ScopedProjectCollaborationGroups({
       if (!isCurrent()) return [];
       setWorkspaceGroups(available);
       setGroups(projectGroups);
+      setCollectionState("ready");
       setAvailableAgents(projectAgents);
       setGroupsError(null);
       return projectAgents;
     } catch (error) {
       if (isCurrent()) {
+        setCollectionState("error");
         setGroupsError(error instanceof Error ? error.message : String(error));
         throw error;
       }
@@ -109,6 +127,11 @@ function ScopedProjectCollaborationGroups({
       reloadRevision.current++;
     };
   }, [reload]);
+
+  async function reloadAfterMutation() {
+    await projectRefresh.refresh();
+    await reload();
+  }
 
   useEffect(() => {
     let active = true;
@@ -225,6 +248,11 @@ function ScopedProjectCollaborationGroups({
 
   return (
     <>
+      <ProjectSettingsRefreshFeedback
+        {...projectRefresh}
+        testId="project-groups-refresh"
+        translate={translate}
+      />
       {groupsError ? (
         <div
           className="collaboration-alert"
@@ -234,7 +262,21 @@ function ScopedProjectCollaborationGroups({
           {locale === "zh-CN"
             ? "加载协作小组失败："
             : "Failed to load collaboration groups: "}
-          {groupsError}
+          {requestFailureMessage(
+            groupsError,
+            translate(
+              "todo.settings_connection_failed",
+              "无法连接服务，请检查连接后重试。",
+            ),
+          )}
+          <button
+            type="button"
+            className="collaboration-link-button"
+            data-testid="project-groups-load-retry"
+            onClick={() => void reload().catch(() => {})}
+          >
+            {locale === "zh-CN" ? "重试" : "Retry"}
+          </button>
         </div>
       ) : null}
       {membersError ? (
@@ -246,7 +288,13 @@ function ScopedProjectCollaborationGroups({
           {locale === "zh-CN"
             ? "加载项目成员失败："
             : "Failed to load project members: "}
-          {membersError}
+          {requestFailureMessage(
+            membersError,
+            translate(
+              "todo.settings_connection_failed",
+              "无法连接服务，请检查连接后重试。",
+            ),
+          )}
           <button
             className="collaboration-link-button"
             data-testid="project-group-members-retry"
@@ -259,6 +307,7 @@ function ScopedProjectCollaborationGroups({
       ) : null}
       <WorkspaceCollaborationGroupsConfiguration
         groups={groups}
+        collectionState={collectionState}
         availableGroups={workspaceGroups.filter(
           (group) => !projectGroupIds.has(group.id),
         )}
@@ -279,9 +328,12 @@ function ScopedProjectCollaborationGroups({
           },
           async createTemplateGroups(document, drafts) {
             requireActive();
-            const onGroupsRefreshed = (refreshedGroups: CollaborationGroup[]) => {
+            const onGroupsRefreshed = (
+              refreshedGroups: CollaborationGroup[],
+            ) => {
               if (!active.current) return;
               setGroups(refreshedGroups);
+              setCollectionState("ready");
               setGroupsError(null);
             };
             const created = await applyProjectTemplate(
@@ -328,7 +380,7 @@ function ScopedProjectCollaborationGroups({
               projectId,
               input,
             );
-            await reload();
+            await reloadAfterMutation();
             return created;
           },
           async updateCollaborationGroup(groupId, input) {
@@ -359,7 +411,7 @@ function ScopedProjectCollaborationGroups({
             if (!updated) {
               throw new Error("Project collaboration group API is unavailable");
             }
-            await reload();
+            await reloadAfterMutation();
             return updated;
           },
           async addCollaborationGroup(groupId) {
@@ -371,7 +423,7 @@ function ScopedProjectCollaborationGroups({
               projectId,
               groupId,
             );
-            await reload();
+            await reloadAfterMutation();
             return added;
           },
           async removeCollaborationGroup(groupId) {
@@ -380,7 +432,7 @@ function ScopedProjectCollaborationGroups({
               throw new Error("Project collaboration group API is unavailable");
             }
             await api.projects.removeCollaborationGroup(projectId, groupId);
-            await reload();
+            await reloadAfterMutation();
           },
         }}
       />

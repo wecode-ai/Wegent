@@ -14,6 +14,7 @@ import { ProjectTemplateApplyDialog } from './ProjectTemplateApplyDialog'
 import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
 import { readTemplateAgents } from './agents'
+import { ProjectSettingsPage } from '../project-manage/ProjectSettingsPage'
 
 export function ProjectTemplateSettings({
   api,
@@ -87,9 +88,11 @@ export function ProjectTemplateSettings({
       )
     )
   return (
-    <section className="collaboration-template-settings" data-testid="project-template-settings">
-      <h2>{m.configuration}</h2>
-      <p>{m.configurationHint}</p>
+    <ProjectSettingsPage
+      title={m.configuration}
+      description={m.configurationHint}
+      testId="project-template-settings"
+    >
       {error && (
         <p role="alert">
           {error}{' '}
@@ -99,9 +102,11 @@ export function ProjectTemplateSettings({
         </p>
       )}
       {canManage && api.projects.createCollaborationGroup && (
-        <section>
-          <h3>{m.importProject}</h3>
-          <p>{m.importProjectHint}</p>
+        <section className="flex flex-wrap items-start justify-between gap-4 border-b border-border py-5">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-medium">{m.importProject}</h2>
+            <p className="mt-1 text-sm text-text-secondary">{m.importProjectHint}</p>
+          </div>
           <button
             type="button"
             className="collaboration-template-choice"
@@ -109,13 +114,15 @@ export function ProjectTemplateSettings({
             disabled={loading || !!error}
             onClick={() => setChoosing(true)}
           >
-            {m.importProject}
+            {m.chooseTemplate}
           </button>
         </section>
       )}
-      <section>
-        <h3>{m.saveTitle}</h3>
-        <p>{m.saveHint}</p>
+      <section className="flex flex-wrap items-start justify-between gap-4 border-b border-border py-5">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base font-medium">{m.saveTitle}</h2>
+          <p className="mt-1 text-sm text-text-secondary">{m.saveHint}</p>
+        </div>
         <button
           type="button"
           className="collaboration-template-choice"
@@ -133,12 +140,14 @@ export function ProjectTemplateSettings({
             }
           }}
         >
-          {m.saveTitle}
+          {m.save}
         </button>
       </section>
-      <section>
-        <h3>{m.export}</h3>
-        <p>{m.exportHint}</p>
+      <section className="flex flex-wrap items-start justify-between gap-4 border-b border-border py-5">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base font-medium">{m.export}</h2>
+          <p className="mt-1 text-sm text-text-secondary">{m.exportHint}</p>
+        </div>
         <button
           type="button"
           className="collaboration-template-choice"
@@ -166,6 +175,7 @@ export function ProjectTemplateSettings({
           onClose={() => setChoosing(false)}
         >
           <CollaborationTemplatePage
+            embedded
             store={store}
             locale={locale}
             onUse={record => {
@@ -202,6 +212,6 @@ export function ProjectTemplateSettings({
           onClose={() => setSaving(null)}
         />
       )}
-    </section>
+    </ProjectSettingsPage>
   )
 }

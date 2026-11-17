@@ -17,16 +17,46 @@ pub const OUTPUT_PREVIEW_BYTES: usize = 16 * 1024;
 /// delivered too.
 pub const CODEX_ROLLOUT_SUBSCRIPTION: &str = "codex_rollout";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum HookEventName {
     PostToolUse,
+    TurnStarted,
+    TurnCompleted,
+    ExecutionCompleted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookUser {
     pub id: Option<String>,
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LifecycleInput {
+    pub schema_version: u32,
+    pub emitted_at_ms: i64,
+    pub event_id: String,
+    pub execution_id: String,
+    pub sequence: u64,
+    pub task_id: Option<String>,
+    pub request_id: Option<String>,
+    pub runtime_task_id: Option<String>,
+    pub device_id: Option<String>,
+    pub runtime: Option<String>,
+    pub executor_version: Option<String>,
+    pub platform: String,
+    pub arch: String,
+    pub user: HookUser,
+    pub cwd: PathBuf,
+    pub session_id: Option<String>,
+    pub turn_id: Option<String>,
+    pub model: Option<String>,
+    pub model_provider: Option<String>,
+    pub permission_mode: String,
+    pub hook_event_name: HookEventName,
+    pub status: String,
+    pub is_test: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -70,6 +100,12 @@ impl HookPluginManifest {
 pub struct HooksConfig {
     #[serde(rename = "PostToolUse", default)]
     pub post_tool_use: Vec<HookMatcherGroup>,
+    #[serde(rename = "TurnStarted", default)]
+    pub turn_started: Vec<HookMatcherGroup>,
+    #[serde(rename = "TurnCompleted", default)]
+    pub turn_completed: Vec<HookMatcherGroup>,
+    #[serde(rename = "ExecutionCompleted", default)]
+    pub execution_completed: Vec<HookMatcherGroup>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -194,6 +230,7 @@ pub struct HookRunSummary {
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedHookHandlerView {
     pub id: String,
+    pub event_name: HookEventName,
     pub matcher: String,
     pub config: CommandHookConfig,
 }
