@@ -438,12 +438,7 @@ impl CodexAppServerClient {
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
         if isolated_rpc::is_source_read(method) {
-            if let Some(result) = self.request_isolated(method, params.clone()).await {
-                return result.map_err(|error| match error {
-                    CodexAppToolError::NotDispatched(message)
-                    | CodexAppToolError::OutcomeUnknown(message) => message,
-                });
-            }
+            return self.request_source_read(method, params).await;
         }
         self.request_with_cloud_config_recovery(method, params)
             .await

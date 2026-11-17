@@ -848,3 +848,6 @@ mod mcp;
 
 #[path = "request_process_cloud_config_tests.rs"]
 mod cloud_config;
+
+#[path = "request_process_isolated_exit_tests.rs"]
+mod isolated_exit;

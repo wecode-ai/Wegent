@@ -123,14 +123,17 @@ async fn stopping_owner_does_not_start_a_shared_process_or_replay_a_tool_call() 
         result,
         Err(super::super::CodexAppToolError::NotDispatched(_))
     ));
-    let error = client
-        .request("thread/read", serde_json::json!({"threadId":"thread"}))
-        .await
-        .unwrap_err();
-    assert!(error.contains("owning isolated app-server"), "{error}");
+    let read = client.request("thread/read", serde_json::json!({"threadId":"thread"}));
+    tokio::pin!(read);
+    assert!(futures_util::poll!(read.as_mut()).is_pending());
     assert!(client.state.lock().await.process.is_none());
     assert!(!root.path().join("calls.jsonl").exists());
     child.kill().await.unwrap();
+    drop(child);
+    // Only after native reaping may the read resolve through the shared path.
+    // This fixture deliberately has no shared executable.
+    let error = read.await.unwrap_err();
+    assert!(!error.contains("owning isolated app-server"), "{error}");
 }
 
 #[tokio::test]

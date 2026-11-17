@@ -5,7 +5,7 @@ use std::{
 };
 
 use serde_json::Value;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 const QUEUED_REQUESTS: usize = 32;
 
@@ -16,7 +16,10 @@ pub(super) struct IsolatedRequest {
 }
 
 #[derive(Clone)]
-pub(super) struct IsolatedRpcSender(mpsc::Sender<IsolatedRequest>);
+pub(super) struct IsolatedRpcSender {
+    requests: mpsc::Sender<IsolatedRequest>,
+    released: watch::Receiver<bool>,
+}
 
 impl IsolatedRpcSender {
     /// Failure here means the request was never admitted; admitted calls are never replayed.
@@ -26,7 +29,7 @@ impl IsolatedRpcSender {
         params: Value,
     ) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
         let (reply, receiver) = oneshot::channel();
-        self.0
+        self.requests
             .send(IsolatedRequest {
                 method: method.to_owned(),
                 params,
@@ -46,9 +49,14 @@ pub(super) struct IsolatedRpcRegistry {
 impl IsolatedRpcRegistry {
     pub fn owner(&self) -> (IsolatedRpcOwner, mpsc::Receiver<IsolatedRequest>) {
         let (sender, receiver) = mpsc::channel(QUEUED_REQUESTS);
+        let (released, release_rx) = watch::channel(false);
         let owner = IsolatedRpcOwner(Arc::new(OwnerLease {
             registry: self.clone(),
-            sender: IsolatedRpcSender(sender),
+            sender: IsolatedRpcSender {
+                requests: sender,
+                released: release_rx,
+            },
+            released,
         }));
         (owner, receiver)
     }
@@ -75,7 +83,7 @@ impl IsolatedRpcOwner {
             .lock()
             .expect("isolated RPC registry poisoned");
         if let Some(existing) = threads.get(thread_id) {
-            if !existing.0.same_channel(&self.0.sender.0) {
+            if !existing.requests.same_channel(&self.0.sender.requests) {
                 return Err("A different isolated process already owns this thread".to_owned());
             }
         } else {
@@ -88,6 +96,7 @@ impl IsolatedRpcOwner {
 struct OwnerLease {
     registry: IsolatedRpcRegistry,
     sender: IsolatedRpcSender,
+    released: watch::Sender<bool>,
 }
 
 impl Drop for OwnerLease {
@@ -96,7 +105,8 @@ impl Drop for OwnerLease {
             .threads
             .lock()
             .expect("isolated RPC registry poisoned")
-            .retain(|_, sender| !sender.0.same_channel(&self.sender.0));
+            .retain(|_, sender| !sender.requests.same_channel(&self.sender.requests));
+        self.released.send_replace(true);
     }
 }
 
@@ -117,6 +127,54 @@ pub(super) fn is_source_read(method: &str) -> bool {
 }
 
 impl super::CodexAppServerClient {
+    pub(super) async fn request_source_read(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        use super::CodexAppToolError::{NotDispatched, OutcomeUnknown};
+        use tokio::time::{timeout, Duration, Instant};
+        let seconds = super::codex_rpc_timeout_seconds();
+        timeout(Duration::from_secs(seconds), async {
+            let registry = self.state.lock().await.isolated_rpc.clone();
+            while let Some(mut owner) = params["threadId"]
+                .as_str()
+                .and_then(|thread| registry.get(thread))
+            {
+                let result = request_owner(owner.clone(), method, params.clone()).await;
+                if matches!(result, Err(NotDispatched(_))) && owner.requests.is_closed() {
+                    // No request was admitted. Keep the original deadline and
+                    // wait for native reaping before resolving ownership again.
+                    let started = Instant::now();
+                    super::log_executor_event(
+                        "codex source read waiting for isolated owner release",
+                        &[("method", method.to_owned())],
+                    );
+                    owner
+                        .released
+                        .wait_for(|released| *released)
+                        .await
+                        .map_err(|_| "Isolated app-server release was not observed".to_owned())?;
+                    super::log_executor_event(
+                        "codex source read isolated owner released",
+                        &[
+                            ("method", method.to_owned()),
+                            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+                        ],
+                    );
+                    continue;
+                }
+                return result.map_err(|error| match error {
+                    NotDispatched(message) | OutcomeUnknown(message) => message,
+                });
+            }
+            self.request_with_cloud_config_recovery(method, params)
+                .await
+        })
+        .await
+        .map_err(|_| format!("codex {method} timed out after {seconds}s"))?
+    }
+
     pub(super) async fn request_isolated(
         &self,
         method: &str,
