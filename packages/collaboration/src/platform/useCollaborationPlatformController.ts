@@ -231,6 +231,10 @@ export function useCollaborationPlatformController({
     projects: [] as CollaborationProject[],
   });
   const navigationSourcesRef = useRef<SharedWorkspaceApi[]>([]);
+  const authorizedProjectRef = useRef<{
+    api: SharedWorkspaceApi;
+    project: CollaborationProject;
+  } | null>(null);
   const pendingNavigationRef = useRef<object | null>(null);
   const refreshKeyRef = useRef(refreshKey);
 
@@ -246,6 +250,7 @@ export function useCollaborationPlatformController({
         navigationSourcesRef.current = sources;
         navigationCacheStatusRef.current = "unsettled";
         navigationCacheRef.current = { workspaces: [], projects: [] };
+        authorizedProjectRef.current = null;
         pendingNavigationRef.current = null;
       }
       if (force) navigationCacheStatusRef.current = "unsettled";
@@ -301,10 +306,44 @@ export function useCollaborationPlatformController({
       if (!workspaceId && location.projectId) {
         try {
           requestedProject = await api.projects.get(location.projectId);
+          if (revision !== loadRevisionRef.current) return;
+          authorizedProjectRef.current = { api, project: requestedProject };
           requestedProjectAuthorized = true;
           workspaceId = requestedProject.workspace_id ?? null;
-        } catch {
-          workspaceId = null;
+        } catch (cause) {
+          if (revision !== loadRevisionRef.current) return;
+          const status =
+            cause && typeof cause === "object" && "status" in cause
+              ? cause.status
+              : null;
+          if (status === 401 || status === 403 || status === 404) {
+            authorizedProjectRef.current = null;
+            navigationCacheRef.current.projects =
+              navigationCacheRef.current.projects.filter(
+                (project) => project.id !== location.projectId,
+              );
+            setState((current) => ({
+              ...current,
+              projects: current.projects.filter(
+                (project) => project.id !== location.projectId,
+              ),
+              navigationProjects: current.navigationProjects.filter(
+                (project) => project.id !== location.projectId,
+              ),
+              workspace: null,
+              workspaceNavigationContext: null,
+              loading: false,
+              error: loadFailedMessage,
+            }));
+            return;
+          }
+          // A transport failure does not move an already known project out of its workspace.
+          const authorized = authorizedProjectRef.current;
+          workspaceId =
+            authorized?.api === api &&
+            authorized.project.id === location.projectId
+              ? (authorized.project.workspace_id ?? null)
+              : null;
         }
         if (revision !== loadRevisionRef.current) return;
       }

@@ -148,6 +148,59 @@ describe('project metadata activation and synchronization', () => {
     expect(refresh).toHaveBeenCalledTimes(2)
   })
 
+  it('validates native local scopes offline and preserves a pending local read on network loss', async () => {
+    const scope = {}
+    const pending = deferred()
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    const refresh = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue(undefined)
+    const { result } = renderHook(() =>
+      useProjectSnapshotRefresh({
+        scope,
+        active: true,
+        refreshKey: '0',
+        requiresNetwork: false,
+        refresh,
+      })
+    )
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce())
+    online.mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('online')))
+    online.mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('offline')))
+    expect(refresh.mock.calls[0][0]()).toBe(true)
+    await act(async () => {
+      pending.resolve()
+      await pending.promise
+    })
+    expect(result.current.state).toBe('fresh')
+    expect(result.current.canWrite).toBe(true)
+    expect(refresh).toHaveBeenCalledOnce()
+    await act(() => result.current.retry())
+    expect(refresh).toHaveBeenCalledTimes(2)
+    expect(result.current.canWrite).toBe(true)
+  })
+
+  it('blocks failed local validation offline until the local runtime recovers', async () => {
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    const scope = {}
+    const refresh = vi.fn().mockRejectedValueOnce(new Error('Local runtime disconnected'))
+    const { result } = renderHook(() =>
+      useProjectSnapshotRefresh({
+        scope,
+        active: true,
+        refreshKey: '0',
+        requiresNetwork: false,
+        refresh,
+      })
+    )
+    await waitFor(() => expect(result.current.state).toBe('stale'))
+    expect(result.current.canWrite).toBe(false)
+    refresh.mockResolvedValue(undefined)
+    await act(() => result.current.retry())
+    expect(result.current.state).toBe('fresh')
+    expect(result.current.canWrite).toBe(true)
+  })
+
   it('disables automatic revalidation with the rollback flag', () => {
     const refresh = vi.fn(async () => {})
     const { result } = renderHook(() =>

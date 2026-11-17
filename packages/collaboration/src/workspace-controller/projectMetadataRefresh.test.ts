@@ -138,6 +138,49 @@ describe('project metadata revalidation', () => {
     expect(getState().project).toEqual(updated)
   })
 
+  it('starts a new board load after leaving and reopening a pending revalidation project', async () => {
+    const { commands, get, getBoardSnapshot, getState } = createController()
+    const pending = deferred<CollaborationProject>()
+    get.mockReturnValueOnce(pending.promise)
+    const oldVisit = commands.loadProject(project.id, false, {
+      revalidate: true,
+    })
+    const other = { ...project, id: 'other-project' }
+    get.mockResolvedValueOnce(other)
+    await commands.loadProject(other.id)
+    const reopened = commands.loadProject(project.id)
+    try {
+      await vi.waitFor(() => expect(getBoardSnapshot).toHaveBeenCalledTimes(2))
+      await reopened
+      expect(getState().project?.id).toBe(project.id)
+    } finally {
+      pending.resolve(updated)
+      await Promise.all([oldVisit, reopened])
+    }
+    expect(getState().project?.id).toBe(project.id)
+    expect(getState().loading).toBe(false)
+  })
+
+  it('does not join a metadata-only revalidation when the board needs a snapshot', async () => {
+    const { commands, get, getBoardSnapshot, getState } = createController()
+    const pending = deferred<CollaborationProject>()
+    get.mockReturnValueOnce(pending.promise)
+    const manage = commands.loadProject(project.id, false, {
+      revalidate: true,
+      loadSnapshot: false,
+    })
+    const board = commands.loadProject(project.id, true)
+    try {
+      await vi.waitFor(() => expect(getBoardSnapshot).toHaveBeenCalledOnce())
+      await board
+      expect(getState().projectItems[project.id]).toEqual(snapshot.items)
+    } finally {
+      pending.resolve(updated)
+      await Promise.all([manage, board])
+    }
+    expect(getState().loading).toBe(false)
+  })
+
   it('queues an invalidating board refresh behind metadata revalidation', async () => {
     const { commands, get, getBoardSnapshot, getState } = createController()
     const pending = deferred<CollaborationProject>()

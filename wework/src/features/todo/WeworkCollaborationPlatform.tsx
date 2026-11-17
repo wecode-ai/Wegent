@@ -469,6 +469,7 @@ export function WeworkSharedProject({
   )
   const snapshotSync = useProjectSnapshotRefresh({
     scope: personalIssue ? null : snapshotScope,
+    requiresNetwork: project.project_store !== 'local' || project.task_provider !== 'local',
     active: workspaceActive && location.projectId === String(project.id),
     refreshKey: `${location.projectView}:${location.projectSettingsSection ?? ''}`,
     refresh: async isCurrent => {

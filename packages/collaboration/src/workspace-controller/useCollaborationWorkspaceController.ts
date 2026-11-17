@@ -260,6 +260,7 @@ export type CollaborationWorkspaceControllerAction =
     }
   | { type: "issue-selected"; issue: CollaborationIssue }
   | { type: "clear-project" }
+  | { type: "project-access-revoked"; projectId: string }
   | { type: "clear-selected-issue" }
   | { type: "replace-project"; project: CollaborationProject }
   | {
@@ -322,6 +323,15 @@ function preserveProjectSnapshotValues<T>(
     if (Object.hasOwn(current, projectId))
       values[projectId] = current[projectId];
   }
+  return values;
+}
+
+function removeProjectSnapshotValue<T>(
+  current: Record<string, T>,
+  projectId: string,
+): Record<string, T> {
+  const values = { ...current };
+  delete values[projectId];
   return values;
 }
 
@@ -676,6 +686,53 @@ function reduceWorkspaceState(
         assignments: [],
         executions: [],
       };
+    case "project-access-revoked": {
+      const next =
+        state.project?.id === action.projectId
+          ? {
+              ...state,
+              project: null,
+              issues: [],
+              members: [],
+              agents: [],
+              taskBindings: [],
+              externalBoardParentId: null,
+              externalPageCursors: {},
+              externalPageLoading: {},
+            }
+          : state;
+      const cleared =
+        state.selectedIssue?.cloud_project_id === action.projectId &&
+        !state.selectedIssue.invited_only
+          ? reduceWorkspaceState(next, { type: "clear-selected-issue" })
+          : next;
+      return {
+        ...cleared,
+        projects: cleared.projects.filter(
+          (project) => project.id !== action.projectId,
+        ),
+        myWork: cleared.myWork.filter(
+          (issue) =>
+            issue.cloud_project_id !== action.projectId || issue.invited_only,
+        ),
+        projectItems: removeProjectSnapshotValue(
+          cleared.projectItems,
+          action.projectId,
+        ),
+        projectMembers: removeProjectSnapshotValue(
+          cleared.projectMembers,
+          action.projectId,
+        ),
+        projectAgents: removeProjectSnapshotValue(
+          cleared.projectAgents,
+          action.projectId,
+        ),
+        projectTaskBindings: removeProjectSnapshotValue(
+          cleared.projectTaskBindings,
+          action.projectId,
+        ),
+      };
+    }
     case "replace-project": {
       const current =
         state.projects.find((project) => project.id === action.project.id) ??
@@ -932,12 +989,21 @@ export function createCollaborationWorkspaceControllerCommands({
 }: CommandEnvironment): CollaborationWorkspaceControllerCommands {
   let catalogProjects = getProjects();
   let projectLoadRevision = 0;
+  // A successful snapshot belongs to this API command scope, not inherited reducer state.
+  let loadedProjectId: string | null = null;
   let selectedIssueLoadRevision = 0;
   const selectedIssueAttachmentsRevisions = new Map<string, number>();
   const selectedIssueCommentsRevisions = new Map<string, number>();
   const selectedIssueAssignmentsRevisions = new Map<string, number>();
   const projectMutationGenerations = new Map<string, number>();
-  const revalidatingProjects = new Map<string, Promise<void>>();
+  const revalidatingProjects = new Map<
+    string,
+    {
+      promise: Promise<void>;
+      loadSnapshot: boolean;
+      isCurrent(): boolean;
+    }
+  >();
   const externalColumnLoads = new Set<string>();
   const standardSnapshotLoads = new Map<
     string,
@@ -1108,7 +1174,8 @@ export function createCollaborationWorkspaceControllerCommands({
       revision === projectLoadRevision && (options?.isCurrent?.() ?? true);
     let mutationGeneration = projectMutationGeneration(projectId);
     let metadataVersion = projectVersion(projectId);
-    if (showLoading) dispatch({ type: "loading", value: true });
+    if (showLoading && loadedProjectId !== projectId)
+      dispatch({ type: "loading", value: true });
     try {
       const incoming = options?.revalidate
         ? await api.projects.get(projectId)
@@ -1196,6 +1263,7 @@ export function createCollaborationWorkspaceControllerCommands({
             }
           : undefined,
       });
+      loadedProjectId = projectId;
     } catch (cause) {
       if (
         !isCurrent() ||
@@ -1203,6 +1271,25 @@ export function createCollaborationWorkspaceControllerCommands({
           (!options?.revalidate || projectVersion(projectId) > metadataVersion))
       )
         return;
+      const status =
+        cause && typeof cause === "object" && "status" in cause
+          ? cause.status
+          : null;
+      if (status === 401 || status === 403 || status === 404) {
+        markProjectMutated(projectId);
+        catalogProjects = catalogProjects.filter(
+          (project) => project.id !== projectId,
+        );
+        if (loadedProjectId === projectId) loadedProjectId = null;
+        const selected = getSelectedIssue();
+        if (
+          !selected?.invited_only &&
+          (getExternalBoardState().project?.id === projectId ||
+            selected?.cloud_project_id === projectId)
+        )
+          selectedIssueLoadRevision += 1;
+        dispatch({ type: "project-access-revoked", projectId });
+      }
       reportError(messages.loadFailed, "load");
       if (options?.throwOnError) throw cause;
     } finally {
@@ -1217,21 +1304,34 @@ export function createCollaborationWorkspaceControllerCommands({
     options,
   ) => {
     const active = revalidatingProjects.get(projectId);
-    if (active && !options?.revalidate) {
+    if (
+      active?.isCurrent() &&
+      (options?.loadSnapshot === false || active.loadSnapshot) &&
+      !options?.revalidate
+    ) {
       if (!options?.invalidate) {
-        return options?.throwOnError ? active : active.catch(() => undefined);
+        return options?.throwOnError
+          ? active.promise
+          : active.promise.catch(() => undefined);
       }
       markProjectMutated(projectId);
       const refresh = () => loadProject(projectId, showLoading, options);
-      return active.then(refresh, refresh);
+      return active.promise.then(refresh, refresh);
     }
+    const revision = projectLoadRevision + 1;
     const pending = performProjectLoad(projectId, showLoading, options).finally(
       () => {
-        if (revalidatingProjects.get(projectId) === pending)
+        if (revalidatingProjects.get(projectId)?.promise === pending)
           revalidatingProjects.delete(projectId);
       },
     );
-    if (options?.revalidate) revalidatingProjects.set(projectId, pending);
+    if (options?.revalidate)
+      revalidatingProjects.set(projectId, {
+        promise: pending,
+        loadSnapshot: options.loadSnapshot !== false,
+        isCurrent: () =>
+          revision === projectLoadRevision && (options.isCurrent?.() ?? true),
+      });
     return pending;
   };
   return {
@@ -1522,6 +1622,7 @@ export function createCollaborationWorkspaceControllerCommands({
     },
     clearProject: () => {
       projectLoadRevision += 1;
+      loadedProjectId = null;
       selectedIssueLoadRevision += 1;
       dispatch({ type: "clear-project" });
     },

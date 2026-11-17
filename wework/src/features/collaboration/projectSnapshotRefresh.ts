@@ -15,16 +15,21 @@ export function useProjectSnapshotRefresh({
   active,
   refreshKey,
   enabled = projectSnapshotRevalidateEnabled,
+  requiresNetwork = true,
   refresh,
 }: {
   scope: object | null
   active: boolean
   refreshKey: string
   enabled?: boolean
+  requiresNetwork?: boolean
   refresh(isCurrent: () => boolean): Promise<void>
 }) {
   const refreshRef = useRef(refresh)
-  const visit = useMemo(() => ({ scope, active, refreshKey }), [scope, active, refreshKey])
+  const visit = useMemo(
+    () => ({ scope, active, refreshKey, requiresNetwork }),
+    [scope, active, refreshKey, requiresNetwork]
+  )
   const retryRef = useRef<() => Promise<void>>(async () => {})
   const [result, setResult] = useState<{
     visit: object | null
@@ -44,7 +49,7 @@ export function useProjectSnapshotRefresh({
     }
     const revalidate = (): Promise<void> => {
       if (!current || document.visibilityState === 'hidden') return Promise.resolve()
-      if (!navigator.onLine) {
+      if (requiresNetwork && !navigator.onLine) {
         generation += 1
         pending = null
         publish('offline')
@@ -61,7 +66,7 @@ export function useProjectSnapshotRefresh({
             if (isCurrent()) publish('fresh')
           },
           () => {
-            if (isCurrent()) publish(navigator.onLine ? 'stale' : 'offline')
+            if (isCurrent()) publish(requiresNetwork && !navigator.onLine ? 'offline' : 'stale')
           }
         )
         .finally(() => {
@@ -73,13 +78,14 @@ export function useProjectSnapshotRefresh({
     const suspend = () => {
       generation += 1
       pending = null
-      publish(navigator.onLine ? 'revalidating' : 'offline')
+      publish(requiresNetwork && !navigator.onLine ? 'offline' : 'revalidating')
     }
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') suspend()
       else onActivate()
     }
     const onOffline = () => {
+      if (!requiresNetwork) return
       generation += 1
       pending = null
       publish('offline')
@@ -100,7 +106,7 @@ export function useProjectSnapshotRefresh({
       window.removeEventListener('online', onActivate)
       window.removeEventListener('offline', onOffline)
     }
-  }, [active, enabled, scope, visit])
+  }, [active, enabled, requiresNetwork, scope, visit])
 
   const state: ProjectSnapshotSyncState =
     !enabled || !scope ? 'fresh' : !active || result.visit !== visit ? 'revalidating' : result.state

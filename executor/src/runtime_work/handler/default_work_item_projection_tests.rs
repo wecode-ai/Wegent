@@ -4,23 +4,52 @@ const DEFAULT_PROJECT: &str = "default-work-items";
 
 #[tokio::test]
 async fn default_work_item_binding_uses_the_handler_store_path() {
-    let (handler, root) = isolated_runtime_work_handler("default-work-item-store");
+    let (mut handler, root) = isolated_runtime_work_handler("default-work-item-store");
     handler.upsert_local_task(RuntimeTaskLink {
         local_task_id: "runtime-task-1".into(),
         runtime: "codex".into(),
         title: "Executor-owned Issue".into(),
+        workspace_path: root.display().to_string(),
         ..Default::default()
     });
+    let (sender, mut events) = broadcast::channel(8);
+    handler.event_tx = Some(sender);
 
-    handler
+    let projection = handler
         .track_default_work_item_async(
             "runtime-task-1".into(),
             "Executor-owned Issue".into(),
             "Created after runtime acceptance".into(),
         )
-        .expect("persistent business work should be projected")
+        .expect("persistent business work should be projected");
+
+    let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .expect("binding must announce inventory changes")
+        .unwrap();
+    assert_eq!(event["event"], "runtime.work.changed");
+    assert_eq!(event["payload"]["deviceId"], "device-1");
+    assert_eq!(event["payload"]["taskId"], "runtime-task-1");
+    assert!(matches!(
+        events.try_recv(),
+        Err(broadcast::error::TryRecvError::Empty)
+    ));
+    let task = handler.get_task(&json!({"taskId":"runtime-task-1"})).unwrap();
+    assert_eq!(task["task"]["taskId"], "runtime-task-1");
+    let inventory = handler
+        .list_tasks_with_project_index(
+            &json!({"preferCached":true}),
+            &CodexGlobalProjectIndex::from_test_payload(&Map::new()),
+            Instant::now(),
+        )
         .await
         .unwrap();
+    assert!(inventory["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|workspace| workspace["tasks"].as_array().unwrap())
+        .any(|task| task["taskId"] == "runtime-task-1"));
 
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let binding = store
@@ -29,6 +58,7 @@ async fn default_work_item_binding_uses_the_handler_store_path() {
     assert_eq!(binding.task_title.as_deref(), Some("Executor-owned Issue"));
     assert_eq!(binding.task_user_id, 0);
     assert_eq!(store.list_tasks(DEFAULT_PROJECT).unwrap().len(), 1);
+    projection.await.unwrap();
 
     handler
         .track_default_work_item_async(
@@ -51,7 +81,9 @@ async fn default_work_item_binding_uses_the_handler_store_path() {
 
 #[tokio::test]
 async fn default_work_item_projection_excludes_identity_conversations_and_ephemeral_tasks() {
-    let (handler, root) = isolated_runtime_work_handler("conversation-no-default-issue");
+    let (mut handler, root) = isolated_runtime_work_handler("conversation-no-default-issue");
+    let (sender, mut events) = broadcast::channel(8);
+    handler.event_tx = Some(sender);
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let project = store
         .create_project(serde_json::from_value(json!({"name":"Shared project"})).unwrap())
@@ -120,5 +152,9 @@ async fn default_work_item_projection_excludes_identity_conversations_and_epheme
     assert_eq!(bindings[0].task_id, "issue-conversation");
     assert_eq!(bindings[0].task_user_id, bound.task_user_id);
     assert_eq!(store.list_tasks(&project.id).unwrap().len(), 1);
+    assert!(matches!(
+        events.try_recv(),
+        Err(broadcast::error::TryRecvError::Empty)
+    ));
     let _ = fs::remove_dir_all(root);
 }

@@ -9,7 +9,7 @@ import type {
   CollaborationProject,
   SharedWorkspaceApi,
 } from '@wegent/collaboration'
-import type { ComponentProps } from 'react'
+import { useState, type ComponentProps } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WeworkSharedProject } from './WeworkCollaborationPlatform'
 
@@ -17,8 +17,16 @@ const editor = vi.hoisted(() => ({ api: null as SharedWorkspaceApi | null }))
 const originalGetAnimations = Element.prototype.getAnimations
 vi.mock('./TodoEditor', () => ({
   TodoEditor: ({ sharedApi }: { sharedApi: SharedWorkspaceApi }) => {
+    const [dialogOpen, setDialogOpen] = useState(false)
     editor.api = sharedApi
-    return <div data-testid="snapshot-test-editor" />
+    return (
+      <div data-testid="snapshot-test-editor">
+        <button data-testid="snapshot-test-open-dialog" onClick={() => setDialogOpen(true)}>
+          Open dialog
+        </button>
+        {dialogOpen ? <div data-testid="snapshot-test-dialog" /> : null}
+      </div>
+    )
   },
 }))
 vi.mock('./StandInPopover', () => ({ StandInPopover: () => null }))
@@ -181,6 +189,86 @@ afterEach(() => {
 })
 
 describe('production project snapshot lifecycle', () => {
+  it.each(
+    [401, 403, 404].flatMap(status =>
+      (['metadata', 'snapshot'] as const).map(read => ({ status, read }))
+    )
+  )(
+    'removes denied details on $read status $status with an explicit workspace route and recovers',
+    async ({ status, read }) => {
+      const fixture = createFixture('backend')
+      render(<WeworkSharedProject {...fixture.props} />)
+      await expectFresh()
+      await screen.findByTestId('snapshot-test-editor')
+      expect(fixture.props.location.workspaceId).toBe('workspace-1')
+      const denied = Object.assign(new Error('Access denied'), { status })
+      if (read === 'metadata') fixture.get.mockRejectedValueOnce(denied)
+      else fixture.getBoardSnapshot.mockRejectedValueOnce(denied)
+
+      fireEvent.focus(window)
+
+      await waitFor(() =>
+        expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+          'data-sync-state',
+          'stale'
+        )
+      )
+      expect(screen.queryByTestId('snapshot-test-editor')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('cloud-todo-column-old')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByTestId('project-snapshot-retry'))
+      await expectFresh()
+      await screen.findByTestId('snapshot-test-editor')
+    }
+  )
+
+  it('retains an open detail dialog when the delayed initial route loads its board', async () => {
+    const fixture = createFixture('backend')
+    const executions = deferred<[]>()
+    const board = deferred<typeof fixture.snapshot>()
+    vi.mocked(fixture.api.executions.list).mockReturnValueOnce(executions.promise)
+    fixture.getBoardSnapshot
+      .mockResolvedValueOnce(fixture.snapshot)
+      .mockReturnValueOnce(board.promise)
+    render(<WeworkSharedProject {...fixture.props} />)
+    await expectFresh()
+    await screen.findByTestId('snapshot-test-editor')
+    fireEvent.click(screen.getByTestId('snapshot-test-open-dialog'))
+    expect(screen.getByTestId('snapshot-test-dialog')).toBeInTheDocument()
+
+    await act(async () => executions.resolve([]))
+    await waitFor(() => expect(fixture.getBoardSnapshot).toHaveBeenCalledTimes(2))
+
+    expect(screen.getByTestId('snapshot-test-editor')).toBeInTheDocument()
+    expect(screen.getByTestId('snapshot-test-dialog')).toBeInTheDocument()
+    await act(async () => board.resolve(fixture.snapshot))
+    expect(screen.getByTestId('snapshot-test-dialog')).toBeInTheDocument()
+  })
+
+  it.each(['local', 'backend'] as const)(
+    'keeps offline writes scoped to whether the %s project requires the network',
+    async store => {
+      vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+      const fixture = createFixture(store)
+      render(<WeworkSharedProject {...fixture.props} />)
+      await screen.findByTestId('snapshot-test-editor')
+      await waitFor(() =>
+        expect(screen.getByTestId('project-snapshot-sync-state')).toHaveAttribute(
+          'data-sync-state',
+          store === 'local' ? 'fresh' : 'offline'
+        )
+      )
+      const mutation = editor.api!.issues.update('detail-only', { version: 1, status: 'completed' })
+      if (store === 'local') {
+        await expect(mutation).resolves.toBeDefined()
+        expect(fixture.updateIssue).toHaveBeenCalledOnce()
+      } else {
+        await expect(mutation).rejects.toThrow()
+        expect(fixture.updateIssue).not.toHaveBeenCalled()
+      }
+    }
+  )
+
   it('keeps personal Issue actions available without a project board controller or workspace', async () => {
     const fixture = createFixture('backend')
     render(

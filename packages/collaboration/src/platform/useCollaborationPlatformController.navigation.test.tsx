@@ -65,7 +65,8 @@ function Harness(props: {
 async function render(
   navigationApis: SharedWorkspaceApi[],
   nextLocation = location,
-  refreshKey?: string
+  refreshKey?: string,
+  api = navigationApis[0]
 ) {
   if (!root) {
     container = document.createElement('div')
@@ -75,7 +76,7 @@ async function render(
   await act(async () =>
     root!.render(
       <Harness
-        api={navigationApis[0]}
+        api={api}
         navigationApis={navigationApis}
         location={nextLocation}
         refreshKey={refreshKey}
@@ -127,6 +128,76 @@ it.each([
     expect(localApi.workspaces!.list).toHaveBeenCalledOnce()
   }
 )
+
+it('retains the current project workspace after a metadata transport failure', async () => {
+  const api = apiFor(cloudWorkspace, [project])
+  api.projects.get = vi.fn(async () => project)
+  const route = { ...location, workspaceId: null }
+  await render([api], route, 'active')
+  expect(currentState().workspace?.id).toBe(cloudWorkspace.id)
+  vi.mocked(api.projects.get).mockRejectedValueOnce(
+    new TypeError('Failed to fetch'),
+  )
+
+  await render([api], route, 'reactivated')
+
+  expect(currentState().workspace?.id).toBe(cloudWorkspace.id)
+  expect(currentState().projects).toContainEqual(project)
+  expect(currentState().loading).toBe(false)
+})
+
+it.each([401, 403, 404])(
+  'removes current project context after metadata denies access with %s',
+  async (status) => {
+    const api = apiFor(cloudWorkspace, [project])
+    api.projects.get = vi.fn(async () => project)
+    const route = { ...location, workspaceId: null }
+    await render([api], route, 'active')
+    vi.mocked(api.projects.get).mockRejectedValueOnce(
+      Object.assign(new Error('Denied'), { status }),
+    )
+
+    await render([api], route, 'reactivated')
+
+    expect(currentState().projects).not.toContainEqual(project)
+    expect(currentState().workspace).toBeNull()
+    expect(currentState().workspaceNavigationContext).toBeNull()
+    expect(currentState().error).toBe('Failed')
+  },
+)
+
+it('does not reuse a project workspace from a replaced API after a transport failure', async () => {
+  const api = apiFor(cloudWorkspace, [project])
+  api.projects.get = vi.fn(async () => project)
+  const route = { ...location, workspaceId: null }
+  await render([api], route, 'active')
+  const replacement = apiFor(localWorkspace, [])
+  replacement.projects.get = vi
+    .fn()
+    .mockRejectedValue(new TypeError('Failed to fetch'))
+
+  await render([replacement], route, 'reactivated')
+
+  expect(currentState().projects).not.toContainEqual(project)
+  expect(currentState().workspace).toBeNull()
+  expect(currentState().workspaceNavigationContext).toBeNull()
+})
+
+it('does not reuse metadata authority when only the project API changes', async () => {
+  const api = apiFor(cloudWorkspace, [project])
+  api.projects.get = vi.fn(async () => project)
+  const sources = [api]
+  const route = { ...location, workspaceId: null }
+  await render(sources, route, 'active', api)
+  expect(currentState().workspace?.id).toBe(cloudWorkspace.id)
+  const replacement = apiFor(cloudWorkspace, [project])
+  replacement.projects.get = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+
+  await render(sources, route, 'reactivated', replacement)
+
+  expect(currentState().workspace).toBeNull()
+  expect(currentState().workspaceNavigationContext).toBeNull()
+})
 
 it('reuses the cache when the navigation source identities are unchanged', async () => {
   const cloudApi = apiFor(cloudWorkspace, [project])

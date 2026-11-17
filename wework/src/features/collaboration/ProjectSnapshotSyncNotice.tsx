@@ -29,7 +29,7 @@ export function ProjectSnapshotSyncNotice({
           data-testid="project-snapshot-retry"
           onClick={() => void retry()}
         >
-          {t('common.retry')}
+          {t('workbench.retry')}
         </Button>
       ) : null}
     </div>

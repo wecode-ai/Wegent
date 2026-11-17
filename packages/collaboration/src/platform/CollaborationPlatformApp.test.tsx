@@ -1060,6 +1060,60 @@ describe("CollaborationPlatformApp real component flow", () => {
       }
     },
   );
+  it("retains a mounted project renderer after a metadata transport failure", async () => {
+    const { api } = createApi();
+    function ProjectPanel() {
+      const [open, setOpen] = useState(false);
+      return (
+        <div data-testid="retained-project-renderer">
+          <button
+            data-testid="open-project-panel"
+            onClick={() => setOpen(true)}
+          >
+            Open panel
+          </button>
+          {open ? <div data-testid="retained-project-panel" /> : null}
+        </div>
+      );
+    }
+    const renderProject = () => <ProjectPanel />;
+    const start = {
+      ...initialLocation,
+      projectId: project.id,
+      workspaceId: null,
+    };
+    await render(
+      <PlatformHarness
+        api={api}
+        start={start}
+        renderProject={renderProject}
+        refreshKey="active"
+      />,
+    );
+    await click(byTestId("open-project-panel"));
+    expect(byTestId("retained-project-panel")).toBeTruthy();
+    vi.mocked(api.projects.get).mockRejectedValueOnce(
+      new TypeError("Failed to fetch"),
+    );
+
+    await render(
+      <PlatformHarness
+        api={api}
+        start={start}
+        renderProject={renderProject}
+        refreshKey="reactivated"
+      />,
+    );
+
+    expect(byTestId("retained-project-renderer")).toBeTruthy();
+    expect(byTestId("retained-project-panel")).toBeTruthy();
+    expect(
+      container.querySelector(
+        '[data-testid="collaboration-platform-opening-project"]',
+      ),
+    ).toBeNull();
+  });
+
   it("renders the shared board for a standalone project without a workspace API", async () => {
     const standalone = {
       ...project,

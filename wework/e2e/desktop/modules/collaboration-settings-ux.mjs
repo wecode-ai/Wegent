@@ -195,21 +195,25 @@ async function createDisabledSchedule(control, scoped) {
   await control.command('waitFor', find('automatic-processing-form'), { visible: false })
 }
 
-async function verifyGroupInlineMaintenance(control, scoped) {
+export async function verifyGroupInlineMaintenance(control, scoped) {
   const find = id => scoped('[data-testid="' + id + '"]')
   await control.command('click', find('collaboration-project-settings-groups'))
   const rules = find('collaboration-group-detail-tab-rules')
+  await control.command('scrollIntoViewAsUser', rules)
   await control.command('waitFor', rules, { visible: true })
   if ((await control.command('getAttribute', rules, { value: 'aria-expanded' })) !== 'true')
     await control.command('click', rules)
   const members = find('collaboration-group-detail-tab-members')
-  if ((await control.command('getAttribute', members, { value: 'aria-expanded' })) !== 'true')
+  if ((await control.command('getAttribute', members, { value: 'aria-expanded' })) !== 'true') {
+    await control.command('scrollIntoViewAsUser', members)
     await control.command('click', members)
+  }
   assert.equal(await control.command('getAttribute', rules, { value: 'aria-expanded' }), 'true')
   assert.equal(await control.command('getAttribute', members, { value: 'aria-expanded' }), 'true')
   const instructions = find('collaboration-group-detail-instructions')
   const original = await control.command('getValue', instructions)
   const draft = original + '\nUnsaved inline configuration regression.'
+  await control.command('scrollIntoViewAsUser', instructions)
   await control.command('fill', instructions, { value: draft })
   await control.command('waitFor', find('collaboration-group-save-status'), {
     text: '有未保存的更改',
@@ -218,10 +222,12 @@ async function verifyGroupInlineMaintenance(control, scoped) {
   await control.command('waitFor', find('cloud-project-members-panel'), { visible: true })
   await control.command('click', find('collaboration-project-settings-groups'))
   assert.equal(await control.command('getValue', instructions), draft)
+  await control.command('scrollIntoViewAsUser', find('collaboration-group-detail-tab-sharing'))
   await control.command('click', find('collaboration-group-detail-tab-sharing'))
   await control.command('waitFor', find('group-template-saved-version-hint'), {
     text: '上次保存的版本',
   })
+  await control.command('scrollIntoViewAsUser', find('collaboration-group-detail-back'))
   await control.command('click', find('collaboration-group-detail-back'))
   await control.command('waitFor', find('collaboration-group-unsaved-dialog'), { visible: true })
   await control.command('click', find('collaboration-group-unsaved-cancel'))
