@@ -16,9 +16,14 @@ pub(crate) const PACKAGE: &str = "@wegent/dsh-connection-git/";
 fn git_cli_command(platform: &str, environment: HashMap<String, String>) -> Command {
     let name = if platform == "github" { "gh" } else { "glab" };
     let environment = wegent_subprocess::environment::merge_process_environment(environment);
-    let executable = crate::local::git_commands::resolve_cli_executable(name, &environment)
-        .unwrap_or_else(|| name.into());
-    let (program, prefix) = crate::process::spawn_program_parts(&executable.to_string_lossy());
+    #[cfg(windows)]
+    let (program, prefix) = {
+        let executable = crate::local::git_commands::resolve_cli_executable(name, &environment)
+            .unwrap_or_else(|| name.into());
+        crate::process::spawn_program_parts(&executable.to_string_lossy())
+    };
+    #[cfg(not(windows))]
+    let (program, prefix) = (name.to_owned(), Vec::<String>::new());
     let mut command = Command::new(program);
     crate::process::hide_windows_console(&mut command);
     command
@@ -736,7 +741,20 @@ mod tests {
         let environment: HashMap<String, String> = std::env::vars()
             .filter(|(key, _)| !key.eq_ignore_ascii_case("PATH"))
             .collect();
-        let paths = std::iter::once(root.path().to_owned())
+        #[cfg(unix)]
+        let directories = {
+            use std::os::unix::fs::PermissionsExt;
+            let shadow = root.path().join("non-executable");
+            std::fs::create_dir(&shadow).unwrap();
+            let candidate = shadow.join("gh");
+            std::fs::write(&candidate, "This file cannot be executed").unwrap();
+            std::fs::set_permissions(candidate, std::fs::Permissions::from_mode(0o644)).unwrap();
+            vec![shadow, root.path().to_owned()]
+        };
+        #[cfg(not(unix))]
+        let directories = vec![root.path().to_owned()];
+        let paths = directories
+            .into_iter()
             .chain(std::env::split_paths(
                 &std::env::var_os("PATH").unwrap_or_default(),
             ))

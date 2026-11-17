@@ -551,10 +551,14 @@ export async function verifyIssueDetailReading(control, { captureScreenshot, uiT
       replySelector,
       scope('[data-testid="cloud-todo-detail-scroll"]'),
     ].join(', ')
-    console.error(
-      '[issue-detail-reading] sticky header geometry:',
-      await control.command('getElementMetrics', selectors)
-    )
+    try {
+      console.error(
+        '[issue-detail-reading] sticky header geometry:',
+        await control.command('getElementMetrics', selectors)
+      )
+    } catch (diagnosticError) {
+      console.error('[issue-detail-reading] geometry diagnostic failed:', diagnosticError)
+    }
     throw error
   }
   const timestamp = `${list} .task-detail-thread-actions time`
