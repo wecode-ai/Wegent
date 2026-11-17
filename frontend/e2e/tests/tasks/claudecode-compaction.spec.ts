@@ -1,6 +1,10 @@
 import { APIRequestContext, expect, test } from '@playwright/test'
 import { ADMIN_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
+import {
+  type ClaudeCapturedMessage,
+  withClaudeToolFallback,
+} from '../../utils/claude-tool-fallback'
 
 const API_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -24,7 +28,7 @@ type Capture = {
   body: {
     model: string
     max_tokens: number
-    messages: unknown[]
+    messages: ClaudeCapturedMessage[]
     thinking?: Record<string, unknown>
     tools: Array<{ name: string; defer_loading?: boolean }>
   }
@@ -212,21 +216,17 @@ test.describe('Real Claude Code cloud-model compaction', () => {
               )
             )
           )
-          expect(fallback.messages.slice(0, -2)).toEqual(deferred.messages.slice(0, -1))
-          expect(fallback.messages.at(-2)).toEqual({
+          // A midnight date reminder already occupies the trailing system
+          // message. The CLI appends its fallback notice to that same block.
+          const conversation =
+            deferred.messages.at(-1)?.role === 'system'
+              ? deferred.messages.slice(0, -1)
+              : deferred.messages
+          expect(conversation.at(-1)).toEqual({
             role: 'user',
             content: `Finish the follow-up for ${model}.`,
           })
-          expect(fallback.messages.at(-1)).toEqual({
-            role: 'system',
-            content: [
-              {
-                type: 'text',
-                text: 'ToolSearch is no longer available. Tools listed earlier as deferred that are still available are declared in full: call them directly.',
-                cache_control: { type: 'ephemeral' },
-              },
-            ],
-          })
+          expect(fallback.messages).toEqual(withClaudeToolFallback(deferred.messages))
         }
         for (const capture of captures) {
           expect(capture.body.model).toBe(model)
