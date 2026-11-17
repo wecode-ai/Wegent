@@ -374,6 +374,32 @@ impl RuntimeWorkRpcHandler {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
+        let path = self.task_store_path.clone();
+        runtime.spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // Leave startup and foreground restoration ahead of maintenance.
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let path = path.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    LocalTaskStore::maintain_stand_in_history(path.as_ref())
+                })
+                .await;
+                match result {
+                    Ok(Ok(0)) => {}
+                    Ok(Ok(records)) => log_executor_event(
+                        "stand-in history pruned",
+                        &[("records", records.to_string())],
+                    ),
+                    result => log_executor_event(
+                        "stand-in history maintenance deferred",
+                        &[("result", format!("{result:?}"))],
+                    ),
+                }
+            }
+        });
         let receipt_handler = self.clone();
         runtime.spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));

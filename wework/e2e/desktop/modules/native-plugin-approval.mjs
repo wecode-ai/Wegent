@@ -189,29 +189,27 @@ async function findLinuxModal(pid, options) {
     // search --name reads only WM_NAME in Ubuntu's xdotool; GTK uses _NET_WM_NAME.
     // getwindowname resolves that EWMH UTF-8 property while preserving PID ownership.
     const titles = await Promise.all(
-      windows.map(window => readLinuxWindowTitle(window, remaining()))
+      windows.map(async window => {
+        try {
+          const { stdout } = await execute('xdotool', ['getwindowname', window], remaining())
+          return { window, title: stdout.trim() }
+        } catch (error) {
+          // X11 windows can disappear between PID enumeration and property reads.
+          if (error.code === 1 && /BadWindow \(invalid Window parameter\)/.test(error.stderr ?? ''))
+            return null
+          throw error
+        }
+      })
     )
-    const matches = windows.filter((_, index) => TITLES.includes(titles[index]))
+    const matches = titles
+      .filter(value => value && TITLES.includes(value.title))
+      .map(value => value.window)
     assert.ok(matches.length < 2, 'Native plugin confirmation must be unambiguous')
     if (matches.length === 1 && Date.now() < deadline) return matches[0]
     const wait = deadline - Date.now()
     if (wait > 0) await new Promise(resolve => setTimeout(resolve, Math.min(100, wait)))
   }
   throw new Error('The isolated app did not display its native Core plugin decision')
-}
-
-async function readLinuxWindowTitle(window, options) {
-  try {
-    const { stdout } = await execute('xdotool', ['getwindowname', window], options)
-    return stdout.trim()
-  } catch (error) {
-    // X11 enumeration does not retain windows while their properties are read.
-    if (error.code !== 1 || !/X Error of failed request:\s+BadWindow\b/.test(error.stderr ?? '')) {
-      throw error
-    }
-    console.info('[native-plugin-window-removed]', JSON.stringify({ window }))
-    return null
-  }
 }
 
 async function recordNativeWindowDiagnostics(pid) {
