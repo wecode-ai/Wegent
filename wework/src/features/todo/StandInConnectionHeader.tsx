@@ -15,7 +15,7 @@ export function StandInConnectionHeader({
         <Icon aria-hidden="true" className="h-4 w-4" />
         {title}
       </h3>
-      <p className="text-sm text-text-muted">{description}</p>
+      <p className="text-sm text-text-secondary">{description}</p>
     </header>
   )
 }

@@ -84,12 +84,12 @@ export async function verifyNewDiscussionComposerUi(control, scope, timeoutMs) {
 export async function verifyReplyComposerUi(control, scope, timeoutMs) {
   const reply = scope('[data-testid="issue-reply-composer"]')
   await control.command('waitFor', reply, {
-    text: '将继续原执行任务',
+    text: '继续此讨论',
     timeoutMs,
   })
   const placeholder = `${reply} [data-testid="task-comment-form"] .composer-prosemirror-placeholder`
   await control.command('waitFor', placeholder, {
-    text: '回复此讨论（继续原执行任务）',
+    text: '回复此讨论…',
     timeoutMs,
   })
 }

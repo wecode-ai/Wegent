@@ -63,6 +63,8 @@ async function verifyArchive(control, request, issue, options) {
       value: 'in_progress',
       timeoutMs,
     })
+    await control.command('waitFor', scoped(`cloud-task-activity-${issue.id}`), { timeoutMs })
+    await control.command('scrollIntoViewAsUser', scoped(`cloud-task-activity-${issue.id}`))
     await control.command('waitFor', scoped(`cloud-task-activity-${issue.id}`), {
       visible: true,
       timeoutMs,

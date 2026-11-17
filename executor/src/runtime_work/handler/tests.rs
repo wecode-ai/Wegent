@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::tasks::runtime_model_selection_changed;
+use super::tasks::{
+    mark_runtime_model_switch, runtime_model_provider_changed, runtime_model_selection_changed,
+};
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
@@ -4617,7 +4619,7 @@ async fn create_task_keeps_board_comment_session_persistent_across_store_reload(
 }
 
 #[test]
-fn runtime_model_selection_change_detects_model_and_provider_type_boundaries() {
+fn runtime_model_selection_change_detects_model_and_provider_boundaries() {
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -4659,6 +4661,55 @@ fn runtime_model_selection_change_detects_model_and_provider_type_boundaries() {
             }
         })
     ));
+
+    link.runtime_handle["modelSelection"]["options"] = json!({
+        "runnerModelProvider": "company-a",
+        "reasoningEffort": "high"
+    });
+    let provider_switch = json!({
+        "modelSelection": {
+            "modelName": "gpt-5.6-sol",
+            "modelType": "runtime",
+            "options": {
+                "runnerModelProvider": "company-b",
+                "reasoningEffort": "high"
+            }
+        }
+    });
+    assert!(runtime_model_selection_changed(&link, &provider_switch));
+    assert!(runtime_model_provider_changed(&link, &provider_switch));
+
+    let mut request = ExecutionRequest::default();
+    mark_runtime_model_switch(&mut request, &link, &provider_switch);
+    assert_eq!(request.extra["wework_model_switched"], true);
+    assert_eq!(request.extra["wework_model_provider_switched"], true);
+
+    link.runtime_handle["modelSelection"]["options"] = json!({
+        "codexProviderId": "openai"
+    });
+    assert!(runtime_model_provider_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "gpt-5.6-sol",
+                "modelType": "runtime",
+                "options": {"codexProviderId": "company"}
+            }
+        })
+    ));
+
+    link.runtime_handle["modelSelection"]["options"] = json!({
+        "runnerModelProvider": "company-a"
+    });
+    let model_only_switch = json!({
+        "modelSelection": {
+            "modelName": "kimi-k3",
+            "modelType": "runtime",
+            "options": {"runnerModelProvider": "company-a"}
+        }
+    });
+    assert!(runtime_model_selection_changed(&link, &model_only_switch));
+    assert!(!runtime_model_provider_changed(&link, &model_only_switch));
 }
 
 #[test]

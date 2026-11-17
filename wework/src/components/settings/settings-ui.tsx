@@ -72,7 +72,7 @@ export function SettingsRow({
 }: SettingsRowProps) {
   return (
     <div
-      className={`flex items-center justify-between gap-6 px-4 py-3 max-sm:flex-col max-sm:items-stretch max-sm:gap-3 ${className}`.trim()}
+      className={`flex items-center justify-between gap-6 px-4 py-3 max-md:flex-col max-md:items-stretch max-md:gap-3 ${className}`.trim()}
       {...props}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -84,10 +84,60 @@ export function SettingsRow({
         )}
       </div>
       {control && (
-        <div className="flex max-w-full shrink-0 items-center gap-2 max-sm:justify-end">
+        <div className="flex max-w-full shrink-0 items-center gap-2 max-md:justify-end">
           {control}
         </div>
       )}
+    </div>
+  )
+}
+
+interface SettingsSegmentOption<T extends string> {
+  value: T
+  label: ReactNode
+  testId: string
+  title?: string
+}
+
+export function SettingsSegmentedControl<T extends string>({
+  label,
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  label: string
+  value: T
+  options: readonly SettingsSegmentOption<T>[]
+  disabled?: boolean
+  onChange(value: T): void
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className="grid w-full shrink-0 rounded-md border border-border bg-background p-0.5 md:h-8 md:w-[300px]"
+      style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+    >
+      {options.map(option => (
+        <button
+          key={option.value}
+          type="button"
+          data-testid={option.testId}
+          title={option.title}
+          disabled={disabled}
+          aria-pressed={value === option.value}
+          onClick={() => onChange(option.value)}
+          className={[
+            'flex min-h-11 min-w-11 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60 md:min-h-0 md:min-w-0',
+            value === option.value
+              ? 'bg-text-primary text-background shadow-sm'
+              : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+          ].join(' ')}
+        >
+          <span className="truncate">{option.label}</span>
+        </button>
+      ))}
     </div>
   )
 }
@@ -116,7 +166,7 @@ export function SettingsSwitch({
       data-state={state}
       disabled={disabled}
       onClick={() => onCheckedChange(!checked)}
-      className={`inline-flex items-center rounded-full focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60 ${className}`.trim()}
+      className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-full focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60 md:min-h-6 md:min-w-8 ${className}`.trim()}
       {...props}
     >
       <span

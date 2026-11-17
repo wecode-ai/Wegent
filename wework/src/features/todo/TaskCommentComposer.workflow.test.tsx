@@ -58,6 +58,13 @@ function setup({ body = '请安排验收', closed = false, canToggle = true, chi
 }
 
 describe('Issue comment staged workflow', () => {
+  it('names the editor and action pickers with their visible prompts', () => {
+    setup()
+    expect(screen.getByRole('textbox', { name: '输入评论' })).toBeVisible()
+    expect(screen.getByTestId('task-comment-form-assignee')).toHaveAccessibleName('分配给…')
+    expect(screen.getByTestId('task-comment-form-move')).toHaveAccessibleName('移动泳道…')
+  })
+
   it('keeps lifecycle actions in the send menu and ordinary sending never closes', async () => {
     const { send, toggle } = setup()
     expect(screen.queryByTestId('task-comment-form-close')).not.toBeInTheDocument()

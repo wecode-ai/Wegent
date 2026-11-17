@@ -1092,6 +1092,26 @@ def test_runtime_global_im_notification_endpoint_dispatches_payload(
     assert payload.session_key == "session-1"
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+def test_runtime_global_im_switch_uses_shared_connections_without_a_target(
+    test_client,
+    test_token,
+    fake_im_session_cache,
+    enabled,
+):
+    response = test_client.put(
+        "/api/runtime-work/im-notifications/global",
+        headers=_auth_headers(test_token),
+        json={"enabled": enabled},
+    )
+    assert response.status_code == 200
+    assert response.json()["global"] == {
+        "enabled": enabled,
+        "sessionKey": None,
+        "session": None,
+    }
+
+
 def test_runtime_task_im_notification_subscribe_endpoint_dispatches_address(
     test_client,
     test_token,
