@@ -461,6 +461,12 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       dueAt: null,
       automationRuleId: null,
       position: { beforeItemId: 'anchor' },
+      qualityReview: {
+        decision: 'no_objection',
+        evidence: ['https://example.com/qa-report'],
+        idempotencyKey: 'qa-head-1',
+        prHeadSha: 'head-1',
+      },
     })
     expect(deliveryApi.updateLoopItem).toHaveBeenCalledWith(
       'issue-1',
@@ -470,6 +476,12 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         start_at: null,
         due_at: null,
         position: { beforeItemId: 'anchor' },
+        quality_review: {
+          decision: 'no_objection',
+          evidence: ['https://example.com/qa-report'],
+          idempotency_key: 'qa-head-1',
+          pr_head_sha: 'head-1',
+        },
       })
     )
     await api.issues.assign('project-1', 'issue-1', {

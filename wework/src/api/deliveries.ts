@@ -1042,6 +1042,12 @@ export function createDeliveryApi(client: HttpClient) {
         version: number
         automation_rule_id?: string | null
         position?: { beforeItemId: string | null }
+        quality_review?: {
+          decision: 'no_objection' | 'accepted' | 'changes_requested'
+          evidence: string[]
+          idempotency_key: string
+          pr_head_sha: string
+        }
       }
     ): Promise<CloudLoopItem> {
       return client.patch(`/v1/loop-items/${encodeURIComponent(itemId)}`, data)

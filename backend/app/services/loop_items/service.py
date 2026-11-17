@@ -127,6 +127,17 @@ from app.services.project_automation_domain import (
 from app.services.project_chat.service import ProjectChatService, bot_config
 from app.services.project_milestones import require_milestone
 from app.services.runtime_cancellation import emit_runtime_cancellations
+from app.services.stage_assignee_mutations import (
+    effective_assignee,
+    lock_issue,
+    preflight_issue_update,
+    record_stage_transition,
+)
+from app.services.stage_assignees import (
+    stage_assignee_enforcement_enabled,
+    stage_name,
+    validate_stage_assignee,
+)
 from app.stores.tasks import task_store
 from app.utils.schedule_time import normalize_schedule_datetime
 from shared.telemetry.decorators import trace_sync
@@ -299,6 +310,9 @@ class LoopItemService:
             values["assignee_team_name"] = team.name if team else None
         metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
         values["badges"] = issue_badges(metadata) if can_view_detail else []
+        values["quality_handoff"] = (
+            metadata.get("quality_handoff") if can_view_detail else None
+        )
         values["resource_participants"] = (
             metadata.get("resource_participants", []) if can_view_detail else []
         )
@@ -874,10 +888,17 @@ class LoopItemService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
             )
         if (agent_id or team_id or collaboration_group) and requested_status is None:
+            preparing = stage_assignee_enforcement_enabled(
+                project, task_metadata
+            ) and stage_name(project, task_metadata) in {
+                "需求提出",
+                "共同评审",
+                "开发准备",
+            }
             payload["status"] = automatic_project_status(
                 project,
                 current_status=payload["status"],
-                candidate_status="in_progress",
+                candidate_status="pending" if preparing else "in_progress",
             )
         if payload["status"]:
             write_status_change(
@@ -897,6 +918,7 @@ class LoopItemService:
             id=f"{project.project_key}-{sequence}",
             cloud_project_id=project.id,
             sequence_number=sequence,
+            version=1,
             created_by_user_id=user_id,
             metadata_json=task_metadata or None,
             **payload,
@@ -905,6 +927,16 @@ class LoopItemService:
             item.metadata_json = {**task_metadata, "tags": tags}
         if item.status == "completed":
             item.completed_at = self._now()
+        target_type, target_id = effective_assignee(item, {}, item.metadata_json or {})
+        item.metadata_json = validate_stage_assignee(
+            db,
+            project=project,
+            item=item,
+            assignee_type=target_type,
+            assignee_id=target_id,
+            metadata=item.metadata_json or {},
+            actor_user_id=user_id,
+        )
         db.add(item)
         db.flush()
         if collaboration_group is not None:
@@ -1677,6 +1709,23 @@ class LoopItemService:
                 issue_creator_user_id=item.created_by_user_id,
                 user_id=user_id,
             )
+        if values.quality_review is not None:
+            from app.services.quality_handoffs import submit_quality_review
+
+            submit_quality_review(
+                db,
+                project=access.project,
+                item=item,
+                user_id=user_id,
+                review=values.quality_review,
+                issue_version=values.version,
+            )
+            if commit:
+                db.commit()
+            else:
+                db.flush()
+            db.refresh(item)
+            return item
         if item.version != values.version:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -1691,6 +1740,7 @@ class LoopItemService:
                 "assignee_group_id",
                 "security_level",
                 "position",
+                "quality_review",
             },
             exclude_unset=True,
         )
@@ -1807,6 +1857,22 @@ class LoopItemService:
                 )
                 updates.pop("execution_config", None)
             updates["metadata_json"] = metadata
+        stage_metadata = dict(updates.get("metadata_json", item.metadata_json) or {})
+        if group_changed:
+            stage_metadata["collaboration_group"] = (
+                {"id": values.assignee_group_id} if values.assignee_group_id else None
+            )
+        elif assignee_changed:
+            stage_metadata.pop("collaboration_group", None)
+        updates["metadata_json"] = stage_metadata
+        preflight_issue_update(
+            db,
+            project=access.project,
+            item=item,
+            updates=updates,
+            user_id=user_id,
+            changed_fields=values.model_fields_set,
+        )
         cancelled_runs: list = []
         if group_changed:
             from app.services.workspaces.service import workspace_service
@@ -2253,6 +2319,7 @@ class LoopItemService:
         self._require_local_task_provider(project)
         if item.cloud_project_id != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        lock_issue(db, item, values.version)
         position_order = None
         if values.position is not None:
             self._require_internal_task_project(
@@ -2278,7 +2345,20 @@ class LoopItemService:
             )
         previous_assignee_user_id = item.assignee_user_id
         automation_run_requested = bool((automation_context or {}).get("run_id"))
-        metadata = dict(item.metadata_json or {})
+        metadata = validate_stage_assignee(
+            db,
+            project=project,
+            item=item,
+            assignee_type=values.assignee_type,
+            assignee_id=values.assignee_id,
+            stage_id=values.workflow_step,
+            allow_stage_advance=True,
+            actor_user_id=user_id,
+        )
+        if values.assignee_type != "group":
+            record_stage_transition(
+                db, project=project, item=item, metadata=metadata, user_id=user_id
+            )
         assignment_created = False
         if values.assignee_type == "agent":
             agent = db.get(ProjectChatAgent, values.assignee_id)
@@ -3667,8 +3747,13 @@ class LoopItemService:
         When the board has the standard column and the Issue is not completed,
         record the actual transition in ``metadata`` and ``updates``.
         """
+        preparing = stage_assignee_enforcement_enabled(
+            project, metadata
+        ) and stage_name(project, metadata) in {"需求提出", "共同评审", "开发准备"}
         started = automatic_project_status(
-            project, current_status=item.status, candidate_status="in_progress"
+            project,
+            current_status=item.status,
+            candidate_status="pending" if preparing else "in_progress",
         )
         if started == item.status:
             return

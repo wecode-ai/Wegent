@@ -35,6 +35,7 @@ WorkflowOrchestrationStatus = Literal[
     "failed",
 ]
 WorkflowPlanItemAssigneeType = Literal["user", "agent", "team"]
+WorkflowAssigneeRole = Literal["qa", "product", "ui", "engineering"]
 ISSUE_WORKFLOW_SCOPE_ID = "__issue__"
 DeliverableValueType = Literal[
     "text",
@@ -344,6 +345,11 @@ class WorkflowLoopConfig(BaseModel):
     )
 
 
+class WorkflowAssigneeTarget(BaseModel):
+    assignee_type: WorkflowPlanItemAssigneeType
+    assignee_id: str = Field(min_length=1, max_length=128)
+
+
 class WorkflowNodeDefinition(BaseModel):
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     name: str = Field(min_length=1, max_length=100)
@@ -377,6 +383,7 @@ class WorkflowNodeDefinition(BaseModel):
     automation_rule_id: str | None = Field(default=None, max_length=64)
     required_assignee_type: WorkflowPlanItemAssigneeType | None = None
     required_assignee_id: str | None = Field(default=None, min_length=1, max_length=128)
+    required_assignee_role: WorkflowAssigneeRole | None = None
     execution_config: WorkflowExecutionConfig | None = None
     execution_config_override: bool = False
 
@@ -430,6 +437,10 @@ class WorkflowNodeDefinition(BaseModel):
             raise ValueError(
                 "workflow stage assignee constraint requires both type and id"
             )
+        if self.required_assignee_role and self.required_assignee_type:
+            raise ValueError(
+                "workflow stage cannot require both a role and an exact assignee"
+            )
         if unknown := set(self.dependency_context) - set(self.depends_on):
             raise ValueError(
                 "workflow dependency context references non-dependencies: "
@@ -454,6 +465,10 @@ class ProjectWorkflowDefinition(BaseModel):
     approval_policy: Literal["required", "automatic"] = "required"
     ai_automation_rule_id: str | None = Field(default=None, max_length=64)
     execution_config: WorkflowExecutionConfig | None = None
+    assignee_roles: dict[str, list[WorkflowAssigneeTarget]] = Field(
+        default_factory=dict
+    )
+    feature_flags: dict[str, bool] = Field(default_factory=dict)
     nodes: list[WorkflowNodeDefinition] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="before")
@@ -677,6 +692,10 @@ class IssueWorkflowInstance(BaseModel):
     approval_policy: Literal["required", "automatic"] = "required"
     ai_automation_rule_id: str | None = Field(default=None, max_length=64)
     execution_config: WorkflowExecutionConfig | None = None
+    assignee_roles: dict[str, list[WorkflowAssigneeTarget]] = Field(
+        default_factory=dict
+    )
+    feature_flags: dict[str, bool] = Field(default_factory=dict)
     orchestration_status: WorkflowOrchestrationStatus = "idle"
     active_run_id: str | None = Field(default=None, max_length=64)
     active_plan_version: int | None = Field(default=None, ge=1)
@@ -692,6 +711,8 @@ class IssueWorkflowInstance(BaseModel):
             coordinator_prompt=self.coordinator_prompt,
             approval_policy=self.approval_policy,
             ai_automation_rule_id=self.ai_automation_rule_id,
+            assignee_roles=self.assignee_roles,
+            feature_flags=self.feature_flags,
             nodes=[
                 WorkflowNodeDefinition(
                     id=node.id,
@@ -712,6 +733,9 @@ class IssueWorkflowInstance(BaseModel):
                     required=node.required,
                     required_deliverables=node.required_deliverables,
                     workspace_policy=node.workspace_policy,
+                    required_assignee_type=node.required_assignee_type,
+                    required_assignee_id=node.required_assignee_id,
+                    required_assignee_role=node.required_assignee_role,
                     automation_rule_id=node.automation_rule_id,
                     execution_config=node.execution_config,
                     execution_config_override=node.execution_config_override,
@@ -758,6 +782,8 @@ def instantiate_workflow(
         approval_policy=definition.approval_policy,
         ai_automation_rule_id=definition.ai_automation_rule_id,
         execution_config=definition.execution_config,
+        assignee_roles=definition.assignee_roles,
+        feature_flags=definition.feature_flags,
         nodes=[
             WorkflowNodeInstance(
                 **node.model_dump(),

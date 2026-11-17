@@ -73,6 +73,22 @@ class LoopItemCreate(BaseModel):
         return self
 
 
+class QualityReviewInput(BaseModel):
+    """One versioned acceptance conclusion from the current stage owner."""
+
+    decision: Literal["no_objection", "accepted", "changes_requested"]
+    evidence: list[str] = Field(min_length=1, max_length=100)
+    idempotency_key: str = Field(min_length=1, max_length=128)
+    pr_head_sha: str = Field(min_length=1, max_length=128)
+
+    @field_validator("evidence")
+    @classmethod
+    def validate_evidence(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() for value in values):
+            raise ValueError("Quality review evidence cannot be empty")
+        return [value.strip() for value in values]
+
+
 class LoopItemUpdate(BaseModel):
     position: LoopItemPosition | None = None
     runner_selection: RunnerSelection | None = None
@@ -95,6 +111,7 @@ class LoopItemUpdate(BaseModel):
     workflow: IssueWorkflowInstance | None = None
     execution_config: WorkflowExecutionConfig | None = None
     automation_rule_id: str | None = Field(default=None, max_length=64)
+    quality_review: QualityReviewInput | None = None
 
     _normalize = field_validator("tags", mode="before")(
         lambda value: None if value is None else _normalize_tags(value)
@@ -102,6 +119,12 @@ class LoopItemUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_assignee(self) -> "LoopItemUpdate":
+        if "quality_review" in self.model_fields_set:
+            if self.quality_review is None or self.model_fields_set - {
+                "version",
+                "quality_review",
+            }:
+                raise ValueError("Quality reviews must be submitted separately")
         if "security_level" in self.model_fields_set and self.security_level is None:
             raise ValueError("security_level cannot be null")
         values = [
@@ -197,6 +220,7 @@ class LoopItemResponse(BaseModel):
     workflow: IssueWorkflowInstance | None = None
     execution_config: WorkflowExecutionConfig | None = None
     priority: str
+    quality_handoff: dict[str, Any] | None = None
     start_at: datetime | None = None
     due_at: datetime | None
     sort_order: int
@@ -325,6 +349,9 @@ class LoopItemResponse(BaseModel):
                 "status_history": status_history,
                 "approval": approval,
                 "workflow": workflow,
+                "quality_handoff": value.get(
+                    "quality_handoff", metadata.get("quality_handoff")
+                ),
                 "execution_config": execution_config,
                 "queued_at": queued_at,
                 "execution_note": (

@@ -33,6 +33,12 @@ interface SavedIssue {
   assignee_user_id: number | null
 }
 
+interface StageIssue extends SavedIssue {
+  version: number
+  tags: string[]
+  workflow: { current_stage_id: string | null }
+}
+
 async function saveSilently(page: Page, testId: string): Promise<void> {
   await page.getByTestId(`${testId}-options`).click()
   const action = page.getByTestId(`${testId}-without-notification`)
@@ -106,6 +112,136 @@ async function waitForAssignmentNotification(
 }
 
 test.describe('Issue Dispatch human assignment', () => {
+  test('enforces stage owners across assignment and PATCH and advances a reassigned introduction', async ({
+    page,
+    request,
+  }, testInfo) => {
+    test.setTimeout(120_000)
+    const suffix = `${Date.now()}`
+    const fixture = await createProjectFixture(page, suffix, `Stage owner ${suffix}`)
+    const memberId = await addProjectMember(page, REGULAR_USER.username)
+    const owner = await webApi<{ id: number }>(page, '/api/users/me')
+    const issuePath = `/api/v1/loop-items/${fixture.issueId}`
+    const assignmentPath = `/api/v1/cloud-projects/${fixture.projectId}/loop-items/${fixture.issueId}/assign`
+    const original = await webApi<StageIssue>(page, issuePath)
+    const constrained = await webApi<StageIssue>(page, issuePath, {
+      method: 'PATCH',
+      body: {
+        version: original.version,
+        assignee_user_id: owner.id,
+        notify_assignee: false,
+        workflow: {
+          stage_mode: 'dag',
+          current_stage_id: 'technical-review',
+          nodes: [
+            {
+              id: 'technical-review',
+              name: 'Technical review',
+              status: 'ready',
+              required_assignee_type: 'user',
+              required_assignee_id: String(owner.id),
+            },
+          ],
+        },
+      },
+    })
+
+    for (const method of ['POST', 'PATCH']) {
+      const rejected = await page.evaluate(
+        async ({ path, requestMethod, version, assigneeId }) => {
+          const response = await fetch(path, {
+            method: requestMethod,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              version,
+              notify_assignee: false,
+              ...(requestMethod === 'POST'
+                ? { assignee_type: 'user', assignee_id: assigneeId }
+                : { assignee_user_id: Number(assigneeId) }),
+            }),
+          })
+          return { status: response.status, body: await response.json() }
+        },
+        {
+          path: method === 'POST' ? assignmentPath : issuePath,
+          requestMethod: method,
+          version: constrained.version,
+          assigneeId: memberId,
+        }
+      )
+      expect(rejected.status).toBe(422)
+      expect(rejected.body.detail).toMatchObject({
+        reason_code: 'stage_assignee_mismatch',
+        issue_version: constrained.version,
+        stage_id: 'technical-review',
+        expected_assignee: { assignee_type: 'user', assignee_id: String(owner.id) },
+        actual_assignee: { assignee_type: 'user', assignee_id: memberId },
+      })
+      expect(await webApi<StageIssue>(page, issuePath)).toMatchObject({
+        version: constrained.version,
+        assignee_user_id: owner.id,
+        workflow: { current_stage_id: 'technical-review' },
+      })
+    }
+    await expectNoAssignmentNotification(request, fixture.issueId)
+
+    const assigned = await webApi<StageIssue>(page, assignmentPath, {
+      method: 'POST',
+      body: {
+        version: constrained.version,
+        assignee_type: 'user',
+        assignee_id: String(owner.id),
+        notify_assignee: false,
+      },
+    })
+    expect(assigned.assignee_user_id).toBe(owner.id)
+
+    // Applying a product introduction and changing its owner is one atomic write.
+    const reviewed = await webApi<StageIssue>(page, issuePath, {
+      method: 'PATCH',
+      body: {
+        version: assigned.version,
+        status: 'pending',
+        tags: ['需求提出'],
+        assignee_user_id: Number(memberId),
+        notify_assignee: false,
+        workflow: {
+          stage_mode: 'dag',
+          current_stage_id: 'introduction',
+          nodes: [
+            {
+              id: 'introduction',
+              name: '需求提出',
+              status: 'ready',
+              required_assignee_type: 'user',
+              required_assignee_id: 'jiangyang7',
+            },
+            {
+              id: 'common-review',
+              name: '共同评审',
+              depends_on: ['introduction'],
+            },
+          ],
+        },
+      },
+    })
+    expect(reviewed).toMatchObject({
+      version: assigned.version + 1,
+      status: 'pending',
+      assignee_user_id: Number(memberId),
+      workflow: { current_stage_id: 'common-review' },
+    })
+    expect(reviewed.tags).toContain('共同评审')
+    expect(reviewed.tags).not.toContain('需求提出')
+    await page.goto(`${fixture.projectPath}/issues/${encodeURIComponent(fixture.issueId)}`)
+    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+      'data-value',
+      `user:${memberId}`
+    )
+    await expectNoAssignmentNotification(request, fixture.issueId)
+    await captureEvidence(page, testInfo, 'stage-owner-common-review')
+  })
+
   test('assigns the Issue to a project member without auto-completing it', async ({
     page,
     request,

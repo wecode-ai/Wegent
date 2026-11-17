@@ -576,6 +576,14 @@ export function createWeworkDeliverySharedWorkspaceApi(
               due_at: input.dueAt,
               tags: input.tags,
               security_level: input.securityLevel,
+              quality_review: input.qualityReview
+                ? {
+                    decision: input.qualityReview.decision,
+                    evidence: input.qualityReview.evidence,
+                    idempotency_key: input.qualityReview.idempotencyKey,
+                    pr_head_sha: input.qualityReview.prHeadSha,
+                  }
+                : undefined,
               position: input.position,
             }) as Parameters<DeliveryApi['updateLoopItem']>[1]
           )

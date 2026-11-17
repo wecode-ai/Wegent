@@ -274,6 +274,25 @@ class GitHubEventPoller(_HttpPoller):
                     repository_payload=repository_payload,
                 )
             )
+            if "draft" in detail:
+                from app.services.project_quality_snapshot import (
+                    observe_quality_snapshot,
+                )
+
+                quality_input = await observe_quality_snapshot(
+                    client,
+                    api_base=api_base,
+                    repository=repository,
+                    number=number,
+                    headers=headers,
+                    repository_payload=repository_payload,
+                    pull=detail,
+                )
+                for change in changes:
+                    change.payload["quality_snapshot"] = quality_input.payload[
+                        "quality_snapshot"
+                    ]
+                changes.append(quality_input)
         reviews = await self._list_all(
             client,
             f"{api_base}/repos/{repository}/pulls/{number}/reviews",
@@ -416,6 +435,31 @@ class GitHubEventPoller(_HttpPoller):
                             repository_payload=repository_payload,
                         )
                     )
+                    if "draft" in detail:
+                        from app.services.project_quality_snapshot import (
+                            observe_quality_snapshot,
+                        )
+
+                        quality_input = await observe_quality_snapshot(
+                            client,
+                            api_base=api_base,
+                            repository=repository,
+                            number=number,
+                            headers=headers,
+                            repository_payload=repository_payload,
+                            pull=detail,
+                        )
+                        for change in changes:
+                            if (
+                                change.payload.get("pull_request", {}).get("number")
+                                == number
+                                or change.payload.get("check_run", {}).get("head_sha")
+                                == head_sha
+                            ):
+                                change.payload["quality_snapshot"] = (
+                                    quality_input.payload["quality_snapshot"]
+                                )
+                        changes.append(quality_input)
             if len(pulls) < POLL_PAGE_SIZE:
                 break
             page += 1

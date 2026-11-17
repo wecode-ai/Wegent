@@ -5,9 +5,14 @@
 
 from sqlalchemy.orm import Session
 
-from app.models.delivery import LoopItem
+from app.models.delivery import CloudProject, LoopItem
 from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_items.service import loop_item_service
+from app.services.stage_assignees import (
+    stage_assignee_enforcement_enabled,
+    stage_node,
+    validate_stage_assignee,
+)
 
 
 def assign_round_owner(
@@ -24,12 +29,41 @@ def assign_round_owner(
     """
     if not assignments:
         return
+    project = db.get(CloudProject, item.cloud_project_id)
+    if project is None:
+        raise ValueError("The Issue project is unavailable")
+    metadata = item.metadata_json or {}
+    node = stage_node(project, metadata) or {}
+    constrained = stage_assignee_enforcement_enabled(project, metadata) and bool(
+        node.get("required_assignee_type")
+        or node.get("required_assignee_role")
+        or node.get("name") in {"需求提出", "质量验收"}
+        or (
+            node.get("name") == "开发实现"
+            and (metadata.get("quality_handoff") or {}).get("required_assignee_role")
+        )
+    )
+    current_stage_id = node.get("id") if constrained else None
+    current_assignments = [
+        entry
+        for entry in assignments
+        if current_stage_id and entry.get("workflow_stage_id") == current_stage_id
+    ]
+    owner_candidates = current_assignments or assignments
     owner = next(
-        (entry for entry in assignments if entry["assignee_type"] == "human"),
-        assignments[0],
+        (entry for entry in owner_candidates if entry["assignee_type"] == "human"),
+        owner_candidates[0],
     )
     human = owner["assignee_type"] == "human"
     member_id = str(owner["human_user_id"] if human else owner["agent_id"])
+    metadata = validate_stage_assignee(
+        db,
+        project=project,
+        item=item,
+        assignee_type="user" if human else "agent",
+        assignee_id=member_id,
+        actor_user_id=user_id,
+    )
     issue_assignment_service.record(
         db,
         project_id=item.cloud_project_id,
@@ -42,7 +76,6 @@ def assign_round_owner(
         trigger="collaboration_round",
         replace_root_assignments=True,
     )
-    metadata = dict(item.metadata_json or {})
     loop_item_service.record_assignment_change(
         metadata,
         user_id,

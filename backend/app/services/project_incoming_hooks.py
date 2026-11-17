@@ -481,6 +481,14 @@ class ProjectIncomingHookService:
                 from app.services.project_internal_events import process_internal_event
 
                 return await process_internal_event(db, event, hook)
+            if metadata.get("collection_mode") != "poll":
+                # Only the authenticated provider collector can assert a full
+                # head/check snapshot. Webhook content cannot supply one.
+                payload = {
+                    key: value
+                    for key, value in payload.items()
+                    if key != "quality_snapshot"
+                }
             normalized = normalize_webhook_events(
                 str(hook_metadata.get("source_type") or hook.source or ""),
                 payload,

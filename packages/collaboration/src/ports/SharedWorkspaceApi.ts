@@ -184,6 +184,12 @@ export interface WorkspaceIssueUpdateInput {
   startAt?: string | null;
   dueAt?: string | null;
   tags?: string[];
+  qualityReview?: {
+    decision: "no_objection" | "accepted" | "changes_requested";
+    evidence: string[];
+    idempotencyKey: string;
+    prHeadSha: string;
+  };
 }
 
 export interface WorkspaceIssueAssignmentInput {
@@ -445,7 +451,9 @@ export interface SharedWorkspaceAutomationExecutionCatalogApi {
 export interface WorkspaceProjectAgent extends CollaborationAgent {
   status?: string;
   systemPrompt?: string;
-  executionPolicy?: import("../agent-form/runnerRouting").AgentExecutionPolicy | null;
+  executionPolicy?:
+    | import("../agent-form/runnerRouting").AgentExecutionPolicy
+    | null;
   modelPolicy?: import("../agent-form/runnerRouting").AgentModelPolicy | null;
   [key: string]: unknown;
 }
