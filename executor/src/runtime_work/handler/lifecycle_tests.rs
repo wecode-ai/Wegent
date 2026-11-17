@@ -594,6 +594,13 @@ async fn native_completed_send_waits_in_scheduler_for_old_process_cleanup() {
             .request
             .new_session
     );
+    {
+        let scheduler = handler.turn_scheduler.lock().unwrap();
+        let queued_turn = scheduler.queued_turns.front().unwrap();
+        assert!(queued_turn.request.new_session);
+        assert!(queued_turn.direct_thread_id.is_none());
+        assert!(queued_turn.resume_thread_id.is_none());
+    }
     assert!(handler.is_current_local_task_execution("task-1", execution));
     assert_eq!(
         handler.turn_scheduler.lock().unwrap().active_task_ids.len(),

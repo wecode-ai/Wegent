@@ -2,7 +2,6 @@
 
 import json
 import os
-from typing import Any
 
 from sqlalchemy.engine import make_url
 
@@ -55,14 +54,32 @@ def main() -> None:
 
         removed = 0
         for row in rows:
-            result: dict[str, Any] = row.result or {}
-            if "executor_session" in result:
-                result.pop("executor_session")
-                row.result = result
+            result = row.result
+            if isinstance(result, dict) and "executor_session" in result:
+                updated = dict(result)
+                updated.pop("executor_session")
+                row.result = updated
                 removed += 1
         if removed == 0:
             raise RuntimeError("Fixture found no persisted executor_session proof")
         db.commit()
+        db.expire_all()
+        remaining = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task_id,
+                Subtask.user_id == user_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+                Subtask.status == SubtaskStatus.COMPLETED,
+            )
+            .order_by(Subtask.id.desc())
+            .all()
+        )
+        if any(
+            isinstance(row.result, dict) and "executor_session" in row.result
+            for row in remaining
+        ):
+            raise RuntimeError("Executor session proof removal was not persisted")
         print(
             json.dumps({"task_id": task_id, "removed": removed, "sessions": sessions})
         )

@@ -21,7 +21,7 @@ use brz_redis::Redis as _;
 use brz_socket_io::{ClientError, Reply};
 use serde_json::{Map, Value, json};
 
-use crate::json_compat::python_json_value;
+use crate::json_compat::{python_json_value, python_str};
 use crate::request_sql::{RouteKey, fetch_optional_as};
 use crate::socketio::chat_session::ChatSession;
 use crate::socketio::chat_trigger::ChatTurn;
@@ -168,6 +168,8 @@ struct FailedSubtask {
     executor_name: Option<String>,
     #[mysql(rename = "executor_namespace")]
     executor_namespace: Option<String>,
+    #[mysql(rename = "result")]
+    result: Option<Json<OpaqueJson>>,
     #[mysql(rename = "created_at")]
     created_at: Option<chrono::NaiveDateTime>,
 }
@@ -251,6 +253,12 @@ async fn prepare_retry(
     }
     let bot_ids = team_bot_ids(state, &team).await?;
     apply_model_override(payload, &mut task_json);
+    let retry_result = failed
+        .result
+        .as_ref()
+        .map(|result| result.0.to_value())
+        .unwrap_or_else(|| json!({}));
+    let retry_session = retry_executor_session(retry_result.get("executor_session"));
     reset_subtask_for_retry(
         state,
         &tables,
@@ -258,6 +266,7 @@ async fn prepare_retry(
         &failed.status,
         task_owner,
         &mut task_json,
+        retry_session.as_ref(),
     )
     .await?;
     let message = extract_display_prompt(user_subtask.prompt.as_deref()).unwrap_or_default();
@@ -380,6 +389,51 @@ fn retry_image_generation(result: &Value) -> Option<Value> {
     Some(json!({ "size": size }))
 }
 
+/// Keep only a structurally valid executor session as retry proof.
+fn retry_executor_session(session: Option<&Value>) -> Option<Value> {
+    let session = session?.as_object()?;
+    let agent = session.get("agent").filter(|value| is_truthy(value))?;
+    let session_id =
+        truthy_value(session.get("sessionId")).or_else(|| truthy_value(session.get("session_id")));
+    let thread_id =
+        truthy_value(session.get("threadId")).or_else(|| truthy_value(session.get("thread_id")));
+    if session_id.is_none() && thread_id.is_none() {
+        return None;
+    }
+    let mut normalized = Map::new();
+    normalized.insert("agent".to_string(), Value::String(python_str(agent)));
+    if let Some(session_id) = session_id {
+        normalized.insert(
+            "sessionId".to_string(),
+            Value::String(python_str(session_id)),
+        );
+    }
+    if let Some(thread_id) = thread_id {
+        normalized.insert("threadId".to_string(), Value::String(python_str(thread_id)));
+    }
+    if let Some(bot_id) = session.get("botId").or_else(|| session.get("bot_id"))
+        && !bot_id.is_null()
+    {
+        normalized.insert("botId".to_string(), bot_id.clone());
+    }
+    Some(Value::Object(normalized))
+}
+
+fn is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(flag) => *flag,
+        Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(fields) => !fields.is_empty(),
+    }
+}
+
+fn truthy_value<'a>(value: Option<&'a Value>) -> Option<&'a Value> {
+    value.filter(|value| is_truthy(value))
+}
+
 /// `_is_code_wiki_task`.
 fn is_code_wiki_task(task_json: &Value) -> bool {
     task_json
@@ -397,6 +451,7 @@ async fn reset_subtask_for_retry(
     previous_status: &str,
     task_owner: i64,
     task_json: &mut Value,
+    executor_session: Option<&Value>,
 ) -> Result<(), RetryFailure> {
     let subtasks = tables.subtasks.clone();
     let task_table = tables.tasks.clone();
@@ -405,6 +460,9 @@ async fn reset_subtask_for_retry(
     let mut pending = task_json.clone();
     crate::responses::create::continuation::mark_pending(&mut pending, &local_isoformat());
     let task_payload = python_json_value(&pending);
+    let reset_result = executor_session
+        .map(|session| json!({"executor_session": session}))
+        .unwrap_or_else(|| json!(null));
     let reset = state
         .mysql
         .with_transaction(async |transaction| {
@@ -417,7 +475,7 @@ async fn reset_subtask_for_retry(
                     (
                         "PENDING".to_string(),
                         0_i64,
-                        None::<String>,
+                        python_json_value(&reset_result),
                         String::new(),
                         now.clone(),
                         payload.subtask_id,
@@ -666,5 +724,27 @@ mod tests {
             retry_image_generation(&json!({"image_config": {"size": null}})),
             None
         );
+    }
+
+    #[test]
+    fn retry_preserves_only_a_structurally_valid_executor_session() {
+        assert_eq!(
+            retry_executor_session(Some(&json!({
+                "agent": "Claude Code",
+                "bot_id": 23,
+                "session_id": "session-1",
+                "extra": "ignored"
+            }))),
+            Some(json!({
+                "agent": "Claude Code",
+                "sessionId": "session-1",
+                "botId": 23
+            }))
+        );
+        assert_eq!(
+            retry_executor_session(Some(&json!({"agent": "Codex"}))),
+            None
+        );
+        assert_eq!(retry_executor_session(None), None);
     }
 }

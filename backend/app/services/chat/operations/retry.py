@@ -106,13 +106,20 @@ def reset_subtask_for_retry(
     Raises:
         Exception: If database commit fails
     """
+    result = getattr(subtask, "result", None)
+    session = (
+        result.get("executor_session")
+        if isinstance(result, dict) and isinstance(result.get("executor_session"), dict)
+        else None
+    )
+    reset_result = {"executor_session": session} if session else None
     subtask_store.update_fields(
         db,
         subtask=subtask,
         status=SubtaskStatus.PENDING,
         progress=0,
         error_message="",
-        result=None,
+        result=reset_result,
         updated_at=datetime.now(),
     )
 

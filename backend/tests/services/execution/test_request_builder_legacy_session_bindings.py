@@ -104,9 +104,53 @@ def test_owned_unproven_continuation_starts_a_new_session(test_db, mocker):
             id=5, user_id=7, name="team", namespace="default", json={}
         ),
         message="continue",
+        allow_new_session_fallback=True,
     )
 
     assert request.new_session is True
+
+
+@pytest.mark.parametrize(
+    (
+        "allow_fallback",
+        "new_session",
+        "user_id",
+        "shell",
+        "inherited",
+        "bindings",
+    ),
+    [
+        (True, False, 7, "Codex", [], []),
+        (False, False, 7, "Codex", [], []),
+        (True, False, 8, "Codex", [], []),
+        (True, False, 7, "Chat", [], []),
+        (True, True, 7, "Codex", [], []),
+        (True, False, 7, "Codex", [_session()], []),
+        (True, False, 7, "Codex", [], [_session()]),
+    ],
+)
+def test_unproven_session_fallback_is_caller_and_context_gated(
+    allow_fallback, new_session, user_id, shell, inherited, bindings
+):
+    should_start = TaskRequestBuilder._should_start_new_session(
+        allow_new_session_fallback=allow_fallback,
+        new_session=new_session,
+        task=SimpleNamespace(id=123, user_id=7),
+        user=SimpleNamespace(id=user_id),
+        bot_configs=[{"shell_type": shell}],
+        inherited_sessions=inherited,
+        legacy_session_bindings=bindings,
+    )
+
+    expected = (
+        allow_fallback
+        and not new_session
+        and user_id == 7
+        and shell in {"Codex", "ClaudeCode"}
+        and not inherited
+        and not bindings
+    )
+    assert should_start is expected
 
 
 @pytest.mark.parametrize(

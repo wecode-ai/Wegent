@@ -1285,6 +1285,7 @@ impl RuntimeWorkRpcHandler {
         // no authenticated proof of the remembered one; preserve that decision.
         // Local session-boundary commands only strengthen continuation to true.
         request.new_session |= start_new_session;
+        let start_fresh_native_session = request.new_session;
         if request.runtime_project_key.is_none() {
             request.runtime_project_key = existing_link
                 .as_ref()
@@ -1446,8 +1447,8 @@ impl RuntimeWorkRpcHandler {
         self.schedule_worktree_prune();
         let direct_thread_id = thread_id
             .clone()
-            .filter(|_| ephemeral && !start_new_session);
-        let resume_thread_id = thread_id.filter(|_| !ephemeral && !start_new_session);
+            .filter(|_| ephemeral && !start_fresh_native_session);
+        let resume_thread_id = thread_id.filter(|_| !ephemeral && !start_fresh_native_session);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
         self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
