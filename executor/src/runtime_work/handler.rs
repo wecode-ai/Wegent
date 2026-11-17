@@ -632,6 +632,7 @@ struct ActiveLocalExecution {
 
 #[derive(Debug, PartialEq, Eq)]
 struct PreparingTurn {
+    owner_request: Option<Value>,
     cancellation_requested: bool,
 }
 

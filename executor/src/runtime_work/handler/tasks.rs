@@ -2436,9 +2436,29 @@ impl RuntimeWorkRpcHandler {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let local_task_id = self.canonical_local_task_id(&requested_task_id);
+        // A preparation can own the send gate while awaiting cancellable provider I/O.
+        let stopped_preparation = self.stop_preparing_turn_before_send_gate(&local_task_id)?;
+        if stopped_preparation {
+            // The notified owner cleans up its own preparation and queue reservation.
+            // Acknowledgement must not wait behind another send or touch its state.
+            return Ok(match self.local_task_link(&local_task_id) {
+                Some(link) => task_action_success(&link),
+                None => json!({
+                    "success": true,
+                    "accepted": true,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                }),
+            });
+        }
         let send_gate = self.task_send_gate(&local_task_id);
         let _send_guard = send_gate.lock().await;
-        self.invalidate_stand_in_owner_request(&local_task_id);
+        if let Err(error) = self.invalidate_stand_in_owner_request(&local_task_id) {
+            self.cancel_preparing_turn(&local_task_id);
+            self.request_active_turn_stop(&local_task_id);
+            self.resolve_pending_request_user_input_for_stop(&local_task_id);
+            return Err(error);
+        }
         let pending_client_user_message_id = string_field(&payload, "clientUserMessageId")
             .or_else(|| string_field(&payload, "client_user_message_id"));
         let link = self.local_task_link(&local_task_id);

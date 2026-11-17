@@ -6,6 +6,10 @@ use super::*;
 
 const ACTIVE_TURN_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+#[cfg(test)]
+#[path = "preparation_cancellation_tests.rs"]
+mod preparation_cancellation_tests;
+
 enum ActiveTurnStopState {
     Missing,
     Pending,
@@ -58,6 +62,34 @@ fn settle_local_execution_link(
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn stop_preparing_turn_before_send_gate(
+        &self,
+        task_id: &str,
+    ) -> Result<bool, AppIpcError> {
+        let mut preparing = self
+            .preparing_turns
+            .lock()
+            .expect("preparation map poisoned");
+        let Some(preparation) = preparing.get_mut(task_id) else {
+            return Ok(false);
+        };
+        let owner = preparation.owner_request.clone();
+        let mut active = self
+            .active_local_executions
+            .lock()
+            .expect("active local execution map poisoned");
+        preparation.cancellation_requested = true;
+        if let Some(control) = active.get_mut(task_id) {
+            request_execution_stop(control);
+        }
+        drop(active);
+        drop(preparing);
+        if let Some(owner) = owner {
+            self.cancel_stand_in_owner_request(task_id, &owner)?;
+        }
+        Ok(true)
+    }
+
     pub(super) fn start_local_task_execution(
         &self,
         local_task_id: String,

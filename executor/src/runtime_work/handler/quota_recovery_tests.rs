@@ -4,6 +4,14 @@
 use super::super::tests::ScalarEnv;
 use super::*;
 
+struct ProviderHold(PathBuf);
+
+impl Drop for ProviderHold {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 fn queued_wait(task: &str, deadline: i64) -> SpawnTurnRequest {
     let mut turn = SpawnTurnRequest {
         task_kind: None,
@@ -517,6 +525,7 @@ done
             assert!(changed.message.contains("account changed"));
             fs::write(home.path().join("account.json"), account.to_string()).unwrap();
             fs::write(home.path().join("hold-account"), "").unwrap();
+            let _hold_cleanup = ProviderHold(home.path().join("hold-account"));
             let mut link =
                 RuntimeTaskLink::new_pending("waiting".into(), "/work".into(), "Wait".into());
             link.thread_id = Some("thread".into());
@@ -535,13 +544,14 @@ done
             })
             .await
             .unwrap();
-            assert_eq!(
-                handler
-                    .cancel_task(json!({"taskId":"waiting"}))
-                    .await
-                    .unwrap()["accepted"],
-                true
-            );
+            let cancelled = tokio::time::timeout(
+                Duration::from_secs(2),
+                handler.cancel_task(json!({"taskId":"waiting"})),
+            )
+            .await
+            .expect("Cancellation must stop provider preparation before its hold is released")
+            .unwrap();
+            assert_eq!(cancelled["accepted"], true);
             tokio::time::timeout(Duration::from_secs(2), async {
                 while handler.is_busy_local_task("waiting")
                     || handler
