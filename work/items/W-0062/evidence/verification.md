@@ -142,6 +142,20 @@ Rust 验证通过：`runtime_work::handler::turns::tests` 17 项、`runtime_work
 
 模型自动合并同时保留 main 的默认选择与本地目录失效刷新，以及 MAN-08 的显式选择身份和可用性。三个 hook 与 modelCatalog 全套共 4 文件、53 项通过，hybrid 三项来源快照案例通过，目标五文件 ESLint 和 Wework typecheck 通过；双语文档 8 项与导航/helper 10 项通过。独立 Electron 包在本地未安装完整测试依赖，宿主 model-runtime-request 套件未成功收集，未计为通过；该路径的真实桌面结果和既有单元 CI 结果仍须核对新 head。本地未运行 E2E 或 ai:verify。
 
+## 2026-11-18 完整 CI 复核与真实宿主修复
+
+`a19640887c` 的七个工作流已全部结束，六个成功，Wework E2E 失败；汇总为 61 项成功、10 项按规则跳过、4 项失败，其中包含三个实际失败及一个失败汇总。该提交仍为 MERGEABLE，不能把部分通过记为全绿或交回 QA。
+
+本轮 [Backend API](https://github.com/wecode-ai/Wegent/actions/runs/44120262134/job/134169562572) 实际执行并通过并发角色、精确降级和 CP 权限用例，全套为 12,911 passed、1 skipped、3 subtests。[MySQL 回归](https://github.com/wecode-ai/Wegent/actions/runs/44120262134/job/134169562519) 的 22 项全部通过，包括旧 RR 快照后观察到并发角色晋升的新增用例。MySQL 与宿主单元 CI 使用 PR merge commit `c993b43967`，其 tree 与 `a19640887c` 相同；宿主 `model-runtime-request.test.ts` 实际收集并通过 17 项，不再只依赖本地未成功收集的结果。`runtime-task-queue` 在实际 Core6、`change-request-status` 在实际 Core8 均 PASS，不能沿用旧分片号。
+
+[Plugins 失败日志](https://github.com/wecode-ai/Wegent/actions/runs/44120261011/job/134174499529) 确认已枚举的窗口 `4194314` 查询标题时返回同资源 ID 的 `BadWindow / X_GetProperty`。artifact 确认处于 `core-dsh-ui-plugin-composition`，错误发生于清理终止前；没有证据确认该窗口的具体销毁原因。协议用例稳定复现旧的 `Promise.all` 会因一个已销毁窗口终止查找，即使同批存在真实确认窗。现在仅忽略同一窗口的该原生错误，继续在原 PID 和标题范围内寻找确认窗；其他错误、取消、双确认窗拒绝及 12 秒总截止保持。新增用例先 2 失败、15 通过，修复后该完整协议套件 20 项通过，主执行复核为 601 毫秒。
+
+[Core10 失败日志](https://github.com/wecode-ai/Wegent/actions/runs/44120261011/job/134174499658) 与 artifact 证明 Tasks 看板五列及真实控件已显示，但测试等待 `display: contents` 包装层自身可见，其尺寸恒为零。进一步复核发现真实 App 关闭了 ChromeTitlebar 的 workspace portal，而看板又隐藏了原对话主区的 portal 宿主；原入口组件只向不存在的宿主投递，因此 More 实际没有挂载。移除测试中人为创建的 portal，使用真实 ChromeTitlebar(false) 与 Layout 后，1120/320 宽度两例稳定失败。现在通过显式 `toolbarAction` 复用看板现有动作区，删除失效 portal 路径；创建状态、共享对话框、成员确认及导航后提示生命周期保留。E2E 改等同一固定 Tasks 标签、同一看板内真实分组按钮可见，后续两成员、Developer/direct_role、立即提示与刷新断言保持。入口相关 6 项、Action 与 TaskBoardView 完整 10 项、导航协议 10 项、双语文档 8 项通过；Wework typecheck 和完整 lint 通过，0 错误、5 项既有警告。
+
+[Cloud5 失败日志](https://github.com/wecode-ai/Wegent/actions/runs/44120261011/job/134174499922) 停在新 C 首次选择，尚未删除 C。设置页已保存 C，但随后完整 native catalog 刷新及 composer 均只有原有 21 项，没有 C；这不是滚动定位问题。旧日志没有记录 restart 返回值、任务及后台终端计数或 catalogReady，不能确认此次未就绪的具体 native gate。真实 modelApi、provider 投影与 reconciler 的四个协议用例确认：已有 B 就绪、新 C 已保存时，原生任务或后台终端导致安全重启延后，可以合法返回只有 B；下次 owner 请求在空闲或模型已加载后才发布 B 与 C。该合同测试不是对 CI 具体原因的复现。
+
+MAN-08 的前提现在明确为两个模型均已真实就绪：C 在项目创建和首次任务发送前通过真实设置页创建，并调用既有 native catalog 就绪检查。第五次发送后才首次改选 C，不发送即删除、禁止回退和发送、显式选 B 后第六次发送、保持同任务与 thread 的全部断言保留；没有增加 sleep、超时或重试。另在既有 model-loading 诊断中补充数量、boolean 和未知计数标记，区分目录就绪、安全重启 gate 与已加载模型数，不记录模型 ID、配置或凭证，不改变原生重启安全门或重试行为。新合同、就绪 helper 和诊断协议共 3 文件、12 项通过，既有 reconciliation 聚焦 6 项通过，目标 ESLint 与 Prettier 通过；最终真实桌面回归仍须取得包含这些修复的新 head CI。本地未运行 E2E 或 ai:verify。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

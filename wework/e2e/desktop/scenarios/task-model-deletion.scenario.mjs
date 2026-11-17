@@ -284,6 +284,13 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
         deletedModelId = created.created[0]?.id
         assert.ok(deletedModelId, 'The deletion fixture was not persisted')
         const localModelId = await createLocalModel(control)
+        const unsentModelId = await createLocalModel(control, {
+          providerName: unsentModelName,
+          modelId: unsentModelName,
+        })
+        assert.notEqual(unsentModelId, localModelId, 'The local model fixtures must be distinct')
+        // Persist both fixtures and verify native availability before any turn can defer activation.
+        await control.command('ensureLocalModelCatalogReady', 'body')
         await control.command('navigate', 'body', { value: '/' })
         await createSingleRootLocalProject(control, workspacePath, 'Task model deletion')
         await selectE2EModel(control, `local-model:${localModelId}`, localModelName)
@@ -394,10 +401,6 @@ export function createDesktopScenario({ workspacePath, modelResponseTimeoutMs, r
         await request(`/api/admin/public-models/${offlineModelId}`, {
           method: 'PUT',
           body: JSON.stringify({ is_visible: true }),
-        })
-        const unsentModelId = await createLocalModel(control, {
-          providerName: unsentModelName,
-          modelId: unsentModelName,
         })
         await control.command('navigate', 'body', { value: '/' })
         await control.command('waitFor', taskSelector)

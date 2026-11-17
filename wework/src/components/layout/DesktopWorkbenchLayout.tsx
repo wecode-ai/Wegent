@@ -1002,13 +1002,6 @@ export function DesktopWorkbenchLayout({
               />
             </TitlebarActionsPortal>
           ) : null}
-          {taskBoardOpen && (
-            <TaskBoardProjectCreateAction
-              services={services}
-              user={state.user ?? LOCAL_USER}
-              active={routeActive && !settingsOpen}
-            />
-          )}
           {taskBoardOpen ? (
             <div
               data-testid="task-view-board-transition"
@@ -1019,6 +1012,13 @@ export function DesktopWorkbenchLayout({
                 runtimeTaskLifecycle={runtimeTaskLifecycle}
                 unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
                 onCreateTask={startNewChatOutsideHarness}
+                toolbarAction={
+                  <TaskBoardProjectCreateAction
+                    services={services}
+                    user={state.user ?? LOCAL_USER}
+                    active={routeActive && !settingsOpen}
+                  />
+                }
                 projectSpaceApis={availableProjectSpaceApis}
                 onArchiveRuntimeTasks={onArchiveChatConversations}
                 onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}

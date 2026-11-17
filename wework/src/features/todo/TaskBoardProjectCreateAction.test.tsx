@@ -2,7 +2,6 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { CollaborationMember, SharedWorkspaceApi } from '@wegent/collaboration'
-import { TITLEBAR_ACTIONS_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { navigateTo } from '@/lib/navigation'
 import type { User } from '@/types/api'
@@ -14,7 +13,6 @@ vi.mock('@/lib/navigation', () => ({ navigateTo: vi.fn() }))
 const owner = { id: 1, user_id: 1, user_name: 'owner', email: null, role: 'Owner' as const }
 
 afterEach(() => {
-  document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
   vi.clearAllMocks()
 })
 
@@ -46,9 +44,6 @@ function fixture() {
       ]),
     },
   } as unknown as SharedWorkspaceApi
-  const portal = document.createElement('div')
-  portal.id = TITLEBAR_ACTIONS_PORTAL_ID
-  document.body.append(portal)
   const view = render(
     <TaskBoardProjectCreateAction
       services={{ sharedWorkspaceApi: api } as WorkbenchServices}

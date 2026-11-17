@@ -1,6 +1,7 @@
 import { createDeviceApi } from '@/api/devices'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { createProjectApi } from '@/api/projects'
+import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
@@ -2464,20 +2465,47 @@ describe('DesktopWorkbenchLayout', () => {
     'creates a project space from the actual Tasks board header at width %s',
     async width => {
       deliveryApiMock.available = true
-      const portal = document.createElement('div')
-      portal.id = TITLEBAR_ACTIONS_PORTAL_ID
-      document.body.append(portal)
-      render(<DesktopWorkbenchLayout {...baseProps} />)
+      const taskTab = {
+        id: 'fixed-task',
+        kind: 'task' as const,
+        title: '任务',
+        contentRoute: '/',
+        fixed: true,
+      }
+      render(
+        <WorkspaceTabsContext.Provider
+          value={{
+            tabs: [taskTab],
+            activeTabId: taskTab.id,
+            activeTab: taskTab,
+            openTab: vi.fn(),
+            selectTab: vi.fn(),
+            closeTab: vi.fn(),
+            closeOtherTabs: vi.fn(),
+            restoreClosedTab: vi.fn(),
+            moveTab: vi.fn(),
+            updateTab: vi.fn(),
+            updateActiveTab: vi.fn(),
+          }}
+        >
+          <ChromeTitlebar showWorkspacePortals={false} />
+          <DesktopWorkbenchLayout {...baseProps} />
+        </WorkspaceTabsContext.Provider>
+      )
       await userEvent.click(screen.getByTestId('runtime-task-view-menu-button'))
       await userEvent.click(screen.getByTestId('runtime-task-view-board'))
       expect(screen.getByTestId('task-board-surface')).toBeVisible()
       expect(screen.queryByTestId('cloud-todo-workspace')).not.toBeInTheDocument()
+      expect(document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)).toBeNull()
       act(() => {
         Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
         window.dispatchEvent(new Event('resize'))
       })
-      const more = screen.getByTestId('task-board-header-more')
+      const more = within(screen.getByTestId('task-board-surface')).getByTestId(
+        'task-board-header-more'
+      )
       expect(more).toBeVisible()
+      expect(more.closest('[data-testid="project-board-toolbar-action"]')).not.toBeNull()
       await userEvent.click(more)
       await userEvent.click(screen.getByTestId('task-board-create-project-space'))
       expect(await screen.findByTestId('cloud-project-name')).toBeVisible()

@@ -125,14 +125,19 @@ test('ordinary project creation starts at the real Tasks board and shares member
     { id: 8, user_name: 'alice' },
     { id: 9, user_name: 'bob' },
   ]
-  const command = vi.fn(async action => (action === 'getElementCount' ? '0' : ''))
+  const command = vi.fn(async (action, selector, options) => {
+    if (action === 'waitFor' && selector.endsWith('[data-testid="task-board-surface"]')) {
+      expect(options.visible).not.toBe(true)
+    }
+    return action === 'getElementCount' ? '0' : ''
+  })
   const request = vi.fn(async () => ({ items: [project] }))
   expect(
     await createOrdinaryTaskProject({ command }, { name: project.name, members, owner, request })
   ).toEqual(project)
   expect(command).toHaveBeenCalledWith(
     'waitFor',
-    '[data-testid="workspace-tab-content-fixed-task"] [data-testid="task-board-surface"]',
+    '[data-testid="workspace-tab-content-fixed-task"] [data-testid="task-board-surface"] [data-testid="cloud-board-group-by"]',
     { visible: true }
   )
   expect(command).toHaveBeenCalledWith('click', '[data-testid="task-board-create-project-space"]')

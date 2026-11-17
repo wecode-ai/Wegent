@@ -4,7 +4,6 @@ import { Plus } from 'lucide-react'
 import type { CollaborationMember, ProjectCreateTarget } from '@wegent/collaboration'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TransientNotice } from '@/components/common/TransientNotice'
-import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
@@ -56,22 +55,20 @@ export function TaskBoardProjectCreateAction({
   return (
     <>
       {active && (
-        <TitlebarActionsPortal>
-          <ActionMenu
-            ariaLabel={t('workbench.more', '更多')}
-            testId="task-board-header-more"
-            placement="bottom-end"
-            triggerClassName="electron-titlebar-interactive-region flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:w-8"
-            items={[
-              {
-                label: t('todo.new_project_space', '新建项目空间'),
-                icon: Plus,
-                testId: 'task-board-create-project-space',
-                onSelect: () => setOpen(true),
-              },
-            ]}
-          />
-        </TitlebarActionsPortal>
+        <ActionMenu
+          ariaLabel={t('workbench.more', '更多')}
+          testId="task-board-header-more"
+          placement="bottom-end"
+          triggerClassName="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary md:h-8 md:w-8"
+          items={[
+            {
+              label: t('todo.new_project_space', '新建项目空间'),
+              icon: Plus,
+              testId: 'task-board-create-project-space',
+              onSelect: () => setOpen(true),
+            },
+          ]}
+        />
       )}
       {open && (
         <ProjectSpaceCreateDialog

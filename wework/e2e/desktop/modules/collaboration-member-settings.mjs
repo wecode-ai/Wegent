@@ -83,7 +83,7 @@ export async function createOrdinaryTaskProject(control, { name, members, owner,
   await control.command('click', '[data-testid="runtime-task-view-board"]')
   await control.command(
     'waitFor',
-    '[data-testid="workspace-tab-content-fixed-task"] [data-testid="task-board-surface"]',
+    '[data-testid="workspace-tab-content-fixed-task"] [data-testid="task-board-surface"] [data-testid="cloud-board-group-by"]',
     { visible: true }
   )
   await control.command('clickWhenEnabled', '[data-testid="task-board-header-more"]', {

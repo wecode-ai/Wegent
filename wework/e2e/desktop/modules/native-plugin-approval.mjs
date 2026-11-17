@@ -188,16 +188,35 @@ async function findLinuxModal(pid, options) {
     const windows = stdout.trim().split(/\s+/).filter(Boolean)
     // search --name reads only WM_NAME in Ubuntu's xdotool; GTK uses _NET_WM_NAME.
     // getwindowname resolves that EWMH UTF-8 property while preserving PID ownership.
-    const titles = await Promise.all(
-      windows.map(window => execute('xdotool', ['getwindowname', window], remaining()))
-    )
-    const matches = windows.filter((_, index) => TITLES.includes(titles[index].stdout.trim()))
+    const titles = await Promise.all(windows.map(window => linuxWindowTitle(window, remaining())))
+    const matches = windows.filter((_, index) => TITLES.includes(titles[index]))
     assert.ok(matches.length < 2, 'Native plugin confirmation must be unambiguous')
     if (matches.length === 1 && Date.now() < deadline) return matches[0]
     const wait = deadline - Date.now()
     if (wait > 0) await new Promise(resolve => setTimeout(resolve, Math.min(100, wait)))
   }
   throw new Error('The isolated app did not display its native Core plugin decision')
+}
+
+async function linuxWindowTitle(window, options) {
+  try {
+    const { stdout } = await execute('xdotool', ['getwindowname', window], options)
+    return stdout.trim()
+  } catch (error) {
+    const stderr = String(error.stderr ?? '')
+    const resource = stderr.match(/Resource id in failed request:\s+(0x[\da-f]+)/i)
+    // X11 enumeration is a snapshot; an owned window may close before its title is read.
+    if (
+      error.code === 1 &&
+      !error.killed &&
+      !error.signal &&
+      /X Error of failed request:\s+BadWindow \(invalid Window parameter\)/.test(stderr) &&
+      /Major opcode of failed request:\s+20 \(X_GetProperty\)/.test(stderr) &&
+      Number(resource?.[1]) === Number(window)
+    )
+      return null
+    throw error
+  }
 }
 
 async function recordNativeWindowDiagnostics(pid) {
