@@ -308,7 +308,7 @@ test('retains Windows native failure stages and the unchanged deadline without e
     killed: true,
     signal: 'SIGTERM',
     stdout:
-      'private-child-output\r\nnative-decision:started\r\nnative-decision:client-loaded\r\nnative-decision:private-value\r\n',
+      'private-child-output\r\nnative-decision:started\r\nnative-decision:client-loaded\r\nnative-decision:search-started\r\nnative-decision:search-completed\r\nnative-decision:title-unmatched\r\nnative-decision:private-value\r\n',
     stderr: 'private-child-error',
   })
   native.execute.mockRejectedValue(original)
@@ -332,7 +332,13 @@ test('retains Windows native failure stages and the unchanged deadline without e
         code: null,
         killed: true,
         signal: 'SIGTERM',
-        stages: ['started', 'client-loaded'],
+        stages: [
+          'started',
+          'client-loaded',
+          'search-started',
+          'search-completed',
+          'title-unmatched',
+        ],
       })
     )
     expect(log.mock.calls.flat().join(' ')).not.toContain('private')

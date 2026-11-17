@@ -74,22 +74,35 @@ end run`,
   }
   if (process.platform === 'win32') {
     const script = `
-Write-Output 'native-decision:started'
+$decisionStages = [System.Collections.Generic.HashSet[string]]::new()
+function Write-DecisionStage([string]$decisionStage) {
+  if ($decisionStages.Add($decisionStage)) { Write-Output "native-decision:$decisionStage" }
+}
+Write-DecisionStage 'started'
 Add-Type -AssemblyName UIAutomationClient
-Write-Output 'native-decision:client-loaded'
+Write-DecisionStage 'client-loaded'
 Add-Type -AssemblyName UIAutomationTypes
-Write-Output 'native-decision:types-loaded'
+Write-DecisionStage 'types-loaded'
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, ${pid})
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
 while ([DateTime]::UtcNow -lt $deadline) {
+  Write-DecisionStage 'search-started'
   $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+  Write-DecisionStage 'search-completed'
   foreach ($window in $windows) {
-    if ($window.Current.Name -notin @(${TITLES.map(title => `'${title}'`).join(', ')})) { continue }
-    Write-Output 'native-decision:dialog-matched'
+    Write-DecisionStage 'owned-window-present'
+    $decisionTitle = $window.Current.Name
+    Write-DecisionStage 'title-read'
+    if ($window.Current.ClassName -eq '#32770') { Write-DecisionStage 'owned-dialog-present' }
+    if ($decisionTitle -notin @(${TITLES.map(title => `'${title}'`).join(', ')})) {
+      Write-DecisionStage 'title-unmatched'
+      continue
+    }
+    Write-DecisionStage 'dialog-matched'
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
     foreach ($button in $buttons) {
       if ($button.Current.Name -in @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
-        Write-Output 'native-decision:button-matched'
+        Write-DecisionStage 'button-matched'
         $pattern = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
         $pattern.Invoke()
         exit 0
@@ -114,6 +127,12 @@ throw 'The isolated app did not display its native Core plugin decision'
         'started',
         'client-loaded',
         'types-loaded',
+        'search-started',
+        'search-completed',
+        'owned-window-present',
+        'title-read',
+        'owned-dialog-present',
+        'title-unmatched',
         'dialog-matched',
         'button-matched',
       ])

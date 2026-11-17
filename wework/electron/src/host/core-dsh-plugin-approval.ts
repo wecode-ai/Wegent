@@ -39,6 +39,7 @@ export async function confirmCoreDshPluginInstall(
     await readFile(new URL(`../locales/${locale}.json`, import.meta.url), 'utf8')
   ) as Record<string, string>
   const options = coreDshPluginInstallDialog(request, copy)
+  console.info('[Wework] Core plugin native decision requested', { action: request.action })
   const result =
     parent && !parent.isDestroyed()
       ? await dialog.showMessageBox(parent, options)
