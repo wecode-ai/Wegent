@@ -49,9 +49,8 @@ export function createProjectPythonNoticeRegression({ captureScreenshot }) {
     },
     async verify(control) {
       // A detached fixed workspace can remain the active control client after
-      // restart. Project creation and the main-window resize must use the same
-      // renderer so the narrow-layout assertion measures the resized window.
-      control.activateWindow('main')
+      // restart. Resize that exact window so the narrow-layout assertion measures
+      // the renderer that owns the project creation flow.
       await control.command('waitFor', 'body', { visible: true })
       const previousSize = await control.command('setMainWindowSize', 'body', {
         value: JSON.stringify({ width: 1024, height: 768 }),

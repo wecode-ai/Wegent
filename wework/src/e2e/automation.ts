@@ -2943,6 +2943,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           width: Number(nextSize.width),
           height: Number(nextSize.height),
           maximized: nextSize.maximized ?? false,
+          windowLabel: getDesktopWindowLabel(),
         })
       )
     }
