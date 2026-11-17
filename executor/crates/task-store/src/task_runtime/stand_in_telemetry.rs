@@ -52,10 +52,13 @@ fn consent_allows(connection: &Connection, user: i64, at: i64) -> Result<bool, T
         return Ok(false);
     }
     ensure_consent_cutoff_store(connection)?;
-    let since: Option<i64> = connection.query_row(
-        "SELECT enabled_since FROM stand_in_telemetry_cutoffs WHERE user_id=?1",
-        [user], |row| row.get(0),
-    ).optional()?;
+    let since: Option<i64> = connection
+        .query_row(
+            "SELECT enabled_since FROM stand_in_telemetry_cutoffs WHERE user_id=?1",
+            [user],
+            |row| row.get(0),
+        )
+        .optional()?;
     Ok(since.map_or(true, |since| at >= since))
 }
 
@@ -199,10 +202,13 @@ impl LocalTaskStore {
             )?;
         }
         if allow {
-            let since: Option<i64> = tx.query_row(
-                "SELECT enabled_since FROM stand_in_telemetry_cutoffs WHERE user_id=?1",
-                [user], |row| row.get(0),
-            ).optional()?;
+            let since: Option<i64> = tx
+                .query_row(
+                    "SELECT enabled_since FROM stand_in_telemetry_cutoffs WHERE user_id=?1",
+                    [user],
+                    |row| row.get(0),
+                )
+                .optional()?;
             if let Some(since) = since {
                 tx.execute(
                     "DELETE FROM stand_in_telemetry_events WHERE user_id=?1 AND occurred_at<?2",
@@ -821,8 +827,12 @@ mod deferred_consent_tests {
         let store = LocalTaskStore::open(&path).unwrap();
         let before = Utc::now().timestamp_millis() - 10_000;
         let cutoff = before + 5_000;
-        store.configure_stand_in_telemetry(7, true, Some(before)).unwrap();
-        store.configure_stand_in_telemetry(7, true, Some(cutoff)).unwrap();
+        store
+            .configure_stand_in_telemetry(7, true, Some(before))
+            .unwrap();
+        store
+            .configure_stand_in_telemetry(7, true, Some(cutoff))
+            .unwrap();
         drop(store);
         let store = LocalTaskStore::open(&path).unwrap();
         let properties = json!({"domain":"stand_in"});
@@ -830,20 +840,39 @@ mod deferred_consent_tests {
             (before + 1_000, "old", true, None),
             (before + 2_000, "old", false, Some("success")),
         ] {
-            store.observe_stand_in_run(StandInRunObservation {
-                occurred_at: at, user: 7, task, turn: "turn", running,
-                waiting: false, result, properties: &properties,
-            }).unwrap();
+            store
+                .observe_stand_in_run(StandInRunObservation {
+                    occurred_at: at,
+                    user: 7,
+                    task,
+                    turn: "turn",
+                    running,
+                    waiting: false,
+                    result,
+                    properties: &properties,
+                })
+                .unwrap();
         }
-        assert!(store.list_stand_in_telemetry(7).unwrap()["items"].as_array().unwrap().is_empty());
+        assert!(store.list_stand_in_telemetry(7).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
         for (at, running, result) in [
             (cutoff, true, None),
             (cutoff + 4_000, false, Some("success")),
         ] {
-            store.observe_stand_in_run(StandInRunObservation {
-                occurred_at: at, user: 7, task: "new", turn: "turn", running,
-                waiting: false, result, properties: &properties,
-            }).unwrap();
+            store
+                .observe_stand_in_run(StandInRunObservation {
+                    occurred_at: at,
+                    user: 7,
+                    task: "new",
+                    turn: "turn",
+                    running,
+                    waiting: false,
+                    result,
+                    properties: &properties,
+                })
+                .unwrap();
         }
         let events = store.list_stand_in_telemetry(7).unwrap();
         assert_eq!(events["items"].as_array().unwrap().len(), 2);
@@ -857,24 +886,44 @@ mod deferred_consent_tests {
         let store = LocalTaskStore::open(&path).unwrap();
         let writer = Connection::open(&path).unwrap();
         writer.execute_batch("BEGIN IMMEDIATE").unwrap();
-        assert!(store.list_stand_in_telemetry(7).unwrap()["items"].as_array().unwrap().is_empty());
+        assert!(store.list_stand_in_telemetry(7).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
         let exists: bool = writer.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='stand_in_telemetry_cutoffs')",
             [], |row| row.get(0),
         ).unwrap();
-        assert!(!exists, "reading an existing store must not initialize consent policy writes");
+        assert!(
+            !exists,
+            "reading an existing store must not initialize consent policy writes"
+        );
         writer.execute_batch("ROLLBACK").unwrap();
         store.configure_stand_in_telemetry(7, true, None).unwrap();
         // The additional cutoff state does not change an older executor's policy writes.
-        writer.execute("INSERT OR REPLACE INTO stand_in_telemetry_policy VALUES(7,1)", []).unwrap();
+        writer
+            .execute(
+                "INSERT OR REPLACE INTO stand_in_telemetry_policy VALUES(7,1)",
+                [],
+            )
+            .unwrap();
         store.configure_stand_in_telemetry(7, false, None).unwrap();
         store.configure_stand_in_telemetry(7, true, None).unwrap();
-        store.observe_stand_in_run(StandInRunObservation {
-            occurred_at: Utc::now().timestamp_millis() - 1_000,
-            user: 7, task: "old", turn: "turn", running: true, waiting: false,
-            result: None, properties: &json!({}),
-        }).unwrap();
-        assert!(store.list_stand_in_telemetry(7).unwrap()["items"].as_array().unwrap().is_empty());
+        store
+            .observe_stand_in_run(StandInRunObservation {
+                occurred_at: Utc::now().timestamp_millis() - 1_000,
+                user: 7,
+                task: "old",
+                turn: "turn",
+                running: true,
+                waiting: false,
+                result: None,
+                properties: &json!({}),
+            })
+            .unwrap();
+        assert!(store.list_stand_in_telemetry(7).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
-
 }
