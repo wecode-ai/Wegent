@@ -32,6 +32,7 @@ function fixture(state: 'ready' | 'loading', failure?: Error) {
     readyCount: 1,
     awaitReadyAfter: vi.fn(async () => ({})),
     command: vi.fn(async (action: string, selector: string, options?: unknown) => {
+      if (action === 'snapshot') return JSON.stringify({ testIds: [] })
       if (action === 'clickWhenEnabled' && selector.includes('interactions-history'))
         historyMode = !historyMode
       if (action === 'waitFor' && selector.includes('interactions-history-count')) {

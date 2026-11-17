@@ -8,8 +8,12 @@ use std::{
     sync::{OnceLock, RwLock},
 };
 
+mod connectors;
 mod plugins;
 mod skills;
+
+#[cfg(test)]
+pub(crate) use connectors::{verify_admin_edits_during_backfill, verify_concurrent_completion};
 
 static DIRECTORIES: OnceLock<RwLock<Vec<PathBuf>>> = OnceLock::new();
 
@@ -199,6 +203,10 @@ pub async fn yaml(mysql: &MysqlService) -> Result<()> {
 
 pub async fn plugins(mysql: &MysqlService) -> Result<()> {
     plugins::apply(mysql).await
+}
+
+pub async fn connectors(mysql: &MysqlService) -> Result<()> {
+    connectors::apply(mysql).await
 }
 
 #[cfg(test)]

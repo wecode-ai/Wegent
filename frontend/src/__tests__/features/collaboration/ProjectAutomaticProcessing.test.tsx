@@ -201,7 +201,9 @@ describe('ProjectAutomaticProcessing loading', () => {
     expect(screen.getByTestId('automatic-processing-hook')).toBeDisabled()
     expect(screen.getByTestId('automatic-processing-save')).toBeDisabled()
     await act(async () => hooks.reject(new Error('接入服务不可用')))
-    expect(screen.getAllByRole('alert')[0]).toHaveTextContent('接入服务不可用')
+    expect(screen.getAllByRole('alert')[0]).toHaveTextContent('读取事件来源失败，请重试。')
+    expect(screen.getAllByRole('alert')[0]).toHaveAttribute('title', '接入服务不可用')
+    expect(screen.getByTestId('automatic-processing-hooks-retry')).toBeEnabled()
     expect(screen.getByText('自动分配')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-created'))
     api.incomingHooks.list.mockResolvedValue([
@@ -215,6 +217,31 @@ describe('ProjectAutomaticProcessing loading', () => {
     expect(api.incomingHooks.list).toHaveBeenCalledTimes(2)
   })
 
+  it('explains empty event sources and refreshes them without submitting a rule', async () => {
+    const { api, view } = fixture()
+    render(view())
+    await screen.findByText('自动分配')
+    fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    fireEvent.click(screen.getByTestId('automatic-processing-trigger-external'))
+    expect(await screen.findByTestId('automatic-processing-hooks-empty')).toHaveTextContent(
+      '管理员'
+    )
+    expect(screen.getByTestId('automatic-processing-hooks-help')).toHaveAttribute(
+      'href',
+      expect.stringContaining('docs/zh/wework/workbench.md')
+    )
+    expect(screen.getByTestId('automatic-processing-save')).toBeDisabled()
+    api.incomingHooks.list.mockResolvedValue([
+      { id: 'hook-1', name: 'GitHub', sourceType: 'github' },
+    ])
+    fireEvent.click(screen.getByTestId('automatic-processing-hooks-refresh'))
+    await waitFor(() =>
+      expect(screen.getByTestId('automatic-processing-hook')).toHaveValue('hook-1')
+    )
+    expect(screen.queryByTestId('automatic-processing-hooks-empty')).not.toBeInTheDocument()
+    expect(api.automations.create).not.toHaveBeenCalled()
+  })
+
   it('refreshes after deletion without hiding the list and caches the updated result', async () => {
     const { api, view } = fixture()
     const mounted = render(view())
@@ -222,8 +249,9 @@ describe('ProjectAutomaticProcessing loading', () => {
     const refresh = deferred<WorkspaceAutomationRule[]>()
     api.automations.list.mockReturnValueOnce(refresh.promise)
     fireEvent.click(screen.getByTestId('automatic-processing-delete-rule-1'))
+    fireEvent.click(await screen.findByTestId('automatic-processing-delete-confirm'))
     await waitFor(() => expect(api.automations.list).toHaveBeenCalledTimes(2))
-    expect(screen.getByText('自动分配')).toBeInTheDocument()
+    expect(screen.getByTestId('automatic-processing-rule-rule-1')).toHaveTextContent('自动分配')
     expect(screen.queryByTestId('automatic-processing-loading')).not.toBeInTheDocument()
     await act(async () => refresh.resolve([]))
     expect(screen.getByText('暂无自动处理规则')).toBeInTheDocument()
@@ -236,6 +264,52 @@ describe('ProjectAutomaticProcessing loading', () => {
 })
 
 describe('ProjectAutomaticProcessing status triggers', () => {
+  it('retains a human description draft across scheduled and status triggers without creating work', async () => {
+    const { api, view } = fixture()
+    api.agents.list.mockResolvedValue([])
+    api.members.list.mockResolvedValue([{ user_id: 7, user_name: '项目成员' }])
+    render(view())
+    await screen.findByText('自动分配')
+    fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    expect(screen.getByTestId('automatic-processing-target-kind-human')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.queryByTestId('automatic-processing-prompt')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('automatic-processing-trigger-schedule'))
+    const prompt = ['保留中文、多行和代码说明。', '第二行职责。'].join('\n')
+    fireEvent.change(screen.getByTestId('automatic-processing-prompt'), {
+      target: { value: prompt },
+    })
+    fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
+    fireEvent.change(screen.getByTestId('automatic-processing-status'), {
+      target: { value: 'completed' },
+    })
+    expect(screen.queryByTestId('automatic-processing-prompt')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('automatic-processing-trigger-schedule'))
+    expect(screen.getByTestId('automatic-processing-prompt')).toHaveValue(prompt)
+    expect(api.automations.create).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
+    expect(screen.getByTestId('automatic-processing-status')).toHaveValue('completed')
+    fireEvent.click(screen.getByTestId('automatic-processing-save'))
+    await waitFor(() =>
+      expect(api.automations.create).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({
+          targetKind: 'human',
+          targetId: '7',
+          prompt,
+          eventType: 'task.status_changed',
+          eventConfig: {
+            executionTarget: 'existing_issue',
+            transition: 'any',
+            statuses: ['completed'],
+          },
+        })
+      )
+    )
+  })
+
   it('requires a status and saves a selected custom board status', async () => {
     const { api, view } = fixture()
     render(view())
@@ -589,7 +663,11 @@ describe('ProjectAutomaticProcessing prompts', () => {
       target: { value: prompt },
     })
     fireEvent.click(screen.getByTestId('automatic-processing-target-kind-human'))
+    expect(screen.queryByTestId('automatic-processing-prompt')).not.toBeInTheDocument()
+    expect(screen.getByTestId('automatic-processing-routing-hint')).toHaveTextContent('不会启动 AI')
+    fireEvent.click(screen.getByTestId('automatic-processing-target-kind-agent'))
     expect(screen.getByTestId('automatic-processing-prompt')).toHaveValue(prompt)
+    fireEvent.click(screen.getByTestId('automatic-processing-target-kind-human'))
     fireEvent.click(screen.getByTestId('automatic-processing-save'))
     await waitFor(() =>
       expect(api.automations.create).toHaveBeenCalledWith(

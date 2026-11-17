@@ -150,7 +150,7 @@ export async function openCollaborationIssueCreation(control, scoped) {
   if (Number(await control.command('getElementCount', recordingMode)) > 0) {
     await control.command('click', recordingMode)
   } else {
-    await control.command('waitFor', scoped('[data-testid="collaboration-first-project-starter"]'))
+    await control.command('waitFor', scoped('[data-testid="collaboration-first-issue-starter"]'))
   }
 }
 

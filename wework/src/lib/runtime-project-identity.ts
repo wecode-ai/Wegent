@@ -1,3 +1,5 @@
+import { parseRuntimeRemoteProjectStateId } from '../../../packages/chat-core/src/runtime-project-metadata'
+export { parseRuntimeRemoteProjectStateId } from '../../../packages/chat-core/src/runtime-project-metadata'
 import type { RuntimeDeviceWorkspace, RuntimeProjectWork } from '@/types/api'
 import { normalizeRuntimeWorkspacePath } from './runtime-project'
 import type { WorkbenchDeviceResolver } from './workbench-device'
@@ -48,23 +50,6 @@ export function getRuntimeProjectSyncTarget(work: RuntimeProjectWork): RuntimePr
 
 export function buildRuntimeRemoteProjectStateId(hostId: string, projectKey: string): string {
   return `wegent-remote:${encodeURIComponent(hostId)}:${encodeURIComponent(projectKey)}`
-}
-
-export function parseRuntimeRemoteProjectStateId(
-  stateId: string
-): { hostId: string; projectKey: string } | null {
-  const prefix = 'wegent-remote:'
-  if (!stateId.startsWith(prefix)) return null
-  const encodedIdentity = stateId.slice(prefix.length)
-  const separatorIndex = encodedIdentity.indexOf(':')
-  if (separatorIndex <= 0 || separatorIndex === encodedIdentity.length - 1) return null
-  try {
-    const hostId = decodeURIComponent(encodedIdentity.slice(0, separatorIndex)).trim()
-    const projectKey = decodeURIComponent(encodedIdentity.slice(separatorIndex + 1)).trim()
-    return hostId && projectKey ? { hostId, projectKey } : null
-  } catch {
-    return null
-  }
 }
 
 /** A persisted sidebar entry refers to a project; it does not own its runtime tasks. */

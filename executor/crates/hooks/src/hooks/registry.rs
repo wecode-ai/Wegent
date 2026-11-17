@@ -12,14 +12,15 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use super::model::{
-    CommandHookConfig, HookHealth, HookPluginManifest, HookPolicy, HookRunSummary, HookSource,
-    HooksConfig, ResolvedHookHandlerView, ResolvedHookPluginView, MAX_TIMEOUT_SECONDS,
+    CommandHookConfig, HookEventName, HookHealth, HookPluginManifest, HookPolicy, HookRunSummary,
+    HookSource, HooksConfig, ResolvedHookHandlerView, ResolvedHookPluginView, MAX_TIMEOUT_SECONDS,
 };
 
 const MAX_JSON_BYTES: u64 = 1024 * 1024;
 
 pub struct ResolvedCommandHook {
     pub handler_id: String,
+    pub event_name: HookEventName,
     pub matcher_source: String,
     pub matcher: Regex,
     pub config: CommandHookConfig,
@@ -49,6 +50,7 @@ impl ResolvedHookPlugin {
                 .iter()
                 .map(|hook| ResolvedHookHandlerView {
                     id: hook.handler_id.clone(),
+                    event_name: hook.event_name,
                     matcher: hook.matcher_source.clone(),
                     config: hook.config.clone(),
                 })
@@ -104,7 +106,6 @@ impl HookRegistryStore {
         }
     }
 
-    #[cfg(test)]
     pub fn new(executor_home: PathBuf) -> Self {
         Self { executor_home }
     }
@@ -400,39 +401,63 @@ fn load_plugin(
         }
     };
     let mut hooks = Vec::new();
-    for (group_index, group) in config.post_tool_use.into_iter().enumerate() {
-        let matcher = match Regex::new(&group.matcher) {
-            Ok(value) => value,
-            Err(error) => {
-                return Some(ResolvedHookPlugin {
-                    manifest,
-                    enabled,
-                    source,
-                    directory,
-                    policy,
-                    health: HookHealth::InvalidConfig(error.to_string()),
-                    hooks: Vec::new(),
-                })
-            }
-        };
-        for (hook_index, config) in group.hooks.into_iter().enumerate() {
-            if let Err(error) = validate_hook(&config) {
-                return Some(ResolvedHookPlugin {
-                    manifest,
-                    enabled,
-                    source,
-                    directory,
-                    policy,
-                    health: HookHealth::Unsupported(error),
-                    hooks: Vec::new(),
+    for (event_name, prefix, groups) in [
+        (
+            HookEventName::PostToolUse,
+            "post-tool-use",
+            config.post_tool_use,
+        ),
+        (
+            HookEventName::TurnStarted,
+            "turn-started",
+            config.turn_started,
+        ),
+        (
+            HookEventName::TurnCompleted,
+            "turn-completed",
+            config.turn_completed,
+        ),
+        (
+            HookEventName::ExecutionCompleted,
+            "execution-completed",
+            config.execution_completed,
+        ),
+    ] {
+        for (group_index, group) in groups.into_iter().enumerate() {
+            let matcher = match Regex::new(&group.matcher) {
+                Ok(value) => value,
+                Err(error) => {
+                    return Some(ResolvedHookPlugin {
+                        manifest,
+                        enabled,
+                        source,
+                        directory,
+                        policy,
+                        health: HookHealth::InvalidConfig(error.to_string()),
+                        hooks: Vec::new(),
+                    })
+                }
+            };
+            for (hook_index, config) in group.hooks.into_iter().enumerate() {
+                if let Err(error) = validate_hook(&config) {
+                    return Some(ResolvedHookPlugin {
+                        manifest,
+                        enabled,
+                        source,
+                        directory,
+                        policy,
+                        health: HookHealth::Unsupported(error),
+                        hooks: Vec::new(),
+                    });
+                }
+                hooks.push(ResolvedCommandHook {
+                    handler_id: format!("{prefix}-{group_index}-{hook_index}"),
+                    event_name,
+                    matcher_source: group.matcher.clone(),
+                    matcher: matcher.clone(),
+                    config,
                 });
             }
-            hooks.push(ResolvedCommandHook {
-                handler_id: format!("post-tool-use-{group_index}-{hook_index}"),
-                matcher_source: group.matcher.clone(),
-                matcher: matcher.clone(),
-                config,
-            });
         }
     }
     let command_health = hooks
@@ -504,7 +529,13 @@ fn write_plugin_files(
     config: &HooksConfig,
 ) -> Result<(), String> {
     validate_plugin_id(&manifest.id)?;
-    for group in &config.post_tool_use {
+    for group in config
+        .post_tool_use
+        .iter()
+        .chain(&config.turn_started)
+        .chain(&config.turn_completed)
+        .chain(&config.execution_completed)
+    {
         Regex::new(&group.matcher).map_err(|error| error.to_string())?;
         for hook in &group.hooks {
             validate_hook(hook)?;
@@ -730,6 +761,39 @@ mod tests {
         assert!(plugins
             .iter()
             .all(|p| p.health == HookHealth::DuplicatePluginId));
+    }
+
+    #[test]
+    fn resolves_lifecycle_events_and_preserves_config_on_invalid_update() {
+        let fixture = tempdir().unwrap();
+        let store = HookRegistryStore::new(fixture.path().to_path_buf());
+        let manifest: HookPluginManifest = serde_json::from_str(
+            r#"{"schemaVersion":1,"id":"reporter","name":"Reporter","version":"1"}"#,
+        )
+        .unwrap();
+        let config: HooksConfig = serde_json::from_value(serde_json::json!({
+            "TurnStarted": [{"matcher":".*","hooks":[{"type":"command","command":"echo start"}]}],
+            "TurnCompleted": [{"matcher":"completed","hooks":[{"type":"command","command":"echo end"}]}],
+            "ExecutionCompleted": [{"matcher":".*","hooks":[{"type":"command","command":"echo close"}]}]
+        }))
+        .unwrap();
+        let plugin = store.create(manifest.clone(), config.clone()).unwrap();
+        assert_eq!(plugin.health, HookHealth::Ready);
+        assert_eq!(plugin.handlers.len(), 3);
+        assert_eq!(plugin.handlers[0].event_name, HookEventName::TurnStarted);
+        assert_eq!(plugin.handlers[1].event_name, HookEventName::TurnCompleted);
+        assert_eq!(
+            plugin.handlers[2].event_name,
+            HookEventName::ExecutionCompleted
+        );
+        let mut invalid = config;
+        invalid.turn_completed[0].matcher = "[".to_owned();
+        assert!(store.update("reporter", manifest, invalid).is_err());
+        assert_eq!(store.list()[0].health, HookHealth::Ready);
+        let legacy: HooksConfig = serde_json::from_str(r#"{"PostToolUse":[]}"#).unwrap();
+        assert!(legacy.turn_started.is_empty());
+        assert!(legacy.turn_completed.is_empty());
+        assert!(legacy.execution_completed.is_empty());
     }
 
     #[test]

@@ -104,6 +104,7 @@ def test_rust_owned_route_is_not_registered_in_python(method: str, path: str) ->
         ("cloud_projects", ("list_cloud_project_members",)),
         ("kind.skills", ("list_unified_skills", "UnifiedSkillResponse")),
         ("connector_runtime", ("list_connector_tools",)),
+        ("connector_apps", ("refresh_connector_connection",)),
         (
             "internal.workspace_archives",
             ("restore_sandbox_workspace", "SandboxRestoreResponse"),

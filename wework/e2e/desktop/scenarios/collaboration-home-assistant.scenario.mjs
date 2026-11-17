@@ -4,6 +4,7 @@ import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { DEFAULT_MODEL_ID, MODEL_PROVIDER_ID } from '../modules/shared.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
+import { verifyCollaborationHomeUsability } from '../modules/collaboration-home-usability.mjs'
 import {
   assistantMessage,
   createSse,
@@ -173,6 +174,12 @@ export function createDesktopScenario(options) {
         `${HOME} [data-testid="personal-home-assistant-view-toggle"]`
       )
       assert.equal(await control.command('getValue', INPUT), 'Keep my homepage draft')
+      await verifyCollaborationHomeUsability(control, {
+        home: HOME,
+        input: INPUT,
+        issueId: issue.id,
+        timeoutMs: options.uiTimeoutMs,
+      })
       await control.command(
         'clickWhenEnabled',
         `${HOME} [data-testid="personal-home-issue-${issue.id}"]`

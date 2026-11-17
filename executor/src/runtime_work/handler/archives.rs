@@ -22,6 +22,29 @@ where
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn archive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let cleanup = bool_field(&payload, "cleanupWorktree").unwrap_or(false);
+        let mut result = self.archive_task_only(payload).await?;
+        if cleanup && result["accepted"] == true {
+            // Resolve managed paths from the archived task, never from client-supplied paths.
+            // Shared worktrees remain until all linked tasks have been archived.
+            let task_id = result["taskId"].as_str().ok_or_else(|| {
+                AppIpcError::new(
+                    "archive_task_id_missing",
+                    "Archived task identity is missing",
+                )
+            })?;
+            if let Err(error) = Box::pin(
+                self.cleanup_worktrees_for_tasks(HashSet::from([task_id.to_owned()]), false),
+            )
+            .await
+            {
+                result["cleanupError"] = json!(error.message);
+            }
+        }
+        Ok(result)
+    }
+
+    async fn archive_task_only(&self, payload: Value) -> Result<Value, AppIpcError> {
         log_executor_event(
             "runtime task archive requested",
             &[

@@ -434,7 +434,7 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
     if settings["primary"].is_object() {
         let mut primary = settings["primary"].clone();
         primary["id"] = json!("@primary");
-        primary["name"] = json!("我的分身");
+        primary["name"] = json!("我的助理");
         primary["version"] = settings["version"].clone();
         identities.push(primary);
     }

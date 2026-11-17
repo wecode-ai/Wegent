@@ -1,6 +1,6 @@
 import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
 import { AgentEnvironmentFields, AgentModelFields } from './AgentRoutingFields'
-import { useAgentRuntimeTab } from './useAgentRuntimeTab'
+import { useAgentRuntimeSettings } from './useAgentRuntimeSettings'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AgentCapabilitiesSelector,
@@ -74,7 +74,7 @@ export function WeworkAgentResourceForm({
     defer: true,
     creation: !editing,
   })
-  const runtimeTab = useAgentRuntimeTab(routing)
+  const runtimeSettings = useAgentRuntimeSettings(routing)
   const loadRouting = routing.load
   const [selectedCapabilityMode, setCapabilityMode] =
     useState<UnifiedAgentCapabilityMode>('follow_device')
@@ -291,7 +291,7 @@ export function WeworkAgentResourceForm({
   return (
     <AgentFormDialog
       onAdvancedOpen={() => setCapabilitiesActive(true)}
-      runtimeTab={runtimeTab}
+      runtimeSettings={runtimeSettings}
       advanced={
         <>
           {unsupportedRuntime ? (

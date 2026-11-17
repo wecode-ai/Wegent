@@ -13,14 +13,11 @@ import '@/i18n'
 import { WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import {
-  runnerModelKey,
-  type CollaborationProject,
-  type SharedWorkspaceApi,
-} from '@wegent/collaboration'
+import { runnerModelKey, type CollaborationProject } from '@wegent/collaboration'
 import { expect, it, vi } from 'vitest'
 import { StandInConversation } from './StandInConversation'
 import { StandInOverviewPage } from './StandInOverviewPage'
+import { standInOverviewFixture as fixture } from './StandInOverviewPage.testFixtures'
 const menuMocks = vi.hoisted(() => ({ leave: vi.fn((action: () => void) => action()) }))
 vi.mock('@/features/automations/AutomationsPage', async () => {
   const { useImperativeHandle } = await import('react')
@@ -71,45 +68,6 @@ vi.mock('./StandInConversation', () => ({
     )
   ),
 }))
-
-function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
-  let settings: PersonalStandInSettings = {
-    userId: 7,
-    executionDeviceId: 'device',
-    version: 0,
-    roles,
-  }
-  const personalAgents = vi.fn(async () => [])
-  const personalSave = vi.fn(async (_user, value: PersonalStandInSettings) => {
-    settings = value
-    return settings
-  })
-  const props = {
-    userId: 7,
-    api: {} as SharedWorkspaceApi,
-    devices: [],
-    projects: [
-      { id: '12', name: 'Example project', project_store: 'backend' },
-    ] as CollaborationProject[],
-    services: {
-      getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'device' }),
-      modelApi: { listModels: async () => ({ data: [] }) },
-      standInApi: {
-        onboarding: vi.fn(async () => ({ state: { version: 1, completed: true } })),
-        connectionProviders: vi.fn(async () => ({ items: [] })),
-        catalog: async () => ({ models: [] }),
-        personalGet: vi.fn(async () => settings),
-        memories: vi.fn(async () => []),
-        inbox: vi.fn(async () => ({ items: [], sourceErrors: [] })),
-        proposal: vi.fn(async () => null),
-        processingStatus: vi.fn(async () => ({ pendingCount: 0, running: false, actions: [] })),
-        personalSave,
-        personalAgents,
-      },
-    } as unknown as WorkbenchServices,
-  }
-  return { props, personalAgents, personalSave }
-}
 
 async function renderLoadedOverview(props: ReturnType<typeof fixture>['props']) {
   const api = props.services.standInApi!
@@ -250,7 +208,7 @@ it('keeps lifecycle controls in management and only exposes details in the role 
   render(
     <StandInOverviewPage
       {...props}
-      headerActions={<button data-testid="instance-stop-fixture">停止分身</button>}
+      headerActions={<button data-testid="instance-stop-fixture">停止助理</button>}
     />
   )
   await openRoles()

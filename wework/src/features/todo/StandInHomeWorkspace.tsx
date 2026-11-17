@@ -42,7 +42,12 @@ export function StandInHomeWorkspace(props: Props) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const [view, setView] = useState('conversation')
-  const inbox = useStandInInbox(services.standInApi, userId, deviceId, active && view === 'list')
+  const inbox = useStandInInbox(
+    services.standInApi,
+    userId,
+    deviceId,
+    active && (view === 'list' || view === 'conversation')
+  )
   const [opened, setOpened] = useState<
     Array<{ key: string; title: string; address: RuntimeTaskAddress }>
   >([])
@@ -78,6 +83,8 @@ export function StandInHomeWorkspace(props: Props) {
       )
   )
   const roleIds = [...new Set(items.map(item => standInWorkRole(item)!))]
+  const runningCount = items.filter(item => standInState(item).status === 'running').length
+  const pendingCount = props.collaborationWork?.pendingIssues.length ?? 0
   const roleName = (id: string) =>
     id === '@primary' || id === 'default'
       ? t('personalHome.assistantRole')
@@ -91,7 +98,7 @@ export function StandInHomeWorkspace(props: Props) {
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="personal-home-workspace">
-      <header className="flex min-h-11 items-center gap-2 border-b border-border px-4 py-2">
+      <header className="flex min-h-11 flex-wrap items-center gap-2 border-b border-border px-4 py-2">
         {view !== 'list' && view !== 'conversation' && (
           <button
             type="button"
@@ -117,6 +124,21 @@ export function StandInHomeWorkspace(props: Props) {
           >
             {t(view === 'list' ? 'personalHome.conversation' : 'personalHome.workList')}
           </button>
+        )}
+        {view === 'conversation' && (
+          <span
+            role="status"
+            aria-live="polite"
+            data-testid="personal-home-assistant-work-status"
+            className="inline-flex flex-wrap items-center gap-1 text-xs text-text-secondary"
+          >
+            {pendingCount > 0 && (
+              <span>{t('personalHome.pendingCount', { count: pendingCount })}</span>
+            )}
+            {runningCount > 0 && (
+              <span>{t('personalHome.runningCount', { count: runningCount })}</span>
+            )}
+          </span>
         )}
         {(view === 'list' || view === 'conversation') && (
           <button
@@ -194,7 +216,7 @@ export function StandInHomeWorkspace(props: Props) {
             </div>
           )}
           {!inbox.scope && !inbox.error && (
-            <p role="status" className="p-4 text-sm text-text-muted">
+            <p role="status" className="p-4 text-sm text-text-secondary">
               {t('standIn.loading')}
             </p>
           )}
@@ -203,7 +225,7 @@ export function StandInHomeWorkspace(props: Props) {
               <p className="text-base font-medium text-text-secondary">
                 {t('personalHome.assistantEmpty')}
               </p>
-              <p className="mt-2 max-w-xs text-sm leading-5 text-text-muted">
+              <p className="mt-2 max-w-xs text-sm leading-5 text-text-secondary">
                 {t('personalHome.assistantEmptyHint')}
               </p>
             </div>
@@ -228,7 +250,7 @@ export function StandInHomeWorkspace(props: Props) {
                   <div key={group} data-testid={`personal-home-role-${roleId}-${group}`}>
                     <h4 className="flex items-center gap-2 px-4 py-2 text-sm font-medium">
                       {t(`personalHome.${group}`)}
-                      <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-muted">
+                      <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-text-secondary">
                         {grouped.length}
                       </span>
                     </h4>
@@ -255,7 +277,7 @@ export function StandInHomeWorkspace(props: Props) {
                           key={item.key}
                           data-testid={`personal-home-work-${item.task.taskId}`}
                           onClick={() => openTask(item.address, item.task.title)}
-                          className="group/work flex min-h-11 w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-text-primary/[0.025] keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+                          className="group/work flex min-h-11 w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-text-primary/[0.025] keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]"
                         >
                           <Icon
                             aria-hidden="true"
@@ -263,7 +285,7 @@ export function StandInHomeWorkspace(props: Props) {
                           />
                           <span className="min-w-0 flex-1">
                             <span className="block truncate font-medium">{item.task.title}</span>
-                            <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
+                            <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-text-secondary">
                               <span className="shrink-0">{status}</span>
                               {item.projectName && (
                                 <>

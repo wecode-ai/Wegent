@@ -1073,6 +1073,7 @@ export function DesktopWorkbenchLayout({
                 />
               ) : (
                 <WeworkCollaborationPlatform
+                  homeDraft={projectChat}
                   user={workItemUser}
                   devices={state.devices}
                   localProjects={localTodoProjects}

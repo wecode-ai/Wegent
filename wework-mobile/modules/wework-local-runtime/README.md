@@ -43,7 +43,8 @@ PC 依据：`wework/electron/src/host/system-sleep-controller.ts` 及对应测�
 - 文件导入通过 owner 线程的 `generic_open` 写入 guest，更新 fakefs 元数据。
   不直接向宿主 `data/` 复制文件。账号切换首先清空旧事件视图。
 - 账号目录使用 `completeUntilFirstUserAuthentication` 文件保护；请求和 stderr 不持久化。
-  事件日志最多约 8 MB / 2048 条，轮换保留最近 512 条；完整历史由 executor transcript 恢复。
+  事件回放仅在内存保留，最多 8 MiB 序列化数据 / 2048 条，按最早事件淘汰；完整历史由 executor transcript 恢复。
+- 「设置 → 诊断 → 诊断日志」默认关闭，覆盖 App、运行层与内核宿主日志输出；不关闭内存安全检查，内核有界环形缓冲及系统、Codex 错误日志仍可保留。启动时清理旧诊断文件，并在 guest 进程全部退出后通过 fakefs 回收程序生成的模型目录；不会清理项目或会话。
 - 前台任务使用 UIKit `UIApplication.beginBackgroundTask` 申请切到后台后的短时宽限。
   不使用 `BGContinuedProcessingTask`，不把未知总量的输出字节伪装为完成进度。
   系统决定是否授予时间以及何时到期；到期取消实际任务并报告 `expired`，不承诺后台完成。
@@ -51,6 +52,18 @@ PC 依据：`wework/electron/src/host/system-sleep-controller.ts` 及对应测�
   终止事件后还会查询 `runtime.tasks.get`，自动续跑处于 active phase 时不提前结束 lease。
   Lease 按运行 generation 和每次前台提交的 task revision 隔离；旧轮状态查询不能结束新轮
   Lease。状态未知时保留任务并报告错误，不伪造完成。
+- 锁屏会暂停内存采样定时器。内存准入发现样本超过 2 秒时，通过同步宿主查询获取真实
+  内存状态，再执行原有压力、余量和滞回规则；查询失败、无效读数和真实内存不足仍拒绝
+  分配。同步查询不打印内核日志，也不获取 guest 锁，避免在分配或 syslog 路径内重入。
+- iOS 回收 TCP 监听端点时，在宿主关闭事件进入 guest reactor 或执行 accept 前，按记录的
+  地址、端口、backlog、选项和标志重建端点。保留 guest 文件身份和宿主 fd 编号，通过
+  完整查询 `POLLIN | POLLOUT | POLLPRI` 并在同一次采样中判断恢复；iOS 的只读查询可能
+  隐藏失效监听器的 HUP，不能作为独立预检查。通过 descriptor generation 重新注册各
+  poll/epoll 后端，清理旧边沿状态并保留 ONESHOT 禁用
+  状态。主动成功 shutdown 不恢复，恢复失败保留真实错误，不无限重试或重启环境。
+- 解锁回前台时，先等待尚未结束的停止过程，再确保本机执行环境已启动并恢复活动会话
+  日志。恢复不重发用户消息，也不自动刷新项目或会话列表。主动停止和环境切换会撤销
+  原环境的运行意图，等待中的启动可取消，旧环境不能在切换后重新启动。
 - 使用 `jit=true` / `jit_emit=false`，运行预编译解释器 gadgets；不申请 JIT entitlement，
   不包含 AOT 镜像、Minis offload 或 FFmpeg。Linux namespaces/seccomp 不可用，
   受限 Linux 沙盒请求明确拒绝，不能静默升级权限。
@@ -98,6 +111,14 @@ iSH 的 GPL 许可证、iOS 附加条款和对应源代码信息。原生桥接�
 
 `tests/RuntimeEventJournalTests.swift` 覆盖切账号和启动失败窗口的事件隔离。
 内核回归见 `native/tests/` 与 `scripts/test-ish-runtime.py`。
+`regress_memory_resume.c` 覆盖暂停采样后的同步恢复、真实压力和滞回、无效宿主读数、
+超额申请及并发准入，并验证分配路径不写内核日志。完整 runner 的宿主部分包含此测试。
+`regress_listener_recovery.c` 按真机的查询掩码差异注入 HUP，覆盖 IPv4/IPv6、多次回收、多个 poll、dup、
+ONESHOT、端口/选项/标志保留、真实连接和恢复失败。成功 shutdown 的禁用恢复场景使用
+mock，因为 Darwin 对正常监听端点的 shutdown 返回 ENOTCONN；此断言不代表真机行为。
+宿主测试不替代实际 iPhone 锁屏后的 RPC 和流式输出验收。
+`regress_poll_waiters.c` 验证真实并发修改 poll 集合时的等待线程生命周期。注册和注销必须
+归属于同一次阻塞调用，不能分别按变化前后的 fd 集合计数，避免 task 释放后仍留在恢复队列。
 `regress_ldpsw.c/.S` 使用真实 ARM64 硬件校准的向量，覆盖有符号双字装载、寻址、
 写回和跨页访问。上游 LDPSW 的零扩展错误会破坏 OpenSSL X25519 公钥计算并导致
 HTTPS 握手失败；补丁修正指令语义，不修改密码算法或关闭证书验证。

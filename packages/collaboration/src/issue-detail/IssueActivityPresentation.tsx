@@ -121,8 +121,15 @@ export function IssueCommentComposer({
       className={`task-detail-comment-send${showSendLabel ? " has-label" : ""}`}
       disabled={!canSend}
     >
-      {showSendLabel ? sendLabel : null}
-      {!workflow ? <ArrowUp className="h-4 w-4" /> : null}
+      {showSendLabel ? (
+        <span className="task-detail-comment-send-label">{sendLabel}</span>
+      ) : null}
+      <ArrowUp
+        aria-hidden="true"
+        className={
+          workflow ? "h-4 w-4 task-detail-comment-send-icon" : "h-4 w-4"
+        }
+      />
     </button>
   );
   return (
@@ -142,16 +149,13 @@ export function IssueCommentComposer({
           {actions}
           {pendingActions}
           {workflow ? (
-            <>
-              <span className="flex-1" />
-              <div
-                className="task-detail-comment-submit-group"
-                data-send-enabled={canSend}
-              >
-                {sendButton}
-                {sendActions}
-              </div>
-            </>
+            <div
+              className="task-detail-comment-submit-group"
+              data-send-enabled={canSend}
+            >
+              {sendButton}
+              {sendActions}
+            </div>
           ) : (
             sendButton
           )}

@@ -995,5 +995,26 @@ describe('localExecutor', () => {
         taskId: 'task-1',
       })
     })
+
+    test('can hold only the old request while a new identity reaches the real executor', async () => {
+      vi.stubEnv('VITE_WEWORK_E2E', 'true')
+      requestDshExecutorMock.mockImplementation(async (_method, params) => params)
+      holdLocalExecutorRequestsForE2E('runtime.connectors.apps.sync', 'before-dispatch', 1)
+      const old = requestLocalExecutor('runtime.connectors.apps.sync', { syncRevision: 1 })
+      await expect(awaitLocalExecutorRequestHoldForE2E()).resolves.toBe(1)
+      await expect(
+        requestLocalExecutor('runtime.connectors.apps.sync', { syncRevision: 2 })
+      ).resolves.toEqual({ syncRevision: 2 })
+      expect(requestDshExecutorMock).toHaveBeenCalledExactlyOnceWith(
+        'runtime.connectors.apps.sync',
+        { syncRevision: 2 }
+      )
+      releaseLocalExecutorRequestHoldForE2E()
+      await expect(old).resolves.toEqual({ syncRevision: 1 })
+      expect(getLocalExecutorRequestHoldSnapshotForE2E()).toMatchObject({
+        heldCount: 1,
+        completedCount: 1,
+      })
+    })
   })
 })

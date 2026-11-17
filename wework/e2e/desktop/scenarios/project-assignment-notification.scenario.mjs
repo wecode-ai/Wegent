@@ -1,3 +1,4 @@
+import { verifyLinkExistingTask } from '../modules/issue-link-existing-task.mjs'
 import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
@@ -896,6 +897,22 @@ export function createDesktopScenario({
         projectId: project.id,
         issueId: issue.id,
       })
+      const modelRequestsBeforeLink = modelRequestCount
+      await verifyLinkExistingTask({
+        control,
+        request: ownerRequest,
+        createIssue,
+        owner,
+        projectId: project.id,
+        taskId: runtimeTaskId,
+        originalIssueId: issue.id,
+        uiTimeoutMs,
+      })
+      assert.equal(
+        modelRequestCount,
+        modelRequestsBeforeLink,
+        'Linking an existing task must not start a model turn'
+      )
       await verifyIssuePersonalTaskPrivacy({
         control,
         request: ownerRequest,

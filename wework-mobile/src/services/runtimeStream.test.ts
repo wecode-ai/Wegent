@@ -135,6 +135,41 @@ describe('RuntimeStream', () => {
     expect(emit).not.toHaveBeenCalled()
   })
 
+  it('publishes cloud status without reconnecting a phone transcript', async () => {
+    const deviceId = 'mobile-local:phone:account'
+    let recover = () => {}
+    const local = {
+      ownsDevice: (id: string) => id === deviceId,
+      onEvent: () => vi.fn(),
+      onRecovery: (listener: () => void) => {
+        recover = listener
+        return vi.fn()
+      },
+    } as unknown as LocalRuntime
+    const stream = await createStream(config, () => [], local)
+    expect(stream.getCloudConnection().connected).toBe(true)
+    const status = vi.fn()
+    const unsubscribe = stream.subscribeCloudConnection(status)
+    const phoneRead = vi.fn()
+    await stream.subscribe({ deviceId, taskId: 'phone-task' }, vi.fn(), phoneRead)
+    const raw = vi.mocked(io).mock.results.at(-1)!.value
+    raw.connected = false
+    handlers.get('disconnect')?.('transport close')
+    expect(stream.getCloudConnection().connected).toBe(false)
+    raw.connected = true
+    handlers.get('connect')?.()
+    expect(stream.getCloudConnection().connected).toBe(true)
+    expect(status).toHaveBeenCalledTimes(2)
+    expect(phoneRead).not.toHaveBeenCalled()
+    recover()
+    expect(phoneRead).toHaveBeenCalledOnce()
+    await stream.reconnectCloud()
+    expect(phoneRead).toHaveBeenCalledOnce()
+    stream.updateBackend(null)
+    expect(stream.getCloudConnection().connected).toBe(false)
+    unsubscribe()
+  })
+
   it('replaces a pending authentication with the refreshed credentials', async () => {
     connect.mockImplementation(() => undefined)
     const stream = await createStream(config)

@@ -424,7 +424,11 @@ class RuntimeRpcService:
             result,
             method=method,
             logical_device_id=route.logical_device_id,
-            runtime_device_id=route.runtime_device_id,
+            runtime_device_id=(
+                route.app_device_id or route.runtime_device_id
+                if route.device_type == DeviceType.APP
+                else route.runtime_device_id
+            ),
         )
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         logger.info(
@@ -456,7 +460,10 @@ class RuntimeRpcService:
             if projected.get(key) == runtime_device_id:
                 projected[key] = logical_device_id
 
-        if not method.startswith("runtime.worktrees."):
+        if not (
+            method.startswith("runtime.worktrees.")
+            or method == "runtime.archived_conversations.list"
+        ):
             return projected
 
         return cls._project_nested_device_ids(

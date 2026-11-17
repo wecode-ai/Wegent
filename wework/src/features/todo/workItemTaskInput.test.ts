@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { describe, expect, it, vi } from 'vitest'
-import { updateIssueWhenPersonalTaskStarts, workItemAssociationUpdate } from './workItemTaskInput'
+import { prepareIssueStartStatus, workItemAssociationUpdate } from './workItemTaskInput'
 
 describe('personal task project association', () => {
   it('preserves an Issue status when attaching project tags', () => {
@@ -23,7 +23,9 @@ describe('personal task Issue status ownership', () => {
     { projectStore: 'backend' as const, dispatchRoundId: 'human-round' },
   ])('leaves lifecycle and manager-owned status untouched: %j', async context => {
     const issues = { get: vi.fn(), update: vi.fn() }
-    await expect(updateIssueWhenPersonalTaskStarts(issues, 'issue', context)).resolves.toBeNull()
+    await expect(prepareIssueStartStatus(issues, 'issue', context)).resolves.toMatchObject({
+      error: null,
+    })
     expect(issues.get).not.toHaveBeenCalled()
     expect(issues.update).not.toHaveBeenCalled()
   })
@@ -37,8 +39,8 @@ describe('personal task Issue status ownership', () => {
         update: vi.fn().mockResolvedValue({ ...source, status: 'in_progress', version: 4 }),
       }
       await expect(
-        updateIssueWhenPersonalTaskStarts(issues, source.id, { projectStore: 'backend' })
-      ).resolves.toBeNull()
+        prepareIssueStartStatus(issues, source.id, { projectStore: 'backend' })
+      ).resolves.toMatchObject({ error: null })
       expect(issues.update).toHaveBeenCalledExactlyOnceWith(source.id, {
         version: 3,
         status: 'in_progress',
@@ -52,11 +54,11 @@ describe('personal task Issue status ownership', () => {
       update: vi.fn().mockResolvedValue({}),
     }
     await expect(
-      updateIssueWhenPersonalTaskStarts(issues, 'issue', {
+      prepareIssueStartStatus(issues, 'issue', {
         projectStore: 'backend',
         dispatchRoundId: 'direct',
       })
-    ).resolves.toBeNull()
+    ).resolves.toMatchObject({ error: null })
     expect(issues.update).toHaveBeenCalledExactlyOnceWith('issue', {
       version: 3,
       status: 'in_progress',
@@ -69,9 +71,54 @@ describe('personal task Issue status ownership', () => {
       update: vi.fn().mockRejectedValue(new Error('Forbidden')),
     }
     await expect(
-      updateIssueWhenPersonalTaskStarts(issues, 'issue', { projectStore: 'backend' })
-    ).resolves.toBe('Forbidden')
+      prepareIssueStartStatus(issues, 'issue', { projectStore: 'backend' })
+    ).resolves.toMatchObject({ error: 'Forbidden' })
     expect(issues.get).toHaveBeenCalledOnce()
     expect(issues.update).toHaveBeenCalledOnce()
   })
+})
+
+it('restores a rejected start only while its own status write is current', async () => {
+  const before = { id: 'issue', status: 'pending', tags: [], version: 3 }
+  const started = { ...before, status: 'in_progress', version: 4 }
+  const issues = {
+    get: vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(started),
+    update: vi
+      .fn()
+      .mockResolvedValueOnce(started)
+      .mockResolvedValueOnce({ ...before, version: 5 }),
+  }
+  const preparation = await prepareIssueStartStatus(issues, before.id, { projectStore: 'backend' })
+  await preparation.rollback!()
+  expect(issues.update).toHaveBeenNthCalledWith(2, before.id, { version: 4, status: 'pending' })
+})
+
+it.each([
+  { status: 'in_progress', version: 5 },
+  { status: 'in_review', version: 4 },
+])('does not undo a concurrent Issue change after a rejected start: %j', async change => {
+  const before = { id: 'issue', status: 'pending', tags: [], version: 3 }
+  const started = { ...before, status: 'in_progress', version: 4 }
+  const issues = {
+    get: vi
+      .fn()
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce({ ...started, ...change }),
+    update: vi.fn().mockResolvedValue(started),
+  }
+  const preparation = await prepareIssueStartStatus(issues, before.id, { projectStore: 'backend' })
+  await preparation.rollback!()
+  expect(issues.update).toHaveBeenCalledOnce()
+})
+
+it('keeps the rollback compare-and-swap failure without retrying a newer revision', async () => {
+  const before = { id: 'issue', status: 'pending', tags: [], version: 3 }
+  const started = { ...before, status: 'in_progress', version: 4 }
+  const issues = {
+    get: vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(started),
+    update: vi.fn().mockResolvedValueOnce(started).mockRejectedValueOnce(new Error('Conflict')),
+  }
+  const preparation = await prepareIssueStartStatus(issues, before.id, { projectStore: 'backend' })
+  await expect(preparation.rollback!()).rejects.toThrow('Conflict')
+  expect(issues.update).toHaveBeenCalledTimes(2)
 })

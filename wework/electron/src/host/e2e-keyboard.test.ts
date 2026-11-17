@@ -109,6 +109,10 @@ describe('isolated native keyboard verification', () => {
     ['Control+Shift+M', 'M', ['control', 'shift']],
     ['Shift+PageUp', 'PageUp', ['shift']],
     ['Shift+PageDown', 'PageDown', ['shift']],
+    ['Home', 'Home', []],
+    ['End', 'End', []],
+    ['Shift+Home', 'Home', ['shift']],
+    ['Shift+End', 'End', ['shift']],
     ['Meta+W', 'W', ['meta']],
   ])('sends native shortcut %s without inserting a character', async (key, keyCode, modifiers) => {
     const { view, contents, focusWindow } = fixture()
