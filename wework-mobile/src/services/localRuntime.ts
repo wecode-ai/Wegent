@@ -203,10 +203,8 @@ export class LocalRuntime {
       const check = () => {
         void this.requireNative().getStatusAsync().then(receive, finish)
       }
-      const unsubscribe = this.onStatus(() => {
-        if (this.current.state === 'stopped') receive(this.current)
-        else if (this.current.state === 'failed') check()
-      })
+      // The visible status hides other profiles; only native state can prove they drained.
+      const unsubscribe = this.onStatus(check)
       this.lifetime.signal.addEventListener('abort', onAbort, { once: true })
       if (this.lifetime.signal.aborted) onAbort()
       else check()

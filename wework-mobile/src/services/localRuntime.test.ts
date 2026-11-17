@@ -66,7 +66,10 @@ function fixture(initial: Partial<LocalRuntimeStatus> = {}) {
   return {
     native,
     runtime,
-    emit: (name: string, value: unknown) => listeners.get(name)?.(value as never),
+    emit: (name: string, value: unknown) => {
+      if (name === 'onRuntimeStatus') status = value as LocalRuntimeStatus
+      listeners.get(name)?.(value as never)
+    },
   }
 }
 
@@ -135,6 +138,62 @@ describe('phone-local runtime ownership and lifecycle', () => {
     await starting
     expect(native.startAsync).toHaveBeenCalledOnce()
     expect(runtime.status.state).toBe('running')
+  })
+
+  it('waits for the previous profile to stop through intermediate background notifications', async () => {
+    const stopping: LocalRuntimeStatus = {
+      supported: true,
+      state: 'stopping',
+      accountScope: 'b'.repeat(64),
+      generation: 1,
+      background: 'active',
+    }
+    const { runtime, native, emit } = fixture(stopping)
+    await runtime.initialize()
+    const starting = runtime.start()
+    const settled = starting.catch(() => undefined)
+    try {
+      await vi.waitFor(() => expect(native.getStatusAsync).toHaveBeenCalledTimes(3))
+      emit('onRuntimeStatus', { ...stopping, background: 'completed' })
+      await vi.waitFor(() =>
+        expect(native.getStatusAsync.mock.calls.length).toBeGreaterThanOrEqual(4)
+      )
+      expect(runtime.status.accountScope).toBeUndefined()
+      expect(native.stopAsync).not.toHaveBeenCalled()
+      expect(native.startAsync).not.toHaveBeenCalled()
+
+      const stopped = { ...stopping, state: 'stopped' as const }
+      emit('onRuntimeStatus', stopped)
+      await starting
+      expect(native.stopAsync).not.toHaveBeenCalled()
+      expect(native.startAsync).toHaveBeenCalledOnce()
+      expect(runtime.status.accountScope).toBe(scope)
+    } finally {
+      runtime.dispose()
+      await settled
+    }
+  })
+
+  it('preserves a previous profile shutdown failure without retrying stop or mounting a guest', async () => {
+    const stopping: LocalRuntimeStatus = {
+      supported: true,
+      state: 'stopping',
+      accountScope: 'b'.repeat(64),
+      generation: 1,
+      background: 'active',
+    }
+    const { runtime, native, emit } = fixture(stopping)
+    await runtime.initialize()
+    const starting = runtime.start()
+    const rejected = expect(starting).rejects.toThrow('guest threads still alive')
+    await vi.waitFor(() => expect(native.getStatusAsync).toHaveBeenCalledTimes(3))
+    const failed = { ...stopping, state: 'failed' as const, error: 'guest threads still alive' }
+    emit('onRuntimeStatus', failed)
+    await rejected
+    expect(native.stopAsync).not.toHaveBeenCalled()
+    expect(native.startAsync).not.toHaveBeenCalled()
+    expect(runtime.status.accountScope).toBeUndefined()
+    runtime.dispose()
   })
 
   it('does not restart an explicitly stopped environment on foreground', async () => {
