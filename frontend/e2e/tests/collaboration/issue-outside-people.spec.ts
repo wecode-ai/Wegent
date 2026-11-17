@@ -323,10 +323,36 @@ for (const visibility of ['private', 'public'] as const) {
         await page.reload()
         await page.getByTestId('cloud-todo-detail-assignee').click()
         await page.getByTestId('cloud-todo-detail-assignee-option-empty').click()
-        await expect.poll(async () => (await guest.get(issuePath)).status).toBe(404)
+        if (visibility === 'private') {
+          await expect
+            .poll(
+              async () =>
+                (await guest.get<Resource & { can_edit: boolean }>(issuePath)).data?.can_edit
+            )
+            .toBe(false)
+          const restored = await guest.get<Resource>(issuePath)
+          expect(restored.status).toBe(200)
+          expect(restored.data).toMatchObject({
+            created_by_user_id: outsider.id,
+            assignee_user_id: null,
+            invited_only: false,
+            permissions: { edit_content: false, comment: false, assign: false, execute: false },
+          })
+          expect(
+            (
+              await guest.patch(issuePath, {
+                version: restored.data!.version,
+                title: 'Former invitee cannot edit',
+              })
+            ).status
+          ).toBe(403)
+        } else {
+          await expect.poll(async () => (await guest.get(issuePath)).status).toBe(404)
+        }
         const restoredViewer = await guest.get<{ access_role: string }>(projectPath)
         expect(restoredViewer.data!.access_role).toBe('Viewer')
         await webApi(page, `${projectPath}/members/${outsider.id}`, { method: 'DELETE' })
+        expect((await guest.get(issuePath)).status).toBe(404)
       } finally {
         guestChat.dispose()
         ownerChat.dispose()
