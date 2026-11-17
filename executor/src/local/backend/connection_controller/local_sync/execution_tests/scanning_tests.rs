@@ -1,12 +1,6 @@
 //! Hold the actual synchronous scan callback, without holding a Tokio worker.
 use super::*;
 
-/// Upper bound for event-driven waits. The waits are notification-based, but
-/// full-suite parallel runs schedule the spawned scan tasks seconds late under
-/// CPU contention, so the guard must tolerate runner slowness instead of
-/// failing at interactive latency.
-const EVENT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
-
 pub(super) async fn held_scan(
     phase: usize,
     unconfirmed: bool,
