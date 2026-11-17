@@ -48,6 +48,7 @@ import { compareExecutionEnvironments } from '../execution-environment/compareEx
 import { ensureWorkspaceEnvironmentSharing } from '../execution-environment/ensureWorkspaceEnvironmentSharing'
 import { GitAccountConfigurationButton } from '../controls/GitAccountConfiguration'
 import { requestFailureMessage } from '../controls/requestFailure'
+import { hasVersionConflictCode } from '../versionConflict'
 
 type BranchState = {
   status: 'loading' | 'ready' | 'error'
@@ -553,7 +554,8 @@ function ScopedProjectExecutionEnvironments({
       environmentErrorDeviceKey.current = ''
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : String(saveError)
-      const conflict = /^(Cloud project|Workspace) changed$/.test(message)
+      const conflict =
+        hasVersionConflictCode(saveError) || /^(Cloud project|Workspace) changed$/.test(message)
       setConfigurationConflict(conflict)
       setConfigurationError(
         conflict
