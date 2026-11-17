@@ -1,6 +1,7 @@
 import { waitForDomChange } from './waitForDomChange'
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
 import { collectConversationRenderingDiagnostics } from './conversation-rendering-diagnostics'
+import { collectIssueDrawerDiagnostics } from './issue-drawer-diagnostics'
 import {
   getProviderConfigurationState,
   reloadProviderConfiguration,
@@ -3664,6 +3665,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
+        issueDrawers: collectIssueDrawerDiagnostics(getWorkbenchDebugSnapshot().logs),
         conversationRendering: await collectConversationRenderingDiagnostics(capability =>
           invokeDesktopHost(capability)
         ),

@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { collaborationTestIds } from "../testIds";
+import { createIssueDrawerDiagnostic } from "./issueDrawerDiagnostics";
 
 interface IssueConversationDrawersProps {
   embedded?: boolean;
@@ -32,11 +33,15 @@ export function IssueConversationDrawers({
   const viewportRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const closeCommittedRef = useRef(false);
+  const [diagnostic] = useState(createIssueDrawerDiagnostic);
   const [retainedConversation, setRetainedConversation] =
     useState(conversation);
   const [dismissing, setDismissing] = useState(false);
   const hasConversation = Boolean(conversation);
-  const requestClose = () => setDismissing(true);
+  const requestClose = () => {
+    diagnostic.record("request-close");
+    setDismissing(true);
+  };
   onCloseRef.current = onClose;
   if (conversation && conversation !== retainedConversation) {
     setRetainedConversation(conversation);
@@ -48,6 +53,7 @@ export function IssueConversationDrawers({
       if (hasConversation) return;
     }
     let active = true;
+    let settled = false;
     const finishExit = async () => {
       // getAnimations flushes style and includes the transition started by this commit.
       // Re-check after cancellation (for example, resizing or enabling reduced motion).
@@ -58,25 +64,40 @@ export function IssueConversationDrawers({
             animation.playState !== "idle",
         );
       let animations = runningAnimations();
+      diagnostic.record("wait-animations", animations);
       while (animations.length > 0) {
-        await Promise.allSettled(
+        const results = await Promise.allSettled(
           animations.map((animation) => animation.finished),
+        );
+        diagnostic.record(
+          "animations-settled",
+          animations,
+          results.filter((result) => result.status === "rejected").length,
         );
         if (!active) return;
         animations = runningAnimations();
+        diagnostic.record("wait-animations", animations);
       }
       if (!active) return;
+      settled = true;
       if (dismissing) {
         if (closeCommittedRef.current) return;
         closeCommittedRef.current = true;
+        diagnostic.record("commit-callback");
         onCloseRef.current();
       } else setRetainedConversation(null);
     };
     void finishExit();
     return () => {
       active = false;
+      if (!settled) diagnostic.record("effect-canceled");
     };
-  }, [hasConversation, dismissing]);
+  }, [hasConversation, dismissing, diagnostic]);
+
+  useEffect(() => {
+    diagnostic.record("mounted");
+    return () => diagnostic.record("unmounted");
+  }, [diagnostic]);
 
   useEffect(() => {
     const trigger = document.activeElement as HTMLElement | null;
@@ -166,6 +187,7 @@ export function IssueConversationDrawers({
           ref={trackRef}
           className="issue-conversation-drawers"
           data-testid="issue-conversation-drawers"
+          data-diagnostic-instance={diagnostic.instanceId}
           data-has-conversation={hasConversation}
           data-dismissing={dismissing}
           inert={dismissing}
