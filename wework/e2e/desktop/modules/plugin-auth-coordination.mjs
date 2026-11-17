@@ -11,6 +11,7 @@ import {
   verifyIndependentPluginMutations,
 } from './plugin-write-coordination.mjs'
 import { pluginApi, until } from './plugin-regression-fixture.mjs'
+import { pendingTarget, readTargetObservations, targetSettled } from './plugin-auth-observation.mjs'
 
 // Exercise the desktop IPC, real Executor broker and account adapter. Only the
 // synthetic credential provider is gated; backend responses are never replaced.
@@ -157,15 +158,20 @@ export async function verifyPluginAuthCoordination({
     await otherLease.release()
   }
   const backgroundRow = await holdInstalledPluginRow(cloud, installedId)
-  let pausedMarker
+  const observations = () => readTargetObservations(reconcileMarker, installedId, 'mail')
+  let blockedTarget
   try {
     await signalAutomaticRetry()
+    blockedTarget = await until(
+      async () => pendingTarget(await observations()),
+      Boolean,
+      'The target credential enrollment did not start'
+    )
     await backgroundRow.waitFor('blocked')
-    pausedMarker = await readFile(reconcileMarker, 'utf8')
     await verifyIndependentPluginMutations(cloud, independent, evidence)
     assert.equal(
-      await readFile(reconcileMarker, 'utf8'),
-      pausedMarker,
+      targetSettled(await observations(), blockedTarget),
+      false,
       'Background authentication finished before its real database fence was released'
     )
     evidence.push({ case: 'background-authentication-does-not-block-other-plugin', installedId })
@@ -173,8 +179,8 @@ export async function verifyPluginAuthCoordination({
     await backgroundRow.release()
   }
   await until(
-    () => readFile(reconcileMarker, 'utf8'),
-    value => value.length > pausedMarker.length,
+    observations,
+    rows => targetSettled(rows, blockedTarget),
     'Background authentication did not recover after its row was released'
   )
   await logout()
