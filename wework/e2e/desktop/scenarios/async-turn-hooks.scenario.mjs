@@ -322,8 +322,12 @@ console.log('HOOK_WRITES_COMPLETE')
           await mkdir(join(root, 'logs'), { recursive: true })
           await cp(join(root, 'logs'), join(diagnostics, 'async-hooks'), { recursive: true })
         }
-        await rm(root, { recursive: true, force: true })
       }
+    },
+    async cleanup() {
+      // Native shell sessions can retain their cwd after task cancellation.
+      // The shared runner stops the application and executor before this phase.
+      if (root) await rm(root, { recursive: true, force: true })
     },
   }
 }
