@@ -62,6 +62,7 @@ impl RuntimeWorkRpcHandler {
                 .collect::<Vec<_>>()
                 .join("\n"));
         }
+        let client_user_message_id = prepared.request.subtask_id.clone();
         payload["attachments"] = prepared.request.extra["attachments"].clone();
         payload["executionRequest"] = serde_json::to_value(prepared.request)
             .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
@@ -78,9 +79,8 @@ impl RuntimeWorkRpcHandler {
         object.remove("requestUserInputResponse");
         object.remove("request_user_input_response");
         object.insert("queueIfBusy".into(), json!(true));
-        if let Some(id) = object.get("clientUserMessageId").cloned() {
-            object.insert("clientGuidanceId".into(), id);
-        }
+        object.insert("clientUserMessageId".into(), json!(client_user_message_id));
+        object.insert("clientGuidanceId".into(), json!(client_user_message_id));
         Ok(())
     }
 
@@ -227,6 +227,21 @@ fn async_reply_execution_request(
     // Preserve the task's model, tools and identity, but replace per-message data.
     let mut request: ExecutionRequest = serde_json::from_value(saved.clone())
         .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+    let client_user_message_id = string_field(payload, "clientUserMessageId")
+        .or_else(|| string_field(payload, "client_user_message_id"))
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    request.subtask_id = client_user_message_id.clone();
+    for key in [
+        "client_user_message_id",
+        "clientUserMessageId",
+        "runtime_generated_user_message",
+    ] {
+        request.extra.remove(key);
+    }
+    request.extra.insert(
+        "client_user_message_id".into(),
+        json!(client_user_message_id),
+    );
     request.prompt = payload["message"].clone();
     request.history.clear();
     request.message_id = None;
@@ -365,6 +380,31 @@ mod reply_tests {
         let without_files =
             async_reply_execution_request(&saved, &json!({"message":"Text only"})).unwrap();
         assert_eq!(without_files.extra["attachments"], json!([]));
+    }
+
+    #[test]
+    fn async_reply_has_its_own_user_message_identity() {
+        let saved = json!({
+            "task_id":"task", "subtask_id":"original-subtask",
+            "client_user_message_id":"original-user", "clientUserMessageId":"original-user",
+            "runtime_generated_user_message":{"id":"original-user", "message":"Original prompt"}
+        });
+        for client_id in [None, Some("answer-user")] {
+            let mut payload = json!({"message":"STAFF\nPDF\nTomorrow"});
+            if let Some(id) = client_id {
+                payload["clientUserMessageId"] = json!(id);
+            }
+            let mut request = async_reply_execution_request(&saved, &payload).unwrap();
+            apply_runtime_payload_metadata(&mut request, &payload);
+            assert_ne!(request.subtask_id, "original-subtask");
+            assert_ne!(request.extra["client_user_message_id"], "original-user");
+            assert!(!request.extra.contains_key("clientUserMessageId"));
+            assert!(!request.extra.contains_key("runtime_generated_user_message"));
+            if let Some(id) = client_id {
+                assert_eq!(request.subtask_id, id);
+                assert_eq!(request.extra["client_user_message_id"], id);
+            }
+        }
     }
 
     #[test]
