@@ -135,9 +135,7 @@ it('retains the current project workspace after a metadata transport failure', a
   const route = { ...location, workspaceId: null }
   await render([api], route, 'active')
   expect(currentState().workspace?.id).toBe(cloudWorkspace.id)
-  vi.mocked(api.projects.get).mockRejectedValueOnce(
-    new TypeError('Failed to fetch'),
-  )
+  vi.mocked(api.projects.get).mockRejectedValueOnce(new TypeError('Failed to fetch'))
 
   await render([api], route, 'reactivated')
 
@@ -148,13 +146,13 @@ it('retains the current project workspace after a metadata transport failure', a
 
 it.each([401, 403, 404])(
   'removes current project context after metadata denies access with %s',
-  async (status) => {
+  async status => {
     const api = apiFor(cloudWorkspace, [project])
     api.projects.get = vi.fn(async () => project)
     const route = { ...location, workspaceId: null }
     await render([api], route, 'active')
     vi.mocked(api.projects.get).mockRejectedValueOnce(
-      Object.assign(new Error('Denied'), { status }),
+      Object.assign(new Error('Denied'), { status })
     )
 
     await render([api], route, 'reactivated')
@@ -163,17 +161,23 @@ it.each([401, 403, 404])(
     expect(currentState().workspace).toBeNull()
     expect(currentState().workspaceNavigationContext).toBeNull()
     expect(currentState().error).toBe('Failed')
-  },
+  }
 )
 
 it.each([401, 403, 404])(
   'loads other authorized navigation when a cold project route is rejected with %s',
   async status => {
     const sibling = { ...project, id: 'accessible-project' }
-    const localProject = { ...project, id: 'local-project', workspace_id: localWorkspace.id }
+    const localProject = {
+      ...project,
+      id: 'local-project',
+      workspace_id: localWorkspace.id,
+    }
     const cloudApi = apiFor(cloudWorkspace, [project, sibling])
     const localApi = apiFor(localWorkspace, [localProject])
-    cloudApi.projects.get = vi.fn().mockRejectedValue(Object.assign(new Error('Denied'), { status }))
+    cloudApi.projects.get = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('Denied'), { status }))
     const route = { ...location, workspaceId: null }
 
     await render([localApi, cloudApi], route, 'denied', cloudApi)
@@ -200,9 +204,7 @@ it('does not reuse a project workspace from a replaced API after a transport fai
   const route = { ...location, workspaceId: null }
   await render([api], route, 'active')
   const replacement = apiFor(localWorkspace, [])
-  replacement.projects.get = vi
-    .fn()
-    .mockRejectedValue(new TypeError('Failed to fetch'))
+  replacement.projects.get = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
 
   await render([replacement], route, 'reactivated')
 
@@ -233,6 +235,335 @@ it('reuses the cache when the navigation source identities are unchanged', async
   await render([cloudApi])
   expect(cloudApi.projects.list).toHaveBeenCalledOnce()
   expect(cloudApi.workspaces!.list).toHaveBeenCalledOnce()
+})
+
+it('retains existing projects while their source refresh is pending and accepts a successful empty list', async () => {
+  const sibling = { ...project, id: 'sibling' }
+  const api = apiFor(cloudWorkspace, [project, sibling])
+  const sources = [api]
+  await render(sources, location, 'initial')
+  let finish!: (projects: CollaborationProject[]) => void
+  vi.mocked(api.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve
+    })
+  )
+
+  await render(sources, location, 'refresh')
+
+  expect(currentState().navigationProjects).toEqual([project, sibling])
+  expect(currentState().navigationIncomplete).toBe(true)
+  await act(async () => finish([]))
+  expect(currentState().navigationProjects).toEqual([])
+  expect(currentState().projects).toEqual([])
+})
+
+it('retains same-source projects after a catalog transport failure', async () => {
+  const sibling = { ...project, id: 'sibling' }
+  const api = apiFor(cloudWorkspace, [project, sibling])
+  const sources = [api]
+  await render(sources, location, 'initial')
+  vi.mocked(api.projects.list).mockRejectedValue(new TypeError('Failed to fetch'))
+
+  await render(sources, location, 'refresh')
+
+  expect(currentState().navigationProjects).toEqual([project, sibling])
+  expect(currentState().navigationIncomplete).toBe(true)
+})
+
+it('reconciles successful source deletions while retaining projects owned by a pending source', async () => {
+  const sibling = { ...project, id: 'sibling' }
+  const localProject = {
+    ...project,
+    id: 'local-project',
+    workspace_id: localWorkspace.id,
+  }
+  const cloudApi = apiFor(cloudWorkspace, [project, sibling])
+  const localApi = apiFor(localWorkspace, [localProject])
+  const sources = [cloudApi, localApi]
+  await render(sources, location, 'initial')
+  let finish!: (projects: CollaborationProject[]) => void
+  vi.mocked(cloudApi.projects.list).mockResolvedValue([project])
+  vi.mocked(localApi.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve
+    })
+  )
+
+  await render(sources, location, 'refresh')
+
+  expect(currentState().navigationProjects).toEqual([project, localProject])
+  await act(async () => finish([]))
+  expect(currentState().navigationProjects).toEqual([project])
+})
+
+it('retains projects during a root catalog refresh until their own source resolves', async () => {
+  const api = apiFor(cloudWorkspace, [project])
+  const sources = [api]
+  const rootLocation = { ...location, workspaceId: null, projectId: null }
+  await render(sources, rootLocation, 'initial')
+  let finish!: (projects: CollaborationProject[]) => void
+  vi.mocked(api.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve
+    })
+  )
+
+  await render(sources, rootLocation, 'refresh')
+
+  expect(currentState().navigationProjects).toEqual([project])
+  await act(async () => finish([]))
+  expect(currentState().navigationProjects).toEqual([])
+})
+
+it('never seeds a replacement navigation source with another API identity catalog', async () => {
+  const api = apiFor(cloudWorkspace, [project])
+  await render([api], location, 'initial')
+  const replacement = apiFor(cloudWorkspace, [])
+  let finish!: (projects: CollaborationProject[]) => void
+  vi.mocked(replacement.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve
+    })
+  )
+
+  await render([replacement], location, 'replacement')
+
+  expect(currentState().navigationProjects).toEqual([])
+  expect(currentState().projects).toEqual([])
+  await act(async () => finish([]))
+  expect(currentState().navigationProjects).toEqual([])
+})
+
+it.each([401, 403, 404])(
+  'does not restore a revoked project from a pending source refresh after %s',
+  async status => {
+    const sibling = { ...project, id: 'sibling' }
+    const api = apiFor(cloudWorkspace, [project, sibling])
+    const sources = [api]
+    api.projects.get = vi.fn(async () => project)
+    const route = { ...location, workspaceId: null }
+    await render(sources, route, 'initial')
+    vi.mocked(api.projects.get).mockRejectedValue(Object.assign(new Error('Denied'), { status }))
+    let finish!: (projects: CollaborationProject[]) => void
+    vi.mocked(api.projects.list).mockReturnValue(
+      new Promise(resolve => {
+        finish = resolve
+      })
+    )
+
+    await render(sources, route, 'denied')
+
+    expect(currentState().navigationProjects).not.toContainEqual(project)
+    expect(currentState().navigationProjects).toContainEqual(sibling)
+    await act(async () => finish([project, sibling]))
+    expect(currentState().navigationProjects).toEqual([sibling])
+    expect(currentState().error).toBe('Failed')
+  }
+)
+
+it.each([401, 403, 404])(
+  'clears a denied root catalog source while an unrelated source is pending: %s',
+  async status => {
+    const localProject = {
+      ...project,
+      id: 'local-project',
+      workspace_id: localWorkspace.id,
+    }
+    const cloudApi = apiFor(cloudWorkspace, [project])
+    const localApi = apiFor(localWorkspace, [localProject])
+    const sources = [cloudApi, localApi]
+    const route = { ...location, workspaceId: null, projectId: null }
+    await render(sources, route, 'initial')
+    vi.mocked(cloudApi.projects.list).mockRejectedValue(
+      Object.assign(new Error('Denied'), { status })
+    )
+    vi.mocked(cloudApi.workspaces!.list).mockReturnValue(new Promise(() => {}))
+    let finish!: (projects: CollaborationProject[]) => void
+    vi.mocked(localApi.projects.list).mockReturnValue(
+      new Promise(resolve => {
+        finish = resolve
+      })
+    )
+    vi.mocked(localApi.workspaces!.list).mockReturnValue(new Promise(() => {}))
+
+    await render(sources, route, 'denied')
+
+    expect(currentState().navigationProjects).toEqual([localProject])
+    await act(async () => finish([localProject]))
+    expect(currentState().navigationProjects).toEqual([localProject])
+  }
+)
+
+it('retains root navigation after same-source transport failures', async () => {
+  const api = apiFor(cloudWorkspace, [project])
+  const sources = [api]
+  const route = { ...location, workspaceId: null, projectId: null }
+  await render(sources, route, 'initial')
+  vi.mocked(api.projects.list).mockRejectedValue(new TypeError('Failed to fetch'))
+
+  await render(sources, route, 'refresh')
+
+  expect(currentState().navigationProjects).toEqual([project])
+  expect(currentState().navigationIncomplete).toBe(true)
+})
+
+it.each([null, 401, 403, 404])(
+  'removes a completed target catalog row while another source is pending: %s',
+  async status => {
+    const localApi = apiFor(localWorkspace, [])
+    const cloudApi = apiFor(cloudWorkspace, [project])
+    const sources = [localApi, cloudApi]
+    await render(sources, location, 'initial', cloudApi)
+    if (status === null) {
+      vi.mocked(cloudApi.projects.list).mockResolvedValue([])
+    } else {
+      vi.mocked(cloudApi.projects.list).mockRejectedValue(
+        Object.assign(new Error('Denied'), { status })
+      )
+    }
+    vi.mocked(localApi.projects.list).mockReturnValue(new Promise(() => {}))
+    vi.mocked(localApi.workspaces!.list).mockReturnValue(new Promise(() => {}))
+
+    await render(sources, location, 'refresh', cloudApi)
+
+    expect(currentState().navigationProjects).not.toContainEqual(project)
+    expect(currentState().projects).not.toContainEqual(project)
+
+    vi.mocked(cloudApi.projects.list).mockReturnValue(new Promise(() => {}))
+    vi.mocked(cloudApi.workspaces!.list).mockReturnValue(new Promise(() => {}))
+    await render(sources, location, 'still-pending', cloudApi)
+
+    expect(currentState().navigationProjects).not.toContainEqual(project)
+    expect(currentState().projects).not.toContainEqual(project)
+  }
+)
+
+it.each([401, 403, 404])(
+  'preserves an independent fresh project grant when its catalog denies access: %s',
+  async status => {
+    const localApi = apiFor(localWorkspace, [])
+    const cloudApi = apiFor(cloudWorkspace, [project])
+    const sources = [localApi, cloudApi]
+    const route = { ...location, workspaceId: null }
+    cloudApi.projects.get = vi.fn(async () => project)
+    await render(sources, route, 'initial', cloudApi)
+    vi.mocked(cloudApi.projects.list).mockRejectedValue(
+      Object.assign(new Error('Denied'), { status })
+    )
+    vi.mocked(localApi.projects.list).mockReturnValue(new Promise(() => {}))
+    vi.mocked(localApi.workspaces!.list).mockReturnValue(new Promise(() => {}))
+
+    await render(sources, route, 'refresh', cloudApi)
+
+    expect(cloudApi.projects.get).toHaveBeenCalledTimes(2)
+    expect(currentState().navigationProjects).toContainEqual(project)
+    expect(currentState().projects).toContainEqual(project)
+  }
+)
+
+it('does not reuse an archived project while its source catalog refresh is pending', async () => {
+  const api = apiFor(cloudWorkspace, [project])
+  api.projects.archive = vi.fn(async () => undefined)
+  const sources = [api]
+  await render(sources, location, 'initial')
+  await act(async () => {
+    await commands.archiveProject(project)
+  })
+  let finish!: (projects: CollaborationProject[]) => void
+  vi.mocked(api.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve
+    })
+  )
+
+  await render(sources, location, 'refresh')
+
+  expect(currentState().navigationProjects).toEqual([])
+  await act(async () => finish([]))
+  expect(currentState().navigationProjects).toEqual([])
+})
+
+it('does not seed a newer refresh with an older same-source catalog response', async () => {
+  const oldSibling = { ...project, id: 'old-sibling' }
+  const newSibling = { ...project, id: 'new-sibling' }
+  const api = apiFor(cloudWorkspace, [project])
+  const sources = [api]
+  await render(sources, location, 'initial')
+  let finishOld!: (projects: CollaborationProject[]) => void
+  vi.mocked(api.projects.list).mockReturnValueOnce(
+    new Promise(resolve => {
+      finishOld = resolve
+    })
+  )
+  await render(sources, location, 'older')
+  vi.mocked(api.projects.list).mockResolvedValue([project, newSibling])
+  await render(sources, location, 'newer')
+  await act(async () => finishOld([project, oldSibling]))
+  let finishLatest!: (projects: CollaborationProject[]) => void
+  vi.mocked(api.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      finishLatest = resolve
+    })
+  )
+
+  await render(sources, location, 'latest')
+
+  expect(currentState().navigationProjects).toEqual([project, newSibling])
+  await act(async () => finishLatest([project, newSibling]))
+})
+
+it('does not let an old pending API catalog seed the replacement identity cache', async () => {
+  const api = apiFor(cloudWorkspace, [project])
+  const sources = [api]
+  await render(sources, location, 'initial')
+  let finishOld!: (projects: CollaborationProject[]) => void
+  vi.mocked(api.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      finishOld = resolve
+    })
+  )
+  await render(sources, location, 'older')
+  const replacementProject = { ...project, id: 'replacement-project' }
+  const replacement = apiFor(cloudWorkspace, [replacementProject])
+  const replacementSources = [replacement]
+  const replacementLocation = { ...location, projectId: replacementProject.id }
+  await render(replacementSources, replacementLocation, 'replacement')
+  await act(async () => finishOld([project]))
+  let finishLatest!: (projects: CollaborationProject[]) => void
+  vi.mocked(replacement.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      finishLatest = resolve
+    })
+  )
+
+  await render(replacementSources, replacementLocation, 'latest')
+
+  expect(currentState().navigationProjects).toEqual([replacementProject])
+  expect(currentState().projects).not.toContainEqual(project)
+  await act(async () => finishLatest([replacementProject]))
+})
+
+it('retains sibling navigation while a standalone project refresh waits for its source', async () => {
+  const standalone = { ...project, workspace_id: null }
+  const sibling = { ...standalone, id: 'standalone-sibling' }
+  const api = apiFor(cloudWorkspace, [standalone, sibling])
+  api.projects.get = vi.fn(async () => standalone)
+  const sources = [api]
+  const route = { ...location, workspaceId: null }
+  await render(sources, route, 'initial')
+  let finish!: (projects: CollaborationProject[]) => void
+  vi.mocked(api.projects.list).mockReturnValue(
+    new Promise(resolve => {
+      finish = resolve
+    })
+  )
+
+  await render(sources, route, 'refresh')
+
+  expect(currentState().navigationProjects).toEqual([standalone, sibling])
+  await act(async () => finish([standalone]))
+  expect(currentState().navigationProjects).toEqual([standalone])
 })
 
 it('opens a cloud project while the unrelated local navigation is pending', async () => {
@@ -370,7 +701,11 @@ it.each(['workspace', 'project', 'archived', 'updated'])(
     })
     cloudApi.workspaces!.get = vi.fn(async () => createdWorkspace)
     cloudApi.workspaces!.update = vi.fn(async () => {
-      const updated = { ...createdWorkspace, name: 'Renamed workspace', version: 2 }
+      const updated = {
+        ...createdWorkspace,
+        name: 'Renamed workspace',
+        version: 2,
+      }
       vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([cloudWorkspace, updated])
       vi.mocked(cloudApi.workspaces!.get).mockResolvedValue(updated)
       return updated
@@ -570,7 +905,12 @@ it.each([
     if (detail === 'navigation context') {
       vi.mocked(cloudApi.workspaces!.list).mockResolvedValue([])
       cloudApi.workspaces!.getNavigationContext = vi.fn(() =>
-        deferDetail({ id: 'cloud', public_id: 'cloud', name: 'Cloud', location: 'cloud' as const })
+        deferDetail({
+          id: 'cloud',
+          public_id: 'cloud',
+          name: 'Cloud',
+          location: 'cloud' as const,
+        })
       )
     }
     const createdProject = { ...project, id: 'created-project', version: 1 }
