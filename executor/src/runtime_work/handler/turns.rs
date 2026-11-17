@@ -410,6 +410,8 @@ impl RuntimeWorkRpcHandler {
         // retain their own context without changing the active native turn.
         for turn in starting {
             self.store.update_task(&turn.local_task_id, |link| {
+                // Admission owns capacity before preparation or the native RPC starts.
+                crate::runtime_work::lifecycle::begin_native_request(link);
                 store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
             });
         }

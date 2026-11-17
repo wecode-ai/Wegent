@@ -116,3 +116,5 @@ Native quota account checks run outside the task send gate; state publication re
 After the workbench mounts, its local runtime initializer prepares execution recovery and default plugins in the background. UI reads do not wait for this phase; failures use the existing runtime notice and retry action.
 
 Telemetry policy persists each user’s collection cutoff and rejects older queued observations within the write transaction. Additional policy storage initializes only on writes; reads create no tables. Terminal task state is published before releasing its execution claim, and telemetry persistence holds no execution-control mutex.
+
+Asynchronous capacity release checks native execution ownership, so question or Goal metadata updates cannot retain a completed turn's worker slot.
