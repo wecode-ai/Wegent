@@ -48,9 +48,14 @@ const project = {
   access_role: 'Owner',
 } as CloudProject
 
-function setup(assignmentError?: Error, workspacePanel = false, backend = false) {
+function setup(
+  assignmentError?: Error,
+  workspacePanel = false,
+  backend = false,
+  initialItem = initial
+) {
   let replaceIssue!: (item: CloudLoopItem) => void
-  let persisted = initial
+  let persisted = initialItem
   const updateLoopItem = vi.fn(async (_id: string, values: Partial<CloudLoopItem>) => {
     persisted = { ...persisted, ...values, version: persisted.version + 1 }
     return persisted
@@ -74,7 +79,7 @@ function setup(assignmentError?: Error, workspacePanel = false, backend = false)
     updateLoopItem,
   }
   function Editor() {
-    const [item, setItem] = useState(initial)
+    const [item, setItem] = useState(initialItem)
     replaceIssue = setItem
     return (
       <TodoEditor
@@ -99,6 +104,23 @@ function setup(assignmentError?: Error, workspacePanel = false, backend = false)
 }
 
 describe('immediate Issue properties', () => {
+  it('lets readers expand a short Markdown body without changing its saved content', async () => {
+    const description = '# Review feedback\n\nKeep the interview context.'
+    const { updateLoopItem } = setup(undefined, true, false, {
+      ...initial,
+      title: 'Review feedback',
+      description,
+    })
+    const toggle = await screen.findByTestId('issue-description-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    const target = document.getElementById(toggle.getAttribute('aria-controls')!)
+    expect(target).toHaveAttribute('data-repeated-heading', 'true')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('test-description')).toHaveValue(description)
+    expect(updateLoopItem).not.toHaveBeenCalled()
+  })
+
   it('opens the parent picker from visible expanded properties and returns keyboard focus', async () => {
     setup(undefined, true)
     const parent = screen.getByTestId('cloud-todo-detail-parent')

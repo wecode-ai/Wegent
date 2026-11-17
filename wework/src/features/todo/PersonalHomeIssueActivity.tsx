@@ -100,7 +100,7 @@ export function PersonalHomeIssueActivity({
       {summary && <div className="mt-1">{summary}</div>}
       {assignment?.body && (
         <blockquote className="mt-1 border-l border-border pl-3 text-sm text-text-secondary">
-          <span className="mr-2 inline text-xs text-text-muted">
+          <span className="mr-2 inline text-xs text-text-secondary">
             {t('personalHome.assignmentReason')}
             {assignment.created_by_user_name ? ` · ${assignment.created_by_user_name}` : ''}
           </span>
@@ -120,7 +120,7 @@ export function PersonalHomeIssueActivity({
           aria-haspopup={tasks.length > 1 ? 'dialog' : undefined}
           aria-expanded={tasks.length > 1 ? Boolean(taskAnchor) : undefined}
           title={tasks.map(task => `${task.title} · ${statusLabel(task.status)}`).join('\n')}
-          className="mt-1 inline-flex min-h-11 max-w-full items-center gap-2 whitespace-nowrap rounded-md py-1 text-sm text-text-secondary transition-colors hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-7"
+          className="mt-1 inline-flex min-h-11 max-w-full items-center gap-2 whitespace-nowrap rounded-md py-1 text-sm text-text-secondary transition-colors hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:min-h-7"
           onClick={event => {
             event.stopPropagation()
             if (tasks.length === 1) onOpenTask?.(tasks[0].binding)
@@ -136,7 +136,7 @@ export function PersonalHomeIssueActivity({
             .map(([status, count]) => (
               <span
                 key={status}
-                className={`inline-flex shrink-0 items-center gap-1 text-xs ${status === 'failed' ? 'text-error' : 'text-text-muted'}`}
+                className={`inline-flex shrink-0 items-center gap-1 text-xs ${status === 'failed' ? 'text-error' : 'text-text-secondary'}`}
               >
                 {status === 'running' ? (
                   <LoaderCircle aria-hidden="true" className="h-3 w-3 motion-safe:animate-spin" />
@@ -176,7 +176,9 @@ export function PersonalHomeIssueActivity({
               }}
             >
               <span className="min-w-0 flex-1 truncate">{task.title}</span>
-              <span className="shrink-0 text-xs text-text-muted">{statusLabel(task.status)}</span>
+              <span className="shrink-0 text-xs text-text-secondary">
+                {statusLabel(task.status)}
+              </span>
               <ArrowUpRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-text-muted" />
             </button>
           ))}

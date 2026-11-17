@@ -106,7 +106,9 @@ export function IssueStatusHistoryList({
           <span className="shrink-0 font-medium">{actor}</span>
           {isCreate ? (
             <>
-              <span className="shrink-0 text-text-muted">{labels.initial}</span>
+              <span className="shrink-0 text-text-secondary">
+                {labels.initial}
+              </span>
               <span className="min-w-0 truncate">{toName}</span>
             </>
           ) : (

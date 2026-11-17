@@ -56,6 +56,7 @@ import LoadingState from '@/features/common/LoadingState'
 import { useCollaborationTemplates } from '@/features/resource-library/useCollaborationTemplates'
 import {
   templateIdentity,
+  localizeBuiltinTemplateRecord,
   templateMessages,
   type CollaborationTemplate,
 } from '@wegent/collaboration/templates'
@@ -169,7 +170,7 @@ export function CollaborationPage({
           setTemplateRequest({
             key: requestedTemplate,
             scope: templateStore.library.scope,
-            document: record.document,
+            document: localizeBuiltinTemplateRecord(record, templateLocale).document,
           })
       })
       .catch(() => {
