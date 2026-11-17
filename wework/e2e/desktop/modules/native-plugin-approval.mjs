@@ -117,21 +117,22 @@ throw 'The isolated app did not display its native Core plugin decision'
         'dialog-matched',
         'button-matched',
       ])
-      console.error(
-        '[native-plugin-decision-failed]',
-        JSON.stringify({
-          pid,
-          allow,
-          code: typeof error.code === 'number' ? error.code : null,
-          killed: error.killed === true,
-          signal: error.signal ?? null,
-          stages: String(error.stdout ?? '')
-            .split(/\r?\n/)
-            .filter(line => line.startsWith('native-decision:'))
-            .map(line => line.slice('native-decision:'.length))
-            .filter(stage => stages.has(stage)),
-        })
-      )
+      if (!signal.aborted)
+        console.error(
+          '[native-plugin-decision-failed]',
+          JSON.stringify({
+            pid,
+            allow,
+            code: typeof error.code === 'number' ? error.code : null,
+            killed: error.killed === true,
+            signal: error.signal ?? null,
+            stages: String(error.stdout ?? '')
+              .split(/\r?\n/)
+              .filter(line => line.startsWith('native-decision:'))
+              .map(line => line.slice('native-decision:'.length))
+              .filter(stage => stages.has(stage)),
+          })
+        )
       throw error
     })
     return

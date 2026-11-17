@@ -185,6 +185,8 @@ Use the shared `ensureLocalModelCatalogReady` control command to establish local
 
 When cumulative snapshots regress, reuse a source identity, or omit required fields, `performance.json.rejectedSnapshots` retains the rejected operation boundary, prior/current elapsed times, and regressing counters to investigate resets versus delivery order. The report remains incomplete and rejected values never overwrite acknowledged metrics.
 
+MCP App catalog failures retain task/thread identities, source-read status, whether restoration ran, and elapsed time since source lookup, without tool arguments or credentials. Windows native plugin decisions retain fixed UI Automation stages, exit signal, and termination state without arbitrary child output. These diagnostics support investigation and do not certify a fix or official runtime compatibility.
+
 Custom scenarios requiring native cloud credentials declare `requiresNativeCloudAuthorization`; the shared runner authorizes against the real Backend after isolated Electron connects. Scenarios managing multiple device authorizations declare `requiresNativeCloudInspector` and pass the current `control` to the authorization fixture. Authorize after connection on initial launch and each new-device restart, never from `prepareApp` or `afterStop` while the native process is not running.
 
 Protocol-independent text replies in model fixtures must reuse `writeLocalAssistantMessage` to emit complete Responses, Chat Completions, or Anthropic termination events for the current request. Do not reset the selected model to accommodate a fixture with a fixed protocol or attribute stream failures caused by malformed fixture SSE to the official runtime.

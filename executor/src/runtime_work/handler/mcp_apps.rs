@@ -207,7 +207,11 @@ impl RuntimeWorkRpcHandler {
                 return Ok(app_descriptor(source, &link, &call_id, uri, None));
             }
         }
-        if read["thread"]["status"]["type"] == "notLoaded" {
+        let source_status = match read["thread"]["status"]["type"].as_str() {
+            Some(status @ ("notLoaded" | "active" | "idle" | "systemError")) => status,
+            _ => "unknown",
+        };
+        if source_status == "notLoaded" {
             self.resume_codex_thread_for_action(&link, &thread_id)
                 .await
                 .map_err(|_| app_error("Cannot restore the source MCP App session"))?;
@@ -226,7 +230,20 @@ impl RuntimeWorkRpcHandler {
                 )],
             );
         }
-        let server_catalog = server_catalog?;
+        let server_catalog = server_catalog.map_err(|error| {
+            crate::logging::log_executor_event(
+                "MCP App catalog lookup failed",
+                &[
+                    ("task_id", link.local_task_id.clone()),
+                    ("thread_id", thread_id.clone()),
+                    ("source_status", source_status.to_string()),
+                    ("task_running", link.running.to_string()),
+                    ("restored", (source_status == "notLoaded").to_string()),
+                    ("source_age_ms", started.elapsed().as_millis().to_string()),
+                ],
+            );
+            error
+        })?;
         let server_catalog = server_catalog.as_ref().unwrap_or(&Value::Null);
         let catalog: Vec<Value> = server_catalog["tools"]
             .as_object()
