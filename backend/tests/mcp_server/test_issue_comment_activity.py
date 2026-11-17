@@ -177,6 +177,35 @@ def test_native_publication_derives_ai_generation_from_the_owned_runtime_binding
     assert published["generation_source"] == "ai"
     assert published["publication_source"] == "human"
     assert published["confirmation_state"] == "authorized"
+    retried = test_client.post(
+        path,
+        headers=headers,
+        json={
+            "body": "Verified public conclusion",
+            "client_message_id": "publication-once",
+            "assistant_source": {
+                "device_id": device.name,
+                "task_id": "private-assistant-task",
+            },
+        },
+    )
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["id"] == published["id"]
+    assert (
+        test_client.post(
+            path,
+            headers=headers,
+            json={
+                "body": "Changed content under the same request",
+                "client_message_id": "publication-once",
+                "assistant_source": {
+                    "device_id": device.name,
+                    "task_id": "private-assistant-task",
+                },
+            },
+        ).status_code
+        == 409
+    )
     assert (
         test_client.post(
             path,

@@ -12,7 +12,7 @@ use crate::state::AppState;
 
 use super::{
     ProjectAssistantRosterEntry, authorize_project, endpoint_kind, invalid_permission_role,
-    roster_id, roster_read_error, roster_write_error, strings, text, text_or,
+    roster_id, roster_read_error, roster_write_error, strings, text, text_or, wegent_agent_id,
 };
 
 #[derive(Clone, Debug, FromMysqlRow)]
@@ -140,6 +140,23 @@ async fn upsert_project_assistant_roster(
             "Assistant owner must be a project developer",
         ));
     }
+    if input.enabled
+        && let Some(agent_id) = wegent_agent_id(&input.endpoint_ref)
+    {
+        crate::background_jobs::project::authority::agent(
+            state,
+            &caller.project.id,
+            agent_id,
+            input.user_id,
+            true,
+        )
+        .await
+        .map_err(|_| {
+            FastApiError::forbidden(
+                "Assistant endpoint is not an authorized project agent for this member",
+            )
+        })?;
+    }
     let id = roster_id(
         &caller.project.id,
         input.user_id,
@@ -263,7 +280,25 @@ pub(super) async fn roster_entries(
             .map(|user| user.user_name)
             .unwrap_or_else(|| "未知成员（历史数据）".into());
         let enabled = row.status == "active";
-        entries.push(entry_from_row(project_id, row, user_name, enabled));
+        let entry = entry_from_row(project_id, row, user_name, enabled);
+        if entry.enabled && entry.endpoint_kind == "wegent_agent" {
+            let Some(agent_id) = wegent_agent_id(&entry.endpoint_ref) else {
+                continue;
+            };
+            if crate::background_jobs::project::authority::agent(
+                state,
+                project_id,
+                agent_id,
+                i64::from(user_id),
+                true,
+            )
+            .await
+            .is_err()
+            {
+                continue;
+            }
+        }
+        entries.push(entry);
     }
     Ok(entries)
 }

@@ -9,8 +9,6 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.delivery import loop_datetime_is_unset
-from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.issue_activity_comment import (
     AssistantPublicationSource,
     StandInPublicReply,
@@ -130,6 +128,7 @@ def add_issue_comment(
         push_project_chat_message(message.model_dump(mode="json", by_alias=True))
         return _comment_view(message)
     verified_source = None
+    assistant_publication = None
     if assistant_source is not None:
         verified_source = active_task_binding_query(
             db,
@@ -138,12 +137,20 @@ def add_issue_comment(
             item_id=item_id,
             device_id=assistant_source.device_id,
             task_id=assistant_source.task_id,
+            lock=True,
         ).first()
         if verified_source is None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Assistant publication source is unavailable",
             )
+        assistant_publication = {
+            "verified": True,
+            "published_by": "human",
+            "binding_id": verified_source.id,
+            "device_id": assistant_source.device_id,
+            "task_id": assistant_source.task_id,
+        }
     result = project_chat_service.send(
         db,
         user_id=user_id,
@@ -155,34 +162,8 @@ def add_issue_comment(
             content=body,
             mentions=mentions or [],
         ),
+        assistant_publication=assistant_publication,
     )
     message = result.message
-    if verified_source is not None:
-        row = (
-            db.query(ProjectChatMessage)
-            .filter(
-                ProjectChatMessage.message_id == message.message_id,
-                ProjectChatMessage.project_id == project_id,
-                ProjectChatMessage.task_id == item_id,
-                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
-            )
-            .one()
-        )
-        metadata = (
-            dict(row.metadata_json) if isinstance(row.metadata_json, dict) else {}
-        )
-        metadata["assistant_publication"] = {
-            "verified": True,
-            "published_by": "human",
-            "binding_id": verified_source.id,
-            "device_id": assistant_source.device_id,
-            "task_id": assistant_source.task_id,
-        }
-        row.metadata_json = metadata
-        db.commit()
-        db.refresh(row)
-        message = project_chat_service.to_shared_view(
-            row, db=db, viewer_user_id=user_id
-        )
     push_project_chat_message(message.model_dump(mode="json", by_alias=True))
     return _comment_view(message)

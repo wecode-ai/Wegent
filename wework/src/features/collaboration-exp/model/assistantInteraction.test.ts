@@ -111,6 +111,96 @@ describe.each(['local_wework', 'cloud_device', 'wegent_agent'] as const)(
       })
     })
 
+    it('projects one ordered asynchronous envelope after acceptance', async () => {
+      const f = fixture(kind)
+      f.getRuntimeTranscript.mockResolvedValue({
+        taskId: 'original-task',
+        runtime: 'codex',
+        workspacePath: '',
+        running: true,
+        acceptedClientUserMessageIds: ['durable-request-key'],
+        messages: [
+          {
+            id: 'request',
+            role: 'user',
+            content: 'Continue investigation',
+            clientUserMessageId: 'durable-request-key',
+            turnId: 'turn-1',
+            blocks: [
+              {
+                id: 'question',
+                type: 'text',
+                renderPayload: { interactionStatus: 'pending' },
+              },
+              { id: 'tool', type: 'tool', tool_name: 'read_file' },
+            ],
+          },
+        ],
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'running',
+            items: [
+              {
+                id: 'answer',
+                type: 'assistant_text',
+                content: 'Draft answer',
+              },
+            ],
+          },
+        ],
+      })
+      const interaction = createAssistantInteraction(f.endpoint, f.conversation, f.transport)
+
+      await interaction.send(f.request)
+      await expect(interaction.events(f.request.requestId, 'trace-ref')).resolves.toEqual([
+        expect.objectContaining({ state: 'request', sequence: 1 }),
+        expect.objectContaining({ state: 'accepted', sequence: 2 }),
+        expect.objectContaining({ state: 'needs_input', sequence: 3 }),
+        expect.objectContaining({ state: 'draft', summary: 'Draft answer', sequence: 4 }),
+        expect.objectContaining({ state: 'evidence', sequence: 5 }),
+        expect.objectContaining({ state: 'trace', traceRef: 'trace-ref', sequence: 6 }),
+      ])
+    })
+
+    it('never projects a missing request onto the latest unrelated turn', async () => {
+      const f = fixture(kind)
+      f.getRuntimeTranscript.mockResolvedValue({
+        taskId: 'original-task',
+        runtime: 'codex',
+        workspacePath: '',
+        acceptedClientUserMessageIds: [],
+        messages: [
+          {
+            id: 'other-request',
+            role: 'user',
+            content: 'Another request',
+            clientUserMessageId: 'another-key',
+            turnId: 'other-turn',
+          },
+        ],
+        turns: [
+          {
+            id: 'other-turn',
+            status: 'completed',
+            items: [
+              {
+                id: 'other-answer',
+                type: 'assistant_text',
+                content: 'Unrelated answer',
+              },
+            ],
+          },
+        ],
+      })
+      const interaction = createAssistantInteraction(f.endpoint, f.conversation, f.transport)
+
+      await interaction.send(f.request)
+      await expect(interaction.events(f.request.requestId)).resolves.toEqual([
+        expect.objectContaining({ state: 'request', sequence: 1 }),
+      ])
+    })
+
     it('retains identity after routing to another device', async () => {
       const f = fixture(kind)
       const moved = {
@@ -149,12 +239,17 @@ describe.each(['local_wework', 'cloud_device', 'wegent_agent'] as const)(
       const f = fixture(kind)
       f.endpoint.capabilities.attachments = false
       f.endpoint.capabilities.cancel = false
+      f.endpoint.capabilities.trace = false
       const interaction = createAssistantInteraction(f.endpoint, f.conversation, f.transport)
       await expect(interaction.send({ ...f.request, attachmentIds: [1] })).rejects.toMatchObject({
         code: 'unsupported_attachments',
       })
       await expect(interaction.cancel()).rejects.toMatchObject({ code: 'unsupported_cancel' })
-      expect(f.sendRuntimeMessage).not.toHaveBeenCalled()
+      await interaction.send(f.request)
+      await expect(interaction.events(f.request.requestId, 'trace-ref')).rejects.toMatchObject({
+        code: 'unsupported_trace',
+      })
+      expect(f.sendRuntimeMessage).toHaveBeenCalledOnce()
       expect(f.cancelRuntimeTask).not.toHaveBeenCalled()
     })
 

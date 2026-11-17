@@ -988,6 +988,7 @@ class ProjectChatService:
         user_id: int,
         user_name: str,
         request: ProjectChatSend,
+        assistant_publication: dict[str, Any] | None = None,
     ) -> ProjectChatWriteResult:
         project = self._require_scope(
             db,
@@ -1012,6 +1013,19 @@ class ProjectChatService:
                     status.HTTP_409_CONFLICT,
                     "client_message_id already belongs to another project",
                 )
+            if assistant_publication is not None:
+                stored_publication = (existing.metadata_json or {}).get(
+                    "assistant_publication"
+                )
+                if (
+                    existing.task_id != (request.task_id or "")
+                    or existing.content != request.content
+                    or stored_publication != assistant_publication
+                ):
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT,
+                        "assistant publication identity or content changed before retry",
+                    )
             return ProjectChatWriteResult(self.to_view(existing, db=db), created=False)
 
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
@@ -1026,6 +1040,8 @@ class ProjectChatService:
             metadata["execution_dispatch"] = "comment_only"
         if request.model is not None:
             metadata["model"] = request.model
+        if assistant_publication is not None:
+            metadata["assistant_publication"] = assistant_publication
         reply = self._resolve_reply_context(
             db,
             project_id=request.project_id,

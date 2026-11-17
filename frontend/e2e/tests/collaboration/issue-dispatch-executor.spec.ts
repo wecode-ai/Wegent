@@ -308,6 +308,25 @@ test.describe('Collaboration group Executor coordination', () => {
           version: 0,
         }
       )
+      const inaccessibleAgent = await request.fetch(
+        `${PROVIDER_NATIVE_API_URL}/api/v1/cloud-projects/${fixture.projectId}/assistant-roster`,
+        {
+          method: 'POST',
+          headers: authHeaders(model.token),
+          data: {
+            userId: me.id,
+            roleId: 'review',
+            endpointRef: `wegent_agent:${me.id}:missing-${suffix}:review`,
+            displayName: `Inaccessible agent ${suffix}`,
+            enabled: true,
+            capabilityTags: ['review'],
+            autonomyPolicy: { automatic: false, askBeforeAct: true },
+            availability: 'online',
+            version: 0,
+          },
+        }
+      )
+      expect(inaccessibleAgent.status(), await inaccessibleAgent.text()).toBe(403)
       const input = {
         intentId: `assistant-intent-${suffix}`,
         goal: `Assistant dispatch ${suffix}`,
