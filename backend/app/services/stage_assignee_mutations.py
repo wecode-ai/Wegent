@@ -17,6 +17,7 @@ from app.services.loop_items.access import can_view_item
 from app.services.stage_assignees import (
     require_stage_target,
     stage_assignee_enforcement_enabled,
+    stage_requires_assignee,
     stage_workflow,
     validate_stage_assignee,
 )
@@ -93,9 +94,7 @@ def require_workflow_creation_override(
     """Only maintainers may replace project stage constraints at creation."""
     configured = stage_workflow(project, {})
     constrained = bool(configured.get("assignee_roles")) or any(
-        node.get("required_assignee_type")
-        or node.get("required_assignee_role")
-        or node.get("name") in {"需求提出", "质量验收"}
+        stage_requires_assignee(project, {}, node)
         for node in configured.get("nodes", [])
         if isinstance(node, dict)
     )

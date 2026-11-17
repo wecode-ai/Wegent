@@ -135,7 +135,7 @@ from app.services.stage_assignee_mutations import (
     require_workflow_creation_override,
 )
 from app.services.stage_assignees import (
-    stage_assignee_enforcement_enabled,
+    stage_assignee_policy_enabled,
     stage_name,
     validate_stage_assignee,
 )
@@ -896,7 +896,7 @@ class LoopItemService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
             )
         if (agent_id or team_id or collaboration_group) and requested_status is None:
-            preparing = stage_assignee_enforcement_enabled(
+            preparing = stage_assignee_policy_enabled(
                 project, task_metadata
             ) and stage_name(project, task_metadata) in {
                 "需求提出",
@@ -3767,9 +3767,9 @@ class LoopItemService:
         When the board has the standard column and the Issue is not completed,
         record the actual transition in ``metadata`` and ``updates``.
         """
-        preparing = stage_assignee_enforcement_enabled(
+        preparing = stage_assignee_policy_enabled(project, metadata) and stage_name(
             project, metadata
-        ) and stage_name(project, metadata) in {"需求提出", "共同评审", "开发准备"}
+        ) in {"需求提出", "共同评审", "开发准备"}
         started = automatic_project_status(
             project,
             current_status=item.status,

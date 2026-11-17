@@ -207,6 +207,7 @@ test.describe('Issue Dispatch human assignment', () => {
         notify_assignee: false,
         workflow: {
           stage_mode: 'dag',
+          feature_flags: { 'collab.enforceStageAssignee.v1': true },
           current_stage_id: 'introduction',
           nodes: [
             {

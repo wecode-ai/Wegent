@@ -35,6 +35,7 @@ from app.services.stage_assignees import (
     engineering_assignee_targets,
     require_stage_target,
     stage_assignee_enforcement_enabled,
+    stage_assignee_policy_enabled,
 )
 from app.services.wework_notifications import create_notification
 from shared.telemetry.decorators import trace_sync
@@ -105,7 +106,7 @@ def _stage(workflow: dict[str, Any], role: str) -> dict[str, Any] | None:
 
 
 def _enabled(workflow: dict[str, Any], project: CloudProject) -> bool:
-    return bool(workflow) and stage_assignee_enforcement_enabled(
+    return bool(workflow) and stage_assignee_policy_enabled(
         project, {"workflow": workflow}
     )
 

@@ -68,6 +68,7 @@ def quality_scenario(test_db, test_user):
         users[role] = user
     workflow = {
         "version": 1,
+        "feature_flags": {"collab.enforceStageAssignee.v1": True},
         "current_stage_id": "build",
         "nodes": [
             {"id": "build", "name": "开发实现"},
@@ -569,6 +570,22 @@ def test_flag_disabled_and_other_project_have_no_effect(quality_scenario):
     s.item.metadata_json = metadata
     assert process_quality_event(s.db, observation(s)) == 0
     assert s.item.assignee_user_id == s.users["engineering"].id
+
+
+def test_unenrolled_named_workflow_does_not_receive_automatic_quality_handoff(
+    quality_scenario,
+):
+    s = quality_scenario
+    workflow = deepcopy(s.item.metadata_json["workflow"])
+    workflow.pop("feature_flags")
+    s.item.metadata_json = {**s.item.metadata_json, "workflow": workflow}
+    before = deepcopy(s.item.metadata_json)
+    s.db.flush()
+
+    assert process_quality_event(s.db, observation(s)) == 0
+    assert s.item.metadata_json == before
+    assert s.item.assignee_user_id == s.users["engineering"].id
+    assert "quality_handoff" not in s.item.metadata_json
 
 
 def test_project_kill_switch_overrides_an_enabled_issue_snapshot(quality_scenario):

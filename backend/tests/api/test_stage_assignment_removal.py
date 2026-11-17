@@ -76,6 +76,7 @@ def test_delete_cannot_clear_or_restore_a_forbidden_stage_owner(
         test_token = create_access_token(data={"sub": s.owner.user_name})
         s.issue.metadata_json = {
             "workflow": {
+                "feature_flags": {"collab.enforceStageAssignee.v1": True},
                 "current_stage_id": "proposal",
                 "nodes": [
                     {"id": "proposal", "name": "需求提出"},

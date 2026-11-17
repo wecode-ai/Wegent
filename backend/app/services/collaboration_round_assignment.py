@@ -11,6 +11,7 @@ from app.services.loop_items.service import loop_item_service
 from app.services.stage_assignees import (
     stage_assignee_enforcement_enabled,
     stage_node,
+    stage_requires_assignee,
     validate_stage_assignee,
 )
 
@@ -34,15 +35,9 @@ def assign_round_owner(
         raise ValueError("The Issue project is unavailable")
     metadata = item.metadata_json or {}
     node = stage_node(project, metadata) or {}
-    constrained = stage_assignee_enforcement_enabled(project, metadata) and bool(
-        node.get("required_assignee_type")
-        or node.get("required_assignee_role")
-        or node.get("name") in {"需求提出", "质量验收"}
-        or (
-            node.get("name") == "开发实现"
-            and (metadata.get("quality_handoff") or {}).get("required_assignee_role")
-        )
-    )
+    constrained = stage_assignee_enforcement_enabled(
+        project, metadata
+    ) and stage_requires_assignee(project, metadata, node)
     current_stage_id = node.get("id") if constrained else None
     current_assignments = [
         entry

@@ -61,6 +61,18 @@ def stage_scenario(test_db: Session, test_user: User) -> SimpleNamespace:
     return SimpleNamespace(db=test_db, project=project, issue=issue, owner=test_user)
 
 
+@pytest.fixture
+def pilot_policy(stage_scenario):
+    s = stage_scenario
+    s.project.metadata_json = {
+        "workflow_definition": {"feature_flags": {STAGE_ASSIGNEE_FLAG: True}}
+    }
+    metadata = deepcopy(s.issue.metadata_json)
+    metadata["workflow"]["feature_flags"] = {STAGE_ASSIGNEE_FLAG: True}
+    s.issue.metadata_json = metadata
+    s.db.flush()
+
+
 def validate(s: SimpleNamespace, **kwargs) -> dict:
     return validate_stage_assignee(
         s.db,
@@ -323,6 +335,7 @@ def test_completed_root_is_not_selected_alongside_the_only_ready_stage(stage_sce
     assert error.value.detail["stage_id"] == "build"
 
 
+@pytest.mark.usefixtures("pilot_policy")
 def test_introduction_owner_change_returns_atomic_review_metadata(stage_scenario):
     s = stage_scenario
     s.owner.user_name = "jiangyang7"
@@ -331,6 +344,7 @@ def test_introduction_owner_change_returns_atomic_review_metadata(stage_scenario
         "tags": ["需求提出", "P0"],
         "workflow": {
             "version": 2,
+            "feature_flags": {STAGE_ASSIGNEE_FLAG: True},
             "current_stage_id": "intro",
             "nodes": [
                 {"id": "intro", "name": "需求提出"},
@@ -355,10 +369,12 @@ def test_introduction_owner_change_returns_atomic_review_metadata(stage_scenario
     assert metadata["workflow"]["current_stage_id"] == "intro"
 
 
+@pytest.mark.usefixtures("pilot_policy")
 def test_missing_common_review_snapshot_rejects_owner_change(stage_scenario):
     s = stage_scenario
     metadata = {
         "workflow": {
+            "feature_flags": {STAGE_ASSIGNEE_FLAG: True},
             "current_stage_id": "intro",
             "nodes": [{"id": "intro", "name": "需求提出"}],
         }
@@ -377,6 +393,7 @@ def test_missing_common_review_snapshot_rejects_owner_change(stage_scenario):
 
 @pytest.mark.parametrize("exact_target", [False, True])
 @pytest.mark.parametrize("review_role", ["product", "ui"])
+@pytest.mark.usefixtures("pilot_policy")
 def test_quality_substep_overrides_initial_target_with_configured_reviewer(
     stage_scenario, exact_target, review_role
 ):
@@ -399,6 +416,7 @@ def test_quality_substep_overrides_initial_target_with_configured_reviewer(
             {"icon": "git-pull-request", "url": "https://github.com/acme/app/pull/12"}
         ],
         "workflow": {
+            "feature_flags": {STAGE_ASSIGNEE_FLAG: True},
             "current_stage_id": "quality",
             "assignee_roles": {
                 review_role: [
@@ -450,6 +468,7 @@ def test_role_targets_use_only_explicit_fallbacks(stage_scenario):
 
 
 @pytest.mark.parametrize("target_mode", ["stage", "metadata"])
+@pytest.mark.usefixtures("pilot_policy")
 def test_manual_quality_entry_requires_a_complete_pr_snapshot(
     stage_scenario, target_mode
 ):
@@ -473,6 +492,7 @@ def test_manual_quality_entry_requires_a_complete_pr_snapshot(
 
 
 @pytest.mark.parametrize("handoff_role", [None, "qa"])
+@pytest.mark.usefixtures("pilot_policy")
 def test_quality_exact_target_takes_precedence_over_the_qa_role_mapping(
     stage_scenario, handoff_role
 ):
@@ -519,6 +539,7 @@ def test_quality_exact_target_takes_precedence_over_the_qa_role_mapping(
     assert not s.db.new
 
 
+@pytest.mark.usefixtures("pilot_policy")
 def test_manual_quality_entry_uses_the_trusted_observed_head(stage_scenario):
     s = stage_scenario
     url = "https://github.com/acme/app/pull/12"
@@ -571,6 +592,7 @@ def test_request_cannot_replace_server_quality_observations(stage_scenario, fiel
 
 
 @pytest.mark.parametrize("source", ["issue_owner", "configured", "pilot"])
+@pytest.mark.usefixtures("pilot_policy")
 def test_engineering_role_uses_the_same_owner_order_as_quality_events(
     stage_scenario, source
 ):

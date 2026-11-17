@@ -38,6 +38,7 @@ def stage_workflow(project: CloudProject, metadata: dict[str, Any]) -> dict[str,
 def stage_assignee_enforcement_enabled(
     project: CloudProject, metadata: dict[str, Any]
 ) -> bool:
+    """Explicit node constraints are enabled unless policy disables enforcement."""
     definition = (project.metadata_json or {}).get("workflow_definition") or {}
     if (definition.get("feature_flags") or {}).get(STAGE_ASSIGNEE_FLAG) is False:
         return False
@@ -46,6 +47,32 @@ def stage_assignee_enforcement_enabled(
         return flags[STAGE_ASSIGNEE_FLAG]
     definition = (project.metadata_json or {}).get("workflow_definition") or {}
     return (definition.get("feature_flags") or {}).get(STAGE_ASSIGNEE_FLAG, True)
+
+
+def stage_assignee_policy_enabled(
+    project: CloudProject, metadata: dict[str, Any]
+) -> bool:
+    """Named pilot stages require explicit enrollment in the workflow policy."""
+    return stage_assignee_enforcement_enabled(project, metadata) and (
+        stage_workflow(project, metadata)
+        .get("feature_flags", {})
+        .get(STAGE_ASSIGNEE_FLAG)
+        is True
+    )
+
+
+def stage_requires_assignee(
+    project: CloudProject, metadata: dict[str, Any], node: dict[str, Any]
+) -> bool:
+    if node.get("required_assignee_type") or node.get("required_assignee_role"):
+        return True
+    return stage_assignee_policy_enabled(project, metadata) and bool(
+        node.get("name") in {"需求提出", "质量验收"}
+        or (
+            node.get("name") == "开发实现"
+            and (metadata.get("quality_handoff") or {}).get("required_assignee_role")
+        )
+    )
 
 
 def stage_node(
@@ -163,7 +190,13 @@ def engineering_assignee_targets(
         .get("assignee_roles", {})
         .get("engineering", [])
     )
-    return configured or [{"assignee_type": "user", "assignee_id": "hongyu9"}]
+    if configured:
+        return configured
+    return (
+        [{"assignee_type": "user", "assignee_id": "hongyu9"}]
+        if stage_assignee_policy_enabled(project, metadata)
+        else []
+    )
 
 
 def _engineering_assignee(
@@ -250,9 +283,10 @@ def _expected_assignee(
         return normalized_assignee(db, "user", "jiangyang7")
     handoff = metadata.get("quality_handoff") or {}
     name = node.get("name") or stage_name(project, metadata)
+    policy_enabled = stage_assignee_policy_enabled(project, metadata)
     role = (
         handoff.get("required_assignee_role")
-        if name in {"开发实现", "质量验收"}
+        if policy_enabled and name in {"开发实现", "质量验收"}
         else None
     )
     if node.get("required_assignee_type") and (
@@ -264,7 +298,7 @@ def _expected_assignee(
     role = (
         role
         or node.get("required_assignee_role")
-        or ("qa" if name == "质量验收" else None)
+        or ("qa" if policy_enabled and name == "质量验收" else None)
     )
     if role:
         if role == "engineering":
@@ -294,10 +328,7 @@ def _stage_selection_error(
     workflow = stage_workflow(project, metadata)
     nodes = workflow.get("nodes") or []
     constrained = expected is not None or any(
-        candidate.get("required_assignee_type")
-        or candidate.get("required_assignee_role")
-        or candidate.get("name") in {"需求提出", "质量验收"}
-        for candidate in nodes
+        stage_requires_assignee(project, metadata, candidate) for candidate in nodes
     )
     if not constrained:
         return None, None
@@ -329,6 +360,8 @@ def _require_quality_entry(
     metadata: dict[str, Any],
     node: dict[str, Any],
 ) -> None:
+    if not stage_assignee_policy_enabled(project, metadata):
+        return
     original = item.metadata_json or {}
     target_name = node.get("name") or stage_name(project, metadata)
     if target_name != "质量验收":
@@ -362,8 +395,9 @@ def validate_stage_assignee(
     node = stage_node(project, effective, stage_id) or {}
     if stage_id and not node:
         node = stage_node(project, effective) or {}
-    introduction = node.get("name") == "需求提出" or (
-        not stage_id and stage_name(project, effective) == "需求提出"
+    introduction = stage_assignee_policy_enabled(project, effective) and (
+        node.get("name") == "需求提出"
+        or (not stage_id and stage_name(project, effective) == "需求提出")
     )
     expected = _expected_assignee(
         db,

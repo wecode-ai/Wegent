@@ -12,6 +12,25 @@ from app.models.delivery import CloudProject, LoopItem
 from app.services.stage_assignees import stage_workflow, validate_stage_assignee
 
 
+def _stage_metadata(
+    project: CloudProject, metadata: dict[str, Any], tags: list[str]
+) -> dict[str, Any]:
+    result = deepcopy(metadata)
+    result["tags"] = list(tags)
+    workflow = deepcopy(stage_workflow(project, result))
+    tagged = [
+        node["id"]
+        for node in workflow.get("nodes", [])
+        if node.get("name") in result["tags"]
+    ]
+    if tagged:
+        workflow.pop("current_stage_id", None)
+        if len(tagged) == 1:
+            workflow["current_stage_id"] = tagged[0]
+        result["workflow"] = workflow
+    return result
+
+
 def external_assignment_item(
     db: Session,
     *,
@@ -26,25 +45,45 @@ def external_assignment_item(
         .populate_existing()
         .one_or_none()
     )
-    metadata = deepcopy(existing.metadata_json if existing else {}) or {}
-    metadata["tags"] = list(values.get("tags") or [])
-    workflow = deepcopy(stage_workflow(project, metadata))
-    tagged = [
-        node["id"]
-        for node in workflow.get("nodes", [])
-        if node.get("name") in metadata["tags"]
-    ]
-    if tagged:
-        workflow.pop("current_stage_id", None)
-        if len(tagged) == 1:
-            workflow["current_stage_id"] = tagged[0]
-        metadata["workflow"] = workflow
+    metadata = _stage_metadata(
+        project,
+        (existing.metadata_json if existing else {}) or {},
+        values.get("tags") or [],
+    )
     return LoopItem(
         id=str(values["id"]),
         cloud_project_id=str(project.id),
         created_by_user_id=int(values["created_by_user_id"]),
         version=int(values["version"]),
         metadata_json=metadata,
+    )
+
+
+def validate_external_creation(
+    db: Session,
+    *,
+    project: CloudProject,
+    tags: list[str],
+    assignee: dict[str, str] | None,
+    user_id: int,
+) -> None:
+    """Check the provider's final labels before creating any remote Issue."""
+    target = assignee or {}
+    item = LoopItem(
+        id=f"{project.project_key}-new",
+        cloud_project_id=str(project.id),
+        created_by_user_id=user_id,
+        version=1,
+        metadata_json=_stage_metadata(project, {}, tags),
+    )
+    validate_external_assignment(
+        db,
+        project=project,
+        item=item,
+        assignee_type=target.get("type") or "user",
+        assignee_id=target.get("id"),
+        workflow_step=None,
+        user_id=user_id,
     )
 
 

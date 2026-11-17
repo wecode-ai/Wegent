@@ -16,7 +16,10 @@ from app.schemas.delivery import LoopItemCreate, LoopItemUpdate
 from app.schemas.project_chat import LoopItemAssign
 from app.services.loop_items.service import loop_item_service
 from app.services.stage_assignee_mutations import stage_observer_user_ids
-from tests.services.test_stage_assignees import stage_scenario  # noqa: F401
+from tests.services.test_stage_assignees import (  # noqa: F401
+    pilot_policy,
+    stage_scenario,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -67,6 +70,7 @@ def test_wrong_owner_is_rejected_before_persistence(stage_scenario, entrypoint):
 
 
 @pytest.mark.parametrize("entrypoint", ["assign", "patch"])
+@pytest.mark.usefixtures("pilot_policy")
 def test_introduction_reassignment_commits_review_with_owner(
     stage_scenario,
     test_admin_user,
@@ -86,6 +90,7 @@ def test_introduction_reassignment_commits_review_with_owner(
     s.issue.metadata_json = {
         "tags": ["需求提出", "other"],
         "workflow": {
+            "feature_flags": {"collab.enforceStageAssignee.v1": True},
             "current_stage_id": "proposal",
             "nodes": [
                 {"id": "proposal", "name": "需求提出"},
@@ -137,6 +142,7 @@ def test_introduction_reassignment_commits_review_with_owner(
 
 
 @pytest.mark.parametrize("future_constrained", [False, True])
+@pytest.mark.usefixtures("pilot_policy")
 def test_scoped_assignment_advances_the_introduction_root_atomically(
     stage_scenario, test_admin_user, future_constrained
 ):
@@ -159,6 +165,7 @@ def test_scoped_assignment_advances_the_introduction_root_atomically(
     s.issue.metadata_json = {
         "tags": ["需求提出"],
         "workflow": {
+            "feature_flags": {"collab.enforceStageAssignee.v1": True},
             "current_stage_id": "proposal",
             "nodes": [
                 {"id": "proposal", "name": "需求提出"},
@@ -349,6 +356,7 @@ def test_initial_workflow_cannot_bypass_an_unselected_stage(stage_scenario):
     assert error.value.detail["reason_code"] == "stage_assignee_mismatch"
 
 
+@pytest.mark.usefixtures("pilot_policy")
 def test_robot_assignment_keeps_review_in_pending(stage_scenario):
     s = stage_scenario
     s.issue.status = "pending"
@@ -396,6 +404,7 @@ def test_developer_cannot_remove_constraints_in_a_stage_update(
     assert s.issue.metadata_json == before
 
 
+@pytest.mark.usefixtures("pilot_policy")
 def test_manual_workflow_patch_cannot_enter_quality_without_observations(
     stage_scenario,
 ):
@@ -447,6 +456,7 @@ def test_patch_does_not_accept_raw_quality_metadata(stage_scenario):
 
 
 @pytest.mark.parametrize("stage", ["开发实现", "质量验收"])
+@pytest.mark.usefixtures("pilot_policy")
 def test_engineering_issue_owner_can_update_after_a_failed_pr_handoff(
     stage_scenario, stage
 ):

@@ -56,6 +56,7 @@ from app.services.loop_items.change_requests import persist_external_badge_sourc
 from app.services.loop_items.external_assignment_constraints import (
     external_assignment_item,
     validate_external_assignment,
+    validate_external_creation,
 )
 from app.services.loop_items.task_bindings import (
     owned_binding_cancellation_targets,
@@ -334,6 +335,13 @@ class ExternalLoopItemProvider:
             item_status,
             assignee=assignee_label,
             security_level=default_issue_security(project),
+        )
+        validate_external_creation(
+            db,
+            project=project,
+            tags=self._public_tags(labels),
+            assignee=self._assignee_from_labels(labels),
+            user_id=user_id,
         )
         issue = self._create_issue(
             project,
