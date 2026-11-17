@@ -78,6 +78,7 @@ async function verifyInitialStorageWriteFailure({ control, data, pid, resultDir,
 export async function createDesktopScenario({
   resultDir,
   executorHome,
+  workspacePath,
   electronUserDataDirectory,
   workbenchReadyTimeoutMs,
 }) {
@@ -135,7 +136,12 @@ export async function createDesktopScenario({
         join(resultDir, 'startup-preferences-unavailable-result.json'),
         JSON.stringify({ workbenchVisible: true, startupSplashClosed: true })
       )
-      await verifyStartupDatabaseLock({ control, executorHome, timeoutMs: workbenchReadyTimeoutMs })
+      await verifyStartupDatabaseLock({
+        control,
+        executorHome,
+        workspacePath,
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await verifyStartupFaultIsolation({
         appBinary,
         environment,

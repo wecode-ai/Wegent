@@ -3,10 +3,18 @@ import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { requestExecutor } from './executor-rpc.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
+import { createSingleRootLocalProject } from './shared.mjs'
 
 /** Reload the real workbench while SQLite's writer slot is held by another connection. */
-export async function verifyStartupDatabaseLock({ control, executorHome, timeoutMs }) {
+export async function verifyStartupDatabaseLock({
+  control,
+  executorHome,
+  workspacePath,
+  timeoutMs,
+}) {
   const rpc = (method, params = {}) => requestExecutor(control, method, params, timeoutMs)
+  const workspaceName = 'Startup code workspace'
+  await createSingleRootLocalProject(control, workspacePath, workspaceName, timeoutMs)
   const project = await rpc('projects.create', { name: 'Startup lock isolation' })
   // Materialize code-project imports before holding a writer, as in an existing profile.
   await rpc('projects.list')
@@ -31,7 +39,10 @@ export async function verifyStartupDatabaseLock({ control, executorHome, timeout
     assert.deepEqual(personal, settings)
     assert.equal(tasks.success, true)
     await control.command('waitFor', '[data-testid="model-selector-button"]', { timeoutMs })
-    await control.command('waitFor', 'body', { text: project.name, timeoutMs })
+    const section = '[data-testid="projects-section-toggle"]'
+    if ((await control.command('getAttribute', section, { value: 'aria-expanded' })) === 'false')
+      await control.command('clickWhenEnabled', section)
+    await control.command('waitFor', 'body', { text: workspaceName, timeoutMs })
     await waitForValue(
       async () => JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')),
       snapshot => snapshot.workbench?.isBootstrapping === false,
