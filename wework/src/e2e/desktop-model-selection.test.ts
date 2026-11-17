@@ -84,6 +84,7 @@ test('waits for the new conversation before reading its Anthropic model selectio
             })
           }
           if (action === 'snapshot') return JSON.stringify({ testIds: [] })
+          if (action === 'getElementMetrics') return '[]'
           if (action === 'getText') {
             assert.equal(snapshots, 2, 'The old composer must not satisfy new-chat readiness')
             assert.equal(
@@ -193,6 +194,7 @@ test('selects Anthropic after the new conversation finishes restoring another mo
               testIds: open ? ['model-selector-menu', `model-option-${model.optionIds[0]}`] : [],
             })
           }
+          if (action === 'getElementMetrics') return '[]'
           if (action === 'getText') {
             // The mounted selector can still display the target while its scope restores Luna.
             return snapshots < 4 || selected ? model.labels[0] : 'GPT 5.6 Luna'
@@ -209,7 +211,11 @@ test('selects Anthropic after the new conversation finishes restoring another mo
           }
           if (action === 'press' && selector === 'body') open = false
           if (action === 'fill') {
-            assert.equal(snapshots, 4, 'Model restoration must finish before selecting a model')
+            assert.equal(
+              snapshots,
+              5,
+              'Restoration finishes before the diagnostic snapshot and selection'
+            )
             assert.ok(selected, 'The restored Luna selection must be changed to Anthropic')
             throw submitted
           }

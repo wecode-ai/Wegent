@@ -4,6 +4,10 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { BufferedChatInput } from './BufferedChatInput'
+import {
+  getComposerDiagnosticsSnapshot,
+  resetComposerDiagnosticsForTest,
+} from '@/components/chat/composer/composerDiagnostics'
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
@@ -38,6 +42,75 @@ describe('BufferedChatInput', () => {
   afterEach(() => {
     vi.useRealTimers()
   })
+
+  test('records model diagnostics after synchronous admission without waiting for delivery', () => {
+    resetComposerDiagnosticsForTest()
+    const sequence: string[] = []
+    const log = vi.spyOn(console, 'info').mockImplementation(() => sequence.push('diagnostic'))
+    const pendingDelivery = new Promise<boolean>(() => {})
+    try {
+      render(
+        <BufferedChatInput
+          variant="desktop"
+          projectChat={createProjectChat('private-scope')}
+          value="private message"
+          onChange={vi.fn()}
+          onSubmit={() => {
+            sequence.push('admission')
+            return pendingDelivery
+          }}
+          disabled={false}
+        />
+      )
+
+      fireEvent.click(screen.getByTestId('send-message-button'))
+
+      expect(sequence).toEqual(['admission', 'diagnostic'])
+      const event = getComposerDiagnosticsSnapshot()?.events.find(
+        entry => entry.name === 'model-selection-submit'
+      )
+      expect(event?.details.scopeFingerprint).toEqual(expect.any(Number))
+      expect(JSON.stringify(log.mock.calls)).not.toMatch(/private-scope|private message/)
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('')
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  test.each(['reader', 'logger'])(
+    'keeps synchronous admission and draft clearing when the optional diagnostic %s throws',
+    failure => {
+      const admit = vi.fn()
+      const log = vi.spyOn(console, 'info').mockImplementation(() => {
+        if (failure === 'logger') throw new Error('PRIVATE_LOGGING_ERROR')
+      })
+      try {
+        render(
+          <BufferedChatInput
+            variant="desktop"
+            projectChat={{
+              ...createProjectChat('private-scope'),
+              getSelectedModel: () => {
+                if (failure === 'reader') throw new Error('PRIVATE_READER_ERROR')
+                return null
+              },
+            }}
+            value="private message"
+            onChange={vi.fn()}
+            onSubmit={admit}
+            disabled={false}
+          />
+        )
+
+        fireEvent.click(screen.getByTestId('send-message-button'))
+
+        expect(admit).toHaveBeenCalledWith('private message')
+        expect(screen.getByTestId('chat-message-input')).toHaveValue('')
+      } finally {
+        log.mockRestore()
+      }
+    }
+  )
 
   test('flushes the latest unacknowledged draft when navigation unmounts the composer', () => {
     vi.useFakeTimers()

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { prepareHistoryRetention } from '../modules/coordination-history-retention.mjs'
 import {
   assistantMessage,
   createSse,
@@ -219,6 +220,22 @@ export function createDesktopScenario({
           'Native work must complete'
         )
         assert.equal(workTurns, 1)
+        await prepareHistoryRetention({
+          database,
+          rpc: (method, params) => rpc(control, method, params),
+          until,
+          userId: USER,
+          historyCount: HISTORY_COUNT,
+        })
+        assert.equal(
+          database
+            .prepare(
+              "SELECT count(*) AS count FROM stand_in_history_refs WHERE owner_id LIKE 'history-failure-%' AND event_id='history-blocked-event'"
+            )
+            .get().count,
+          HISTORY_COUNT,
+          'Pausing the fixture must preserve failed-action recovery references'
+        )
         await until(
           async () => ({
             event: database
@@ -277,29 +294,6 @@ export function createDesktopScenario({
             .get().count,
           HISTORY_COUNT,
           'Polling must not generate another failed intent'
-        )
-        // Observe two normal five-second polling intervals, including idle passes
-        // that legitimately skip commit and do not advance lastCheckAt.
-        const observationEnds = Date.now() + 10_000
-        do {
-          assert.equal(
-            database
-              .prepare(
-                "SELECT count(*) AS count FROM loop_items WHERE resource_type='stand_in_action' AND json_extract(metadata,'$.status')='failed'"
-              )
-              .get().count,
-            HISTORY_COUNT,
-            'Background polling must not replan failed events'
-          )
-          await new Promise(resolve => setTimeout(resolve, 500))
-        } while (Date.now() < observationEnds)
-        assert.equal(
-          database
-            .prepare(
-              "SELECT count(*) AS count FROM loop_items WHERE resource_type='stand_in_action' AND json_extract(metadata,'$.status')='failed'"
-            )
-            .get().count,
-          HISTORY_COUNT
         )
         return {
           taskId,

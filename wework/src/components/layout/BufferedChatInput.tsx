@@ -15,6 +15,8 @@ import {
   type ChatSubmitOptions,
 } from '@/components/chat/ChatInput'
 import { recordComposerDiagnostic } from '@/components/chat/composer/composerDiagnostics'
+import { captureComposerModelSelectionDiagnostics } from '@/features/workbench/modelSelectionDiagnostics'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import {
   consumeWorkbenchComposerFocusRequest,
@@ -407,12 +409,23 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       const submittedDraft = valueOverride ?? draftRef.current
       const submittedDraftEditVersion = draftEditVersionRef.current
       const submittedScopeKey = scopeKey
+      const modelDiagnostics = props.projectChat
+        ? captureComposerModelSelectionDiagnostics(props.projectChat)
+        : null
       if (!clearOnSubmit) {
         cancelPendingFlushFrame()
         flushDraft(submittedDraft, 'submit')
       }
       const submission =
         options === undefined ? onSubmit(submittedDraft) : onSubmit(submittedDraft, options)
+      if (modelDiagnostics) {
+        try {
+          recordComposerDiagnostic('model-selection-submit', modelDiagnostics)
+          logRuntimeTaskCreateStage('composer-model-selection-submit', modelDiagnostics)
+        } catch {
+          // Optional logging must not interrupt admission or clearing the submitted draft.
+        }
+      }
       if (clearOnSubmit && submittedDraft.trim()) {
         draftRef.current = ''
         cancelPendingFlush()
@@ -442,6 +455,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       clearOnSubmit,
       flushDraft,
       onSubmit,
+      props.projectChat,
       publishDraft,
       scopeKey,
       setComposerValue,

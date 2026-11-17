@@ -40,6 +40,21 @@ const SAFE_DETAIL_KEYS = new Set([
   "suppressEnterUntilKeyUp",
   "keyCode",
   "sendKey",
+  "scopeFingerprint",
+  "modelScopeFingerprint",
+  "selectionRevision",
+  "isModelCatalogReady",
+  "hasLiveModelGetter",
+  "hasLiveOptionsGetter",
+  "modelSelectionCaptureFailed",
+  ...["configured", "effective", "selected", "rendered", "live"].flatMap(
+    (prefix) => [
+      `${prefix}ModelName`,
+      `${prefix}ModelType`,
+      `${prefix}ProviderId`,
+      `${prefix}Fingerprint`,
+    ],
+  ),
 ]);
 
 export type ComposerDiagnosticEventName =
@@ -56,6 +71,7 @@ export type ComposerDiagnosticEventName =
   | "keyboard"
   | "keyboard-text"
   | "keyboard-policy"
+  | "model-selection-submit"
   | "prediction-accepted"
   | "submit-policy"
   | "transaction"

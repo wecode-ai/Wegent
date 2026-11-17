@@ -45,6 +45,7 @@ import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalS
 import { useOptionalWorkspaceTabActivity } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useTranslation } from '@/hooks/useTranslation'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { captureComposerModelSelectionDiagnostics } from './modelSelectionDiagnostics'
 import { assertLocalRuntimeSidebarIdentity } from '@/lib/local-runtime-sidebar-identity'
 import { parseRuntimeTaskRoute } from '@/lib/navigation'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
@@ -933,6 +934,12 @@ function OwnedWorkbenchProvider({
         availableModelNames: modelSelection.models.map(model => model.name),
         isModelSelectionReady:
           modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
+        modelSelection: captureComposerModelSelectionDiagnostics({
+          ...modelSelection,
+          scopeKey: projectChatScopeKey,
+          isModelSelectionReady:
+            modelSelection.isSelectionReady && modelSelection.selectedModelAvailable,
+        }),
         currentInputLength: draftInput.length,
         scopedInputLengths: Object.fromEntries(
           Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])

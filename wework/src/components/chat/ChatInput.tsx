@@ -66,6 +66,7 @@ import type { QuickPhrase } from '@/desktop/appPreferences'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { ReplyPredictionProvider } from '@/features/reply-predictions/ReplyPredictionProvider'
 import { requiresNewConversationForModelSwitch } from '@/features/workbench/runtimeModelSelection'
+import type { ModelSelectionDiagnostics } from '@/features/workbench/modelSelectionDiagnostics'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -84,6 +85,8 @@ export interface ProjectChatControls {
   requiresNewSession?: boolean
   onSessionStartConfirmed?(model: UnifiedModel): void
   selectedModelOptions: ModelOptions
+  selectionRevision?: number
+  modelSelectionDiagnostics?: ModelSelectionDiagnostics
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
   trialPluginName?: string

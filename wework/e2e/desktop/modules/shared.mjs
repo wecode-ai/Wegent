@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { logE2EModelSelection } from './model-selection-diagnostics.mjs'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
@@ -1584,7 +1585,8 @@ async function selectE2EModel(
   modelIds = DEFAULT_MODEL_ID,
   modelLabels = DEFAULT_MODEL_LABEL,
   composerSelector = '',
-  expectedProviderId = expectedModelProviderId(modelIds)
+  expectedProviderId = expectedModelProviderId(modelIds),
+  diagnosticContext = null
 ) {
   const labels = (Array.isArray(modelLabels) ? modelLabels : [modelLabels]).flatMap(label =>
     label === DEFAULT_MODEL_LABEL ? [label, 'GPT-5.6 Luna'] : [label]
@@ -1623,6 +1625,19 @@ async function selectE2EModel(
         expectedProviderId,
       })
     )
+    if (diagnosticContext) {
+      await logE2EModelSelection({
+        control,
+        context: diagnosticContext,
+        composerSelector,
+        modelSelectorButton,
+        modelIds,
+        labels,
+        expectedProviderId,
+        selectedModelLabel,
+        selectedProviderId,
+      })
+    }
     if (
       labels.some(label => selectedModelLabel.includes(label)) &&
       (!expectedProviderId || selectedProviderId === expectedProviderId)

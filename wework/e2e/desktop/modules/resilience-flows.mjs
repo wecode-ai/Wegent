@@ -457,7 +457,9 @@ async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control 
     control,
     anthropicModel.optionIds,
     anthropicModel.labels,
-    ACTIVE_WORKBENCH_SELECTOR
+    ACTIVE_WORKBENCH_SELECTOR,
+    undefined,
+    'anthropic-empty-response'
   )
   await sendPromptUntilScenarioRequest(
     control,
