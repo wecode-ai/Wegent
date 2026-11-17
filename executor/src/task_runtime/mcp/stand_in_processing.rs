@@ -70,15 +70,13 @@ pub(super) fn call(
             return Err("payloadOffset requires a current batch eventId".into());
         }
         let actions = store
-            .stand_in_actions(identity.user)
+            .recent_stand_in_actions(identity.user, 50)
             .map_err(|e| e.to_string())?;
-        let suggestions: Vec<_> = actions.iter().rev()
-            .filter(|action| action["kind"] == "suggest_action" && action["status"] != "cancelled")
-            .take(20)
+        let suggestions: Vec<_> = store.recent_stand_in_suggestions(identity.user).map_err(|e| e.to_string())?.into_iter()
             .map(|action| json!({"eventIds":action["arguments"]["eventIds"],"roleId":action["arguments"]["roleId"],"message":action["arguments"]["message"],"topics":action["arguments"]["topics"],"status":action["status"],"createdAt":action["createdAt"]}))
             .collect();
         return Ok(
-            json!({"snapshot":super::connection_context::summarize(state["snapshot"].clone()),"actions":actions.into_iter().rev().take(50).collect::<Vec<_>>(),"recentSuggestions":suggestions}),
+            json!({"snapshot":super::connection_context::summarize(state["snapshot"].clone()),"actions":actions,"recentSuggestions":suggestions}),
         );
     }
     let events = arguments["eventIds"].as_array();

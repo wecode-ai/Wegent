@@ -6,7 +6,7 @@ import { requestExecutor } from './executor-rpc.mjs'
 import {
   createLocalCollaborationProject,
   selectAgentEnvironment,
-  selectAgentFormTab,
+  setAgentRuntimeExpanded,
 } from './workspace-flows.mjs'
 import { selectE2EModel } from './shared.mjs'
 import { waitForElementWidth } from './layout-metrics.mjs'
@@ -309,7 +309,7 @@ export function createStandInCoordinatorVerification({
       await control.command('fill', '[data-testid="cloud-project-chat-agent-display-name"]', {
         value: '项目负责人',
       })
-      await selectAgentFormTab(control, 'cloud-project-chat-agent-editor', 'runtime', uiTimeoutMs)
+      await setAgentRuntimeExpanded(control, 'cloud-project-chat-agent-editor', true, uiTimeoutMs)
       await selectAgentEnvironment(
         control,
         'cloud-project-chat-agent-environment',

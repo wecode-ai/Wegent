@@ -47,7 +47,7 @@ import {
   type HarnessAppPreview,
 } from '@/api/local/harnessApps'
 import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { SmartAppRemoveLocalDialog } from './SmartAppRemoveLocalDialog'
 import { SmartAppsSectionNav } from '@/components/smart-apps/SmartAppsSectionNav'
 import { ApplicationContextToolbar } from '@/components/sites/ApplicationContextToolbar'
 import { Button } from '@/components/ui/button'
@@ -1904,26 +1904,11 @@ export function SmartAppsMarketplacePage({
           onInstall={addPluginToInstallation}
         />
       ) : null}
-      <ConfirmDialog
-        open={Boolean(pendingDelete)}
-        title={t('workbench.smart_apps_remove_local_title', '从本机移除工作台？')}
-        description={
-          pendingDelete?.source === 'linked'
-            ? t(
-                'workbench.smart_apps_unlink_local_description',
-                '将停止运行并从列表中移除，但不会删除工作台文件夹。'
-              )
-            : t(
-                'workbench.smart_apps_remove_local_description',
-                '将停止运行并删除本机文件。已发布版本和分享范围不会受到影响。'
-              )
-        }
-        cancelLabel={t('common.cancel', '取消')}
-        confirmLabel={t('workbench.smart_apps_remove_local_confirm', '移除')}
-        confirmTestId="smart-app-remove-local-confirm"
-        destructive
+      <SmartAppRemoveLocalDialog
+        installation={pendingDelete}
+        localReady={localReady}
+        localError={localError}
         pending={Boolean(pendingDelete && busy === pendingDelete.id)}
-        confirmDisabled={!localReady}
         onClose={() => setPendingDelete(null)}
         onConfirm={() => void deleteLocalInstallation()}
       />

@@ -1,10 +1,11 @@
-import { useCallback, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 
 import { chatReducer, type ChatAction } from '@/domain/chatReducer'
 import { runtimeTaskKey } from '@/domain/runtimeTaskLifecycle'
 import { hydrateRuntimeTranscript } from '@/domain/runtimeTranscriptHydration'
 import { requestUserInputResponseKey } from '../../../packages/chat-core/src/runtime-user-input'
 import type { RuntimeStream } from '@/services/runtimeStream'
+import { recordMobileDiagnostic } from '@/services/mobileDiagnostics'
 import type { ChatMessage, RuntimeTaskAddress, RuntimeTranscriptResponse } from '@/types/runtime'
 
 // Match the PC conversation cache bounds; snapshots remain in memory only.
@@ -28,15 +29,33 @@ interface ConversationSnapshot {
 export function useMobileTranscript(
   stream: RuntimeStream,
   currentAddress: RefObject<RuntimeTaskAddress | null>,
-  onError: (error: string) => void,
-  observeRead?: (address: RuntimeTaskAddress) => (response: RuntimeTranscriptResponse) => void
+  onError: (
+    error: string,
+    address: RuntimeTaskAddress,
+    page?: 'older',
+    retry?: () => Promise<unknown>
+  ) => void,
+  observeRead?: (
+    address: RuntimeTaskAddress,
+    page?: 'older'
+  ) => (response: RuntimeTranscriptResponse) => void
 ) {
   const entries = useRef(new Map<string, ConversationSnapshot>())
   const messagesRef = useRef<ChatMessage[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(false)
+  const [historyLoaded, setHistoryLoaded] = useState(false)
   const [hasMoreMessagesBefore, setHasMoreMessagesBefore] = useState(false)
   const [loadingMoreMessagesBefore, setLoadingMoreMessagesBefore] = useState(false)
+  const readRevision = useRef(0)
+
+  useEffect(() => {
+    recordMobileDiagnostic('[MobileTranscript] View', {
+      messages: messages.length,
+      loading,
+      hasMore: hasMoreMessagesBefore,
+    })
+  }, [messages.length, loading, hasMoreMessagesBefore])
 
   const entryFor = useCallback((address: RuntimeTaskAddress): ConversationSnapshot => {
     const key = runtimeTaskKey(address)
@@ -68,6 +87,7 @@ export function useMobileTranscript(
       if (!currentAddress.current || runtimeTaskKey(currentAddress.current) !== key) return
       messagesRef.current = entry.messages
       setMessages(entry.messages)
+      setHistoryLoaded(entry.loaded)
       setHasMoreMessagesBefore(Boolean(entry.beforeCursor))
       setLoadingMoreMessagesBefore(Boolean(entry.older))
     },
@@ -94,6 +114,11 @@ export function useMobileTranscript(
       entries.current.delete(key)
       entries.current.set(key, entry)
       entry.touchedAt = Date.now()
+      recordMobileDiagnostic('[MobileTranscript] Activate', {
+        messages: entry.messages.length,
+        loaded: entry.loaded,
+        pending: Boolean(entry.pending),
+      })
       publish(address, entry)
       setLoading(!entry.loaded && entry.messages.length === 0)
       return entry.title
@@ -105,6 +130,7 @@ export function useMobileTranscript(
     messagesRef.current = []
     setMessages([])
     setLoading(false)
+    setHistoryLoaded(false)
     setHasMoreMessagesBefore(false)
     setLoadingMoreMessagesBefore(false)
   }, [])
@@ -117,7 +143,7 @@ export function useMobileTranscript(
       )
         return
       setLoading(false)
-      onError(error)
+      onError(error, address)
     },
     [currentAddress, onError]
   )
@@ -177,12 +203,31 @@ export function useMobileTranscript(
     (address: RuntimeTaskAddress): Promise<RuntimeTranscriptResponse | null> => {
       const entry = entryFor(address)
       if (entry.pending) return entry.pending
+      const read = ++readRevision.current
+      const diagnostic = (phase: string, counts: Record<string, unknown> = {}) =>
+        recordMobileDiagnostic(`[MobileTranscript] ${phase}`, () => ({
+          read,
+          retained: entries.current.get(runtimeTaskKey(address)) === entry,
+          active: Boolean(
+            currentAddress.current &&
+            runtimeTaskKey(currentAddress.current) === runtimeTaskKey(address)
+          ),
+          messages: entry.messages.length,
+          ...counts,
+        }))
+      diagnostic('Read started')
+      if (
+        currentAddress.current &&
+        runtimeTaskKey(currentAddress.current) === runtimeTaskKey(address)
+      )
+        setLoading(!entry.loaded && entry.messages.length === 0)
       entry.buffered = []
       entry.hydrationMessages = entry.messages
       const receive = observeRead?.(address)
       const request = stream
         .getTranscript(address)
         .then(transcript => {
+          diagnostic('Read received', { receivedMessages: transcript.messages.length })
           if (entries.current.get(runtimeTaskKey(address)) !== entry) return null
           receive?.(transcript)
           const hydrated = hydrateRuntimeTranscript(
@@ -202,11 +247,16 @@ export function useMobileTranscript(
           entry.loaded = true
           entry.title = transcript.title
           entry.touchedAt = Date.now()
+          diagnostic('Hydrated', { buffered: entry.buffered.length })
           publish(address, entry)
           return transcript
         })
         .catch(cause => {
+          diagnostic('Read failed', {
+            errorType: cause instanceof Error ? cause.name : typeof cause,
+          })
           if (entries.current.get(runtimeTaskKey(address)) !== entry) return null
+          onError(cause instanceof Error ? cause.message : String(cause), address)
           throw cause
         })
         .finally(() => {
@@ -223,56 +273,66 @@ export function useMobileTranscript(
       entry.pending = request
       return request
     },
-    [currentAddress, entryFor, observeRead, publish, stream]
+    [currentAddress, entryFor, observeRead, onError, publish, stream]
+  )
+
+  const loadOlder = useCallback(
+    async function readOlder(address: RuntimeTaskAddress): Promise<void> {
+      const entry = entryFor(address)
+      if (entry.older) return entry.older
+      if (!entry.beforeCursor) return
+      const beforeCursor = entry.beforeCursor
+      const generation = entry.paginationGeneration
+      const isCurrentPage = () =>
+        entries.current.get(runtimeTaskKey(address)) === entry &&
+        entry.paginationGeneration === generation
+      const receive = observeRead?.(address, 'older')
+      const request = stream
+        .getTranscript(address, { beforeCursor })
+        .then(transcript => {
+          if (!isCurrentPage()) return
+          receive?.(transcript)
+          entry.messages = chatReducer(entry.messages, {
+            type: 'prepend',
+            messages: transcript.messages,
+          })
+          for (const settled of entry.settledInputs.values())
+            entry.messages = chatReducer(entry.messages, settled)
+          if (entry.hydrationMessages) {
+            entry.hydrationMessages = chatReducer(entry.hydrationMessages, {
+              type: 'prepend',
+              messages: transcript.messages,
+            })
+          }
+          entry.beforeCursor = transcript.beforeCursor ?? null
+          entry.touchedAt = Date.now()
+        })
+        .catch(cause => {
+          if (
+            isCurrentPage() &&
+            currentAddress.current &&
+            runtimeTaskKey(currentAddress.current) === runtimeTaskKey(address)
+          )
+            onError(cause instanceof Error ? cause.message : String(cause), address, 'older', () =>
+              readOlder(address)
+            )
+        })
+        .finally(() => {
+          if (!isCurrentPage() || entry.older !== request) return
+          entry.older = undefined
+          publish(address, entry)
+        })
+      entry.older = request
+      publish(address, entry)
+      return entry.older
+    },
+    [currentAddress, entryFor, observeRead, onError, publish, stream]
   )
 
   const loadMoreMessagesBefore = useCallback(async () => {
     const address = currentAddress.current
-    if (!address) return
-    const entry = entryFor(address)
-    if (entry.older) return entry.older
-    if (!entry.beforeCursor) return
-    const beforeCursor = entry.beforeCursor
-    const generation = entry.paginationGeneration
-    const isCurrentPage = () =>
-      entries.current.get(runtimeTaskKey(address)) === entry &&
-      entry.paginationGeneration === generation
-    const request = stream
-      .getTranscript(address, { beforeCursor })
-      .then(transcript => {
-        if (!isCurrentPage()) return
-        entry.messages = chatReducer(entry.messages, {
-          type: 'prepend',
-          messages: transcript.messages,
-        })
-        for (const settled of entry.settledInputs.values())
-          entry.messages = chatReducer(entry.messages, settled)
-        if (entry.hydrationMessages) {
-          entry.hydrationMessages = chatReducer(entry.hydrationMessages, {
-            type: 'prepend',
-            messages: transcript.messages,
-          })
-        }
-        entry.beforeCursor = transcript.beforeCursor ?? null
-        entry.touchedAt = Date.now()
-      })
-      .catch(cause => {
-        if (
-          isCurrentPage() &&
-          currentAddress.current &&
-          runtimeTaskKey(currentAddress.current) === runtimeTaskKey(address)
-        )
-          onError(cause instanceof Error ? cause.message : String(cause))
-      })
-      .finally(() => {
-        if (!isCurrentPage() || entry.older !== request) return
-        entry.older = undefined
-        publish(address, entry)
-      })
-    entry.older = request
-    publish(address, entry)
-    return entry.older
-  }, [currentAddress, entryFor, onError, publish, stream])
+    if (address) await loadOlder(address)
+  }, [currentAddress, loadOlder])
 
   const retainDevices = useCallback((deviceIds: string[]) => {
     const allowed = new Set(deviceIds)
@@ -285,6 +345,7 @@ export function useMobileTranscript(
   return {
     messages,
     loading,
+    historyLoaded,
     hasMoreMessagesBefore,
     loadingMoreMessagesBefore,
     activate,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { confirmProjectTemplateConfiguration } from '../modules/project-create-template-navigation.mjs'
 import { readFile } from 'node:fs/promises'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -118,7 +119,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         value: PROJECT_NAME,
       })
       await control.command('click', scoped('[data-testid="project-create-choose-template"]'))
-      const picker = `${dialog} [data-testid="collaboration-template-dialog"]`
+      const picker = `${dialog} [data-testid="project-create-template-catalog"]`
       await control.command('waitFor', picker, { timeoutMs: uiTimeoutMs })
       await control.command('click', `${picker} [data-testid="template-tab-mine"]`)
       await control.command('waitFor', `${picker} [data-testid="template-details-${templateId}"]`, {
@@ -130,6 +131,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await control.command('click', `${picker} [data-testid="template-use"]`)
       await control.command('waitFor', picker, { visible: false, timeoutMs: uiTimeoutMs })
+      await confirmProjectTemplateConfiguration(control, CONTENT)
       await control.command('waitFor', scoped('[data-testid="project-create-template-section"]'), {
         text: TEMPLATE_DISPLAY_NAME,
         timeoutMs: uiTimeoutMs,

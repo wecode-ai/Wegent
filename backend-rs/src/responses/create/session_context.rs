@@ -20,6 +20,7 @@ use crate::task_store_statements::{
     assistant_subtasks_by_task_statement, owner_matches_task_id_statement,
 };
 use crate::task_store_tables::TableTemplates;
+use wegent_task_store::task_store_subscription_reads::recent_executor_sessions_statement;
 
 /// One `_build_session_context` call's inputs.
 pub(crate) struct SessionContextInput<'a> {
@@ -37,6 +38,8 @@ pub(crate) struct SessionContextInput<'a> {
     pub executor_deleted: bool,
     /// The source builder's `new_session` argument.
     pub new_session: bool,
+    /// Subscription recovery has its own cap, independent of chat history.
+    pub is_subscription: bool,
     /// The deployment's physical table templates (`{{tasks}}` when the
     /// deployment shards them); the statements render against these, exactly
     /// like the completion path's `Tables`.
@@ -138,6 +141,39 @@ async fn persisted_sessions<M: Mysql>(
         .await?;
     if guard.is_none() {
         return Ok(Vec::new());
+    }
+    if input.is_subscription
+        || input
+            .task_json
+            .pointer("/metadata/labels/type")
+            .and_then(Value::as_str)
+            == Some("subscription")
+    {
+        let bot_ids: Vec<_> = input
+            .bot_configs
+            .iter()
+            .filter_map(|config| config["id"].as_i64())
+            .collect();
+        let mut args = vec![crate::sql_support::StatementArg::Int(task_id)];
+        args.extend(
+            bot_ids
+                .iter()
+                .map(|id| crate::sql_support::StatementArg::Str(id.to_string())),
+        );
+        let rows: Vec<MysqlRow> = routed
+            .fetch_all(
+                recent_executor_sessions_statement(input.table_templates.subtasks, bot_ids.len()),
+                args,
+            )
+            .await?;
+        let sessions = rows
+            .iter()
+            .filter_map(|row| {
+                let session = row.get::<Json<Value>>("executor_session").ok().flatten()?;
+                normalize_executor_session(Some(&session.0))
+            })
+            .collect::<Vec<_>>();
+        return Ok(merge_inherited_sessions(&[sessions.as_slice()]));
     }
     let rows: Vec<MysqlRow> = routed
         .fetch_all(
@@ -352,6 +388,7 @@ mod tests {
             task_json,
             executor_deleted,
             new_session,
+            is_subscription: false,
             table_templates: TableTemplates {
                 tasks: "tasks_0711",
                 subtasks: "subtasks_0711",
@@ -361,6 +398,54 @@ mod tests {
 
     fn coding_bot(id: i64) -> Value {
         json!({"id": id, "shell_type": "ClaudeCode"})
+    }
+
+    #[tokio::test]
+    async fn subscription_recovery_projects_bounded_sessions_on_the_production_path() {
+        use crate::sql_test_support::mysql_rows::{MysqlRows, Value as Cell};
+
+        let session = json!({
+            "agent": "ClaudeCode", "bot_id": 23, "session_id": "old-session"
+        });
+        let fixture = MysqlRows::start_results(move |sql| {
+            if sql.contains("AS executor_session") {
+                assert!(sql.ends_with("LIMIT 50"), "{sql}");
+                let row = vec![("executor_session", Cell::Text(session.to_string()))];
+                return (row.clone(), vec![row.clone(), row]);
+            }
+            assert!(sql.contains("user_id = ?"), "{sql}");
+            let guard = vec![("id", Cell::I64(801406538674539))];
+            (guard.clone(), vec![guard])
+        })
+        .await;
+        let bots = [coding_bot(23)];
+        for explicit in [false, true] {
+            let task_json = if explicit {
+                json!({})
+            } else {
+                json!({"metadata":{"labels":{"type":"subscription"}}})
+            };
+            for deleted in [false, true] {
+                let mut input = input(&bots, &task_json, 7, 7, deleted, false);
+                input.is_subscription = explicit;
+                // No history setting is required for executor recovery.
+                let (inherited, bindings) = build(&fixture.mysql, &input).await.unwrap();
+                assert_eq!(inherited.len(), usize::from(deleted));
+                assert_eq!(bindings.len(), 1);
+                assert_eq!(bindings[0]["sessionId"], "old-session");
+                assert_eq!(bindings[0]["botId"], 23);
+                assert_eq!(bindings[0]["user_id"], 7);
+            }
+        }
+        let queries = fixture.queries();
+        assert_eq!(queries.len(), 8);
+        for sql in queries
+            .iter()
+            .filter(|sql| sql.contains("AS executor_session"))
+        {
+            assert!(sql.contains("FROM subtasks_0711"));
+            assert!(!sql.contains("subtasks_0711.result AS"));
+        }
     }
 
     fn persisted(agent: &str, bot_id: i64, field: &str, session_id: &str) -> Value {

@@ -46,6 +46,19 @@ function publish(status: Partial<ExecutionEnvironmentStatus>) {
 }
 
 describe('PluginPythonRuntimeNotice', () => {
+  test('keeps background notices inside the application shell stacking context', async () => {
+    render(
+      <div data-testid="app-shell" style={{ position: 'fixed', inset: 0 }}>
+        <PluginPythonRuntimeNotice />
+      </div>
+    )
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledOnce())
+    publish({ state: 'error' })
+    expect(screen.getByTestId('app-shell')).toContainElement(
+      screen.getByTestId('plugin-python-runtime-notice')
+    )
+  })
+
   test('explains temporary local Python while the managed installation continues', async () => {
     render(<PluginPythonRuntimeNotice />)
     await waitFor(() => expect(mocks.list).toHaveBeenCalledOnce())

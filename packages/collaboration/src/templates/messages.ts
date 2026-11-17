@@ -4,6 +4,8 @@
 export const templateMessages = {
   'zh-CN': {
     optionalRuntimeConfiguration: '运行环境（可选）',
+    chooseTemplate: '选择模板',
+    backToTemplates: '返回模板列表',
     deferredRuntimeHint: '可稍后在项目设置中配置。',
     environmentOnline: '在线',
     title: '协作模板',
@@ -43,6 +45,12 @@ export const templateMessages = {
     deleteConnectionRequired: '请连接云端后删除已同步的模板。',
     createFromTemplate: '从模板创建',
     clearSelection: '移除模板',
+    configureSelection: '配置成员',
+    confirmConfiguration: '确认配置',
+    returnToProject: '返回项目',
+    returnToTemplates: '返回模板列表',
+    selectionSummary: '{groups} 个小组 · {roles} 个角色',
+    selectionIncomplete: '还有角色未安排成员，请配置后创建。',
     use: '使用此模板',
     download: '下载并使用',
     cloudAdd: '添加到我的能力',
@@ -126,6 +134,8 @@ export const templateMessages = {
   },
   en: {
     optionalRuntimeConfiguration: 'Runtime (optional)',
+    chooseTemplate: 'Choose template',
+    backToTemplates: 'Back to templates',
     deferredRuntimeHint: 'You can configure this later in project settings.',
     environmentOnline: 'Online',
     title: 'Collaboration templates',
@@ -166,6 +176,12 @@ export const templateMessages = {
     deleteConnectionRequired: 'Connect to delete a synced template.',
     createFromTemplate: 'Create from template',
     clearSelection: 'Remove template',
+    configureSelection: 'Configure members',
+    confirmConfiguration: 'Confirm configuration',
+    returnToProject: 'Back to project',
+    returnToTemplates: 'Back to templates',
+    selectionSummary: 'Groups: {groups} · Roles: {roles}',
+    selectionIncomplete: 'Some roles need members. Configure them before creating the project.',
     use: 'Use template',
     download: 'Download and use',
     cloudAdd: 'Add to my capabilities',
@@ -210,12 +226,11 @@ export const templateMessages = {
     syncConflict: 'Template not synced. Resolve the conflict or save a copy.',
     embeddedAgents:
       'Template Agents are created and bound automatically. Models and tools follow the execution environment.',
-    agentsCount: '{count} Agents will be created and bound to roles.',
+    agentsCount: 'Agents to create and bind to roles: {count}.',
     environmentHint: 'Models and tools follow the execution environment.',
     agentModel: 'Model for Agents',
     chooseModel: 'Choose a model',
-    selectedModelHint:
-      'Execution environments and models can be configured later.',
+    selectedModelHint: 'Execution environments and models can be configured later.',
     modelUnavailable:
       'The selected model is no longer available. Refresh the model list and choose again.',
     noModels: 'No models available. Add a model in Settings, then refresh this list.',

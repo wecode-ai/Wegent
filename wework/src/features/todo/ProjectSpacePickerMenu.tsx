@@ -165,7 +165,7 @@ export function ProjectSpacePickerMenu({
                   choose(visible[activeIndex].project)
                 }
               }}
-              className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-muted"
+              className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-text-secondary"
             />
             {query ? (
               <button
@@ -211,7 +211,7 @@ export function ProjectSpacePickerMenu({
           }
           className="w-40 shrink-0 overflow-y-auto border-r border-border p-1 max-md:w-28"
         >
-          <div className="px-2 py-1 text-xs text-text-muted">
+          <div className="px-2 py-1 text-xs text-text-secondary">
             {groupByWorkspace
               ? t('workbench.project_picker_space')
               : t('workbench.project_picker_projects')}
@@ -242,7 +242,7 @@ export function ProjectSpacePickerMenu({
                 <Folder className="h-4 w-4 shrink-0" aria-hidden="true" />
               )}
               <span className="min-w-0 flex-1 truncate">{group.label}</span>
-              <span className="text-xs tabular-nums text-text-muted">
+              <span className="text-xs tabular-nums text-text-secondary">
                 {group.key === null
                   ? matching.length
                   : matching.filter(entry => entry.group.key === group.key).length}
@@ -267,7 +267,7 @@ export function ProjectSpacePickerMenu({
           </button>
         </nav>
         <div className="flex min-w-0 flex-1 flex-col px-1">
-          <div className="shrink-0 px-2 py-1 text-xs text-text-muted">
+          <div className="shrink-0 px-2 py-1 text-xs text-text-secondary">
             {t('workbench.project_picker_projects', '项目')}
           </div>
           <div
@@ -306,11 +306,11 @@ export function ProjectSpacePickerMenu({
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm">{option.name}</span>
-                    <span className="block truncate text-xs text-text-muted">
+                    <span className="block truncate text-xs text-text-secondary">
                       {option.project_key}
                     </span>
                   </span>
-                  <span className="max-w-28 truncate text-xs text-text-muted max-md:max-w-16">
+                  <span className="max-w-28 truncate text-xs text-text-secondary max-md:max-w-16">
                     {group.label}
                   </span>
                   <span className="h-4 w-4 shrink-0">
@@ -324,7 +324,7 @@ export function ProjectSpacePickerMenu({
             <div
               role="status"
               data-testid="project-space-picker-empty"
-              className="flex flex-1 items-center justify-center px-3 py-8 text-center text-sm text-text-muted"
+              className="flex flex-1 items-center justify-center px-3 py-8 text-center text-sm text-text-secondary"
             >
               {t('workbench.project_picker_empty', '没有匹配的项目，试试其他关键词或空间')}
             </div>
@@ -346,7 +346,7 @@ export function ProjectSpacePickerMenu({
             {t('workbench.clear_extra_project_space', '不加入其他项目空间')}
           </button>
         ) : null}
-        <span className="ml-auto pr-2 text-xs text-text-muted max-md:hidden">
+        <span className="ml-auto pr-2 text-xs text-text-secondary max-md:hidden">
           {t('workbench.project_picker_keys', '↑↓ 选择 · Enter 确认 · Esc 关闭')}
         </span>
       </footer>

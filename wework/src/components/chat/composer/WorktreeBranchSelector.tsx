@@ -1,3 +1,4 @@
+import { branchMatchesQuery } from '@wegent/chat-core/workspace-branches'
 import { Check, ChevronDown, GitBranch, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -19,21 +20,6 @@ interface WorktreeBranchSelectorProps {
 }
 
 const WORKTREE_BRANCH_MENU_MAX_HEIGHT = 360
-
-function branchMatchesQuery(branch: string, query: string): boolean {
-  const normalizedBranch = branch.toLowerCase()
-  const normalizedQuery = query.trim().toLowerCase()
-  if (!normalizedQuery || normalizedBranch.includes(normalizedQuery)) return true
-
-  let queryIndex = 0
-  for (const character of normalizedBranch) {
-    if (character === normalizedQuery[queryIndex]) {
-      queryIndex += 1
-      if (queryIndex === normalizedQuery.length) return true
-    }
-  }
-  return false
-}
 
 export function WorktreeBranchSelector({
   currentBranch,

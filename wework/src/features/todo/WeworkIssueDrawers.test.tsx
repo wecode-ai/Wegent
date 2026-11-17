@@ -1,5 +1,5 @@
 import '@/i18n'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type {
   CollaborationApp,
@@ -414,7 +414,7 @@ describe('Wework Issue conversation drawers', () => {
   })
 
   it.each([false, true])(
-    'starts an ordinary cloud task after acceptance, including direct human assignment: %s',
+    'prepares cloud status before execution, including direct human assignment: %s',
     async direct => {
       if (direct)
         issue.human_task_binding = {
@@ -424,32 +424,53 @@ describe('Wework Issue conversation drawers', () => {
           assignmentId: 'assignment',
         }
       const source = { ...issue, tags: [], version: 3 }
+      let finishStatusUpdate!: () => void
       const issues = {
         get: vi.fn(async () => source),
-        update: vi.fn(async (_id, update) => ({ ...source, ...update, version: 4 })),
+        update: vi.fn(
+          (_id, update) =>
+            new Promise<typeof source>(resolve => {
+              finishStatusUpdate = () => resolve({ ...source, ...update, version: 4 })
+            })
+        ),
       }
       const runtimePort = { bindTask: vi.fn(), unbindTask: vi.fn() }
       render(<Project issues={issues} runtimePort={runtimePort} />)
       await userEvent.click(screen.getByText('Open Issue'))
       await userEvent.click(screen.getByRole('button', { name: 'Add task' }))
       const address = { deviceId: 'device', taskId: 'prepared-task' }
-      await act(async () => {
-        await chatPreparations.get('new')!(address, null)
+      let prepared = false
+      const preparation = Promise.resolve(chatPreparations.get('new')!(address, null)).then(() => {
+        prepared = true
       })
+      await waitFor(() => expect(issues.update).toHaveBeenCalledOnce())
       expect(runtimePort.bindTask).toHaveBeenCalledOnce()
-      expect(issues.update).not.toHaveBeenCalled()
-      await act(async () => {
-        await chatCompletions.get('new')!(address, null, null)
-      })
+      expect(prepared).toBe(false)
       expect(issues.update).toHaveBeenCalledExactlyOnceWith(issue.id, {
         version: 3,
         status: 'in_progress',
       })
+      await act(async () => {
+        finishStatusUpdate()
+        await preparation
+      })
+      expect(prepared).toBe(true)
+      await act(async () => {
+        await chatCompletions.get('new')!(address, null, null)
+      })
+      expect(issues.update).toHaveBeenCalledOnce()
     }
   )
 
-  it('leaves the Issue untouched when a prepared execution is rolled back without acceptance', async () => {
-    const issues = { get: vi.fn(), update: vi.fn() }
+  it('restores the original status and unbinds when prepared execution is rejected', async () => {
+    let stored = { ...issue, status: 'pending', tags: [], version: 3 }
+    const issues = {
+      get: vi.fn(async () => stored),
+      update: vi.fn(async (_id, update) => {
+        stored = { ...stored, ...update, version: stored.version + 1 }
+        return stored
+      }),
+    }
     const runtimePort = { bindTask: vi.fn(), unbindTask: vi.fn() }
     render(<Project issues={issues} runtimePort={runtimePort} />)
     await userEvent.click(screen.getByText('Open Issue'))
@@ -463,8 +484,32 @@ describe('Wework Issue conversation drawers', () => {
     })
     expect(runtimePort.bindTask).toHaveBeenCalledOnce()
     expect(runtimePort.unbindTask).toHaveBeenCalledOnce()
-    expect(issues.get).not.toHaveBeenCalled()
-    expect(issues.update).not.toHaveBeenCalled()
+    expect(issues.update).toHaveBeenNthCalledWith(1, issue.id, {
+      version: 3,
+      status: 'in_progress',
+    })
+    expect(issues.update).toHaveBeenNthCalledWith(2, issue.id, { version: 4, status: 'pending' })
+    expect(stored.status).toBe('pending')
+  })
+
+  it('still unbinds when a concurrent write rejects the status rollback', async () => {
+    const source = { ...issue, status: 'pending', tags: [], version: 3 }
+    const started = { ...source, status: 'in_progress', version: 4 }
+    const issues = {
+      get: vi.fn().mockResolvedValueOnce(source).mockResolvedValueOnce(started),
+      update: vi.fn().mockResolvedValueOnce(started).mockRejectedValueOnce(new Error('Conflict')),
+    }
+    const runtimePort = { bindTask: vi.fn(), unbindTask: vi.fn() }
+    render(<Project issues={issues} runtimePort={runtimePort} />)
+    await userEvent.click(screen.getByText('Open Issue'))
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }))
+    const rollback = await chatPreparations.get('new')!(
+      { deviceId: 'device', taskId: 'rejected-task' },
+      null
+    )
+    await expect(rollback!()).rejects.toThrow('Conflict')
+    expect(runtimePort.unbindTask).toHaveBeenCalledOnce()
+    expect(issues.update).toHaveBeenCalledTimes(2)
   })
 
   it('does not update the Issue when binding the task is denied', async () => {
