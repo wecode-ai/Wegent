@@ -1283,6 +1283,7 @@ async function main() {
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       modelResponseTimeoutMs: Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000),
+      runtimeOperationTimeoutMs: Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000),
       recordScenarioRequest: (scenario, request) =>
         control.recordScenarioRequest(scenario, request),
       restartDesktopApp: options => restartDesktopApp(options),
