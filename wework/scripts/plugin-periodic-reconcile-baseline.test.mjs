@@ -3,8 +3,11 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, onTestFinished, test } from 'vitest'
-import { settleRetainedPluginBaseline } from '../e2e/desktop/scenarios/plugin-periodic-reconcile.scenario.mjs'
+import { expect, onTestFinished, test, vi } from 'vitest'
+import {
+  settleReconcileBaselines,
+  settleRetainedPluginBaseline,
+} from '../e2e/desktop/scenarios/plugin-periodic-reconcile.scenario.mjs'
 
 async function fixture() {
   const home = await mkdtemp(join(tmpdir(), 'plugin-reconcile-baseline-'))
@@ -60,6 +63,39 @@ test('does not accept unacknowledged ordering metadata as the recovery baseline'
   await expect(settleRetainedPluginBaseline(target, retained, 1)).rejects.toThrow(
     'retained plugin baseline did not settle'
   )
+})
+
+test('revalidates every timer window after asynchronous baseline settlement', async () => {
+  const first = await fixture()
+  const second = await fixture()
+  const targets = [first.target, second.target]
+  let now = 1000
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+  onTestFinished(() => clock.mockRestore())
+  for (const target of targets) {
+    target.baseline.registeredAt = now
+    target.baseline.scheduledAt = now
+    target.observation.reconciliations = []
+  }
+  const capabilities = second.target.observation.capabilities
+  let advanced = false
+  Object.defineProperty(second.target.observation, 'capabilities', {
+    get() {
+      if (!advanced) {
+        advanced = true
+        now = 61_001
+        const timer = setTimeout(() => {
+          now = 95_000
+          for (const target of targets) target.observation.reconciliations.push({ at: 94_999 })
+        }, 100)
+        onTestFinished(() => clearTimeout(timer))
+      }
+      return capabilities
+    },
+  })
+  const settled = await settleReconcileBaselines(targets, first.retained, 1000)
+  expect(settled).toHaveLength(2)
+  for (const target of targets) expect(target.baseline.scheduledAt).toBe(94_999)
 })
 
 test.each(['checksum', 'enabled', 'component_states', 'runtime'])(
