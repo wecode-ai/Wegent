@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -9,6 +9,7 @@ import { EventEmitter } from 'node:events'
 import { onTestFinished, test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 import { createDesktopScenario as createTemporaryChatScenario } from '../e2e/desktop/scenarios/temporary-chat.scenario.mjs'
+import { createDesktopScenario as createResponsesCompatibilityScenario } from '../e2e/desktop/scenarios/responses-tool-compatibility.scenario.mjs'
 import {
   CLOUD_VISION_SIDECAR_CASE,
   LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
@@ -116,6 +117,48 @@ test.each([undefined, 'Bearer desktop-e2e'])(
     )
   }
 )
+
+test('Responses compatibility predictions retain each configured model and its distinct credential', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'responses-prediction-auth-'))
+  onTestFinished(() => rmSync(directory, { recursive: true, force: true }))
+  const scenario = createResponsesCompatibilityScenario({
+    electronUserDataDirectory: directory,
+    workspacePath: directory,
+    resultDir: directory,
+  })
+  await scenario.prepareApp()
+  const provider = JSON.parse(readFileSync(join(directory, 'model-connections/model.yml'), 'utf8'))
+    .providers[0]
+  assert.notEqual(provider.api_key, MODEL_API_KEY)
+  const server = new DesktopE2EServer(directory, undefined, scenario)
+  server.url = 'http://fixture'
+  for (const model of provider.models) {
+    const body = {
+      model: model.model_id,
+      input: [{ role: 'user', content: REPLY_PREDICTION_PROMPT }],
+    }
+    const request = Readable.from([JSON.stringify(body)])
+    Object.assign(request, {
+      method: 'POST',
+      url: '/v1/responses',
+      headers: { authorization: `Bearer ${provider.api_key}` },
+    })
+    const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
+    await server.handle(request, response)
+    assert.equal(response.status, 200)
+    const message = response.events().find(event => event.item?.type === 'message')
+    assert.deepEqual(JSON.parse(message.item.content[0].text), { suggestion: null })
+    const invalid = Readable.from([JSON.stringify(body)])
+    Object.assign(invalid, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${MODEL_API_KEY}` },
+    })
+    await assert.rejects(
+      scenario.handleHttp(invalid, memoryResponse(), new URL('/v1/responses', server.url)),
+      { code: 'ERR_ASSERTION' }
+    )
+  }
+})
 
 async function activeTemporaryChatScenario() {
   const scenario = createTemporaryChatScenario({ uiTimeoutMs: 100 })
