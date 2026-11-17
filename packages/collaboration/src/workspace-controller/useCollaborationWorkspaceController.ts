@@ -2050,6 +2050,7 @@ export function useCollaborationWorkspaceController({
     if (location.projectId) {
       const projectId = location.projectId;
       const loadProject = async () => {
+        let hasCurrentRouteIssue = false;
         if (location.issueId) {
           const issue = await commands.loadSelectedIssue(location.issueId);
           if (!isCurrent()) return;
@@ -2057,6 +2058,9 @@ export function useCollaborationWorkspaceController({
             dispatch({ type: "loading", value: false });
             return;
           }
+          hasCurrentRouteIssue =
+            issue?.id === location.issueId &&
+            issue.cloud_project_id === projectId;
         }
         if (
           loadedProjectScopeRef.current === projectRequestScope &&
@@ -2064,10 +2068,14 @@ export function useCollaborationWorkspaceController({
         )
           return;
         if (loadProjectOnLocation) {
-          await commands.loadProject(projectId, true, {
-            isCurrent,
-            loadSnapshot: loadProjectSnapshotOnLocation,
-          });
+          await commands.loadProject(
+            projectId,
+            stateRef.current.loading || !hasCurrentRouteIssue,
+            {
+              isCurrent,
+              loadSnapshot: loadProjectSnapshotOnLocation,
+            },
+          );
         } else {
           await commands.loadProjectCatalog({ isCurrent });
         }
