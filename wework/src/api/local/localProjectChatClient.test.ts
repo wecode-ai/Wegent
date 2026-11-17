@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LocalCommentRecord } from './localProjectChatClient'
 import { createLocalProjectChatClient } from './localProjectChatClient'
+import { timelineMessageKind } from '@/features/collaboration-exp/model/messageLayer'
 
 const request = vi.fn()
 
@@ -29,10 +30,76 @@ function commentRecord(overrides: Partial<LocalCommentRecord> = {}): LocalCommen
 }
 
 describe('createLocalProjectChatClient', () => {
+  it('publishes an assistant conclusion through native source verification', async () => {
+    request.mockResolvedValue(
+      commentRecord({
+        generation_source: 'ai',
+        publication_source: 'human',
+        confirmation_state: 'authorized',
+      })
+    )
+    const client = createLocalProjectChatClient(request, {
+      currentUser: { id: 0, user_name: 'local' },
+    })
+    const result = await client.publishAssistantMessage!({
+      projectId: 'p1',
+      taskId: 't1',
+      clientMessageId: 'cm-1',
+      text: 'Approved result',
+      source: { deviceId: 'mac', taskId: 'private' },
+    })
+    expect(request).toHaveBeenCalledExactlyOnceWith('todos.comment.publish_assistant', {
+      device_id: 'mac',
+      runtime_task_id: 'private',
+      comment: {
+        project_id: 'p1',
+        task_id: 't1',
+        client_message_id: 'cm-1',
+        sender_type: 'user',
+        sender_id: '0',
+        sender_name: 'local',
+        content: 'Approved result',
+        metadata: {},
+        reply_to_message_id: null,
+      },
+    })
+    expect(result).toMatchObject({
+      generationSource: 'ai',
+      publicationSource: 'human',
+      confirmationState: 'authorized',
+    })
+  })
+  it('keeps process chunks in the execution layer and follows runtime owner instead of trigger author', async () => {
+    request.mockResolvedValue([
+      commentRecord({
+        sender_type: 'agent',
+        actor_user_id: '8',
+        runtime_owner_user_id: '7',
+        message_type: 'agent_chunk',
+        content: 'private output',
+        metadata: { runtime_address: { deviceId: 'mac', taskId: 'private' } },
+      }),
+    ])
+    for (const id of [7, 8]) {
+      const client = createLocalProjectChatClient(request, {
+        currentUser: { id, user_name: 'viewer' },
+      })
+      const subscription = await client.subscribe('p1', 't1', 0, vi.fn())
+      const message = subscription.snapshot.messages[0]
+      expect(timelineMessageKind(message)).toBe('execution')
+      expect(message.actorUserId).toBe('8')
+      expect(message.content).toBe(id === 7 ? 'private output' : '')
+      expect(message.runtimeAddress).toEqual(
+        id === 7 ? { deviceId: 'mac', taskId: 'private' } : undefined
+      )
+      subscription.unsubscribe()
+    }
+  })
   it('preserves native-owner sources across cloud identity without exposing another participant', async () => {
     request.mockResolvedValue([
       commentRecord({
         actor_user_id: '0',
+        runtime_owner_user_id: '0',
         metadata: {
           runtime_address: { deviceId: 'mac', taskId: 'private' },
           runtime_turn_id: 'turn',
@@ -253,6 +320,7 @@ describe('createLocalProjectChatClient', () => {
         message_id: 'agent-turn-2',
         sender_type: 'agent',
         actor_user_id: '0',
+        runtime_owner_user_id: '0',
         sender_id: 'a1',
         sender_name: 'Bot',
         status: 'streaming',
@@ -379,6 +447,7 @@ describe('createLocalProjectChatClient', () => {
       commentRecord({
         sender_type: 'agent',
         actor_user_id: '0',
+        runtime_owner_user_id: '0',
         status: 'pending',
         metadata: {
           execution_id: 4,

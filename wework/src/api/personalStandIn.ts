@@ -104,7 +104,7 @@ export function connectionChangeEnablesIdentity(
 }
 
 export function standInPolicy(
-  role: StandInRole,
+  role: Pick<StandInRole, 'collaboration' | 'enabled'>,
   project?: StandInProjectRef
 ): StandInHandlingPolicy {
   return (

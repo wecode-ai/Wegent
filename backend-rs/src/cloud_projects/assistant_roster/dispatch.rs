@@ -50,6 +50,22 @@ fn default_risk_level() -> String {
     "high".into()
 }
 
+fn coordinator_entry<'a>(
+    manager: i64,
+    selected: &[(&DispatchAssignment, &'a ProjectAssistantRosterEntry)],
+    roster: &'a [ProjectAssistantRosterEntry],
+) -> Option<&'a ProjectAssistantRosterEntry> {
+    selected
+        .iter()
+        .find(|(assignment, _)| assignment.user_id == manager)
+        .map(|(_, entry)| *entry)
+        .or_else(|| {
+            roster
+                .iter()
+                .find(|entry| entry.user_id == manager && entry.enabled)
+        })
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct DispatchChild {
@@ -209,9 +225,7 @@ async fn create_assistant_dispatch(
             .map(|(assignment, _)| assignment.user_id)
             .unwrap_or_else(|| i64::from(user.id)),
     };
-    let manager_roster_entry = roster
-        .iter()
-        .find(|entry| entry.user_id == manager && entry.enabled);
+    let manager_roster_entry = coordinator_entry(manager, &selected, &roster);
     if !users.contains(&manager)
         && manager != i64::from(user.id)
         && !has_permission(
@@ -356,16 +370,7 @@ async fn create_assistant_dispatch(
                 .await?
                 .ok_or(brz_mysql::MysqlError::RowNotFound)?;
             let mut pending = Vec::new();
-            let manager_entry = selected
-                .iter()
-                .find(|(assignment, _)| assignment.user_id == manager)
-                .map(|(_, entry)| *entry)
-                .or_else(|| {
-                    roster
-                        .iter()
-                        .find(|entry| entry.user_id == manager && entry.enabled)
-                });
-            if let Some(manager_entry) = manager_entry.filter(|entry| {
+            if let Some(manager_entry) = manager_roster_entry.filter(|entry| {
                 entry.endpoint_kind == "wegent_agent" && automatic_for(entry, &request.risk_level)
             })
             {
@@ -737,7 +742,40 @@ pub(super) fn dispatch_from_metadata(
 
 #[cfg(test)]
 mod tests {
-    use super::dispatch_tags;
+    use super::*;
+
+    #[test]
+    fn coordinator_uses_the_explicitly_selected_role_for_a_multi_role_member() {
+        let entry = |id: &str| ProjectAssistantRosterEntry {
+            id: id.into(),
+            project_id: "project".into(),
+            user_id: 7,
+            user_name: "Owner".into(),
+            role_id: id.into(),
+            endpoint_ref: format!("local_wework:7:{id}"),
+            endpoint_kind: "local_wework".into(),
+            display_name: id.into(),
+            enabled: true,
+            capability_tags: vec![],
+            autonomy_policy: json!({"automatic":true}),
+            availability: "online".into(),
+            version: 1,
+        };
+        let roster = [entry("primary"), entry("specialist")];
+        let assignment = DispatchAssignment {
+            roster_entry_id: Some("specialist".into()),
+            user_id: 7,
+            brief: "Review".into(),
+        };
+        assert_eq!(
+            coordinator_entry(7, &[(&assignment, &roster[1])], &roster)
+                .unwrap()
+                .id,
+            "specialist"
+        );
+        assert_eq!(coordinator_entry(7, &[], &roster).unwrap().id, "primary");
+        assert!(coordinator_entry(8, &[], &roster).is_none());
+    }
 
     #[test]
     fn dispatch_tags_carry_role_filters_without_duplicates() {

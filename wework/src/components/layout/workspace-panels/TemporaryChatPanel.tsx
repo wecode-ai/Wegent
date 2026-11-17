@@ -870,6 +870,16 @@ export function TemporaryChatPanel({
 
   const send = useCallback(
     async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
+      if (runtimeContext?.conversationContext === 'private_discussion') {
+        console.info('[runtime-v2] private conversation submit', {
+          taskId: address?.taskId,
+          active,
+          readOnly,
+          historyAvailable: !historySource || scopedHistory.available,
+          nativeSubmissionPending: nativeSubmission.current,
+          modelIdentityPending: taskModelIdentityPending,
+        })
+      }
       if (!active || readOnly) return false
       const draftValue = valueOverride ?? input
       const message = draftValue.trim()
@@ -930,9 +940,11 @@ export function TemporaryChatPanel({
                   message,
                   clientUserMessageId: queuedMessage.id,
                   attachmentIds: remoteAttachmentIds(currentAttachments),
-                  interruptWhenBusy: options.interruptWhenBusy === true,
+                  interruptWhenBusy:
+                    !queuedMessage.startNewSession && options.interruptWhenBusy === true,
                   runtimeOptions: {
                     ...selectedModelFields,
+                    ...sessionStartFields,
                     ...(localRuntimeAttachments(currentAttachments).length
                       ? { attachments: localRuntimeAttachments(currentAttachments) }
                       : {}),
@@ -942,6 +954,13 @@ export function TemporaryChatPanel({
                   queuedMessage,
                   !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
                 ))
+          if (runtimeContext?.conversationContext === 'private_discussion') {
+            console.info('[runtime-v2] private conversation send result', {
+              taskId: address.taskId,
+              sent: result.sent,
+              transport: assistantSend ? 'assistant' : 'runtime',
+            })
+          }
           if (!result.sent) {
             setError(result.error || t('workbench.project_chat_send_failed'))
             if (!transactionalDraft) setInput(current => current || message)
@@ -1133,6 +1152,7 @@ export function TemporaryChatPanel({
       scopedHistory.available,
       paneStatus.isBusy,
       assistantSend,
+      taskModelIdentityPending,
       sendConversationMessage,
       sendRuntimePaneGuidance,
       t,

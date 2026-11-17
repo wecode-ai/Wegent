@@ -1,7 +1,7 @@
 //! Project-chat terminal state preserves newer runs and existing Issue content.
 
 use crate::socketio::project_chat_messages::{database_timestamp, utc_timestamp};
-use brz_mysql::{Json, Mysql, MysqlResult, MysqlTransaction};
+use brz_mysql::{FromMysqlRow, Json, Mysql, MysqlResult, MysqlTransaction};
 use chrono::{NaiveDateTime, Utc};
 use serde_json::{Value, json};
 
@@ -11,6 +11,11 @@ use super::super::project::{
     issues, notifications,
     store::{self, LIVE, Node, iso},
 };
+
+#[derive(FromMysqlRow)]
+struct ActivityOrder {
+    id: i64,
+}
 
 pub(crate) async fn finish(
     tx: &mut impl MysqlTransaction,
@@ -46,7 +51,27 @@ pub(crate) async fn finish(
         return Ok(());
     };
     let mut metadata = task.meta();
-    let applied = project_ai_state(&mut metadata, message, status, detail, now);
+    let previous_activity: Option<ActivityOrder> = if terminal(status)
+        && metadata["ai_state"]["run_id"] != message.metadata.0["run_id"]
+    {
+        let id = metadata["ai_state"]["project_chat_message_id"]
+            .as_str()
+            .unwrap_or_default();
+        tx.fetch_optional(
+            "SELECT id FROM project_chat_messages WHERE message_id=? AND project_id=? AND task_id=?",
+            (id, message.project_id.as_str(), message.task_id.as_str()),
+        ).await?
+    } else {
+        None
+    };
+    let applied = project_ai_state(
+        &mut metadata,
+        message,
+        status,
+        detail,
+        now,
+        previous_activity.map(|row| row.id),
+    );
     let auto_published =
         applied && apply_assistant_publication(&task, &mut metadata, message, status);
     issues::update_change_request_source(
@@ -63,8 +88,23 @@ pub(crate) async fn finish(
         dispatch_review_allowed(&task, &metadata, message, status, applied, auto_published)
             && append_review_history(tx, &task, &mut metadata, now).await?;
     if applied || review || dispatch_review || auto_published || metadata != task.metadata.0 {
-        let transition =
-            assistant_transition(&task.status, review, dispatch_review, auto_published);
+        let candidate = assistant_transition(&task.status, review, dispatch_review, auto_published);
+        let transition = if let Some(candidate) = candidate {
+            let project: Option<Node> = tx
+                .fetch_optional(
+                    format!(
+                        "SELECT {} FROM loop_items WHERE id=? AND resource_type='project'",
+                        store::COLUMNS
+                    ),
+                    (task.cloud_project_id.as_str(),),
+                )
+                .await?;
+            project
+                .filter(|project| assignments::has_status(project, candidate))
+                .map(|_| candidate)
+        } else {
+            None
+        };
         let (next_status, reset_sort) = transition
             .map(|status| (status, true))
             .unwrap_or((task.status.as_str(), false));
@@ -259,6 +299,7 @@ fn project_ai_state(
     status: &str,
     error: &str,
     at: NaiveDateTime,
+    previous_activity_id: Option<i64>,
 ) -> bool {
     if message.metadata.0["conversation_only"] == true {
         return false;
@@ -270,7 +311,11 @@ fn project_ai_state(
     let run = message.metadata.0["run_id"].as_str().unwrap_or("");
     let old_run = previous.get("run_id").and_then(Value::as_str).unwrap_or("");
     let old_status = previous.get("status").and_then(Value::as_str).unwrap_or("");
-    if terminal(status) && !old_run.is_empty() && old_run != run {
+    if terminal(status)
+        && !old_run.is_empty()
+        && old_run != run
+        && previous_activity_id.is_none_or(|id| id >= message.id)
+    {
         return false;
     }
     let mut next = previous.clone();
@@ -394,7 +439,7 @@ pub(crate) async fn start_runtime_activity(
     }
     message.metadata.0["activity_at"] = json!(iso(now));
     let mut metadata = task.meta();
-    project_ai_state(&mut metadata, message, "running", "", now);
+    project_ai_state(&mut metadata, message, "running", "", now, None);
     if let Some(owner) = owner {
         metadata["ai_state"]["updated_by_user_id"] = json!(owner);
     }
@@ -572,7 +617,8 @@ pub(super) mod tests {
             &message(),
             "failed",
             "old failure",
-            Utc::now().naive_utc()
+            Utc::now().naive_utc(),
+            None
         ));
         assert_eq!(metadata, original);
         let mut settled = json!({"ai_state":{"run_id":"new","status":"completed","project_chat_message_id":"new-message"},"content_revision":7});
@@ -582,9 +628,41 @@ pub(super) mod tests {
             &message(),
             "completed",
             "",
-            Utc::now().naive_utc()
+            Utc::now().naive_utc(),
+            Some(2)
         ));
         assert_eq!(settled, original);
+    }
+
+    #[test]
+    fn terminal_before_start_installs_only_a_newer_activity() {
+        for status in ["failed", "cancelled"] {
+            let mut metadata = json!({"ai_state":{"run_id":"previous","status":"completed","project_chat_message_id":"previous"}});
+            let mut current = message();
+            current.id = 2;
+            assert!(project_ai_state(
+                &mut metadata,
+                &current,
+                status,
+                "rejected before start",
+                Utc::now().naive_utc(),
+                Some(1)
+            ));
+            assert_eq!(metadata["ai_state"]["status"], status);
+            assert_eq!(metadata["ai_state"]["run_id"], "old");
+            let saved = metadata.clone();
+            let mut older = message();
+            older.metadata.0["run_id"] = json!("previous");
+            assert!(!project_ai_state(
+                &mut metadata,
+                &older,
+                "completed",
+                "",
+                Utc::now().naive_utc(),
+                Some(2)
+            ));
+            assert_eq!(metadata, saved);
+        }
     }
 
     #[test]
@@ -595,7 +673,8 @@ pub(super) mod tests {
             &message(),
             "failed",
             "timeout",
-            Utc::now().naive_utc()
+            Utc::now().naive_utc(),
+            None
         ));
         assert_eq!(metadata["ai_state"]["auto_retry_count"], 3);
         assert_eq!(metadata["ai_state"]["last_error"], "timeout");

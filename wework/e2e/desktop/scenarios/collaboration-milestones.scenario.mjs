@@ -621,6 +621,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         localId,
         'Returning to board must retain the shared milestone'
       )
+      await showAllCollaborationIssues(control, CONTENT)
       await selectMilestone(control, 'all', 'milestone-filter')
       await control.command('click', scoped('cloud-board-parent-layout'))
       await control.command('waitFor', scoped('cloud-board-parent-rows'))

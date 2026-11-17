@@ -12,8 +12,12 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.base_role import BaseRole
 from app.schemas.issue_activity_comment import StandInPublicReply
 from app.schemas.project_chat import ProjectChatMessageView
+from app.services.collaboration_human_assignments import human_task_bindings
 from app.services.device.identity import resolve_owned_device_alias
-from app.services.loop_item_status_history import write_status_change
+from app.services.loop_item_status_history import (
+    automatic_project_status,
+    write_status_change,
+)
 from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.task_bindings import active_task_binding_query
 from app.services.project_chat.service import project_chat_service
@@ -123,10 +127,28 @@ def publish_stand_in_reply(
     owner_matches = _dispatch_endpoint_belongs_to(
         metadata, user_id=user_id, role_id=identity.role_id
     )
-    can_transition = item.status not in {"completed", "in_review"}
+    current_assignment = human_task_bindings(
+        db, [item], user_id, projects=[project]
+    ).get(item.id, {})
+    assignment_id = current_assignment.get("humanAssignmentId")
+    current_dispatch = bool(
+        assignment_id
+        and identity.human_assignment_id == assignment_id
+        and any(
+            (binding.metadata_json or {}).get("human_assignment_id") == assignment_id
+            for binding in bindings
+        )
+    )
+    completion_status = automatic_project_status(
+        project, current_status=item.status, candidate_status="completed"
+    )
+    review_status = automatic_project_status(
+        project, current_status=item.status, candidate_status="in_review"
+    )
     auto_publish = (
         metadata.get("assistant_dispatch_role") == "member"
         and owner_matches
+        and current_dispatch
         and metadata.get("awaiting_public_summary") is True
         and metadata.get("publish_policy") == "summary_only"
         and metadata.get("risk_level") == "low"
@@ -141,11 +163,12 @@ def publish_stand_in_reply(
     dispatch_review = (
         metadata.get("assistant_dispatch_role") == "member"
         and owner_matches
+        and current_dispatch
         and metadata.get("awaiting_public_summary") is True
         and metadata.get("publish_policy") == "summary_only"
         and identity.status == "completed"
         and not auto_publish
-        and can_transition
+        and review_status != item.status
     )
     message_metadata = {
         "execution_dispatch": "comment_only",
@@ -172,17 +195,17 @@ def publish_stand_in_reply(
         metadata["awaiting_public_summary"] = False
         metadata["assistant_publication_message_id"] = message_id
         metadata["assistant_result_message_id"] = message_id
-        if can_transition:
+        if completion_status != item.status and item.status != "in_review":
             write_status_change(
                 metadata,
                 project=project,
                 from_status=item.status,
-                to_status="completed",
+                to_status=completion_status,
                 trigger="assistant_publication",
                 by_user_id=user_id,
                 completion_owner_user_id=user_id,
             )
-            item.status = "completed"
+            item.status = completion_status
             item.completed_at = datetime.now(UTC).replace(tzinfo=None)
     elif dispatch_review:
         metadata["awaiting_public_summary"] = False
@@ -191,11 +214,11 @@ def publish_stand_in_reply(
             metadata,
             project=project,
             from_status=item.status,
-            to_status="in_review",
+            to_status=review_status,
             trigger="assistant_result",
             by_user_id=user_id,
         )
-        item.status = "in_review"
+        item.status = review_status
     row = ProjectChatMessage(
         message_id=message_id,
         client_message_id=client,

@@ -77,6 +77,14 @@ function setup(f = fixture(), assistantSource?: { deviceId: string; taskId: stri
 }
 
 describe('explicit conclusion publication', () => {
+  it('preserves an assistant draft when its provenance transport is unavailable', async () => {
+    const base = fixture()
+    delete base.api.comments.createAssistantPublication
+    const view = setup(base, { deviceId: 'device', taskId: 'task' })
+    await act(async () => expect(await view.result.current.publish()).toBe(false))
+    expect(base.create).not.toHaveBeenCalled()
+    expect(view.result.current.text).toBe('  Edited conclusion only  ')
+  })
   it('uses the verified assistant source only for an assistant-derived publication', async () => {
     const base = fixture()
     const view = setup(base, { deviceId: 'device-1', taskId: 'task-1' })

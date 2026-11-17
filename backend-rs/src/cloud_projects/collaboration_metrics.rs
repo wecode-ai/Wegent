@@ -232,7 +232,7 @@ async fn project_metrics(
     let id = project_id.to_string();
     let start = as_of - Duration::days(7);
     let cohort = format!(
-        "cloud_project_id=? AND resource_type='task' AND parent_id IS NULL AND {LIVE} {visibility} \
+        "cloud_project_id=? AND resource_type='task' AND (parent_id IS NULL OR parent_id='') AND {LIVE} {visibility} \
          AND (status IN ('in_progress','in_review') OR (status='completed' AND completed_at >= ? AND completed_at < ?))"
     );
     let mut issues: Vec<Issue> = state.mysql.fetch_all(format!(

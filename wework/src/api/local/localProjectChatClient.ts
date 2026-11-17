@@ -9,6 +9,7 @@ type LocalChatRequest = <T>(method: string, params?: Record<string, unknown>) =>
 
 export interface LocalCommentRecord {
   actor_user_id?: string | null
+  runtime_owner_user_id?: string | null
   actor_display_name?: string | null
   generation_source?: ProjectChatMessage['generationSource']
   publication_source?: ProjectChatMessage['publicationSource']
@@ -50,6 +51,9 @@ const SHARED_METADATA_KEYS = new Set([
   'publish_policy',
   'imported_from',
   'history_import',
+  'member_assistant_result',
+  'workflow_task_title',
+  'execution_id',
 ])
 
 function commentToMessage(
@@ -67,8 +71,8 @@ function commentToMessage(
       ? record.status
       : 'completed'
   const owner =
-    record.actor_user_id != null
-      ? viewerUserIds.has(record.actor_user_id)
+    record.runtime_owner_user_id != null
+      ? viewerUserIds.has(record.runtime_owner_user_id)
       : record.sender_type === 'user'
         ? viewerUserIds.has(record.sender_id)
         : false
@@ -77,6 +81,7 @@ function commentToMessage(
     : Object.fromEntries(
         Object.entries(record.metadata ?? {}).filter(([key]) => SHARED_METADATA_KEYS.has(key))
       )
+  const subagentProcess = record.metadata?.kind === 'task_ai_subagent'
   const runtimeAddressRecord = owner ? metadata.runtime_address : undefined
   const runtimeAddress =
     runtimeAddressRecord &&
@@ -101,9 +106,16 @@ function commentToMessage(
     projectId: record.project_id,
     taskId: record.task_id,
     sender: { type: senderType, id: record.sender_id, name: record.sender_name },
-    type: record.message_type === 'agent_status' ? 'agent_status' : 'text',
+    type: subagentProcess
+      ? 'agent_chunk'
+      : record.message_type === 'agent_status' || record.message_type === 'agent_chunk'
+        ? record.message_type
+        : 'text',
     content:
-      !owner && (record.message_type === 'agent_status' || record.message_type === 'agent_chunk')
+      !owner &&
+      (subagentProcess ||
+        record.message_type === 'agent_status' ||
+        record.message_type === 'agent_chunk')
         ? ''
         : record.content,
     metadata,
@@ -112,8 +124,11 @@ function commentToMessage(
     triggerMessageId: record.trigger_message_id ?? null,
     runtimeAddress,
     status,
-    traceState:
-      record.trace_state ?? (runtimeAddress ? (owner ? 'available' : 'restricted') : undefined),
+    traceState: owner
+      ? (record.trace_state ?? (runtimeAddress ? 'available' : undefined))
+      : record.trace_ref
+        ? 'restricted'
+        : 'history-unavailable',
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   }
@@ -307,6 +322,26 @@ export function createLocalProjectChatClient(
   return {
     subscribe,
     send,
+    async publishAssistantMessage(input) {
+      return commentToMessage(
+        await request<LocalCommentRecord>('todos.comment.publish_assistant', {
+          device_id: input.source.deviceId,
+          runtime_task_id: input.source.taskId,
+          comment: {
+            project_id: input.projectId,
+            task_id: input.taskId,
+            client_message_id: input.clientMessageId,
+            sender_type: 'user',
+            sender_id: currentUserId,
+            sender_name: currentUserName,
+            content: input.text,
+            metadata: {},
+            reply_to_message_id: null,
+          },
+        }),
+        viewerUserIds
+      )
+    },
     ...(options.prepareExecution ? { executeTaskComment } : {}),
     startAgentResponse,
     failAgentResponse,

@@ -350,6 +350,8 @@ pub struct LocalComment {
     #[serde(default)]
     pub actor_user_id: Option<String>,
     #[serde(default)]
+    pub runtime_owner_user_id: Option<String>,
+    #[serde(default)]
     pub actor_display_name: Option<String>,
     #[serde(default)]
     pub generation_source: String,

@@ -100,6 +100,28 @@ def publish(db, user, scope, identity=None, text="Received"):
     )
 
 
+def bind_current_dispatch(db, user, scope):
+    project, issue, binding, _, identity = scope
+    assigned = loop_item_service.assign(
+        db,
+        project_id=project.id,
+        item_id=issue.id,
+        user_id=user.id,
+        values=LoopItemAssign(
+            version=issue.version, assignee_type="user", assignee_id=str(user.id)
+        ),
+    )
+    current = human_task_bindings(db, [assigned], user.id, projects=[project])[issue.id]
+    binding.metadata_json = {
+        **(binding.metadata_json or {}),
+        "human_assignment_id": current["humanAssignmentId"],
+    }
+    db.commit()
+    return identity.model_copy(
+        update={"human_assignment_id": current["humanAssignmentId"]}
+    )
+
+
 def test_public_messages_are_separate_and_redelivery_is_idempotent(
     test_db, test_user, scope
 ):
@@ -153,6 +175,7 @@ def test_public_reply_advances_issue_unread_once_without_marking_its_owner_read(
 def test_dispatched_reply_follows_the_member_autonomy_policy(
     test_db, test_user, scope, automatic, risk_level, expected_status, published
 ):
+    identity = bind_current_dispatch(test_db, test_user, scope)
     issue = scope[1]
     issue.metadata_json = {
         "assistant_dispatch_role": "member",
@@ -171,7 +194,7 @@ def test_dispatched_reply_follows_the_member_autonomy_policy(
         test_db,
         test_user,
         scope,
-        scope[-1].model_copy(update={"message_id": f"result-{automatic}-{risk_level}"}),
+        identity.model_copy(update={"message_id": f"result-{automatic}-{risk_level}"}),
         "Verified summary",
     )
     test_db.refresh(issue)
@@ -199,9 +222,78 @@ def test_dispatch_publication_requires_the_authorized_owner_and_role():
     assert _dispatch_endpoint_belongs_to(metadata, user_id=7, role_id="review")
 
 
+@pytest.mark.parametrize("stale_source", ["reply", "binding"])
+def test_old_conversation_cannot_complete_a_new_assignment(
+    test_db, test_user, scope, stale_source
+):
+    identity = bind_current_dispatch(test_db, test_user, scope)
+    _, issue, binding, _, _ = scope
+    issue.metadata_json = {
+        "assistant_dispatch_role": "member",
+        "assistant_endpoint_ref": f"local_wework:{test_user.id}:review",
+        "risk_level": "low",
+        "awaiting_public_summary": True,
+        "publish_policy": "summary_only",
+        "assistant_autonomy_policy": {
+            "automatic": True,
+            "ask_before_act": False,
+            "risk_ceiling": "low",
+        },
+    }
+    if stale_source == "reply":
+        identity = identity.model_copy(
+            update={"human_assignment_id": "older-assignment"}
+        )
+    else:
+        binding.metadata_json = {"human_assignment_id": "older-assignment"}
+    test_db.commit()
+    result = publish(
+        test_db, test_user, scope, identity, "Previous conversation result"
+    )
+    test_db.refresh(issue)
+    assert result.content == "Previous conversation result"
+    assert result.confirmation_state == "pending"
+    assert issue.status == "pending"
+    assert issue.metadata_json["awaiting_public_summary"] is True
+    assert "assistant_result_message_id" not in issue.metadata_json
+
+
+@pytest.mark.parametrize("automatic", [True, False])
+def test_dispatch_result_preserves_a_custom_board_status(
+    test_db, test_user, scope, automatic
+):
+    identity = bind_current_dispatch(test_db, test_user, scope)
+    project, issue, _, _, _ = scope
+    project.metadata_json = {
+        **(project.metadata_json or {}),
+        "board_config": {"statuses": [{"id": "doing", "name": "Doing"}]},
+    }
+    issue.status = "doing"
+    issue.metadata_json = {
+        "assistant_dispatch_role": "member",
+        "assistant_endpoint_ref": f"local_wework:{test_user.id}:review",
+        "risk_level": "low",
+        "awaiting_public_summary": True,
+        "publish_policy": "summary_only",
+        "assistant_autonomy_policy": {
+            "automatic": automatic,
+            "ask_before_act": not automatic,
+            "risk_ceiling": "low",
+        },
+    }
+    test_db.commit()
+    result = publish(test_db, test_user, scope, identity, "Custom board result")
+    test_db.refresh(issue)
+    assert result.content == "Custom board result"
+    assert issue.status == "doing"
+    assert not issue.metadata_json.get("status_history")
+    assert issue.completed_at is None
+
+
 def test_late_dispatch_result_does_not_reopen_a_completed_issue(
     test_db, test_user, scope
 ):
+    identity = bind_current_dispatch(test_db, test_user, scope)
     issue = scope[1]
     issue.metadata_json = {
         "assistant_dispatch_role": "member",
@@ -221,7 +313,7 @@ def test_late_dispatch_result_does_not_reopen_a_completed_issue(
         test_db,
         test_user,
         scope,
-        scope[-1].model_copy(update={"message_id": "auto-result"}),
+        identity.model_copy(update={"message_id": "auto-result"}),
         "Automatic summary",
     )
     publish(

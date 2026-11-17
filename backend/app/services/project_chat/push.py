@@ -51,10 +51,17 @@ def push_project_chat_message(message: dict[str, Any]) -> None:
             project_chat_room,
         )
         from app.services.project_chat.message_provenance import (
+            is_private_execution_message,
             shared_message_metadata,
         )
 
         shared = dict(message)
+        if is_private_execution_message(
+            str(message.get("type", "")), message.get("metadata")
+        ):
+            shared["content"] = ""
+            if shared.get("type") == "text":
+                shared["type"] = "agent_chunk"
         if "metadata" in shared:
             shared["metadata"] = shared_message_metadata(shared["metadata"])
         if "runtimeAddress" in shared:

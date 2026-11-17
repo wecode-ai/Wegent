@@ -19,6 +19,7 @@ from app.db.timezone import database_datetime_as_utc
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    LoopItemTaskBinding,
     ProjectChatAgent,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
@@ -30,6 +31,7 @@ from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.issue_activity_comment import AssistantPublicationSource
 from app.schemas.kind import Bot, Shell, Team
 from app.schemas.project_chat import (
     ProjectChatAgentCreate,
@@ -988,6 +990,7 @@ class ProjectChatService:
         user_id: int,
         user_name: str,
         request: ProjectChatSend,
+        assistant_source: AssistantPublicationSource | None = None,
     ) -> ProjectChatWriteResult:
         project = self._require_scope(
             db,
@@ -997,6 +1000,9 @@ class ProjectChatService:
             required_role=BaseRole.Developer,
         )
         self._validate_agent_mentions(db, project, request)
+        assistant_source_binding = self._verified_assistant_source(
+            db, user_id=user_id, request=request, source=assistant_source
+        )
         existing = (
             db.query(ProjectChatMessage)
             .filter(
@@ -1007,10 +1013,28 @@ class ProjectChatService:
             .first()
         )
         if existing is not None:
-            if existing.project_id != request.project_id:
+            if existing.project_id != request.project_id or existing.task_id != (
+                request.task_id or ""
+            ):
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
-                    "client_message_id already belongs to another project",
+                    "client_message_id already belongs to another conversation",
+                )
+            expected_publication = self._assistant_publication(assistant_source_binding)
+            if (existing.metadata_json or {}).get(
+                "assistant_publication"
+            ) != expected_publication:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "client_message_id has another publication source",
+                )
+            if (
+                assistant_source_binding is not None
+                and existing.content != request.content
+            ):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "client_message_id has different publication content",
                 )
             return ProjectChatWriteResult(self.to_view(existing, db=db), created=False)
 
@@ -1020,6 +1044,10 @@ class ProjectChatService:
                 mention.model_dump(by_alias=True) for mention in request.mentions
             ]
         }
+        if assistant_source_binding is not None:
+            metadata["assistant_publication"] = self._assistant_publication(
+                assistant_source_binding
+            )
         if request.mentions and all(
             mention.type == "user" for mention in request.mentions
         ):
@@ -1119,6 +1147,48 @@ class ProjectChatService:
         self._commit(db)
         db.refresh(row)
         return ProjectChatWriteResult(self.to_view(row, db=db), created=True)
+
+    @staticmethod
+    def _verified_assistant_source(
+        db: Session,
+        *,
+        user_id: int,
+        request: ProjectChatSend,
+        source: AssistantPublicationSource | None,
+    ) -> LoopItemTaskBinding | None:
+        if source is None:
+            return None
+        from app.services.loop_items.task_bindings import active_task_binding_query
+
+        db.query(LoopItem).filter_by(
+            id=request.task_id, cloud_project_id=request.project_id
+        ).with_for_update().one()
+        binding = active_task_binding_query(
+            db,
+            user_id=user_id,
+            project_id=request.project_id,
+            item_id=request.task_id,
+            device_id=source.device_id,
+            task_id=source.task_id,
+            lock=True,
+        ).first()
+        if binding is None:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "Assistant publication source is unavailable"
+            )
+        return binding
+
+    @staticmethod
+    def _assistant_publication(binding: LoopItemTaskBinding | None) -> dict | None:
+        if binding is None:
+            return None
+        return {
+            "verified": True,
+            "published_by": "human",
+            "binding_id": binding.id,
+            "device_id": binding.device_id,
+            "task_id": binding.task_id,
+        }
 
     def _resolve_reply_context(
         self,
@@ -2883,6 +2953,7 @@ class ProjectChatService:
         """Render one member-specific shared view over the internal projection."""
 
         from app.services.project_chat.message_provenance import (
+            is_private_execution_message,
             message_runtime_owner_id,
             shared_message_metadata,
         )
@@ -2890,12 +2961,16 @@ class ProjectChatService:
         view = cls.to_view(row, db=db)
         if message_runtime_owner_id(db, row) == viewer_user_id:
             return view
+        private_execution = is_private_execution_message(
+            row.message_type, row.metadata_json
+        )
         return view.model_copy(
             update={
-                "content": (
-                    ""
-                    if row.message_type in {"agent_status", "agent_chunk"}
-                    else view.content
+                "content": ("" if private_execution else view.content),
+                "type": (
+                    "agent_chunk"
+                    if private_execution and view.type == "text"
+                    else view.type
                 ),
                 "metadata": shared_message_metadata(row.metadata_json),
                 "runtime_address": None,

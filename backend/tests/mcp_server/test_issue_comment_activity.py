@@ -135,6 +135,7 @@ def test_native_publication_derives_ai_generation_from_the_owned_runtime_binding
     test_user: User,
     test_token: str,
     issue_context: tuple[CloudProject, LoopItem],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project, item = issue_context
     device = Kind(
@@ -158,6 +159,21 @@ def test_native_publication_derives_ai_generation_from_the_owned_runtime_binding
         )
     )
     test_db.commit()
+    commit = test_db.commit
+    committed_sources = []
+
+    def commit_publication():
+        test_db.flush()
+        row = (
+            test_db.query(ProjectChatMessage)
+            .filter_by(client_message_id="publication-once")
+            .one()
+        )
+        committed_sources.append(row.metadata_json.get("assistant_publication"))
+        assert committed_sources[-1]["verified"] is True
+        commit()
+
+    monkeypatch.setattr(test_db, "commit", commit_publication)
     headers = {"Authorization": f"Bearer {test_token}"}
     path = f"/api/v1/cloud-projects/{project.id}/loop-items/{item.id}/activity-comments"
     response = test_client.post(
@@ -177,6 +193,35 @@ def test_native_publication_derives_ai_generation_from_the_owned_runtime_binding
     assert published["generation_source"] == "ai"
     assert published["publication_source"] == "human"
     assert published["confirmation_state"] == "authorized"
+    assert len(committed_sources) == 1
+    retry = test_client.post(
+        path,
+        headers=headers,
+        json={
+            "body": "Verified public conclusion",
+            "client_message_id": "publication-once",
+            "assistant_source": {
+                "device_id": device.name,
+                "task_id": "private-assistant-task",
+            },
+        },
+    )
+    assert retry.status_code == 200
+    assert retry.json()["id"] == published["id"]
+    assert len(committed_sources) == 1
+    mismatch = test_client.post(
+        path,
+        headers=headers,
+        json={
+            "body": "Changed conclusion",
+            "client_message_id": "publication-once",
+            "assistant_source": {
+                "device_id": device.name,
+                "task_id": "private-assistant-task",
+            },
+        },
+    )
+    assert mismatch.status_code == 409
     assert (
         test_client.post(
             path,

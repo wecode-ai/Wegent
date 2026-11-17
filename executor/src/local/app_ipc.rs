@@ -2561,6 +2561,17 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let create = task_input::<LocalCommentCreate>(&params, "comment")?;
             serialize_task_value(runtime.create_comment(create).map_err(task_runtime_error)?)
         }
+        "todos.comment.publish_assistant" => {
+            let create = task_input::<LocalCommentCreate>(&params, "comment")?;
+            let device = required_task_string(&params, "device_id")?;
+            let task = required_task_string(&params, "runtime_task_id")?;
+            serialize_task_value(
+                runtime
+                    .stand_in_store()
+                    .publish_assistant_comment(&create, device, task)
+                    .map_err(task_runtime_error)?,
+            )
+        }
         "todos.comment.agent.start" => {
             let project_id = required_task_string(&params, "project_id")?;
             let task_id = required_task_string(&params, "task_id")?;

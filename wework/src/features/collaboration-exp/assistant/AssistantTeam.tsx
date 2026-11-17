@@ -137,9 +137,13 @@ export function AssistantTeam({
                         role?.id,
                         name,
                         projectRef,
-                        role
-                          ? standInPolicy(role, projectRef)
-                          : (collaboration.policy ?? { automatic: false, askBeforeAct: true })
+                        standInPolicy(
+                          role ?? {
+                            collaboration,
+                            enabled: settings.primary?.enabled ?? false,
+                          },
+                          projectRef
+                        )
                       ).finally(() => setRegistering(current => (current === key ? null : current)))
                     }}
                     className="min-h-11 text-xs text-text-muted underline md:min-h-8"

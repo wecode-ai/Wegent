@@ -198,7 +198,7 @@ async fn acknowledge_assignment(
                     "deviceId":payload.device_id,"deliveryId":null,"publicMessageId":public_result,
                     "observedAt":update.observed_at,"updatedAt":timestamp,
                 });
-                tx.execute("UPDATE loop_items SET metadata=JSON_SET(COALESCE(metadata,JSON_OBJECT()),'$.dispatch_receipt',?) WHERE id=? AND loop_item_id=? AND resource_type='comment'",(Json(receipt),assignment_id,item_id)).await?;
+                persist_dispatch_receipt(tx, item_id, assignment_id, receipt).await?;
             }
             if payload.dispatch.as_ref().is_some_and(|update| update.state == DispatchState::BlockedPolicy) || unbound_failure(&payload) {
                 return Ok(true);
@@ -221,6 +221,22 @@ async fn acknowledge_assignment(
     Ok(json!({"acknowledged": true}))
 }
 
+pub(super) async fn persist_dispatch_receipt<T: MysqlTransaction>(
+    tx: &mut T,
+    item_id: &str,
+    assignment_id: &str,
+    receipt: Value,
+) -> brz_mysql::MysqlResult<()> {
+    tx.execute(
+        "UPDATE loop_items SET metadata=JSON_SET(COALESCE(metadata,JSON_OBJECT()), \
+         '$.dispatch_receipt',CAST(? AS JSON)) \
+         WHERE id=? AND loop_item_id=? AND resource_type='comment'",
+        (Json(receipt), assignment_id, item_id),
+    )
+    .await?;
+    Ok(())
+}
+
 fn accept_update(previous: Option<&Value>, payload: &ReceiptInput) -> bool {
     let Some(update) = &payload.dispatch else {
         return true;
@@ -235,10 +251,9 @@ fn accept_update(previous: Option<&Value>, payload: &ReceiptInput) -> bool {
     {
         return false;
     }
-    if !unbound_failure(payload)
-        && previous["runtimeTaskId"]
-            .as_str()
-            .is_some_and(|task| Some(task) != payload.task_id.as_deref())
+    if previous["runtimeTaskId"]
+        .as_str()
+        .is_some_and(|task| Some(task) != payload.task_id.as_deref())
     {
         return false;
     }
@@ -501,6 +516,21 @@ mod tests {
             Some(
                 &json!({"runtimeTaskId":null,"deviceId":"other-device","state":"blocked_policy","observedAt":"2026-11-17T02:04:00Z"})
             ),
+            &payload
+        ));
+    }
+
+    #[test]
+    fn unbound_start_failure_cannot_replace_an_executing_task() {
+        let payload: ReceiptInput = serde_json::from_value(json!({
+            "kind":"stand_in_state","device_id":"mac",
+            "dispatch":{"state":"failed","reasonCode":"execution_rejected","observedAt":"2026-11-17T03:00:00Z"}
+        })).unwrap();
+        assert!(accept_update(None, &payload));
+        assert!(!accept_update(
+            Some(&json!({
+                "runtimeTaskId":"task","deviceId":"mac","observedAt":"2026-11-17T02:00:00Z"
+            })),
             &payload
         ));
     }

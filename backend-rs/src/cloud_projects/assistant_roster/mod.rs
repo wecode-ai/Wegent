@@ -79,10 +79,8 @@ pub(super) fn effective_autonomy_policy(
 }
 
 pub(super) fn automatic_for(entry: &ProjectAssistantRosterEntry, risk_level: &str) -> bool {
-    effective_autonomy_policy(entry, risk_level)
-        .get("automatic")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
+    let policy = effective_autonomy_policy(entry, risk_level);
+    policy["automatic"] == true && policy["ask_before_act"] != true
 }
 
 pub(super) fn dispatch_status_for(
@@ -280,6 +278,9 @@ mod tests {
         assert_eq!(dispatch_status_for(&entry, "low"), "waiting_confirmation");
         entry.autonomy_policy = json!({"automatic":true});
         assert_eq!(dispatch_status_for(&entry, "low"), "queued");
+        entry.autonomy_policy = json!({"automatic":true,"ask_before_act":true});
+        assert_eq!(dispatch_status_for(&entry, "low"), "waiting_confirmation");
+        entry.autonomy_policy = json!({"automatic":true,"ask_before_act":false});
         assert_eq!(dispatch_status_for(&entry, "high"), "waiting_confirmation");
         assert_eq!(dispatch_status_for(&entry, "low"), "queued");
         entry.availability = "offline".into();

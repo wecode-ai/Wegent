@@ -19,13 +19,20 @@ fn runtime_state(
         "cancelled" => ("cancelled", "runtime_cancelled", None),
         "done" => {
             let origin = &handle["origin"];
+            let public_turn = &handle["standInPublicTurn"];
             let result = handle["standInIssueReplies"]
                 .as_object()
                 .into_iter()
                 .flatten()
                 .filter(|(_, report)| {
                     report["sent"] == true
+                        && origin["humanAssignmentId"].is_string()
                         && report["origin"]["humanAssignmentId"] == origin["humanAssignmentId"]
+                        && public_turn["turn"].is_string()
+                        && public_turn["thread"].is_string()
+                        && public_turn["generation"].is_number()
+                        && public_turn["turn"] == handle["lastTurnId"]
+                        && report["publicTurn"] == *public_turn
                 })
                 .filter_map(|(_, report)| report["messageId"].as_str())
                 .next_back();
@@ -153,14 +160,27 @@ mod tests {
     #[test]
     fn runtime_completion_requires_publication_for_the_same_assignment() {
         let mut handle = json!({
-            "origin":{"humanAssignmentId":"new"},"standInIssueReplies":{"old":{"sent":true,"messageId":"old-result","origin":{"humanAssignmentId":"old"}}}
+            "origin":{"humanAssignmentId":"new"},
+            "lastTurnId":"current",
+            "standInPublicTurn":{"thread":"thread","turn":"current","generation":2},
+            "standInIssueReplies":{"old":{"sent":true,"messageId":"old-result","origin":{"humanAssignmentId":"old"}}}
         });
         assert_eq!(
             runtime_state("done", false, false, &handle).0,
             "waiting_user"
         );
-        handle["standInIssueReplies"]["new"] =
-            json!({"sent":true,"messageId":"new-result","origin":{"humanAssignmentId":"new"}});
+        handle["standInIssueReplies"]["new"] = json!({"sent":true,"messageId":"new-result","origin":{"humanAssignmentId":"new"},"publicTurn":{"thread":"thread","turn":"previous","generation":2}});
+        assert_eq!(
+            runtime_state("done", false, false, &handle).0,
+            "waiting_user"
+        );
+        handle["standInIssueReplies"]["new"]["publicTurn"] =
+            json!({"thread":"thread","turn":"current","generation":1});
+        assert_eq!(
+            runtime_state("done", false, false, &handle).0,
+            "waiting_user"
+        );
+        handle["standInIssueReplies"]["new"]["publicTurn"] = handle["standInPublicTurn"].clone();
         assert_eq!(
             runtime_state("done", false, false, &handle),
             (
@@ -171,5 +191,10 @@ mod tests {
         );
         assert_eq!(runtime_state("done", true, false, &handle).0, "running");
         assert_eq!(runtime_state("done", true, true, &handle).0, "waiting_user");
+        handle["lastTurnId"] = json!("next");
+        assert_eq!(
+            runtime_state("done", false, false, &handle).0,
+            "waiting_user"
+        );
     }
 }

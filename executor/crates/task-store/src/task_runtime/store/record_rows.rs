@@ -243,8 +243,11 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
         || metadata
             .get("imported_from")
             .is_some_and(|value| !value.is_null());
+    let verified_publication = metadata["assistant_publication"]["verified"] == true;
     let source = if historical {
         "human"
+    } else if verified_publication {
+        "ai"
     } else {
         match sender_type.as_str() {
             "user" => "human",
@@ -260,6 +263,7 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
             .map(|id| id.to_string())
     };
     Ok(LocalComment {
+        runtime_owner_user_id: actor_user_id.clone(),
         actor_user_id,
         actor_display_name: if sender_type == "user" {
             Some(row.get(7)?)
@@ -267,9 +271,16 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
             None
         },
         generation_source: source.into(),
-        publication_source: source.into(),
+        publication_source: if verified_publication {
+            "human"
+        } else {
+            source
+        }
+        .into(),
         confirmation_state: if historical {
             "unknown"
+        } else if verified_publication {
+            "authorized"
         } else if source == "ai" {
             "pending"
         } else {
@@ -312,6 +323,16 @@ pub(super) fn enrich_comment_actor(
     if comment.sender_type != "agent" {
         return Ok(());
     }
+    if comment.runtime_owner_user_id.is_none() {
+        comment.runtime_owner_user_id = connection
+            .query_row(
+                "SELECT created_by_user_id FROM loop_items
+                 WHERE id=?1 AND cloud_project_id=?2 AND resource_type='chat_agent'",
+                params![comment.sender_id, comment.project_id],
+                |row| row.get::<_, i64>(0).map(|id| id.to_string()),
+            )
+            .optional()?;
+    }
     let trigger = comment
         .trigger_message_id
         .as_deref()
@@ -345,6 +366,9 @@ pub(super) fn enrich_comment_actor(
         .transpose()?
         .flatten();
     if let Some((id, name)) = &trigger {
+        if comment.runtime_owner_user_id.is_none() {
+            comment.runtime_owner_user_id = Some(id.clone());
+        }
         let actor_matches_trigger = match comment.actor_user_id.as_deref() {
             None => true,
             Some(actor) => actor == id,

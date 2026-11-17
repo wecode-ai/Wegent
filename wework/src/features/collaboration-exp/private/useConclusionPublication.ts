@@ -127,7 +127,10 @@ export function useConclusionPublication(input: ConclusionPublicationInput) {
         return false
       }
       submission = request.draft.beginSubmission(request.draft.value)
-      if (request.assistantSource && request.api.comments.createAssistantPublication) {
+      if (request.assistantSource) {
+        if (!request.api.comments.createAssistantPublication) {
+          throw new Error('Assistant publication service is unavailable')
+        }
         await request.api.comments.createAssistantPublication(issue.id, body, {
           clientMessageId: submission.clientMessageId,
           projectId: project.id,
@@ -137,7 +140,6 @@ export function useConclusionPublication(input: ConclusionPublicationInput) {
         await request.api.comments.create(issue.id, body, {
           clientMessageId: submission.clientMessageId,
           projectId: project.id,
-          ...(request.assistantSource ? { assistantSource: request.assistantSource } : {}),
         })
       }
       published = true

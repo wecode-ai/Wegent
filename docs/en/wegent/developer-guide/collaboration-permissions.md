@@ -4,6 +4,21 @@ sidebar_position: 36
 
 # Collaboration permission architecture and invariants
 
+Assistant conclusion publication locks the Issue and validates current membership and an active task binding on the caller's owned device before writing content and server-derived provenance in one transaction. Notifications and shared pushes observe only the complete committed message. Retries require the same source and content; ordinary comments cannot impersonate confirmed AI conclusions. An old conversation may still publish public replies, but completing the current assignment requires both its current humanAssignmentId and matching task binding. Completion receipts additionally match the current Runtime turn, thread and generation. Shared pushes remove execution text, sub-agent process content and private parameters. Native runtime ownership is separate from the trigger author, including valid local owner 0. Canonical project execution records retain their existing Issue-authorized shared source entry; private assistant bindings grant no such authority. Focused provenance, push, stale-assignment and native publication tests, plus existing CI desktop scenarios, protect this chain. CP01–CP20 remain unchanged.
+
+```mermaid
+flowchart TD
+    Source[Current user and Issue permission] --> Lock[Lock Issue and owned active task binding]
+    Lock --> Commit[Atomically persist content and verified provenance]
+    Commit --> Public[Public conclusion and summary]
+    Public --> Receipt{Current assignment and Runtime turn match}
+    Receipt -->|Yes| Complete[Update current assignment receipt]
+    Receipt -->|No| History[Retain public reply and assignment state]
+    Public --> Trace{Source read permission}
+    Trace -->|Owner or canonical project execution| Scoped[Authorized source entry]
+    Trace -->|Another owner's private assistant| Restricted[Summary and restricted state only]
+```
+
 Manual source starts use the host snapshot's existing `origin.manual` and exact `standInSourceBindings`. Transient confirmation flags confer no durable authorization, and later arrivals cannot reuse the grant. Disabling automation does not block authorized manual workers or their completion reports. Queue admission revalidates the original message grant, source, identity and configuration version while retaining native confirmation. Automatic workers still require enabled role and source policies; revoking the binding blocks both workers and reports. Native manual-start, snapshot and source-task admission regressions protect these boundaries. CP01–CP20 remain unchanged.
 
 Personal task creation from a connected source requires a connector-verified owner self-conversation record; `isOwn` alone is insufficient. Third-party messages, own messages to others/groups and unknown identity are rejected. The scoped `create_task` revalidates the current owner, device, role, work and exact source, then creates a task using the immutable message record and a stable request ID. Workers inherit role configuration and the stricter confirmation policy; callers cannot supply an owner, permissions, workspace overrides or source-read grants. Workers can read only their own conversation. The durable result outbox returns to the original source work, revalidating source authority before native replies; revocation, identity mismatch, uncertain sends and duplicate execution confer no authority. `stand_in_source_tasks`, source-tool catalog contracts and CI's `stand-in-cli` user story cover these transactions. CP01–CP20 remain unchanged.

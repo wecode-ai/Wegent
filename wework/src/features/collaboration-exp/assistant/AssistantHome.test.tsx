@@ -937,6 +937,43 @@ describe('AssistantHome', () => {
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith(role))
   })
 
+  it('registers the primary assistant with the selected project policy', async () => {
+    const policy = { automatic: false, askBeforeAct: true }
+    const onRegister = vi.fn().mockResolvedValue(true)
+    render(
+      <AssistantTeam
+        settings={{
+          ...settings,
+          primary: {
+            ...settings.primary!,
+            collaboration: {
+              enabled: true,
+              allProjects: true,
+              projects: [],
+              excludedProjects: [],
+              tags: [],
+              policy: { automatic: true, askBeforeAct: false },
+              projectPolicies: [{ id: 'project-1', store: 'cloud', policy }],
+            },
+          },
+        }}
+        projects={[{ project: experienceProjectFixture(), issues: [] }]}
+        onConfigure={vi.fn()}
+        onDelete={vi.fn()}
+        onRegister={onRegister}
+      />
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-register-@primary-project-1'))
+    await waitFor(() =>
+      expect(onRegister).toHaveBeenCalledWith(
+        undefined,
+        expect.any(String),
+        { id: 'project-1', store: 'cloud' },
+        policy
+      )
+    )
+  })
+
   it('removes only the confirmed specialist settings and preserves the primary assistant', async () => {
     const { api } = setupWorkbench()
     const role = { ...newStandInRole('device-1', 'reviewer'), name: 'Reviewer' }

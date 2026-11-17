@@ -60,6 +60,13 @@ export interface LoopItemChangedEvent {
 }
 
 export interface ProjectChatClient {
+  publishAssistantMessage?: (input: {
+    projectId: string
+    taskId: string
+    clientMessageId: string
+    text: string
+    source: { deviceId: string; taskId: string }
+  }) => Promise<ProjectChatMessage>
   reconcileExecutionSnapshot?: (
     snapshot: RuntimeExecutionSnapshot,
   ) => Promise<ProjectChatMessage[]>

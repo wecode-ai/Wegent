@@ -22,6 +22,8 @@ SHARED_METADATA_KEYS = frozenset(
         "imported_from",
         "history_import",
         "member_assistant_result",
+        "workflow_task_title",
+        "execution_id",
     }
 )
 
@@ -30,6 +32,12 @@ def shared_message_metadata(metadata: object) -> dict[str, object]:
     if not isinstance(metadata, dict):
         return {}
     return {key: metadata[key] for key in SHARED_METADATA_KEYS if key in metadata}
+
+
+def is_private_execution_message(message_type: str, metadata: object) -> bool:
+    return message_type in {"agent_status", "agent_chunk"} or (
+        isinstance(metadata, dict) and metadata.get("kind") == "task_ai_subagent"
+    )
 
 
 def message_actor_id(db: Session, row: ProjectChatMessage) -> int | None:

@@ -169,11 +169,17 @@ def test_shared_view_hides_runtime_parameters_from_another_member(test_db, test_
     assert owned.trace_state == "available"
 
 
-def test_shared_view_removes_process_output_from_another_member(test_db, test_user):
+@pytest.mark.parametrize(
+    "message_type,extra",
+    [("agent_chunk", {}), ("agent_status", {}), ("text", {"kind": "task_ai_subagent"})],
+)
+def test_shared_view_removes_process_output_from_another_member(
+    test_db, test_user, message_type, extra
+):
     row = message(
         message_id="process-message",
-        message_type="agent_chunk",
-        metadata_json={"stand_in": {"user_id": test_user.id}},
+        message_type=message_type,
+        metadata_json={"stand_in": {"user_id": test_user.id}, **extra},
         runtime_device_id="device",
         runtime_task_id="process-task",
         status="streaming",
@@ -183,6 +189,13 @@ def test_shared_view_removes_process_output_from_another_member(test_db, test_us
     test_db.flush()
     shared = project_chat_service.to_shared_view(row, db=test_db, viewer_user_id=8)
     assert shared.content == ""
+    assert shared.type in {"agent_chunk", "agent_status"}
+    assert (
+        project_chat_service.to_shared_view(
+            row, db=test_db, viewer_user_id=test_user.id
+        ).content
+        == "private tool output"
+    )
 
 
 def test_runtime_address_follows_agent_owner_not_trigger_author(test_db, test_user):

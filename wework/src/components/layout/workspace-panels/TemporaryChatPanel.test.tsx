@@ -1829,6 +1829,8 @@ describe('TemporaryChatPanel', () => {
   })
 
   it.each([
+    { existing: true, target: 'cloud', role: 'primary', assistantTransport: true, busy: true },
+    { existing: true, target: 'custom', role: 'role-sales', assistantTransport: true },
     { existing: false, target: 'cloud', role: 'primary' },
     { existing: true, target: 'cloud', role: 'primary', threadRouting: true },
     { existing: true, target: 'custom', role: 'role-sales', threadRouting: true },
@@ -1876,7 +1878,9 @@ describe('TemporaryChatPanel', () => {
       providerPending = false,
       revertBeforeSend = false,
       changeTargetRoundtrip = false,
+      assistantTransport = false,
     }) => {
+      const assistantSend = vi.fn(async () => ({ sent: true }))
       mocks.realComposer = true
       mocks.busy = busy
       mocks.busySendError = busy
@@ -2063,6 +2067,7 @@ describe('TemporaryChatPanel', () => {
             >
               <TemporaryChatPanel
                 nativeConversation
+                assistantSend={assistantTransport ? assistantSend : undefined}
                 hideProcessing={hideProcessing}
                 currentProject={null}
                 source={null}
@@ -2159,7 +2164,22 @@ describe('TemporaryChatPanel', () => {
               : { codexProviderId: executionTarget === 'official' ? 'openai' : 'company' }
           ),
         }
-        if (existing) {
+        if (assistantTransport) {
+          await waitFor(() => expect(assistantSend).toHaveBeenCalledOnce())
+          expect(assistantSend).toHaveBeenCalledWith(
+            expect.objectContaining({
+              message: 'Keep this stand-in draft',
+              interruptWhenBusy: false,
+              runtimeOptions: expect.objectContaining({
+                ...execution,
+                startNewSession: true,
+                expectedThreadId: taskAddress.threadId,
+              }),
+            })
+          )
+          expect(mocks.sendRuntimePaneMessage).not.toHaveBeenCalled()
+          expect(mocks.interruptAndSendRuntimePaneMessage).not.toHaveBeenCalled()
+        } else if (existing) {
           await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
           expect(mocks.sendRuntimePaneMessage).toHaveBeenLastCalledWith(
             expect.objectContaining({
@@ -2237,10 +2257,12 @@ describe('TemporaryChatPanel', () => {
             'startNewSession'
           )
         }
-        if (busy) {
+        if (busy && !assistantTransport) {
           expect(screen.getByTestId('chat-message-input')).toHaveTextContent(
             'Keep this stand-in draft'
           )
+        } else if (assistantTransport) {
+          expect(screen.getByTestId('chat-message-input')).toHaveTextContent('')
         } else if (
           existing &&
           target === 'cloud' &&

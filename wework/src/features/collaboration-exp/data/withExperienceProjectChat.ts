@@ -19,8 +19,7 @@ export function withExperienceProjectChat(
     comments: createProjectChatComments(
       activity,
       async issueId => (await api.issues.get(issueId)).cloud_project_id,
-      api.comments.createAssistantPublication?.bind(api.comments) ??
-        api.comments.create.bind(api.comments)
+      api.comments.createAssistantPublication?.bind(api.comments)
     ),
   }
 }
