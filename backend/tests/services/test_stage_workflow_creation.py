@@ -110,13 +110,14 @@ def test_developer_can_create_with_the_same_project_constraints(
     )
 
 
+@pytest.mark.parametrize("stage_name", ["Standard work", "需求提出", "质量验收"])
 def test_unconstrained_project_preserves_custom_creation_workflow(
-    stage_scenario, test_admin_user, monkeypatch
+    stage_scenario, test_admin_user, monkeypatch, stage_name
 ):
     s = stage_scenario
     _developer(s, test_admin_user)
     s.project.metadata_json = {
-        "workflow_definition": {"nodes": [{"id": "standard", "name": "Standard work"}]}
+        "workflow_definition": {"nodes": [{"id": "standard", "name": stage_name}]}
     }
     s.project.next_item_number = 2
     s.db.commit()
