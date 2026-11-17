@@ -604,8 +604,30 @@ jobs:
         run: |
           $env:GOBIN = Join-Path $env:RUNNER_TEMP "wework-minio\bin"
           New-Item -ItemType Directory -Force -Path $env:GOBIN | Out-Null
+          function Write-BuildFilesystemDiagnostics([string]$stage) {
+            try {
+              $runnerWorkRoot = Split-Path $env:RUNNER_TEMP -Parent
+              $paths = @{
+                workspaceAction = Join-Path $env:GITHUB_WORKSPACE ".github/actions/build-wework-windows-e2e/action.yml"
+                uploadAction = Join-Path $runnerWorkRoot "_actions/actions/upload-artifact/v4/action.yml"
+                checkoutAction = Join-Path $runnerWorkRoot "_actions/actions/checkout/v4/action.yml"
+                objectStorage = Join-Path $env:GOBIN "minio.exe"
+              }
+              $files = @{}
+              foreach ($entry in $paths.GetEnumerator()) {
+                $files[$entry.Key] = @{ path = $entry.Value; exists = Test-Path -LiteralPath $entry.Value -PathType Leaf }
+              }
+              $drives = @(Get-PSDrive -PSProvider FileSystem | Select-Object Name, Free, Used)
+              Write-Host ("[windows-build-filesystem] " + (@{ stage = $stage; files = $files; drives = $drives } | ConvertTo-Json -Depth 5 -Compress))
+            } catch {
+              Write-Warning "Unable to inspect Windows build filesystem: $($_.Exception.Message)"
+            }
+          }
+          Write-BuildFilesystemDiagnostics "before-object-storage-build"
           go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
-          if ($LASTEXITCODE -ne 0) {
+          $minioBuildExitCode = $LASTEXITCODE
+          Write-BuildFilesystemDiagnostics "after-object-storage-build"
+          if ($minioBuildExitCode -ne 0) {
             throw "Failed to build the MinIO binary for desktop E2E"
           }
 
