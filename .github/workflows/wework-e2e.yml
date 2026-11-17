@@ -160,7 +160,7 @@ jobs:
         id: runtime
         env:
           EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -985,6 +985,23 @@ jobs:
         with:
           go-version: "1.25.9"
           cache: false
+
+      - name: Prepare Remote Docker event recovery from the shared native build
+        if: contains(matrix.segments, 'conversation-event-remote-docker')
+        env:
+          EVENT_DEVICE_BASE_IMAGE: ${{ needs.changes.outputs.desktop_image }}
+        run: |
+          source .github/scripts/lib/apt-packages.sh
+          mapfile -t missing < <(find_missing_apt_packages docker.io)
+          if ((${#missing[@]} > 0)); then
+            bash .github/scripts/install-e2e-apt-packages.sh "${missing[@]}"
+          fi
+          docker info >/dev/null
+          image="wework-event-remote:ci-${GITHUB_RUN_ID}"
+          node .github/scripts/prepare-event-remote-device.mjs \
+            "$EVENT_DEVICE_BASE_IMAGE" \
+            "$GITHUB_WORKSPACE/.ci-artifacts/wework-core-e2e-build" "$image"
+          echo "WEWORK_E2E_REMOTE_IMAGE=$image" >> "$GITHUB_ENV"
 
       - name: Run Wework desktop Cloud E2E checkpoints
         env:

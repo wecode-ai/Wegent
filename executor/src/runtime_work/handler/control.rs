@@ -6,6 +6,7 @@ use futures_util::{stream, StreamExt};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
+pub(super) mod connection_events;
 mod execution;
 mod materialization;
 mod new_conversation;
@@ -50,6 +51,14 @@ impl RuntimeWorkRpcHandler {
         }
         // Use the Runtime dispatcher so only the selected branch occupies a worker's stack.
         match operation {
+            "list_connection_event_providers"
+            | "list_connection_event_resources"
+            | "subscribe_connection_events"
+            | "list_connection_event_subscriptions"
+            | "cancel_connection_event_subscription" => boxed_rpc(move || async move {
+                self.control_connection_events(context, operation, args)
+                    .await
+            }),
             "present_interaction" => {
                 boxed_rpc(move || async move { workbench_control::apps::present(args) })
             }

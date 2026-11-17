@@ -15,6 +15,7 @@
   "paths": [
     "packages/collaboration/src/markdown/AssistantMarkdown.tsx",
     "packages/collaboration/src/markdown/MarkdownServices.tsx",
-    "wework/e2e/desktop/modules/markdown-file-preview.mjs"
+    "wework/e2e/desktop/modules/markdown-file-preview.mjs",
+    "wework/e2e/desktop/modules/markdown-relative-file-links.mjs"
   ]
 }

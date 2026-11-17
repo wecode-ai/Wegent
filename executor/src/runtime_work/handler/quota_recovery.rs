@@ -287,6 +287,7 @@ impl RuntimeWorkRpcHandler {
         for key in [
             "client_user_message_id",
             "clientUserMessageId",
+            "resource_event_keys",
             "runtime_generated_user_message",
             "additionalContext",
             "additional_context",

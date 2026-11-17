@@ -22,7 +22,7 @@ pub(crate) fn transact<T>(
         .open(path.with_extension("lock"))
         .map_err(io_error)?;
     lock.lock_exclusive().map_err(io_error)?;
-    let mut state = match fs::read(path) {
+    let mut state: Value = match fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|_| AppIpcError::new("control_storage_failed", "Invalid control journal"))?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -48,4 +48,20 @@ pub(crate) fn transact<T>(
     })?;
     crate::runtime_work::store::atomic_write_file(path, &bytes).map_err(io_error)?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reading_a_missing_default_journal_does_not_create_a_document() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("journal.json");
+        assert_eq!(
+            transact(&path, |state| Ok(state["operations"].clone())).unwrap(),
+            json!({})
+        );
+        assert!(!path.exists());
+    }
 }

@@ -316,6 +316,7 @@ fn runtime_features_extensions_follow_the_known_members() {
         worktrees: None,
         project_editing: None,
         plugin_sync: None,
+        connection_events: None,
         remote_task_access: None,
         extensions: std::iter::once((
             "desktop".to_string(),
@@ -346,4 +347,26 @@ fn runtime_features_extensions_follow_the_known_members() {
             },
         })
     );
+}
+
+#[test]
+fn connection_event_protocol_projection_is_explicit_and_preserves_denials() {
+    for advertisement in [
+        json!(null),
+        json!({}),
+        json!({"protocolVersion": "1"}),
+        json!({"protocolVersion": true}),
+        json!({"protocolVersion": 0}),
+    ] {
+        let projected = crate::json_contract_tests::serialized(runtime_features(&json!({"runtime_features": {"schemaVersion": 4, "connectionEvents": advertisement, "projectEditing": {"plugins": false}}})).unwrap()).unwrap();
+        assert!(projected.get("connectionEvents").is_none());
+        assert_eq!(projected["projectEditing"]["plugins"], false);
+    }
+    let projected = crate::json_contract_tests::serialized(runtime_features(&json!({"runtime_features": {"schemaVersion": 4, "connectionEvents": {"protocolVersion": 1, "unknown": true}}})).unwrap()).unwrap();
+    assert_eq!(projected["connectionEvents"], json!({"protocolVersion": 1}));
+    let old = crate::json_contract_tests::serialized(
+        runtime_features(&json!({"runtime_features": {"schemaVersion": 4}})).unwrap(),
+    )
+    .unwrap();
+    assert!(old.get("connectionEvents").is_none());
 }

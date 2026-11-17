@@ -39,7 +39,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           {
             taskId: 'ordinary',
             workspacePath: '/chats',
-            title: '分身记忆整理',
+            title: '助理记忆整理',
             runtime: 'codex',
           },
         ],

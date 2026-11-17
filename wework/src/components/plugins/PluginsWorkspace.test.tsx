@@ -1,4 +1,9 @@
-import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import {
+  authorizeWegentConnector,
+  listWegentConnectorApps,
+  notifyConnectorAuthorizationChanged,
+  refreshWegentConnector,
+} from '@/api/cloud/connectorApps'
 import * as fileHash from '@/api/fileHash'
 import * as codexPlugins from '@/api/local/codexPlugins'
 import { ExpiredPluginInventoryRequest } from '@/api/local/codexInstalledCatalog'
@@ -107,7 +112,11 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 vi.mock('@/telemetry/businessEvents', () => ({ trackPluginEvent: telemetryMocks.track }))
 vi.mock('@/api/cloud/connectorApps', () => ({
   authorizeWegentConnector: vi.fn(),
+  connectorAuthorizationErrorMessage: (error: unknown) =>
+    error instanceof Error ? error.message : String(error),
   listWegentConnectorApps: vi.fn(),
+  notifyConnectorAuthorizationChanged: vi.fn(),
+  refreshWegentConnector: vi.fn(),
 }))
 
 type CodexMarketplaceMock = {
@@ -1895,6 +1904,7 @@ describe('PluginsWorkspace', () => {
       granted_scopes: [],
       expires_at: null,
     })
+    vi.mocked(refreshWegentConnector).mockReset()
     window.localStorage.clear()
     window.sessionStorage.clear()
     clearPluginMarketplaceCache()
@@ -6239,10 +6249,199 @@ describe('PluginsWorkspace', () => {
         '/api',
         'cloud-token',
         'github',
-        expect.any(Function)
+        expect.any(Function),
+        { isCurrent: expect.any(Function) }
       )
     })
   })
+
+  test('falls back to OAuth consent when an expired connector refresh fails', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+      marketplaceConnectorSlug: 'github',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    vi.mocked(listWegentConnectorApps).mockResolvedValue([
+      {
+        id: 1,
+        slug: 'github',
+        name: 'GitHub',
+        description: 'Connect GitHub',
+        icon_url: 'https://example.com/github.png',
+        auth_type: 'oauth2',
+        connection: {
+          status: 'expired',
+          external_account_name: 'octocat',
+          granted_scopes: ['repo'],
+          expires_at: '2026-01-01T00:00:00Z',
+        },
+      },
+    ])
+    vi.mocked(refreshWegentConnector).mockRejectedValue(new Error('refresh rejected'))
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(await screen.findByTestId('plugin-connection-manage-connector:github'))
+
+    await waitFor(() =>
+      expect(refreshWegentConnector).toHaveBeenCalledWith('/api', 'cloud-token', 'github')
+    )
+    await waitFor(() => {
+      expect(authorizeWegentConnector).toHaveBeenCalledWith(
+        '/api',
+        'cloud-token',
+        'github',
+        expect.any(Function),
+        { isCurrent: expect.any(Function) }
+      )
+    })
+  })
+
+  test.each(['install', 'manage'] as const)(
+    'invalidates %s OAuth when an account changes and returns to the original identity',
+    async entry => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceInstalled: entry === 'manage',
+        marketplaceDeviceState: entry === 'manage' ? 'installed' : undefined,
+        marketplaceConnectorSlug: 'github',
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      vi.mocked(listWegentConnectorApps).mockResolvedValue([
+        {
+          id: 1,
+          slug: 'github',
+          name: 'GitHub',
+          description: '',
+          icon_url: null,
+          auth_type: 'oauth2',
+          connection: {
+            status: 'disconnected',
+            external_account_name: null,
+            granted_scopes: [],
+            expires_at: null,
+          },
+        },
+      ])
+      let finishAuthorization!: () => void
+      vi.mocked(authorizeWegentConnector).mockImplementation(
+        () =>
+          new Promise(resolve => {
+            finishAuthorization = () =>
+              resolve({
+                status: 'connected',
+                external_account_name: null,
+                granted_scopes: [],
+                expires_at: null,
+              })
+          })
+      )
+      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      if (entry === 'install') {
+        await screen.findByTestId('plugin-marketplace-install-101')
+        await installPluginFromMarketCard('plugin-marketplace-install-101')
+      } else {
+        await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+        await userEvent.click(
+          await screen.findByTestId('plugin-connection-manage-connector:github')
+        )
+      }
+      await waitFor(() => expect(authorizeWegentConnector).toHaveBeenCalledTimes(1))
+      const options = vi.mocked(authorizeWegentConnector).mock.calls[0][4]
+      expect(options?.isCurrent?.()).toBe(true)
+      view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="other-account" />)
+      expect(options?.isCurrent?.()).toBe(false)
+      view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      expect(options?.isCurrent?.()).toBe(false)
+      expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
+      const finishOldAuthorization = finishAuthorization
+      if (entry === 'manage') {
+        await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+        const manage = await screen.findByTestId('plugin-connection-manage-connector:github')
+        expect(manage).toBeEnabled()
+        await userEvent.click(manage)
+        await waitFor(() => expect(authorizeWegentConnector).toHaveBeenCalledTimes(2))
+        await act(async () => finishOldAuthorization())
+        expect(manage).toBeDisabled()
+        await act(async () => finishAuthorization())
+        expect(manage).toBeEnabled()
+      } else {
+        await act(async () => finishOldAuthorization())
+        expect(authorizeWegentConnector).toHaveBeenCalledTimes(1)
+      }
+      view.unmount()
+    }
+  )
+
+  test.each(['catalog', 'refresh-success', 'refresh-failure'] as const)(
+    'does not continue connector management after the account changes during %s',
+    async phase => {
+      window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+      mockSystemSkillsFetch({
+        marketplaceInstalled: true,
+        marketplaceDeviceState: 'installed',
+        marketplaceConnectorSlug: 'github',
+      })
+      mockCodexAppServerInvoke({ deviceId: 'current-device' })
+      const apps = [
+        {
+          id: 1,
+          slug: 'github',
+          name: 'GitHub',
+          description: '',
+          icon_url: null,
+          auth_type: 'oauth2' as const,
+          connection: {
+            status: 'expired' as const,
+            external_account_name: null,
+            granted_scopes: [],
+            expires_at: null,
+          },
+        },
+      ]
+      vi.mocked(listWegentConnectorApps).mockResolvedValue(apps)
+      const view = render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+      await screen.findByTestId('plugin-connection-manage-connector:github')
+      let finishRequest!: () => void
+      let started = false
+      if (phase === 'catalog') {
+        vi.mocked(listWegentConnectorApps).mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              started = true
+              finishRequest = () => resolve(apps)
+            })
+        )
+      } else {
+        vi.mocked(refreshWegentConnector).mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              started = true
+              finishRequest = () =>
+                phase === 'refresh-failure'
+                  ? reject(new Error('expired request failed'))
+                  : resolve({ ...apps[0].connection, status: 'connected' })
+            })
+        )
+      }
+      const navigate = vi.spyOn(navigation, 'navigateTo')
+      vi.mocked(notifyConnectorAuthorizationChanged).mockClear()
+      await userEvent.click(screen.getByTestId('plugin-connection-manage-connector:github'))
+      await waitFor(() => expect(started).toBe(true))
+      view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="other-account" />)
+      view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+      await act(async () => finishRequest())
+      expect(authorizeWegentConnector).not.toHaveBeenCalled()
+      expect(notifyConnectorAuthorizationChanged).not.toHaveBeenCalled()
+      expect(navigate).not.toHaveBeenCalled()
+      if (phase === 'catalog') expect(refreshWegentConnector).not.toHaveBeenCalled()
+      view.unmount()
+    }
+  )
 
   test('does not report an account install as installed when this device failed', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }

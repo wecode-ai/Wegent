@@ -21,6 +21,25 @@ const goal: RuntimeGoal = {
 }
 
 describe('GoalStatusBar', () => {
+  test('keeps a human pause visible beside the resume control', () => {
+    render(<GoalStatusBar goal={goal} onResumeGoal={vi.fn()} />)
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('已暂停')
+    expect(screen.getByTestId('resume-goal-button')).toBeInTheDocument()
+  })
+  test('explains an event wait and allows the user to pause automatic recovery', () => {
+    const onPauseGoal = vi.fn()
+    render(
+      <GoalStatusBar
+        goal={{ ...goal, status: 'blocked' }}
+        eventWaitState="waiting"
+        onPauseGoal={onPauseGoal}
+      />
+    )
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('等待事件')
+    expect(screen.queryByTestId('resume-goal-button')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('pause-goal-button'))
+    expect(onPauseGoal).toHaveBeenCalledOnce()
+  })
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -41,6 +60,22 @@ describe('GoalStatusBar', () => {
     )
 
     expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('需要恢复')
+    fireEvent.click(screen.getByTestId('resume-goal-button'))
+    expect(onResumeGoal).toHaveBeenCalledOnce()
+  })
+
+  test('preserves canonical execution recovery when an event wait projection is stale', () => {
+    const onResumeGoal = vi.fn()
+    render(
+      <GoalStatusBar
+        goal={{ ...goal, status: 'blocked' }}
+        eventWaitState="received"
+        executionStatus="needsAttention"
+        onResumeGoal={onResumeGoal}
+      />
+    )
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('需要恢复')
+    expect(screen.queryByText('等待继续执行')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('resume-goal-button'))
     expect(onResumeGoal).toHaveBeenCalledOnce()
   })

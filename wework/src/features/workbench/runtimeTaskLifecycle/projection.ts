@@ -165,6 +165,39 @@ export function shouldReplaceRuntimeTaskProjection(
   return true
 }
 
+/** Persistent metadata has its own order across native execution epochs. */
+export function mergeRuntimeTaskSnapshotMetadata(
+  current: RuntimeTaskSummary,
+  candidate: RuntimeTaskSummary
+): RuntimeTaskSummary {
+  if (current.taskId !== candidate.taskId) return current
+  const revision = (value: string | undefined) =>
+    value && /^\d+$/.test(value) ? BigInt(value) : 0n
+  if (revision(candidate.snapshotRevision) <= revision(current.snapshotRevision)) return current
+  const runtimeHandle = { ...current.runtimeHandle }
+  // These fields are independent of native turn, session and permission bindings.
+  for (const field of [
+    'connectionEventSubscriptions',
+    'changeRequests',
+    'modelSelection',
+    'model_selection',
+    'quotaWait',
+  ]) {
+    if (Object.hasOwn(candidate.runtimeHandle ?? {}, field)) {
+      runtimeHandle[field] = candidate.runtimeHandle![field]
+    } else {
+      delete runtimeHandle[field]
+    }
+  }
+  return {
+    ...current,
+    snapshotRevision: candidate.snapshotRevision,
+    runtimeHandle,
+    title: candidate.title,
+    modelSelection: candidate.modelSelection,
+  }
+}
+
 export function isRuntimeTaskAuthoritativeCompletion(task: RuntimeTaskSummary): boolean {
   if (task.executionState) return task.executionState.phase === 'idle'
   return task.running === false && task.completedAt != null && !isRuntimeGoalExecutionActive(task)

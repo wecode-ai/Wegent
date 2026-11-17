@@ -1497,7 +1497,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
             "gh api --method GET "
             "'repos/{owner}/{repo}/pulls?state=all&per_page=100' "
             "--jq '[.[] | {number, html_url, title, state, draft, "
-            "head: {ref: .head.ref}, updated_at, merged_at}]'"
+            "head: {ref: .head.ref, sha: .head.sha}, updated_at, merged_at}]'"
         ),
         post_processor="json",
     ),

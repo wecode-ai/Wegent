@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
+import type { AssistantMarkdownProps } from '@wegent/collaboration/markdown'
 import { useImperativeHandle, useRef, type ReactNode } from 'react'
 import type { CodeViewItem } from '@pierre/diffs'
 import JSZip from 'jszip'
@@ -21,8 +22,11 @@ const appearanceMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/components/chat/AssistantMarkdown', () => ({
-  AssistantMarkdown: ({ content, variant }: { content: string; variant?: string }) => (
+  AssistantMarkdown: ({ content, variant, onOpenFile }: AssistantMarkdownProps) => (
     <div data-testid="assistant-markdown" data-variant={variant}>
+      {onOpenFile && (
+        <button onClick={() => onOpenFile('./截图.png', { lineStart: 3 })}>Open linked file</button>
+      )}
       {content.split('\n\n').map((block, index) => (
         <p
           key={`${index}-${block}`}
@@ -453,4 +457,26 @@ test('warns when a truncated HTML preview hides content', () => {
   expect(screen.getByTestId('workspace-html-file-preview-truncated')).toHaveTextContent(
     '文件过大，仅显示前 256 KiB'
   )
+})
+
+test('connects Markdown file links to the owning workspace opener', () => {
+  const onOpenFile = vi.fn()
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/reports/report.md',
+        name: 'report.md',
+        content: '[截图](./截图.png)',
+        editable: true,
+        revision: '1',
+        truncated: false,
+        size: 30,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onOpenFile={onOpenFile}
+    />
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Open linked file' }))
+  expect(onOpenFile).toHaveBeenCalledWith('./截图.png', { lineStart: 3 })
 })

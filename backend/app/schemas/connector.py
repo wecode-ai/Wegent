@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 AuthType = Literal["none", "bearer", "oauth2"]
 Visibility = Literal["all", "roles"]
 Transport = Literal["streamable-http", "sse", "http"]
+ToolLoadingMode = Literal["static", "lazy"]
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 HttpArgumentLocation = Literal["path", "query", "body"]
 
@@ -31,6 +32,24 @@ def _validate_http_url(value: str | None) -> str | None:
     if parsed.username is not None or parsed.password is not None:
         raise ValueError("URL must not contain embedded credentials")
     return value
+
+
+def _normalize_tool_loading_mode(value: object) -> object:
+    """Accept the short-lived direct/skill names and return static/lazy."""
+    if value == "direct":
+        return "static"
+    if value == "skill":
+        return "lazy"
+    return value
+
+
+def _normalize_keywords(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for value in values:
+        keyword = value.strip()
+        if keyword and keyword not in normalized:
+            normalized.append(keyword)
+    return normalized
 
 
 class ConnectorHttpToolDefinition(BaseModel):
@@ -122,8 +141,11 @@ class ConnectorAppWrite(BaseModel):
     visibility: Visibility = "all"
     allowed_roles: list[str] = Field(default_factory=list)
     auth_type: AuthType = "none"
+    oauth_scope: str | None = Field(default=None, max_length=200)
     transport: Transport = "streamable-http"
     mcp_url: str = Field(min_length=1, max_length=2048)
+    tool_loading_mode: ToolLoadingMode = "static"
+    keywords: list[str] = Field(default_factory=list, max_length=50)
     provider_headers: dict[str, str] = Field(default_factory=dict)
     forward_user_context_headers: bool = False
     tool_allowlist: list[str] = Field(default_factory=list)
@@ -135,6 +157,16 @@ class ConnectorAppWrite(BaseModel):
     @classmethod
     def validate_http_url(cls, value: str | None) -> str | None:
         return _validate_http_url(value)
+
+    @field_validator("tool_loading_mode", mode="before")
+    @classmethod
+    def normalize_tool_loading_mode(cls, value: object) -> object:
+        return _normalize_tool_loading_mode(value)
+
+    @field_validator("keywords")
+    @classmethod
+    def normalize_keywords(cls, value: list[str]) -> list[str]:
+        return _normalize_keywords(value)
 
     @model_validator(mode="after")
     def validate_auth_configuration(self) -> "ConnectorAppWrite":
@@ -160,8 +192,12 @@ class ConnectorAppUpdate(BaseModel):
     visibility: Visibility | None = None
     allowed_roles: list[str] | None = None
     auth_type: AuthType | None = None
+    oauth_scope: str | None = Field(default=None, max_length=200)
+    clear_oauth_client: bool = False
     transport: Transport | None = None
     mcp_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    tool_loading_mode: ToolLoadingMode | None = None
+    keywords: list[str] | None = Field(default=None, max_length=50)
     provider_headers: dict[str, str] | None = None
     clear_provider_headers: bool = False
     forward_user_context_headers: bool | None = None
@@ -175,6 +211,16 @@ class ConnectorAppUpdate(BaseModel):
     def validate_http_url(cls, value: str | None) -> str | None:
         return _validate_http_url(value)
 
+    @field_validator("tool_loading_mode", mode="before")
+    @classmethod
+    def normalize_tool_loading_mode(cls, value: object) -> object:
+        return _normalize_tool_loading_mode(value)
+
+    @field_validator("keywords")
+    @classmethod
+    def normalize_keywords(cls, value: list[str] | None) -> list[str] | None:
+        return _normalize_keywords(value) if value is not None else None
+
     @model_validator(mode="after")
     def reject_null_for_required_fields(self) -> "ConnectorAppUpdate":
         required_fields = {
@@ -186,6 +232,8 @@ class ConnectorAppUpdate(BaseModel):
             "auth_type",
             "transport",
             "mcp_url",
+            "tool_loading_mode",
+            "keywords",
             "forward_user_context_headers",
             "tool_allowlist",
             "http_tools",
@@ -210,8 +258,12 @@ class ConnectorAppAdminResponse(BaseModel):
     visibility: str
     allowed_roles: list[str]
     auth_type: AuthType
+    oauth_scope: str | None
+    oauth_client_registered: bool
     transport: str
     mcp_url: str
+    tool_loading_mode: ToolLoadingMode
+    keywords: list[str]
     provider_header_names: list[str]
     provider_headers_configured: bool
     forward_user_context_headers: bool
@@ -227,6 +279,12 @@ class ConnectorConnectionResponse(BaseModel):
     external_account_name: str | None = None
     granted_scopes: list[str] = Field(default_factory=list)
     expires_at: datetime | None = None
+    # Last discovery failure for a still-authorized app, so the UI can explain
+    # "authorized but the upstream is unavailable" instead of showing a healthy
+    # connection or asking the user to authorize again.
+    last_error: str | None = None
+    last_discovered_at: datetime | None = None
+    tool_count: int = 0
 
 
 class ConnectorOAuthSessionCreateResponse(BaseModel):
@@ -250,6 +308,8 @@ class ConnectorAppResponse(BaseModel):
     description: str
     icon_url: str | None
     auth_type: AuthType
+    tool_loading_mode: ToolLoadingMode
+    keywords: list[str] = Field(default_factory=list)
     connection: ConnectorConnectionResponse
 
 

@@ -272,6 +272,107 @@ fn native_snapshot_revision_covers_interaction_goal_and_model_metadata() {
 }
 
 #[test]
+fn persistent_metadata_revision_survives_restart_without_inventing_native_execution_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("index.json");
+    let store = RuntimeWorkStore::new(path.clone());
+    let task = RuntimeTaskLink::new_pending("task".into(), "/tmp/task".into(), "Task".into());
+    let updated_at = task.updated_at;
+    let recency_at = task.recency_at;
+    store.upsert_task(task);
+    let first = store
+        .update_task("task", |task| {
+            task.runtime_handle["connectionEventSubscriptions"] =
+                serde_json::json!([{"status":"armed","error_code":"connection_unavailable"}])
+        })
+        .unwrap();
+    let revision = first.snapshot_revision.unwrap();
+    let restarted = RuntimeWorkStore::new(path);
+    let restored = restarted.get_task("task").unwrap();
+    assert_eq!(
+        restored.snapshot_revision.as_deref(),
+        Some(revision.as_str())
+    );
+    assert!(restored.execution_state.is_none());
+    let healthy = restarted
+        .update_task("task", |task| {
+            task.runtime_handle["connectionEventSubscriptions"][0]["error_code"] = Value::Null
+        })
+        .unwrap();
+    assert!(
+        healthy
+            .snapshot_revision
+            .as_ref()
+            .unwrap()
+            .parse::<u128>()
+            .unwrap()
+            > revision.parse::<u128>().unwrap()
+    );
+    assert!(healthy.execution_state.is_none());
+    assert_eq!(healthy.updated_at, updated_at);
+    assert_eq!(healthy.recency_at, recency_at);
+    assert_eq!(
+        super::super::response::local_task_json(healthy.clone())["snapshotRevision"],
+        healthy.snapshot_revision.unwrap()
+    );
+}
+
+#[test]
+fn persistent_metadata_revision_never_regresses_when_the_saved_clock_is_ahead() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = RuntimeWorkStore::new(directory.path().join("index.json"));
+    let mut task = RuntimeTaskLink::new_pending("task".into(), "/tmp/task".into(), "Task".into());
+    task.snapshot_revision = Some((u64::MAX - 10).to_string());
+    store.upsert_task(task);
+    let changed = store
+        .update_task("task", |task| {
+            task.runtime_handle["connectionEventSubscriptions"] = serde_json::json!([])
+        })
+        .unwrap();
+    assert_eq!(changed.snapshot_revision, Some((u64::MAX - 9).to_string()));
+    assert_eq!(
+        store.update_task("task", |_| {}).unwrap().snapshot_revision,
+        changed.snapshot_revision
+    );
+}
+
+#[test]
+fn transactional_metadata_updates_advance_the_same_durable_snapshot_revision() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("index.json");
+    let store = RuntimeWorkStore::new(path.clone());
+    store.upsert_task(RuntimeTaskLink::new_pending(
+        "task".into(),
+        "/tmp/task".into(),
+        "Task".into(),
+    ));
+    let before = store.get_task("task").unwrap().snapshot_revision.unwrap();
+    let changed = store
+        .try_update_task("task", |task| {
+            task.runtime_handle["changeRequests"] =
+                serde_json::json!([{"url":"https://github.com/org/repo/pull/1"}])
+        })
+        .unwrap()
+        .unwrap();
+    assert!(
+        changed
+            .snapshot_revision
+            .as_ref()
+            .unwrap()
+            .parse::<u128>()
+            .unwrap()
+            > before.parse::<u128>().unwrap()
+    );
+    let restarted = RuntimeWorkStore::new(path).get_task("task").unwrap();
+    assert_eq!(restarted.snapshot_revision, changed.snapshot_revision);
+    assert_eq!(
+        restarted.runtime_handle["changeRequests"],
+        changed.runtime_handle["changeRequests"]
+    );
+    assert!(restarted.execution_state.is_none());
+}
+
+#[test]
 fn persisted_archive_metadata_restores_without_task_status_fields() {
     let directory = tempfile::tempdir().expect("temporary directory should be created");
     let index_path = directory.path().join("index.json");
