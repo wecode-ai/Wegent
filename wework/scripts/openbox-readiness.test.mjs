@@ -91,6 +91,7 @@ shift
         },
         encoding: 'utf8',
         timeout: fixtureTimeoutMs,
+        windowsHide: true,
       }
     )
     expect(result.error).toBeUndefined()
