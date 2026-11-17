@@ -324,7 +324,7 @@ async fn fetch_failed_subtask(
 ) -> Result<Option<FailedSubtask>, RetryFailure> {
     let statement = format!(
         "SELECT id, task_id, team_id, parent_id, status, message_id, executor_name, \
-         executor_namespace, created_at FROM `{table}` WHERE id = ? AND task_id = ? \
+         executor_namespace, result, created_at FROM `{table}` WHERE id = ? AND task_id = ? \
          AND `role` = 'ASSISTANT' LIMIT 1"
     );
     let mut handle = &state.mysql;
@@ -430,7 +430,7 @@ fn is_truthy(value: &Value) -> bool {
     }
 }
 
-fn truthy_value<'a>(value: Option<&'a Value>) -> Option<&'a Value> {
+fn truthy_value(value: Option<&Value>) -> Option<&Value> {
     value.filter(|value| is_truthy(value))
 }
 
@@ -634,6 +634,20 @@ fn local_isoformat() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_subtask_retry_read_includes_the_result_proof_column() {
+        let source = include_str!("chat_retry.rs");
+        let start = source.find("async fn fetch_failed_subtask").unwrap();
+        let end = source[start..]
+            .find("/// `task_store.get_non_deleted_task`")
+            .unwrap();
+        let function = &source[start..start + end];
+        assert!(
+            function.contains("executor_namespace, result, created_at"),
+            "retry must read the failed result before preserving its executor session: {function}"
+        );
+    }
 
     #[tokio::test]
     async fn offline_device_retry_finalizes_pending_subtask_and_task() {
