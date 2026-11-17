@@ -45,10 +45,17 @@ export function TemplateModelSelection({
   const [selected, setSelected] = useState('')
   const selection = useRef('')
   const selectionChosen = useRef(false)
-  const { host, projectId } = configuration
+  const { host, projectId, environmentId, location } = configuration
   const load = useCallback(
-    () => host.listTemplateAgentModels!(runtime, projectId),
-    [host, projectId, runtime]
+    () =>
+      environmentId
+        ? host.listTemplateAgentModels!(runtime, {
+            projectId,
+            environmentId,
+            location,
+          })
+        : Promise.resolve({ models: [] }),
+    [host, projectId, environmentId, location, runtime]
   )
   const state = usePanelData(load)
   const loadCloud = useCallback(
@@ -60,13 +67,13 @@ export function TemplateModelSelection({
   const catalog = useMemo(
     () => [
       ...new Map(
-        [...(cloud.data ?? []), ...(state.data?.models ?? [])].map(model => [
+        [...(cloud.data ?? []), ...(environmentId ? (state.data?.models ?? []) : [])].map(model => [
           runnerModelKey(model),
           model,
         ])
       ).values(),
     ],
-    [state.data, cloud.data]
+    [state.data, cloud.data, environmentId]
   )
   const cloudUnavailable = cloud.error !== undefined
   const error = state.error !== undefined

@@ -108,6 +108,7 @@ test.describe('Collaboration group Executor coordination', () => {
         await page.getByTestId('template-details-product-lifecycle').click()
         await page.getByTestId('template-use').click()
         await page.getByTestId(`template-project-${fixture.projectId}`).click()
+        await page.getByTestId('template-runtime-configuration').locator('summary').click()
         const environment = page.getByTestId('template-project-environment-select')
         await expect(environment).toBeEnabled()
         await expect(environment).toHaveValue(
@@ -134,6 +135,8 @@ test.describe('Collaboration group Executor coordination', () => {
           'href',
           `${fixture.projectPath}?view=manage&section=environments`
         )
+        // Web imports retain user-selected model routing until actual execution.
+        await expect(page.getByTestId('template-model-codex')).toHaveCount(0)
         await page.getByTestId('template-bindings-apply').click()
         await expect(page).toHaveURL(new RegExp(`${fixture.projectPath}$`))
         await page.reload()
@@ -154,7 +157,7 @@ test.describe('Collaboration group Executor coordination', () => {
             mode: 'fixed',
             environment_id: String(appDevice.id),
           })
-          expect(agent.modelPolicy.mode).toBe('fixed')
+          expect(agent.modelPolicy.mode).toBe('user_select')
         }
         const groups = await apiRequest<{ items: Array<{ name: string }> }>(
           request,

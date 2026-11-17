@@ -80,7 +80,7 @@ pub struct Automation {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AutomationSchedule {
     Cron {
@@ -97,7 +97,7 @@ pub enum AutomationSchedule {
     },
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum IntervalUnit {
     Minutes,
@@ -263,13 +263,21 @@ impl AutomationStore {
         next.version += 1;
         next.created_at = existing.created_at;
         next.updated_at = now;
-        next.next_run_at = if next.enabled {
-            initial_next_run_checked(&next.schedule, &next.timezone, now)?
-        } else {
+        next.next_run_at = if !next.enabled {
             None
+        } else if next.enabled == existing.enabled
+            && next.schedule == existing.schedule
+            && next.timezone == existing.timezone
+        {
+            existing.next_run_at
+        } else {
+            initial_next_run_checked(&next.schedule, &next.timezone, now)?
         };
         state.automations.insert(next.id.clone(), next.clone());
-        self.write_state(&state)?;
+        if let Err(error) = self.write_state(&state) {
+            state.automations.insert(existing.id.clone(), existing);
+            return Err(error);
+        }
         Ok(next)
     }
 

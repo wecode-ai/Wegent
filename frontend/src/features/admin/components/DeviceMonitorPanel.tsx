@@ -121,6 +121,7 @@ export function DeviceMonitorPanel() {
   const [isStatsLoading, setIsStatsLoading] = useState(false)
   const [isDevicesLoading, setIsDevicesLoading] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [deviceToRestart, setDeviceToRestart] = useState<AdminDeviceInfo | null>(null)
   const [deviceToDelete, setDeviceToDelete] = useState<AdminDeviceInfo | null>(null)
   const [isDeletingDevice, setIsDeletingDevice] = useState(false)
   const [deviceListRevision, setDeviceListRevision] = useState(0)
@@ -703,6 +704,34 @@ export function DeviceMonitorPanel() {
       </AlertDialog>
 
       <AlertDialog
+        open={!!deviceToRestart}
+        onOpenChange={open => !open && setDeviceToRestart(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('device_monitor.confirm.restart_title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('device_monitor.confirm.restart_message', { name: deviceToRestart?.name })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="cancel-admin-device-restart">
+              {t('common.cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button
+                variant="primary"
+                onClick={() => deviceToRestart && void handleRestart(deviceToRestart)}
+                data-testid="confirm-admin-device-restart"
+              >
+                {t('device_monitor.actions.restart')}
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
         open={!!deviceToDelete}
         onOpenChange={open => {
           if (!open && !isDeletingDevice) setDeviceToDelete(null)
@@ -939,7 +968,7 @@ export function DeviceMonitorPanel() {
                 }
                 deleteDisabled={isDeletingDevice}
                 handleUpgrade={handleUpgrade}
-                handleRestart={handleRestart}
+                handleRestart={setDeviceToRestart}
                 handleMigrate={handleMigrate}
                 onDelete={setDeviceToDelete}
               />

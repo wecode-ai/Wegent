@@ -805,7 +805,7 @@ export const ComposerProseMirrorEditor = forwardRef<
       />
       {!hasContent && !composing && (
         <div
-          className={`${props.className} composer-prosemirror-placeholder pointer-events-none absolute inset-0 ${props.prediction && !props.disabled ? "!text-text-secondary" : "!text-text-muted/55"}`}
+          className={`${props.className} composer-prosemirror-placeholder pointer-events-none absolute inset-0 !text-text-secondary`}
           data-testid={
             props.prediction && !props.disabled
               ? `${props.testId}-prediction`
@@ -829,6 +829,8 @@ function editorAttributes(
     "data-testid": props.testId,
     role: "textbox",
     "aria-multiline": "true",
+    "aria-label": props.placeholder,
+    "aria-placeholder": props.placeholder,
     spellcheck: "true",
     rows: String(props.rows),
     placeholder: props.placeholder,

@@ -1,7 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { Folder } from 'lucide-react'
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
-import type { CloudProject } from '@/api/deliveries'
+import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
+import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { ChevronDown, ChevronRight, Folder } from 'lucide-react'
+import { IssueDetailSearchableSelect, type SharedWorkspaceApi } from '@wegent/collaboration'
+import { usePanelData } from '@wegent/collaboration/platform'
 import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -11,14 +13,21 @@ import {
   type PersonalIssuesApi,
 } from '@/api/personalIssues'
 import { IssueParticipantPicker } from './IssueParticipantPicker'
-import { participantKey, resourceInvitations, type IssueParticipant } from './issueParticipants'
+import { IssueProjectSelect } from './IssueProjectSelect'
+import {
+  participantKey,
+  participantLabel,
+  participantNeedsIdentifier,
+  resourceInvitations,
+  type IssueParticipant,
+} from './issueParticipants'
 
 export interface IssueCreationInput extends IndependentIssueInput {
   project_id?: string
   project_status?: string
 }
 const control =
-  'min-h-11 w-full rounded-md border border-border bg-background px-2 py-1 text-base text-text-primary md:min-h-8'
+  'wework-native-select min-h-11 min-w-0 w-full rounded-md border-0 bg-muted/40 px-2 py-1 text-sm text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8'
 
 export function IndependentIssueEditor({
   api,
@@ -29,6 +38,8 @@ export function IndependentIssueEditor({
   busy,
   onSave,
   onCancel,
+  onDirtyChange,
+  autoFocus = true,
 }: {
   api: PersonalIssuesApi
   collaborationApi?: SharedWorkspaceApi
@@ -38,6 +49,8 @@ export function IndependentIssueEditor({
   busy: boolean
   onSave(input: IssueCreationInput): Promise<void>
   onCancel(): void
+  onDirtyChange?(dirty: boolean): void
+  autoFocus?: boolean
 }) {
   const { t } = useTranslation('common')
   const canSelectProject = allowProjectSelection ?? !issue
@@ -57,12 +70,13 @@ export function IndependentIssueEditor({
         }
   )
   const owner = issue?.creator_id ?? userId
+  const [baseline] = useState(() => JSON.stringify(draft))
   const [people, setPeople] = useState<IssueParticipant[]>(() => [
     {
       key: `human:${owner}`,
       kind: 'human',
       id: owner,
-      name: owner === userId ? t('personalHome.me') : (issue?.people[owner] ?? `#${owner}`),
+      name: issue?.people[owner] ?? `#${owner}`,
     },
     ...(issue?.metadata.direct_participants ?? issue?.metadata.participants ?? [])
       .filter(id => id !== owner)
@@ -81,39 +95,20 @@ export function IndependentIssueEditor({
   ])
   const [projectId, setProjectId] = useState('')
   const [projectStatus, setProjectStatus] = useState('')
-  const [projects, setProjects] = useState<CloudProject[]>([])
-  const [projectError, setProjectError] = useState('')
-  const [revision, setRevision] = useState(0)
-  const [loadingProjects, setLoadingProjects] = useState(canSelectProject)
+  const loadProjects = useCallback(() => api.projects(), [api])
+  const {
+    data: projectPage,
+    error: projectError,
+    loading: loadingProjects,
+    refresh: refreshProjects,
+  } = usePanelData(loadProjects, canSelectProject)
+  const projects = (projectPage?.items ?? []).filter(
+    project =>
+      ['local', 'backend'].includes(project.task_provider) && project.access_role !== 'Viewer'
+  )
   useEffect(() => {
-    if (!canSelectProject) return
-    let active = true
-    void api
-      .projects()
-      .then(
-        page => {
-          if (active) {
-            setProjects(
-              page.items.filter(
-                project =>
-                  ['local', 'backend'].includes(project.task_provider) &&
-                  project.access_role !== 'Viewer'
-              )
-            )
-            setProjectError('')
-          }
-        },
-        error => {
-          if (active) setProjectError(error instanceof Error ? error.message : String(error))
-        }
-      )
-      .finally(() => {
-        if (active) setLoadingProjects(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api, canSelectProject, revision])
+    onDirtyChange?.(JSON.stringify(draft) !== baseline || Boolean(projectId))
+  }, [draft, baseline, projectId, onDirtyChange])
   const project = projects.find(row => String(row.id) === projectId)
   const statuses = project?.board_config?.statuses ?? []
   const set = <K extends keyof IndependentIssueInput>(key: K, value: IndependentIssueInput[K]) =>
@@ -143,199 +138,275 @@ export function IndependentIssueEditor({
     : draft.assignee_id
       ? `human:${draft.assignee_id}`
       : ''
+  const assigneeOptions = [
+    { value: '', label: t('independentIssues.unassigned'), description: undefined },
+    ...(['human', 'agent', 'group'] as const).flatMap(kind =>
+      people
+        .filter(person => person.kind === kind)
+        .map(person => {
+          const identified = participantNeedsIdentifier(person, people, userId)
+          return {
+            value: person.key,
+            label: identified
+              ? person.name
+              : participantLabel(person, people, { id: userId, name: t('personalHome.me') }),
+            description: identified ? `#${person.id}` : undefined,
+            group: t(`issue_creation.participant_${kind}`),
+            searchText: String(person.id),
+          }
+        })
+    ),
+  ]
+  const selectedAssignee = assigneeOptions.find(option => option.value === assignee)
+  const selection = (label: string, identifier?: string) => (
+    <>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {identifier && <span className="shrink-0 text-text-secondary">{identifier}</span>}
+      <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+    </>
+  )
   const field = (label: string, children: ReactNode) => (
-    <label className="grid min-w-0 gap-1 text-sm">
-      <span className="text-text-secondary">{label}</span>
+    <label className="flex min-w-0 items-center gap-2 text-sm">
+      <span className="w-16 shrink-0 text-text-secondary">{label}</span>
       {children}
     </label>
   )
   return (
     <DialogForm
-      className="flex min-w-0 flex-col gap-5"
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
       onSubmit={event => {
         event.preventDefault()
+        if (busy || !draft.title.trim()) return
         void onSave({
           ...draft,
           ...(projectId ? { project_id: projectId, project_status: projectStatus } : {}),
         })
       }}
     >
-      <fieldset disabled={busy} className="grid min-w-0 gap-5">
-        {canSelectProject && (
-          <div className="grid gap-1">
-            <label className="flex items-center gap-2 text-sm">
-              <Folder className="h-4 w-4 shrink-0 text-text-muted" />
-              <span className="shrink-0 text-text-secondary">
-                {t('issue_creation.project_label')}
-              </span>
+      <div
+        data-testid="independent-issue-editor-scroll"
+        className="min-h-0 flex-1 overflow-y-auto p-5"
+      >
+        <fieldset disabled={busy} className="grid min-w-0 gap-3">
+          <label className="grid gap-1">
+            <span className="text-sm text-text-secondary">{t('independentIssues.title')}</span>
+            <input
+              autoFocus={autoFocus}
+              required
+              maxLength={255}
+              data-testid="independent-issue-title"
+              aria-label={t('independentIssues.title')}
+              placeholder={t('issue_creation.title_placeholder')}
+              value={draft.title}
+              onChange={event => set('title', event.target.value)}
+              className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-base font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring placeholder:text-text-secondary md:min-h-8"
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="text-sm text-text-secondary">
+              {t('independentIssues.description')}
+            </span>
+            <textarea
+              data-testid="independent-issue-description"
+              aria-label={t('independentIssues.description')}
+              placeholder={t('issue_creation.description_placeholder')}
+              value={draft.description}
+              onChange={event => set('description', event.target.value)}
+              rows={3}
+              className="w-full resize-y rounded-lg border border-border bg-background p-3 text-base leading-6 outline-none placeholder:text-text-secondary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring"
+            />
+          </label>
+          <div className="grid min-w-0 gap-3 border-t border-border pt-3">
+            {canSelectProject && (
+              <div className="grid grid-cols-1 gap-1">
+                <label className="flex items-center gap-2 text-sm">
+                  <Folder className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                  <span className="shrink-0 text-text-secondary">
+                    {t('issue_creation.project_label')}
+                  </span>
+                  <IssueProjectSelect
+                    projects={projects}
+                    className={`${control} flex-1`}
+                    disabled={loadingProjects}
+                    value={projectId}
+                    onChange={value => {
+                      setProjectId(value)
+                      const target = projects.find(row => String(row.id) === value)
+                      setProjectStatus(target?.board_config?.statuses[0]?.id ?? '')
+                    }}
+                  />
+                </label>
+                {loadingProjects && (
+                  <p
+                    role="status"
+                    data-testid="issue-project-loading"
+                    className="text-sm text-text-secondary"
+                  >
+                    {t('issue_creation.projects_loading')}
+                  </p>
+                )}
+                {projectId && (
+                  <p data-testid="issue-project-scope" className="text-sm text-text-secondary">
+                    {t('issue_creation.project_scope_hint')}
+                  </p>
+                )}
+                {projectError !== undefined && (
+                  <p role="alert" className="text-sm text-destructive">
+                    {t('issue_creation.projects_load_failed')}
+                    <button
+                      type="button"
+                      data-testid="issue-project-retry"
+                      className="ml-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md underline md:min-h-8"
+                      onClick={() => void refreshProjects()}
+                    >
+                      {t('independentIssues.retry')}
+                    </button>
+                  </p>
+                )}
+              </div>
+            )}
+            <IssueParticipantPicker
+              api={api}
+              collaborationApi={collaborationApi}
+              userId={userId}
+              selected={people}
+              onChange={changePeople}
+              disabled={busy || owner !== userId}
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+            {field(
+              t('independentIssues.status'),
+              projectId && statuses.length ? (
+                <select
+                  data-testid="independent-issue-project-status"
+                  className={control}
+                  value={projectStatus}
+                  onChange={event => setProjectStatus(event.target.value)}
+                >
+                  {statuses.map(status => (
+                    <option key={status.id} value={status.id}>
+                      {status.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  data-testid="independent-issue-status"
+                  className={control}
+                  value={draft.status}
+                  onChange={event =>
+                    set('status', event.target.value as IndependentIssue['status'])
+                  }
+                >
+                  {(['pending', 'in_progress', 'completed'] as const).map(status => (
+                    <option key={status} value={status}>
+                      {t(`independentIssues.${status}`)}
+                    </option>
+                  ))}
+                </select>
+              )
+            )}
+            {field(
+              t('independentIssues.priority'),
               <select
-                data-testid="independent-issue-project"
-                aria-label={t('issue_creation.project_label')}
-                className={`${control} flex-1`}
-                disabled={loadingProjects}
-                value={projectId}
-                onChange={event => {
-                  setProjectId(event.target.value)
-                  const target = projects.find(row => String(row.id) === event.target.value)
-                  setProjectStatus(target?.board_config?.statuses[0]?.id ?? '')
-                }}
+                data-testid="independent-issue-priority"
+                className={control}
+                value={draft.priority}
+                onChange={event =>
+                  set('priority', event.target.value as IndependentIssue['priority'])
+                }
               >
-                <option value="">{t('issue_creation.independent_option')}</option>
-                {projects.map(project => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
+                {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
+                  <option key={priority} value={priority}>
+                    {t(`independentIssues.${priority}`)}
                   </option>
                 ))}
               </select>
-            </label>
-            <p className="text-sm text-text-muted">
-              {t(
-                projectId
-                  ? 'issue_creation.project_scope_hint'
-                  : 'issue_creation.independent_scope_hint'
-              )}
-            </p>
-            {projectError && (
-              <p role="alert" className="text-sm text-error">
-                {projectError}
-                <button
-                  type="button"
-                  data-testid="issue-project-retry"
-                  className="ml-2 underline"
-                  onClick={() => {
-                    setLoadingProjects(true)
-                    setRevision(v => v + 1)
-                  }}
-                >
-                  {t('independentIssues.retry')}
-                </button>
-              </p>
+            )}
+            {field(
+              t('independentIssues.assignee'),
+              <IssueDetailSearchableSelect
+                modal
+                testId="independent-issue-assignee"
+                accessibleLabel={t('independentIssues.assignee')}
+                className={`${control} flex items-center gap-2 text-left`}
+                value={assignee}
+                options={assigneeOptions}
+                searchPlaceholder={t('todo.search_assignee')}
+                emptyLabel={t('todo.no_matching_assignee')}
+                triggerContent={selection(
+                  selectedAssignee?.label ?? t('independentIssues.unassigned'),
+                  selectedAssignee?.description
+                )}
+                onChange={value => {
+                  const target = people.find(person => person.key === value)
+                  setDraft(previous => ({
+                    ...previous,
+                    assignee_id: target?.kind === 'human' ? target.id : null,
+                    assignee_resource:
+                      target && target.kind !== 'human'
+                        ? { kind: target.kind, id: target.id }
+                        : null,
+                  }))
+                }}
+              />
+            )}
+            {field(
+              t('independentIssues.due'),
+              <input
+                type="date"
+                data-testid="independent-issue-due"
+                className={control}
+                value={draft.due_at ?? ''}
+                onChange={event => set('due_at', event.target.value || null)}
+              />
             )}
           </div>
-        )}
-        <label className="grid gap-1">
-          <span className="sr-only">{t('independentIssues.title')}</span>
-          <input
-            autoFocus
-            required
-            maxLength={255}
-            data-testid="independent-issue-title"
-            aria-label={t('independentIssues.title')}
-            placeholder={t('issue_creation.title_placeholder')}
-            value={draft.title}
-            onChange={event => set('title', event.target.value)}
-            className="min-h-11 w-full border-0 bg-transparent text-heading-sm font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring placeholder:text-text-muted md:min-h-8"
-          />
-        </label>
-        <IssueParticipantPicker
-          api={api}
-          collaborationApi={collaborationApi}
-          userId={userId}
-          selected={people}
-          onChange={changePeople}
-          disabled={busy || owner !== userId}
-        />
-        <label className="grid gap-1">
-          <span className="sr-only">{t('independentIssues.description')}</span>
-          <textarea
-            data-testid="independent-issue-description"
-            aria-label={t('independentIssues.description')}
-            placeholder={t('issue_creation.description_placeholder')}
-            value={draft.description}
-            onChange={event => set('description', event.target.value)}
-            rows={6}
-            className="w-full resize-y rounded-lg border border-border bg-background p-3 text-base leading-6 outline-none focus:border-primary"
-          />
-        </label>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          {field(
-            t('independentIssues.status'),
-            projectId && statuses.length ? (
-              <select
-                data-testid="independent-issue-project-status"
-                className={control}
-                value={projectStatus}
-                onChange={event => setProjectStatus(event.target.value)}
-              >
-                {statuses.map(status => (
-                  <option key={status.id} value={status.id}>
-                    {status.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <select
-                data-testid="independent-issue-status"
-                className={control}
-                value={draft.status}
-                onChange={event => set('status', event.target.value as IndependentIssue['status'])}
-              >
-                {(['pending', 'in_progress', 'completed'] as const).map(status => (
-                  <option key={status} value={status}>
-                    {t(`independentIssues.${status}`)}
-                  </option>
-                ))}
-              </select>
-            )
-          )}
-          {field(
-            t('independentIssues.priority'),
-            <select
-              data-testid="independent-issue-priority"
-              className={control}
-              value={draft.priority}
-              onChange={event =>
-                set('priority', event.target.value as IndependentIssue['priority'])
-              }
+          <details className="group min-w-0 border-t border-border pt-2">
+            <summary
+              data-testid="independent-issue-execution-settings"
+              className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8 [&::-webkit-details-marker]:hidden"
             >
-              {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
-                <option key={priority} value={priority}>
-                  {t(`independentIssues.${priority}`)}
-                </option>
-              ))}
-            </select>
-          )}
-          {field(
-            t('independentIssues.assignee'),
-            <select
-              data-testid="independent-issue-assignee"
-              className={control}
-              value={assignee}
-              onChange={event => {
-                const target = people.find(person => person.key === event.target.value)
-                setDraft(previous => ({
-                  ...previous,
-                  assignee_id: target?.kind === 'human' ? target.id : null,
-                  assignee_resource:
-                    target && target.kind !== 'human' ? { kind: target.kind, id: target.id } : null,
-                }))
-              }}
-            >
-              <option value="">{t('independentIssues.unassigned')}</option>
-              {people.map(person => (
-                <option key={person.key} value={person.key}>
-                  {person.name}
-                </option>
-              ))}
-            </select>
-          )}
-          {field(
-            t('independentIssues.due'),
-            <input
-              type="date"
-              data-testid="independent-issue-due"
-              className={control}
-              value={draft.due_at ?? ''}
-              onChange={event => set('due_at', event.target.value || null)}
-            />
-          )}
-        </div>
-      </fieldset>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-        <span className="text-sm text-text-muted">
-          {project?.name ?? t('issue_creation.independent_short')} ·{' '}
-          {t('issue_creation.participant_count', { count: people.length })}
-        </span>
+              <ChevronRight
+                className="h-4 w-4 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+                aria-hidden="true"
+              />
+              {t('issue_creation.runtime_label')}
+            </summary>
+            <div className="grid min-w-0 gap-2 pt-2">
+              <span className="text-sm text-text-secondary">
+                {t(
+                  projectId
+                    ? 'issue_creation.project_device_settings'
+                    : 'workbench.runner_personal_default'
+                )}
+              </span>
+              {projectId && collaborationApi ? (
+                <IssueProjectEnvironmentPicker
+                  key={projectId}
+                  api={collaborationApi}
+                  projectId={projectId}
+                  disabled={busy}
+                />
+              ) : (
+                <DefaultRunnerSetting compact confirmChanges />
+              )}
+              <p className="text-xs text-text-secondary">
+                {t(
+                  projectId
+                    ? 'issue_creation.project_device_settings_hint'
+                    : 'issue_creation.personal_runner_hint'
+                )}
+              </p>
+            </div>
+          </details>
+        </fieldset>
+      </div>
+      <div
+        data-testid="independent-issue-editor-actions"
+        className="flex shrink-0 items-center justify-end gap-3 border-t border-border bg-popover px-5 py-4"
+      >
         <div className="flex gap-2">
           <button
             type="button"

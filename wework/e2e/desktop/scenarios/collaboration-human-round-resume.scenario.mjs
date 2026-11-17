@@ -696,7 +696,7 @@ export function createDesktopScenario({
         { value: '1' }
       )
       await control.command('waitFor', scoped('[data-testid="cloud-todo-personal-task-action"]'), {
-        text: '让 AI 帮我处理',
+        text: '创建任务',
         timeoutMs: uiTimeoutMs,
       })
       await control.command(

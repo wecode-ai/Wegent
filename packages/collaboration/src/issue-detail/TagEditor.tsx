@@ -1,13 +1,7 @@
-import {
-  forwardRef,
-  useImperativeHandle,
-  useRef,
-  useState,
-  type ForwardedRef,
-  type KeyboardEvent,
-} from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { X } from "lucide-react";
 import { isTagNameTooLong } from "../tagging";
+import { useOutsideClick } from "../composer/useOutsideClick";
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
 }
@@ -15,6 +9,7 @@ function cn(...values: Array<string | false | null | undefined>): string {
 interface TagEditorProps {
   tags: string[];
   onChange: (tags: string[]) => void;
+  onDraftDirtyChange?: (dirty: boolean) => void;
   disabled?: boolean;
   placeholder?: string;
   removeLabel?: (tag: string) => string;
@@ -26,30 +21,31 @@ interface TagEditorProps {
   testIdPrefix: string;
 }
 
-export interface TagEditorHandle {
-  commitDraft(): void;
-}
-
 // Inline chip-style tag editor: Enter or comma commits, Backspace on an empty
 // input removes the last tag, and existing tags are offered as suggestions.
-function TagEditorField(
-  {
-    tags,
-    onChange,
-    disabled = false,
-    placeholder = "添加标签",
-    removeLabel = (tag) => `移除标签 ${tag}`,
-    lengthErrorLabel,
-    tagLimit,
-    suggestions = [],
-    testIdPrefix,
-  }: TagEditorProps,
-  ref: ForwardedRef<TagEditorHandle>,
-) {
+export function TagEditor({
+  tags,
+  onChange,
+  onDraftDirtyChange,
+  disabled = false,
+  placeholder = "添加标签",
+  removeLabel = (tag) => `移除标签 ${tag}`,
+  lengthErrorLabel,
+  tagLimit,
+  suggestions = [],
+  testIdPrefix,
+}: TagEditorProps) {
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLSpanElement>(null);
+  const composingRef = useRef(false);
+  const draftDirty = Boolean(draft.trim());
+  useEffect(() => {
+    onDraftDirtyChange?.(draftDirty);
+  }, [draftDirty, onDraftDirtyChange]);
+  useEffect(() => () => onDraftDirtyChange?.(false), [onDraftDirtyChange]);
 
   const normalizedDraft = draft.trim().toLowerCase();
   const tooLong = isTagNameTooLong(draft.replace(/,/g, ""));
@@ -87,7 +83,12 @@ function TagEditorField(
     if (tag) add(tag);
   }
 
-  useImperativeHandle(ref, () => ({ commitDraft: () => commit(draft) }));
+  useOutsideClick(containerRef, !disabled && Boolean(draft.trim()), () => {
+    // Native composition must publish its final text before blur commits it.
+    if (composingRef.current) return;
+    commit(draft);
+    setOpen(false);
+  });
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -103,8 +104,10 @@ function TagEditorField(
       );
       return;
     }
-    if (event.key === "Escape" && showSuggestions) {
+    if (event.key === "Escape" && (showSuggestions || draft.trim())) {
       event.stopPropagation();
+      event.preventDefault();
+      commit(draft);
       setOpen(false);
       return;
     }
@@ -121,16 +124,19 @@ function TagEditorField(
 
   return (
     <span
-      className="task-detail-tag-editor relative flex min-w-0 flex-1 flex-wrap items-center gap-1.5"
+      ref={containerRef}
+      className="task-detail-tag-editor relative flex min-w-0 flex-1 flex-wrap items-center gap-1.5 rounded-md focus-within:ring-2 focus-within:ring-focus/70"
       onClick={() => inputRef.current?.focus()}
     >
       {tags.map((tag) => (
         <span
           key={tag}
           data-testid={`${testIdPrefix}-tag-${tag}`}
-          className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary"
+          className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary"
         >
-          {tag}
+          <span className="min-w-0 truncate" title={tag}>
+            {tag}
+          </span>
           {!disabled && (
             <button
               type="button"
@@ -139,7 +145,7 @@ function TagEditorField(
               onClick={() =>
                 onChange(tags.filter((candidate) => candidate !== tag))
               }
-              className="flex h-3.5 w-3.5 items-center justify-center rounded-full text-text-muted transition hover:bg-hover hover:text-text-primary"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-text-secondary transition hover:bg-hover hover:text-text-primary md:h-6 md:w-6"
             >
               <X className="h-2.5 w-2.5" />
             </button>
@@ -165,6 +171,12 @@ function TagEditorField(
             }
           }}
           onFocus={() => setOpen(true)}
+          onCompositionStart={() => {
+            composingRef.current = true;
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false;
+          }}
           onKeyDown={handleKeyDown}
           onBlur={() => {
             setOpen(false);
@@ -172,7 +184,7 @@ function TagEditorField(
           }}
           placeholder={tags.length === 0 ? placeholder : ""}
           className={cn(
-            "h-6 min-w-16 flex-1 bg-transparent text-xs text-text-primary outline-none placeholder:text-text-muted",
+            "h-11 min-w-16 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary md:h-7",
           )}
         />
       )}
@@ -199,7 +211,7 @@ function TagEditorField(
               onClick={() => add(candidate)}
               onMouseEnter={() => setHighlight(index)}
               className={cn(
-                "flex w-full items-center px-3 py-1.5 text-left text-xs text-text-primary transition",
+                "flex min-h-11 w-full items-center px-3 py-1.5 text-left text-sm text-text-primary transition md:min-h-6",
                 index === highlight ? "bg-muted" : "hover:bg-muted",
               )}
             >
@@ -211,5 +223,3 @@ function TagEditorField(
     </span>
   );
 }
-
-export const TagEditor = forwardRef(TagEditorField);

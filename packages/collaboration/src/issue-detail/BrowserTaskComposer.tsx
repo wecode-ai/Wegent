@@ -341,6 +341,7 @@ export function BrowserTaskComposer({
             }}
             imageServices={imageServices}
             labels={{
+              removeAttachment: t('todo.remove_attachment'),
               showText: t('workbench.show_text_attachment_in_composer'),
               addingText: t('workbench.adding_pasted_text_attachment'),
               pastedText: t('workbench.pasted_text_attachment'),

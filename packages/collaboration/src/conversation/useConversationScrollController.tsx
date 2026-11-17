@@ -188,31 +188,34 @@ export function useConversationScrollController({
     commandRef.current = false
     lastScrollPositionRef.current = viewport.scrollTop
   }, [])
-  const save = useCallback((measuredDistanceFromBottomPx?: number) => {
-    const viewport = activeScrollRefRef.current.current
-    if (!viewport || messages.length === 0 || latestRef.current.autoScrollSuspended) return
-    const snapshot: ConversationScrollSnapshot =
-      modeRef.current === 'follow'
-        ? { pinnedToBottom: true, distanceFromBottomPx: 0 }
-        : modeRef.current === 'drag'
-          ? {
-              pinnedToBottom: false,
-              distanceFromBottomPx: getDistanceFromBottom(viewport),
-            }
-          : createScrollSnapshot(viewport)
-    if (modeRef.current === 'read' || modeRef.current === 'drag') snapshot.pinnedToBottom = false
-    if (modeRef.current === 'follow') {
-      snapshot.pinnedToBottom = true
-      snapshot.distanceFromBottomPx = 0
-      delete snapshot.anchor
-    }
-    lastSnapshotRef.current = { key: currentScrollKey, snapshot }
-    if (currentScrollKey) setConversationScrollSnapshot(currentScrollKey, snapshot)
-    // Follow steps already measured the range and read back their applied offset.
-    setShowScrollButton(
-      (measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport)) > BOTTOM_THRESHOLD
-    )
-  }, [currentScrollKey, messages.length])
+  const save = useCallback(
+    (measuredDistanceFromBottomPx?: number) => {
+      const viewport = activeScrollRefRef.current.current
+      if (!viewport || messages.length === 0 || latestRef.current.autoScrollSuspended) return
+      const snapshot: ConversationScrollSnapshot =
+        modeRef.current === 'follow'
+          ? { pinnedToBottom: true, distanceFromBottomPx: 0 }
+          : modeRef.current === 'drag'
+            ? {
+                pinnedToBottom: false,
+                distanceFromBottomPx: getDistanceFromBottom(viewport),
+              }
+            : createScrollSnapshot(viewport)
+      if (modeRef.current === 'read' || modeRef.current === 'drag') snapshot.pinnedToBottom = false
+      if (modeRef.current === 'follow') {
+        snapshot.pinnedToBottom = true
+        snapshot.distanceFromBottomPx = 0
+        delete snapshot.anchor
+      }
+      lastSnapshotRef.current = { key: currentScrollKey, snapshot }
+      if (currentScrollKey) setConversationScrollSnapshot(currentScrollKey, snapshot)
+      // Follow steps already measured the range and read back their applied offset.
+      setShowScrollButton(
+        (measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport)) > BOTTOM_THRESHOLD
+      )
+    },
+    [currentScrollKey, messages.length]
+  )
   const follow = useCallback(
     (smooth = false) => {
       if (
@@ -558,10 +561,15 @@ export function useConversationScrollController({
       if (scrollbarPointer) {
         changeMode('drag')
         clearAnchor()
-      } else captureUserViewportAnchor()
-      if (event instanceof WheelEvent && event.deltaY < 0) changeMode('read')
-      if (event instanceof KeyboardEvent && ['ArrowUp', 'PageUp', 'Home'].includes(event.key))
-        changeMode('read')
+      } else {
+        captureUserViewportAnchor()
+        // Publish reader intent before row measurements can precede native scroll delivery.
+        if (
+          inputDirectionRef.current === 'backward' ||
+          getDistanceFromBottom(viewport) > SCROLLED_TO_BOTTOM_THRESHOLD
+        )
+          changeMode('read')
+      }
     }
     const scroll = () => {
       if (latestRef.current.autoScrollSuspended || modeRef.current === 'navigate') return

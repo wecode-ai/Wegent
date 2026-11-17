@@ -169,14 +169,15 @@ export async function createAutoTaggedIssue(
     'The newly created Issue detail was not opened',
     timeoutMs
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-more-properties"]'), {
+  await control.command('waitFor', scoped('[data-testid="issue-primary-metadata"]'), {
+    visible: true,
     timeoutMs,
   })
   await control.command('fill', '[data-testid="cloud-todo-detail-tag-input"]', { value: 'auto' })
   await control.command('press', '[data-testid="cloud-todo-detail-tag-input"]', { key: 'Enter' })
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
-  await control.command('waitFor', '[data-testid="cloud-todo-more-properties-popover"]', {
-    visible: false,
+  await control.command('waitFor', scoped('[data-testid="issue-primary-metadata"]'), {
+    visible: true,
     timeoutMs,
   })
   return { issue, rule }

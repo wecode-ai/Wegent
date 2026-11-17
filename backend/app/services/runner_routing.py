@@ -337,10 +337,7 @@ def _resolve_routing(
         candidates,
         config["runtime"],
         automatic,
-        allow_native_default=ExecutionPolicy.model_validate(
-            config["execution_policy"]
-        ).mode
-        == "fixed",
+        allow_native_default=policy.mode == "fixed",
     )
     if model.source == "cloud":
         from app.services.runner_cloud_models import require_cloud_model
@@ -354,7 +351,7 @@ def _resolve_routing(
             model,
             allow_hidden=allow_hidden_models or model_policy.mode == "fixed",
         )
-    elif model.source == "native" and config["execution_policy"]["mode"] != "fixed":
+    elif model.source == "native" and policy.mode != "fixed":
         raise routing_error(
             "RUNNER_MODEL_UNAVAILABLE", "Local models require a fixed environment"
         )

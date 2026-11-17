@@ -8,6 +8,7 @@ import {
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { waitForClosedStartupSplash } from '../modules/native-window-state.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
+import { createStartupLiveWriter } from '../modules/startup-live-writer.mjs'
 
 async function reloadWorkbench(control, timeoutMs) {
   const before = control.readyCount
@@ -83,6 +84,7 @@ export async function createDesktopScenario({
   let replacement
   let appPid
   let restartDesktopApp
+  const liveWriter = createStartupLiveWriter({ resultDir, timeoutMs: workbenchReadyTimeoutMs })
   const preferences = join(electronUserDataDirectory, 'app-preferences.json')
   const preferencesBackup = `${preferences}.startup-original`
   const metadata = JSON.parse(
@@ -99,11 +101,13 @@ export async function createDesktopScenario({
     async prepareApp(input) {
       appBinary = input.appBinary
       environment = input.appEnvironment
+      await liveWriter.prepareApp(input)
       // A real unreadable settings path must not authorize credential changes or hide the UI.
       await rename(preferences, preferencesBackup)
       await mkdir(preferences)
     },
     async verify(control) {
+      await liveWriter.verify(control)
       await control.command('waitFor', '[data-testid="app-shell"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
@@ -240,5 +244,6 @@ export async function createDesktopScenario({
         )
       }
     },
+    cleanup: () => liveWriter.cleanup(),
   }
 }

@@ -338,10 +338,19 @@ export function SystemDragBridge() {
     const reportTransferError = (error: unknown) => {
       latest.current.setWorkbenchError(error instanceof Error ? error.message : String(error))
     }
-    const takePending = () =>
-      invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending').then(payloads => {
+    let pending = false
+    const takePending = async () => {
+      if (pending || cancelled) return
+      pending = true
+      try {
+        const payloads = await invokeDesktopHost<SystemDropPayload[]>('systemDrag.takePending')
         if (!cancelled) payloads.forEach(handlePayload)
-      })
+      } catch (error) {
+        if (!cancelled) reportTransferError(error)
+      } finally {
+        pending = false
+      }
+    }
     void takePending()
     const poll = window.setInterval(() => void takePending(), 250)
     return () => {

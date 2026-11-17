@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { stripAppBasePath } from '@/config/runtime'
 import { parseRuntimeTaskRoute } from '@/lib/navigation'
+import { resolveWorkbenchDeviceId } from '@/lib/workbench-device'
 import { isSameRuntimeTaskAddress } from './workbenchRuntimeHelpers'
 import { useWorkbench } from './useWorkbench'
 import { useRuntimeTaskSummaryResolver } from './runtimeTaskLifecycle'
@@ -29,17 +30,23 @@ export function useRuntimeTaskRouteRestoration(enabled = true) {
   const route = useMemo(() => {
     if (!enabled || state.isBootstrapping) return null
     const location = new URL(runtimeTaskLocation, window.location.origin)
-    return parseRuntimeTaskRoute(stripAppBasePath(location.pathname), location.search)
-  }, [enabled, runtimeTaskLocation, state.isBootstrapping])
+    const parsed = parseRuntimeTaskRoute(stripAppBasePath(location.pathname), location.search)
+    return parsed
+      ? { ...parsed, deviceId: resolveWorkbenchDeviceId(state.devices, parsed.deviceId)! }
+      : null
+  }, [enabled, runtimeTaskLocation, state.isBootstrapping, state.devices])
   const runtimeTask = resolveTask(route)
   const routeRuntimeTask = useMemo(() => {
+    const current = state.currentRuntimeTask
+    const currentAddress = current
+      ? { ...current, deviceId: resolveWorkbenchDeviceId(state.devices, current.deviceId)! }
+      : null
     const currentHasWorkspace = Boolean(
       state.currentRuntimeTask?.workspacePath || state.currentRuntimeTask?.workspaceKind === 'chat'
     )
     if (
       !route ||
-      ((runtimeTask || currentHasWorkspace) &&
-        isSameRuntimeTaskAddress(state.currentRuntimeTask, route))
+      ((runtimeTask || currentHasWorkspace) && isSameRuntimeTaskAddress(currentAddress, route))
     )
       return null
     if (!runtimeTask) return route
@@ -47,7 +54,7 @@ export function useRuntimeTaskRouteRestoration(enabled = true) {
       ...route,
       ...(runtimeTask?.workspacePath ? { workspacePath: runtimeTask.workspacePath } : {}),
     }
-  }, [route, runtimeTask, state.currentRuntimeTask])
+  }, [route, runtimeTask, state.currentRuntimeTask, state.devices])
 
   useEffect(() => {
     if (!routeRuntimeTask || getNavigationSnapshot() !== runtimeTaskLocation) return

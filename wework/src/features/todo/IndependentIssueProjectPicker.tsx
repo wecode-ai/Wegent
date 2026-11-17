@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
-import type { CloudProject } from '@/api/deliveries'
+import { useCallback, useState } from 'react'
+import { usePanelData } from '@wegent/collaboration/platform'
 import type { IndependentIssue, PersonalIssuesApi } from '@/api/personalIssues'
 import { useTranslation } from '@/hooks/useTranslation'
+import { IssueProjectSelect } from './IssueProjectSelect'
 
 export function IndependentIssueProjectPicker({
   api,
@@ -17,32 +18,15 @@ export function IndependentIssueProjectPicker({
   onCancel(): void
 }) {
   const { t } = useTranslation('common')
-  const [projects, setProjects] = useState<CloudProject[]>([])
+  const loadProjects = useCallback(() => api.projects(), [api])
+  const { data, error, loading, refresh } = usePanelData(loadProjects)
+  const projects = (data?.items ?? []).filter(project =>
+    ['local', 'backend'].includes(project.task_provider)
+  )
   const [selected, setSelected] = useState('')
   const [targetStatus, setTargetStatus] = useState('')
   const statuses =
     projects.find(project => String(project.id) === selected)?.board_config?.statuses ?? []
-  const [error, setError] = useState('')
-  const [revision, setRevision] = useState(0)
-  useEffect(() => {
-    let active = true
-    void api.projects().then(
-      page => {
-        if (active) {
-          setProjects(
-            page.items.filter(project => ['local', 'backend'].includes(project.task_provider))
-          )
-          setError('')
-        }
-      },
-      reason => {
-        if (active) setError(reason instanceof Error ? reason.message : String(reason))
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [api, revision])
   return (
     <section
       className="mb-5 grid gap-3 rounded-md border border-border p-4"
@@ -50,14 +34,23 @@ export function IndependentIssueProjectPicker({
     >
       <h3 className="text-base font-medium">{t('independentIssues.attachProject')}</h3>
       <p className="text-sm text-text-secondary">{t('independentIssues.attachHint')}</p>
-      {error ? (
-        <div role="alert" className="text-sm text-error">
-          {error}
+      {loading && (
+        <p
+          role="status"
+          data-testid="issue-project-loading"
+          className="text-sm text-text-secondary"
+        >
+          {t('issue_creation.projects_loading')}
+        </p>
+      )}
+      {error !== undefined ? (
+        <div role="alert" className="text-sm text-destructive">
+          {t('issue_creation.projects_load_failed')}
           <button
             type="button"
             data-testid="independent-issue-project-retry"
             className="min-h-11 px-3 underline md:min-h-8"
-            onClick={() => setRevision(value => value + 1)}
+            onClick={() => void refresh()}
           >
             {t('independentIssues.retry')}
           </button>
@@ -65,28 +58,22 @@ export function IndependentIssueProjectPicker({
       ) : null}
       <label className="grid gap-2 text-sm">
         {t('independentIssues.chooseProject')}
-        <select
-          data-testid="independent-issue-project"
+        <IssueProjectSelect
+          projects={projects}
           value={selected}
-          disabled={busy}
-          onChange={event => {
-            const project = projects.find(item => String(item.id) === event.target.value)
-            setSelected(event.target.value)
+          disabled={busy || loading}
+          placeholder={t('independentIssues.chooseProject')}
+          onChange={value => {
+            const project = projects.find(item => String(item.id) === value)
+            setSelected(value)
             setTargetStatus(
               project?.board_config?.statuses.some(status => status.id === issue.status)
                 ? issue.status
                 : ''
             )
           }}
-          className="min-h-11 rounded-md border border-border bg-background px-3 md:min-h-8"
-        >
-          <option value="">{t('independentIssues.chooseProject')}</option>
-          {projects.map(project => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
+          className="min-h-11 min-w-0 rounded-md border border-border bg-background px-3 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8"
+        />
       </label>
       {selected ? (
         <label className="grid gap-2 text-sm">

@@ -164,7 +164,7 @@ for (const destination of ['existing', 'new'] as const) {
   })
 }
 
-test('keeps the built-in template form open without creating a project when the default executor is missing', async ({
+test('creates a built-in template project without a device and defers runtime setup', async ({
   page,
   request,
 }) => {
@@ -190,17 +190,58 @@ test('keeps the built-in template form open without creating a project when the 
     await expect(picker.or(name)).toBeVisible()
     if (await picker.isVisible()) await picker.click()
     await page.getByTestId('collaboration-project-create-confirm').click()
-    await expect(
-      page.getByTestId('collaboration-project-create-dialog').getByRole('alert')
-    ).toContainText(/执行设备暂不可用|execution device is unavailable/)
-    await expect(name).toHaveValue(definitions[0].spec.resources.collaboration.project.name)
+    await expect(page.getByTestId('collaboration-project-create-dialog')).toBeHidden()
+    await expect(page.getByTestId('collaboration-board')).toBeVisible()
     const projects = await request.get(
       `${API_BASE_URL}/api/v1/workspaces/${workspace.id}/projects`,
       { headers }
     )
     expect(projects.ok()).toBeTruthy()
-    expect((await projects.json()).items).toHaveLength(0)
+    const created = (await projects.json()).items
+    expect(created).toHaveLength(1)
+    expect(created[0].name).toBe(definitions[0].spec.resources.collaboration.project.name)
+    const agents = await request.get(
+      `${API_BASE_URL}/api/v1/cloud-projects/${created[0].id}/chat-agents`,
+      { headers }
+    )
+    expect(agents.ok()).toBeTruthy()
+    const definitionsCreated = await agents.json()
+    expect(definitionsCreated).toHaveLength(
+      definitions[0].spec.resources.collaboration.agents.length
+    )
+    for (const agent of definitionsCreated) {
+      expect(agent.executionPolicy ?? agent.execution_policy).toMatchObject({ mode: 'user_select' })
+      expect((agent.executionPolicy ?? agent.execution_policy).environment_id ?? null).toBeNull()
+      expect(agent.modelPolicy ?? agent.model_policy).toMatchObject({ mode: 'user_select' })
+      expect((agent.modelPolicy ?? agent.model_policy).model ?? null).toBeNull()
+    }
+    const rules = await request.get(
+      `${API_BASE_URL}/api/v1/cloud-projects/${created[0].id}/automations`,
+      { headers }
+    )
+    expect(rules.ok()).toBeTruthy()
+    const automations = await rules.json()
+    expect(automations).not.toHaveLength(0)
+    expect(automations.every((rule: { enabled: boolean }) => !rule.enabled)).toBe(true)
   } finally {
+    // Project creation is independent of device readiness, so remove its resources first.
+    const projects = await request.get(
+      `${API_BASE_URL}/api/v1/workspaces/${workspace.id}/projects`,
+      { headers }
+    )
+    expect(projects.ok()).toBeTruthy()
+    for (const project of (await projects.json()).items) {
+      const current = await request.get(`${API_BASE_URL}/api/v1/cloud-projects/${project.id}`, {
+        headers,
+      })
+      expect(current.ok()).toBeTruthy()
+      const removed = await request.delete(
+        `${API_BASE_URL}/api/v1/cloud-projects/${project.id}?version=${(await current.json()).version}`,
+        { headers }
+      )
+      expect(removed.status()).toBe(204)
+    }
+
     const current = await request.get(`${API_BASE_URL}/api/v1/workspaces/${workspace.id}`, {
       headers,
     })
