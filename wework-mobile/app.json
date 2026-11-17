@@ -11,7 +11,7 @@
       "supportsTablet": true,
       "icon": "./assets/icon.png",
       "bundleIdentifier": "io.wecode.wework",
-      "buildNumber": "15",
+      "buildNumber": "16",
       "appleTeamId": "27XH7KRW54",
       "config": {
         "usesNonExemptEncryption": false
