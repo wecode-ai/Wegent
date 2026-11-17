@@ -9,8 +9,14 @@ export function conversationReferenceReadEvents(request, callId) {
     if (typeof value === 'string') strings.push(value)
     else if (value && typeof value === 'object') Object.values(value).forEach(collect)
   }
-  collect(request.input)
-  const id = strings.join('\n').match(/"conversation_id"\s*:\s*"(conv_[A-Za-z0-9_-]+)"/)?.[1]
+  for (const message of request.input ?? []) {
+    if (message.role === 'user') collect(message.content)
+  }
+  const reference = strings.findLast(value => value.includes('[referencedConversations]'))
+  const id = reference
+    ?.split('[referencedConversations]')
+    .at(-1)
+    ?.match(/"conversation_id"\s*:\s*"(conv_[A-Za-z0-9_-]+)"/)?.[1]
   assert.ok(id, 'The submission must contain a native conversation reference')
   const selection = selectMcpToolRequest(
     request,
