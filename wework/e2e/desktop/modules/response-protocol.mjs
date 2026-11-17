@@ -107,10 +107,15 @@ function delegatedTaskResultEvents(body) {
     history = JSON.parse(output)
     break
   }
-  assert.ok(
-    history,
-    `The native read_task call failed in Code Mode ${DELEGATED_RESULT_READ_ATTEMPTS} times: ${readMcpToolOutput(body, `${baseCallId}-retry-${DELEGATED_RESULT_READ_ATTEMPTS - 1}`)}`
-  )
+  if (!history) {
+    const lastOutput = readMcpToolOutput(
+      body,
+      `${baseCallId}-retry-${DELEGATED_RESULT_READ_ATTEMPTS - 1}`
+    )
+    assert.fail(
+      `The native read_task call failed in Code Mode ${DELEGATED_RESULT_READ_ATTEMPTS} times: ${lastOutput}`
+    )
+  }
   assert.equal(history.taskId, taskId, 'Completion reporting must read the exact child task')
   assert.ok(Array.isArray(history.messages), 'Completion reporting requires a real transcript')
   const answer = history.messages
