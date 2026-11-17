@@ -1113,23 +1113,40 @@ export class EmbeddedBrowserManager {
   }> {
     const entry = this.required(this.activeLabel(label))
     const contents = entry.contents
+    const startedAt = Date.now()
+    const logStage = (stage: string) =>
+      console.info('[embedded-browser-inspector]', {
+        stage,
+        label: entry.label,
+        contentsId: contents.id,
+        elapsedMs: Date.now() - startedAt,
+      })
+    logStage('layout-started')
     const beforeFrame = await waitForSettledFrame(entry, 5_000)
+    logStage('layout-settled')
     const beforeWindowCount = this.nativeWindowCount()
+    logStage('open-requested')
     contents.openDevTools({ mode: 'detach', activate: true })
+    logStage('open-request-returned')
     await waitForState(
       () => contents.isDevToolsOpened() && contents.devToolsWebContents !== null,
       DETACHED_INSPECTOR_OPEN_TIMEOUT_MS,
       'Timed out waiting for detached embedded browser Inspector'
     )
+    logStage('opened')
     await waitForStableFrame(entry, beforeFrame, 5_000)
+    logStage('frame-verified')
     const afterFrame = browserFrame(entry.bounds)
     const afterWindowCount = this.nativeWindowCount()
+    logStage('close-requested')
     contents.closeDevTools()
+    logStage('close-request-returned')
     await waitForState(
       () => !contents.isDevToolsOpened(),
       5_000,
       'Timed out closing detached embedded browser Inspector'
     )
+    logStage('closed')
     return {
       beforeFrame,
       afterFrame,

@@ -1459,32 +1459,32 @@ describe('branch environment commands', () => {
       source: 'runtime' as const,
     }
 
-    await expect(listProjectBranches({ executeCommand }, project, target)).resolves.toEqual([
-      'main',
-    ])
+    const preflightWorktree = vi.fn().mockResolvedValue({
+      success: true,
+      gitRepository: true,
+      gitRef: 'requested-ref',
+      currentBranch: 'main',
+      branches: ['release', 'main'],
+    })
+    await expect(
+      listProjectBranches({ executeCommand, preflightWorktree }, project, target)
+    ).resolves.toEqual(['main', 'release'])
     await checkoutProjectBranch({ executeCommand }, project, 'human/alpaca', target)
     await createAndCheckoutProjectBranch({ executeCommand }, project, 'human/new-branch', target)
 
+    expect(preflightWorktree).toHaveBeenCalledExactlyOnceWith({
+      deviceId: 'runtime-device',
+      sourcePath: '/workspace/worktrees/1029/Wegent',
+      includeBranches: true,
+    })
     expect(executeCommand).toHaveBeenNthCalledWith(1, 'runtime-device', {
-      command_key: 'git_branch_list',
-      path: '/workspace/worktrees/1029/Wegent',
-      timeout_seconds: 15,
-      max_output_bytes: 1024 * 64,
-    })
-    expect(executeCommand).toHaveBeenNthCalledWith(2, 'runtime-device', {
-      command_key: 'git_branch',
-      path: '/workspace/worktrees/1029/Wegent',
-      timeout_seconds: 10,
-      max_output_bytes: 4096,
-    })
-    expect(executeCommand).toHaveBeenNthCalledWith(3, 'runtime-device', {
       command_key: 'git_checkout',
       path: '/workspace/worktrees/1029/Wegent',
       args: ['human/alpaca'],
       timeout_seconds: 30,
       max_output_bytes: 8192,
     })
-    expect(executeCommand).toHaveBeenNthCalledWith(4, 'runtime-device', {
+    expect(executeCommand).toHaveBeenNthCalledWith(2, 'runtime-device', {
       command_key: 'git_checkout_new',
       path: '/workspace/worktrees/1029/Wegent',
       args: ['human/new-branch'],

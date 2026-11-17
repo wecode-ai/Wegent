@@ -5,7 +5,7 @@
   },
   "patch": {
     "path": "patches/ish-wework-mobile-compat.patch",
-    "sha256": "399be9bb5328bbffc0169959041ada2c3bd4117427030c6961b7d80aa8f12339"
+    "sha256": "e2bf87b44613951046d4cb3226632e48f27d46a099416f1ffa9e891cba75418b"
   },
   "licenses": [
     {

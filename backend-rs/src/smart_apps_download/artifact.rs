@@ -25,7 +25,7 @@ use crate::permissions::EntityResolvers;
 use wegent_storage::minio_client::{self, MinioConfig};
 
 /// `settings.PLUGIN_STORAGE_BUCKET` default (`app/core/config.py`).
-const DEFAULT_BUCKET: &str = "wegent";
+const DEFAULT_BUCKET: &str = "plugins";
 /// `settings.ATTACHMENT_S3_REGION` default.
 const DEFAULT_REGION: &str = "us-east-1";
 

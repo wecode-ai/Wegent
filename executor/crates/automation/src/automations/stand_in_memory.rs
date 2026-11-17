@@ -19,12 +19,12 @@ pub fn memory_review(user: i64, device: &str) -> Result<Automation, String> {
     ));
     let mut review: Automation = serde_json::from_value(serde_json::json!({
         "id":format!("stand-in-memory-review-{user}"), "version":0,
-        "name":"分身记忆整理", "prompt":prompt,
+        "name":"助理记忆整理", "prompt":prompt,
         "schedule":{"type":"interval","value":6,"unit":"hours"},
         "timezone":"UTC", "enabled":true, "conversationMode":"independent",
         "notificationPolicy":"attention_only",
         "taskRequest":{"schemaVersion":2,"runtime":"codex","deviceId":device,
-            "title":"分身记忆整理","message":prompt,
+            "title":"助理记忆整理","message":prompt,
             "standInOwner":{"userId":user,"roleId":"@primary"},
             "standInCalendar":{"template":MEMORY_REVIEW_TEMPLATE}},
         "taskPayload":{"runtime":"codex"}

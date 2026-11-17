@@ -153,6 +153,18 @@ index fa1bd9b5a26b778883933a282a356dc386ea8a5a..f84f74a6c809b5d1db7c9f4496b7b7f6
          } else if (base_opcode == 4 && size == 0) {
              elem_size = 4;
              lane = (Q << 1) | S;
+diff --git a/fs/fd.h b/fs/fd.h
+index 8f8c135efe2c7bf30e091a510ea921bd5c83d76e..d5fd21b2e1d70004ae4ac3c4dffec2864fea8584 100644
+--- a/fs/fd.h
++++ b/fs/fd.h
+@@ -129,6 +129,7 @@ struct fd {
+     struct statbuf open_stat;
+     struct statbuf stat; // for adhoc fs
+     struct fd_sockrestart sockrestart; // argh
++    atomic_uint real_generation;
+ 
+     // these are used for a variety of things related to the fd
+     lock_t lock;
 diff --git a/fs/mount.c b/fs/mount.c
 index 2e4b751501baf79c3105bc27a1b456ac2ee8c67f..89663a4494caa7cc9623e1cfcf8f473aad974fda 100644
 --- a/fs/mount.c
@@ -238,6 +250,157 @@ index 2e4b751501baf79c3105bc27a1b456ac2ee8c67f..89663a4494caa7cc9623e1cfcf8f473a
  }
  
  struct list mounts = {&mounts, &mounts};
+diff --git a/fs/poll.c b/fs/poll.c
+index c9e7ac538ad4371c434409f0c56755aae15347c2..17c3c27ccb2b407e19813ceab93f9dc0260adb12 100644
+--- a/fs/poll.c
++++ b/fs/poll.c
+@@ -16,9 +16,6 @@
+ 
+ #include "fs/sockrestart.h"
+ 
+-// From kernel/calls.h - avoid circular include
+-extern _Noreturn void do_exit_group(int status);
+-
+ #if defined(__linux__)
+ #include <sys/epoll.h>
+ #define HAVE_EPOLL 1
+@@ -171,6 +168,7 @@ int poll_add_fd(struct poll *poll, struct fd *fd, int fd_no, int types, union po
+     poll_fd->types = types;
+     poll_fd->info = info;
+     poll_fd->triggered_types = 0;
++    poll_fd->real_generation = atomic_load(&fd->real_generation);
+     poll_fd->oneshot_fired = false;
+ 
+     // Link first, then refresh the (shared) host registration to the union of
+@@ -417,6 +415,22 @@ int poll_wait(struct poll *poll_, poll_callback_t callback, void *context, struc
+             int poll_types = 0;
+             if (fd->ops->poll)
+                 poll_types = fd->ops->poll(fd);
++            unsigned generation = atomic_load(&fd->real_generation);
++            if (poll_fd_is_real(poll_fd) && poll_fd->real_generation != generation) {
++                // dup2 removes the old descriptor's host filters. Re-register
++                // the union for this poll without changing guest ONESHOT state.
++                if (poll_real_refresh(poll_, fd) < 0) {
++                    res = errno_map();
++                    goto out;
++                }
++                struct poll_fd *member;
++                list_for_each_entry(&poll_->poll_fds, member, fds) {
++                    if (member->fd == fd) {
++                        member->real_generation = generation;
++                        member->triggered_types = 0;
++                    }
++                }
++            }
+             poll_types &= poll_fd->types | POLL_HUP | POLL_ERR;
+             if (poll_fd->types & POLL_EDGETRIGGERED) {
+                 poll_types &= ~poll_fd->triggered_types;
+@@ -484,9 +498,7 @@ int poll_wait(struct poll *poll_, poll_callback_t callback, void *context, struc
+         }
+ 
+         // wait for a ready notification
+-        list_for_each_entry(&poll_->poll_fds, poll_fd, fds) {
+-            sockrestart_begin_listen_wait(poll_fd->fd);
+-        }
++        sockrestart_begin_listen_wait();
+         unlock(&poll_->lock);
+         if (spurious >= POLL_SPIN_GRACE)
+             poll_spin_backoff(spurious);
+@@ -513,7 +525,8 @@ int poll_wait(struct poll *poll_, poll_callback_t callback, void *context, struc
+         do {
+             err = real_poll_wait(&poll_->real, e, sizeof(e)/sizeof(e[0]), wait_timeout);
+             saved_errno = errno;  // save immediately before anything clobbers it
+-        } while (saved_errno == EINTR && sockrestart_should_restart_listen_wait());
++        } while (err < 0 && saved_errno == EINTR && sockrestart_should_restart_listen_wait());
++        sockrestart_end_listen_wait();
+         current->blocking = false;
+         // Only update last_unblocked_ns when actual events were received.
+         // Timeout returns (err==0) don't count as real progress — the poll_wait
+@@ -532,54 +545,11 @@ int poll_wait(struct poll *poll_, poll_callback_t callback, void *context, struc
+         if (err == 0 && wait_timeout == &bounded_timeout) {
+             spurious = 0;
+             lock(&poll_->lock);
+-            list_for_each_entry(&poll_->poll_fds, poll_fd, fds) {
+-                sockrestart_end_listen_wait(poll_fd->fd);
+-            }
+             // Check for group exit so blocking threads unblock promptly
+             if (current->group->doing_group_exit) {
+                 res = _EINTR;
+                 break;
+             }
+-            // Safety valve: if no thread in this process group has
+-            // done real work for >60s and there are no live child
+-            // processes, force exit. Catches V8/libuv exit cleanup
+-            // hangs where the event loop spins idle forever.
+-            //
+-            // Exceptions:
+-            //   - pid 1 (init): legitimately idles, killing halts the system
+-            //   - processes with a controlling TTY: interactive shells idle
+-            //     waiting for user input and must not be killed
+-            if (current->pid != 1 && current->group->tty == NULL) {
+-                struct timespec _now;
+-                clock_gettime(CLOCK_MONOTONIC, &_now);
+-                uint64_t now_ns = (uint64_t)_now.tv_sec * 1000000000ULL + _now.tv_nsec;
+-                uint64_t last = atomic_load_explicit(
+-                    &current->group->last_progress_ns, memory_order_relaxed);
+-                int64_t idle_s = (int64_t)(now_ns - last) / 1000000000LL;
+-                if (idle_s >= 60) {
+-                    bool has_live_children = false;
+-                    int thread_count = 0;
+-                    lock(&pids_lock);
+-                    lock(&current->group->lock);
+-                    struct task *t_iter;
+-                    list_for_each_entry(&current->group->threads, t_iter, group_links) {
+-                        thread_count++;
+-                        struct task *child;
+-                        list_for_each_entry(&t_iter->children, child, siblings) {
+-                            if (child->group != current->group && !child->zombie)
+-                                has_live_children = true;
+-                        }
+-                    }
+-                    unlock(&current->group->lock);
+-                    unlock(&pids_lock);
+-                    if (!has_live_children) {
+-                        if (ish_exec_trace())
+-                            printk("SAFETY-VALVE[poll]: pid=%d idle %llds, %d threads → exit_group\n",
+-                                   current->pid, (long long)idle_s, thread_count);
+-                        do_exit_group(0);
+-                    }
+-                }
+-            }
+             if (timeout != NULL) {
+                 // Timed wait: subtract elapsed time
+                 timeout->tv_sec -= 1;
+@@ -591,9 +561,6 @@ int poll_wait(struct poll *poll_, poll_callback_t callback, void *context, struc
+             continue;
+         }
+         lock(&poll_->lock);
+-        list_for_each_entry(&poll_->poll_fds, poll_fd, fds) {
+-            sockrestart_end_listen_wait(poll_fd->fd);
+-        }
+ 
+         if (err < 0) {
+             errno = saved_errno;
+@@ -625,6 +592,7 @@ int poll_wait(struct poll *poll_, poll_callback_t callback, void *context, struc
+         }
+     }
+ 
++out:
+     // release the pipe
+     if (--poll_->waiters == 0) {
+         real_poll_update(&poll_->real, poll_->notify_pipe[0], 0, NULL);
+diff --git a/fs/poll.h b/fs/poll.h
+index f057f71f7cbfcca397218f3f84789328860cc7bd..a779b3a96fd6dc8e4154a9e2981c56b079625637 100644
+--- a/fs/poll.h
++++ b/fs/poll.h
+@@ -52,6 +52,7 @@ struct poll_fd {
+     // returned its bits are set here, and those bits are ignored on the next
+     // call to poll_wait. The bits are cleared by poll_wakeup.
+     int triggered_types;
++    unsigned real_generation;
+     // A fired POLL_ONESHOT registration is DISABLED in place (Linux keeps
+     // the registration and re-arms it on EPOLL_CTL_MOD), never unlinked from
+     // inside poll_wait: unlinking there holds only poll->lock while
 diff --git a/fs/proc/pid.c b/fs/proc/pid.c
 index 2920f5254ff969fed6ef7c34d7046ab2189448d5..f7e8c2d1c478f48dbfa8695c8c87fa93c8489450 100644
 --- a/fs/proc/pid.c
@@ -322,7 +485,7 @@ index 27dc77d65b5cfd48440b9e85c8efa18c89034a2b..22944ae5ba6fe596aafed3d2c8c51048
          if (pid > MAX_PID)
              return false;
 diff --git a/fs/real.c b/fs/real.c
-index d5af5b03325f93bb070ac080afedf62734a3cf53..9db9d1208d4de51607e1363eddaffb98a9d0f0f0 100644
+index d5af5b03325f93bb070ac080afedf62734a3cf53..c1256cbe152e17dcc2a784bcb029c89391f813ab 100644
 --- a/fs/real.c
 +++ b/fs/real.c
 @@ -177,24 +177,37 @@ int realfs_fstat(struct fd *fd, struct statbuf *fake_stat) {
@@ -377,11 +540,77 @@ index d5af5b03325f93bb070ac080afedf62734a3cf53..9db9d1208d4de51607e1363eddaffb98
  }
  
  ssize_t realfs_pread(struct fd *fd, void *buf, size_t bufsize, off_t off) {
+@@ -297,8 +310,10 @@ int realfs_poll(struct fd *fd) {
+         p.events |= POLLIN;
+     if ((flags & O_ACCMODE) != O_RDONLY)
+         p.events |= POLLOUT;
+-    if (poll(&p, 1, 0) <= 0)
+-        return 0;
++    int readiness = sockrestart_poll(fd, p.events);
++    if (readiness < 0)
++        return POLLERR;
++    p.revents = readiness;
+ 
+ #if defined(__APPLE__)
+     // this is the "WTF is apple smoking" section
 diff --git a/fs/sock.c b/fs/sock.c
-index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e268fe649b8 100644
+index 58dc3e325aac67ebbcf9643f9882a3e116e04538..628d1b9210beb810e78c85e55568c594a16ca997 100644
 --- a/fs/sock.c
 +++ b/fs/sock.c
-@@ -882,19 +882,34 @@ error:
+@@ -626,8 +626,19 @@ int_t sys_listen(fd_t sock_fd, int_t backlog) {
+     int err = listen(sock->real_fd, backlog);
+     if (err < 0)
+         return errno_map();
+-    sockrestart_begin_listen(sock);
+-    return err;
++    return sockrestart_begin_listen(sock, backlog);
++}
++
++static _Atomic uint64_t accept_calls, accept_failures;
++static _Atomic int accept_host_error, accept_guest_pid;
++
++struct ish_accept_diagnostics ish_get_accept_diagnostics(void) {
++    return (struct ish_accept_diagnostics) {
++        .calls = atomic_load_explicit(&accept_calls, memory_order_relaxed),
++        .failures = atomic_load_explicit(&accept_failures, memory_order_relaxed),
++        .host_error = atomic_load_explicit(&accept_host_error, memory_order_relaxed),
++        .guest_pid = atomic_load_explicit(&accept_guest_pid, memory_order_relaxed),
++    };
+ }
+ 
+ int_t sys_accept(fd_t sock_fd, addr_t sockaddr_addr, addr_t sockaddr_len_addr) {
+@@ -635,6 +646,9 @@ int_t sys_accept(fd_t sock_fd, addr_t sockaddr_addr, addr_t sockaddr_len_addr) {
+     struct fd *sock = sock_getfd(sock_fd);
+     if (sock == NULL)
+         return _EBADF;
++    int recovery = sockrestart_check_listener(sock);
++    if (recovery < 0)
++        return err_map(-recovery);
+     dword_t sockaddr_len = 0;
+     if (sockaddr_addr != 0) {
+         if (user_get(sockaddr_len_addr, sockaddr_len))
+@@ -644,12 +658,18 @@ int_t sys_accept(fd_t sock_fd, addr_t sockaddr_addr, addr_t sockaddr_len_addr) {
+     char sockaddr[sockaddr_len];
+     int client;
+     do {
+-        sockrestart_begin_listen_wait(sock);
++        sockrestart_begin_listen_wait();
+         errno = 0;
++        atomic_fetch_add_explicit(&accept_calls, 1, memory_order_relaxed);
+         client = accept(sock->real_fd,
+                 sockaddr_addr != 0 ? (void *) sockaddr : NULL,
+                 sockaddr_addr != 0 ? &sockaddr_len : NULL);
+-        sockrestart_end_listen_wait(sock);
++        if (client < 0) {
++            atomic_store_explicit(&accept_host_error, errno, memory_order_relaxed);
++            atomic_store_explicit(&accept_guest_pid, current->pid, memory_order_relaxed);
++            atomic_fetch_add_explicit(&accept_failures, 1, memory_order_relaxed);
++        }
++        sockrestart_end_listen_wait();
+     } while (sockrestart_should_restart_listen_wait() && errno == EINTR);
+     if (client < 0)
+         return errno_map();
+@@ -882,19 +902,34 @@ error:
      return err;
  }
  
@@ -423,7 +652,7 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
  }
  
  // Wait for a socket fd to become ready (readable or writable), with a
-@@ -904,10 +919,14 @@ static long monotonic_ms(void) {
+@@ -904,10 +939,14 @@ static long monotonic_ms(void) {
  //
  // Returns 0 when ready, _EINTR on guest signal, _EAGAIN on timeout expiry,
  // or a negative errno on poll() error.
@@ -442,7 +671,7 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
      bool slow_logged = false;
      for (;;) {
          if (current->sighand != NULL) {
-@@ -919,11 +938,11 @@ static int sock_wait_for(int real_fd, short events, int timeout_opt) {
+@@ -919,11 +958,11 @@ static int sock_wait_for(int real_fd, short events, int timeout_opt) {
          }
  
          int poll_ms = 1000;
@@ -458,7 +687,7 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
                  return _EAGAIN;
              }
              if (remaining < poll_ms)
-@@ -940,9 +959,9 @@ static int sock_wait_for(int real_fd, short events, int timeout_opt) {
+@@ -940,9 +979,9 @@ static int sock_wait_for(int real_fd, short events, int timeout_opt) {
              return 0;
          if (pr == 0) {
              // Log once if we're stuck > 3 seconds without any ready event
@@ -471,7 +700,7 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
                  slow_logged = true;
              }
              continue;
-@@ -956,8 +975,8 @@ static int sock_wait_for(int real_fd, short events, int timeout_opt) {
+@@ -956,8 +995,8 @@ static int sock_wait_for(int real_fd, short events, int timeout_opt) {
      }
  }
  
@@ -482,7 +711,7 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
  }
  
  int_t sys_recvfrom(fd_t sock_fd, addr_t buffer_addr, dword_t len, dword_t flags, addr_t sockaddr_addr, addr_t sockaddr_len_addr) {
-@@ -997,6 +1016,7 @@ int_t sys_recvfrom(fd_t sock_fd, addr_t buffer_addr, dword_t len, dword_t flags,
+@@ -997,6 +1036,7 @@ int_t sys_recvfrom(fd_t sock_fd, addr_t buffer_addr, dword_t len, dword_t flags,
      // should wait do we fall back to the bounded-poll wait.
      ssize_t res;
      if (should_wait) {
@@ -490,7 +719,7 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
          // Diagnostic: a blocking recv is exceptional for most network
          // programs (Node, Go, Python asyncio all use nonblock). Log it so
          // we can see the guest/host fd state in user-shared logs.
-@@ -1018,7 +1038,7 @@ int_t sys_recvfrom(fd_t sock_fd, addr_t buffer_addr, dword_t len, dword_t flags,
+@@ -1018,7 +1058,7 @@ int_t sys_recvfrom(fd_t sock_fd, addr_t buffer_addr, dword_t len, dword_t flags,
              }
              // EAGAIN: no data yet. Wait (bounded) for readability or a
              // guest signal, then retry.
@@ -499,7 +728,16 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
              if (wr < 0) {
                  free(buffer);
                  return wr;
-@@ -1071,11 +1091,102 @@ int_t sys_shutdown(fd_t sock_fd, dword_t how) {
+@@ -1063,7 +1103,7 @@ int_t sys_shutdown(fd_t sock_fd, dword_t how) {
+     struct fd *sock = sock_getfd(sock_fd);
+     if (sock == NULL)
+         return _EBADF;
+-    int err = shutdown(sock->real_fd, how);
++    int err = sockrestart_shutdown(sock, how);
+     if (err < 0)
+         return errno_map();
+     return 0;
+@@ -1071,11 +1111,102 @@ int_t sys_shutdown(fd_t sock_fd, dword_t how) {
  
  #define DEFAULT_TCP_CONGESTION "cubic"
  
@@ -556,7 +794,7 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
 +    struct timeval host = {.tv_sec = guest.sec, .tv_usec = guest.usec};
 +    if ((int64_t) host.tv_sec != guest.sec)
 +        return _EOVERFLOW;
-+    if (setsockopt(sock->real_fd, SOL_SOCKET, real_opt, &host, sizeof(host)) < 0)
++    if (sockrestart_setsockopt(sock, SOL_SOCKET, real_opt, &host, sizeof(host)) < 0)
 +        return errno_map();
 +    return 0;
 +}
@@ -602,7 +840,16 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
      char value[value_len];
      if (user_read(value_addr, value, value_len))
          return _EFAULT;
-@@ -1137,6 +1248,9 @@ int_t sys_getsockopt(fd_t sock_fd, dword_t level, dword_t option, addr_t value_a
+@@ -1123,7 +1254,7 @@ int_t sys_setsockopt(fd_t sock_fd, dword_t level, dword_t option, addr_t value_a
+     if (real_opt == 0)
+         return 0;
+ 
+-    int err = setsockopt(sock->real_fd, real_level, real_opt, value, value_len);
++    int err = sockrestart_setsockopt(sock, real_level, real_opt, value, value_len);
+     if (err < 0)
+         return errno_map();
+     return 0;
+@@ -1137,6 +1268,9 @@ int_t sys_getsockopt(fd_t sock_fd, dword_t level, dword_t option, addr_t value_a
      dword_t value_len;
      if (user_get(len_addr, value_len))
          return _EFAULT;
@@ -612,7 +859,7 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
      char value[value_len];
      if (user_read(value_addr, value, value_len))
          return _EFAULT;
-@@ -1526,6 +1640,7 @@ int_t sys_recvmsg(fd_t sock_fd, addr_t msghdr_addr, int_t flags) {
+@@ -1526,6 +1660,7 @@ int_t sys_recvmsg(fd_t sock_fd, addr_t msghdr_addr, int_t flags) {
      ssize_t res = -1;
      int err = 0;
      if (should_wait_rm) {
@@ -620,7 +867,7 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
          printk("NETDIAG recvmsg-block(pid=%d comm=%s fd=%d real=%d gflags=%#x hflags=%#x sflags=%#x)\n",
                 current->pid, current->comm, sock_fd, sock->real_fd,
                 (unsigned)flags, host_flags_rm, sock->flags);
-@@ -1539,7 +1654,7 @@ int_t sys_recvmsg(fd_t sock_fd, addr_t msghdr_addr, int_t flags) {
+@@ -1539,7 +1674,7 @@ int_t sys_recvmsg(fd_t sock_fd, addr_t msghdr_addr, int_t flags) {
                  err = errno_map();
                  break;
              }
@@ -629,11 +876,34 @@ index 58dc3e325aac67ebbcf9643f9882a3e116e04538..a5d19a2500abaf5c1979677b43bf3e26
              if (wr < 0) {
                  err = wr;
                  break;
+@@ -1827,7 +1962,7 @@ const struct fd_ops socket_fdops = {
+     .close = sock_close,
+     .poll = realfs_poll,
+     .getflags = realfs_getflags,
+-    .setflags = realfs_setflags,
++    .setflags = sockrestart_setflags,
+     .ioctl_size = realfs_ioctl_size,
+     .ioctl = realfs_ioctl,
+ };
 diff --git a/fs/sock.h b/fs/sock.h
-index ed34b5176e1638fd0c5172f5e7a7e0a9e4dea886..ab0c363ff97696aae4d3868f4696f22ad4d1ed3c 100644
+index ed34b5176e1638fd0c5172f5e7a7e0a9e4dea886..ac0cb139ad2300547acb3175eb0906ae9ee4b0fc 100644
 --- a/fs/sock.h
 +++ b/fs/sock.h
-@@ -210,8 +210,10 @@ static inline int sock_flags_from_real(int real) {
+@@ -17,6 +17,13 @@ int_t sys_connect(fd_t sock_fd, addr_t sockaddr_addr, uint_t sockaddr_len);
+ int_t sys_listen(fd_t sock_fd, int_t backlog);
+ int_t sys_accept(fd_t sock_fd, addr_t sockaddr_addr, addr_t sockaddr_len_addr);
+ int_t sys_accept4(fd_t sock_fd, addr_t sockaddr_addr, addr_t sockaddr_len_addr, int_t flags);
++struct ish_accept_diagnostics {
++    uint64_t calls;
++    uint64_t failures;
++    int host_error;
++    int guest_pid;
++};
++struct ish_accept_diagnostics ish_get_accept_diagnostics(void);
+ int_t sys_getsockname(fd_t sock_fd, addr_t sockaddr_addr, addr_t sockaddr_len_addr);
+ int_t sys_getpeername(fd_t sock_fd, addr_t sockaddr_addr, addr_t sockaddr_len_addr);
+ int_t sys_socketpair(dword_t domain, dword_t type, dword_t protocol, addr_t sockets_addr);
+@@ -210,8 +217,10 @@ static inline int sock_flags_from_real(int real) {
  #define SO_TIMESTAMP_ 29
  #define SO_PROTOCOL_ 38
  #define SO_DOMAIN_ 39
@@ -646,7 +916,7 @@ index ed34b5176e1638fd0c5172f5e7a7e0a9e4dea886..ab0c363ff97696aae4d3868f4696f22a
  #define IP_TOS_ 1
  #define IP_TTL_ 2
  #define IP_HDRINCL_ 3
-@@ -243,8 +245,10 @@ static inline int sock_opt_to_real(int fake, int level) {
+@@ -243,8 +252,10 @@ static inline int sock_opt_to_real(int fake, int level) {
              case SO_SNDBUF_: return SO_SNDBUF;
              case SO_RCVBUF_: return SO_RCVBUF;
              case SO_TIMESTAMP_: return SO_TIMESTAMP;
@@ -659,6 +929,310 @@ index ed34b5176e1638fd0c5172f5e7a7e0a9e4dea886..ab0c363ff97696aae4d3868f4696f22a
              case SO_REUSEPORT_: return SO_REUSEPORT;
          } break;
          case IPPROTO_TCP: switch (fake) {
+diff --git a/fs/sockrestart.c b/fs/sockrestart.c
+index dfc64279a0f175fa92544671ea183159ee8d704c..d8cee5290ed54895d796c9beb29125ac0fe4d1ac 100644
+--- a/fs/sockrestart.c
++++ b/fs/sockrestart.c
+@@ -1,22 +1,206 @@
+ #include <string.h>
+ #include <signal.h>
+ #include <pthread.h>
++#include <fcntl.h>
++#include <poll.h>
++#include <stdatomic.h>
++#include <stdlib.h>
++#include <unistd.h>
+ #include "fs/sockrestart.h"
+ #include "fs/fd.h"
+ #include "fs/sock.h"
++#include "fs/real.h"
+ #include "kernel/task.h"
+ #include "util/list.h"
+ extern const struct fd_ops socket_fdops;
+ 
+ static lock_t sockrestart_lock = LOCK_INITIALIZER;
+ static struct list listen_fds = LIST_INITIALIZER(listen_fds);
++static struct list listen_tasks = LIST_INITIALIZER(listen_tasks);
++static atomic_bool listener_recovery;
++static _Atomic uint64_t listeners_restored, listener_failures;
++static _Atomic int listener_host_error;
++
++struct ish_listener_diagnostics ish_get_listener_diagnostics(void) {
++    return (struct ish_listener_diagnostics) {
++        .restored = atomic_load(&listeners_restored),
++        .failures = atomic_load(&listener_failures),
++        .host_error = atomic_load(&listener_host_error),
++    };
++}
++
++struct listener_option {
++    struct listener_option *next;
++    int level, option;
++    unsigned length;
++    char value[];
++};
++
++struct listener_snapshot {
++    bool listening;
++    int error, backlog, status_flags, descriptor_flags;
++    struct sockaddr_storage address;
++    socklen_t address_length;
++    struct listener_option *options;
++};
++
++void ish_set_listener_recovery(bool enabled) { atomic_store(&listener_recovery, enabled); }
++
++static bool managed_listener(struct fd *sock) {
++    return atomic_load(&listener_recovery) && sock->ops == &socket_fdops &&
++        (sock->socket.domain == AF_INET_ || sock->socket.domain == AF_INET6_) &&
++        sock->socket.type == SOCK_STREAM_;
++}
++
++static struct listener_snapshot *listener_snapshot(struct fd *sock) {
++    if (sock->sockrestart.snapshot == NULL)
++        sock->sockrestart.snapshot = calloc(1, sizeof(struct listener_snapshot));
++    return sock->sockrestart.snapshot;
++}
++
++int sockrestart_setsockopt(struct fd *sock, int level, int option,
++                          const void *value, unsigned length) {
++    if (!managed_listener(sock))
++        return setsockopt(sock->real_fd, level, option, value, length);
++    struct listener_option *saved = malloc(sizeof(*saved) + length);
++    if (saved == NULL) { errno = ENOMEM; return -1; }
++    *saved = (struct listener_option) {.level = level, .option = option, .length = length};
++    memcpy(saved->value, value, length);
++    lock(&sockrestart_lock);
++    struct listener_snapshot *state = listener_snapshot(sock);
++    int result = state == NULL ? -1 : setsockopt(sock->real_fd, level, option, value, length);
++    int error = state == NULL ? ENOMEM : errno;
++    if (result == 0) {
++        struct listener_option **tail = &state->options;
++        while (*tail != NULL) {
++            if ((*tail)->level == level && (*tail)->option == option) {
++                struct listener_option *old = *tail;
++                *tail = old->next;
++                free(old);
++            } else { tail = &(*tail)->next; }
++        }
++        *tail = saved;
++    } else { free(saved); }
++    unlock(&sockrestart_lock);
++    errno = error;
++    return result;
++}
++
++int sockrestart_setflags(struct fd *sock, unsigned flags) {
++    lock(&sockrestart_lock);
++    int result = realfs_setflags(sock, flags);
++    if (result == 0 && sock->sockrestart.snapshot != NULL)
++        sock->sockrestart.snapshot->status_flags = fcntl(sock->real_fd, F_GETFL);
++    unlock(&sockrestart_lock);
++    return result;
++}
++
++static int restore_listener(struct fd *sock, struct listener_snapshot *state) {
++    int replacement = socket(state->address.ss_family, SOCK_STREAM, sock->socket.protocol);
++    if (replacement < 0) return -errno;
++    for (struct listener_option *option = state->options; option; option = option->next) {
++        if (setsockopt(replacement, option->level, option->option, option->value, option->length) < 0) {
++            int error = errno; close(replacement); return -error;
++        }
++    }
++    int flags = fcntl(sock->real_fd, F_GETFL);
++    if (flags >= 0) state->status_flags = flags;
++    flags = fcntl(sock->real_fd, F_GETFD);
++    if (flags >= 0) state->descriptor_flags = flags;
++    if (replacement != sock->real_fd) {
++        if (dup2(replacement, sock->real_fd) < 0) {
++            int error = errno; close(replacement); return -error;
++        }
++        close(replacement);
++    }
++    if (fcntl(sock->real_fd, F_SETFL, state->status_flags) < 0 ||
++        fcntl(sock->real_fd, F_SETFD, state->descriptor_flags) < 0 ||
++        bind(sock->real_fd, (struct sockaddr *)&state->address, state->address_length) < 0 ||
++        listen(sock->real_fd, state->backlog) < 0)
++        return -errno;
++    atomic_fetch_add(&sock->real_generation, 1);
++    struct task *task;
++    list_for_each_entry(&listen_tasks, task, sockrestart.listen) {
++        task->sockrestart.punt = true;
++        pthread_kill(task->thread, SIGUSR1);
++    }
++    return 0;
++}
+ 
+-void sockrestart_begin_listen(struct fd *sock) {
++static int host_readiness(struct fd *sock, short events) {
++    struct pollfd readiness = {.fd = sock->real_fd, .events = events};
++    int result = poll(&readiness, 1, 0);
++    return result < 0 ? -errno : readiness.revents;
++}
++
++int sockrestart_poll(struct fd *sock, short events) {
++    if (!managed_listener(sock))
++        return host_readiness(sock, events);
++    lock(&sockrestart_lock);
++    struct listener_snapshot *state = sock->sockrestart.snapshot;
++    bool listening = state != NULL && state->listening;
++    // iOS can return no events for POLLIN while the same listener reports
++    // HUP for POLLOUT/POLLPRI. Inspect the full mask, including from accept.
++    int readiness = listening && state->error ? state->error :
++        host_readiness(sock, listening ? POLLIN | POLLOUT | POLLPRI : events);
++    if (listening && readiness >= 0 && (readiness & (POLLHUP | POLLNVAL))) {
++        // Consume this exact readiness sample here. A separate pre-check
++        // followed by another poll can leak host-only HUP into Tokio's
++        // permanent READ_CLOSED state if suspension falls between them.
++        readiness = state->error = restore_listener(sock, state);
++        if (readiness < 0) {
++            atomic_store(&listener_host_error, -readiness);
++            atomic_fetch_add(&listener_failures, 1);
++        } else {
++            atomic_fetch_add(&listeners_restored, 1);
++        }
++        // Success returns no stale events. The descriptor generation refresh
++        // arms the reactor for connections on the replacement listener.
++    }
++    unlock(&sockrestart_lock);
++    return readiness;
++}
++
++int sockrestart_check_listener(struct fd *sock) {
++    if (!managed_listener(sock)) return 0;
++    int readiness = sockrestart_poll(sock, POLLIN | POLLOUT | POLLPRI);
++    return readiness < 0 ? readiness : 0;
++}
++
++int sockrestart_shutdown(struct fd *sock, int how) {
++    lock(&sockrestart_lock);
++    int result = shutdown(sock->real_fd, how);
++    int error = errno;
++    if (result == 0 && sock->sockrestart.snapshot != NULL)
++        sock->sockrestart.snapshot->listening = false;
++    unlock(&sockrestart_lock);
++    errno = error;
++    return result;
++}
++
++int sockrestart_begin_listen(struct fd *sock, int backlog) {
+     if (sock->ops != &socket_fdops)
+-        return;
++        return 0;
+     lock(&sockrestart_lock);
++    int error = 0;
++    if (managed_listener(sock)) {
++        struct listener_snapshot *state = listener_snapshot(sock);
++        if (state == NULL) { error = _ENOMEM; goto out; }
++        state->address_length = sizeof(state->address);
++        if (getsockname(sock->real_fd, (struct sockaddr *)&state->address, &state->address_length) < 0 ||
++            (state->status_flags = fcntl(sock->real_fd, F_GETFL)) < 0 ||
++            (state->descriptor_flags = fcntl(sock->real_fd, F_GETFD)) < 0) {
++            error = err_map(errno); goto out;
++        }
++        state->backlog = backlog;
++        state->listening = true;
++        state->error = 0;
++    }
++    list_remove_safe(&sock->sockrestart.listen);
+     list_add(&listen_fds, &sock->sockrestart.listen);
++out:
+     unlock(&sockrestart_lock);
++    return error;
+ }
+ 
+ void sockrestart_end_listen(struct fd *sock) {
+@@ -24,28 +208,31 @@ void sockrestart_end_listen(struct fd *sock) {
+         return;
+     lock(&sockrestart_lock);
+     list_remove_safe(&sock->sockrestart.listen);
++    struct listener_snapshot *state = sock->sockrestart.snapshot;
++    sock->sockrestart.snapshot = NULL;
++    if (state != NULL) {
++        struct listener_option *option = state->options;
++        while (option != NULL) { struct listener_option *next = option->next; free(option); option = next; }
++        free(state);
++    }
+     unlock(&sockrestart_lock);
+ }
+ 
+-static struct list listen_tasks = LIST_INITIALIZER(listen_tasks);
+ 
+-void sockrestart_begin_listen_wait(struct fd *sock) {
+-    if (sock->ops != &socket_fdops)
+-        return;
++// Registration belongs to one blocking call, never to the watched fd set.
++// epoll_ctl/close can change that set while its lock is released for kevent.
++void sockrestart_begin_listen_wait(void) {
+     lock(&sockrestart_lock);
+-    if (current->sockrestart.count == 0)
+-        list_add(&listen_tasks, &current->sockrestart.listen);
+-    current->sockrestart.count++;
++    assert(list_empty(&current->sockrestart.listen));
++    current->sockrestart.punt = false;
++    list_add(&listen_tasks, &current->sockrestart.listen);
+     unlock(&sockrestart_lock);
+ }
+ 
+-void sockrestart_end_listen_wait(struct fd *sock) {
+-    if (sock->ops != &socket_fdops)
+-        return;
++void sockrestart_end_listen_wait(void) {
+     lock(&sockrestart_lock);
+-    current->sockrestart.count--;
+-    if (current->sockrestart.count == 0)
+-        list_remove(&current->sockrestart.listen);
++    assert(!list_empty(&current->sockrestart.listen));
++    list_remove(&current->sockrestart.listen);
+     unlock(&sockrestart_lock);
+ }
+ 
+diff --git a/fs/sockrestart.h b/fs/sockrestart.h
+index b369f3c76ae152082b103022c9a554eeeffb356e..075bddc6e4c9edf5a44a7d4e33d42238dbe1a58d 100644
+--- a/fs/sockrestart.h
++++ b/fs/sockrestart.h
+@@ -13,23 +13,37 @@
+ #ifndef FS_SOCKRESTART_H
+ #define FS_SOCKRESTART_H
+ #include <stdbool.h>
++#include <stdint.h>
+ #include "util/list.h"
+ struct fd;
++struct listener_snapshot;
+ 
+-void sockrestart_begin_listen(struct fd *sock);
++void ish_set_listener_recovery(bool enabled);
++struct ish_listener_diagnostics {
++    uint64_t restored, failures;
++    int host_error;
++};
++struct ish_listener_diagnostics ish_get_listener_diagnostics(void);
++int sockrestart_check_listener(struct fd *sock);
++int sockrestart_poll(struct fd *sock, short events);
++int sockrestart_setsockopt(struct fd *sock, int level, int option, const void *value, unsigned length);
++int sockrestart_setflags(struct fd *sock, unsigned flags);
++int sockrestart_shutdown(struct fd *sock, int how);
++
++int sockrestart_begin_listen(struct fd *sock, int backlog);
+ void sockrestart_end_listen(struct fd *sock);
+-void sockrestart_begin_listen_wait(struct fd *sock);
+-void sockrestart_end_listen_wait(struct fd *sock);
++void sockrestart_begin_listen_wait(void);
++void sockrestart_end_listen_wait(void);
+ bool sockrestart_should_restart_listen_wait(void);
+ void sockrestart_on_suspend(void);
+ void sockrestart_on_resume(void);
+ 
+ struct fd_sockrestart {
+     struct list listen;
++    struct listener_snapshot *snapshot;
+ };
+ 
+ struct task_sockrestart {
+-    int count;
+     bool punt;
+     struct list listen;
+ };
 diff --git a/kernel/calls.c b/kernel/calls.c
 index 6295ad70db7e15c7d6a217718dc1767962ada49d..0eabaceedaf02db474aab897f058012a4f33426c 100644
 --- a/kernel/calls.c
@@ -1299,6 +1873,45 @@ index b52bc6cc68af5ba0a33d5d1aef9b04f3763399d1..3f01698f422b74b6d4373199dc7f508e
  int create_stdio(const char *file, int major, int minor);
  int create_piped_stdio(void);
  
+diff --git a/kernel/log.c b/kernel/log.c
+index 6b019f658e6deee0e75b5900c405d7ec43d301d5..b3d2cd1b0bc0795d03023db1775a9003fe751234 100644
+--- a/kernel/log.c
++++ b/kernel/log.c
+@@ -1,6 +1,8 @@
+ #include <stdio.h>
+ #include <fcntl.h>
+ #include <stdarg.h>
++#include <stdatomic.h>
++#include <stdbool.h>
+ #include <string.h>
+ #include <sys/uio.h>
+ #include <syslog.h>
+@@ -21,6 +23,15 @@ static char log_buffer[1 << LOG_BUF_SHIFT];
+ static struct fifo log_buf = FIFO_INIT(log_buffer);
+ static size_t log_max_since_clear = 0;
+ static lock_t log_lock = LOCK_INITIALIZER;
++#if LOG_HANDLER_NSLOG
++static atomic_bool host_logging_enabled = false;
++#else
++static atomic_bool host_logging_enabled = true;
++#endif
++
++void ish_set_host_logging(bool enabled) {
++    atomic_store(&host_logging_enabled, enabled);
++}
+ 
+ #define SYSLOG_ACTION_CLOSE_ 0
+ #define SYSLOG_ACTION_OPEN_ 1
+@@ -101,7 +112,8 @@ static void log_buf_append(const char *msg) {
+ static void log_line(const char *line);
+ static void output_line(const char *line) {
+     // send it to stdout or wherever
+-    log_line(line);
++    if (atomic_load(&host_logging_enabled))
++        log_line(line);
+     // add it to the circular buffer
+     log_buf_append(line);
+     log_buf_append("\n");
 diff --git a/kernel/misc.c b/kernel/misc.c
 index b717275d5a462b9e4e72b009c4da628742bb4711..27b1afbf5a06a2578047a2af9354a7bc747b2276 100644
 --- a/kernel/misc.c
@@ -1336,6 +1949,104 @@ index b717275d5a462b9e4e72b009c4da628742bb4711..27b1afbf5a06a2578047a2af9354a7bc
          // Nothing dumps core here, but sftp-server, sshd and other hardened
          // programs set this at startup and exit when it fails.
          case PRCTL_GET_DUMPABLE_:
+diff --git a/kernel/mm.h b/kernel/mm.h
+index f3b55bd28cf7344ff44c568d0a23ef8332550e69..19055304fcb430d62c33797d6d6e259d20a7c256 100644
+--- a/kernel/mm.h
++++ b/kernel/mm.h
+@@ -109,7 +109,8 @@ long anon_pages_precharge_peek(void);
+ // SIGSEGV — the same failure Linux gives when overcommitted memory cannot
+ // be backed). Enter BRAKE below 10% headroom, leave above 15% (hysteresis),
+ // and a critical memory-pressure event forces it regardless. A stale feed
+-// (no update for >2s) also reads as BRAKE: a dead sampler must fail closed.
++// (no update for >2s) requires a fresh host reading; an unavailable or failed
++// provider still reads as BRAKE. App suspension must not invent memory pressure.
+ //
+ // Two things stay admitted even under BRAKE, deliberately:
+ //   * the growsdown fault page (a refused stack page corrupts the frame;
+@@ -125,6 +126,15 @@ enum ish_mem_state { ISH_MEM_OK = 0, ISH_MEM_BRAKE = 1 };
+ // jetsam allowance); `avail_bytes` = os_proc_available_memory();
+ // `pressure_critical` = the OS sent a critical memory-pressure event.
+ void ish_set_memory_status(uint64_t limit_bytes, uint64_t avail_bytes, bool pressure_critical);
++struct ish_memory_status {
++    uint64_t limit_bytes;
++    uint64_t avail_bytes;
++    bool pressure_critical;
++};
++// Called synchronously on allocation after a stale sample. It must not log or
++// acquire guest locks: the caller may already hold a guest memory/log lock.
++typedef int (*ish_memory_refresh_handler)(struct ish_memory_status *status);
++void ish_set_memory_refresh_handler(ish_memory_refresh_handler handler);
+ // True once the host feed has been installed (footprint mode active).
+ bool ish_footprint_mode(void);
+ // Admission check for `bytes` of new anonymous commitment. In legacy mode
+diff --git a/kernel/mmap.c b/kernel/mmap.c
+index 9eb8b5994ebcab4a1d90285dfbcefbeb61f99508..12d0fdee5a0911ba693f433072767049e43c92e2 100644
+--- a/kernel/mmap.c
++++ b/kernel/mmap.c
+@@ -35,6 +35,7 @@ static _Atomic int ish_mem_state_v = ISH_MEM_OK;
+ static _Atomic uint64_t ish_mem_limit_v;
+ static _Atomic uint64_t ish_mem_avail_v;
+ static _Atomic uint64_t ish_mem_stamp_ms;
++static _Atomic(ish_memory_refresh_handler) ish_mem_refresh;
+ 
+ // Feed staleness window. A sampler that stops updating for this long is
+ // treated as dead and the brake engages — the governor must fail closed.
+@@ -50,7 +51,8 @@ bool ish_footprint_mode(void) {
+     return atomic_load(&ish_mem_stamp_ms) != 0;
+ }
+ 
+-void ish_set_memory_status(uint64_t limit_bytes, uint64_t avail_bytes, bool pressure_critical) {
++static void update_memory_status(uint64_t limit_bytes, uint64_t avail_bytes,
++                                bool pressure_critical, bool report) {
+     if (limit_bytes == 0)
+         return; // host couldn't measure — don't flip modes on garbage
+     int prev = atomic_load(&ish_mem_state_v);
+@@ -69,7 +71,7 @@ void ish_set_memory_status(uint64_t limit_bytes, uint64_t avail_bytes, bool pres
+     atomic_store(&ish_mem_avail_v, avail_bytes);
+     atomic_store(&ish_mem_state_v, next);
+     atomic_store(&ish_mem_stamp_ms, ish_monotonic_ms());
+-    if (next != prev)
++    if (report && next != prev)
+         printk("mem: brake %s — footprint %lu MB / limit %lu MB (avail %lu MB)%s\n",
+                next == ISH_MEM_BRAKE ? "ENGAGED" : "released",
+                (unsigned long)((limit_bytes - avail_bytes) >> 20),
+@@ -78,18 +80,34 @@ void ish_set_memory_status(uint64_t limit_bytes, uint64_t avail_bytes, bool pres
+                pressure_critical ? " [OS pressure critical]" : "");
+ }
+ 
++void ish_set_memory_status(uint64_t limit_bytes, uint64_t avail_bytes, bool pressure_critical) {
++    update_memory_status(limit_bytes, avail_bytes, pressure_critical, true);
++}
++
++void ish_set_memory_refresh_handler(ish_memory_refresh_handler handler) {
++    atomic_store(&ish_mem_refresh, handler);
++}
++
+ bool ish_mem_commit_ok(uint64_t bytes) {
+     uint64_t stamp = atomic_load(&ish_mem_stamp_ms);
+     if (stamp == 0)
+         return true;   // legacy mode: the ledger check in anon_pages_reserve decides
++    if (ish_monotonic_ms() - stamp > ISH_MEM_STALE_MS) {
++        ish_memory_refresh_handler refresh = atomic_load(&ish_mem_refresh);
++        struct ish_memory_status status = {0};
++        if (refresh == NULL || refresh(&status) != 0 || status.limit_bytes == 0 ||
++                status.avail_bytes > status.limit_bytes)
++            return false;
++        // Do not printk here: this can run while syslog holds its log lock.
++        update_memory_status(status.limit_bytes, status.avail_bytes,
++                             status.pressure_critical, false);
++    }
+     uint64_t limit = atomic_load(&ish_mem_limit_v);
+     // Sanity gate: one request larger than the entire allowance can never be
+     // dirtied safely — give it a clean upfront ENOMEM (malloc returns NULL)
+     // instead of admitting it and killing the process mid-memset later.
+     if (limit != 0 && bytes > limit)
+         return false;
+-    if (ish_monotonic_ms() - stamp > ISH_MEM_STALE_MS)
+-        return false;  // dead sampler fails closed
+     return atomic_load(&ish_mem_state_v) == ISH_MEM_OK;
+ }
+ 
 diff --git a/kernel/signal.c b/kernel/signal.c
 index f54619254360be3ffe7df30a4e8a13f58f20e75a..2ac312601d9fcaf216f164ef5362115e23f50126 100644
 --- a/kernel/signal.c

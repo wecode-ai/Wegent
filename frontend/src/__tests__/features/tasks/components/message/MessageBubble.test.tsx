@@ -176,6 +176,32 @@ describe('MessageBubble', () => {
     mockFinalPromptMessage.mockClear()
   })
 
+  it.each(['', 'markdown', 'md', 'text'])(
+    'preserves a fenced protocol example without adding an authorization link: %s',
+    language => {
+      const content = `\`\`\`${language}\nconnector_auth_required connectorSlug=demo\n\`\`\``
+      const msg: Message = {
+        type: 'ai',
+        content,
+        timestamp: Date.now(),
+        subtaskStatus: 'COMPLETED',
+        status: 'completed',
+      }
+      const { container } = render(
+        <MessageBubble
+          msg={msg}
+          index={0}
+          selectedTaskDetail={null}
+          selectedTeam={makeTeam()}
+          theme="light"
+          t={t}
+        />
+      )
+      expect(container.textContent).toContain(content)
+      expect(container.textContent).not.toContain('wegent://modal/connector-oauth')
+    }
+  )
+
   it('does not display a video config badge for image generation', () => {
     const msg: Message = {
       type: 'user',

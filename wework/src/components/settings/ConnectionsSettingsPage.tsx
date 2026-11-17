@@ -22,6 +22,7 @@ import { deviceSurfaceExtension } from '@extensions/device-surface'
 import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { ConnectorConnectionsSection } from './ConnectorConnectionsSection'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -1229,6 +1230,11 @@ export function ConnectionsDeviceSettingsPage({
           <DshSettingsSectionSurface page="connections" />
 
           <CloudModelsSection cloudConnection={cloudConnection} />
+
+          <ConnectorConnectionsSection
+            apiBaseUrl={cloudConnection.apiBaseUrl ?? null}
+            token={cloudConnection.token}
+          />
 
           <div className="rounded-lg border border-border bg-background p-5">
             <div className="mb-4 flex items-center justify-between">

@@ -108,6 +108,16 @@ Rust 验证通过：`runtime_work::handler::turns::tests` 17 项、`runtime_work
 
 随后主线进入 `4702fff1`（项目设置与智能体配置维护），再次通过 `git merge-tree` 确认共享桌面场景存在导入及调用冲突。合并保留主线 `verifyCollaborationSettingsUx`，也保留本项 `selectProjectCreateMembers` 与传给成员验证器的真实所选成员，不删除任何一侧场景。自动合并的 Platform 仅增加设置页渲染器透传及分组 scope，创建核心源码未变。完整 Platform/App 15 文件、345 项、普通入口与工厂 73 项、导航协议 6 项、文档契约 8 项通过；共享构建、Wework typecheck、场景格式及差异检查通过。最终 CI 必须属于包含这次整合的新 head。
 
+## 2026-11-17 事件唤醒主线冲突整合
+
+`5c28e7639` 的全部 CI 已通过（59 项成功、16 项按规则跳过，0 失败或等待），三个实际桌面检查点均 PASS。随后主线再次推进；本轮 `git merge-tree` 对 `05a6ce6c1` 稳定确认仅 `executor/src/runtime_work/handler/turns.rs` 存在冲突。
+
+整合沿用主线事件 Goal 与自动输入准入，把 lifecycle 初始化留在原生 turn started 回调，删除旧的提前初始化。observer drain 在自动输入延后判断之前执行且只等待一次，原耗时诊断包裹同一个 await；不修改调度、断言或等待时限。共享创建核心源码相对前一提交未变，普通入口自动合并保留成员资源配置与主线新的任务绑定和事件唤醒逻辑。
+
+本轮共享创建与模板 32 文件、240 项，普通入口、资源工厂与任务模型集成 3 文件、77 项，导航协议 6 项，双语文档契约 8 项全部通过；共享包构建、Wework typecheck、完整 lint（0 错误、5 项既有或主线带入的警告）及差异检查通过。文档检查首次误带 Vitest worker 参数，触发非目标 renderer 收集，已中止且不计为验证结果；移除不适用于 Node 测试的参数后，仅执行所列文档检查并通过。本地未执行 E2E 或 ai:verify，最终新 head 必须取得自身的全部 CI 与可合并结果后再交接。
+
+冲突整合后的 Rust focused lib 测试共 20 项通过：turns 17 项、handler hooks 1 项、hooks lifecycle 2 项；沿用 locked、all-features 与既有共享临时 target，Rustfmt 检查通过。没有修改任何 Rust 测试或新增重跑逻辑。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

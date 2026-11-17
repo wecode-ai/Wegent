@@ -79,7 +79,7 @@ async def test_default_chat_preserves_the_existing_wegent_flow(monkeypatch, cont
 
 @pytest.mark.parametrize(
     "command",
-    ["/standin", "/stand-in", "/分身", "/mode standin", "/mode stand_in", "/mode 分身"],
+    ["/standin", "/stand-in", "/助理", "/mode standin", "/mode stand_in", "/mode 助理"],
 )
 async def test_explicit_command_enters_stand_in_mode(command):
     session, context, port = fixture(command)
@@ -91,7 +91,7 @@ async def test_explicit_command_enters_stand_in_mode(command):
         port=port,
     )
     assert await im_session_service.get_mode(session) == IMSessionMode.STAND_IN
-    assert "分身模式" in port.send_text_reply.await_args.args[1]
+    assert "助理模式" in port.send_text_reply.await_args.args[1]
 
 
 async def test_chat_command_leaves_stand_in_without_changing_its_identity(monkeypatch):

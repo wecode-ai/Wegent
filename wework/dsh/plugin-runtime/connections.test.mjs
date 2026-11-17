@@ -566,7 +566,7 @@ test('registers providers by package, enforces dependencies on every invocation 
   }
 })
 
-test('installs only explicitly requested missing dependencies and never upgrades shared versions', async () => {
+test('plans only explicitly requested missing dependencies without granting reader installation authority', async () => {
   let present = false
   const calls = []
   const dependencies = new ConnectionDependencies(async (method, params) => {
@@ -599,11 +599,26 @@ test('installs only explicitly requested missing dependencies and never upgrades
   const definition = parseConnections(declaration())
   assert.equal((await dependencies.plan(definition))[0].status, 'missing')
   assert.equal(calls.filter(call => call.method === 'plugin/install').length, 0)
-  assert.equal((await dependencies.install(definition, ['mail']))[0].status, 'ready')
-  assert.deepEqual(calls.find(call => call.method === 'plugin/install').params, {
-    pluginName: 'mail',
-    marketplacePath: '/market/.agents/plugins/marketplace.json',
-  })
+  const catalog = await dependencies.request('plugin/list', { cwds: [] })
+  const before = calls.length
+  const plan = await dependencies.installationPlan(definition, ['mail'], catalog)
+  assert.equal(plan.installations.length, 1)
+  assert.equal(plan.installations[0].alias, 'mail')
+  assert.equal(plan.installations[0].target.pluginId, 'mail@company')
+  assert.equal(
+    plan.installations[0].target.marketplacePath,
+    '/market/.agents/plugins/marketplace.json'
+  )
+  assert.ok(calls.slice(before).every(call => call.method === 'plugin/installed'))
+  assert.equal(calls.filter(call => call.method === 'plugin/install').length, 0)
+  await assert.rejects(
+    dependencies.installationPlan(definition, ['unknown'], catalog),
+    error => error.code === 'invalid_dependency'
+  )
+  await assert.rejects(
+    dependencies.installationPlan(definition, ['mail']),
+    error => error.code === 'dependency_catalog_failed'
+  )
   const incompatible = new ConnectionDependencies(
     async () => ({
       marketplaces: [
@@ -624,7 +639,7 @@ test('installs only explicitly requested missing dependencies and never upgrades
     satisfies
   )
   await assert.rejects(
-    incompatible.install(definition, ['mail']),
+    incompatible.installationPlan(definition, ['mail'], catalog),
     error => error.code === 'dependency_conflict'
   )
 })
@@ -689,7 +704,9 @@ test('reuses only declared alternate sources before installing the preferred sou
       ],
     }
   }, satisfies)
-  assert.equal((await dependencies.install(definition, ['mail']))[0].status, 'ready')
+  const result = await dependencies.installationPlan(definition, ['mail'], { marketplaces: [] })
+  assert.equal(result.dependencies[0].status, 'ready')
+  assert.deepEqual(result.installations, [])
   assert.ok(!calls.includes('plugin/install'))
 })
 

@@ -127,6 +127,7 @@ export interface RuntimeProjectEditingCapability {
 
 export interface RuntimeFeatureSet {
   schemaVersion: number
+  connectionEvents?: { protocolVersion: number } | null
   remoteTaskAccess?: { version: number; enabled: boolean; taskCreation?: boolean } | null
   interactiveSessions?: RuntimeInteractiveSessionCapability | null
   worktrees?: RuntimeWorktreeCapability | null

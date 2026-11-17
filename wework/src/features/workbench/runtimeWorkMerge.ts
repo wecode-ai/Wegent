@@ -19,6 +19,7 @@ import {
 import { createWorkbenchDeviceResolver, type WorkbenchDeviceResolver } from '@/lib/workbench-device'
 import {
   normalizeRuntimeTaskSummary,
+  mergeRuntimeTaskSnapshotMetadata,
   shouldReplaceRuntimeTaskProjection,
 } from './runtimeTaskLifecycle/projection'
 
@@ -362,7 +363,12 @@ function mergeRuntimeTasks(
     const candidate = normalizeRuntimeTaskSummary(task)
     const current = tasks.get(candidate.taskId)
     if (!current || shouldReplaceRuntimeTaskProjection(current, candidate)) {
-      tasks.set(candidate.taskId, candidate)
+      tasks.set(
+        candidate.taskId,
+        current ? mergeRuntimeTaskSnapshotMetadata(candidate, current) : candidate
+      )
+    } else {
+      tasks.set(candidate.taskId, mergeRuntimeTaskSnapshotMetadata(current, candidate))
     }
   }
 
@@ -441,6 +447,7 @@ function dedupeRuntimeTaskProjections(
 ): Pick<RuntimeWorkListResponse, 'projects' | 'chats'> {
   const winners = new Set<RuntimeTaskProjection>()
   const winnersByAlias = new Map<string, RuntimeTaskProjection>()
+  const metadata = new Map<RuntimeTaskSummary, RuntimeTaskSummary>()
   const workspaces = [...projects.flatMap(project => project.deviceWorkspaces), ...chats]
 
   workspaces.forEach(workspace => {
@@ -452,9 +459,19 @@ function dedupeRuntimeTaskProjections(
           .filter((projection): projection is RuntimeTaskProjection => Boolean(projection))
       )
       const candidate = { workspace, task, aliases }
-      const winner = [...matches, candidate].reduce((current, projection) =>
-        shouldReplaceRuntimeTaskProjection(current.task, projection.task) ? projection : current
-      )
+      const winner = [...matches, candidate].reduce((current, projection) => {
+        const replace = shouldReplaceRuntimeTaskProjection(current.task, projection.task)
+        const winner = replace ? projection : current
+        const other = replace ? current : projection
+        metadata.set(
+          winner.task,
+          mergeRuntimeTaskSnapshotMetadata(
+            metadata.get(winner.task) ?? winner.task,
+            metadata.get(other.task) ?? other.task
+          )
+        )
+        return winner
+      })
       const mergedAliases = new Set([
         ...aliases,
         ...[...matches].flatMap(projection => [...projection.aliases]),
@@ -470,8 +487,13 @@ function dedupeRuntimeTaskProjections(
   const winningTasks = new Set([...winners].map(projection => projection.task))
   const retainWinningTasks = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace | null => {
     const inputTaskCount = workspace.tasks.length
-    const tasks = workspace.tasks.filter(task => winningTasks.has(task))
-    const filteredWorkspace = tasks.length === inputTaskCount ? workspace : { ...workspace, tasks }
+    const tasks = workspace.tasks
+      .filter(task => winningTasks.has(task))
+      .map(task => metadata.get(task) ?? task)
+    const unchanged =
+      tasks.length === inputTaskCount &&
+      tasks.every((task, index) => task === workspace.tasks[index])
+    const filteredWorkspace = unchanged ? workspace : { ...workspace, tasks }
     return shouldKeepRuntimeWorkspace(filteredWorkspace, inputTaskCount) ? filteredWorkspace : null
   }
   const dedupedProjects = projects

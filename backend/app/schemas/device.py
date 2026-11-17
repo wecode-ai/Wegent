@@ -130,8 +130,8 @@ class RuntimeProjectEditingFeatures(BaseModel):
         return value if isinstance(value, bool) else None
 
 
-class RuntimePluginSyncFeatures(BaseModel):
-    """Explicit plugin synchronization wire protocol support."""
+class RuntimeProtocolFeatures(BaseModel):
+    """An explicitly advertised optional Runtime wire protocol."""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
@@ -183,8 +183,11 @@ class RuntimeFeatures(BaseModel):
     project_editing: Optional[RuntimeProjectEditingFeatures] = Field(
         default=None, alias="projectEditing"
     )
-    plugin_sync: Optional[RuntimePluginSyncFeatures] = Field(
+    plugin_sync: Optional[RuntimeProtocolFeatures] = Field(
         default=None, alias="pluginSync"
+    )
+    connection_events: Optional[RuntimeProtocolFeatures] = Field(
+        default=None, alias="connectionEvents"
     )
     remote_task_access: Optional[RuntimeRemoteTaskAccessFeatures] = Field(
         default=None, alias="remoteTaskAccess"
@@ -198,12 +201,14 @@ class RuntimeFeatures(BaseModel):
         except ValidationError:
             return None
 
-    @field_validator("plugin_sync", mode="before")
+    @field_validator("plugin_sync", "connection_events", mode="before")
     @classmethod
-    def normalize_plugin_sync(cls, value: Any) -> Optional[RuntimePluginSyncFeatures]:
+    def normalize_protocol_feature(
+        cls, value: Any
+    ) -> Optional[RuntimeProtocolFeatures]:
         # A malformed optional feature must not erase unrelated capabilities.
         try:
-            return RuntimePluginSyncFeatures.model_validate(value)
+            return RuntimeProtocolFeatures.model_validate(value)
         except ValidationError:
             return None
 
@@ -222,6 +227,9 @@ class RuntimeFeatures(BaseModel):
         if self.plugin_sync is None:
             result.pop("pluginSync", None)
             result.pop("plugin_sync", None)
+        if self.connection_events is None:
+            result.pop("connectionEvents", None)
+            result.pop("connection_events", None)
         if self.remote_task_access is None:
             result.pop("remoteTaskAccess", None)
             result.pop("remote_task_access", None)

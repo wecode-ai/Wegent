@@ -1,3 +1,4 @@
+import type { RuntimeTaskArchiveRequest } from '../../../../packages/chat-core/src/runtime-management-types'
 import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
@@ -829,6 +830,12 @@ export function createHybridWorkbenchServices(
     (await listCloudDevices()).find(device => device.device_id === deviceId) ??
     null
   const resolveExecutorDevice = async (deviceId: string): Promise<RuntimeDeviceInfo | null> => {
+    const remoteDevice = createWorkbenchDeviceResolver(
+      mergeKnownDevices(rememberedLocalDevices, rememberedCloudDevices)
+    ).resolve(deviceId)
+    if (remoteDevice?.device_type === 'remote' || remoteDevice?.device_type === 'cloud') {
+      return remoteDevice
+    }
     const knownDevice = createWorkbenchDeviceResolver(await listKnownDevices()).resolve(deviceId)
     if (knownDevice) return knownDevice
 
@@ -1016,11 +1023,19 @@ export function createHybridWorkbenchServices(
       if (shouldUseCloudDeviceCommand(data.command_key)) {
         return cloudServices.deviceApi.executeCommand(deviceId, data)
       }
-      return cloudRuntimeIpc.request<DeviceCommandResponse>(
-        'device.execute_command',
-        { ...data },
-        deviceId
-      )
+      return cloudRuntimeIpc
+        .request<DeviceCommandResponse>('device.execute_command', { ...data }, deviceId)
+        .catch((error: unknown) => {
+          if (
+            error &&
+            typeof error === 'object' &&
+            'code' in error &&
+            error.code === 'device_offline'
+          ) {
+            throw new Error(`executor-offline:${deviceId}`, { cause: error })
+          }
+          throw error
+        })
     },
     upgradeDevice(deviceId, options) {
       return deviceApi(deviceId).upgradeDevice(deviceId, options)
@@ -1364,7 +1379,7 @@ export function createHybridWorkbenchServices(
         rememberedCloudArchives.get(requestCacheKey(request)) ?? emptyArchiveList()
       return mergeArchiveLists(localResult, cloudResult)
     },
-    archiveConversation(address: RuntimeTaskAddress) {
+    archiveConversation(address: RuntimeTaskArchiveRequest) {
       const request = routeByAddress(address).archiveConversation(address)
       if (isLocalDeviceId(address.deviceId)) return request
       return request.then(response => {

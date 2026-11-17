@@ -8,6 +8,7 @@ import {
 import { LocalRuntimeApi } from './localRuntimeApi'
 import { RuntimeApi } from './runtimeApi'
 import { LocalCodexLogin } from './localCodexLogin'
+import { setDiagnosticRecording } from './mobileDiagnostics'
 
 const scope = 'a'.repeat(64)
 const deviceId = `mobile-local:phone:${scope}`
@@ -65,7 +66,10 @@ function fixture(initial: Partial<LocalRuntimeStatus> = {}) {
   return {
     native,
     runtime,
-    emit: (name: string, value: unknown) => listeners.get(name)?.(value as never),
+    emit: (name: string, value: unknown) => {
+      if (name === 'onRuntimeStatus') status = value as LocalRuntimeStatus
+      listeners.get(name)?.(value as never)
+    },
   }
 }
 
@@ -119,6 +123,111 @@ describe('phone-local runtime ownership and lifecycle', () => {
     const { runtime, native } = fixture({ accountScope: 'previous' })
     native.stopAsync.mockRejectedValue(new Error('guest threads still alive'))
     await expect(runtime.start()).rejects.toThrow('guest threads still alive')
+    expect(native.startAsync).not.toHaveBeenCalled()
+  })
+
+  it('waits for native stop completion before starting the same phone environment', async () => {
+    const { runtime, native, emit } = fixture({ state: 'stopping' })
+    await runtime.initialize()
+    const starting = runtime.start()
+    await vi.waitFor(() => expect(native.getStatusAsync).toHaveBeenCalledTimes(3))
+    expect(native.startAsync).not.toHaveBeenCalled()
+    const stopped = { ...runtime.status, state: 'stopped' as const }
+    native.getStatusAsync.mockResolvedValueOnce(stopped)
+    emit('onRuntimeStatus', stopped)
+    await starting
+    expect(native.startAsync).toHaveBeenCalledOnce()
+    expect(runtime.status.state).toBe('running')
+  })
+
+  it('waits for the previous profile to stop through intermediate background notifications', async () => {
+    const stopping: LocalRuntimeStatus = {
+      supported: true,
+      state: 'stopping',
+      accountScope: 'b'.repeat(64),
+      generation: 1,
+      background: 'active',
+    }
+    const { runtime, native, emit } = fixture(stopping)
+    await runtime.initialize()
+    const starting = runtime.start()
+    const settled = starting.catch(() => undefined)
+    try {
+      await vi.waitFor(() => expect(native.getStatusAsync).toHaveBeenCalledTimes(3))
+      emit('onRuntimeStatus', { ...stopping, background: 'completed' })
+      await vi.waitFor(() =>
+        expect(native.getStatusAsync.mock.calls.length).toBeGreaterThanOrEqual(4)
+      )
+      expect(runtime.status.accountScope).toBeUndefined()
+      expect(native.stopAsync).not.toHaveBeenCalled()
+      expect(native.startAsync).not.toHaveBeenCalled()
+
+      const stopped = { ...stopping, state: 'stopped' as const }
+      emit('onRuntimeStatus', stopped)
+      await starting
+      expect(native.stopAsync).not.toHaveBeenCalled()
+      expect(native.startAsync).toHaveBeenCalledOnce()
+      expect(runtime.status.accountScope).toBe(scope)
+    } finally {
+      runtime.dispose()
+      await settled
+    }
+  })
+
+  it('preserves a previous profile shutdown failure without retrying stop or mounting a guest', async () => {
+    const stopping: LocalRuntimeStatus = {
+      supported: true,
+      state: 'stopping',
+      accountScope: 'b'.repeat(64),
+      generation: 1,
+      background: 'active',
+    }
+    const { runtime, native, emit } = fixture(stopping)
+    await runtime.initialize()
+    const starting = runtime.start()
+    const rejected = expect(starting).rejects.toThrow('guest threads still alive')
+    await vi.waitFor(() => expect(native.getStatusAsync).toHaveBeenCalledTimes(3))
+    const failed = { ...stopping, state: 'failed' as const, error: 'guest threads still alive' }
+    emit('onRuntimeStatus', failed)
+    await rejected
+    expect(native.stopAsync).not.toHaveBeenCalled()
+    expect(native.startAsync).not.toHaveBeenCalled()
+    expect(runtime.status.accountScope).toBeUndefined()
+    runtime.dispose()
+  })
+
+  it('does not restart an explicitly stopped environment on foreground', async () => {
+    const { runtime, native } = fixture()
+    await runtime.start()
+    await runtime.stop()
+    await runtime.resume()
+    expect(native.startAsync).toHaveBeenCalledOnce()
+    expect(runtime.status.state).toBe('stopped')
+  })
+
+  it('cancels a waiting start when the old phone profile is disposed', async () => {
+    const { runtime, native } = fixture({ state: 'stopping' })
+    const starting = runtime.start()
+    const cancelled = expect(starting).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(native.getStatusAsync).toHaveBeenCalledTimes(2))
+    runtime.dispose()
+    await cancelled
+    expect(native.startAsync).not.toHaveBeenCalled()
+  })
+
+  it('surfaces failed native shutdown rather than mounting another guest', async () => {
+    const { runtime, native, emit } = fixture({ state: 'stopping' })
+    const starting = runtime.start()
+    const rejected = expect(starting).rejects.toThrow('guest threads still alive')
+    await vi.waitFor(() => expect(native.getStatusAsync).toHaveBeenCalledTimes(2))
+    const failed = {
+      ...runtime.status,
+      state: 'failed' as const,
+      error: 'guest threads still alive',
+    }
+    native.getStatusAsync.mockResolvedValue(failed)
+    emit('onRuntimeStatus', failed)
+    await rejected
     expect(native.startAsync).not.toHaveBeenCalled()
   })
 
@@ -308,6 +417,48 @@ describe('phone-local runtime ownership and lifecycle', () => {
     await runtime.recover()
     expect(delivered).toEqual([9, 10])
   })
+
+  it.each([false, true])(
+    'reports recovery transport state only with opt-in (%s) and no private data',
+    async enabled => {
+      const { runtime, native, emit } = fixture()
+      await runtime.initialize()
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      setDiagnosticRecording(enabled)
+      try {
+        const page = deferred<JournalPage>()
+        native.getEventsAsync.mockReturnValueOnce(page.promise)
+        const cause = new Error('sensitive-auth-detail')
+        const recovering = expect(runtime.recover()).rejects.toBe(cause)
+        await vi.waitFor(() => expect(native.getEventsAsync).toHaveBeenCalledOnce())
+        emit('onRuntimeEvent', {
+          ...journalEvent(1),
+          event: { event: 'response.output_text.delta', payload: { content: 'private-message' } },
+        })
+        page.reject(cause)
+        await recovering
+        if (enabled)
+          expect(info).toHaveBeenCalledWith('[LocalRuntime] Recovery failed', {
+            state: 'running',
+            generation: 1,
+            sequence: 0,
+            bufferedEvents: 1,
+            buffering: true,
+            eventListeners: 0,
+          })
+        else expect(info).not.toHaveBeenCalled()
+        expect(warning).not.toHaveBeenCalled()
+        const diagnostic = JSON.stringify([...info.mock.calls, ...warning.mock.calls])
+        expect(diagnostic).not.toContain('sensitive-auth-detail')
+        expect(diagnostic).not.toContain('private-message')
+      } finally {
+        setDiagnosticRecording(false)
+        info.mockRestore()
+        warning.mockRestore()
+      }
+    }
+  )
 
   it('drains recovery state after stop/start without requiring an App foreground transition', async () => {
     const { runtime, native, emit } = fixture()

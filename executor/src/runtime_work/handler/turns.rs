@@ -710,7 +710,7 @@ impl RuntimeWorkRpcHandler {
             .expect("active local execution map lock should not be poisoned")
             .get(local_task_id)
             .and_then(|execution| execution.request.clone());
-        let Some(request) = request.or_else(|| {
+        let Some(mut request) = request.or_else(|| {
             let link = self.local_task_link(local_task_id)?;
             // A paused native Goal can be reactivated after its local send
             // has finished. Reuse its saved execution profile, never replay
@@ -731,6 +731,9 @@ impl RuntimeWorkRpcHandler {
         }) else {
             return;
         };
+        // Event triggers belong to the first admitted input. Autonomous Goal
+        // recovery retains its command receipt without resubmitting that input.
+        request.extra.remove("resource_event_keys");
         let thread_id = active_turn.map(|turn| turn.thread_id.clone()).or_else(|| {
             self.local_task_link(local_task_id)
                 .and_then(|link| link.thread_id)
@@ -836,6 +839,7 @@ impl RuntimeWorkRpcHandler {
             turn.clone()
         };
         let mut turn = turn;
+        turn.request.extra.remove("resource_event_keys");
         turn.request.extra.remove(GOAL_NEEDS_ATTENTION_MARKER);
         turn.request
             .extra
@@ -864,6 +868,10 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn set_interaction_status(&self, local_task_id: &str, status: Option<&str>) {
+        let _guard = self
+            .stand_in_lifecycle_gate
+            .lock()
+            .expect("turn lifecycle gate poisoned");
         let mut changed = false;
         self.store.update_task(local_task_id, |link| {
             let next_status = status.map(ToOwned::to_owned);
@@ -1307,7 +1315,7 @@ impl RuntimeWorkRpcHandler {
         turn: SpawnTurnRequest,
         restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
-        if self.automatic_stand_in_waits(&turn) {
+        if self.automatic_input_waits(&turn) {
             let handler = self.clone();
             tokio::spawn(async move {
                 handler.park_waiting_automatic_turn(turn).await;
@@ -1344,7 +1352,7 @@ impl RuntimeWorkRpcHandler {
             });
             return;
         }
-        if self.automatic_stand_in_waits(&turn) {
+        if self.automatic_input_waits(&turn) {
             let handler = self.clone();
             tokio::spawn(async move {
                 handler.park_waiting_automatic_turn(turn).await;
@@ -1628,9 +1636,18 @@ impl RuntimeWorkRpcHandler {
                             thread_id: thread_id.clone(),
                             turn_id: turn_id.clone(),
                         });
-                    if let Some(hooks) = callback_lifecycle.lock().expect("lifecycle lock").as_mut()
                     {
-                        hooks.started(&thread_id, &turn_id);
+                        let mut lifecycle = callback_lifecycle.lock().expect("lifecycle lock");
+                        if lifecycle.is_none() {
+                            *lifecycle = active_turn_handler.begin_lifecycle_hooks(
+                                &active_turn_request,
+                                &active_turn_local_task_id,
+                                "Codex",
+                            );
+                        }
+                        if let Some(hooks) = lifecycle.as_mut() {
+                            hooks.started(&thread_id, &turn_id);
+                        }
                     }
                     active_turn_handler.record_active_codex_turn(
                         &active_turn_local_task_id,
@@ -1638,6 +1655,8 @@ impl RuntimeWorkRpcHandler {
                         thread_id.clone(),
                         turn_id.clone(),
                     );
+                    active_turn_handler
+                        .event_goal_turn_started(&active_turn_local_task_id, &active_turn_request);
                     active_turn_handler.bind_native_turn_start(
                         &active_turn_local_task_id,
                         &active_turn_request,
@@ -1722,8 +1741,6 @@ impl RuntimeWorkRpcHandler {
                         .validate_project_coordinator_request(&request)
                         .await?;
                 }
-                *lifecycle.lock().expect("lifecycle lock") =
-                    handler.begin_lifecycle_hooks(&request, &turn_local_task_id, "Codex");
                 {
                     let _stage = turn_diagnostics::TurnStage::start(
                         &turn_local_task_id,
@@ -1731,11 +1748,17 @@ impl RuntimeWorkRpcHandler {
                     );
                     crate::agents::runtime_capabilities::prepare_codex_runtime(&request).await?;
                 }
+                let event_goal = handler
+                    .event_goal_admission(&turn_local_task_id, &request)
+                    .await?;
                 handler
                     .codex_app_server
                     .run_turn_with_cancel(
                         request.clone(),
                         CodexAppServerTurnOptions {
+                            input_admission: handler
+                                .automatic_input_admission(&turn_local_task_id, &request),
+                            event_goal,
                             recover_usage_limits: true,
                             quota_resume: quota_recovery::wait(&recovery_turn)
                                 .map(|wait| wait.recovery),
@@ -1762,6 +1785,33 @@ impl RuntimeWorkRpcHandler {
                     .await
             }
             .await;
+            {
+                let _stage = turn_diagnostics::TurnStage::start(
+                    &turn_local_task_id,
+                    "notification_observer_drain",
+                );
+                let _ = mapper_handle.await;
+            }
+            if matches!(result.as_ref(),Err(error) if error==crate::agents::AUTOMATIC_INPUT_WAITING_FOR_HUMAN)
+            {
+                if let Some(startup) = restore_startup.as_ref() {
+                    startup.finish();
+                }
+                match handler
+                    .defer_automatic_input(&turn_local_task_id, &request, execution_id)
+                    .await
+                {
+                    Ok(true) => {
+                        scheduled_turn_guard.transferred = true;
+                        return;
+                    }
+                    Ok(false) => {}
+                    Err(error) => result = Err(error.message),
+                }
+            }
+            if result.is_err() {
+                handler.event_goal_admission_failed(&turn_local_task_id, &request);
+            }
             let runtime_was_stopped = interrupted_by_runtime_stop(&result);
             scheduled_turn_guard.command_outcome = Some(match result.as_ref() {
                 Ok(turn) => command_journal::CommandState::from_execution(&turn.outcome),
@@ -1783,13 +1833,6 @@ impl RuntimeWorkRpcHandler {
                 restore_startup.finish();
             }
 
-            {
-                let _stage = turn_diagnostics::TurnStage::start(
-                    &turn_local_task_id,
-                    "notification_observer_drain",
-                );
-                let _ = mapper_handle.await;
-            }
             if let Some(hooks) = lifecycle.lock().expect("lifecycle lock").as_mut() {
                 let status = match &result {
                     Ok(turn) => super::hooks::lifecycle_status(&turn.outcome),
@@ -2218,7 +2261,7 @@ impl RuntimeWorkRpcHandler {
                     return;
                 }
                 if turn.goal_status_observed {
-                    self.sync_runtime_task_goal_status(local_task_id, turn.goal_status.clone());
+                    self.observe_runtime_task_goal_status(local_task_id, turn.goal_status.clone());
                 }
                 self.register_thread_event_route(
                     &thread_id,

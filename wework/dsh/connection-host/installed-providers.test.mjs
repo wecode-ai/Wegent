@@ -42,12 +42,12 @@ test('lists disabled installed connection manifests without running their entryp
       })
     )
     await writeFile(join(plugin, 'must-not-run.js'), "throw new Error('Disabled plugin executed')")
-    const catalog = await installedProviders(home, [], parseConnections)
+    const catalog = await installedProviders(root, [], parseConnections)
     assert.equal(catalog[0].id, '@test/mail/inbox')
     assert.equal(catalog[0].availability.status, 'plugin_disabled')
     assert.deepEqual(
       await installedProviders(
-        home,
+        root,
         [{ packageName: '@test/mail', id: 'active' }],
         parseConnections
       ),
