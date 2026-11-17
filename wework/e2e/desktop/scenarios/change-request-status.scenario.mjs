@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
@@ -171,6 +171,11 @@ if (endpoint === 'user') {
     await chmod(executablePath, 0o755)
   }
   process.env.PATH = `${binPath}${delimiter}${process.env.PATH ?? ''}`
+  if (process.platform === 'win32') return {}
+  // Keep the CLI fixture ahead of developer tools after login-shell hydration.
+  const nodePath = join(binPath, 'node')
+  await symlink(process.execPath, nodePath)
+  return { WEWORK_NODE_PATH: nodePath }
 }
 
 async function createLocalProject(control, workspacePath, timeoutMs) {
@@ -268,7 +273,7 @@ export async function createDesktopScenario({
   workspacePath,
 }) {
   await configureGitFixture(workspacePath)
-  await createGitHubCliFixture(homePath)
+  const appEnvironment = await createGitHubCliFixture(homePath)
   const queryLogPath = join(homePath, QUERY_LOG_FILE)
   const statePath = join(homePath, STATE_FILE)
   const gitSyncRequests = []
@@ -279,6 +284,7 @@ export async function createDesktopScenario({
     captureScreenshot(control, name, selector)
 
   return {
+    appEnvironment,
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === '/api/auth/wework/config') {
         json(response, 200, {
@@ -678,9 +684,14 @@ export async function createDesktopScenario({
       await control.command('waitFor', CHANGE_REQUEST_BUTTON, {
         text: '#2631',
       })
-      await control.command('waitFor', '[data-testid="change-request-state"]', {
+      await control.command('waitFor', CHANGE_REQUEST_BUTTON, {
         text: '已合并',
       })
+      assert.match(
+        await control.command('getAttribute', CHANGE_REQUEST_BUTTON, { value: 'aria-label' }),
+        /已合并/,
+        'The recovered PR control did not expose its merged status'
+      )
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查通过',
       })
