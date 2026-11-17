@@ -92,6 +92,7 @@ describe('ConnectorConnectionsSection', () => {
     expect(screen.getByTestId('connector-authorize-scope-test')).toBeEnabled()
     fireEvent.click(screen.getByTestId('connector-authorize-scope-test'))
     await waitFor(() => expect(api.authorize).toHaveBeenCalledTimes(1))
+    expect(api.authorize.mock.calls[0][3]).toBe(api.open)
   })
 
   test('reloads the authoritative catalog and notifies the runtime after refresh succeeds', async () => {
