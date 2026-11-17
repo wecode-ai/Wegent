@@ -264,6 +264,52 @@ describe('ProjectAutomaticProcessing loading', () => {
 })
 
 describe('ProjectAutomaticProcessing status triggers', () => {
+  it('retains a human description draft across scheduled and status triggers without creating work', async () => {
+    const { api, view } = fixture()
+    api.agents.list.mockResolvedValue([])
+    api.members.list.mockResolvedValue([{ user_id: 7, user_name: '项目成员' }])
+    render(view())
+    await screen.findByText('自动分配')
+    fireEvent.click(screen.getByTestId('automatic-processing-create'))
+    expect(screen.getByTestId('automatic-processing-target-kind-human')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.queryByTestId('automatic-processing-prompt')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('automatic-processing-trigger-schedule'))
+    const prompt = ['保留中文、多行和代码说明。', '第二行职责。'].join('\n')
+    fireEvent.change(screen.getByTestId('automatic-processing-prompt'), {
+      target: { value: prompt },
+    })
+    fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
+    fireEvent.change(screen.getByTestId('automatic-processing-status'), {
+      target: { value: 'completed' },
+    })
+    expect(screen.queryByTestId('automatic-processing-prompt')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('automatic-processing-trigger-schedule'))
+    expect(screen.getByTestId('automatic-processing-prompt')).toHaveValue(prompt)
+    expect(api.automations.create).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('automatic-processing-trigger-status_changed'))
+    expect(screen.getByTestId('automatic-processing-status')).toHaveValue('completed')
+    fireEvent.click(screen.getByTestId('automatic-processing-save'))
+    await waitFor(() =>
+      expect(api.automations.create).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({
+          targetKind: 'human',
+          targetId: '7',
+          prompt,
+          eventType: 'task.status_changed',
+          eventConfig: {
+            executionTarget: 'existing_issue',
+            transition: 'any',
+            statuses: ['completed'],
+          },
+        })
+      )
+    )
+  })
+
   it('requires a status and saves a selected custom board status', async () => {
     const { api, view } = fixture()
     render(view())
