@@ -16,6 +16,7 @@ from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_items.access import can_view_item
 from app.services.stage_assignees import (
     require_stage_target,
+    stage_assignee_enforcement_enabled,
     stage_workflow,
     validate_stage_assignee,
 )
@@ -80,6 +81,31 @@ def _constraint_config(metadata: dict[str, Any]) -> dict[str, Any]:
             if isinstance(node, dict)
         ],
     }
+
+
+def require_workflow_creation_override(
+    db: Session,
+    *,
+    project: CloudProject,
+    workflow: dict[str, Any],
+    user_id: int,
+) -> None:
+    """Only maintainers may replace project stage constraints at creation."""
+    configured = stage_workflow(project, {})
+    constrained = bool(configured.get("assignee_roles")) or any(
+        node.get("required_assignee_type")
+        or node.get("required_assignee_role")
+        or node.get("name") in {"需求提出", "质量验收"}
+        for node in configured.get("nodes", [])
+        if isinstance(node, dict)
+    )
+    if (
+        constrained
+        and stage_assignee_enforcement_enabled(project, {})
+        and _constraint_config({"workflow": workflow})
+        != _constraint_config({"workflow": configured})
+    ):
+        require_cloud_project_role(db, int(project.id), user_id, BaseRole.Maintainer)
 
 
 def preflight_issue_update(

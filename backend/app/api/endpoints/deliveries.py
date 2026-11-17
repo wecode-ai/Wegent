@@ -1065,14 +1065,13 @@ def remove_issue_assignment(
         issue_id=item_id,
         user_id=current_user.id,
     )
-    issue_assignment_service.remove(
+    issue_assignment_service.remove_and_project(
         db,
         project_id=int(project.id),
         issue_id=item_id,
         assignment_id=assignment_id,
         user_id=current_user.id,
     )
-    issue_assignment_service.project_legacy_assignment(db, item=item)
     db.commit()
     publish_loop_item_changed(
         db, item=item, reason="assignment_removed", actor_user_id=current_user.id

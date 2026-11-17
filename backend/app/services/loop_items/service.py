@@ -132,6 +132,7 @@ from app.services.stage_assignee_mutations import (
     lock_issue,
     preflight_issue_update,
     record_stage_transition,
+    require_workflow_creation_override,
 )
 from app.services.stage_assignees import (
     stage_assignee_enforcement_enabled,
@@ -671,6 +672,13 @@ class LoopItemService:
                         status.HTTP_409_CONFLICT, "Created TODO has been archived"
                     )
                 return existing
+        if values.workflow is not None:
+            require_workflow_creation_override(
+                db,
+                project=project,
+                workflow=values.workflow.model_dump(),
+                user_id=user_id,
+            )
         sequence = project.next_item_number
         project.next_item_number += 1
         payload = values.model_dump(
