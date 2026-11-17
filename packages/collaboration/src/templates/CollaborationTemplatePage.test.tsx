@@ -112,7 +112,30 @@ it('browses template details within the existing picker dialog and returns witho
   await click('template-details-product-lifecycle')
   expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
   expect(container.querySelector('[data-testid="template-inline-detail"]')).not.toBeNull()
+  expect(container.querySelector('[data-testid="template-detail-cancel"]')).toBeNull()
   await act(async () => detail?.onBack())
+  expect(container.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
+  expect(container.querySelector('[data-testid="template-search"]')).not.toBeNull()
+  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+})
+
+it('retains its own Back action when the inline picker has no host navigation', async () => {
+  const store = new CollaborationTemplateStore({
+    scope: 'local:7',
+    ownerId: 7,
+    persistence: { read: async () => [], write: async () => undefined },
+  })
+  await act(async () =>
+    root.render(
+      <TemplateDialog title="Choose template" closeLabel="Close" onClose={vi.fn()}>
+        <CollaborationTemplatePage embedded store={store} locale="en" onUse={vi.fn()} />
+      </TemplateDialog>
+    )
+  )
+  await click('template-details-product-lifecycle')
+  expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
+  expect(container.querySelector('[data-testid="template-inline-detail"]')).not.toBeNull()
+  await click('template-detail-cancel')
   expect(container.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
   expect(container.querySelector('[data-testid="template-search"]')).not.toBeNull()
   expect(container.querySelectorAll('dialog[open]')).toHaveLength(1)
@@ -192,7 +215,8 @@ it('prevents overlapping import and remote detail panels while a detail request 
     expect(importBlocked).toBe(true)
     expect(importedWhilePending).toBe(false)
     expect(container.querySelector('[data-testid="template-import-file"]')).toBeNull()
-    expect(footer.querySelectorAll('button')).toHaveLength(1)
+    expect(footer.querySelectorAll('button')).toHaveLength(2)
+    expect(footer.querySelector('[data-testid="template-detail-cancel"]')).not.toBeNull()
     expect(footer.querySelector('[data-testid="template-use"]')).not.toBeNull()
     expect(footer.querySelector('[data-testid="template-import-save"]')).toBeNull()
   } finally {

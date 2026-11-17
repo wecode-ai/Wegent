@@ -457,14 +457,14 @@ function ScopedCollaborationTemplatePage({
           busy={busy}
           footer={
             <>
-              {!embedded && (
+              {(!embedded || !onDetailChange) && (
                 <button
                   type="button"
                   data-testid="template-detail-cancel"
                   disabled={busy}
                   onClick={() => setSelected(null)}
                 >
-                  {m.cancel}
+                  {embedded ? m.backToTemplates : m.cancel}
                 </button>
               )}
               {mode === 'marketplace' ? (

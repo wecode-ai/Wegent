@@ -77,7 +77,7 @@ export async function verifyCollaborationSettingsUx(control, { scoped, request, 
   await control.command('click', find('collaboration-project-settings-sharing'))
   await control.command('clickWhenEnabled', find('project-template-import'))
   await control.command('clickWhenEnabled', find('template-details-product-lifecycle'))
-  await control.command('waitFor', find('template-detail-inline'), { visible: true })
+  await control.command('waitFor', find('template-inline-detail'), { visible: true })
   assert.equal(
     Number(await control.command('getElementCount', scoped('dialog[open]'))),
     1,
