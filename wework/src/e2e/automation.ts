@@ -3934,6 +3934,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return hoverDesktopControlElement(command.selector)
     case 'focus':
       return focusDesktopControlElement(command.selector)
+    case 'focusWindow': {
+      const windowLabel = getDesktopWindowLabel()
+      await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
+        windowLabel,
+      })
+      return ''
+    }
     case 'pointerLeave':
       return leaveDesktopControlElement(command.selector, command.target)
     case 'pointerDown':
