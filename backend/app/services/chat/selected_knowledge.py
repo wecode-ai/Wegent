@@ -499,7 +499,9 @@ def _build_current_wegent_refs(
             if context_type == ContextType.KNOWLEDGE_BASE.value
             else []
         )
-        document_ids = _int_values(data.get("document_ids"))
+        document_ids = _int_values(
+            data.get("explicit_document_ids", data.get("document_ids"))
+        )
         scope_restricted = bool(data.get("scope_restricted")) or bool(
             folder_ids or document_ids
         )
