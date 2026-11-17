@@ -59,6 +59,23 @@ describe('shutdown diagnostics', () => {
     expect(error).toHaveBeenCalled()
   })
 
+  it('keeps redacted shutdown evidence for ordinary desktop E2E sessions', async () => {
+    vi.stubEnv('WEWORK_RELEASE_ROOT', '')
+    const output = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    await expect(traceShutdownStep('desktop-runtime', () => 42)).resolves.toBe(42)
+    recordReleaseDiagnostic('application-quit', { token: 'sensitive-value' }, true)
+    const messages = output.mock.calls.map(([message]) => String(message))
+    expect(messages).toHaveLength(3)
+    expect(messages[0]).toContain('"status":"started"')
+    expect(messages[1]).toContain('"status":"completed"')
+    expect(messages[2]).toContain('[application-quit]')
+    expect(messages.join('\n')).not.toContain('sensitive-value')
+    const circular: { self?: unknown } = {}
+    circular.self = circular
+    expect(() => recordReleaseDiagnostic('startup-step', circular, true)).not.toThrow()
+    expect(() => records()).toThrow()
+  })
+
   it('does not create diagnostic files outside an E2E session', async () => {
     vi.stubEnv('WEWORK_E2E_CONTROL_URL', '')
     await expect(traceShutdownStep('service', () => 42)).resolves.toBe(42)

@@ -31,6 +31,8 @@ Backend 身份校验在 HTTP 计时范围外完成，避免把串行存储等待
 仍须拒绝 Backend 切换并检查地址是否过期。父窗口日志以 `parent-python-downloads-failed` 记录安全的
 错误分类，可区分描述请求超时，不记录凭据或下载地址。
 
+普通桌面 E2E 即使未设置发布槽位目录，也会把经过脱敏的 `[shutdown-step]` 和 `[application-quit]` 记录写入 `app.log`。关闭阶段包含每个服务的开始、完成或失败，以及工作区目录日志刷新；可据此区分清理流程未结束与 Electron 已触发退出事件但原生进程未结束。发布槽位仍保留自己的 `activation-diagnostics.log`。这些诊断不改变退出预算或进程存活断言。
+
 ## 运行方式
 
 首次运行需要安装 Playwright 浏览器：

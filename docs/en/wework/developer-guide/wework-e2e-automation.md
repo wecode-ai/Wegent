@@ -30,6 +30,8 @@ The first model-routing task and real Harness CLI launch use the workbench start
 
 Numeric Process Explorer filters match the exact PID, excluding matches in other processes' launch arguments or PID substrings. Text filters still search process names and launch details. The application-menu checkpoint retains its assertion that filtering by the application PID excludes unrelated helpers.
 
+Ordinary desktop E2E writes redacted `[shutdown-step]` and `[application-quit]` records to `app.log` even without a release-slot directory. The stages include each service’s start, completion or failure and workspace-catalog log flushing, distinguishing unfinished cleanup from an Electron quit event followed by a surviving native process. Release slots retain their own `activation-diagnostics.log`. These diagnostics do not change exit budgets or process-liveness assertions.
+
 ## Running Tests
 
 Install the Playwright browser before the first run:
