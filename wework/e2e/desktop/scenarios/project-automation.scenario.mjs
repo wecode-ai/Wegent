@@ -12,7 +12,7 @@ import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { verifyWorkspaceAgentDisplayNames } from '../modules/workspace-agent-setup.mjs'
 import {
   assertSavedCloudRouting,
-  readBasicCloudDefault,
+  readCloudDefaultWithoutOpeningRuntime,
   verifyCloudSaveDuringNativeFaults,
   verifyLocalBasicDefaultSave,
 } from '../modules/agent-catalog-regressions.mjs'
@@ -431,7 +431,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           selectableModels.length > 0,
           'No executable model is available for Agent creation'
         )
-        const defaultModel = await readBasicCloudDefault(
+        const defaultModel = await readCloudDefaultWithoutOpeningRuntime(
           control,
           'wework-agent',
           'wework-agent-resource-creator',
