@@ -1,4 +1,5 @@
 import { vi } from 'vitest'
+import { canonicalTestTranscript } from '../../test/chatHarness'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/runtime'
 
@@ -95,7 +96,8 @@ vi.mock('@/services/runtimeStream', () => ({
       mocks.updateAccessToken(config?.accessToken ?? '')
     }
     listWork = mocks.listWork
-    getTranscript = mocks.transcript
+    getTranscript = async (...args: unknown[]) =>
+      canonicalTestTranscript(await mocks.transcript(...args))
     async subscribe(scope: unknown, listener: unknown) {
       mocks.order.push('subscribe')
       mocks.conversationSubscribe(scope, listener)

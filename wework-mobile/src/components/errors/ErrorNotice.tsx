@@ -6,6 +6,7 @@ import { copyErrorDetails, showErrorAlert } from '@/services/errorAlerts'
 
 export function ErrorNotice({
   error,
+  errorType,
   title,
   testID = 'error-notice',
   retryTestID = `${testID}-retry`,
@@ -13,6 +14,7 @@ export function ErrorNotice({
   onRetry,
 }: {
   error: unknown
+  errorType?: string
   title?: string
   testID?: string
   retryTestID?: string
@@ -20,7 +22,7 @@ export function ErrorNotice({
   onRetry?: () => void | Promise<unknown>
 }) {
   const theme = useTheme()
-  const presentation = describeMobileError(error, title)
+  const presentation = describeMobileError(error, title, errorType)
   return (
     <View testID={testID} style={[styles.notice, { backgroundColor: theme.colors.surfaceVariant }]}>
       <Ionicons

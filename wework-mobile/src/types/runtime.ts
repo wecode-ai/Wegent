@@ -39,7 +39,8 @@ export interface DeviceInfo {
   bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null
   runtime_features?:
-    import('../../../packages/chat-core/src/execution-project').RuntimeFeatureSet | null
+    | import('../../../packages/chat-core/src/execution-project').RuntimeFeatureSet
+    | null
 }
 
 export interface DeviceListResponse {
@@ -131,6 +132,7 @@ export interface RuntimeWorkListResponse {
 }
 
 export interface RuntimeTranscriptMessage {
+  messageIndex?: number
   id: string
   runtimeItemId?: string
   role: 'user' | 'assistant' | 'system' | 'tool' | string
@@ -166,6 +168,8 @@ export interface RuntimeTranscriptResponse {
   title?: string | null
   running?: boolean
   messages: RuntimeTranscriptMessage[]
+  turns?: import('../../../packages/chat-core/src/runtime-conversation').RuntimeConversationTurn[]
+  supersededTurnIds?: string[]
   hasMoreBefore?: boolean
   beforeCursor?: string | null
 }
@@ -322,6 +326,9 @@ export interface ChatMessage {
   completedAt?: number
   error?: string
   errorType?: string
+  runtimeStatus?: import('../../../packages/chat-core/src/runtime-conversation').RuntimeWorkbenchMessageStatus
+  stoppedNotice?: boolean
+  runtimeDisplayItems?: import('../../../packages/chat-core/src/runtime-conversation').RuntimeAssistantDisplayItem[]
 }
 
 export interface ChatTextItem {
@@ -364,7 +371,10 @@ export type ChatSubagentBlock =
   import('../../../packages/chat-core/src/runtime-conversation').SubagentBlock
 
 export type ChatProcessingBlock =
-  ChatToolBlock | ChatNarrativeBlock | ChatFileChangesBlock | ChatSubagentBlock
+  | ChatToolBlock
+  | ChatNarrativeBlock
+  | ChatFileChangesBlock
+  | ChatSubagentBlock
 
 export interface ChatFileChangeItem {
   path: string

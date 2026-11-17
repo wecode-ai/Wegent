@@ -14,7 +14,14 @@ import type {
 } from '@/types/runtime'
 
 export type ToolActivityKind =
-  'web' | 'file' | 'search' | 'command' | 'create' | 'edit' | 'guidance' | 'tool'
+  | 'web'
+  | 'file'
+  | 'search'
+  | 'command'
+  | 'create'
+  | 'edit'
+  | 'guidance'
+  | 'tool'
 
 export type MessageDisplayRow =
   | { type: 'narrative'; id: string; block: ChatNarrativeBlock }
@@ -439,4 +446,33 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+}
+
+export type AssistantBodyPart =
+  | { id: string; type: 'text'; content: string }
+  | { id: string; type: 'processing'; blocks: ChatProcessingBlock[] }
+
+/** Only adjacent processing items may be grouped; text remains at its native position. */
+export function assistantBodyParts(message: ChatMessage): AssistantBodyPart[] {
+  if (!message.runtimeDisplayItems)
+    return [
+      ...(message.blocks?.length
+        ? [{ id: 'processing', type: 'processing' as const, blocks: message.blocks }]
+        : []),
+      ...(message.content ? [{ id: 'text', type: 'text' as const, content: message.content }] : []),
+    ]
+  const blocks = new Map(message.blocks?.map(block => [block.id, block]))
+  const parts: AssistantBodyPart[] = []
+  for (const item of message.runtimeDisplayItems) {
+    if (item.type === 'assistant_text') {
+      parts.push({ id: item.id, type: 'text', content: item.content })
+    } else {
+      const block = blocks.get(item.id)
+      if (!block) continue
+      const previous = parts.at(-1)
+      if (previous?.type === 'processing') previous.blocks.push(block)
+      else parts.push({ id: item.id, type: 'processing', blocks: [block] })
+    }
+  }
+  return parts
 }

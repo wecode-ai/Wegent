@@ -72,6 +72,17 @@ export function hydrateRuntimeConversationTurns(
     ),
   );
   const updatedTextIds = new Set<string>();
+  const completedTextIds = new Set<string>();
+  const terminalSnapshots = new Set(
+    snapshot
+      .filter(
+        (turn) =>
+          turn.status === "done" ||
+          turn.status === "failed" ||
+          turn.status === "cancelled",
+      )
+      .map((turn) => turn.id),
+  );
   const recoveringTurnIds = new Set<string>();
   for (const action of actions) {
     if (!actionsAlreadyApplied)
@@ -81,6 +92,14 @@ export function hydrateRuntimeConversationTurns(
       action.itemId
     ) {
       updatedTextIds.add(action.itemId);
+      if (action.type === "assistant_done") completedTextIds.add(action.itemId);
+    }
+    if (
+      (action.type === "assistant_done" ||
+        action.type === "assistant_cancelled") &&
+      action.subtaskId
+    ) {
+      recoveringTurnIds.add(action.subtaskId);
     }
     if (
       action.type === "block_created" &&
@@ -120,6 +139,16 @@ export function hydrateRuntimeConversationTurns(
             item.type !== "assistant_text" ||
             live?.type !== "assistant_text" ||
             !updatedTextIds.has(item.id)
+          )
+            return item;
+          // A completed native item can rewrite provisional text. Only an
+          // observed terminal content event can supersede that final snapshot.
+          if (
+            !localIds.has(turn.id) &&
+            terminalSnapshots.has(turn.id) &&
+            !completedTextIds.has(item.id) &&
+            !item.content.startsWith(live.content) &&
+            !live.content.startsWith(item.content)
           )
             return item;
           // Text deltas are append-only. A native snapshot may already include a received delta,
@@ -357,6 +386,12 @@ export function reduceRuntimeConversationTurns(
   action: RuntimePaneMessageAction,
 ): RuntimeConversationTurn[] {
   switch (action.type) {
+    case "guidance_applied":
+      return appendRuntimeConversationGuidance(
+        turns,
+        action.subtaskId,
+        action.message,
+      );
     case "reset":
       return seedRuntimeConversationTurns(action.messages, turns);
     case "user_added":
@@ -437,6 +472,8 @@ export function reduceRuntimeConversationTurns(
           ...turn,
           items: settleRuntimeReconnectingBlocks(turn.items),
           status: "cancelled",
+          error: undefined,
+          errorType: undefined,
           streamingThinkingContent: undefined,
           ...completeRuntimeTurnTiming(turn, action),
           stoppedNotice: true,

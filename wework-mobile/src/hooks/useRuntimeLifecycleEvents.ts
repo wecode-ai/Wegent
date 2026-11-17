@@ -1,3 +1,4 @@
+import type { RuntimeExecutionState } from '../../../packages/chat-core/src/runtime-task-api-types'
 import { useEffect, type RefObject } from 'react'
 import { modelSelectionFromRuntimeHandle } from '../../../packages/chat-core/src/runtime-model-selection'
 import {
@@ -47,7 +48,8 @@ export function useRuntimeLifecycleEvents({
         if (event.name === 'runtime.work.changed') {
           const data = event.payload.data as Record<string, unknown> | undefined
           const cleanup = data?.archiveCleanup as
-            { workspacePath?: unknown; errors?: unknown } | undefined
+            | { workspacePath?: unknown; errors?: unknown }
+            | undefined
           // Match PC onRuntimeWorkChanged: accepted background deletion can still fail.
           if (typeof cleanup?.workspacePath === 'string' && Array.isArray(cleanup.errors)) {
             const errors = cleanup.errors.filter(
@@ -56,6 +58,14 @@ export function useRuntimeLifecycleEvents({
             if (errors.length)
               showErrorAlert(new Error(errors.join('; ')), { title: '已归档会话的文件清理失败' })
           }
+        }
+        const data = event.payload.data as Record<string, unknown> | undefined
+        const task = (data?.task ?? event.payload.task) as
+          | { executionState?: RuntimeExecutionState }
+          | undefined
+        if (event.name === 'executor.runtime_replaced') lifecycle.executorReplaced(address)
+        if (task?.executionState && lifecycle.executionReceived(address, task.executionState)) {
+          publishTaskLifecycle()
         }
         const current = currentAddressRef.current
         const selection =
@@ -80,7 +90,8 @@ export function useRuntimeLifecycleEvents({
           publishTaskLifecycle()
         }
         if (
-          isTerminalRuntimeEvent(event.name) &&
+          (isTerminalRuntimeEvent(event.name) ||
+            (event.name === 'runtime.turn.updated' && data?.status === 'settled')) &&
           current &&
           runtimeTaskKey(current) === runtimeTaskKey(address)
         ) {

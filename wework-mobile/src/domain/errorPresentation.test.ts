@@ -77,3 +77,14 @@ describe('mobile error copy follows PC classification', () => {
       expect(redacted).not.toContain(secret)
   })
 })
+
+it('recognizes the actual Codex quota response and honors explicit backend classifications', () => {
+  expect(
+    describeMobileError(
+      'You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits'
+    )
+  ).toMatchObject({ title: '模型额度已用尽' })
+  expect(
+    describeMobileError('unfamiliar provider wording', undefined, 'quota_exceeded')
+  ).toMatchObject({ title: '模型额度已用尽' })
+})

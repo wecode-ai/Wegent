@@ -385,7 +385,7 @@ export function upsertAssistantText(
         streamTextOffset:
           contentMode === "snapshot" || offset === undefined
             ? undefined
-            : offset + content.length,
+            : offset + Array.from(content).length,
         createdAt: new Date().toISOString(),
       },
     ];
@@ -410,17 +410,19 @@ export function upsertAssistantText(
       streamTextOffset: undefined,
     });
   }
+  // Executor offsets count Unicode scalar values, not UTF-16 code units.
+  const previous = Array.from(current.content);
+  const length = Array.from(content).length;
   const mergedContent =
     offset === undefined
       ? `${current.content}${content}`
-      : `${current.content.slice(0, offset)}${content}${current.content.slice(
-          offset + content.length,
-        )}`;
+      : `${previous.slice(0, offset).join("")}${content}${previous
+          .slice(offset + length)
+          .join("")}`;
   return replaceAt(items, index, {
     ...current,
     content: mergedContent,
-    streamTextOffset:
-      offset === undefined ? undefined : offset + content.length,
+    streamTextOffset: offset === undefined ? undefined : offset + length,
   });
 }
 

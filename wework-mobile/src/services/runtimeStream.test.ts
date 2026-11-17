@@ -696,7 +696,13 @@ describe('RuntimeStream', () => {
       taskId: 'task-1',
       workspacePath: '/work',
       runtime: 'codex',
-      turns: [],
+      turns: [
+        {
+          id: 'turn',
+          status: 'done',
+          items: [{ id: 'reply', type: 'assistant_text', content: '历史消息'.repeat(1000) }],
+        },
+      ],
       runtimeTurns: [],
       messages: [{ id: 'assistant-1', role: 'assistant', content: '历史消息'.repeat(1000) }],
     }
@@ -713,51 +719,57 @@ describe('RuntimeStream', () => {
 
     await expect(
       stream.getTranscript({ deviceId: 'device-1', taskId: 'task-1' })
-    ).resolves.toMatchObject(transcript)
+    ).resolves.toMatchObject({ taskId: 'task-1', messages: [{ content: '历史消息'.repeat(1000) }] })
   })
 
-  it('retries an oversized five-turn page as one turn with the same cursor', async () => {
-    emit
-      .mockImplementationOnce((_name, payload, acknowledge) => {
-        expect(payload).toMatchObject({
-          params: { taskId: 'task-1', limit: 5, beforeCursor: 'offset:15' },
-        })
-        acknowledge({
-          ok: false,
-          error: {
-            code: 'runtime_rpc_failed',
-            message: 'Response exceeded the transport payload limit',
-          },
-        })
+  it('reads one V2 snapshot in chunks without shrinking the native page or losing its cursor', async () => {
+    const transcript = {
+      taskId: 'task-1',
+      workspacePath: '/work',
+      runtime: 'codex',
+      messages: [],
+      turns: [
+        {
+          id: 'turn',
+          status: 'completed',
+          items: [{ id: 'reply', type: 'assistant_text', content: 'latest' }],
+        },
+      ],
+      beforeCursor: 'native-cursor',
+    }
+    const bytes = gzipSync(strToU8(JSON.stringify({ transcript, strings: [], references: [] })))
+    const boundary = Math.floor(bytes.length / 2)
+    emit.mockImplementation((_name, payload, acknowledge) => {
+      const offset = payload.params.transcriptTransfer?.offset ?? 0
+      expect(payload.params).toMatchObject({
+        transcriptProtocolVersion: 2,
+        limit: 5,
+        beforeCursor: 'native-before',
       })
-      .mockImplementationOnce((_name, payload, acknowledge) => {
-        expect(payload).toMatchObject({
-          params: { taskId: 'task-1', limit: 1, beforeCursor: 'offset:15' },
-        })
-        acknowledge({
-          ok: true,
-          result: {
-            taskId: 'task-1',
-            workspacePath: '/work',
-            runtime: 'codex',
-            turns: [],
-            runtimeTurns: [],
-            messages: [{ id: 'assistant-1', role: 'assistant', content: 'latest' }],
-            beforeCursor: 'offset:14',
+      if (offset) expect(payload.params.transcriptTransfer.snapshotId).toBe('a'.repeat(64))
+      const end = offset ? bytes.length : boundary
+      acknowledge({
+        ok: true,
+        result: {
+          transcriptProtocolVersion: 2,
+          transfer: {
+            encoding: 'gzip+base64+json',
+            snapshotId: 'a'.repeat(64),
+            totalBytes: bytes.length,
+            offset,
+            nextOffset: end === bytes.length ? null : end,
+            payload: base64.encode(bytes.slice(offset, end)),
           },
-        })
+        },
       })
+    })
     const stream = await createStream(config)
-
     await expect(
       stream.getTranscript(
         { deviceId: 'device-1', taskId: 'task-1' },
-        { beforeCursor: 'offset:15' }
+        { beforeCursor: 'native-before' }
       )
-    ).resolves.toMatchObject({
-      messages: [{ content: 'latest' }],
-      beforeCursor: 'offset:14',
-    })
+    ).resolves.toMatchObject({ messages: [{ content: 'latest' }], beforeCursor: 'native-cursor' })
     expect(emit).toHaveBeenCalledTimes(2)
   })
 

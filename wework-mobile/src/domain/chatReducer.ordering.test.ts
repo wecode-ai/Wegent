@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { chatReducer, type ChatAction } from './chatReducer'
-import { hydrateRuntimeTranscript } from './runtimeTranscriptHydration'
+import { chatReducer, type ChatAction } from '../../test/chatHarness'
+import { hydrateRuntimeTranscript } from '../../test/chatHarness'
 import type { RuntimeTranscriptResponse } from '@/types/runtime'
 
 const assistant = {
@@ -14,6 +14,7 @@ const assistant = {
 const user = {
   id: 'provider-user',
   clientUserMessageId: 'client-user',
+  subtaskId: 'turn',
   role: 'user',
   content: 'Question',
 }
@@ -48,6 +49,21 @@ describe('live user and assistant order', () => {
       id: 'client-user',
       content: 'Question',
       createdAt: 1000,
+    })
+    messages = chatReducer(messages, {
+      type: 'stream',
+      event: {
+        name: 'response.guidance.applied',
+        payload: {
+          subtaskId: 'turn',
+          data: {
+            guidanceId: 'client-user',
+            clientGuidanceId: 'client-user',
+            message: 'Question',
+            appliedAtMs: 1000,
+          },
+        },
+      },
     })
     messages = chatReducer(messages, {
       type: 'stream',
@@ -114,7 +130,7 @@ describe('live user and assistant order', () => {
     const previous = chatReducer([], {
       type: 'replace',
       messages: [
-        { id: 'history-user', role: 'user', content: 'Old question' },
+        { id: 'history-user', subtaskId: 'history-reply', role: 'user', content: 'Old question' },
         { id: 'history-reply', role: 'assistant', content: 'Old reply' },
         assistant,
       ],
@@ -138,7 +154,17 @@ describe('live user and assistant order', () => {
     const result = hydrateRuntimeTranscript(
       [],
       transcript,
-      [{ type: 'optimistic-user', id: 'client-user', content: 'Question', createdAt: 1000 }, delta],
+      [
+        { type: 'optimistic-user', id: 'client-user', content: 'Question', createdAt: 1000 },
+        {
+          type: 'stream',
+          event: {
+            name: 'response.created',
+            payload: { subtaskId: 'turn', clientUserMessageId: 'client-user', data: {} },
+          },
+        },
+        delta,
+      ],
       false
     )
     expect(result.messages.map(message => message.role)).toEqual(['user', 'assistant'])

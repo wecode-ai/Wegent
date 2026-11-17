@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installReactNativeAbortGlobals } from '../../test/reactNativeAbortController'
 import type { WorkspaceGitSelection } from '@/types/workspaceGit'
 import { RuntimeApi } from './runtimeApi'
-import { loadMobileWorkspaceChanges, WorkspaceNotGitRepositoryError } from './mobileWorkspaceGit'
+import {
+  loadMobileWorkspaceChanges,
+  loadMobileWorkspaceGitSummary,
+  WorkspaceNotGitRepositoryError,
+} from './mobileWorkspaceGit'
 
 const config = {
   apiBaseUrl: 'https://example.com/api',
@@ -285,4 +289,31 @@ describe('Mobile workspace changes state', () => {
       undefined
     )
   })
+})
+
+it('reads the branch shortstat for the conversation summary without fetching a full diff', async () => {
+  const service = {
+    getWorkspaceGitShortStat: vi
+      .fn()
+      .mockResolvedValue('2 files changed, 7 insertions(+), 3 deletions(-)'),
+    getWorkspaceGitBranch: vi.fn(),
+    getWorkspaceGitDiff: vi.fn(),
+    isWorkspaceGitRepository: vi.fn(),
+  }
+  const controller = new AbortController()
+  expect(await loadMobileWorkspaceGitSummary(service, target, controller.signal)).toEqual({
+    fileCount: 2,
+    additions: 7,
+    deletions: 3,
+  })
+  expect(service.getWorkspaceGitShortStat).toHaveBeenCalledExactlyOnceWith(
+    target.deviceId,
+    target.path,
+    controller.signal
+  )
+  expect(service.getWorkspaceGitDiff).not.toHaveBeenCalled()
+  const failure = new Error('original shortstat failure')
+  service.getWorkspaceGitShortStat.mockRejectedValue(failure)
+  service.isWorkspaceGitRepository.mockResolvedValue(true)
+  await expect(loadMobileWorkspaceGitSummary(service, target)).rejects.toBe(failure)
 })

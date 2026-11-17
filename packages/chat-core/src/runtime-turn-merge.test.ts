@@ -217,3 +217,35 @@ describe('MCP output history reconciliation', () => {
     })
   })
 })
+
+it('keeps omitted attachment metadata while allowing authoritative empty attachment arrays', () => {
+  const user = (attachments?: unknown[]) => ({
+    id: 'turn',
+    status: 'done' as const,
+    items: [
+      {
+        id: 'input',
+        type: 'user_message' as const,
+        message: {
+          id: 'user',
+          role: 'user' as const,
+          content: 'Inspect',
+          attachments,
+        },
+      },
+    ],
+  })
+  const attached = user([
+    { id: 1, filename: 'report.png', image_width: 320 },
+  ]) as RuntimeConversationTurn
+  const omitted = user() as RuntimeConversationTurn
+  const cleared = user([]) as RuntimeConversationTurn
+  expect(mergeRuntimeConversationTurns([attached], [omitted])[0].items[0]).toMatchObject({
+    message: {
+      attachments: [{ id: 1, filename: 'report.png', image_width: 320 }],
+    },
+  })
+  expect(mergeRuntimeConversationTurns([attached], [cleared])[0].items[0]).toMatchObject({
+    message: { attachments: [] },
+  })
+})

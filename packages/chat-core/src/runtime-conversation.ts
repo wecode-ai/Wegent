@@ -134,7 +134,12 @@ export type RuntimeConversationItem = { position?: number } & (
 );
 
 export type RuntimePaneMessageAction =
-  import("./workbench-message-reducer").WorkbenchMessageAction<
-    import("./runtime").Attachment,
-    import("./runtime").TurnFileChangesSummary
-  >;
+  | import("./workbench-message-reducer").WorkbenchMessageAction<
+      import("./runtime").Attachment,
+      import("./runtime").TurnFileChangesSummary
+    >
+  | {
+      type: "guidance_applied";
+      subtaskId: string | undefined;
+      message: WorkbenchMessage & { role: "user"; runtimeGuidance: true };
+    };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatToolBlock, RequestUserInputPayload } from '@/types/runtime'
-import { chatReducer } from './chatReducer'
+import { chatReducer } from '../../test/chatHarness'
 import {
   pendingMobileUserInput,
   requestUserInputPayloadKey,
@@ -64,6 +64,7 @@ describe('mobile request-user-input projection', () => {
     const later = {
       ...message,
       id: 'later',
+      subtaskId: 'turn-b',
       blocks: [{ ...block, renderPayload: { ...payload, interactionScope: 'turn-b' } }],
     }
     const state = chatReducer([message, later], {

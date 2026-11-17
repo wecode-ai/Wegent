@@ -1,3 +1,8 @@
+import type { RuntimeExecutionState } from '../../../packages/chat-core/src/runtime-task-api-types'
+import {
+  isNewerRuntimeExecutionState,
+  isRuntimeExecutionRunning,
+} from '../../../packages/chat-core/src/runtime-execution-state'
 import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
@@ -14,6 +19,7 @@ const TERMINAL_RUNTIME_EVENTS = new Set([
   'response.completed',
   'response.failed',
   'response.incomplete',
+  'response.recovered',
   'error',
   'cancelled',
   'canceled',
@@ -42,6 +48,8 @@ export interface RuntimeTranscriptObservation {
 }
 
 export class RuntimeTaskLifecycleProjection {
+  private readonly executionByTask = new Map<string, RuntimeExecutionState>()
+  private readonly retiredEpochsByTask = new Map<string, Set<string>>()
   private readonly runningByTask = new Map<string, boolean>()
   private readonly revisionByTask = new Map<string, number>()
   private readonly transcriptRequestByTask = new Map<string, number>()
@@ -50,8 +58,31 @@ export class RuntimeTaskLifecycleProjection {
     return new Map(this.runningByTask)
   }
 
+  executionReceived(address: RuntimeTaskAddress, state: RuntimeExecutionState): boolean {
+    const key = runtimeTaskKey(address)
+    if (state.epoch && this.retiredEpochsByTask.get(key)?.has(state.epoch)) return false
+    if (!isNewerRuntimeExecutionState(this.executionByTask.get(key), state)) return false
+    this.executionByTask.set(key, state)
+    this.runningByTask.set(key, isRuntimeExecutionRunning(state))
+    this.advanceRevision(key)
+    return true
+  }
+
+  executorReplaced(address: RuntimeTaskAddress): void {
+    const key = runtimeTaskKey(address)
+    const epoch = this.executionByTask.get(key)?.epoch
+    if (epoch) {
+      const retired = this.retiredEpochsByTask.get(key) ?? new Set<string>()
+      retired.add(epoch)
+      this.retiredEpochsByTask.set(key, retired)
+    }
+    this.executionByTask.delete(key)
+    this.advanceRevision(key)
+  }
+
   executorStarted(address: RuntimeTaskAddress): boolean {
     const key = runtimeTaskKey(address)
+    if (this.executionByTask.has(key)) return false
     const changed = this.runningByTask.get(key) !== true
     this.advanceRevision(key)
     this.runningByTask.set(key, true)
@@ -117,6 +148,7 @@ export class RuntimeTaskLifecycleProjection {
   }
 
   transcriptReceived(observation: RuntimeTranscriptObservation, running: boolean): boolean {
+    if (this.executionByTask.has(observation.key)) return false
     if ((this.revisionByTask.get(observation.key) ?? 0) !== observation.lifecycleRevision) {
       return false
     }

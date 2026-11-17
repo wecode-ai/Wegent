@@ -112,3 +112,50 @@ function workWithRunning(running: boolean): RuntimeWorkListResponse {
     chats: [],
   }
 }
+
+it('uses native execution revisions across completion, stale events, and executor replacement', () => {
+  const lifecycle = new RuntimeTaskLifecycleProjection()
+  const address = { deviceId: 'device', taskId: 'task' }
+  const state = {
+    revision: '2',
+    epoch: 'first',
+    phase: 'running' as const,
+    turnId: 'turn',
+    latestTurnId: 'turn',
+    outcome: null,
+  }
+  expect(lifecycle.executionReceived(address, state)).toBe(true)
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(true)
+  const read = lifecycle.transcriptRequested(address)
+  expect(
+    lifecycle.executionReceived(address, {
+      ...state,
+      revision: '3',
+      phase: 'idle',
+      turnId: null,
+      outcome: 'succeeded',
+    })
+  ).toBe(true)
+  expect(lifecycle.executionReceived(address, state)).toBe(false)
+  expect(lifecycle.executorStarted(address)).toBe(false)
+  expect(lifecycle.transcriptReceived(read, true)).toBe(false)
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(false)
+  lifecycle.executorReplaced(address)
+  expect(lifecycle.executionReceived(address, { ...state, revision: '100' })).toBe(false)
+  expect(
+    lifecycle.executionReceived(address, {
+      ...state,
+      epoch: 'second',
+      revision: '1',
+      phase: 'recovering',
+    })
+  ).toBe(true)
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(true)
+  lifecycle.executionReceived(address, {
+    ...state,
+    epoch: 'second',
+    revision: '2',
+    phase: 'queued',
+  })
+  expect(lifecycle.snapshot().get(runtimeTaskKey(address))).toBe(false)
+})

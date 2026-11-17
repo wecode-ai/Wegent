@@ -41,7 +41,7 @@ export function ProcessingTimeline({
   // Other reply deltas must not rebuild already completed tool/file groups.
   const reply = message.content.trim()
   const duplicateReply = message.blocks?.find(
-    block => block.type === 'text' && block.content.trim() === reply
+    block => !message.runtimeDisplayItems && block.type === 'text' && block.content.trim() === reply
   )
   const excludedReply = duplicateReply && 'content' in duplicateReply ? duplicateReply.content : ''
   const segments = useMemo(

@@ -31,11 +31,16 @@ fn runtime_transcript_overlay_messages(
                 .filter_map(move |item| Some(((turn["id"].as_str()?, item["id"].as_str()?), item)))
         })
         .collect::<std::collections::HashMap<_, _>>();
+    let active_turn_id = crate::runtime_work::lifecycle::native_execution_state(link)
+        .and_then(|state| state.turn_id);
     completed_transcript_messages(link)
         .into_iter()
         .filter_map(|mut message| {
             let source = message["runtimeItems"].as_array()?;
             let turn_id = message["turnId"].as_str().unwrap_or_default();
+            let native_turn = native_turns.iter().find(|turn| turn["id"] == turn_id);
+            let command_is_current =
+                page_turns.contains(turn_id) || active_turn_id.as_deref() == Some(turn_id);
             let is_page_overlay = |item: &Value| {
                 page_turns.contains(turn_id)
                     && (is_runtime_user_interaction(item, turn_id)
@@ -43,9 +48,10 @@ fn runtime_transcript_overlay_messages(
                             && item["block"]["tool_name"] == "auto_approval_review"))
             };
             if message["role"] != "assistant"
-                || !source
-                    .iter()
-                    .any(|item| is_running_runtime_command(item) || is_page_overlay(item))
+                || !source.iter().any(|item| {
+                    (command_is_current && is_running_runtime_command(item))
+                        || is_page_overlay(item)
+                })
             {
                 return None;
             }
@@ -57,7 +63,8 @@ fn runtime_transcript_overlay_messages(
                         .and_then(|id| native_items.get(&(turn_id, id)))
                         .copied();
                     if is_page_overlay(item)
-                        || (is_running_runtime_command(item)
+                        || (command_is_current
+                            && is_running_runtime_command(item)
                             && !native.is_some_and(|native| {
                                 matches!(
                                     native.pointer("/block/status").and_then(Value::as_str),
@@ -78,6 +85,25 @@ fn runtime_transcript_overlay_messages(
                 })
                 .collect::<Vec<_>>();
             message["runtimeItems"] = json!(items);
+            // Runtime overlays own execution artifacts, never native turn outcomes.
+            if let Some(native) = native_turn.filter(|turn| turn["status"].is_string()) {
+                for key in [
+                    "status",
+                    "runtimeStatus",
+                    "error",
+                    "errorType",
+                    "stoppedNotice",
+                    "startedAt",
+                    "completedAt",
+                    "durationMs",
+                ] {
+                    if let Some(value) = native.get(key) {
+                        message[key] = value.clone();
+                    } else {
+                        message.as_object_mut()?.remove(key);
+                    }
+                }
+            }
             Some(message)
         })
         .collect()
@@ -105,4 +131,49 @@ pub(super) fn is_runtime_user_interaction(item: &Value, turn_id: &str) -> bool {
         && payload["kind"] == "request_user_input"
         && payload.get("interactionStatus").is_some()
         && payload["interactionScope"] == turn_id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_commands_cannot_resurrect_off_page_failures_or_native_outcomes() {
+        let command = json!({"id":"command","type":"block","block":{
+            "id":"command","type":"tool","tool_name":"bash","status":"pending",
+            "render_payload":{"kind":"command_execution","status":"inProgress"}
+        }});
+        let interaction = json!({"id":"question","type":"block","block":{
+            "id":"question","type":"tool","tool_name":"request_user_input","status":"done",
+            "render_payload":{"kind":"request_user_input","interactionScope":"old",
+                "interactionStatus":"answered"}
+        }});
+        let link = RuntimeTaskLink {
+            thread_id: Some("thread".into()),
+            runtime_handle: json!({"completedTranscriptThreadId":"thread","completedTranscriptMessages":[{
+                "id":"cached","turnId":"old","role":"assistant","content":"",
+                "status":"failed","error":"stale quota","errorType":"quota_exceeded",
+                "runtimeItems":[command, interaction]
+            }]}),
+            ..Default::default()
+        };
+        assert!(runtime_transcript_overlay_turns(&link, &[]).is_empty());
+        assert!(
+            runtime_transcript_overlay_turns(&link, &[json!({"id":"new","items":[]})]).is_empty()
+        );
+        let turns = runtime_transcript_overlay_turns(
+            &link,
+            &[json!({
+                "id":"old","status":"completed","items":[{"id":"command","type":"block","block":{"id":"command","type":"tool","status":"done"}}]
+            })],
+        );
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0]["status"], "completed");
+        assert!(turns[0]["error"].is_null());
+        assert!(turns[0]["errorType"].is_null());
+        assert_eq!(turns[0]["items"].as_array().unwrap().len(), 2);
+        assert_eq!(turns[0]["items"][0]["id"], "command");
+        assert_eq!(turns[0]["items"][0]["block"]["status"], "done");
+        assert_eq!(turns[0]["items"][1]["id"], "question");
+    }
 }

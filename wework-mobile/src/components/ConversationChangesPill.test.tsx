@@ -1,10 +1,10 @@
+import { showErrorAlert } from '@/services/errorAlerts'
 import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConversationChangesPill } from './ConversationChangesPill'
 import { FilePreviewContext, type MobileFilePreviewActions } from './files/FilePreviewContext'
 import { WorkspaceNotGitRepositoryError } from '@/services/mobileWorkspaceGit'
-
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const events = vi.hoisted(() => ({ active: undefined as undefined | ((state: string) => void) }))
 vi.mock('@react-navigation/native', async () => {
@@ -29,6 +29,7 @@ vi.mock('react-native-paper', () => ({
   Text: 'Text',
   useTheme: () => ({ dark: false, colors: {} }),
 }))
+vi.mock('@/services/errorAlerts', () => ({ showErrorAlert: vi.fn() }))
 vi.mock('./LiquidGlass', () => ({ LiquidGlassButton: 'GlassButton' }))
 
 describe('conversation changes summary', () => {
@@ -47,7 +48,11 @@ describe('conversation changes summary', () => {
   }
   beforeEach(() => {
     vi.clearAllMocks()
-    actions = { target, loadChanges, openChangesBrowser } as unknown as MobileFilePreviewActions
+    actions = {
+      target,
+      loadChangesSummary: loadChanges,
+      openChangesBrowser,
+    } as unknown as MobileFilePreviewActions
     loadChanges.mockResolvedValue(summary)
   })
   afterEach(async () => {
@@ -77,7 +82,7 @@ describe('conversation changes summary', () => {
     await act(() => {
       renderer = create(tree())
     })
-    const oldSignal = loadChanges.mock.calls[0]![1] as AbortSignal
+    const oldSignal = loadChanges.mock.calls[0]![0] as AbortSignal
     actions = { ...actions, target: { ...target, deviceId: 'device-b' } }
     loadChanges.mockResolvedValue({ ...summary, fileCount: 2 })
     await act(() => renderer.update(tree()))
@@ -149,10 +154,22 @@ describe('conversation changes summary', () => {
           finish = resolve
         })
     )
-    actions = { ...actions, loadChanges: nextLoader } as unknown as MobileFilePreviewActions
+    actions = { ...actions, loadChangesSummary: nextLoader } as unknown as MobileFilePreviewActions
     await act(() => renderer.update(tree()))
     expect(pill().props.accessibilityLabel).toBe('查看文件更改')
     await act(() => finish({ ...summary, fileCount: 1 }))
     expect(pill().props.accessibilityLabel).toContain('1 个文件')
+  })
+  it('keeps the original summary failure available through the native diagnostics boundary', async () => {
+    const failure = new Error('shortstat unavailable')
+    loadChanges.mockRejectedValueOnce(failure)
+    await act(() => {
+      renderer = create(tree())
+    })
+    await act(() => pill().props.onPress())
+    expect(showErrorAlert).toHaveBeenCalledWith(failure, {
+      title: '无法读取更改',
+      onRetry: expect.any(Function),
+    })
   })
 })

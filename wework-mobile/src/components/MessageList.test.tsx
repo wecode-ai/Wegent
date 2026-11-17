@@ -11,7 +11,6 @@ import { requestUserInputPayloadKey } from '@/domain/requestUserInput'
 import type { ChatMessage } from '@/types/runtime'
 import { MessageList } from './MessageList'
 import type { MobileFilePreviewActions } from './files/FilePreviewContext'
-
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const preview = vi.hoisted(() => ({ current: null as MobileFilePreviewActions | null }))
 vi.mock('./files/FilePreviewContext', () => ({ useMobileFilePreview: () => preview.current }))
@@ -552,11 +551,24 @@ describe('conversation waiting, streaming and native list integration (PC contra
       status: 'completed',
     }
     const currentUser = { ...user, id: 'current-user', createdAt: 3 }
-    await render([user, history, currentUser, assistant])
+    const current = {
+      ...assistant,
+      blocks: [
+        {
+          id: 'command',
+          subtaskId: 'turn',
+          type: 'tool' as const,
+          toolName: 'bash',
+          status: 'pending' as const,
+          createdAt: 3,
+        },
+      ],
+    }
+    await render([user, history, currentUser, current])
     boundary.timeline.mockClear()
 
     for (const content of ['A', 'An answer', 'An answer with more text']) {
-      await render([user, history, currentUser, { ...assistant, content }])
+      await render([user, history, currentUser, { ...current, content }])
     }
 
     expect(boundary.timeline.mock.calls.map(([props]) => props.message.id)).toEqual([

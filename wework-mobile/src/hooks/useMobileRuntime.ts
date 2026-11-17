@@ -209,6 +209,7 @@ export function useMobileRuntime(
     dispatchToAddress,
     readMessages,
     reloadTranscript,
+    repairTranscript,
     loadMoreMessagesBefore,
     retainDevices: retainTranscriptDevices,
   } = useMobileTranscript(stream, currentAddressRef, reportTranscriptFailure, observeTranscript)
@@ -323,7 +324,7 @@ export function useMobileRuntime(
             event,
           })
         },
-        () => void reloadTranscript(address).catch(readFailureRecorded)
+        () => void repairTranscript(address).catch(readFailureRecorded)
       )
       if (!sameRuntimeAddress(currentAddressRef.current, address)) {
         unsubscribe()
@@ -331,7 +332,7 @@ export function useMobileRuntime(
       }
       unsubscribeRef.current = unsubscribe
     },
-    [dispatchMessages, reloadTranscript, stream]
+    [dispatchMessages, repairTranscript, stream]
   )
 
   transcriptRetry.current = async address => {
@@ -448,7 +449,7 @@ export function useMobileRuntime(
     setCurrentAddress,
     commitDeviceWork,
     publishTaskLifecycle,
-    reloadTranscript,
+    reloadTranscript: repairTranscript,
   })
 
   const cacheRefs = useMemo(

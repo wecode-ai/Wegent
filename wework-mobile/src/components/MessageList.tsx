@@ -1,3 +1,4 @@
+import { assistantBodyParts } from '@/domain/messagePresentation'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { KeyboardAwareLegendList, useKeyboardScrollToEnd } from '@legendapp/list/keyboard'
 import type { LegendListRef } from '@legendapp/list/react-native'
@@ -313,17 +314,25 @@ const Message = memo(
         style={({ pressed }) => [styles.assistant, pressed && styles.messagePressed]}
         testID={`message-${message.id}`}
       >
-        <ProcessingTimeline
-          message={message}
-          pendingInputKeys={pendingInputKeys}
-          onRequestUserInputSubmit={onRequestUserInputSubmit}
-          onRequestUserInputSkip={onRequestUserInputSkip}
-        />
-        {message.content ? (
-          <AssistantMarkdown streaming={message.status === 'streaming'}>
-            {message.content}
-          </AssistantMarkdown>
-        ) : null}
+        {assistantBodyParts(message).map((part, index) =>
+          part.type === 'text' ? (
+            <AssistantMarkdown key={part.id} streaming={message.status === 'streaming'}>
+              {part.content}
+            </AssistantMarkdown>
+          ) : (
+            <ProcessingTimeline
+              key={part.id}
+              message={{
+                ...message,
+                id: index === 0 ? message.id : `${message.id}:${part.id}`,
+                blocks: part.blocks,
+              }}
+              pendingInputKeys={pendingInputKeys}
+              onRequestUserInputSubmit={onRequestUserInputSubmit}
+              onRequestUserInputSkip={onRequestUserInputSkip}
+            />
+          )
+        )}
         <MessageAttachments messageId={message.id} attachments={message.attachments} />
         {message.status === 'completed' && message.fileChanges ? (
           <FileChangesSummary summary={message.fileChanges} />
@@ -335,8 +344,17 @@ const Message = memo(
         !message.blocks?.length ? (
           <ThinkingIndicator preview="" />
         ) : null}
-        {message.error ? (
-          <ErrorNotice error={message.error} testID={`message-error-${message.id}`} />
+        {message.stoppedNotice ? (
+          <Text style={styles.thinkingIndicator} testID={`message-stopped-${message.id}`}>
+            已停止
+          </Text>
+        ) : null}
+        {message.status === 'failed' && message.error ? (
+          <ErrorNotice
+            error={message.error}
+            errorType={message.errorType}
+            testID={`message-error-${message.id}`}
+          />
         ) : null}
       </Pressable>
     )

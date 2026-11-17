@@ -1,3 +1,4 @@
+import { parseWorkspaceGitShortStat } from '../../../packages/chat-core/src/workspace-git'
 import {
   listWorkspaceBranches,
   type WorktreePreflightReader,
@@ -583,13 +584,8 @@ export function parseGitShortStat(value: string): Pick<EnvironmentInfo, 'additio
     }
   }
 
-  const additionsMatch = value.match(/(\d+)\s+insertions?\(\+\)/)
-  const deletionsMatch = value.match(/(\d+)\s+deletions?\(-\)/)
-
-  return {
-    additions: `+${additionsMatch?.[1] ?? '0'}`,
-    deletions: `-${deletionsMatch?.[1] ?? '0'}`,
-  }
+  const stat = parseWorkspaceGitShortStat(value)
+  return { additions: `+${stat.additions}`, deletions: `-${stat.deletions}` }
 }
 
 function porcelainHasTrackedChanges(lines: string[]): boolean {

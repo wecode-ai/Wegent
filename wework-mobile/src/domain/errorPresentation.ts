@@ -80,10 +80,11 @@ function isUserMessage(value: string): boolean {
 
 export function describeMobileError(
   cause: unknown,
-  contextTitle?: string
+  contextTitle?: string,
+  errorType?: string
 ): MobileErrorPresentation {
   const raw = errorText(cause).trim()
-  const parsed = parseChatError(raw)
+  const parsed = parseChatError(raw, errorType)
   const [title, guidance] = parsed.gitFailure
     ? ['无法访问 Git 仓库', '请检查仓库地址和 Git 账号权限。']
     : copy[parsed.type]

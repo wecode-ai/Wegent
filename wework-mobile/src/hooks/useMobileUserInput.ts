@@ -5,7 +5,7 @@ import {
   requestUserInputResponseText,
 } from '../../../packages/chat-core/src/runtime-user-input'
 
-import type { ChatAction } from '@/domain/chatReducer'
+import type { ChatAction } from '@/domain/chatActions'
 import {
   isAsyncRequestUserInputPayload,
   pendingMobileUserInput,

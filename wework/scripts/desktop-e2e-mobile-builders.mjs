@@ -7,7 +7,7 @@ export {
 export { runnerModelCatalog } from '../../packages/collaboration/src/agent-form/runnerModelCatalog.ts'
 export { adaptRuntimeWorkListResponse } from '../../wework-mobile/src/domain/runtimeWorkAdapter.ts'
 export { flattenConversations } from '../../wework-mobile/src/domain/work.ts'
-export { chatReducer } from '../../wework-mobile/src/domain/chatReducer.ts'
+export { MobileConversation } from '../../wework-mobile/src/domain/mobileConversation.ts'
 export { projectMobileRuntimeTranscript } from '../../wework-mobile/src/domain/runtimeTranscript.ts'
 export {
   reasoningEfforts,

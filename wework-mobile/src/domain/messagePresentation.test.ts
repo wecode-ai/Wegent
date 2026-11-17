@@ -1,3 +1,4 @@
+import { assistantBodyParts } from './messagePresentation'
 import { describe, expect, it } from 'vitest'
 
 import type { ChatProcessingBlock, ChatToolBlock } from '@/types/runtime'
@@ -396,4 +397,36 @@ describe('messagePresentation', () => {
       ])
     ).toEqual([])
   })
+})
+
+it('groups only adjacent tools and keeps every native text position, including repeated content', () => {
+  const block = (id: string) => ({
+    id,
+    subtaskId: 'turn',
+    type: 'tool' as const,
+    toolName: 'bash',
+    status: 'done' as const,
+    createdAt: 1,
+  })
+  const message = {
+    id: 'view',
+    role: 'assistant' as const,
+    status: 'completed' as const,
+    createdAt: 1,
+    content: 'Same\n\nSame',
+    blocks: [block('tool-a'), block('tool-b'), block('tool-c')],
+    runtimeDisplayItems: [
+      { id: 'before', type: 'assistant_text' as const, content: 'Same' },
+      { id: 'tool-a', type: 'block' as const },
+      { id: 'tool-b', type: 'block' as const },
+      { id: 'after', type: 'assistant_text' as const, content: 'Same' },
+      { id: 'tool-c', type: 'block' as const },
+    ],
+  }
+  expect(assistantBodyParts(message)).toEqual([
+    { id: 'before', type: 'text', content: 'Same' },
+    { id: 'tool-a', type: 'processing', blocks: [block('tool-a'), block('tool-b')] },
+    { id: 'after', type: 'text', content: 'Same' },
+    { id: 'tool-c', type: 'processing', blocks: [block('tool-c')] },
+  ])
 })

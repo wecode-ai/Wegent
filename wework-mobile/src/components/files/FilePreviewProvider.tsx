@@ -19,7 +19,10 @@ import {
 } from '@/domain/mobileFiles'
 import { isPhoneLocalDeviceId } from '@/services/localRuntime'
 import { MobileFileStore } from '@/services/mobileFileStore'
-import { loadMobileWorkspaceChanges } from '@/services/mobileWorkspaceGit'
+import {
+  loadMobileWorkspaceChanges,
+  loadMobileWorkspaceGitSummary,
+} from '@/services/mobileWorkspaceGit'
 import type { RuntimeApi } from '@/services/runtimeApi'
 import type { LoadedMobileFile, MobileFileRequest, RecentMobileFile } from '@/types/files'
 import { FilePreviewContext, type MobileFilePreviewActions } from './FilePreviewContext'
@@ -153,6 +156,10 @@ export function FilePreviewProvider({
     () => ({
       target,
       openFile,
+      loadChangesSummary: signal => {
+        if (!target) return Promise.reject(new Error('当前会话尚无可访问的文件目录'))
+        return loadMobileWorkspaceGitSummary(api, target, signal)
+      },
       loadChanges: (selection, signal) => {
         if (!target) return Promise.reject(new Error('当前会话尚无可访问的文件目录'))
         return loadMobileWorkspaceChanges(api, target, selection, signal)

@@ -5,17 +5,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeStream } from '@/services/runtimeStream'
 import type { RuntimeTaskAddress, RuntimeTranscriptResponse } from '@/types/runtime'
 import { useMobileTranscript } from './useMobileTranscript'
+import { canonicalTestTranscript } from '../../test/chatHarness'
 import { setDiagnosticRecording } from '@/services/mobileDiagnostics'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const first = { deviceId: 'device-1', taskId: 'task-1' }
 const second = { deviceId: 'device-2', taskId: 'task-1' }
-const page = (content: string, beforeCursor: string | null = null): RuntimeTranscriptResponse => ({
+const page = (
+  content: string,
+  beforeCursor: string | null = null,
+  position = 0
+): RuntimeTranscriptResponse => ({
   taskId: 'task-1',
   workspacePath: '/work',
   runtime: 'codex',
   beforeCursor,
-  messages: [{ id: content, role: 'user', content }],
+  messages: [{ id: content, messageIndex: position, role: 'user', content }],
 })
 
 function deferred<T>() {
@@ -34,7 +39,10 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
   let address = createRef<RuntimeTaskAddress | null>()
   const getTranscript = vi.fn()
   const onError = vi.fn()
-  const stream = { getTranscript } as unknown as RuntimeStream
+  const stream = {
+    getTranscript: async (...args: unknown[]) =>
+      canonicalTestTranscript(await getTranscript(...args)),
+  } as unknown as RuntimeStream
 
   function Harness() {
     state = useMobileTranscript(stream, address, onError)
@@ -75,7 +83,7 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
     expect(onError).toHaveBeenCalledWith('older page failed', first, 'older', expect.any(Function))
     const retry = onError.mock.lastCall![3] as () => Promise<void>
     await open(second)
-    getTranscript.mockResolvedValueOnce(page('older first page'))
+    getTranscript.mockResolvedValueOnce(page('older first page', null, -1))
     await act(() => retry())
     expect(getTranscript).toHaveBeenLastCalledWith(first, { beforeCursor: 'older' })
     expect(state.messages).toEqual([])
@@ -131,6 +139,13 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
     let read!: Promise<unknown>
     await act(() => {
       read = state.reloadTranscript(first)
+      state.dispatchMessages({
+        type: 'stream',
+        event: {
+          name: 'response.created',
+          payload: { subtaskId: 'turn', clientUserMessageId: 'user', data: {} },
+        },
+      })
       state.dispatchMessages({
         type: 'stream',
         event: {
@@ -289,7 +304,7 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
       pending.resolve({
         ...page('old'),
         messages: [
-          { id: 'old', role: 'user', content: 'old', subtaskId: 'turn-new', status: 'completed' },
+          { id: 'old', role: 'user', content: 'old', subtaskId: 'turn-new', status: 'streaming' },
         ],
       })
       await read
@@ -322,6 +337,7 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
             role: 'assistant',
             subtaskId: 'turn',
             content: 'Complete',
+            runtimeItems: [{ id: 'item', type: 'assistant_text', content: 'Complete' }],
             status: 'completed',
           },
         ],
@@ -383,6 +399,13 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
       state.dispatchMessages({
         type: 'stream',
         event: {
+          name: 'response.created',
+          payload: { subtaskId: 'turn', clientUserMessageId: 'client-user', data: {} },
+        },
+      })
+      state.dispatchMessages({
+        type: 'stream',
+        event: {
           name: 'response.output_text.delta',
           payload: {
             subtaskId: 'turn',
@@ -433,7 +456,7 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
     expect(getTranscript).toHaveBeenCalledTimes(2)
     expect(state.loadingMoreMessagesBefore).toBe(true)
     await act(async () => {
-      older.resolve(page('older history', 'oldest'))
+      older.resolve(page('older history', 'oldest', -1))
       await read
     })
     await open(second)
@@ -508,7 +531,7 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
       await state.reloadTranscript(first)
     })
     expect(state.messages.map(message => message.content)).toEqual(['newest page'])
-    getTranscript.mockResolvedValueOnce(page('middle page', 'middle-cursor'))
+    getTranscript.mockResolvedValueOnce(page('middle page', 'middle-cursor', -1))
     await act(async () => {
       await state.loadMoreMessagesBefore()
     })
@@ -553,7 +576,7 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
     expect(state.messages.map(message => message.content)).toEqual(['latest'])
     expect(state.loadingMoreMessagesBefore).toBe(true)
     await act(async () => {
-      current.resolve(page('middle', 'new-middle'))
+      current.resolve(page('middle', 'new-middle', -1))
       await currentRead
     })
     expect(state.messages.map(message => message.content)).toEqual(['middle', 'latest'])
@@ -669,5 +692,40 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
     await open(second)
     await open()
     expect(state.messages[0]?.content).toBe('Draft')
+  })
+  it('repairs a missed event after in-flight snapshots, including a second gap during repair', async () => {
+    await open()
+    const initial = deferred<RuntimeTranscriptResponse>()
+    const second = deferred<RuntimeTranscriptResponse>()
+    const final = deferred<RuntimeTranscriptResponse>()
+    getTranscript
+      .mockReturnValueOnce(initial.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockReturnValueOnce(final.promise)
+    let read!: Promise<unknown>
+    let repair!: Promise<unknown>
+    await act(() => {
+      read = state.reloadTranscript(first)
+      repair = state.repairTranscript(first)
+    })
+    expect(getTranscript).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      initial.resolve(page('before gap'))
+      await read
+    })
+    expect(getTranscript).toHaveBeenCalledTimes(2)
+    await act(() => {
+      expect(state.repairTranscript(first)).toBe(repair)
+    })
+    await act(async () => {
+      second.resolve(page('before second gap'))
+      await second.promise
+    })
+    expect(getTranscript).toHaveBeenCalledTimes(3)
+    await act(async () => {
+      final.resolve(page('Final answer'))
+      await repair
+    })
+    expect(state.messages.map(message => message.content)).toEqual(['Final answer'])
   })
 })

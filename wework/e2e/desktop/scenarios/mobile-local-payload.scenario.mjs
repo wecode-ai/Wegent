@@ -157,14 +157,19 @@ export function createDesktopScenario(options) {
       const first = await waitForReply(INITIAL_DONE)
       const mobileTranscript = builders.projectMobileRuntimeTranscript(first.transcript)
       // A viewer can receive the reply before the history read exposes its user message.
-      const replyFirst = builders.chatReducer([], {
-        type: 'replace',
-        messages: mobileTranscript.messages.filter(message => message.role === 'assistant'),
-      })
-      const hydrated = builders.chatReducer(replyFirst, {
-        type: 'merge-latest',
-        messages: mobileTranscript.messages,
-      })
+      const viewer = new builders.MobileConversation(address)
+      viewer.hydrate(
+        {
+          ...mobileTranscript,
+          turns: mobileTranscript.turns.map(turn => ({
+            ...turn,
+            items: turn.items.filter(item => item.type !== 'user_message'),
+          })),
+        },
+        false
+      )
+      viewer.hydrate(mobileTranscript, true)
+      const hydrated = viewer.messages
       const userIndex = hydrated.findIndex(message => message.id === `${taskId}-initial`)
       const replyIndex = hydrated.findIndex(message => message.role === 'assistant')
       assert.ok(

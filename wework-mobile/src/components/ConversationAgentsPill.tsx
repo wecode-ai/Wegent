@@ -17,7 +17,10 @@ import {
   getSubagentPreview,
   getSubagentStatus,
 } from '../../../packages/collaboration/src/conversation/blocks/subagentPresentation'
-import { chatReducer } from '@/domain/chatReducer'
+import { mobileMessagesFromWorkbench } from '@/domain/mobileMessagePresentation'
+import { assistantBodyParts } from '@/domain/messagePresentation'
+import { projectRuntimeConversationTurns } from '../../../packages/chat-core/src/runtime-turns'
+import { runtimeTranscriptTurnsToConversationTurns } from '../../../packages/chat-core/src/runtime-transcript'
 import {
   collectMobileSubagents,
   mobileSubagentActive,
@@ -206,41 +209,49 @@ function SubagentConversation({
     if (running) return
     const controller = new AbortController()
     setHistory({ loading: true, messages: [] })
-    void api.getSubagentTranscript(address, threadId, controller.signal).then(
-      response => {
-        if (!controller.signal.aborted)
-          setHistory({
-            loading: false,
-            messages: chatReducer([], { type: 'replace', messages: response.messages }),
-          })
-      },
-      error => {
-        if (!controller.signal.aborted)
-          setHistory({
-            loading: false,
-            messages: [],
-            error: error instanceof Error ? error.message : String(error),
-          })
-      }
-    )
+    void api
+      .getSubagentTranscript(address, threadId, controller.signal)
+      .then(response => {
+        if (!Array.isArray(response.turns))
+          throw new Error('Runtime transcript is missing canonical turns')
+        return mobileMessagesFromWorkbench(projectRuntimeConversationTurns(response.turns))
+      })
+      .then(
+        messages => {
+          if (!controller.signal.aborted)
+            setHistory({
+              loading: false,
+              messages,
+            })
+        },
+        error => {
+          if (!controller.signal.aborted)
+            setHistory({
+              loading: false,
+              messages: [],
+              error: error instanceof Error ? error.message : String(error),
+            })
+        }
+      )
     return () => controller.abort()
   }, [api, address.deviceId, address.taskId, address.workspacePath, threadId, running, revision])
   const live = useMemo(
     () =>
-      chatReducer([], {
-        type: 'replace',
-        messages: [
-          {
-            id: block.id,
-            subtaskId: block.subtaskId,
-            role: 'assistant',
-            content: '',
-            blocks: block.children?.map(child => ({ ...child })),
-            status: running ? 'streaming' : 'completed',
-            createdAt: block.createdAt,
-          },
-        ],
-      }),
+      mobileMessagesFromWorkbench(
+        projectRuntimeConversationTurns(
+          runtimeTranscriptTurnsToConversationTurns([
+            {
+              id: block.subtaskId,
+              status: running ? 'streaming' : 'completed',
+              items: (block.children ?? []).map(child => ({
+                id: child.id,
+                type: 'block',
+                block: { ...child },
+              })),
+            },
+          ])
+        )
+      ),
     [block, running]
   )
   const loaded = history.messages.filter(
@@ -264,10 +275,22 @@ function SubagentConversation({
       {block.summary?.trim() ? <AssistantMarkdown muted>{block.summary}</AssistantMarkdown> : null}
       {content.map(message => (
         <View key={message.id} style={styles.group}>
-          <ProcessingTimeline message={message} />
-          {message.content.trim() ? (
-            <AssistantMarkdown streaming={running}>{message.content}</AssistantMarkdown>
-          ) : null}
+          {assistantBodyParts(message).map((part, index) =>
+            part.type === 'text' ? (
+              <AssistantMarkdown key={part.id} streaming={running}>
+                {part.content}
+              </AssistantMarkdown>
+            ) : (
+              <ProcessingTimeline
+                key={part.id}
+                message={{
+                  ...message,
+                  id: index === 0 ? message.id : `${message.id}:${part.id}`,
+                  blocks: part.blocks,
+                }}
+              />
+            )
+          )}
         </View>
       ))}
       {output ? <AssistantMarkdown streaming={running}>{output}</AssistantMarkdown> : null}

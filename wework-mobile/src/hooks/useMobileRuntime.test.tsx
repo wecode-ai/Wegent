@@ -648,12 +648,20 @@ describe('creating a conversation on the only computer', () => {
     })
     const [scope, listener] = mocks.conversationSubscribe.mock.calls.at(-1)!
     expect(scope.taskId).toBe('canonical')
-    await act(() =>
+    await act(() => {
+      listener({
+        name: 'response.created',
+        payload: { taskId: 'canonical', subtaskId: 'turn', data: {} },
+      })
       listener({
         name: 'response.output_text.delta',
-        payload: { taskId: 'canonical', subtaskId: 'turn', data: { delta: 'Live', offset: 0 } },
+        payload: {
+          taskId: 'canonical',
+          subtaskId: 'turn',
+          data: { itemId: 'answer', delta: 'Live', block_offset: 0 },
+        },
       })
-    )
+    })
     expect(state.messages.map(message => message.content)).toEqual(['你好', 'Live'])
     expect(state.currentAddress?.taskId).toBe('canonical')
   })

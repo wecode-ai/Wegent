@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { appendDelta, chatReducer, type RuntimeStreamEvent } from './chatReducer'
+import {
+  appendDelta,
+  chatReducer,
+  startStream,
+  type RuntimeStreamEvent,
+} from '../../test/chatHarness'
 import { projectMobileRuntimeTranscript } from './runtimeTranscript'
-import { hydrateRuntimeTranscript } from './runtimeTranscriptHydration'
+import { hydrateRuntimeTranscript } from '../../test/chatHarness'
 import type { Attachment } from '@/types/runtime'
 
 const attachment: Attachment = {
@@ -22,7 +27,7 @@ const attachment: Attachment = {
 }
 
 function stream(state: ReturnType<typeof chatReducer>, event: RuntimeStreamEvent) {
-  return chatReducer(state, { type: 'stream', event })
+  return chatReducer(startStream(state, event), { type: 'stream', event })
 }
 
 describe('chatReducer', () => {
@@ -61,10 +66,13 @@ describe('chatReducer', () => {
     })
     expect(message.fileChanges?.source).toMatchObject(source)
     expect(message.blocks?.[0]).toMatchObject({ fileChanges: { source } })
-    const streamed = stream([], {
-      name: 'response.completed',
-      payload: { subtaskId: 'turn', data: { file_changes: source } },
-    })
+    const streamed = stream(
+      stream([], { name: 'response.created', payload: { subtaskId: 'turn', data: {} } }),
+      {
+        name: 'response.completed',
+        payload: { subtaskId: 'turn', data: { file_changes: source } },
+      }
+    )
     expect(streamed[0].fileChanges?.source).toMatchObject(source)
   })
   it('keeps complete attachment metadata through canonical projection and message hydration', () => {
@@ -280,7 +288,7 @@ describe('chatReducer', () => {
 
     expect(result[0]).toMatchObject({ id: 'user-1', createdAt: 1788099302000 })
     expect(result[1]).toMatchObject({
-      id: 'assistant-1',
+      id: 'runtime-view:turn-1:assistant',
       subtaskId: 'turn-1',
       content: '# 完成',
       status: 'completed',
@@ -318,19 +326,23 @@ describe('chatReducer', () => {
     const recent = chatReducer([], {
       type: 'replace',
       messages: [
-        { id: 'message-5', role: 'user', content: 'recent' },
-        { id: 'message-6', role: 'assistant', content: 'latest' },
+        { id: 'message-5', messageIndex: 5, role: 'user', content: 'recent' },
+        { id: 'message-6', messageIndex: 6, role: 'assistant', content: 'latest' },
       ],
     })
     const combined = chatReducer(recent, {
       type: 'prepend',
       messages: [
-        { id: 'message-4', role: 'assistant', content: 'older' },
-        { id: 'message-5', role: 'user', content: 'recent' },
+        { id: 'message-4', messageIndex: 4, role: 'assistant', content: 'older' },
+        { id: 'message-5', messageIndex: 5, role: 'user', content: 'recent' },
       ],
     })
 
-    expect(combined.map(message => message.id)).toEqual(['message-4', 'message-5', 'message-6'])
+    expect(combined.map(message => message.id)).toEqual([
+      'runtime-view:message-4:assistant',
+      'message-5',
+      'runtime-view:message-6:assistant',
+    ])
   })
 
   it('restores file change blocks and the turn summary from transcript history', () => {
@@ -355,6 +367,11 @@ describe('chatReducer', () => {
               type: 'file_changes',
               status: 'done',
               file_changes: {
+                version: 1,
+                status: 'active',
+                artifact_id: 'changes',
+                device_id: 'device-1',
+                workspace_path: '/work',
                 file_count: 1,
                 additions: 1,
                 deletions: 0,
@@ -472,12 +489,14 @@ describe('chatReducer', () => {
       },
     })
 
-    expect(tool[0]?.content).toBe('')
+    expect(tool[0]?.runtimeDisplayItems).toEqual([
+      { id: 'item-1', type: 'assistant_text', content: '先解释' },
+      { id: 'call-1', type: 'block' },
+    ])
     expect(tool[0]?.blocks).toMatchObject([
-      { type: 'text', content: '先解释', status: 'done' },
       { id: 'call-1', type: 'tool', toolName: 'bash', status: 'pending' },
     ])
-    expect(completed[0]?.blocks?.[1]).toMatchObject({ status: 'done', toolOutput: 'ok' })
+    expect(completed[0]?.blocks?.[0]).toMatchObject({ status: 'done', toolOutput: 'ok' })
   })
 
   it('reconciles streamed commentary and its completed block before the next tool (phone trace)', () => {
@@ -491,6 +510,7 @@ describe('chatReducer', () => {
       payload: {
         subtaskId: 'turn',
         data: {
+          replacesItemId: 'message',
           block: {
             id: 'message',
             type: 'text',
@@ -502,7 +522,7 @@ describe('chatReducer', () => {
       },
     })
     expect(state[0].content).toBe('')
-    expect(state[0].textItems).toBeUndefined()
+    expect(state[0].textItems).toEqual([])
     state = stream(state, {
       name: 'response.block.created',
       payload: {
@@ -542,20 +562,24 @@ describe('chatReducer', () => {
         data: { item_id: 'first', delta: '🙂', offset: 103, block_offset: 2 },
       },
     })
-    expect(state[0].blocks?.[0]).toMatchObject({ content: '重复🙂' })
+    expect(state[0].textItems?.[0]).toMatchObject({ id: 'first', content: '重复🙂' })
     state = stream(state, {
       name: 'response.output_text.done',
       payload: { subtaskId: 'turn', data: { item_id: 'first', text: '修正🙂' } },
     })
-    expect(state[0].content).toBe('')
-    expect(state[0].blocks?.map(block => block.id)).toEqual(['first', 'tool'])
-    expect(state[0].blocks?.[0]).toMatchObject({ content: '修正🙂' })
+    expect(state[0].runtimeDisplayItems).toEqual([
+      { id: 'first', type: 'assistant_text', content: '修正🙂' },
+      { id: 'tool', type: 'block' },
+    ])
     state = stream(state, {
       name: 'response.output_text.delta',
       payload: { subtaskId: 'turn', data: { item_id: 'second', delta: '修正🙂', block_offset: 0 } },
     })
-    expect(state[0].content).toBe('修正🙂')
-    expect(state[0].textItems).toMatchObject([{ id: 'second', content: '修正🙂' }])
+    expect(state[0].runtimeDisplayItems).toEqual([
+      { id: 'first', type: 'assistant_text', content: '修正🙂' },
+      { id: 'tool', type: 'block' },
+      { id: 'second', type: 'assistant_text', content: '修正🙂' },
+    ])
   })
 
   it('keeps different items with identical text and accepts rewritten snapshots under the original ID', () => {
@@ -570,6 +594,7 @@ describe('chatReducer', () => {
       payload: {
         subtaskId: 'turn',
         data: {
+          replacesItemId: 'first',
           block: {
             id: 'first',
             type: 'text',
@@ -579,16 +604,17 @@ describe('chatReducer', () => {
         },
       },
     })
-    expect(state[0].content).toBe('')
-    expect(state[0].blocks).toMatchObject([
-      { id: 'first', content: '修订后的第一段' },
-      { id: 'second', content: '相同内容' },
+    expect(state[0].blocks).toMatchObject([{ id: 'first', content: '修订后的第一段' }])
+    expect(state[0].runtimeDisplayItems).toEqual([
+      { id: 'first', type: 'block' },
+      { id: 'second', type: 'assistant_text', content: '相同内容' },
     ])
     state = stream(state, {
       name: 'response.block.created',
       payload: {
         subtaskId: 'turn',
         data: {
+          replacesItemId: 'first',
           block: {
             id: 'first',
             type: 'text',
@@ -598,11 +624,11 @@ describe('chatReducer', () => {
         },
       },
     })
-    expect(state[0].blocks?.map(block => block.id)).toEqual(['first', 'second'])
-    expect(state[0].blocks?.map(block => ('content' in block ? block.content : ''))).toEqual([
-      '相同内容',
-      '相同内容',
-    ])
+    expect(state[0].runtimeDisplayItems?.map(item => item.id)).toEqual(['first', 'second'])
+    expect([
+      state[0].blocks?.[0] && 'content' in state[0].blocks[0] ? state[0].blocks[0].content : '',
+      state[0].textItems?.[0].content,
+    ]).toEqual(['相同内容', '相同内容'])
   })
 
   it('applies response block creation and incremental updates', () => {
@@ -617,7 +643,7 @@ describe('chatReducer', () => {
             type: 'plan',
             content: '第一步',
             status: 'streaming',
-            timestamp: 100,
+            timestamp: Date.now(),
           },
         },
       },
@@ -629,7 +655,12 @@ describe('chatReducer', () => {
         subtaskId: 'turn-1',
         data: {
           blockId: 'plan-1',
-          updates: { contentDelta: '\n第二步', status: 'done', durationMs: 25 },
+          updates: {
+            contentDelta: '\n第二步',
+            status: 'done',
+            durationMs: 25,
+            completedAt: Date.now() + 25,
+          },
         },
       },
     })
@@ -639,7 +670,7 @@ describe('chatReducer', () => {
       content: '第一步\n第二步',
       status: 'done',
       durationMs: 25,
-      completedAt: 125,
+      completedAt: created[0].blocks![0].createdAt + 25,
     })
   })
 
@@ -665,6 +696,11 @@ describe('chatReducer', () => {
               },
             ],
             file_changes: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'changes',
+              device_id: 'device-1',
+              workspace_path: '/work',
               file_count: 41,
               additions: 12_000,
               deletions: 0,
@@ -676,6 +712,13 @@ describe('chatReducer', () => {
                   deletions: 0,
                   binary: false,
                 },
+                ...Array.from({ length: 40 }, (_, index) => ({
+                  path: `src/file-${index}.ts`,
+                  change_type: 'modified',
+                  additions: 0,
+                  deletions: 0,
+                  binary: false,
+                })),
               ],
             },
           },
@@ -692,7 +735,9 @@ describe('chatReducer', () => {
         fileCount: 41,
         additions: 12_000,
         deletions: 0,
-        files: [{ path: 'src/App.tsx', changeType: 'modified' }],
+        files: expect.arrayContaining([
+          expect.objectContaining({ path: 'src/App.tsx', changeType: 'modified' }),
+        ]),
       },
     })
   })

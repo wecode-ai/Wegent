@@ -124,6 +124,7 @@ const CLASSIFICATION_RULES: Array<[ChatErrorType, Array<string | RegExp>]> = [
     "quota_exceeded",
     [
       "quota exceeded",
+      "hit your usage limit",
       "insufficient_quota",
       "billing",
       "credit balance",

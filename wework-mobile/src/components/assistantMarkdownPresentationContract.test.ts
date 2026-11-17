@@ -31,6 +31,6 @@ describe('assistant markdown presentation contract', () => {
   it('enables progressive rendering while an assistant message streams', () => {
     const messages = sources['./MessageList.tsx']
 
-    expect(messages).toContain("<AssistantMarkdown streaming={message.status === 'streaming'}>")
+    expect(messages).toContain("streaming={message.status === 'streaming'}")
   })
 })

@@ -12,7 +12,9 @@ import {
   AmbiguousExecutorIdentityError,
 } from '../../../packages/chat-core/src/runtime-device-identity'
 
-import type { RuntimeStreamEvent } from '@/domain/chatReducer'
+import type { RuntimeStreamEvent } from '@/domain/chatActions'
+import { readRuntimeTranscript } from '../../../packages/chat-core/src/runtime-transcript-transport'
+import { decodeMobileTranscriptGzip } from './mobileTranscriptTransfer'
 import { adaptRuntimeWorkListResponse } from '@/domain/runtimeWorkAdapter'
 import { projectMobileRuntimeTranscript } from '@/domain/runtimeTranscript'
 import type { RuntimeTranscriptResponse as CoreTranscript } from '../../../packages/chat-core/src/runtime'
@@ -37,7 +39,6 @@ const REQUEST_EVENT = 'runtime:request'
 const TRANSCRIPT_TIMEOUT_MS = 15_000
 const REQUEST_TIMEOUT_MS = 75_000
 export const TRANSCRIPT_PAGE_SIZE = 5
-const TRANSCRIPT_PAYLOAD_LIMIT_PAGE_SIZE = 1
 
 type Listener = (event: RuntimeStreamEvent) => void
 type LifecycleListener = (address: RuntimeTaskAddress, event: RuntimeStreamEvent) => void
@@ -228,12 +229,7 @@ export class RuntimeStream {
     address: RuntimeTaskAddress,
     options: { beforeCursor?: string } = {}
   ): Promise<RuntimeTranscriptResponse> {
-    try {
-      return await this.requestTranscript(address, options, TRANSCRIPT_PAGE_SIZE)
-    } catch (error) {
-      if (!isTranscriptPayloadLimitError(error)) throw error
-      return this.requestTranscript(address, options, TRANSCRIPT_PAYLOAD_LIMIT_PAGE_SIZE)
-    }
+    return this.requestTranscript(address, options, TRANSCRIPT_PAGE_SIZE)
   }
 
   async listWork(deviceId: string, deviceName?: string): Promise<RuntimeWorkListResponse> {
@@ -349,6 +345,14 @@ export class RuntimeStream {
         if (error instanceof AmbiguousExecutorIdentityError) return
         throw error
       }
+    }
+    if (name === 'executor.event_lagged' || name === 'executor.runtime_replaced') {
+      if (this.scope && (!deviceId || deviceId === this.scope.deviceId)) {
+        this.listener?.({ name, payload })
+        this.lifecycleListener?.(this.scope, { name, payload })
+        this.reconnectListener?.()
+      }
+      return
     }
     if (!taskId) return
     if (taskId === this.scope?.taskId) {
@@ -476,15 +480,15 @@ export class RuntimeStream {
     options: { beforeCursor?: string },
     limit: number
   ): Promise<RuntimeTranscriptResponse> {
-    const response = await this.request<CoreTranscript & { taskId: string }>(
-      'runtime.tasks.transcript',
+    const response = await readRuntimeTranscript<CoreTranscript & { taskId: string }>(
       {
         ...address,
         limit,
         ...(options.beforeCursor && { beforeCursor: options.beforeCursor }),
       },
-      address.deviceId,
-      TRANSCRIPT_TIMEOUT_MS
+      query =>
+        this.request('runtime.tasks.transcript', query, address.deviceId, TRANSCRIPT_TIMEOUT_MS),
+      decodeMobileTranscriptGzip
     )
     recordMobileDiagnostic('[MobileTranscript] Transport received', () => ({
       local: this.local?.ownsDevice(address.deviceId) ?? false,
@@ -503,15 +507,6 @@ function runtimeRequestError(ack: RuntimeRequestAck<unknown>): string {
   const code = ack.error?.code?.trim()
   const message = ack.error?.message?.trim() || 'Runtime 请求失败'
   return code ? `${code}: ${message}` : message
-}
-
-function isTranscriptPayloadLimitError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  const message = error.message.toLowerCase()
-  return (
-    message.includes('response exceeded the transport payload limit') ||
-    message.includes('runtime_rpc_response_too_large')
-  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
