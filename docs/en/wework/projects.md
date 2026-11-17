@@ -687,11 +687,13 @@ Independent Issue details show invited Agents and Teams. Before **Ask AI to help
 
 If an edit encounters a version conflict, the local draft is retained. **Reload latest content** still lets you choose **Keep editing**; only **Discard changes and reload** discards local changes and reads the latest Issue. You can then edit the refreshed content.
 
+<a id="comment-child-issues"></a>
+
 ## Create child Issues from comments
 
 In the Issue comment composer toolbar, use the **Assignment mode** branch icon and select **Create child Issue**, write a comment, choose an assignee, and select **Send and create child Issue**. The original comment is saved before the child is created. The selected assignee owns the child; the parent assignment remains unchanged. A failed creation or assignment keeps an actionable error, and retry reuses a child already created. Creation uses a stable operation identifier, so concurrent requests or a lost response do not create duplicate children.
 
-Use **Create child Issue** beside any existing visible comment, including comments with or without mentions. Confirming the assignee also adds a discussion reply linking to the new child. Current Issue edit and comment permissions apply; mentions grant no additional access. Children retain the stricter of parent visibility and the project default so copied comments do not become project-public.
+In Issue details, the action row beneath each top-level comment places **Create child Issue** beside **Reply**; replies within a thread retain their own **Create child Issue** action. Use the action on any existing visible comment, including comments with or without mentions. Confirming the assignee also adds a discussion reply linking to the new child. Current Issue edit and comment permissions apply; mentions grant no additional access. Children retain the stricter of parent visibility and the project default so copied comments do not become project-public.
 
 Project maintainers can choose **Project settings → AI configuration → Agents → Delete** and confirm removal. Existing tasks, execution history and shared source resources remain intact. Replace or remove all leader, member and stage references in collaboration groups first. System-managed current-device Agents cannot be deleted. Removing a collaboration group also requires confirmation; Cancel leaves it unchanged.
 
