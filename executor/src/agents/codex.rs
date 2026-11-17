@@ -121,6 +121,7 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
 mod external_work;
+mod home_writer;
 #[cfg(test)]
 mod native_event_tests;
 mod reply_prediction;
@@ -1545,6 +1546,7 @@ struct CodexAppServerSharedState {
     next_id: u64,
     auth_mode: CodexAuthMode,
     active_threads: HashMap<String, usize>,
+    named_home_writer_admission: Arc<Mutex<()>>,
     preparing_turns: startup::SharedTurnPreparations,
     thread_activity_changed: Arc<tokio::sync::Notify>,
     mcp_app_sessions: HashSet<(String, String, String)>,
@@ -1607,6 +1609,7 @@ impl Default for CodexAppServerSharedState {
             next_id: 1,
             auth_mode: CodexAuthMode::default(),
             active_threads: HashMap::new(),
+            named_home_writer_admission: Arc::new(Mutex::new(())),
             preparing_turns: startup::SharedTurnPreparations::default(),
             thread_activity_changed: Arc::new(tokio::sync::Notify::new()),
             mcp_app_sessions: HashSet::new(),
@@ -2794,12 +2797,17 @@ pub async fn run_codex_app_server_turn_with_cancel(
 async fn run_codex_app_server_turn_with_runtime(
     binary: &str,
     request: ExecutionRequest,
-    options: CodexAppServerTurnOptions,
+    mut options: CodexAppServerTurnOptions,
     runtime_notifications: Option<CodexNotificationHub>,
 ) -> Result<CodexAppServerTurn, String> {
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
     let _home_lease = super::instance_home::acquire(&request)?;
+    let home_client = CodexAppServerClient::new(binary).for_request(&request)?;
+    let _home_writer = home_client
+        .admit_named_home_writer(options.cancellation.as_mut())
+        .await
+        .map_err(|()| CODEX_APP_SERVER_TURN_CANCELLED.to_owned())?;
     super::environment_setup::prepare_execution_environment(&request).await?;
     super::runtime_capabilities::prepare_codex_runtime_locked(&request).await?;
     let CodexAppServerTurnOptions {
