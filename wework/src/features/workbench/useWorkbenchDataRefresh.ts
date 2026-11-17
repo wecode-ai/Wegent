@@ -15,8 +15,7 @@ import type {
   User,
 } from '@/types/api'
 import { isRemoteTaskDevice } from '@/lib/device-capabilities'
-import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
-import { getRuntimeProjectSyncTarget } from '@/lib/runtime-project-identity'
+import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
 import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/types/workbench'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
@@ -60,6 +59,7 @@ import {
   type CloudBackgroundRefreshOptions,
   queueWorkRefreshAfterInventory,
   createCloudRuntimeStateWithCache,
+  getRuntimeProjectRemovalContext,
   localDeviceSnapshot,
   mergeRuntimeTaskAddresses,
   loadDevicesForRefresh,
@@ -739,12 +739,9 @@ export function useWorkbenchDataRefresh({
             workspacePath: normalizeRuntimeWorkspacePath(workspace.workspacePath),
           }
         : undefined
-      const removedProject = runtimeWorkRef.current?.projects.find(
-        project => runtimeProjectUiId(project.project) === projectId
-      )
       const context = {
+        ...getRuntimeProjectRemovalContext(runtimeWorkRef.current, projectId, normalizedWorkspace),
         devices: devicesRef.current,
-        target: removedProject ? getRuntimeProjectSyncTarget(removedProject) : undefined,
       }
       cloudBackgroundRequestRef.current?.controller.abort()
       cloudBackgroundRequestRef.current = null

@@ -8,6 +8,7 @@ import type { WorkbenchServices } from './workbenchServices'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { readCachedDeviceList } from './workbenchCloudStatus'
+import { qualifyLocalRuntimeWork } from '@/lib/local-runtime-sidebar-identity'
 import {
   readCachedRemoteRuntimeWork,
   writeCachedRemoteRuntimeWork,
@@ -367,6 +368,59 @@ describe('useWorkbenchDataRefresh', () => {
         item => item.project.key === 'local-project'
       )
     ).toMatchObject(localProject)
+    expect(hook.listRuntimeWork).toHaveBeenCalledTimes(1)
+    hook.unmount()
+  })
+
+  test('cancels initial cloud checks and removes native chat projections without catalog runtime metadata', async () => {
+    const nativeWork = qualifyLocalRuntimeWork(
+      {
+        ...work,
+        projects: [
+          {
+            project: {
+              id: 1,
+              key: 'native-project',
+              name: 'Native',
+              source: 'local_project',
+              stateDeviceId: 'local-device',
+            },
+            deviceWorkspaces: work.chats,
+            totalTasks: 1,
+          },
+        ],
+      },
+      { deviceId: 'local-device', runtimeInstanceId: 'native-runtime', provenance: 'local-ipc' }
+    )
+    const pendingCloudWork = deferred<RuntimeWorkListResponse>()
+    const cloudApi = {
+      listTeams: vi.fn().mockResolvedValue([]),
+      listDevices: vi.fn().mockResolvedValue([]),
+      listRuntimeWork: vi.fn().mockReturnValue(pendingCloudWork.promise),
+    }
+    const hook = setup(vi.fn().mockResolvedValue(nativeWork), undefined, {
+      cloudBackgroundApi: cloudApi,
+    } as unknown as WorkbenchServices)
+    await waitFor(() => expect(hook.result.current.state.runtimeWork?.projects).toHaveLength(1))
+    await waitFor(() => expect(hook.result.current.cloudWorkStatus.availability).toBe('syncing'))
+    act(() => {
+      hook.result.current.markRuntimeProjectRemoved(1, {
+        deviceId: 'local-device',
+        workspacePath: '/workspace',
+      })
+      hook.result.current.dispatch({ type: 'runtime_project_removed', projectId: 1 })
+    })
+    expect(hook.result.current.cloudWorkStatus.availability).toBe('idle')
+    expect(Object.values(hook.result.current.cloudWorkStatus.checks)).not.toContain('syncing')
+
+    const emptyWork = { projects: [], chats: [], totalTasks: 0 }
+    cloudApi.listRuntimeWork.mockResolvedValue(emptyWork)
+    await act(async () => {
+      pendingCloudWork.resolve(nativeWork)
+      await hook.result.current.refreshDevices()
+    })
+    await waitFor(() => expect(hook.result.current.cloudWorkStatus.availability).toBe('empty'))
+    expect(hook.result.current.state.runtimeWork).toMatchObject(emptyWork)
     expect(hook.listRuntimeWork).toHaveBeenCalledTimes(1)
     hook.unmount()
   })

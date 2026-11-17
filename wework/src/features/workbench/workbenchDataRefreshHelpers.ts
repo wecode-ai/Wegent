@@ -9,14 +9,20 @@ import type {
 } from '@/types/api'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { isRemoteTaskDevice } from '@/lib/device-capabilities'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import {
+  getRuntimeProjectLocalOwnerIdentity,
   getRuntimeProjectSyncTarget,
   isRuntimeDirectoryProject,
   runtimeProjectSyncTargetKey,
   runtimeWorkspaceLocationKey,
   type RuntimeProjectSyncTarget,
 } from '@/lib/runtime-project-identity'
+import {
+  getLocalRuntimeSourceIdentity,
+  qualifyLocalRuntimeSource,
+  type LocalRuntimeSidebarIdentity,
+} from '@/lib/local-runtime-sidebar-identity'
 import {
   AmbiguousExecutorIdentityError,
   createWorkbenchDeviceResolver,
@@ -46,6 +52,37 @@ export interface CloudBackgroundRefreshOptions {
 export interface RuntimeProjectRemovalContext {
   devices?: DeviceInfo[]
   target?: RuntimeProjectSyncTarget
+  localOwnerIdentity?: LocalRuntimeSidebarIdentity
+}
+
+export function getRuntimeProjectRemovalContext(
+  runtimeWork: RuntimeWorkListResponse | null,
+  projectId: number,
+  workspace?: { deviceId: string; workspacePath: string }
+): RuntimeProjectRemovalContext {
+  const project = runtimeWork?.projects.find(item => runtimeProjectUiId(item.project) === projectId)
+  const target = project ? getRuntimeProjectSyncTarget(project) : undefined
+  if (!workspace) return { target }
+  if (project) {
+    return {
+      target,
+      localOwnerIdentity: getRuntimeProjectLocalOwnerIdentity(project, workspace.deviceId),
+    }
+  }
+  const standaloneWorkspace = runtimeWork?.chats.find(
+    item =>
+      item.deviceId === workspace.deviceId &&
+      normalizeRuntimeWorkspacePath(item.workspacePath) ===
+        normalizeRuntimeWorkspacePath(workspace.workspacePath) &&
+      getLocalRuntimeSourceIdentity(item)?.deviceId === workspace.deviceId &&
+      !item.remoteHostId &&
+      item.workspaceSource !== 'remote'
+  )
+  return {
+    localOwnerIdentity: standaloneWorkspace
+      ? getLocalRuntimeSourceIdentity(standaloneWorkspace)
+      : undefined,
+  }
 }
 
 export function queueWorkRefreshAfterInventory(
@@ -184,13 +221,11 @@ export function removeRuntimeProjectFromCloudState(
           runtimeWork: removeRuntimeProject(snapshot.runtimeWork, projectId, workspace, context),
         }
       : null
-  return {
+  return clearCloudRuntimeSync({
     ...state,
-    availability:
-      state.inFlightRevision == null ? state.availability : state.lastGood ? 'stale' : 'idle',
     current: removeFromSnapshot(state.current),
     lastGood: removeFromSnapshot(state.lastGood),
-  }
+  })
 }
 
 export function mergeRuntimeTaskAddresses(
@@ -220,12 +255,19 @@ export function removeRuntimeProject(
   context: RuntimeProjectRemovalContext = {}
 ): RuntimeWorkListResponse {
   const devices = createWorkbenchDeviceResolver(context.devices ?? [])
-  const removedProject = runtimeWork.projects.find(
-    project => runtimeProjectUiId(project.project) === projectId
-  )
-  const target = context.target ?? (removedProject && getRuntimeProjectSyncTarget(removedProject))
+  const selected = context.target
+    ? context
+    : getRuntimeProjectRemovalContext(runtimeWork, projectId, workspace)
+  const target = selected.target
   const targetKey = target ? runtimeProjectSyncTargetKey(target, devices) : null
-  const workspaceKey = workspace ? runtimeWorkspaceLocationKey(workspace, devices) : null
+  const localOwnerIdentity = context.localOwnerIdentity ?? selected.localOwnerIdentity
+  const removedWorkspace =
+    workspace && localOwnerIdentity
+      ? qualifyLocalRuntimeSource(workspace, localOwnerIdentity)
+      : workspace
+  const workspaceKey = removedWorkspace
+    ? runtimeWorkspaceLocationKey(removedWorkspace, devices)
+    : null
   const matchesRemovedWorkspace = (candidate: RuntimeDeviceWorkspace) =>
     matchesRemovalIdentity(() => runtimeWorkspaceLocationKey(candidate, devices), workspaceKey)
   const projects = runtimeWork.projects.filter(project => {
