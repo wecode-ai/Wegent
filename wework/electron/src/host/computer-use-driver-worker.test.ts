@@ -61,6 +61,10 @@ test('cancels read-only native work without acknowledging abort as a successful 
   await vi.waitFor(() =>
     expect(send).toHaveBeenCalledWith({ id: 1, ok: true, result: undefined }, expect.any(Function))
   )
+  expect(mocks.create).toHaveBeenCalledWith({
+    embedded: true,
+    claudeCodeCompatibility: false,
+  })
   receive({ id: 2, method: 'callTool', name: 'verify_state', argumentsJson: '{"pid":123}' })
   receive({ id: 2, method: 'abort' })
   expect(signal?.aborted).toBe(true)
