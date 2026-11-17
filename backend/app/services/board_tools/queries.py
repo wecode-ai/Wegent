@@ -19,7 +19,7 @@ from app.schemas.cloud_project import CloudProjectBoardConfig
 from app.services.workspaces.storage import workspace_id_for_project
 
 from . import access
-from .protocol import digest, failure
+from .protocol import digest, failure, parse_timestamp
 
 TTL = 600
 MAX_BYTES = 64 * 1024 * 1024
@@ -101,11 +101,6 @@ def assignee(item: dict[str, Any]) -> dict[str, str] | None:
     return {"type": "group", "id": str(group["id"])} if group.get("id") else None
 
 
-def _source_timestamp(value: str) -> datetime:
-    stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return stamp.replace(tzinfo=stamp.tzinfo or timezone.utc).astimezone(timezone.utc)
-
-
 def _sort_value(item: dict[str, Any], field: str) -> str | tuple[bool, datetime | None]:
     value = item.get(field)
     if field not in {"created_at", "updated_at", "due_at"}:
@@ -115,7 +110,7 @@ def _sort_value(item: dict[str, Any], field: str) -> str | tuple[bool, datetime 
     try:
         if not isinstance(value, str):
             raise ValueError("Timestamp must be a string")
-        return True, _source_timestamp(value)
+        return True, parse_timestamp(value)
     except (OverflowError, TypeError, ValueError) as error:
         raise failure("unsupported_sort", "Invalid source timestamp") from error
 
@@ -160,15 +155,13 @@ def matches(item: dict[str, Any], values: dict[str, Any], parents: set[str]) -> 
         value = item.get(field)
         if not value:
             return False
-        stamp = _source_timestamp(str(value))
+        stamp = parse_timestamp(str(value))
         interval = values[field]
         for bound, predicate in (
             ("from", lambda a, b: a < b),
             ("to", lambda a, b: a >= b),
         ):
-            if bound in interval and predicate(
-                stamp, datetime.fromisoformat(interval[bound].replace("Z", "+00:00"))
-            ):
+            if bound in interval and predicate(stamp, parse_timestamp(interval[bound])):
                 return False
     return True
 

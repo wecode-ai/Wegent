@@ -44,6 +44,7 @@ from app.schemas.delivery import (
     LoopItemUpdate,
 )
 from app.schemas.project_chat import LoopItemAssign, ProjectChatMention
+from app.services.board_tools import candidates
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
@@ -62,9 +63,6 @@ from app.services.project_chat.issue_comments import (
     add_issue_comment,
     list_issue_comments,
 )
-from app.services.project_chat.service import project_chat_service
-from app.services.workspaces.service import workspace_service
-from app.services.workspaces.storage import workspace_id_for_project
 from app.stores.tasks import task_store
 
 BOARD_TASK_SOURCES = {
@@ -304,6 +302,7 @@ def get_current_context(token_info: MCPAuthInfo) -> dict[str, Any]:
         return {
             **context,
             "space": _project_view(project),
+            "space_ref": {"project_store": "backend", "space_id": str(project.id)},
             "item": _read_item(db, project, context["item_id"], token_info.user_id),
         }
 
@@ -467,45 +466,7 @@ def get_assignment_candidates(
 
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
-        members = cloud_project_service.list_members(db, project.id, token_info.user_id)
-        robots = project_chat_service.list_agents(
-            db, user_id=token_info.user_id, project_id=str(project.id)
-        )
-        teams = (
-            workspace_service.list_project_collaboration_groups(
-                db, project.id, token_info.user_id
-            )
-            if workspace_id_for_project(db, project.id) is not None
-            else []
-        )
-        return {
-            "members": [
-                {
-                    "id": value["user_id"],
-                    "name": value["user_name"],
-                    "role": value["role"],
-                    "capability": value.get("capability_description") or "",
-                }
-                for value in members
-            ],
-            "robots": [
-                {
-                    "id": robot.id,
-                    "name": robot.name or "AI",
-                    "runtime": robot.runtime,
-                    "capability": robot.capability_description or "",
-                }
-                for robot in robots
-            ],
-            "groups": [
-                {
-                    "id": team["id"],
-                    "name": team["name"],
-                    "capability": team.get("description") or "",
-                }
-                for team in teams
-            ],
-        }
+        return candidates.read(db, project, token_info.user_id)
 
 
 @mcp_tool(server="wework_space")
@@ -701,6 +662,18 @@ def read_space_file(
         )
 
 
+def _item_attachments(
+    db: Session, project: CloudProject, item_id: str, user_id: int
+) -> list[dict[str, Any]]:
+    """Read attachment metadata using the authorized caller's Session."""
+    _read_item(db, project, item_id, user_id)
+    values = loop_item_attachment_provider_router.list(db, item_id, user_id)
+    return [
+        LoopItemAttachmentResponse.model_validate(value).model_dump(mode="json")
+        for value in values
+    ]
+
+
 @mcp_tool(server="wework_space")
 def list_item_attachments(
     token_info: MCPAuthInfo, space_id: str = "", item_id: str = ""
@@ -710,14 +683,7 @@ def list_item_attachments(
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
-        _read_item(db, project, resolved_item_id, token_info.user_id)
-        values = loop_item_attachment_provider_router.list(
-            db, resolved_item_id, token_info.user_id
-        )
-        return [
-            LoopItemAttachmentResponse.model_validate(value).model_dump(mode="json")
-            for value in values
-        ]
+        return _item_attachments(db, project, resolved_item_id, token_info.user_id)
 
 
 @mcp_tool(server="wework_space")
@@ -863,6 +829,18 @@ def upload_delivery_asset(
         return DeliveryAssetResponse.model_validate(asset).model_dump(mode="json")
 
 
+def _item_deliveries(
+    db: Session, project: CloudProject, item_id: str, user_id: int
+) -> list[dict[str, Any]]:
+    """Read delivery summaries using the authorized caller's Session."""
+    _read_item(db, project, item_id, user_id)
+    external_loop_item_provider.ensure_shadow(db, item_id, user_id)
+    return [
+        _delivery_view(db, delivery)
+        for delivery in delivery_service.list_deliveries(db, item_id, user_id)
+    ]
+
+
 @mcp_tool(server="wework_space")
 def list_deliveries(
     token_info: MCPAuthInfo, space_id: str = "", item_id: str = ""
@@ -872,16 +850,7 @@ def list_deliveries(
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
-        _read_item(db, project, resolved_item_id, token_info.user_id)
-        external_loop_item_provider.ensure_shadow(
-            db, resolved_item_id, token_info.user_id
-        )
-        return [
-            _delivery_view(db, delivery)
-            for delivery in delivery_service.list_deliveries(
-                db, resolved_item_id, token_info.user_id
-            )
-        ]
+        return _item_deliveries(db, project, resolved_item_id, token_info.user_id)
 
 
 @mcp_tool(server="wework_space")

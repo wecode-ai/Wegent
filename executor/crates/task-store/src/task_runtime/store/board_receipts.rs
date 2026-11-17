@@ -171,6 +171,124 @@ mod tests {
         assert_eq!(created.id, replayed.id);
         assert_eq!(store.list_tasks(&project.id).unwrap().len(), 1);
     }
+
+    #[test]
+    fn successful_task_writes_return_the_recorded_snapshot_without_a_second_read() {
+        for update in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+            let project = store
+                .create_project(serde_json::from_value(json!({"name":"Snapshot board"})).unwrap())
+                .unwrap();
+            let receipt = BoardWriteReceipt {
+                id: "snapshot-receipt".into(),
+                owner: "owner".into(),
+                payload: "snapshot-payload".into(),
+            };
+            let original = update.then(|| {
+                store
+                    .create_task(
+                        &project.id,
+                        serde_json::from_value(json!({"title":"Original"})).unwrap(),
+                    )
+                    .unwrap()
+            });
+            // Advance the domain row after its result is recorded, deterministically
+            // exposing any fresh read used to produce the successful response.
+            store
+                .connection()
+                .unwrap()
+                .execute_batch(
+                    "CREATE TRIGGER advance_after_snapshot AFTER INSERT ON loop_items
+                 WHEN NEW.kind='board_operation' AND NEW.id='snapshot-receipt'
+                 BEGIN UPDATE loop_items SET title='Later writer',version=version+1
+                 WHERE id=json_extract(NEW.metadata,'$.result.id'); END;",
+                )
+                .unwrap();
+            let write = || match original.as_ref() {
+                Some(original) => store.update_task_with_receipt(
+                    &project.id,
+                    &original.id,
+                    serde_json::from_value(json!({"version":original.version,"title":"Snapshot"}))
+                        .unwrap(),
+                    None,
+                    None,
+                    Some(&receipt),
+                ),
+                None => store.create_task_with_receipt(
+                    &project.id,
+                    serde_json::from_value(json!({"title":"Snapshot"})).unwrap(),
+                    None,
+                    None,
+                    Some(&receipt),
+                ),
+            };
+            let result = write().unwrap();
+            let expected_version = if update { 2 } else { 1 };
+            assert_eq!(result.title.as_deref(), Some("Snapshot"));
+            assert_eq!(result.version, expected_version);
+            let recorded = store
+                .board_operation(&receipt.id, &receipt.owner)
+                .unwrap()
+                .unwrap();
+            assert_eq!(serde_json::to_value(&result).unwrap(), recorded["result"]);
+            assert_eq!(
+                serde_json::to_value(write().unwrap()).unwrap(),
+                recorded["result"]
+            );
+            let current = store.get_task(&project.id, &result.id).unwrap();
+            assert_eq!(current.title.as_deref(), Some("Later writer"));
+            assert_eq!(current.version, expected_version + 1);
+        }
+    }
+
+    #[test]
+    fn update_receipt_and_response_include_the_same_execution_projection() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(serde_json::from_value(json!({"name":"Execution board"})).unwrap())
+            .unwrap();
+        let agent = store.create_chat_agent(&project.id, serde_json::from_value(json!({
+            "name":"Receipt runner","runtime":"codex","execution_mode":"auto",
+            "execution_policy":{"mode":"project_pool"},
+            "model_policy":{"mode":"fixed","model":{"runtime":"codex","provider":"test","model_id":"model-a"}}
+        })).unwrap()).unwrap();
+        let task = store
+            .create_task(
+                &project.id,
+                serde_json::from_value(json!({"title":"Assigned","assignee_agent_id":agent.id}))
+                    .unwrap(),
+            )
+            .unwrap();
+        let receipt = BoardWriteReceipt {
+            id: "projected-receipt".into(),
+            owner: "owner".into(),
+            payload: "payload".into(),
+        };
+        let update = || {
+            store.update_task_with_receipt(
+                &project.id,
+                &task.id,
+                serde_json::from_value(json!({"version":task.version,"title":"Reviewed"})).unwrap(),
+                None,
+                None,
+                Some(&receipt),
+            )
+        };
+        let result = update().unwrap();
+        assert!(result.execution_id.is_some());
+        assert!(result.execution_state.is_some());
+        let recorded = store
+            .board_operation(&receipt.id, &receipt.owner)
+            .unwrap()
+            .unwrap();
+        assert_eq!(serde_json::to_value(&result).unwrap(), recorded["result"]);
+        assert_eq!(
+            serde_json::to_value(update().unwrap()).unwrap(),
+            recorded["result"]
+        );
+    }
 }
 
 #[cfg(test)]

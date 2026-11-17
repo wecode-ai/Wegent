@@ -429,6 +429,18 @@ async fn view(
         }
     }
     let results = state["results"].as_array().ok_or("Invalid receipts")?;
+    if state["state"] == "running"
+        && (state["remote"].is_null() || state["remote"]["state"] == "completed")
+        && results
+            .iter()
+            .all(|result| matches!(result["state"].as_str(), Some("succeeded" | "failed")))
+    {
+        state["state"] = json!("completed");
+        store
+            .save_board_operation(operation, &principal, &state)
+            .map_err(|error| error.to_string())?;
+    }
+    let results = state["results"].as_array().ok_or("Invalid receipts")?;
     Ok(
         json!({"operation_id":operation,"state":state["state"],"counts":counts(results),"results":results,"expires_at":chrono::DateTime::from_timestamp(state["expires_at"].as_i64().ok_or("Missing expiration")?,0).ok_or("Invalid expiration")?.to_rfc3339()}),
     )

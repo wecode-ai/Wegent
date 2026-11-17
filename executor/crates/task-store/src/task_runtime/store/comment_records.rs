@@ -74,36 +74,50 @@ impl LocalTaskStore {
         after_sequence: i64,
     ) -> Result<Vec<LocalComment>, TaskRuntimeError> {
         let connection = self.connection()?;
-        let mut statement = connection.prepare(
-            "SELECT c.id, c.message_id, c.client_message_id, c.project_id, c.task_id,
-                    c.sender_type, c.sender_id, c.sender_name, c.message_type, c.content,
-                    c.metadata, c.trigger_message_id, c.reply_to_message_id,
-                    c.thread_root_message_id, c.status, c.sequence_number, c.created_at, c.updated_at,
-                    e.status, e.observed_state, e.sync_state
-             FROM loop_item_comments c
-             LEFT JOIN loop_item_executions e
-               ON e.id = json_extract(c.metadata, '$.execution_id')
-              AND e.cloud_project_id = c.project_id AND e.loop_item_id = c.task_id
-              AND c.sender_type = 'agent' AND e.agent_id = c.sender_id
-             WHERE c.project_id = ?1 AND c.task_id = ?2 AND c.deleted_at IS NULL
-               AND c.sequence_number > ?3
-             ORDER BY c.sequence_number ASC",
-        )?;
-        let rows = statement.query_map(params![project_id, task_id, after_sequence], |row| {
-            let mut comment = map_comment(row)?;
-            if let Some(status) = row.get::<_, Option<String>>(18)? {
-                let observed: String = row.get(19)?;
-                let sync: String = row.get(20)?;
-                comment.metadata["run_status"] =
-                    json!(local_execution_display_state(&status, &observed, &sync));
-            }
-            Ok(comment)
-        })?;
-        let mut comments = Vec::new();
-        for comment in rows {
-            comments.push(comment?);
+        read_comment_rows(&connection, project_id, task_id, after_sequence, -1, false)
+    }
+
+    /// Return ascending comments with exact earlier/later flags from one bounded snapshot.
+    pub fn list_comment_page(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        after_sequence: i64,
+        limit: usize,
+        latest: bool,
+    ) -> Result<(Vec<LocalComment>, bool, bool), TaskRuntimeError> {
+        if after_sequence < 0 || !(1..=500).contains(&limit) {
+            return Err(TaskRuntimeError::Invalid(
+                "Invalid comment page range".into(),
+            ));
         }
-        Ok(comments)
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let mut comments = read_comment_rows(
+            &transaction,
+            project_id,
+            task_id,
+            after_sequence,
+            (limit + 1) as i64,
+            latest,
+        )?;
+        let has_later = !latest && comments.len() > limit;
+        comments.truncate(limit);
+        if latest {
+            comments.reverse();
+        }
+        let earlier_boundary = comments.first().map_or(after_sequence, |comment| {
+            comment.sequence_number.saturating_sub(1)
+        });
+        let has_earlier = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM loop_item_comments
+             WHERE project_id=?1 AND task_id=?2 AND deleted_at IS NULL
+               AND sequence_number<=?3)",
+            params![project_id, task_id, earlier_boundary],
+            |row| row.get::<_, bool>(0),
+        )?;
+        transaction.commit()?;
+        Ok((comments, has_earlier, has_later))
     }
 
     pub fn create_comment(
@@ -279,9 +293,187 @@ impl LocalTaskStore {
     // ------------------------------------------------------------------
 }
 
+fn read_comment_rows(
+    connection: &Connection,
+    project_id: &str,
+    task_id: &str,
+    after_sequence: i64,
+    limit: i64,
+    latest: bool,
+) -> Result<Vec<LocalComment>, TaskRuntimeError> {
+    let direction = if latest { "DESC" } else { "ASC" };
+    let mut statement = connection.prepare(&format!(
+        "SELECT c.id, c.message_id, c.client_message_id, c.project_id, c.task_id,
+                c.sender_type, c.sender_id, c.sender_name, c.message_type, c.content,
+                c.metadata, c.trigger_message_id, c.reply_to_message_id,
+                c.thread_root_message_id, c.status, c.sequence_number, c.created_at, c.updated_at,
+                e.status, e.observed_state, e.sync_state
+         FROM loop_item_comments c
+         LEFT JOIN loop_item_executions e
+           ON e.id = json_extract(c.metadata, '$.execution_id')
+          AND e.cloud_project_id = c.project_id AND e.loop_item_id = c.task_id
+          AND c.sender_type = 'agent' AND e.agent_id = c.sender_id
+         WHERE c.project_id = ?1 AND c.task_id = ?2 AND c.deleted_at IS NULL
+           AND c.sequence_number > ?3
+         ORDER BY c.sequence_number {direction} LIMIT ?4"
+    ))?;
+    let rows = statement.query_map(params![project_id, task_id, after_sequence, limit], |row| {
+        let mut comment = map_comment(row)?;
+        if let Some(status) = row.get::<_, Option<String>>(18)? {
+            let observed: String = row.get(19)?;
+            let sync: String = row.get(20)?;
+            comment.metadata["run_status"] =
+                json!(local_execution_display_state(&status, &observed, &sync));
+        }
+        Ok(comment)
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
 #[cfg(test)]
 mod stand_in_reply_tests {
     use super::*;
+
+    #[test]
+    fn comment_pages_reject_unbounded_or_invalid_ranges() {
+        let (_directory, store, project, _agent, issue, _catalog) =
+            crate::task_runtime::runner_routing_tests::setup();
+        for limit in [0, 501, usize::MAX] {
+            assert!(store
+                .list_comment_page(&project.id, &issue.id, 0, limit, false)
+                .is_err());
+        }
+        assert!(store
+            .list_comment_page(&project.id, &issue.id, -1, 2, false)
+            .is_err());
+    }
+
+    #[test]
+    fn comment_pages_preserve_live_execution_activity_enrichment_and_authors() {
+        let (_directory, store, project, agent, issue, _catalog) =
+            crate::task_runtime::runner_routing_tests::setup();
+        let execution = store
+            .enqueue_execution(&project.id, &issue.id, &agent.id, json!({}), None)
+            .unwrap();
+        let check = |expected_status: &str| {
+            let all = store.list_comments(&project.id, &issue.id, 0).unwrap();
+            let expected = all
+                .iter()
+                .find(|comment| comment.metadata["execution_id"] == execution.id)
+                .unwrap();
+            for latest in [false, true] {
+                let (page, earlier, later) = store
+                    .list_comment_page(&project.id, &issue.id, 0, 2, latest)
+                    .unwrap();
+                let actual = page
+                    .iter()
+                    .find(|comment| comment.message_id == expected.message_id)
+                    .unwrap();
+                assert_eq!(actual.metadata["run_status"], expected_status);
+                assert_eq!(actual.metadata, expected.metadata);
+                assert_eq!(actual.sender_type, expected.sender_type);
+                assert_eq!(actual.sender_id, expected.sender_id);
+                assert_eq!(actual.sender_name, expected.sender_name);
+                assert_eq!(actual.content, expected.content);
+                assert!(!earlier);
+                assert!(!later);
+            }
+        };
+        check("queued");
+        store.cancel_execution(execution.id, None).unwrap();
+        check("cancelled");
+    }
+
+    #[test]
+    fn comment_page_flags_use_visible_sequences_and_exclude_deleted_or_foreign_rows() {
+        let (_directory, store, project, _agent, issue, _catalog) =
+            crate::task_runtime::runner_routing_tests::setup();
+        let mut comments = Vec::new();
+        for index in 0..5 {
+            comments.push(
+                store
+                    .create_comment(&LocalCommentCreate {
+                        project_id: project.id.clone(),
+                        task_id: issue.id.clone(),
+                        client_message_id: None,
+                        sender_type: "user".into(),
+                        sender_id: "7".into(),
+                        sender_name: "Reader".into(),
+                        content: format!("Comment {index}"),
+                        metadata: json!({}),
+                        reply_to_message_id: None,
+                    })
+                    .unwrap(),
+            );
+        }
+        let connection = store.connection().unwrap();
+        connection
+            .execute(
+                "UPDATE loop_item_comments SET deleted_at=?1 WHERE message_id=?2 OR message_id=?3",
+                params![now(), comments[0].message_id, comments[4].message_id],
+            )
+            .unwrap();
+        drop(connection);
+        let (first, earlier, later) = store
+            .list_comment_page(&project.id, &issue.id, 0, 2, false)
+            .unwrap();
+        assert_eq!(first[0].message_id, comments[1].message_id);
+        assert_eq!(first[1].message_id, comments[2].message_id);
+        assert!(!earlier);
+        assert!(later);
+        let (latest, earlier, later) = store
+            .list_comment_page(&project.id, &issue.id, 0, 2, true)
+            .unwrap();
+        assert_eq!(latest[0].message_id, comments[2].message_id);
+        assert_eq!(latest[1].message_id, comments[3].message_id);
+        assert!(earlier);
+        assert!(!later);
+        let (last, earlier, later) = store
+            .list_comment_page(&project.id, &issue.id, first[1].sequence_number, 2, false)
+            .unwrap();
+        assert_eq!(last.len(), 1);
+        assert_eq!(last[0].message_id, comments[3].message_id);
+        assert!(earlier);
+        assert!(!later);
+        let (empty, earlier, later) = store
+            .list_comment_page(
+                &project.id,
+                &issue.id,
+                comments[4].sequence_number,
+                2,
+                false,
+            )
+            .unwrap();
+        assert!(empty.is_empty());
+        assert!(earlier);
+        assert!(!later);
+        let (foreign, earlier, later) = store
+            .list_comment_page("another-project", &issue.id, 0, 2, false)
+            .unwrap();
+        assert!(foreign.is_empty());
+        assert!(!earlier);
+        assert!(!later);
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE loop_item_comments SET deleted_at=?1 WHERE task_id=?2",
+                params![now(), issue.id],
+            )
+            .unwrap();
+        let (empty, earlier, later) = store
+            .list_comment_page(
+                &project.id,
+                &issue.id,
+                comments[4].sequence_number,
+                2,
+                false,
+            )
+            .unwrap();
+        assert!(empty.is_empty());
+        assert!(!earlier);
+        assert!(!later);
+    }
 
     #[test]
     fn public_stand_in_reply_preserves_owned_conversations_after_reassignment() {

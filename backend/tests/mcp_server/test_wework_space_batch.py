@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
@@ -50,6 +51,77 @@ def add_items(db: Session, project, user: User, count: int) -> list[LoopItem]:
     return items
 
 
+def test_batch_assignment_candidates_preserve_executor_discovery_denial(
+    board, monkeypatch: pytest.MonkeyPatch
+):
+    _, token, space = board
+    monkeypatch.setattr(
+        wework_space,
+        "_board_context",
+        lambda *_: {
+            "space_id": space["space_id"],
+            "item_id": "delegated-issue",
+            "dispatch_role": "executor",
+        },
+    )
+    result = dispatch("batch_get_assignment_candidates", token, {"spaces": [space]})
+    assert result["counts"]["succeeded"] == 0
+    assert result["counts"]["failed"] == 1
+    assert result["results"][0]["error"]["code"] == "not_found"
+    assert "result" not in result["results"][0]
+
+
+@pytest.mark.parametrize("field", ["created_at", "updated_at", "due_at"])
+@pytest.mark.parametrize(
+    ("interval", "indices"),
+    [
+        ({"from": "2026-01-01t00:00:00z", "to": "2026-01-02T00:00:00Z"}, [1, 2]),
+        ({"from": "2026-01-01t00:00:00z"}, [1, 2, 3]),
+        ({"to": "2026-01-02t00:00:00z"}, [0, 1, 2]),
+    ],
+)
+def test_search_accepts_lowercase_rfc3339_interval_bounds(
+    board, test_db, test_user, field, interval, indices
+):
+    project, token, space = board
+    items = add_items(test_db, project, test_user, 4)
+    for item, stamp in zip(
+        items,
+        [
+            datetime(2025, 12, 31, 23, 59, 59),
+            datetime(2026, 1, 1),
+            datetime(2026, 1, 1, 12),
+            datetime(2026, 1, 2),
+        ],
+    ):
+        setattr(item, field, stamp)
+    test_db.commit()
+    result = dispatch(
+        "search_board_items",
+        token,
+        {
+            "scope": {"kind": "projects", "spaces": [space]},
+            field: interval,
+            "sort": [{"field": field, "direction": "asc"}],
+        },
+    )
+    assert result["coverage"]["complete"] is True
+    assert [item["id"] for item in result["items"]] == [
+        items[index].id for index in indices
+    ]
+
+
+@pytest.mark.parametrize("field", ["created_at", "updated_at", "due_at"])
+def test_lowercase_rfc3339_interval_retains_order_validation(field):
+    with pytest.raises(HTTPException) as invalid:
+        validate(
+            "search_board_items",
+            {field: {"from": "2026-01-02t00:00:00z", "to": "2026-01-01T00:00:00Z"}},
+        )
+    assert invalid.value.status_code == 422
+    assert invalid.value.detail["code"] == "invalid_request"
+
+
 def source_time_query(
     board: tuple,
     db: Session,
@@ -83,6 +155,27 @@ def source_time_query(
     row.metadata_json = snapshot
     db.commit()
     return token, row.id
+
+
+@pytest.mark.parametrize("field", ["created_at", "updated_at", "due_at"])
+def test_temporal_sort_accepts_lowercase_rfc3339_source_timestamps(
+    board, test_db, test_user, field
+):
+    token, query_id = source_time_query(
+        board,
+        test_db,
+        test_user,
+        field,
+        [
+            ("later", "2026-01-01t02:00:00z"),
+            ("first", "2026-01-01t01:00:00z"),
+            ("tie", "2026-01-01T02:00:00+01:00"),
+        ],
+        "asc",
+    )
+    result = dispatch("search_board_items", token, {"query_id": query_id})
+    assert result["coverage"]["complete"] is True
+    assert [item["title"] for item in result["items"]] == ["first", "tie", "later"]
 
 
 @pytest.mark.parametrize("field", ["created_at", "updated_at", "due_at"])
@@ -754,10 +847,13 @@ def test_executor_comments_keep_own_issue_scope_and_parent_sections_do_not_expan
     )
     assert [entry["state"] for entry in written["results"]] == ["succeeded", "failed"]
 
+    fetched = []
+
     def must_not_read(*_args, **_kwargs):
+        fetched.append(True)
         raise AssertionError("Parent attachments must not be fetched")
 
-    monkeypatch.setattr(wework_space, "list_item_attachments", must_not_read)
+    monkeypatch.setattr(wework_space, "_item_attachments", must_not_read)
     read = dispatch(
         "batch_get_board_items",
         token,
@@ -776,3 +872,4 @@ def test_executor_comments_keep_own_issue_scope_and_parent_sections_do_not_expan
         read["results"][0]["result"]["sections"]["attachment_metadata"]["state"]
         == "unavailable"
     )
+    assert fetched == []

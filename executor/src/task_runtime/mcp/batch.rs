@@ -22,15 +22,11 @@ pub(super) fn contains(name: &str) -> bool {
     tools().iter().any(|tool| tool["name"] == name)
 }
 
-pub(super) async fn all_spaces(
+pub(super) async fn discovered_projects(
     runtime: &TaskRuntime,
     context: &SpaceMcpRequestContext,
 ) -> Result<Value, String> {
-    let value = queries::discovery(runtime, context, &json!({})).await?;
-    if value["coverage"]["complete"] != true {
-        return Err("Project discovery is incomplete; restore the unavailable source".into());
-    }
-    Ok(value["items"].clone())
+    queries::discovery(runtime, context, &json!({})).await
 }
 
 pub(super) fn hash(value: &Value) -> String {
@@ -70,7 +66,7 @@ fn owner(runtime: &TaskRuntime, context: &SpaceMcpRequestContext) -> String {
     ]))
 }
 
-fn device(context: &SpaceMcpRequestContext) -> Result<String, String> {
+pub(super) fn device(context: &SpaceMcpRequestContext) -> Result<String, String> {
     context
         .current_device_id
         .clone()

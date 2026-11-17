@@ -81,6 +81,10 @@ export function createPersonalIssueAccessRegression({
     const assertContext = value => {
       assert.equal(value.space_id, String(sourceProject.id))
       assert.equal(value.item_id, sourceIssue.id)
+      assert.deepEqual(value.space_ref, {
+        project_store: 'backend',
+        space_id: String(sourceProject.id),
+      })
     }
     steps.push({ name: 'get_current_context', args: () => ({}), verify: assertContext })
     steps.push({
@@ -154,7 +158,6 @@ export function createPersonalIssueAccessRegression({
       step = steps[stepIndex]
     }
     if (!step) {
-      await assertPersistedResults()
       toolRunVerified = true
       return [assistantMessage(COMPLETE)]
     }
@@ -358,6 +361,14 @@ export function createPersonalIssueAccessRegression({
         device_id: binding.device_id,
         loop_item_id: binding.loop_item_id,
         cloud_project_id: binding.cloud_project_id,
+      }
+      for (const [index, step] of steps.entries()) {
+        await waitForValue(
+          () => stepIndex,
+          completed => completed > index,
+          `Personal Issue MCP step ${index + 1}/${steps.length} (${step.name}) did not finish`,
+          modelResponseTimeoutMs
+        )
       }
       await control.command(
         'waitFor',

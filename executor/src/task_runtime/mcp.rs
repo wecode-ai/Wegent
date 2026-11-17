@@ -1066,11 +1066,25 @@ async fn call_individual_tool(
                     .await
                     .and_then(|value| serde_json::to_value(value).map_err(invalid_json))
                     .map(|item| {
-                        json!({
+                        let mut value = json!({
                             "space_id": project_id,
                             "item_id": task_id,
                             "item": item,
-                        })
+                        });
+                        match batch::device(context) {
+                            Ok(device_id) => {
+                                value["space_ref"] = json!({
+                                    "project_store": "local", "space_id": project_id,
+                                    "device_id": device_id,
+                                })
+                            }
+                            Err(message) => {
+                                value["space_ref_error"] = json!({
+                                    "code": "source_unavailable", "message": message,
+                                })
+                            }
+                        }
+                        value
                     }),
                 (Err(error), _) | (_, Err(error)) => Err(error),
             }
@@ -2205,6 +2219,7 @@ async fn call_backend_tool(
             return Ok(json!({
                 "space_id": project_id,
                 "item_id": item_id,
+                "space_ref": {"project_store": "backend", "space_id": project_id},
                 "item": item,
             }));
         }

@@ -30,11 +30,11 @@ def details(
     sections = {}
     actions = {
         "permissions": lambda: item.get("permissions", {}),
-        "attachment_metadata": lambda: single.list_item_attachments(
-            token, str(project.id), target["item_id"]
+        "attachment_metadata": lambda: single._item_attachments(
+            db, project, target["item_id"], token.user_id
         ),
-        "delivery_summaries": lambda: single.list_deliveries(
-            token, str(project.id), target["item_id"]
+        "delivery_summaries": lambda: single._item_deliveries(
+            db, project, target["item_id"], token.user_id
         ),
     }
     for name in include:

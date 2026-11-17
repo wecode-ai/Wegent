@@ -98,6 +98,7 @@ type AssigneeRef = {
 ```
 
 - Discovery supplies references. Preserve string IDs; never infer stores from numbers, prefixes, or historical caches. A device ID grants no remote-device access.
+- A bound Issue's `get_current_context` returns `space_ref`, allowing authorized batch targets without project enumeration. Executors retain their original Issue scope and must not resolve bindings through `list_spaces`. An unavailable trusted local identity produces `space_ref_error` while preserving authorized Issue details.
 - Conversational “me” resolves to the current trusted principal before service execution. Local owner `0` is not a global account alias.
 - Every batch entry has a unique `request_id`. Preserve input order and correlate by that ID, rather than by potentially repeated Issue numbers.
 - Repeated write targets are valid and execute serially in input order; different targets may execute concurrently. Each entry retains its explicit expected version without silent rewriting from a predecessor's result. Failed or unresolved predecessors leave dependent later entries `not_executed`.

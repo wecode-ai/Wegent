@@ -2,6 +2,10 @@ use super::*;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(test)]
+#[path = "query_cursor_regressions.rs"]
+mod query_cursor_regressions;
+
 struct Query {
     owner: String,
     filters: Value,
@@ -288,11 +292,19 @@ fn sort_items(mut items: Vec<Value>, sorts: &Value) -> Result<Vec<Value>, String
 }
 
 fn matches(item: &Value, filters: &Value, parents: &HashSet<String>) -> Result<bool, String> {
-    let text = format!(
-        "{} {} {} {}",
-        item["id"], item["title"], item["description"], item["tags"]
-    )
-    .to_lowercase();
+    let text = ["id", "title", "description"]
+        .into_iter()
+        .filter_map(|field| item[field].as_str())
+        .chain(
+            item["tags"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str),
+        )
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
     if !text.contains(
         &filters["query"]
             .as_str()
@@ -422,6 +434,12 @@ fn registry() -> &'static Mutex<Queries> {
     QUERIES.get_or_init(Mutex::default)
 }
 
+fn issue_cursor(id: &str, state: &mut Query, offset: usize) -> String {
+    let token = uuid::Uuid::new_v4().to_string();
+    state.cursors.insert(token.clone(), offset);
+    STANDARD.encode(json!({"query_id":id,"token":token}).to_string())
+}
+
 async fn existing(
     runtime: &TaskRuntime,
     context: &SpaceMcpRequestContext,
@@ -495,6 +513,7 @@ pub(super) async fn search(
     }
     let mut id = values["query_id"].as_str().map(str::to_owned);
     let mut offset = 0;
+    let mut cursor_token = None;
     if let Some(cursor) = values["cursor"]
         .as_str()
         .or_else(|| values["continuation_cursor"].as_str())
@@ -512,26 +531,15 @@ pub(super) async fn search(
         {
             return Err("Cursor cannot change filters".into());
         }
-        let entries = registry()
-            .lock()
-            .map_err(|_| "Query cache unavailable")?
-            .iter()
-            .map(|(id, state)| (id.clone(), state.clone()))
-            .collect::<Vec<_>>();
-        let mut found = None;
-        for (key, state) in entries {
-            let state = state.lock().await;
-            if let Some(position) = state.cursors.get(cursor) {
-                found = Some((key, *position));
-                break;
-            }
-        }
-        let (key, position) = found.ok_or("cursor_expired")?;
-        if id.as_ref().is_some_and(|id| id != &key) {
+        let decoded = STANDARD.decode(cursor).map_err(|_| "cursor_expired")?;
+        let decoded: Value = serde_json::from_slice(&decoded).map_err(|_| "cursor_expired")?;
+        let key = decoded["query_id"].as_str().ok_or("cursor_expired")?;
+        let token = decoded["token"].as_str().ok_or("cursor_expired")?;
+        if id.as_deref().is_some_and(|id| id != key) {
             return Err("Query cursor mismatch".into());
         }
-        id = Some(key);
-        offset = position;
+        id = Some(key.to_owned());
+        cursor_token = Some(token.to_owned());
     }
     if id.is_none() {
         let discovery = if values["scope"]["kind"] == "projects" {
@@ -586,6 +594,9 @@ pub(super) async fn search(
     let id = id.ok_or("Missing query")?;
     let query = existing(runtime, context, &id).await?;
     let mut state = query.lock().await;
+    if let Some(token) = cursor_token {
+        offset = *state.cursors.get(&token).ok_or("cursor_expired")?;
+    }
     let started = std::time::Instant::now();
     while state.position < state.spaces.len() && started.elapsed().as_secs() < 40 {
         let space = state.spaces[state.position].clone();
@@ -682,9 +693,7 @@ pub(super) async fn search(
             .all(|source| source["state"] == "complete");
     let mut result = json!({"query_id":id,"state":if complete{"ready"}else if ready{"partial"}else{"collecting"},"coverage":{"complete":complete,"sources":state.sources},"consistency":"materialized_scan","expires_at":chrono::DateTime::from_timestamp(state.expires,0).ok_or("Invalid expiry")?.to_rfc3339()});
     if !ready {
-        let cursor = uuid::Uuid::new_v4().to_string();
-        state.cursors.insert(cursor.clone(), 0);
-        result["continuation_cursor"] = json!(cursor);
+        result["continuation_cursor"] = json!(issue_cursor(&id, &mut state, 0));
         result["matched_so_far"] = json!(state.items.len());
         result["items"] = json!([]);
         return Ok(result);
@@ -719,9 +728,7 @@ pub(super) async fn search(
     result["items"] = json!(page);
     result["matched_total"] = json!(items.len());
     result["next_cursor"] = if offset.saturating_add(limit) < items.len() {
-        let cursor = uuid::Uuid::new_v4().to_string();
-        state.cursors.insert(cursor.clone(), offset + limit);
-        json!(cursor)
+        json!(issue_cursor(&id, &mut state, offset + limit))
     } else {
         Value::Null
     };

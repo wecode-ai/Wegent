@@ -355,14 +355,13 @@ impl LocalTaskStore {
             &id,
             local_automation::AutomationEvent::Created,
         )?;
+        let item =
+            get_item_from(&transaction, &id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
         if let Some(receipt) = receipt {
-            let item =
-                get_item_from(&transaction, &id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
             receipt.record(&transaction, &item)?;
         }
         transaction.commit()?;
-        drop(connection);
-        self.get_item(&id, "task")
+        Ok(item)
     }
 
     pub fn update_task(
@@ -725,19 +724,14 @@ impl LocalTaskStore {
                 local_automation::AutomationEvent::TagsAdded(&added_tags),
             )?;
         }
+        let item =
+            get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        let item = attach_execution(item, latest_execution(&transaction, task_id)?);
         if let Some(receipt) = receipt {
-            let item = get_item_from(&transaction, task_id, "task")?
-                .ok_or(TaskRuntimeError::TaskNotFound)?;
             receipt.record(&transaction, &item)?;
         }
         transaction.commit()?;
-        drop(connection);
-        let item = self.get_item(task_id, "task")?;
-        let connection = self.connection()?;
-        Ok(attach_execution(
-            item,
-            latest_execution(&connection, task_id)?,
-        ))
+        Ok(item)
     }
 
     // ------------------------------------------------------------------

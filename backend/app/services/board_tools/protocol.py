@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from importlib.resources import files
 from typing import Any
 
@@ -28,6 +29,12 @@ def digest(value: Any) -> str:
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
+def parse_timestamp(value: str) -> datetime:
+    """Parse RFC 3339 case variants and normalize source timestamps to UTC."""
+    stamp = datetime.fromisoformat(value.upper().replace("Z", "+00:00"))
+    return stamp.replace(tzinfo=stamp.tzinfo or timezone.utc).astimezone(timezone.utc)
+
+
 @trace_sync("board_tools.validate", tracer_name="backend")
 def validate(name: str, arguments: dict[str, Any]) -> None:
     schema = TOOLS[name]["inputSchema"]
@@ -49,10 +56,8 @@ def validate(name: str, arguments: dict[str, Any]) -> None:
     for field in ("created_at", "updated_at", "due_at"):
         interval = arguments.get(field, {})
         if interval.get("from") and interval.get("to"):
-            from datetime import datetime
-
-            start = datetime.fromisoformat(interval["from"].replace("Z", "+00:00"))
-            end = datetime.fromisoformat(interval["to"].replace("Z", "+00:00"))
+            start = parse_timestamp(interval["from"])
+            end = parse_timestamp(interval["to"])
             if start >= end:
                 raise failure("invalid_request", f"Invalid {field} interval")
 

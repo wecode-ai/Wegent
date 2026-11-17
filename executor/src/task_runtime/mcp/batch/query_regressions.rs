@@ -233,3 +233,128 @@ async fn invalid_source_timestamps_cannot_be_silently_sorted_as_text() {
             .contains("unsupported_sort: invalid source timestamp"));
     }
 }
+
+#[tokio::test]
+async fn search_uses_raw_quotes_backslashes_and_tags_without_serializing_nulls() {
+    let (_directory, runtime, context, space) = fixture();
+    let item = runtime
+        .stand_in_store()
+        .create_task(
+            space["space_id"].as_str().unwrap(),
+            serde_json::from_value(json!({
+                "title":"say \"hi\"",
+                "description":r"C:\tmp",
+                "tags":["tag \"quoted\"",r"tag\path"]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let empty = create_item(&runtime, &space, "Empty source title");
+    rusqlite::Connection::open(runtime.stand_in_store().path())
+        .unwrap()
+        .execute("UPDATE loop_items SET title=NULL WHERE id=?1", [empty])
+        .unwrap();
+    for query in [r#"say "hi""#, r"C:\tmp", r#"tag "quoted""#, r"tag\path"] {
+        let page = invoke(
+            &runtime,
+            &context,
+            "search_board_items",
+            json!({"scope":{"kind":"projects","spaces":[space]},"query":query}),
+        )
+        .await;
+        assert_eq!(page["matched_total"], 1, "{query}: {page}");
+        assert_eq!(page["items"][0]["id"], item.id);
+    }
+    let page = invoke(
+        &runtime,
+        &context,
+        "search_board_items",
+        json!({"scope":{"kind":"projects","spaces":[space]},"query":"null"}),
+    )
+    .await;
+    assert_eq!(page["matched_total"], 0);
+}
+
+#[tokio::test]
+async fn issued_query_cursors_reject_owner_changes_tampering_and_query_mismatches() {
+    let (_directory, runtime, context, space) = fixture();
+    create_item(&runtime, &space, "First");
+    create_item(&runtime, &space, "Second");
+    let request = json!({"scope":{"kind":"projects","spaces":[space]},"limit":1});
+    let first = invoke(&runtime, &context, "search_board_items", request.clone()).await;
+    let second = invoke(&runtime, &context, "search_board_items", request).await;
+    let mut foreign_owner = context.clone();
+    foreign_owner.principal_id = Some("another-owner".into());
+    let denied = call(
+        &runtime,
+        "search_board_items",
+        json!({"cursor":first["next_cursor"]}),
+        &foreign_owner,
+    )
+    .await;
+    assert_eq!(denied["isError"], true);
+    assert!(denied.to_string().contains("cursor_expired"));
+    let mismatch = call(
+        &runtime,
+        "search_board_items",
+        json!({"query_id":second["query_id"],"cursor":first["next_cursor"]}),
+        &context,
+    )
+    .await;
+    assert_eq!(mismatch["isError"], true);
+    assert!(mismatch.to_string().contains("Query cursor mismatch"));
+    let bytes = STANDARD
+        .decode(first["next_cursor"].as_str().unwrap())
+        .unwrap();
+    let mut tampered: Value = serde_json::from_slice(&bytes).unwrap();
+    tampered["query_id"] = second["query_id"].clone();
+    let denied = call(
+        &runtime,
+        "search_board_items",
+        json!({"cursor":STANDARD.encode(tampered.to_string())}),
+        &context,
+    )
+    .await;
+    assert_eq!(denied["isError"], true);
+    assert!(denied.to_string().contains("cursor_expired"));
+}
+
+#[tokio::test]
+async fn stand_in_project_discovery_keeps_local_results_and_reports_backend_failure() {
+    let (_directory, runtime, mut context, space) = fixture();
+    let app =
+        axum::Router::new().fallback(|| async { axum::http::StatusCode::SERVICE_UNAVAILABLE });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    context.backend_url = Some(format!("http://{}", listener.local_addr().unwrap()));
+    context.auth_token = Some("test-token".into());
+    context.stand_in = Some(crate::task_runtime::mcp::StandInMcpIdentity {
+        task_id: "stand-in-project-discovery".into(),
+        user: 7,
+        device: "device-1".into(),
+        role: None,
+        work: None,
+        ask_before_act: false,
+        coordinator_batch: None,
+        project: None,
+        review: false,
+        memory_review: false,
+        readonly_worker: false,
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let result =
+        super::super::super::stand_in::call(&runtime, "list_projects", json!({}), &context).await;
+    server.abort();
+    assert_eq!(result["isError"], false, "{result}");
+    let result: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert!(result["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|project| project["space"] == space));
+    assert_eq!(result["coverage"]["complete"], false);
+    assert!(result["coverage"]["sources"]
+        .as_array()
+        .unwrap()
+        .contains(&json!({"store":"backend","state":"unavailable"})));
+}

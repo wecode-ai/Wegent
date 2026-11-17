@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from app.mcp_server.auth import MCPAuthInfo
 from app.mcp_server.tools.decorator import mcp_tool
-from app.services.board_tools import access, queries, reads, writes
+from app.services.board_tools import access, candidates, queries, reads, writes
 from app.services.board_tools.protocol import TOOLS, counts, error_result, validate
 from shared.telemetry.decorators import trace_sync
 
@@ -94,8 +94,10 @@ def dispatch(
             for index, space in enumerate(arguments["spaces"]):
                 entry = {"request_id": str(index)}
                 try:
-                    access.project(db, token, space, action="get_assignment_candidates")
-                    value = single.get_assignment_candidates(token, space["space_id"])
+                    project = access.project(
+                        db, token, space, action="get_assignment_candidates"
+                    )
+                    value = candidates.read(db, project, token.user_id)
                     selected = arguments.get("types")
                     if selected:
                         value = {

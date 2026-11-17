@@ -258,30 +258,15 @@ fn comments(
         }
         (0, mode == "oldest")
     };
-    let comments = runtime
-        .list_comments(project, item, 0)
-        .map_err(|error| error.to_string())?;
     let limit = entry["limit"].as_u64().unwrap_or(100) as usize;
-    let eligible = comments
-        .iter()
-        .filter(|comment| comment.sequence_number > after)
-        .collect::<Vec<_>>();
-    let start = if mode == "latest" {
-        eligible.len().saturating_sub(limit)
-    } else {
-        0
-    };
-    let page = eligible
-        .iter()
-        .skip(start)
-        .take(limit)
-        .copied()
-        .collect::<Vec<_>>();
-    let has_later = mode != "latest" && eligible.len() > limit;
+    let (page, has_earlier, has_later) = runtime
+        .stand_in_store()
+        .list_comment_page(project, item, after, limit, mode == "latest")
+        .map_err(|error| error.to_string())?;
     let cursor = page.last().map(|comment| {
         STANDARD.encode(json!({"binding":binding,"after":comment.sequence_number,"history_from_start":history_from_start,"expires_at":Local::now().timestamp()+600}).to_string())
     });
     Ok(
-        json!({"comments":page.iter().map(|comment|json!({"id":comment.message_id,"body":comment.content,"author":comment.sender_name,"web_url":null,"created_at":comment.created_at,"updated_at":comment.updated_at,"sequence_number":comment.sequence_number})).collect::<Vec<_>>(),"has_earlier":start>0||after>0,"has_later":has_later,"history_complete":history_from_start&&!has_later,"next_cursor":cursor}),
+        json!({"comments":page.iter().map(|comment|json!({"id":comment.message_id,"body":comment.content,"author":comment.sender_name,"web_url":null,"created_at":comment.created_at,"updated_at":comment.updated_at,"sequence_number":comment.sequence_number})).collect::<Vec<_>>(),"has_earlier":has_earlier,"has_later":has_later,"history_complete":history_from_start&&!has_later,"next_cursor":cursor}),
     )
 }
