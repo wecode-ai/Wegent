@@ -18,6 +18,8 @@ export function ProjectCollaboratorPicker({
   excludedIds,
   agents,
   groups,
+  agentsError,
+  groupsError,
   searchUsers,
   directoryLoading = false,
   directoryError,
@@ -34,6 +36,8 @@ export function ProjectCollaboratorPicker({
   excludedIds: number[]
   agents: ProjectCreateResourceSetup['agents']
   groups: ProjectCreateResourceSetup['groups']
+  agentsError?: string | null
+  groupsError?: string | null
   searchUsers?: ProjectCreateResourceSetup['searchUsers']
   directoryLoading?: boolean
   directoryError?: string | null
@@ -186,6 +190,16 @@ export function ProjectCollaboratorPicker({
               }
               agentsContent={
                 <>
+                  {agentsError && <p role="alert">{agentsError}</p>}
+                  {agentsError && onRetryDirectory && (
+                    <button
+                      type="button"
+                      data-testid="collaboration-project-create-agents-retry"
+                      onClick={onRetryDirectory}
+                    >
+                      {labels.retry}
+                    </button>
+                  )}
                   {availableAgents.map(agent => (
                     <button
                       key={agent.id}
@@ -199,11 +213,21 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!availableAgents.length && empty}
+                  {!availableAgents.length && !agentsError && empty}
                 </>
               }
               groupsContent={
                 <>
+                  {groupsError && <p role="alert">{groupsError}</p>}
+                  {groupsError && onRetryDirectory && (
+                    <button
+                      type="button"
+                      data-testid="collaboration-project-create-groups-retry"
+                      onClick={onRetryDirectory}
+                    >
+                      {labels.retry}
+                    </button>
+                  )}
                   {availableGroups.map(group => (
                     <button
                       key={group.id}
@@ -218,7 +242,7 @@ export function ProjectCollaboratorPicker({
                       </span>
                     </button>
                   ))}
-                  {!availableGroups.length && empty}
+                  {!availableGroups.length && !groupsError && empty}
                   {groupAction}
                 </>
               }

@@ -175,6 +175,7 @@ export function useWorkbenchModels({
   const selectedModelOptionsRef = useRef<Record<string, ModelOptions>>({})
   const modelLoadRevisionRef = useRef(0)
   const selectionRevisionByScopeRef = useRef<Record<string, number>>({})
+  const modelChoiceRevisionByScopeRef = useRef<Record<string, number>>({})
   const validatedSelectionRef = useRef<{
     scopeKey: string
     selectionKey: string
@@ -422,7 +423,7 @@ export function useWorkbenchModels({
   )
 
   const reconcileSelectedModels = useCallback(
-    (nextModels: UnifiedModel[], selectionsBeforeLoad: Record<string, UnifiedModel | null>) => {
+    (nextModels: UnifiedModel[], modelChoicesBeforeLoad: Record<string, number>) => {
       const selectedModelPatch: Record<string, UnifiedModel | null> = {}
       const selectedOptionsPatch: Record<string, ModelOptions> = {}
 
@@ -432,10 +433,12 @@ export function useWorkbenchModels({
         if (!refreshedModel) {
           // Local discovery is authoritative. Cloud models may be hidden from
           // discovery and are validated separately through their saved identity.
-          // A choice made after this request started must survive its stale list.
+          // Only an explicit model choice after this request started can
+          // supersede its list; restoring a task or editing options cannot.
           if (
             currentModel.type === 'runtime' &&
-            selectionsBeforeLoad[selectedScopeKey] === currentModel
+            (modelChoiceRevisionByScopeRef.current[selectedScopeKey] ?? 0) ===
+              (modelChoicesBeforeLoad[selectedScopeKey] ?? 0)
           ) {
             selectedModelPatch[selectedScopeKey] = null
           }
@@ -481,7 +484,7 @@ export function useWorkbenchModels({
   const loadModels = useCallback(async () => {
     if (!enabled) return
     const revision = ++modelLoadRevisionRef.current
-    const selectionsBeforeLoad = { ...selectedModelRef.current }
+    const modelChoicesBeforeLoad = { ...modelChoiceRevisionByScopeRef.current }
     const loadTraceId = `${traceId}-${revision}`
     setIsLoading(true)
     setError(null)
@@ -497,7 +500,7 @@ export function useWorkbenchModels({
         const filtered = response.data.filter(isSupportedModelFamily)
         reconcileSelectedModels(
           filterModel ? filtered.filter(filterModel) : filtered,
-          selectionsBeforeLoad
+          modelChoicesBeforeLoad
         )
         setAvailableModels(filtered)
       }
@@ -658,6 +661,8 @@ export function useWorkbenchModels({
       // A manual choice must win over any restore lookup that is still in
       // flight; its late result or a 404 must not overwrite this selection.
       invalidateSelectionQueries(targetScopeKey)
+      modelChoiceRevisionByScopeRef.current[targetScopeKey] =
+        (modelChoiceRevisionByScopeRef.current[targetScopeKey] ?? 0) + 1
       selectedModelRef.current[targetScopeKey] = model
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [targetScopeKey]: model }))

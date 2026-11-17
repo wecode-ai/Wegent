@@ -118,9 +118,11 @@ export interface ProjectCreateResourceSetup {
   membersError?: string | null;
   reloadMembers?(): void;
   agents: CollaborationOwnedAgent[];
+  agentsError?: string | null;
   defaultAgentResourceIds?: string[];
   searchUsers?(query: string): Promise<CollaborationUser[]>;
   groups: CollaborationGroup[];
+  groupsError?: string | null;
   executionEnvironments?: CollaborationExecutionEnvironment[];
   executionEnvironmentLoading?: boolean;
   executionEnvironmentError?: string;

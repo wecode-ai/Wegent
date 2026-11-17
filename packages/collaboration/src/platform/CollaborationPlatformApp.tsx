@@ -1424,9 +1424,14 @@ function CollaborationPlatformAppContent({
   const [projectWorkspaceId, setProjectWorkspaceId] = useState<string | null>(
     null,
   );
-  const [projectWorkspaceMembers, setProjectWorkspaceMembers] = useState<
-    CollaborationWorkspaceMember[]
-  >([]);
+  const [projectMemberDirectory, setProjectMemberDirectory] = useState<{
+    workspaceId: string | null;
+    members: CollaborationWorkspaceMember[];
+  } | null>(null);
+  const projectWorkspaceMembers =
+    projectMemberDirectory?.workspaceId === projectWorkspaceId
+      ? projectMemberDirectory.members
+      : [];
   const [projectMembersLoading, setProjectMembersLoading] = useState(false);
   const [projectMembersError, setProjectMembersError] = useState<string | null>(
     null,
@@ -1437,6 +1442,12 @@ function CollaborationPlatformAppContent({
   const [projectWorkspaceGroups, setProjectWorkspaceGroups] = useState<
     CollaborationGroup[]
   >([]);
+  const [projectAgentsError, setProjectAgentsError] = useState<string | null>(
+    null,
+  );
+  const [projectGroupsError, setProjectGroupsError] = useState<string | null>(
+    null,
+  );
   const [projectResourceRefreshKey, setProjectResourceRefreshKey] = useState(0);
   const [projectCreationResources, setProjectCreationResources] = useState<
     import("../types").CollaborationPlatformResources
@@ -1515,11 +1526,13 @@ function CollaborationPlatformAppContent({
           : projectWorkspace.namespace));
   useEffect(() => {
     if (!projectDialogOpen) {
-      setProjectWorkspaceMembers([]);
+      setProjectMemberDirectory(null);
       setProjectMembersLoading(false);
       setProjectMembersError(null);
       setProjectWorkspaceAgents([]);
       setProjectWorkspaceGroups([]);
+      setProjectAgentsError(null);
+      setProjectGroupsError(null);
       setProjectCreationResources({ agents: [], execution_environments: [] });
       setProjectEnvironmentLoading(false);
       setProjectEnvironmentError(false);
@@ -1530,6 +1543,8 @@ function CollaborationPlatformAppContent({
     setProjectMembersError(null);
     setProjectWorkspaceAgents([]);
     setProjectWorkspaceGroups([]);
+    setProjectAgentsError(null);
+    setProjectGroupsError(null);
     setProjectCreationResources({ agents: [], execution_environments: [] });
     setProjectEnvironmentLoading(Boolean(api.resources));
     setProjectEnvironmentError(false);
@@ -1545,17 +1560,15 @@ function CollaborationPlatformAppContent({
         .finally(() => {
           if (active) setProjectEnvironmentLoading(false);
         });
-    if (projectWorkspaceId && api.workspaces)
-      void Promise.all([
-        api.workspaces.listMembers(projectWorkspaceId),
-        api.workspaces.listAgents(projectWorkspaceId),
-        api.workspaces.listCollaborationGroups(projectWorkspaceId),
-      ])
-        .then(([members, agents, groups]) => {
-          if (!active) return;
-          setProjectWorkspaceMembers(members);
-          setProjectWorkspaceAgents(agents);
-          setProjectWorkspaceGroups(groups);
+    if (projectWorkspaceId && api.workspaces) {
+      void api.workspaces
+        .listMembers(projectWorkspaceId)
+        .then((members) => {
+          if (active)
+            setProjectMemberDirectory({
+              workspaceId: projectWorkspaceId,
+              members,
+            });
         })
         .catch((cause) => {
           if (!active) return;
@@ -1566,6 +1579,29 @@ function CollaborationPlatformAppContent({
         .finally(() => {
           if (active) setProjectMembersLoading(false);
         });
+      void api.workspaces
+        .listAgents(projectWorkspaceId)
+        .then((agents) => {
+          if (active) setProjectWorkspaceAgents(agents);
+        })
+        .catch((cause) => {
+          if (active)
+            setProjectAgentsError(
+              cause instanceof Error ? cause.message : messages.loadFailed,
+            );
+        });
+      void api.workspaces
+        .listCollaborationGroups(projectWorkspaceId)
+        .then((groups) => {
+          if (active) setProjectWorkspaceGroups(groups);
+        })
+        .catch((cause) => {
+          if (active)
+            setProjectGroupsError(
+              cause instanceof Error ? cause.message : messages.loadFailed,
+            );
+        });
+    }
     return () => {
       active = false;
     };
@@ -2972,8 +3008,10 @@ function CollaborationPlatformAppContent({
                 ? api.members.searchUsers
                 : undefined,
             agents: selectedProjectResourceAgents,
+            agentsError: projectAgentsError,
             defaultAgentResourceIds: defaultProjectAgentResourceIds,
             groups: projectWorkspaceGroups,
+            groupsError: projectGroupsError,
             executionEnvironments:
               projectCreationResources.execution_environments,
             executionEnvironmentLoading: projectEnvironmentLoading,

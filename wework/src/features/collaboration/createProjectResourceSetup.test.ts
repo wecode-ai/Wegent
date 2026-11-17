@@ -21,6 +21,26 @@ const selection: ProjectCreateResourceSelection = {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('ordinary project resource setup', () => {
+  it('does not require member reads or a board refresh when no additional members are selected', async () => {
+    const list = vi.fn(async () => {
+      throw new Error('Member roster unavailable')
+    })
+    const refresh = vi.fn(async () => {
+      throw new Error('Board refresh unavailable')
+    })
+    const api = { members: { list, add: vi.fn() } } as unknown as SharedWorkspaceApi
+    const setup = createProjectResourceSetup(api, { id: 1, name: 'owner' }, refresh, 'Retry')!
+
+    await expect(
+      setup.configure({ id: 'new-project' } as CollaborationProject, {
+        ...selection,
+        memberUserIds: [1],
+      })
+    ).resolves.toBeUndefined()
+    expect(list).not.toHaveBeenCalled()
+    expect(refresh).not.toHaveBeenCalled()
+  })
+
   it('verifies persisted members and refreshes the project before completing', async () => {
     const members: CollaborationMember[] = [owner]
     const api = {

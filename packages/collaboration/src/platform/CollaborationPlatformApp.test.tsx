@@ -7202,7 +7202,7 @@ describe("CollaborationPlatformApp real component flow", () => {
       ),
     ).toBeNull();
     expect(
-      byTestId<HTMLButtonElement>("collaboration-project-create-confirm")
+      (byTestId("collaboration-project-create-confirm") as HTMLButtonElement)
         .disabled,
     ).toBe(false);
     await click(byTestId("collaboration-project-create-confirm"));
@@ -7472,6 +7472,93 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
   });
 
+  it.each(["listAgents", "listCollaborationGroups"] as const)(
+    "keeps project members available when %s fails or remains pending",
+    async (request) => {
+      const { api } = createApi({ initialProjects: [] });
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{ ...initialLocation, workspaceId: workspace.id }}
+        />,
+      );
+      const pending = deferred<never[]>();
+      const resources = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Optional resources unavailable"))
+        .mockReturnValueOnce(pending.promise);
+      api.workspaces![request] = resources;
+      await chooseBlankProjectCreation(
+        "collaboration-workspace-project-create",
+      );
+      await click(byTestId("collaboration-project-create-add-collaborator"));
+
+      expect(
+        portalByTestId(`collaboration-project-create-member-${member.user_id}`)
+          .textContent,
+      ).toContain(member.user_name);
+      expect(
+        portalByTestId("collaboration-project-create-collaborator-menu")
+          .textContent,
+      ).not.toContain("Optional resources unavailable");
+      const tab = request === "listAgents" ? "agents" : "groups";
+      await click(
+        portalByTestId(`collaboration-project-create-collaborator-tab-${tab}`),
+      );
+      expect(document.body.textContent).toContain(
+        "Optional resources unavailable",
+      );
+      await click(portalByTestId(`collaboration-project-create-${tab}-retry`));
+      await click(
+        portalByTestId("collaboration-project-create-collaborator-tab-members"),
+      );
+      expect(
+        portalByTestId(`collaboration-project-create-member-${member.user_id}`)
+          .textContent,
+      ).toContain(member.user_name);
+      await act(async () => pending.resolve([]));
+    },
+  );
+
+  it("clears the previous workspace directory while the new workspace members are pending", async () => {
+    const { api } = createApi({
+      initialProjects: [],
+      initialWorkspaces: [workspace, groupWorkspace],
+    });
+    await render(
+      <PlatformHarness
+        api={api}
+        start={{ ...initialLocation, workspaceId: workspace.id }}
+      />,
+    );
+    await chooseBlankProjectCreation("collaboration-workspace-project-create");
+    const pending = deferred<CollaborationMember[]>();
+    api.workspaces!.listMembers = vi.fn(() => pending.promise);
+    const select = byTestId("collaboration-project-workspace-select");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype,
+        "value",
+      )!.set!.call(select, groupWorkspace.id);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await click(byTestId("collaboration-project-create-add-collaborator"));
+    expect(
+      document.body.querySelector(
+        `[data-testid="collaboration-project-create-member-${member.user_id}"]`,
+      ),
+    ).toBeNull();
+    const replacement = {
+      ...member,
+      user_id: 88,
+      user_name: "New workspace member",
+    };
+    await act(async () => pending.resolve([replacement]));
+    expect(
+      portalByTestId("collaboration-project-create-member-88").textContent,
+    ).toContain(replacement.user_name);
+  });
+
   it("recovers the project collaborator directory without clearing the project draft", async () => {
     const { api } = createApi({ initialProjects: [] });
     await render(
@@ -7499,7 +7586,7 @@ describe("CollaborationPlatformApp real component flow", () => {
 
     expect(api.workspaces!.listMembers).toHaveBeenCalledTimes(2);
     expect(
-      byTestId<HTMLInputElement>("collaboration-project-name-input").value,
+      (byTestId("collaboration-project-name-input") as HTMLInputElement).value,
     ).toBe("Keep this draft");
     expect(
       portalByTestId(`collaboration-project-create-member-${member.user_id}`)

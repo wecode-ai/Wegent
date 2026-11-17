@@ -351,6 +351,16 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
   const generationModelLoaderRef = useRef(
     resourceSetup?.loadCollaborationGroupGenerationModels,
   );
+  generationModelLoaderRef.current =
+    resourceSetup?.loadCollaborationGroupGenerationModels;
+  const generationModelHostRef = useRef(host);
+  generationModelHostRef.current = host;
+  const generationModelFailureLabelRef = useRef(labels.createFailed);
+  generationModelFailureLabelRef.current = labels.createFailed;
+  const generationModelScope =
+    resourceSetup?.loadCollaborationGroupGenerationModels
+      ? `${resourceSetup.location}:${resourceSetup.currentUser.id}`
+      : null;
   const [generationModels, setGenerationModels] = useState<
     ProjectCreateGenerationModel[]
   >([]);
@@ -363,6 +373,10 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     useState<Record<string, string>>({});
   useEffect(() => {
     const loadModels = generationModelLoaderRef.current;
+    setGenerationModels([]);
+    setSelectedGenerationModelKey("");
+    setSelectedGenerationModelOptions({});
+    setGenerationModelsLoading(Boolean(loadModels));
     if (!loadModels) return;
     let active = true;
     void loadModels()
@@ -390,8 +404,10 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
       .catch((cause) => {
         if (!active) return;
         setGroupGenerationError(
-          host?.formatError?.(cause) ??
-            (cause instanceof Error ? cause.message : labels.createFailed),
+          generationModelHostRef.current?.formatError?.(cause) ??
+            (cause instanceof Error
+              ? cause.message
+              : generationModelFailureLabelRef.current),
         );
       })
       .finally(() => {
@@ -400,7 +416,7 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
     return () => {
       active = false;
     };
-  }, [host, labels.createFailed]);
+  }, [generationModelScope]);
   useEffect(() => {
     if (!groupGenerating) return;
     const startedAt = Date.now();
@@ -1282,7 +1298,9 @@ export function ProjectCreateDialog(props: ProjectCreateDialogProps) {
                   directoryError={resourceSetup.membersError}
                   onRetryDirectory={resourceSetup.reloadMembers}
                   agents={availableAgents}
+                  agentsError={resourceSetup.agentsError}
                   groups={resourceSetup.groups}
+                  groupsError={resourceSetup.groupsError}
                   onSelectPerson={(user) => {
                     if (collaboratorsLocked) return;
                     setAddedPeople((current) => [

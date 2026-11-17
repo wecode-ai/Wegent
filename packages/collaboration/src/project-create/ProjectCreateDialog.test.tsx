@@ -96,6 +96,43 @@ function resourceSetup(): ProjectCreateResourceSetup {
 }
 
 describe("shared project creation members", () => {
+  it("loads cloud generation models after switching from a local project", async () => {
+    const setup = resourceSetup();
+    setup.loadCollaborationGroupGenerationModels = vi.fn(async () => ({
+      models: [
+        {
+          modelName: "cloud-model",
+          modelType: "public",
+          displayName: "Cloud model",
+        },
+      ],
+    }));
+    const create = vi.fn(async () => project);
+    await act(async () =>
+      root.render(
+        <ProjectCreateDialog
+          targets={[
+            { location: "local", create },
+            { location: "cloud", create },
+          ]}
+          defaultLocation="local"
+          allowDingTalkAITable={false}
+          labels={projectCreateLabels.en}
+          resourceSetup={setup}
+          onClose={() => {}}
+          onCreated={() => {}}
+        />,
+      ),
+    );
+    expect(setup.loadCollaborationGroupGenerationModels).not.toHaveBeenCalled();
+
+    await click("cloud-project-location-cloud");
+
+    expect(setup.loadCollaborationGroupGenerationModels).toHaveBeenCalledOnce();
+    await input("cloud-project-name", "Retain the cloud catalog");
+    expect(setup.loadCollaborationGroupGenerationModels).toHaveBeenCalledOnce();
+  });
+
   it("keeps selected directory members visible when resource loading fails and exposes retry", async () => {
     const setup = resourceSetup();
     setup.members = [

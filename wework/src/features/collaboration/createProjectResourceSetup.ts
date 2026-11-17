@@ -23,6 +23,7 @@ export function createProjectResourceSetup(
     groups: [],
     searchUsers: query => api.members.searchUsers(query),
     configure: async (project, selection) => {
+      if (!selection.memberUserIds.some(userId => userId !== currentUser.id)) return
       const members = await configureProjectMembers({
         api,
         projectId: project.id,

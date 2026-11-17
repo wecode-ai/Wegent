@@ -18,7 +18,7 @@ sidebar_position: 2
 
 `collab.projectCreateMembers.v1` 对应 Wework 的 Vite 构建设置 `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1`，默认启用。在 Wework 构建环境（例如 `wework/.env.local`）设置为 `false` 并重新构建即可关闭普通入口能力；该配置方式兼容 Windows、macOS 和 Linux。协作平台原有资源能力不受此回滚开关影响。
 
-E2E 覆盖加入现有 `collaboration-shared-core` checkpoint，通过原有 Core CI shard 执行。它创建两个测试账号，验证真实成员搜索、Developer 持久化、成员列表和重载后仍存在。依仓库规则，本次没有运行 E2E 或 `ai:verify`。
+E2E 覆盖加入现有 `collaboration-shared-core` checkpoint，通过原有 Core CI shard 执行。它创建两个测试账号，验证真实成员搜索、Developer 持久化、成员列表和重载后仍存在。按根目录 `AGENTS.md` 的测试执行策略，本地未运行 E2E 或 `ai:verify`；这不替代 GitHub CI 的真实桌面验证结果。
 
 当前桌面外壳以 `embedded=true` 挂载普通任务工作区，隐藏该组件的创建侧栏，因此普通入口使用组件测试覆盖；没有为测试新增产品导航。
 
@@ -70,6 +70,22 @@ pnpm --filter wework test src/features/todo/CloudTodoWorkspace.test.tsx src/feat
 
 该诊断版本已完成 Executor Rust test profile 编译，并用生成的同一测试二进制执行分类并发 7 项和原生生命周期 42 项测试，49 项全部通过；Rustfmt 检查通过。初始 Cargo 测试过滤器未匹配模块，未将其 0 项结果计为测试通过。Wework 完整 lint 通过，0 错误、4 项既有警告。
 
+## 2026-11-17 主线整合与评审复核
+
+此前提交 `d94034bdb` 的 GitHub CI 全部通过，包括 [Wework E2E](https://github.com/wecode-ai/Wegent/actions/runs/43870839548) 和 [Platform / Executor E2E](https://github.com/wecode-ai/Wegent/actions/runs/43870839588)。实际 `collaboration-shared-core`、`task-model-deletion`、`runtime-task-queue` 检查点均通过。并发队列此次从第一轮完成事件到下一轮 Codex turn RPC 为 582ms，旧延迟没有复现，根因仍未确认。
+
+主线更新后 PR 再次出现冲突。本次整合 `cbacc633a`，中文导航保留主线新增入口与本项普通项目成员选择说明；自动合并的 Codex provider 切换逻辑和耗时诊断均保留。
+
+评审意见先以组件或集成测试复核，确认并修复了以下路径：
+
+- 对话框先打开本地项目，再切到云端时，资源配置刚变为可用但模型目录未请求。现在按有效资源作用域加载，普通重新渲染或语言切换不丢失生成模型选择。
+- 智能体或小组请求失败、持续等待时，原 `Promise.all` 丢失成功的成员目录。现在独立发布结果，对应标签显示各自错误并复用重试入口。
+- 切换分组后的新成员请求仍在等待时，原目录可能仍显示。现在成员结果绑定分组 ID，不展示前一分组目录。
+- 未选择额外成员时，原配置器仍强制读取名单与刷新看板。现在使用原有创建成功链；新项目看板加载失败继续显示看板错误，项目只创建一次且创建弹窗正常关闭。
+- 后台任务在模型目录请求期间编辑选项会自动恢复旧模型，被错误视为新的显式选择。新增集成用例先稳定失败；现在按显式模型选择版本区分恢复与改选，删除模型不能发送，保留选项并允许改选恢复。
+
+共享创建、模板与完整协作平台 22 文件、301 项测试通过；普通入口与资源工厂 2 文件、71 项完整回归通过，随后新增的看板失败负路径 1 项单独通过；模型相关 4 文件、49 项测试通过。共享包构建、Wework typecheck、完整 lint 通过（0 错误、4 项既有警告），双语文档契约 8 项通过；Prettier、Rustfmt 与差异检查通过。未提高超时、跳过断言或修改 E2E 行为。本次最新提交的 CI 以 PR 对应 head 的检查为准，不沿用旧提交结论。
+
 # Verification and rollback
 
-The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The existing CI-covered `collaboration-shared-core` scenario now includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run, as instructed. The initial test results above were recorded before integration with the latest main branch. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
+The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
