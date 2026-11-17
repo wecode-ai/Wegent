@@ -380,7 +380,7 @@ export function IssueChatMessage({
           </div>
           <time
             dateTime={issueActivityTimestamp(message)}
-            className="text-xs text-text-muted"
+            className="text-xs text-text-secondary"
           >
             {formatIssueTimestamp(issueActivityTimestamp(message))}
           </time>

@@ -1,3 +1,5 @@
+import { DshSettingsSectionSurface } from '@/features/dsh-runtime/DshSettingsSectionSurface'
+import { GeneralFixedWorkspaceTabs } from './GeneralFixedWorkspaceTabs'
 import { TelemetryCollectionNotice } from '@/telemetry/TelemetryCollectionNotice'
 import { saveTelemetryConsent, useSessionTelemetryConsent } from '@/telemetry/sessionConsent'
 import { DefaultRunnerSetting } from './DefaultRunnerSetting'
@@ -5,28 +7,24 @@ import { ReplyPredictionSettings } from './ReplyPredictionSettings'
 import { useContext, useEffect, useState } from 'react'
 import {
   Activity,
-  ArrowDown,
-  ArrowUp,
   Bell,
   Check,
   CircleDot,
   Gauge,
   Loader2,
   Pencil,
-  Pin,
   Trash2,
-  X,
   type LucideIcon,
 } from 'lucide-react'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
-import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
 import {
   SettingsGroup,
   SettingsPage,
   SettingsPageHeader,
   SettingsRow,
+  SettingsSegmentedControl,
   SettingsSwitch,
 } from './settings-ui'
 import { applyLanguagePreference, languagePreferenceOptions } from '@/i18n/languagePreference'
@@ -55,11 +53,6 @@ import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harness
 import { changeWorkbenchMode } from '@/features/workbench-mode/workbenchMode'
 import { getPlatform } from '@/lib/platform'
 import { RuntimeConcurrencySettings } from './RuntimeConcurrencySettings'
-import {
-  COLLABORATION_EXP_PATH,
-  COLLABORATION_EXP_TAB_ID,
-  isCollaborationExpPath,
-} from '@/features/collaboration-exp/collaborationExpFeature'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -77,20 +70,6 @@ interface SwitchRowProps {
 const GENERAL_ROW_CLASS_NAME = 'py-4'
 const GENERAL_ROW_LABEL_CLASS_NAME = 'font-normal'
 const FRIENDLY_TITLE_TASK_MODEL_VALUE = 'task-model'
-const BUILT_IN_FIXED_TAB_OPTIONS = ['task', 'board', 'agent'] as const
-
-function moveFixedTab(
-  tabs: FixedWorkspaceTabPreference[],
-  sourceIndex: number,
-  targetIndex: number
-): FixedWorkspaceTabPreference[] {
-  const next = [...tabs]
-  const source = next[sourceIndex]
-  next[sourceIndex] = next[targetIndex]
-  next[targetIndex] = source
-  return next
-}
-
 interface TrayDisplayOption {
   preferenceKey: BooleanPreferenceKey
   testId: string
@@ -476,10 +455,6 @@ export function GeneralSettingsPage() {
   const friendlyTitleModel = preferences.friendlyTaskTitleModel
   const fixedWorkspaceTabs =
     preferences.fixedWorkspaceTabs ?? defaultAppPreferences.fixedWorkspaceTabs
-  const visibleFixedWorkspaceTabs = fixedWorkspaceTabs.filter(
-    tab =>
-      preferences.collaborationExperienceEnabled || !isCollaborationExpPath(tab.contentRoute ?? '')
-  )
   const startupWorkspaceTabId =
     preferences.startupWorkspaceTabId ?? defaultAppPreferences.startupWorkspaceTabId
   const friendlyTitleModels = workbench?.projectChat?.models ?? []
@@ -506,34 +481,20 @@ export function GeneralSettingsPage() {
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
             control={
-              <div className="grid h-8 w-full shrink-0 grid-cols-2 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
-                {(['focus', 'developer'] as const).map(mode => {
-                  const active = preferences.workbenchMode === mode
-                  return (
-                    <button
-                      key={mode}
-                      type="button"
-                      data-testid={`general-workbench-mode-${mode}-button`}
-                      disabled={loading || saving}
-                      title={t(`workbench.general_settings_mode_${mode}_description`)}
-                      aria-pressed={active}
-                      onClick={() => {
-                        if (!active) setPendingWorkbenchMode(mode)
-                      }}
-                      className={[
-                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-                        active
-                          ? 'bg-text-primary text-background shadow-sm'
-                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
-                      ].join(' ')}
-                    >
-                      <span className="truncate">
-                        {t(`workbench.general_settings_mode_${mode}`)}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
+              <SettingsSegmentedControl
+                label={t('workbench.general_settings_mode')}
+                value={preferences.workbenchMode}
+                disabled={loading || saving}
+                onChange={mode => {
+                  if (mode !== preferences.workbenchMode) setPendingWorkbenchMode(mode)
+                }}
+                options={(['focus', 'developer'] as const).map(mode => ({
+                  value: mode,
+                  label: t(`workbench.general_settings_mode_${mode}`),
+                  title: t(`workbench.general_settings_mode_${mode}_description`),
+                  testId: `general-workbench-mode-${mode}-button`,
+                }))}
+              />
             }
           />
           <SettingsRow
@@ -542,30 +503,18 @@ export function GeneralSettingsPage() {
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
             control={
-              <div className="grid h-8 w-full shrink-0 grid-cols-3 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
-                {languagePreferenceOptions.map(option => {
-                  const active = preferences.language === option.value
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      data-testid={`general-language-${option.value}-button`}
-                      disabled={loading || saving}
-                      title={t(`workbench.${option.descriptionKey}`)}
-                      aria-pressed={active}
-                      onClick={() => void handleLanguageChange(option.value)}
-                      className={[
-                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-                        active
-                          ? 'bg-text-primary text-background shadow-sm'
-                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
-                      ].join(' ')}
-                    >
-                      <span className="truncate">{t(`workbench.${option.shortLabelKey}`)}</span>
-                    </button>
-                  )
-                })}
-              </div>
+              <SettingsSegmentedControl
+                label={t('workbench.general_settings_language_preference')}
+                value={preferences.language}
+                disabled={loading || saving}
+                onChange={value => void handleLanguageChange(value)}
+                options={languagePreferenceOptions.map(option => ({
+                  value: option.value,
+                  label: t(`workbench.${option.shortLabelKey}`),
+                  title: t(`workbench.${option.descriptionKey}`),
+                  testId: `general-language-${option.value}-button`,
+                }))}
+              />
             }
           />
           <SettingsRow
@@ -574,39 +523,24 @@ export function GeneralSettingsPage() {
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
             control={
-              <div className="grid h-8 w-full shrink-0 grid-cols-2 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
-                {(['enter', 'cmd_enter'] as const).map(option => {
-                  const active = sendKey === option
-                  const label =
+              <SettingsSegmentedControl
+                label={t('workbench.general_settings_send_key')}
+                value={sendKey}
+                disabled={loading || saving || !workbench?.updateUserPreferences}
+                onChange={value => void handleSendKeyChange(value)}
+                options={(['enter', 'cmd_enter'] as const).map(option => ({
+                  value: option,
+                  label:
                     option === 'enter'
                       ? t('workbench.general_settings_send_key_enter')
                       : t(
                           'workbench.general_settings_send_key_command_enter',
                           '{{modifier}} Enter 发送',
-                          {
-                            modifier: getPlatform() === 'mac' ? '⌘' : 'Ctrl',
-                          }
-                        )
-                  return (
-                    <button
-                      key={option}
-                      type="button"
-                      data-testid={`general-send-key-${option}-button`}
-                      disabled={loading || saving || !workbench?.updateUserPreferences}
-                      aria-pressed={active}
-                      onClick={() => void handleSendKeyChange(option)}
-                      className={[
-                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-                        active
-                          ? 'bg-text-primary text-background shadow-sm'
-                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
-                      ].join(' ')}
-                    >
-                      <span className="truncate">{label}</span>
-                    </button>
-                  )
-                })}
-              </div>
+                          { modifier: getPlatform() === 'mac' ? '⌘' : 'Ctrl' }
+                        ),
+                  testId: `general-send-key-${option}-button`,
+                }))}
+              />
             }
           />
           <SettingsRow
@@ -615,211 +549,27 @@ export function GeneralSettingsPage() {
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
             control={
-              <div className="grid h-8 w-full shrink-0 grid-cols-2 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
-                {(['queue', 'guide'] as const).map(option => {
-                  const active = followUpBehavior === option
-                  return (
-                    <button
-                      key={option}
-                      type="button"
-                      data-testid={`general-follow-up-${option}-button`}
-                      disabled={loading || saving || !workbench?.updateUserPreferences}
-                      aria-pressed={active}
-                      onClick={() => void handleFollowUpBehaviorChange(option)}
-                      className={[
-                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-                        active
-                          ? 'bg-text-primary text-background shadow-sm'
-                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
-                      ].join(' ')}
-                    >
-                      <span className="truncate">
-                        {t(`workbench.general_settings_follow_up_behavior_${option}`)}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
+              <SettingsSegmentedControl
+                label={t('workbench.general_settings_follow_up_behavior')}
+                value={followUpBehavior}
+                disabled={loading || saving || !workbench?.updateUserPreferences}
+                onChange={value => void handleFollowUpBehaviorChange(value)}
+                options={(['queue', 'guide'] as const).map(option => ({
+                  value: option,
+                  label: t(`workbench.general_settings_follow_up_behavior_${option}`),
+                  testId: `general-follow-up-${option}-button`,
+                }))}
+              />
             }
           />
-          <SettingsRow
-            label={t('workbench.general_settings_fixed_workspace_tabs', '固定标签页')}
-            description={t(
-              'workbench.general_settings_fixed_workspace_tabs_description',
-              '每次启动时按顺序打开；通过加号创建的普通标签页不会在重启后恢复。'
-            )}
-            className={GENERAL_ROW_CLASS_NAME}
-            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
-              <div className="w-full space-y-2 md:w-[360px]" data-testid="general-fixed-tabs">
-                {visibleFixedWorkspaceTabs.map((tab, index) => {
-                  const label =
-                    tab.kind === 'smart_app'
-                      ? (tab.title ?? t('workbench.smart_apps_title', '智能工作台'))
-                      : tab.kind === 'auxiliary'
-                        ? (tab.title ??
-                          (tab.contentRoute === INTERACTIONS_PATH
-                            ? t('interactions.title', '待你处理')
-                            : isCollaborationExpPath(tab.contentRoute ?? '')
-                              ? t('workbench.workspace_tab_collaboration_exp', '协作 exp')
-                              : t('workbench.workspace_tab_auxiliary', '工作区')))
-                        : (tab.title ??
-                          t(`workbench.general_settings_default_workspace_tab_${tab.kind}`))
-                  return (
-                    <div
-                      key={tab.id}
-                      data-testid={`general-fixed-tab-${tab.id}`}
-                      className="flex min-h-11 items-center gap-1 rounded-lg border border-border bg-background px-2 md:h-9 md:min-h-0"
-                    >
-                      <button
-                        type="button"
-                        data-testid={`general-fixed-tab-startup-${tab.id}`}
-                        disabled={loading || saving}
-                        aria-pressed={startupWorkspaceTabId === tab.id}
-                        aria-label={t(
-                          'workbench.general_settings_startup_workspace_tab',
-                          '设为启动标签页'
-                        )}
-                        onClick={() => void saveFixedWorkspaceTabs(fixedWorkspaceTabs, tab.id)}
-                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted md:h-6 md:w-6"
-                        title={t(
-                          'workbench.general_settings_startup_workspace_tab',
-                          '设为启动标签页'
-                        )}
-                      >
-                        <Pin
-                          className={
-                            startupWorkspaceTabId === tab.id
-                              ? 'h-3.5 w-3.5 fill-current'
-                              : 'h-3.5 w-3.5'
-                          }
-                        />
-                      </button>
-                      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
-                      <button
-                        type="button"
-                        data-testid={`general-fixed-tab-up-${tab.id}`}
-                        disabled={loading || saving || index === 0}
-                        onClick={() => {
-                          void saveFixedWorkspaceTabs(
-                            moveFixedTab(
-                              fixedWorkspaceTabs,
-                              fixedWorkspaceTabs.findIndex(item => item.id === tab.id),
-                              fixedWorkspaceTabs.findIndex(
-                                item => item.id === visibleFixedWorkspaceTabs[index - 1]?.id
-                              )
-                            )
-                          )
-                        }}
-                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted disabled:opacity-30 md:h-6 md:w-6"
-                        aria-label={t('workbench.move_up', '上移')}
-                      >
-                        <ArrowUp className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        data-testid={`general-fixed-tab-down-${tab.id}`}
-                        disabled={
-                          loading || saving || index === visibleFixedWorkspaceTabs.length - 1
-                        }
-                        onClick={() => {
-                          void saveFixedWorkspaceTabs(
-                            moveFixedTab(
-                              fixedWorkspaceTabs,
-                              fixedWorkspaceTabs.findIndex(item => item.id === tab.id),
-                              fixedWorkspaceTabs.findIndex(
-                                item => item.id === visibleFixedWorkspaceTabs[index + 1]?.id
-                              )
-                            )
-                          )
-                        }}
-                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted disabled:opacity-30 md:h-6 md:w-6"
-                        aria-label={t('workbench.move_down', '下移')}
-                      >
-                        <ArrowDown className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        data-testid={`general-fixed-tab-remove-${tab.id}`}
-                        disabled={loading || saving || visibleFixedWorkspaceTabs.length === 1}
-                        onClick={() =>
-                          void saveFixedWorkspaceTabs(
-                            fixedWorkspaceTabs.filter(item => item.id !== tab.id)
-                          )
-                        }
-                        className="flex h-11 w-11 items-center justify-center rounded hover:bg-muted disabled:opacity-30 md:h-6 md:w-6"
-                        aria-label={t('workbench.remove', '移除')}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  )
-                })}
-                <select
-                  data-testid="general-fixed-tab-add"
-                  disabled={loading || saving}
-                  value=""
-                  onChange={event => {
-                    const value = event.target.value
-                    if (!value) return
-                    const builtIn = BUILT_IN_FIXED_TAB_OPTIONS.find(kind => kind === value)
-                    const smartApp = installedSmartApps.find(app => `smart_app:${app.id}` === value)
-                    const nextTab: FixedWorkspaceTabPreference | null = builtIn
-                      ? { id: `fixed-${builtIn}`, kind: builtIn }
-                      : value === COLLABORATION_EXP_TAB_ID &&
-                          preferences.collaborationExperienceEnabled
-                        ? {
-                            id: COLLABORATION_EXP_TAB_ID,
-                            kind: 'auxiliary',
-                            contentRoute: COLLABORATION_EXP_PATH,
-                          }
-                        : smartApp
-                          ? {
-                              id: `fixed-smart-app-${smartApp.id}`,
-                              kind: 'smart_app',
-                              installationId: smartApp.id,
-                              title: smartApp.manifest.displayName,
-                            }
-                          : null
-                    if (nextTab) {
-                      void saveFixedWorkspaceTabs([...fixedWorkspaceTabs, nextTab])
-                    }
-                  }}
-                  className="h-11 w-full rounded-lg border border-dashed border-border bg-background px-2 text-sm text-text-secondary md:h-9"
-                >
-                  <option value="">
-                    {t('workbench.general_settings_add_fixed_workspace_tab', '+ 添加固定标签页')}
-                  </option>
-                  {BUILT_IN_FIXED_TAB_OPTIONS.filter(
-                    kind => !fixedWorkspaceTabs.some(tab => tab.kind === kind)
-                  ).map(kind => (
-                    <option key={kind} value={kind}>
-                      {t(`workbench.general_settings_default_workspace_tab_${kind}`)}
-                    </option>
-                  ))}
-                  {preferences.collaborationExperienceEnabled &&
-                  !fixedWorkspaceTabs.some(tab =>
-                    isCollaborationExpPath(tab.contentRoute ?? '')
-                  ) ? (
-                    <option value={COLLABORATION_EXP_TAB_ID}>
-                      {t('workbench.workspace_tab_collaboration_exp', '协作 exp')}
-                    </option>
-                  ) : null}
-                  {(preferences.experimentalFeaturesEnabled ? installedSmartApps : [])
-                    .filter(
-                      app =>
-                        !fixedWorkspaceTabs.some(
-                          tab => tab.kind === 'smart_app' && tab.installationId === app.id
-                        )
-                    )
-                    .map(app => (
-                      <option key={app.id} value={`smart_app:${app.id}`}>
-                        {app.manifest.displayName}
-                      </option>
-                    ))}
-                </select>
-              </div>
-            }
+          <GeneralFixedWorkspaceTabs
+            fixedWorkspaceTabs={fixedWorkspaceTabs}
+            startupWorkspaceTabId={startupWorkspaceTabId}
+            collaborationExperienceEnabled={preferences.collaborationExperienceEnabled}
+            experimentalFeaturesEnabled={preferences.experimentalFeaturesEnabled}
+            installedSmartApps={installedSmartApps}
+            disabled={loading || saving}
+            onSave={saveFixedWorkspaceTabs}
           />
           {renderSwitchRow({
             preferenceKey: 'showMainWindowOnLaunch',
@@ -851,7 +601,7 @@ export function GeneralSettingsPage() {
                 type="button"
                 data-testid="general-external-content-import-button"
                 onClick={() => setShowImportDialog(true)}
-                className="h-8 rounded-md bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
+                className="h-11 rounded-md bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted md:h-8"
               >
                 {t('workbench.external_import_action')}
               </button>
@@ -859,6 +609,10 @@ export function GeneralSettingsPage() {
           />
         </SettingsGroup>
       </section>
+
+      <div className="mt-12 space-y-12 empty:hidden">
+        <DshSettingsSectionSurface page="general" />
+      </div>
 
       <section data-testid="general-settings-runtime-section" className="mt-12">
         <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
@@ -912,7 +666,7 @@ export function GeneralSettingsPage() {
                       title={option.description}
                       disabled={loading || saving}
                       onClick={() => void handlePreferenceChange(option.preferenceKey, !selected)}
-                      className={`group flex h-9 items-center justify-between gap-2 rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      className={`group flex h-11 items-center justify-between gap-2 rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 md:h-9 ${
                         selected
                           ? 'border-text-primary/50 bg-muted text-text-primary'
                           : 'border-border bg-background text-text-secondary hover:border-text-muted/40 hover:bg-muted/40 hover:text-text-primary'
@@ -975,7 +729,7 @@ export function GeneralSettingsPage() {
           />
           {preferences.friendlyTaskTitlesEnabled && (
             <div data-testid="friendly-task-title-model-row" className="px-4 pb-3">
-              <div className="ml-3 flex items-center justify-between gap-4 rounded-lg bg-muted/50 px-3 py-2.5 max-sm:ml-0 max-sm:flex-col max-sm:items-stretch">
+              <div className="ml-3 flex items-center justify-between gap-4 rounded-lg bg-muted/50 px-3 py-2.5 max-md:ml-0 max-md:flex-col max-md:items-stretch">
                 <div className="min-w-0">
                   <div className="text-xs font-medium text-text-primary">
                     {t('workbench.friendly_task_titles_model', '标题模型')}
@@ -997,7 +751,7 @@ export function GeneralSettingsPage() {
                       event.target.value
                     )
                   }}
-                  className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary md:w-[220px]"
+                  className="h-11 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary md:h-8 md:w-[220px]"
                 >
                   <option value={FRIENDLY_TITLE_TASK_MODEL_VALUE}>
                     {t('workbench.friendly_task_titles_model_task', '与任务相同')}

@@ -711,12 +711,12 @@ export async function expandCompletedProcessing(control, timeoutMs) {
   await control.command('waitFor', `${summaryToggle}[aria-expanded="true"]`, { timeoutMs })
 }
 
-export async function waitForBottom(control, description, timeoutMs) {
+export async function waitForBottom(control, description, timeoutMs, maxDistanceFromBottom = 8) {
   const startedAt = Date.now()
   let metrics
   while (Date.now() - startedAt < timeoutMs) {
     metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
-    if (distanceFromBottom(metrics) <= 8) return metrics
+    if (distanceFromBottom(metrics) <= maxDistanceFromBottom) return metrics
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`${description} remained ${distanceFromBottom(metrics)}px from the bottom`)

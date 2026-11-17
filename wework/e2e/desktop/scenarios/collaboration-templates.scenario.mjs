@@ -387,6 +387,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('clickWhenEnabled', testId('collaboration-project-create-confirm'), {
         timeoutMs: uiTimeoutMs,
       })
+      // Creation configures template resources before onCreated closes the form.
+      await control.command('waitFor', testId('collaboration-project-create-confirm'), {
+        visible: false,
+        timeoutMs: workbenchReadyTimeoutMs,
+      })
       await wait(control, 'cloud-project-header-title', projectName, workbenchReadyTimeoutMs)
       await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
       await click(control, 'collaboration-project-settings-sharing')

@@ -2,6 +2,33 @@ import type { ReactNode } from 'react'
 import { ArrowLeft, ChevronRight, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 
+export function StandInSettingsError({
+  error,
+  retry,
+}: {
+  error: string | null
+  retry?: { testId: string; disabled?: boolean; onClick(): void }
+}) {
+  const { t } = useTranslation('common')
+  if (!error) return null
+  return (
+    <div role="alert" className="text-sm text-error">
+      <p>{error}</p>
+      {retry && (
+        <button
+          type="button"
+          data-testid={retry.testId}
+          disabled={retry.disabled}
+          onClick={retry.onClick}
+          className="mt-1 min-h-11 min-w-11 underline md:min-h-8"
+        >
+          {t('standIn.reload')}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function StandInSettingsHeader({
   title,
   description,
@@ -39,7 +66,7 @@ export function StandInSettingsHeader({
           <nav
             aria-label={t('standIn.workspace.settings_path')}
             data-testid="stand-in-settings-path"
-            className="mb-1 flex flex-wrap items-center gap-1 text-xs text-text-muted"
+            className="mb-1 flex flex-wrap items-center gap-1 text-xs text-text-secondary"
           >
             {path.map((entry, index) => (
               <span key={entry.testId} className="inline-flex items-center gap-1">
@@ -66,7 +93,7 @@ export function StandInSettingsHeader({
         {title && (!path || path.length < 2) && (
           <h2 className="heading-sm flex min-h-8 items-center">{title}</h2>
         )}
-        {description && <p className="mt-1 text-sm text-text-muted">{description}</p>}
+        {description && <p className="mt-1 text-sm text-text-secondary">{description}</p>}
       </div>
       {actions}
       {close && (
@@ -92,6 +119,7 @@ export function StandInSettingsActions({
   onCancel,
   onSave,
   saveLabel,
+  busy = false,
   children,
   leading,
 }: {
@@ -101,6 +129,7 @@ export function StandInSettingsActions({
   onCancel(): void
   onSave(): void
   saveLabel?: string
+  busy?: boolean
   children?: ReactNode
   leading?: ReactNode
 }) {
@@ -118,16 +147,17 @@ export function StandInSettingsActions({
         data-testid={`${prefix}-cancel`}
         disabled={disabled}
         onClick={onCancel}
-        className="min-h-9 rounded-lg px-3 text-sm hover:bg-muted"
+        className="min-h-11 rounded-lg px-3 text-sm hover:bg-muted md:min-h-9"
       >
         {t('standIn.cancel')}
       </button>
       <button
         type="button"
         data-testid={`${prefix}-save`}
+        aria-busy={busy || undefined}
         disabled={saveDisabled}
         onClick={onSave}
-        className="min-h-9 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50"
+        className="min-h-11 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50 md:min-h-9"
       >
         {saveLabel ?? t('standIn.save')}
       </button>
@@ -148,17 +178,23 @@ export function StandInSettingsEntry({
   label: string
   description?: string
 }) {
+  const { t } = useTranslation('common')
   return (
     <button
       type="button"
       data-testid={testId}
       disabled={disabled}
       onClick={onClick}
-      className="flex min-h-11 w-full items-center gap-3 border-t border-border py-4 text-left disabled:opacity-40"
+      className="flex min-h-11 w-full items-center gap-3 rounded-lg border border-border bg-muted/30 p-3 text-left hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 disabled:opacity-40"
     >
       <span className="flex-1">
         <span className="block font-medium">{label}</span>
-        {description && <span className="mt-1 block text-sm text-text-muted">{description}</span>}
+        {description && (
+          <span className="mt-1 block text-sm text-text-secondary">{description}</span>
+        )}
+      </span>
+      <span className="shrink-0 rounded-md border border-border bg-background px-2 py-1 text-sm">
+        {t('standIn.personal.manage')}
       </span>
       <ChevronRight className="h-4 w-4" />
     </button>

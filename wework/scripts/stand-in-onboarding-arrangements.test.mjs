@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { onboardingArrangementIds } from '../e2e/desktop/scenarios/stand-in-profile-with-review.scenario.mjs'
+import { loadDesktopCheckpointCatalog } from '../e2e/desktop/checkpoint-catalog.mjs'
+
+test('onboarding and original processing dependencies remain in the existing CI profile group', () => {
+  const catalog = loadDesktopCheckpointCatalog()
+  assert.ok(catalog.ci.core_segments.includes('stand-in-profile'))
+  for (const scenario of ['stand-in-processing', 'stand-in-onboarding-skip']) {
+    assert.deepEqual(
+      catalog.PATH_TARGETS.get(`wework/e2e/desktop/scenarios/${scenario}.scenario.mjs`),
+      ['core:stand-in-profile']
+    )
+  }
+})
 
 const memoryReview = () => ({
   id: 'stand-in-memory-review-9001',

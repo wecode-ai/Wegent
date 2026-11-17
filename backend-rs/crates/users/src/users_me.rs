@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Current-user response with public preference defaults and an optional
-//! application-supplied profile extension. Missing credentials return 401.
+//! application-supplied profile extension and the initial-password handshake.
 use serde::Deserialize;
 #[cfg(test)]
 use serde_json::json;
@@ -19,40 +19,78 @@ async fn read_current_user(
     #[inject(state)] state: &AppState,
     #[auth] user: UsersMeUser,
 ) -> Result<UserView, FastApiError> {
-    users_me(state, user.0).await
+    match user {
+        UsersMeUser::Authenticated(user) => users_me(state, user).await,
+        UsersMeUser::PasswordSetupRequired => Err(super::users_me_bootstrap::setup_required()),
+    }
 }
 
-/// The users-me endpoint deliberately collapses every authentication failure
-/// to its own "Missing authentication credentials" response.
-struct UsersMeUser(UserRow);
+/// The bootstrap state can only return the setup error, never a user profile.
+/// Credential failures retain the endpoint's missing-credentials response.
+enum UsersMeUser {
+    Authenticated(UserRow),
+    PasswordSetupRequired,
+}
 
 impl brz_http_server::Authenticator<UsersMeUser> for AppAuthenticator {
     async fn authenticate<'a>(
         &'a self,
         request: brz_http_server::AuthRequest<'a>,
     ) -> Result<UsersMeUser, brz_http_server::AuthFailure> {
-        let authorization = request
-            .header("authorization")
-            .and_then(|value| std::str::from_utf8(value).ok());
-        get_current_user(&self.state().auth, &self.state().mysql, authorization)
+        let header = request.header("authorization");
+        let authorization = header.and_then(|value| std::str::from_utf8(value).ok());
+        let user = get_current_user(&self.state().auth, &self.state().mysql, authorization)
             .await
-            .map(UsersMeUser)
-            .map_err(|_| brz_http_server::AuthFailure::invalid_credentials("Bearer"))
+            .ok();
+        users_me_principal(
+            user,
+            header.is_none(),
+            super::users_me_bootstrap::is_required(&self.state().mysql),
+        )
+        .await
     }
 
     fn api_log_id<'a>(&'a self, principal: &'a UsersMeUser) -> Option<&'a dyn std::fmt::Display> {
-        Some(&principal.0.user_name)
+        match principal {
+            UsersMeUser::Authenticated(user) => Some(&user.user_name),
+            UsersMeUser::PasswordSetupRequired => None,
+        }
     }
 
     fn reject(
         &self,
         _request: brz_http_server::AuthRequest<'_>,
-        _failure: brz_http_server::AuthFailure,
+        failure: brz_http_server::AuthFailure,
         arena: &brz_http_server::EphemeralBytesArena,
     ) -> brz_http_server::Response {
         use brz_http_server::IntoHttpError as _;
 
-        missing_credentials().into_http_error(arena)
+        match failure {
+            brz_http_server::AuthFailure::Internal => FastApiError::internal(),
+            _ => missing_credentials(),
+        }
+        .into_http_error(arena)
+    }
+}
+
+async fn users_me_principal(
+    user: Option<UserRow>,
+    anonymous: bool,
+    bootstrap: impl std::future::Future<Output = brz_mysql::MysqlResult<bool>>,
+) -> Result<UsersMeUser, brz_http_server::AuthFailure> {
+    if let Some(user) = user {
+        return Ok(UsersMeUser::Authenticated(user));
+    }
+    if !anonymous {
+        return Err(brz_http_server::AuthFailure::invalid_credentials("Bearer"));
+    }
+    if bootstrap.await.map_err(|error| {
+        tracing::error!(%error, "admin password bootstrap read failed");
+        brz_http_server::AuthFailure::Internal
+    })? {
+        Ok(UsersMeUser::PasswordSetupRequired)
+    } else {
+        Err(brz_http_server::AuthFailure::invalid_credentials("Bearer"))
     }
 }
 
@@ -469,6 +507,40 @@ mod tests {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::net::TcpStream;
 
+    #[tokio::test]
+    async fn authenticated_profiles_do_not_depend_on_admin_password_setup() {
+        let result = users_me_principal(Some(user_row("{}")), false, async {
+            panic!("Authenticated profiles must not read the anonymous bootstrap state")
+        })
+        .await
+        .unwrap();
+        assert!(matches!(result, UsersMeUser::Authenticated(user) if user.id == 1001));
+    }
+
+    #[tokio::test]
+    async fn anonymous_handshake_requires_setup_only_while_the_marker_is_pending() {
+        assert!(matches!(
+            users_me_principal(None, true, std::future::ready(Ok(true))).await,
+            Ok(UsersMeUser::PasswordSetupRequired)
+        ));
+        assert!(matches!(
+            users_me_principal(None, true, std::future::ready(Ok(false))).await,
+            Err(brz_http_server::AuthFailure::InvalidCredentials { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejected_credentials_do_not_enter_the_anonymous_setup_handshake() {
+        let result = users_me_principal(None, false, async {
+            panic!("Rejected credentials must not read the anonymous bootstrap state")
+        })
+        .await;
+        assert!(matches!(
+            result,
+            Err(brz_http_server::AuthFailure::InvalidCredentials { .. })
+        ));
+    }
+
     // A dedicated test group (separate from the crate's real `http_apis`
     // group) so the probe's `/api/users/me` route does not collide with the
     // real handler's registration.
@@ -487,6 +559,11 @@ mod tests {
             crate::user_profile::UserViewExt::empty(),
             None,
         ))
+    }
+
+    #[brz_http_server::get("/password-setup", group = probe::users_me_probe, access = public)]
+    async fn password_setup_probe() -> Result<UserView, FastApiError> {
+        Err(super::super::users_me_bootstrap::setup_required())
     }
 
     fn user_row(preferences: &str) -> UserRow {
@@ -517,7 +594,7 @@ mod tests {
 
     /// Serves the probe route on a real socket so status, headers, and body
     /// are asserted exactly as the runtime renders them.
-    async fn serve_users_me() -> String {
+    async fn serve_users_me(path: &str) -> String {
         let handler =
             brz_http_server::handlers!(; group = probe::users_me_probe).expect("probe router");
         let server = brz_http_server::Server::bind("127.0.0.1:0".parse().unwrap(), handler)
@@ -530,7 +607,8 @@ mod tests {
         let mut client = TcpStream::connect(address).await.expect("connect");
         client
             .write_all(
-                b"GET /api/users/me HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
             )
             .await
             .expect("send request");
@@ -542,7 +620,7 @@ mod tests {
 
     #[tokio::test]
     async fn users_me_answers_application_json() {
-        let raw = serve_users_me().await;
+        let raw = serve_users_me("/api/users/me").await;
         assert!(raw.starts_with("HTTP/1.1 200"), "{raw}");
         let content_type = raw
             .lines()
@@ -555,6 +633,19 @@ mod tests {
         );
         let body = raw.split_once("\r\n\r\n").map_or("", |(_, body)| body);
         assert_eq!(body, rendered(&user_row("{}")), "{raw}");
+    }
+
+    #[tokio::test]
+    async fn password_setup_handshake_renders_structured_400() {
+        let raw = serve_users_me("/password-setup").await;
+        assert!(raw.starts_with("HTTP/1.1 400"), "{raw}");
+        let body: serde_json::Value =
+            serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(
+            body["detail"]["error_code"],
+            "ADMIN_PASSWORD_SETUP_REQUIRED"
+        );
+        assert_eq!(body["detail"]["admin_username"], "admin");
     }
 
     #[test]

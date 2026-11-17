@@ -1162,7 +1162,7 @@ impl RuntimeWorkRpcHandler {
         self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
         let existing_link = self.local_task_link(&local_task_id);
-        let payload = if let Some(link) = &existing_link {
+        let mut payload = if let Some(link) = &existing_link {
             self.refresh_project_coordinator_payload(payload, link)
                 .await?
         } else {
@@ -1181,13 +1181,28 @@ impl RuntimeWorkRpcHandler {
         {
             return Ok(json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"}));
         }
+        if let Some(response) = request_user_input_response(&payload) {
+            if response["delivery"] == "async" {
+                self.prepare_async_question_reply(&local_task_id, &response, &mut payload)
+                    .await?;
+                if self.is_busy_local_task(&local_task_id) {
+                    let guided = self.send_guidance(payload.clone()).await?;
+                    if guided["code"] != "no_active_turn" {
+                        return Ok(guided);
+                    }
+                    // Completion can race with delivery; the ordinary send
+                    // scheduler accepts the answer after native cleanup.
+                }
+                self.refresh_persisted_model_credentials(&mut payload)
+                    .await?;
+            } else {
+                return self
+                    .send_request_user_input_response(&local_task_id, response)
+                    .await;
+            }
+        }
         let payload_execution_request = execution_request(&payload);
         let has_execution_request = payload_execution_request.is_some();
-        if let Some(response) = request_user_input_response(&payload) {
-            return self
-                .send_request_user_input_response(&local_task_id, response)
-                .await;
-        }
         let queue_if_busy = bool_field(&payload, "queueIfBusy")
             .or_else(|| bool_field(&payload, "queue_if_busy"))
             .unwrap_or(false);
@@ -2295,7 +2310,7 @@ impl RuntimeWorkRpcHandler {
         }) || active_turn
             .as_ref()
             .is_some_and(|turn| turn.execution_id != pending_request.execution_id);
-        let invalid_mcp_response = self
+        let invalid_interaction_response = self
             .active_codex_transcript_items
             .lock()
             .ok()
@@ -2309,6 +2324,18 @@ impl RuntimeWorkRpcHandler {
                         })
                         .map(|accepted| !accepted)
                         .unwrap_or_else(|| {
+                            if let Some(id) = super::super::mcp_elicitation::response_id(&response)
+                            {
+                                let key = id
+                                    .as_str()
+                                    .map(str::to_owned)
+                                    .unwrap_or_else(|| id.to_string());
+                                return !active
+                                    .user_input_requests
+                                    .get(&key)
+                                    .copied()
+                                    .unwrap_or(false);
+                            }
                             super::super::mcp_elicitation::response_id(&response).is_none()
                                 && active.items.iter().any(|item| {
                                     item["type"] == "mcpElicitation"
@@ -2318,7 +2345,7 @@ impl RuntimeWorkRpcHandler {
                 })
             })
             .unwrap_or(false);
-        if scoped_to_other_turn || invalid_mcp_response {
+        if scoped_to_other_turn || invalid_interaction_response {
             return Ok(json!({
                 "success": false, "code": "stale_request_user_input",
                 "error": "This interaction is expired, settled, or belongs to another turn",
