@@ -74,17 +74,22 @@ end run`,
   }
   if (process.platform === 'win32') {
     const script = `
+Write-Output 'native-decision:started'
 Add-Type -AssemblyName UIAutomationClient
+Write-Output 'native-decision:client-loaded'
 Add-Type -AssemblyName UIAutomationTypes
+Write-Output 'native-decision:types-loaded'
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, ${pid})
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
 while ([DateTime]::UtcNow -lt $deadline) {
   $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
   foreach ($window in $windows) {
     if ($window.Current.Name -notin @(${TITLES.map(title => `'${title}'`).join(', ')})) { continue }
+    Write-Output 'native-decision:dialog-matched'
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
     foreach ($button in $buttons) {
       if ($button.Current.Name -in @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
+        Write-Output 'native-decision:button-matched'
         $pattern = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
         $pattern.Invoke()
         exit 0
@@ -104,7 +109,31 @@ throw 'The isolated app did not display its native Core plugin decision'
         Buffer.from(script, 'utf16le').toString('base64'),
       ],
       options
-    )
+    ).catch(error => {
+      const stages = new Set([
+        'started',
+        'client-loaded',
+        'types-loaded',
+        'dialog-matched',
+        'button-matched',
+      ])
+      console.error(
+        '[native-plugin-decision-failed]',
+        JSON.stringify({
+          pid,
+          allow,
+          code: typeof error.code === 'number' ? error.code : null,
+          killed: error.killed === true,
+          signal: error.signal ?? null,
+          stages: String(error.stdout ?? '')
+            .split(/\r?\n/)
+            .filter(line => line.startsWith('native-decision:'))
+            .map(line => line.slice('native-decision:'.length))
+            .filter(stage => stages.has(stage)),
+        })
+      )
+      throw error
+    })
     return
   }
   // X11 keyboard input targets only this process's named modal. Cancel is the default.
