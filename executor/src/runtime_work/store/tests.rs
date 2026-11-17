@@ -780,3 +780,80 @@ fn codex_terminal_fact_cannot_restore_another_turn_or_active_native_request() {
     assert_eq!(task.status, "queued");
     assert!(task.completed_at.is_none());
 }
+
+#[test]
+fn task_list_does_not_wait_for_telemetry_database_writes() {
+    use crate::task_runtime::LocalTaskStore;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tasks.sqlite");
+    let facts = LocalTaskStore::open(&path).unwrap();
+    facts.configure_stand_in_telemetry(7, true, None).unwrap();
+    let store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    let mut task = RuntimeTaskLink::new_pending("task".into(), "".into(), "".into());
+    task.runtime_handle =
+        serde_json::json!({"origin": {"initiatedBy":"stand_in_identity", "userId":7}});
+    store.upsert_task(task);
+    store.set_telemetry_path(path.clone());
+    let mut writer = rusqlite::Connection::open(path).unwrap();
+    let transaction = writer
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .unwrap();
+    let updater = store.clone();
+    let (started_tx, started_rx) = mpsc::channel();
+    let update = std::thread::spawn(move || {
+        updater.update_task("task", |task| {
+            task.running = true;
+            task.status = "running".into();
+            started_tx.send(()).unwrap();
+        });
+    });
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let (read_tx, read_rx) = mpsc::channel();
+    let reader =
+        std::thread::spawn(move || read_tx.send(store.list_task_summaries(false)).unwrap());
+    let result = read_rx.recv_timeout(Duration::from_secs(2));
+    transaction.rollback().unwrap();
+    update.join().unwrap();
+    reader.join().unwrap();
+    let tasks = result.expect("task list waited for telemetry persistence");
+    assert_eq!(tasks.len(), 1);
+    assert!(tasks[0].running);
+    assert_eq!(
+        facts.list_stand_in_telemetry(7).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn unchanged_task_list_does_not_wait_for_the_persistence_lock() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let root = tempfile::tempdir().unwrap();
+    let store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    store.upsert_task(RuntimeTaskLink::new_pending(
+        "task".into(),
+        "".into(),
+        "".into(),
+    ));
+    let persistence = store.write_lock.lock().unwrap();
+    let reader = store.clone();
+    let (sender, receiver) = mpsc::channel();
+    let thread =
+        std::thread::spawn(move || sender.send(reader.list_task_summaries(false)).unwrap());
+    let result = receiver.recv_timeout(Duration::from_secs(2));
+    drop(persistence);
+    thread.join().unwrap();
+    assert_eq!(
+        result
+            .expect("unchanged startup list waited for persistence")
+            .len(),
+        1
+    );
+}
