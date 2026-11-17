@@ -55,6 +55,13 @@ export interface RuntimeProjectRemovalContext {
   localOwnerIdentity?: LocalRuntimeSidebarIdentity
 }
 
+export interface RuntimeProjectRemoval {
+  projectId: number
+  targetKey: string | null
+  workspaceKey: string | null
+  devices: DeviceInfo[]
+}
+
 export function getRuntimeProjectRemovalContext(
   runtimeWork: RuntimeWorkListResponse | null,
   projectId: number,
@@ -210,15 +217,13 @@ export function removeRuntimeTasksFromCloudState(
 
 export function removeRuntimeProjectFromCloudState(
   state: CloudRuntimeState,
-  projectId: number,
-  workspace?: { deviceId: string; workspacePath: string },
-  context: RuntimeProjectRemovalContext = {}
+  removal: RuntimeProjectRemoval
 ): CloudRuntimeState {
   const removeFromSnapshot = (snapshot: CloudRuntimeState['current']) =>
     snapshot
       ? {
           ...snapshot,
-          runtimeWork: removeRuntimeProject(snapshot.runtimeWork, projectId, workspace, context),
+          runtimeWork: removeRuntimeProject(snapshot.runtimeWork, removal),
         }
       : null
   return clearCloudRuntimeSync({
@@ -248,13 +253,14 @@ function matchesRemovalIdentity(candidateKey: () => string, removedKey: string |
   }
 }
 
-export function removeRuntimeProject(
-  runtimeWork: RuntimeWorkListResponse,
+export function createRuntimeProjectRemoval(
+  runtimeWork: RuntimeWorkListResponse | null,
   projectId: number,
   workspace?: { deviceId: string; workspacePath: string },
   context: RuntimeProjectRemovalContext = {}
-): RuntimeWorkListResponse {
-  const devices = createWorkbenchDeviceResolver(context.devices ?? [])
+): RuntimeProjectRemoval {
+  const deviceSnapshot = [...(context.devices ?? [])]
+  const devices = createWorkbenchDeviceResolver(deviceSnapshot)
   const selected = context.target
     ? context
     : getRuntimeProjectRemovalContext(runtimeWork, projectId, workspace)
@@ -268,6 +274,15 @@ export function removeRuntimeProject(
   const workspaceKey = removedWorkspace
     ? runtimeWorkspaceLocationKey(removedWorkspace, devices)
     : null
+  return { projectId, targetKey, workspaceKey, devices: deviceSnapshot }
+}
+
+export function removeRuntimeProject(
+  runtimeWork: RuntimeWorkListResponse,
+  removal: RuntimeProjectRemoval
+): RuntimeWorkListResponse {
+  const { projectId, targetKey, workspaceKey } = removal
+  const devices = createWorkbenchDeviceResolver(removal.devices)
   const matchesRemovedWorkspace = (candidate: RuntimeDeviceWorkspace) =>
     matchesRemovalIdentity(() => runtimeWorkspaceLocationKey(candidate, devices), workspaceKey)
   const projects = runtimeWork.projects.filter(project => {

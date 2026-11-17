@@ -15,8 +15,10 @@ export async function verifyProjectRemovalCompletion(control, projectId, workspa
     snapshot =>
       snapshot.workbench != null &&
       String(snapshot.workbench.currentProject?.id) !== projectId &&
+      snapshot.workbench.currentRuntimeTask == null &&
+      snapshot.workbench.selectedDeviceWorkspaceId == null &&
       snapshot.workbench.standaloneWorkspacePath !== workspacePath,
-    'Confirmed cloud project removal retained the active project or standalone workspace'
+    'Confirmed cloud project removal retained its active project, task, or workspace selection'
   )
 
   await control.command('clickWhenEnabled', '[data-testid="new-chat-button"]')

@@ -109,11 +109,9 @@ describe('runtime project removal completion', () => {
             startFreshChat: true,
           })
         )
-        if (listed)
-          expect(options.dispatch).toHaveBeenCalledWith({
-            type: 'runtime_project_removed',
-            projectId,
-          })
+        expect(options.dispatch).not.toHaveBeenCalledWith(
+          expect.objectContaining({ type: 'runtime_project_removed' })
+        )
       } finally {
         refresh.resolve()
         await Promise.all([removing, refreshing])
@@ -152,6 +150,9 @@ describe('runtime project removal completion', () => {
     vi.mocked(options.refreshWorkLists).mockRejectedValue(new Error('List unavailable'))
     await expect(result.current.removeProject(projectId)).resolves.toBeUndefined()
     expect(options.refreshWorkLists).not.toHaveBeenCalled()
-    expect(options.dispatch).toHaveBeenCalledWith({ type: 'runtime_project_removed', projectId })
+    expect(options.markRuntimeProjectRemoved).toHaveBeenCalledWith(projectId, {
+      deviceId: 'remote',
+      workspacePath: '/srv/project',
+    })
   })
 })

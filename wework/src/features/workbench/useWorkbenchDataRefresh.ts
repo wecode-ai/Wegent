@@ -5,6 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Dispatch } from 'react'
 import { createModelLoadingTrace, logModelLoading } from '@/lib/model-loading-diagnostics'
 import type { ExecutorClient } from '@/api/executorAccess'
+import { stripAppBasePath } from '@/config/runtime'
 import type {
   DeviceInfo,
   RuntimeSupervisorState,
@@ -16,6 +17,7 @@ import type {
 } from '@/types/api'
 import { isRemoteTaskDevice } from '@/lib/device-capabilities'
 import { normalizeRuntimeWorkspacePath } from '@/lib/runtime-project'
+import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/types/workbench'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
@@ -32,12 +34,13 @@ import {
   startCloudRuntimeSync,
   timedWorkbenchBootstrapRequest,
 } from './workbenchCloudStatus'
-import type { WorkbenchAction } from './workbenchReducer'
+import { isRuntimeProjectSelectionRemoved, type WorkbenchAction } from './workbenchReducer'
 import {
   findRuntimeTask,
   findRuntimeTaskForPinRequest,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
+  isSameRuntimeTaskAddress,
   removeRuntimeTasks,
   runtimeWorkContainsTask,
   updateRuntimeWorkTask,
@@ -59,7 +62,7 @@ import {
   type CloudBackgroundRefreshOptions,
   queueWorkRefreshAfterInventory,
   createCloudRuntimeStateWithCache,
-  getRuntimeProjectRemovalContext,
+  createRuntimeProjectRemoval,
   localDeviceSnapshot,
   mergeRuntimeTaskAddresses,
   loadDevicesForRefresh,
@@ -76,6 +79,7 @@ interface UseWorkbenchDataRefreshOptions {
   dispatch: Dispatch<WorkbenchAction>
   executorClient: ExecutorClient
   services: WorkbenchServices
+  canNavigate?: () => boolean
 }
 
 // Cloud synchronization is detached from the local workbench bootstrap. Give
@@ -90,6 +94,7 @@ export function useWorkbenchDataRefresh({
   dispatch,
   executorClient,
   services,
+  canNavigate = () => true,
 }: UseWorkbenchDataRefreshOptions) {
   const cacheScope = workbenchCacheScope(ownershipKey, user.id)
   const initialCachedRemoteRuntimeWork = useMemo(
@@ -127,6 +132,10 @@ export function useWorkbenchDataRefresh({
     userRef.current = user
   }, [user])
   const runtimeWorkRef = useRef(state.runtimeWork)
+  const selectionRef = useRef(state)
+  useLayoutEffect(() => {
+    selectionRef.current = state
+  }, [state])
   const localRuntimeWorkRef = useRef<RuntimeWorkListResponse | null>(null)
   const runtimeTaskTitleOverridesRef = useRef(
     new Map<string, { address: RuntimeTaskAddress; title: string }>()
@@ -739,24 +748,31 @@ export function useWorkbenchDataRefresh({
             workspacePath: normalizeRuntimeWorkspacePath(workspace.workspacePath),
           }
         : undefined
-      const context = {
-        ...getRuntimeProjectRemovalContext(runtimeWorkRef.current, projectId, normalizedWorkspace),
-        devices: devicesRef.current,
-      }
+      const removal = createRuntimeProjectRemoval(
+        runtimeWorkRef.current,
+        projectId,
+        normalizedWorkspace,
+        { devices: devicesRef.current }
+      )
       const localRuntimeWork = localRuntimeWorkRef.current
-        ? removeRuntimeProject(localRuntimeWorkRef.current, projectId, normalizedWorkspace, context)
+        ? removeRuntimeProject(localRuntimeWorkRef.current, removal)
         : null
       const cachedRuntimeWork = removeRuntimeProject(
         cachedRemoteRuntimeWorkRef.current.runtimeWork,
-        projectId,
-        normalizedWorkspace,
-        context
+        removal
       )
       const cloudRuntimeState = removeRuntimeProjectFromCloudState(
         cloudRuntimeStateRef.current,
+        removal
+      )
+      const visibleRuntimeWork = runtimeWorkRef.current
+        ? removeRuntimeProject(runtimeWorkRef.current, removal)
+        : null
+      const selection = selectionRef.current
+      const removesCurrentSelection = isRuntimeProjectSelectionRemoved(
+        selection,
         projectId,
-        normalizedWorkspace,
-        context
+        visibleRuntimeWork
       )
 
       cloudBackgroundRequestRef.current?.controller.abort()
@@ -772,8 +788,22 @@ export function useWorkbenchDataRefresh({
         ),
       }
       updateCloudRuntimeState(cloudRuntimeState)
+      runtimeWorkRef.current = visibleRuntimeWork
+      dispatch({ type: 'runtime_project_removed', removal })
+      const activeRoute = parseRuntimeTaskRoute(
+        stripAppBasePath(window.location.pathname),
+        window.location.search
+      )
+      if (
+        removesCurrentSelection &&
+        canNavigate() &&
+        activeRoute &&
+        isSameRuntimeTaskAddress(selection.currentRuntimeTask, activeRoute)
+      ) {
+        navigateTo('/')
+      }
     },
-    [cacheScope, updateCloudRuntimeState]
+    [cacheScope, canNavigate, dispatch, updateCloudRuntimeState]
   )
 
   const refreshDevices = useCallback(

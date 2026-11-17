@@ -7,6 +7,7 @@ import {
 import { describe, expect, test } from 'vitest'
 import {
   createCloudRuntimeStateWithCache,
+  createRuntimeProjectRemoval,
   getRuntimeProjectRemovalContext,
   removeRuntimeProject,
   removeRuntimeProjectFromCloudState,
@@ -66,7 +67,8 @@ describe('runtime project removal identity', () => {
       chats: [removed.deviceWorkspaces[0], independent.deviceWorkspaces[0]],
       totalTasks: 4,
     }
-    const remaining = removeRuntimeProject(runtimeWork, 1, workspace, { devices })
+    const removal = createRuntimeProjectRemoval(runtimeWork, 1, workspace, { devices })
+    const remaining = removeRuntimeProject(runtimeWork, removal)
     expect(remaining.projects).toEqual([independent])
     expect(remaining.chats).toEqual([independent.deviceWorkspaces[0]])
     expect(remaining.totalTasks).toBe(2)
@@ -77,9 +79,9 @@ describe('runtime project removal identity', () => {
     const removed = project(1, 'same-project')
     const alias = project(3, 'same-project', 'relay-a')
     const independent = project(2, 'same-project', 'relay-b')
-    const remaining = removeRuntimeProject(list(removed, alias, independent), 1, workspace, {
-      devices,
-    })
+    const runtimeWork = list(removed, alias, independent)
+    const removal = createRuntimeProjectRemoval(runtimeWork, 1, workspace, { devices })
+    const remaining = removeRuntimeProject(runtimeWork, removal)
     expect(remaining.projects).toEqual([independent])
     expect(remaining.totalTasks).toBe(1)
   })
@@ -89,15 +91,12 @@ describe('runtime project removal identity', () => {
     directory.project.source = 'legacy_root'
     const independent = project(9, 'old-directory-identity', 'relay-b')
     independent.project.source = 'legacy_root'
-    const remaining = removeRuntimeProject(
-      {
-        ...list(directory, independent),
-        chats: [directory.deviceWorkspaces[0], independent.deviceWorkspaces[0]],
-      },
-      1,
-      workspace,
-      { devices }
-    )
+    const runtimeWork = {
+      ...list(directory, independent),
+      chats: [directory.deviceWorkspaces[0], independent.deviceWorkspaces[0]],
+    }
+    const removal = createRuntimeProjectRemoval(runtimeWork, 1, workspace, { devices })
+    const remaining = removeRuntimeProject(runtimeWork, removal)
     expect(remaining.projects).toEqual([independent])
     expect(remaining.chats).toEqual([independent.deviceWorkspaces[0]])
   })
@@ -105,7 +104,9 @@ describe('runtime project removal identity', () => {
   test('preserves another named project on the same Runtime sharing the same root', () => {
     const removed = project(1, 'project-a')
     const independent = project(2, 'project-b', 'relay-a')
-    const remaining = removeRuntimeProject(list(removed, independent), 1, workspace, { devices })
+    const runtimeWork = list(removed, independent)
+    const removal = createRuntimeProjectRemoval(runtimeWork, 1, workspace, { devices })
+    const remaining = removeRuntimeProject(runtimeWork, removal)
     expect(remaining.projects).toEqual([independent])
     expect(remaining.totalTasks).toBe(1)
   })
@@ -114,10 +115,11 @@ describe('runtime project removal identity', () => {
     const selected = project(1, 'project-a')
     const cached = project(8, 'project-a', 'relay-a')
     const independent = project(2, 'project-b', 'relay-a')
-    const remaining = removeRuntimeProject(list(cached, independent), 1, workspace, {
+    const removal = createRuntimeProjectRemoval(list(selected), 1, workspace, {
       devices,
       target: getRuntimeProjectSyncTarget(selected),
     })
+    const remaining = removeRuntimeProject(list(cached, independent), removal)
     expect(remaining.projects).toEqual([independent])
   })
 
@@ -131,9 +133,7 @@ describe('runtime project removal identity', () => {
         ...state,
         current: state.lastGood,
       },
-      1,
-      workspace,
-      { devices, target: getRuntimeProjectSyncTarget(selected) }
+      createRuntimeProjectRemoval(list(selected), 1, workspace, { devices })
     )
     expect(remaining.current?.runtimeWork.projects).toEqual([independent])
     expect(remaining.lastGood?.runtimeWork.projects).toEqual([independent])
@@ -144,7 +144,11 @@ describe('runtime project removal identity', () => {
     const removed = project(1, 'project-a')
     const independent = project(2, 'project-a', 'unresolved-device')
     independent.project.source = 'legacy_root'
-    const remaining = removeRuntimeProject(list(removed, independent), 1, workspace)
+    const runtimeWork = list(removed, independent)
+    const remaining = removeRuntimeProject(
+      runtimeWork,
+      createRuntimeProjectRemoval(runtimeWork, 1, workspace)
+    )
     expect(remaining.projects).toEqual([independent])
   })
 
@@ -156,12 +160,11 @@ describe('runtime project removal identity', () => {
     const removed = project(1, 'project-a')
     const ambiguous = project(2, 'project-a', 'shared-alias')
     ambiguous.project.source = 'legacy_root'
-    const remaining = removeRuntimeProject(
-      { ...list(removed, ambiguous), chats: [ambiguous.deviceWorkspaces[0]] },
-      1,
-      workspace,
-      { devices: ambiguousDevices }
-    )
+    const runtimeWork = { ...list(removed, ambiguous), chats: [ambiguous.deviceWorkspaces[0]] }
+    const removal = createRuntimeProjectRemoval(runtimeWork, 1, workspace, {
+      devices: ambiguousDevices,
+    })
+    const remaining = removeRuntimeProject(runtimeWork, removal)
     expect(remaining.projects).toEqual([ambiguous])
     expect(remaining.chats).toEqual([ambiguous.deviceWorkspaces[0]])
   })
@@ -175,7 +178,9 @@ describe('runtime project removal identity', () => {
     const selectedWorkspace =
       identity === 'workspace' ? { ...workspace, deviceId: 'shared-alias' } : workspace
     expect(() =>
-      removeRuntimeProject(list(removed), 1, selectedWorkspace, { devices: ambiguousDevices })
+      createRuntimeProjectRemoval(list(removed), 1, selectedWorkspace, {
+        devices: ambiguousDevices,
+      })
     ).toThrow('ambiguous-executor-identity:shared-alias')
   })
 
@@ -203,9 +208,15 @@ describe('runtime project removal identity', () => {
               { ...devices[1], socket_device_id: 'owner-a' },
             ]
       const cached = { ...qualified, projects: qualified.projects.slice(1) }
-      expect(
-        removeRuntimeProject(cached, 1, workspace, { ...context, devices: contextDevices })
-      ).toMatchObject({ projects: [], chats: [], totalTasks: 0 })
+      const removal = createRuntimeProjectRemoval(qualified, 1, workspace, {
+        ...context,
+        devices: contextDevices,
+      })
+      expect(removeRuntimeProject(cached, removal)).toMatchObject({
+        projects: [],
+        chats: [],
+        totalTasks: 0,
+      })
     }
   )
 
@@ -220,7 +231,8 @@ describe('runtime project removal identity', () => {
     const runtimeWork = { projects: [], chats: [unqualified, native], totalTasks: 2 }
     const context = getRuntimeProjectRemovalContext(runtimeWork, 1, workspace)
     expect(context.localOwnerIdentity).toEqual(identity)
-    expect(removeRuntimeProject(runtimeWork, 1, workspace, context).chats).toEqual([unqualified])
+    const removal = createRuntimeProjectRemoval(runtimeWork, 1, workspace, context)
+    expect(removeRuntimeProject(runtimeWork, removal).chats).toEqual([unqualified])
   })
 
   test('does not promote a remote projection with local index provenance to a native owner', () => {
@@ -235,9 +247,8 @@ describe('runtime project removal identity', () => {
     remote.deviceWorkspaces[0].remoteHostId = 'owner-a'
     const context = getRuntimeProjectRemovalContext(list(remote), 1, workspace)
     expect(context.localOwnerIdentity).toBeUndefined()
-    const cachedNative = qualifyLocalRuntimeWork(list(project(1, 'old-native-project')), identity)
     expect(() =>
-      removeRuntimeProject(cachedNative, 1, workspace, {
+      createRuntimeProjectRemoval(list(remote), 1, workspace, {
         ...context,
         devices: [devices[0], { ...devices[1], socket_device_id: 'owner-a' }],
       })
@@ -250,7 +261,10 @@ describe('runtime project removal identity', () => {
       'devices',
       'runtimeWork',
     ])
-    const remaining = removeRuntimeProjectFromCloudState(syncing, 1, workspace)
+    const remaining = removeRuntimeProjectFromCloudState(
+      syncing,
+      createRuntimeProjectRemoval(null, 1, workspace)
+    )
     expect(remaining.inFlightRevision).toBeNull()
     expect(remaining.availability).toBe('idle')
     expect(remaining.current?.fetchedAt).toBeNull()
@@ -275,7 +289,10 @@ describe('runtime project removal identity', () => {
       'devices',
       'runtimeWork',
     ])
-    const remaining = removeRuntimeProjectFromCloudState(syncing, 1, workspace, { devices })
+    const remaining = removeRuntimeProjectFromCloudState(
+      syncing,
+      createRuntimeProjectRemoval(cached.lastGood!.runtimeWork, 1, workspace, { devices })
+    )
     expect(remaining.inFlightRevision).toBeNull()
     expect(remaining.availability).toBe('stale')
     expect(remaining.current?.checks).toEqual(cached.lastGood!.checks)

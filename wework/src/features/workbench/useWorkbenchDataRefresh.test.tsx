@@ -10,6 +10,8 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { readCachedDeviceList } from './workbenchCloudStatus'
 import { qualifyLocalRuntimeWork } from '@/lib/local-runtime-sidebar-identity'
 import { AmbiguousExecutorIdentityError } from '@/lib/workbench-device'
+import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
+import { buildRuntimeTaskRoute, navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import * as refreshHelpers from './workbenchDataRefreshHelpers'
 import {
   readCachedRemoteRuntimeWork,
@@ -55,7 +57,8 @@ function setup(
   listRuntimeWork = vi.fn().mockResolvedValue(work),
   listDevices = vi.fn().mockResolvedValue(devices),
   workbenchServices = services,
-  ownershipKey?: string
+  ownershipKey?: string,
+  canNavigate?: () => boolean
 ) {
   const executorClient = {
     runtime: { listRuntimeWork },
@@ -79,6 +82,7 @@ function setup(
         services: workbenchServices,
         state,
         dispatch,
+        canNavigate,
       })
       return { state, dispatch, ...actions }
     },
@@ -346,7 +350,6 @@ describe('useWorkbenchDataRefresh', () => {
         deviceId: 'remote-device',
         workspacePath: '/workspace/shared',
       })
-      hook.result.current.dispatch({ type: 'runtime_project_removed', projectId: 1 })
     })
     cloudApi.listRuntimeWork.mockReturnValue(pendingCloudRefresh.promise)
     await act(async () => hook.result.current.refreshDevices())
@@ -410,7 +413,6 @@ describe('useWorkbenchDataRefresh', () => {
         deviceId: 'local-device',
         workspacePath: '/workspace',
       })
-      hook.result.current.dispatch({ type: 'runtime_project_removed', projectId: 1 })
     })
     expect(hook.result.current.cloudWorkStatus.availability).toBe('idle')
     expect(Object.values(hook.result.current.cloudWorkStatus.checks)).not.toContain('syncing')
@@ -427,101 +429,337 @@ describe('useWorkbenchDataRefresh', () => {
     hook.unmount()
   })
 
-  test('keeps the active cloud request and all snapshots when removal projection rejects', async () => {
-    const remoteProject = {
-      project: {
-        id: 7,
-        key: 'remote-project',
-        name: 'Remote',
-        source: 'remote_project' as const,
-        stateDeviceId: 'local-device',
-        sidebarStateKey: 'remote-sidebar',
-      },
-      deviceWorkspaces: [
-        {
-          deviceId: 'remote-device',
-          remoteHostId: 'remote-device',
-          workspacePath: '/remote',
-          available: true,
-          mapped: true,
-          tasks: [],
+  test.each(['cloud', 'visible'] as const)(
+    'keeps the active cloud request and all snapshots when the %s removal projection rejects',
+    async projectionStage => {
+      const remoteProject = {
+        project: {
+          id: 7,
+          key: 'remote-project',
+          name: 'Remote',
+          source: 'remote_project' as const,
+          stateDeviceId: 'local-device',
+          sidebarStateKey: 'remote-sidebar',
         },
-      ],
-      totalTasks: 0,
-    }
-    const initialWork = { projects: [remoteProject], chats: [], totalTasks: 0 }
-    const pendingCloudWork = deferred<RuntimeWorkListResponse>()
-    let cloudSignal: AbortSignal | undefined
-    const cloudApi = {
-      listTeams: vi.fn().mockResolvedValue([]),
-      listDevices: vi
-        .fn()
-        .mockResolvedValue([
-          { ...devices[0], id: 2, device_id: 'remote-device', device_type: 'remote' },
-        ]),
-      listRuntimeWork: vi.fn().mockResolvedValue(initialWork),
-    }
-    const hook = setup(
-      vi.fn().mockResolvedValue({ ...work, projects: [remoteProject] }),
-      undefined,
-      {
-        cloudBackgroundApi: cloudApi,
-      } as unknown as WorkbenchServices
-    )
-    const cacheScope = workbenchCacheScope('', LOCAL_USER.id)
-    await waitFor(() => expect(hook.result.current.cloudWorkStatus.availability).toBe('available'))
-    cloudApi.listRuntimeWork.mockImplementation(({ signal }: { signal?: AbortSignal }) => {
-      cloudSignal = signal
-      return pendingCloudWork.promise
-    })
-    await act(async () => hook.result.current.refreshDevices())
-    await waitFor(() => expect(cloudApi.listRuntimeWork).toHaveBeenCalledTimes(2))
-    const beforeWork = hook.result.current.state.runtimeWork
-    const beforeCache = readCachedRemoteRuntimeWork(cacheScope)
-    const beforeStatus = hook.result.current.cloudWorkStatus
-    const rejection = new AmbiguousExecutorIdentityError('remote-device', [])
-    const projection = vi
-      .spyOn(refreshHelpers, 'removeRuntimeProjectFromCloudState')
-      .mockImplementationOnce(() => {
-        throw rejection
+        deviceWorkspaces: [
+          {
+            deviceId: 'remote-device',
+            remoteHostId: 'remote-device',
+            workspacePath: '/remote',
+            available: true,
+            mapped: true,
+            tasks: [],
+          },
+        ],
+        totalTasks: 0,
+      }
+      const initialWork = { projects: [remoteProject], chats: [], totalTasks: 0 }
+      const pendingCloudWork = deferred<RuntimeWorkListResponse>()
+      let cloudSignal: AbortSignal | undefined
+      const cloudApi = {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi
+          .fn()
+          .mockResolvedValue([
+            { ...devices[0], id: 2, device_id: 'remote-device', device_type: 'remote' },
+          ]),
+        listRuntimeWork: vi.fn().mockResolvedValue(initialWork),
+      }
+      const hook = setup(
+        vi.fn().mockResolvedValue({ ...work, projects: [remoteProject] }),
+        undefined,
+        {
+          cloudBackgroundApi: cloudApi,
+        } as unknown as WorkbenchServices
+      )
+      const cacheScope = workbenchCacheScope('', LOCAL_USER.id)
+      await waitFor(() =>
+        expect(hook.result.current.cloudWorkStatus.availability).toBe('available')
+      )
+      cloudApi.listRuntimeWork.mockImplementation(({ signal }: { signal?: AbortSignal }) => {
+        cloudSignal = signal
+        return pendingCloudWork.promise
       })
-    try {
-      expect(() =>
-        hook.result.current.markRuntimeProjectRemoved(7, {
-          deviceId: 'remote-device',
-          workspacePath: '/remote',
+      await act(async () => hook.result.current.refreshDevices())
+      await waitFor(() => expect(cloudApi.listRuntimeWork).toHaveBeenCalledTimes(2))
+      const beforeWork = hook.result.current.state.runtimeWork
+      const beforeCache = readCachedRemoteRuntimeWork(cacheScope)
+      const beforeStatus = hook.result.current.cloudWorkStatus
+      const rejection = new AmbiguousExecutorIdentityError('remote-device', [])
+      const removeRuntimeProject = refreshHelpers.removeRuntimeProject
+      const projection =
+        projectionStage === 'cloud'
+          ? vi
+              .spyOn(refreshHelpers, 'removeRuntimeProjectFromCloudState')
+              .mockImplementationOnce(() => {
+                throw rejection
+              })
+          : vi
+              .spyOn(refreshHelpers, 'removeRuntimeProject')
+              .mockImplementation((snapshot, ...args) => {
+                if (snapshot === beforeWork) throw rejection
+                return removeRuntimeProject(snapshot, ...args)
+              })
+      try {
+        expect(() =>
+          hook.result.current.markRuntimeProjectRemoved(7, {
+            deviceId: 'remote-device',
+            workspacePath: '/remote',
+          })
+        ).toThrow(rejection)
+        expect(cloudSignal?.aborted).toBe(false)
+        expect(readCachedRemoteRuntimeWork(cacheScope)).toEqual(beforeCache)
+        expect(hook.result.current.state.runtimeWork).toBe(beforeWork)
+        expect(hook.result.current.getRuntimeWorkSnapshot()).toBe(beforeWork)
+        expect(hook.result.current.cloudWorkStatus).toBe(beforeStatus)
+      } finally {
+        projection.mockRestore()
+      }
+      const freshProject = {
+        ...remoteProject,
+        project: {
+          ...remoteProject.project,
+          id: 8,
+          key: 'fresh-project',
+          sidebarStateKey: 'fresh-sidebar',
+        },
+        deviceWorkspaces: [{ ...remoteProject.deviceWorkspaces[0], workspacePath: '/fresh' }],
+      }
+      await act(async () =>
+        pendingCloudWork.resolve({ projects: [freshProject], chats: [], totalTasks: 0 })
+      )
+      await waitFor(() =>
+        expect(
+          hook.result.current.state.runtimeWork?.projects.map(item => item.project.key).sort()
+        ).toEqual(['fresh-project', 'remote-project'])
+      )
+      expect(hook.result.current.state.runtimeWork?.chats[0].tasks[0].taskId).toBe('task-1')
+      expect(hook.listRuntimeWork).toHaveBeenCalledTimes(1)
+      expect(cloudSignal?.aborted).toBe(true)
+      hook.unmount()
+    }
+  )
+
+  test.each([
+    [true, false],
+    [false, false],
+    [true, true],
+    [false, true],
+  ])(
+    'publishes removed listed=%s workspace projections while preserving same-batch optimistic=%s tasks',
+    async (listed, optimistic) => {
+      const independentWorkspace = {
+        ...work.chats[0],
+        deviceId: 'independent-device',
+        tasks: [{ ...work.chats[0].tasks[0], taskId: 'independent-task' }],
+      }
+      const independentProject = {
+        project: {
+          id: 2,
+          key: 'independent',
+          name: 'Independent',
+          source: 'local_project' as const,
+          stateDeviceId: 'independent-device',
+        },
+        deviceWorkspaces: [independentWorkspace],
+        totalTasks: 1,
+      }
+      const nativeProject = {
+        project: {
+          id: 1,
+          key: 'native',
+          name: 'Native',
+          source: 'local_project' as const,
+          stateDeviceId: 'local-device',
+        },
+        deviceWorkspaces: work.chats,
+        totalTasks: 1,
+      }
+      const directory = {
+        ...nativeProject,
+        project: {
+          ...nativeProject.project,
+          id: 3,
+          key: 'old-directory',
+          source: 'legacy_root' as const,
+        },
+      }
+      const nativeWork = qualifyLocalRuntimeWork(
+        {
+          projects: [...(listed ? [nativeProject] : []), directory, independentProject],
+          chats: work.chats,
+          totalTasks: listed ? 4 : 3,
+        },
+        { deviceId: 'local-device', runtimeInstanceId: 'native-runtime', provenance: 'local-ipc' }
+      )
+      const hook = setup(
+        vi.fn().mockResolvedValue(nativeWork),
+        vi.fn().mockResolvedValue([
+          { ...devices[0], runtime_instance_id: 'native-runtime' },
+          {
+            ...devices[0],
+            id: 2,
+            device_id: 'independent-device',
+            runtime_instance_id: 'independent-runtime',
+            device_type: 'remote',
+          },
+        ])
+      )
+      await waitFor(() => expect(hook.result.current.state.runtimeWork?.chats).toHaveLength(1))
+      await waitFor(() => expect(hook.result.current.state.devices).toHaveLength(2))
+      const projectId = listed
+        ? 1
+        : runtimeProjectUiId({
+            key: standaloneRuntimeProjectKey('/workspace'),
+            stateDeviceId: 'local-device',
+            name: '/workspace',
+          })
+      act(() =>
+        hook.result.current.dispatch({
+          type: 'project_cleared',
+          standaloneDeviceId: 'local-device',
+          standaloneWorkspacePath: '/workspace',
         })
-      ).toThrow(rejection)
-      expect(cloudSignal?.aborted).toBe(false)
-      expect(readCachedRemoteRuntimeWork(cacheScope)).toEqual(beforeCache)
-      expect(hook.result.current.state.runtimeWork).toBe(beforeWork)
-      expect(hook.result.current.cloudWorkStatus).toBe(beforeStatus)
-    } finally {
-      projection.mockRestore()
-    }
-    const freshProject = {
-      ...remoteProject,
-      project: {
-        ...remoteProject.project,
-        id: 8,
-        key: 'fresh-project',
-        sidebarStateKey: 'fresh-sidebar',
-      },
-      deviceWorkspaces: [{ ...remoteProject.deviceWorkspaces[0], workspacePath: '/fresh' }],
-    }
-    await act(async () =>
-      pendingCloudWork.resolve({ projects: [freshProject], chats: [], totalTasks: 0 })
-    )
-    await waitFor(() =>
+      )
+      if (!listed)
+        act(() =>
+          hook.result.current.dispatch({
+            type: 'runtime_task_opened',
+            project: null,
+            address: {
+              deviceId: 'local-device',
+              workspacePath: '/workspace',
+              taskId: 'task-1',
+            },
+          })
+        )
+      act(() => {
+        if (optimistic)
+          hook.result.current.dispatch({
+            type: 'runtime_task_optimistic_upserted',
+            project: { id: 2, name: 'Independent', tasks: [] },
+            workspace: independentWorkspace,
+            task: {
+              ...independentWorkspace.tasks[0],
+              taskId: 'independent-new-task',
+              optimistic: true,
+            },
+          })
+        hook.result.current.markRuntimeProjectRemoved(projectId, {
+          deviceId: 'local-device',
+          workspacePath: '/workspace',
+        })
+        if (!listed)
+          hook.result.current.dispatch({
+            type: 'project_cleared',
+            standaloneWorkspacePath: null,
+            startFreshChat: true,
+          })
+      })
+      expect(hook.result.current.state.runtimeWork?.projects.map(item => item.project.id)).toEqual([
+        2,
+      ])
+      expect(hook.result.current.state.runtimeWork?.chats).toEqual([])
+      expect(hook.result.current.state.currentRuntimeTask).toBeNull()
+      expect(hook.result.current.state.runtimeWork?.totalTasks).toBe(optimistic ? 2 : 1)
       expect(
-        hook.result.current.state.runtimeWork?.projects.map(item => item.project.key).sort()
-      ).toEqual(['fresh-project', 'remote-project'])
-    )
-    expect(hook.result.current.state.runtimeWork?.chats[0].tasks[0].taskId).toBe('task-1')
-    expect(hook.listRuntimeWork).toHaveBeenCalledTimes(1)
-    expect(cloudSignal?.aborted).toBe(true)
-    hook.unmount()
-  })
+        hook.result.current.state.runtimeWork?.projects[0].deviceWorkspaces[0].tasks.map(
+          task => task.taskId
+        )
+      ).toEqual(optimistic ? ['independent-new-task', 'independent-task'] : ['independent-task'])
+      expect(hook.result.current.getRuntimeWorkSnapshot()).toMatchObject({
+        projects: [{ project: { id: 2 } }],
+        chats: [],
+        totalTasks: optimistic ? 2 : 1,
+      })
+      expect(hook.listRuntimeWork).toHaveBeenCalledTimes(1)
+      expect(hook.listDevices).toHaveBeenCalledTimes(1)
+      hook.unmount()
+    }
+  )
+
+  test.each(['removed-task', 'new-selection', 'inactive-tab'] as const)(
+    'navigates after removal only while the active route still belongs to the removed task: %s',
+    async scenario => {
+      const removedAddress = {
+        deviceId: 'local-device',
+        workspacePath: '/workspace',
+        taskId: 'task-1',
+      }
+      const independentAddress = {
+        deviceId: 'local-device',
+        workspacePath: '/independent',
+        taskId: 'independent-task',
+      }
+      const removedProject = { id: 7, key: 'removed', name: 'Removed', tasks: [] }
+      const independentProject = { id: 8, key: 'independent', name: 'Independent', tasks: [] }
+      const initialWork = {
+        projects: [
+          { project: removedProject, deviceWorkspaces: work.chats },
+          {
+            project: independentProject,
+            deviceWorkspaces: [
+              {
+                ...work.chats[0],
+                workspacePath: '/independent',
+                tasks: [{ ...work.chats[0].tasks[0], ...independentAddress }],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 2,
+      }
+      const hook = setup(
+        vi.fn().mockResolvedValue(initialWork),
+        undefined,
+        undefined,
+        undefined,
+        () => scenario !== 'inactive-tab'
+      )
+      const previousLocation = `${window.location.pathname}${window.location.search}`
+      try {
+        await waitFor(() => expect(hook.result.current.state.runtimeWork?.projects).toHaveLength(2))
+        act(() => {
+          hook.result.current.dispatch({
+            type: 'runtime_task_opened',
+            project: removedProject,
+            address: removedAddress,
+          })
+          navigateTo(buildRuntimeTaskRoute(removedAddress))
+        })
+        act(() => {
+          if (scenario === 'new-selection') {
+            hook.result.current.dispatch({
+              type: 'runtime_task_opened',
+              project: independentProject,
+              address: independentAddress,
+            })
+            navigateTo(buildRuntimeTaskRoute(independentAddress))
+          }
+          hook.result.current.markRuntimeProjectRemoved(7, removedAddress)
+        })
+        expect(hook.result.current.state.currentProject?.id ?? null).toBe(
+          scenario === 'new-selection' ? 8 : null
+        )
+        expect(hook.result.current.state.currentRuntimeTask).toEqual(
+          scenario === 'new-selection' ? independentAddress : null
+        )
+        const route = parseRuntimeTaskRoute(window.location.pathname, window.location.search)
+        expect(route?.taskId ?? null).toBe(
+          scenario === 'new-selection'
+            ? 'independent-task'
+            : scenario === 'inactive-tab'
+              ? 'task-1'
+              : null
+        )
+        expect(hook.listRuntimeWork).toHaveBeenCalledTimes(1)
+      } finally {
+        hook.unmount()
+        window.history.replaceState({}, '', previousLocation)
+      }
+    }
+  )
 
   test('completes initial cloud inventory after a work event supersedes bootstrap work', async () => {
     const pendingDevices = deferred<DeviceInfo[]>()

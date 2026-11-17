@@ -690,6 +690,7 @@ function OwnedWorkbenchProvider({
     dispatch,
     executorClient,
     services: resolvedServices,
+    canNavigate: canNavigateWorkspaceTab,
   })
 
   const markRuntimeTasksArchived = useMarkRuntimeTasksArchived({

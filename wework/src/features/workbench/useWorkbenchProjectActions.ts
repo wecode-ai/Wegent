@@ -495,7 +495,6 @@ export function useWorkbenchProjectActions({
         deviceId: runtimeWorkspace.deviceId,
         workspacePath: runtimeWorkspace.workspacePath,
       })
-      dispatch({ type: 'runtime_project_removed', projectId })
       if (clearsStandaloneWorkspace) {
         dispatch({
           type: 'project_cleared',

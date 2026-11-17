@@ -11071,6 +11071,147 @@ describe('WorkbenchProvider runtime tasks', () => {
     ).toEqual([])
   })
 
+  test.each([7, 8, 9])(
+    'atomically removes workspace projections while historical project %s is open',
+    async selectedProjectId => {
+      const initial = createRuntimeWork()
+      const owner = initial.projects[0]
+      owner.project = {
+        ...owner.project,
+        key: 'named-project',
+        source: 'local_project',
+        stateDeviceId: 'device-1',
+      }
+      const alias = {
+        ...owner,
+        project: {
+          ...owner.project,
+          id: 8,
+          key: 'old-directory',
+          name: 'Old directory',
+          source: 'legacy_root' as const,
+        },
+        deviceWorkspaces: [
+          {
+            ...owner.deviceWorkspaces[0],
+            id: 23,
+            projectId: 8,
+            tasks: [{ ...owner.deviceWorkspaces[0].tasks[0], taskId: 'alias-task' }],
+          },
+        ],
+        totalTasks: 1,
+      }
+      const independent = {
+        ...owner,
+        project: { ...owner.project, id: 9, key: 'independent-project', name: 'Independent' },
+        deviceWorkspaces: [
+          {
+            ...owner.deviceWorkspaces[0],
+            id: 24,
+            projectId: 9,
+            tasks: [{ ...owner.deviceWorkspaces[0].tasks[0], taskId: 'independent-task' }],
+          },
+        ],
+        totalTasks: 1,
+      }
+      const runtimeWork = {
+        ...initial,
+        projects: [owner, alias, independent],
+        chats: [
+          {
+            ...owner.deviceWorkspaces[0],
+            tasks: [{ ...owner.deviceWorkspaces[0].tasks[0], taskId: 'standalone-task' }],
+          },
+        ],
+        totalTasks: 6,
+      }
+      const runtimeWorkApi = createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn().mockResolvedValue(runtimeWork),
+      })
+      const services = createWorkbenchServices({
+        runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      })
+      let current!: ReturnType<typeof useWorkbench>
+      const taskId =
+        selectedProjectId === 7
+          ? 'runtime-a'
+          : selectedProjectId === 8
+            ? 'alias-task'
+            : 'independent-task'
+      function RemovalProbe() {
+        const workbench = useWorkbench()
+        useLayoutEffect(() => {
+          current = workbench
+        }, [workbench])
+        return (
+          <>
+            <button
+              type="button"
+              data-testid="select-removal-workspace"
+              onClick={() =>
+                current.selectProjectWorkspace(
+                  selectedProjectId,
+                  selectedProjectId === 7 ? 22 : selectedProjectId === 8 ? 23 : 24
+                )
+              }
+            >
+              Select workspace
+            </button>
+            <button
+              type="button"
+              data-testid="open-removal-history"
+              onClick={() =>
+                void current.openRuntimeTask({
+                  deviceId: 'device-1',
+                  workspacePath: '/workspace/project-alpha',
+                  taskId,
+                })
+              }
+            >
+              Open history
+            </button>
+            <button
+              type="button"
+              data-testid="remove-open-runtime-project"
+              onClick={() => void current.removeProject(7)}
+            >
+              Remove project
+            </button>
+          </>
+        )
+      }
+      const view = renderWorkbench(<RemovalProbe />, services)
+      try {
+        await waitFor(() => expect(current.state.runtimeWork?.projects).toHaveLength(3))
+        await userEvent.click(screen.getByTestId('select-removal-workspace'))
+        await userEvent.click(screen.getByTestId('open-removal-history'))
+        await waitFor(() => expect(current.state.currentProject?.id).toBe(selectedProjectId))
+        expect(current.state.currentRuntimeTask?.taskId).toBe(taskId)
+        expect(current.state.standaloneWorkspacePath).toBeNull()
+        expect(current.state.selectedDeviceWorkspaceId).not.toBeNull()
+        const readsBeforeRemoval = runtimeWorkApi.listRuntimeWork.mock.calls.length
+        await userEvent.click(screen.getByTestId('remove-open-runtime-project'))
+        await waitFor(() =>
+          expect(current.state.runtimeWork?.projects.map(item => item.project.id)).toEqual([9])
+        )
+        expect(current.state.runtimeWork?.chats).toEqual([])
+        expect(current.state.runtimeWork?.totalTasks).toBe(1)
+        expect(current.state.currentProject?.id ?? null).toBe(selectedProjectId === 9 ? 9 : null)
+        expect(current.state.currentRuntimeTask?.taskId ?? null).toBe(
+          selectedProjectId === 9 ? taskId : null
+        )
+        expect(current.state.selectedDeviceWorkspaceId).toBe(selectedProjectId === 9 ? 24 : null)
+        expect(current.state.standaloneWorkspacePath).toBeNull()
+        expect(
+          parseRuntimeTaskRoute(window.location.pathname, window.location.search)?.taskId ?? null
+        ).toBe(selectedProjectId === 9 ? taskId : null)
+        expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(readsBeforeRemoval)
+      } finally {
+        view.unmount()
+      }
+    }
+  )
+
   test('removes an offline remote project only from the local Codex index', async () => {
     const offlineRemoteRuntimeWork = createRuntimeWork({
       projects: [
