@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { issueCommentFormSelector } from '../modules/issue-comment-selectors.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { storyUntil } from '../modules/stand-in-source-story-evidence.mjs'
 import { createIssueDelegationModel } from '../modules/issue-delegation-model.mjs'
@@ -117,7 +118,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         `${activity} [data-testid="cloud-task-activity-reply-toggle-${rows.find(row => row.body === RESULT).id}"]`
       )
       await control.command('waitFor', '[data-testid="issue-reply-composer"]')
-      const form = `${activity} [data-testid="task-comment-form"]`
+      const form = `[data-workspace-tab-content][aria-hidden="false"] ${issueCommentFormSelector(issue.id)}`
       await control.command('fill', `${form} [data-testid="cloud-task-activity-composer"]`, {
         value: SIMPLE,
       })

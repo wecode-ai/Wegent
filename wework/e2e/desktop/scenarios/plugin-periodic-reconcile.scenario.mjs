@@ -76,6 +76,38 @@ function pluginRuntime(plugin) {
   )
 }
 
+// Waiting for another Runtime's safe window can cross this Runtime's timer.
+// Refresh ordering metadata only after its observed generation is acknowledged.
+export async function settleRetainedPluginBaseline(target, retained, timeoutMs) {
+  return until(
+    async () => {
+      const plugin = await materializedPlugin(target.home, retained.installedId)
+      assert.deepEqual(
+        pluginRuntime(plugin),
+        pluginRuntime(target.retainedBefore),
+        'Reconcile window alignment altered the retained plugin runtime'
+      )
+      const request = latestPluginSyncRequest(
+        target.observation.capabilities.filter(value =>
+          value.pluginIds.includes(String(retained.installedId))
+        )
+      )
+      return {
+        plugin,
+        request,
+        acknowledgement: request
+          ? acknowledgedPluginGeneration(target.observation, plugin, retained.installedId, request)
+          : null,
+      }
+    },
+    value =>
+      value.acknowledgement?.success === true &&
+      value.plugin.plugin_sync_generation === value.request.pluginSync.generation,
+    `${target.kind} retained plugin baseline did not settle after window alignment`,
+    timeoutMs
+  )
+}
+
 // Only the selected real Socket.IO change frame is withheld. MySQL, APIs,
 // Electron, IPC, Executor, package storage and the timer remain real.
 export async function createDesktopScenario({
@@ -452,6 +484,16 @@ export async function createDesktopScenario({
         capturedAt: Date.now(),
       }
       target.baseline.scheduledAt = await waitForSafeReconcileWindow(target)
+    }
+    for (const target of targets) {
+      const settled = await settleRetainedPluginBaseline(target, retained, workbenchReadyTimeoutMs)
+      target.baseline.retained = settled.plugin
+      evidence.push({
+        case: 'retained-plugin-baseline-acknowledged-after-window-alignment',
+        target: target.kind,
+        generation: settled.plugin.plugin_sync_generation,
+        acknowledgement: settled.acknowledgement,
+      })
     }
     missedInstalledId = item.installedId
     const componentStates = { [`skill:${item.slug}`]: false }

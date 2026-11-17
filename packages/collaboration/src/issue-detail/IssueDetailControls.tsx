@@ -14,6 +14,61 @@ import { Check, Search } from "lucide-react";
 import type { CollaborationPriority, CollaborationStatus } from "../types";
 import { useCollaborationPortalTheme } from "../theme";
 
+export function IssueDetailCollaboratorPicker({
+  value,
+  members,
+  onChange,
+  onAdd,
+  busy,
+  label,
+  addLabel,
+  compact = false,
+  className,
+}: {
+  value: number | null;
+  members: ReadonlyArray<{ user_id: number; user_name: string }>;
+  onChange(value: number | null): void;
+  onAdd(): void;
+  busy: boolean;
+  label: string;
+  addLabel: string;
+  compact?: boolean;
+  className?: string;
+}) {
+  const desktopHeight = compact ? "md:h-8" : "md:h-9";
+  return (
+    <div className={`flex items-center gap-2 ${className ?? ""}`}>
+      <select
+        data-testid="cloud-todo-collaborator-select"
+        aria-label={label}
+        value={value ?? ""}
+        onChange={(event) =>
+          onChange(
+            event.target.value === "" ? null : Number(event.target.value),
+          )
+        }
+        className={`h-11 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-text-muted ${desktopHeight}`}
+      >
+        <option value="">{label}</option>
+        {members.map((member) => (
+          <option key={member.user_id} value={member.user_id}>
+            {member.user_name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        data-testid="cloud-todo-confirm-collaborator"
+        disabled={value === null || busy}
+        onClick={onAdd}
+        className={`h-11 shrink-0 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-40 ${desktopHeight}`}
+      >
+        {addLabel}
+      </button>
+    </div>
+  );
+}
+
 export interface IssueDetailSelectProps<TValue extends string> {
   value: TValue;
   options: Array<{ value: TValue; label: string }>;
@@ -234,7 +289,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
           }}
           className={`${portalTheme.className} z-system-popover flex max-h-[min(320px,var(--radix-popover-content-available-height))] w-72 flex-col overflow-hidden rounded-xl border border-border bg-background p-1.5 text-text-primary shadow-lg ${contentClassName ?? ""}`}
         >
-          <label className="flex h-8 shrink-0 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-muted">
+          <label className="flex h-11 shrink-0 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-secondary md:h-8">
             <Search className="h-3.5 w-3.5 shrink-0" />
             <input
               ref={searchInputRef}
@@ -243,7 +298,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
               onChange={(event) => setQuery(event.target.value)}
               placeholder={searchPlaceholder}
               aria-label={searchPlaceholder}
-              className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+              className="h-full min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary"
             />
           </label>
           <div
@@ -279,7 +334,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                   ) : null}
                   {showGroup ? (
                     <p
-                      className={`px-2.5 pb-1 pt-2 text-xs font-medium text-text-muted ${option.section ? "pl-5" : ""}`}
+                      className={`px-2.5 pb-1 pt-2 text-xs font-medium text-text-secondary ${option.section ? "pl-5" : ""}`}
                     >
                       {option.group}
                     </p>
@@ -293,7 +348,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                       onChange(option.value);
                       setOpen(false);
                     }}
-                    className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted ${option.section ? "pl-7" : ""} ${
+                    className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted md:min-h-9 ${option.section ? "pl-7" : ""} ${
                       option.value === value ? "bg-muted font-medium" : ""
                     }`}
                   >
@@ -315,7 +370,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                           return next;
                         })
                       }
-                      className="flex min-h-9 w-full items-center rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                      className="flex min-h-11 w-full items-center rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-9"
                     >
                       {showAllLabel?.(option.group, totalInGroup)}
                     </button>
@@ -324,7 +379,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
               );
             })}
             {visibleOptions.length === 0 ? (
-              <p className="px-3 py-6 text-center text-xs text-text-muted">
+              <p className="px-3 py-6 text-center text-xs text-text-secondary">
                 {emptyLabel}
               </p>
             ) : null}
@@ -340,7 +395,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
                     setOpen(false);
                     action.onSelect();
                   }}
-                  className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
+                  className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-9"
                 >
                   {action.icon ? (
                     <span

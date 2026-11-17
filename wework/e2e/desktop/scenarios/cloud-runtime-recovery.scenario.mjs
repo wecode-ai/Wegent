@@ -90,6 +90,8 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       await existing.verify(control)
+      // The base recovery restarts Backend and waits for the App device only.
+      await cloud.waitForDevice(CLOUD_DEVICE_ID, cloud.remoteExecutorLogPath)
       active = true
       const request = (path, body) =>
         fetchJson(`${cloud.backendUrl}${path}`, {
