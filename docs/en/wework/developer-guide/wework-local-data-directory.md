@@ -93,9 +93,10 @@ Opening an initialized `data/tasks.sqlite` checks the current schema and default
 without waiting for the task-store initialization mutex or resetting WAL mode. First creation,
 schema migration and default-project repair remain serialized when they modify data.
 
-Reading assistant settings normalizes legacy values and binds the current device in memory;
-it neither starts a SQLite write transaction nor treats a read as a save. Explicit saves retain
-transactional version, permission and device validation and persist normalized settings.
+UI assistant settings use one read-only WAL snapshot, normalizing legacy values and binding
+the current device in memory. Execution-owned reconciliation reserves a writer only for actual
+legacy migrations or device rebinding and re-reads transactionally. Explicit saves retain version,
+permission and device validation. Legacy roles have stable identities across views and migration.
 Refreshing an existing code project reads its existence and archive state without filling in
 execution metadata; importing a new project remains a write. Reading the model picker does not
 write custom catalogs, synchronize creation profiles or wait for a Codex restart. Execution
@@ -108,3 +109,5 @@ while a real database write transaction remains open, checks project, task and a
 and verifies saving after release. It never modifies a personal database.
 
 Task updates publish their index state before recording telemetry outside the index lock. SQLite waits cannot hold the task-list index mutex. Telemetry reads filter retention and queue limits in SQL; append and configuration writes own cleanup.
+
+Native quota account checks run outside the task send gate; state publication reacquires it and checks execution ownership, so cancellation does not wait for account reads.

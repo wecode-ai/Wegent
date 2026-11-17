@@ -25,9 +25,7 @@ pub(super) fn snapshot(link: &RuntimeTaskLink) -> Option<Observation> {
     ) {
         return None;
     }
-    let Some(user) = origin["userId"].as_i64() else {
-        return None;
-    };
+    let user = origin["userId"].as_i64()?;
     let result = match (link.status.as_str(), link.turn_status.as_deref()) {
         ("cancelled", _) | (_, Some("interrupted")) => Some("cancelled"),
         ("failed", _) | (_, Some("failed")) => Some("failure"),
