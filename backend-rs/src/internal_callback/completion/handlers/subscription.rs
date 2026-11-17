@@ -15,6 +15,7 @@ use serde_json::Value;
 use crate::background_jobs::subscription::{
     completion,
     model::{self, Execution},
+    state,
 };
 use crate::executor_manager::{ExecutorManager, SandboxLookup};
 use crate::internal_callback::completion::Completion;
@@ -52,6 +53,7 @@ pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
     let mysql = ctx
         .mysql
         .route(crate::task_routing::ByTaskId(event.task_id as u64));
+    let mut reached_status_write = false;
     let outcome = mysql
         .with_transaction(async |transaction| {
             let Some(execution) = find_execution_by_task_id(transaction, event).await? else {
@@ -65,40 +67,137 @@ pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
                 return Ok(None);
             };
             let result = completion::terminal_result(event);
+            reached_status_write = true;
             let applied = completion::apply_status(transaction, event, &execution, &result).await?;
-            Ok(Some((applied, result)))
+            Ok(Some((execution, applied, result)))
+        })
+        .await;
+    let failure_message: String;
+    let failed_event: TaskCompletedEvent<'_>;
+    let (event, execution, result) = match outcome {
+        Ok(Some((_, Some(applied), result))) => (event, applied, result),
+        Ok(Some((execution, None, _))) => {
+            // A cancel from the subscription API marks the execution CANCELLED
+            // before the executor reports the end of the run, so this event is
+            // the first chance to release the container.
+            if model::terminal(&execution.status) && releases_executor(event.status) {
+                release_finished_executor(ctx, &mysql, &execution, event.task_id).await;
+            }
+            return;
+        }
+        Ok(None) => return,
+        Err(error) if reached_status_write => {
+            // Left RUNNING, the execution would wait for the stale sweep, which
+            // reports a timeout and sends nothing. Fail it with the real cause
+            // so the failure notifications still go out.
+            tracing::error!(%error, task_id=event.task_id, "could not save the run result");
+            failure_message = unsaved_result_message(&error);
+            let Some(execution) =
+                fail_unsaved_result(ctx, &mysql, event, &failure_message).await
+            else {
+                return;
+            };
+            failed_event = TaskCompletedEvent {
+                status: "FAILED",
+                error: Some(&failure_message),
+                ..*event
+            };
+            let result = completion::TerminalResult {
+                status: "FAILED",
+                silent: false,
+                summary: None,
+                notification_summary: None,
+            };
+            (&failed_event, execution, result)
+        }
+        Err(error) => {
+            tracing::error!(%error, task_id=event.task_id, "task completion transaction failed; cleanup rolled back");
+            return;
+        }
+    };
+    // The status is committed, so the container is released before the
+    // post-status notifications (`task_completion_handler.py`): a failed
+    // notification or inbox writeback must not keep it until the stale sweep.
+    if releases_executor(result.status) {
+        release_finished_executor(ctx, &mysql, &execution, event.task_id).await;
+    }
+    if let Err(error) = completion::after_status(ctx, event, &execution, &result).await {
+        tracing::error!(%error, task_id=event.task_id, "subscription completion failed")
+    }
+}
+
+/// A finished run never reuses its container, whatever its terminal status.
+fn releases_executor(status: &str) -> bool {
+    matches!(
+        status,
+        "COMPLETED" | "COMPLETED_SILENT" | "FAILED" | "CANCELLED"
+    )
+}
+
+/// The error the execution is failed with when its result could not be saved;
+/// the cause is cut to 300 characters.
+fn unsaved_result_message(cause: &impl std::fmt::Display) -> String {
+    let cause: String = cause.to_string().chars().take(300).collect();
+    format!("The run finished but its result could not be saved: {cause}")
+}
+
+/// Fallback when the status write failed: mark the execution FAILED, without
+/// the result, in a fresh transaction (`task_completion_handler.py`).
+async fn fail_unsaved_result<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    mysql: &M,
+    event: &TaskCompletedEvent<'_>,
+    message: &str,
+) -> Option<Execution> {
+    let outcome = mysql
+        .with_transaction(async |transaction| {
+            let Some(execution) = find_execution_by_task_id(transaction, event).await? else {
+                return Ok(None);
+            };
+            let applied =
+                state::transition_in(transaction, execution.id, "FAILED", None, Some(message))
+                    .await?;
+            Ok(Some((execution, applied)))
         })
         .await;
     match outcome {
-        Ok(Some((Some(execution), result))) => {
-            match completion::after_status(ctx, event, &execution, &result).await {
-                Ok(Some(status)) if matches!(status.as_str(), "COMPLETED" | "COMPLETED_SILENT") => {
-                    if let Err(error) = mysql
-                        .with_transaction(async |tx| {
-                            cleanup_completed_managed_executor(
-                                tx,
-                                ctx.tables,
-                                ctx.executor_manager,
-                                &execution,
-                                event.task_id,
-                            )
-                            .await
-                        })
-                        .await
-                    {
-                        tracing::warn!(%error, task_id=event.task_id, "subscription runtime cleanup failed");
-                    }
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    tracing::error!(%error, task_id=event.task_id, "subscription completion failed")
-                }
+        Ok(Some((_, Some(applied)))) => Some(applied),
+        Ok(Some((execution, None))) => {
+            if model::terminal(&execution.status) && releases_executor(event.status) {
+                release_finished_executor(ctx, mysql, &execution, event.task_id).await;
             }
+            None
         }
-        Ok(_) => {}
+        Ok(None) => None,
         Err(error) => {
-            tracing::error!(%error, task_id=event.task_id, "task completion transaction failed; cleanup rolled back")
+            tracing::error!(%error, task_id=event.task_id, "could not mark the run FAILED");
+            None
         }
+    }
+}
+
+/// Release a finished run's executor in its own transaction; a failure is
+/// logged and leaves the container to the stale sweep.
+async fn release_finished_executor<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    mysql: &M,
+    execution: &Execution,
+    task_id: i64,
+) {
+    if let Err(error) = mysql
+        .with_transaction(async |tx| {
+            cleanup_finished_subscription_executor(
+                tx,
+                ctx.tables,
+                ctx.executor_manager,
+                execution,
+                task_id,
+            )
+            .await
+        })
+        .await
+    {
+        tracing::warn!(%error, task_id, "subscription runtime cleanup failed");
     }
 }
 
@@ -207,11 +306,14 @@ async fn cleanup_auto_delete_task_executor<T: MysqlTransaction>(
     Ok(())
 }
 
-/// `_cleanup_completed_managed_subscription_executor`
-/// (`task_completion_handler.py:336-370`): resolve the execution's subscription
-/// first — a missing subscription skips the runtime cleanup — then tear the
-/// task's runtime down.
-async fn cleanup_completed_managed_executor<T: MysqlTransaction>(
+/// `_cleanup_finished_managed_subscription_executor`
+/// (`task_completion_handler.py`): resolve the execution's subscription first
+/// — a missing subscription skips the runtime cleanup — then tear the task's
+/// runtime down. It runs for every terminal status: a finished run never
+/// reuses its container, and on a node with 2 to 4 slots two cancelled runs
+/// were enough to leave none free. Cleanup is idempotent: once the subtasks
+/// are marked `executor_deleted_at`, the lookup finds none.
+async fn cleanup_finished_subscription_executor<T: MysqlTransaction>(
     transaction: &mut T,
     tables: Tables,
     executor_manager: &ExecutorManager,
@@ -444,6 +546,32 @@ mod tests {
     use super::*;
 
     use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, RedisResult, RedisValues};
+
+    /// Cancelled and failed runs release their container like completed ones;
+    /// on a node with 2 to 4 slots, two cancelled runs left none free.
+    #[test]
+    fn every_terminal_status_releases_the_executor() {
+        for status in ["COMPLETED", "COMPLETED_SILENT", "FAILED", "CANCELLED"] {
+            assert!(releases_executor(status), "{status}");
+        }
+        for status in ["PENDING", "RUNNING", ""] {
+            assert!(!releases_executor(status), "{status}");
+        }
+    }
+
+    #[test]
+    fn the_unsaved_result_error_keeps_300_characters_of_the_cause() {
+        let message = unsaved_result_message(&"界".repeat(400));
+        let cause = message
+            .strip_prefix("The run finished but its result could not be saved: ")
+            .expect("prefix");
+        assert_eq!(cause.chars().count(), 300);
+        assert_eq!(
+            unsaved_result_message(&"Data too long for column 'result'"),
+            "The run finished but its result could not be saved: \
+             Data too long for column 'result'"
+        );
+    }
 
     /// The cleanup path issues no Redis command; the completion context still
     /// requires a Redis handle.

@@ -20,6 +20,7 @@ Usage:
     event_bus.subscribe(TaskCompletedEvent, handler.on_task_completed)
 """
 
+import dataclasses
 import logging
 from typing import Any, Dict, Optional
 
@@ -98,6 +99,13 @@ class SubscriptionTaskCompletionHandler:
                         f"[TaskCompletionHandler] Execution {execution.id} already in "
                         f"terminal state {current_status.value}, skipping update"
                     )
+                    # cancel_execution marks the execution CANCELLED before the
+                    # executor reports the end of the run, so this event is the
+                    # first chance to release the container.
+                    if event.status in {"COMPLETED", "FAILED", "CANCELLED"}:
+                        await self._cleanup_finished_subscription_executor(
+                            db, execution, event.task_id
+                        )
                     return
 
                 # Extract result summary from event
@@ -125,14 +133,57 @@ class SubscriptionTaskCompletionHandler:
                     f"is_silent_exit={is_silent_exit}"
                 )
 
-                self.execution_manager.update_execution_status(
-                    db,
-                    execution_id=execution.id,
-                    status=status,
-                    result_summary=stored_result_summary,
-                    error_message=event.error,
-                    skip_notifications=True,  # We'll handle notifications separately
-                )
+                try:
+                    self.execution_manager.update_execution_status(
+                        db,
+                        execution_id=execution.id,
+                        status=status,
+                        result_summary=stored_result_summary,
+                        error_message=event.error,
+                        skip_notifications=True,  # We'll handle notifications separately
+                    )
+                except Exception as exc:
+                    # Left RUNNING, the execution would wait for the stale sweep,
+                    # which reports a timeout and sends nothing. Fail it with
+                    # the real cause so the failure notifications still go out.
+                    db.rollback()
+                    logger.exception(
+                        "[TaskCompletionHandler] Could not save the result of "
+                        "execution %s (result_summary_length=%s)",
+                        execution.id,
+                        len(stored_result_summary or ""),
+                    )
+                    cause = getattr(exc, "orig", None) or exc
+                    error = (
+                        "The run finished but its result could not be saved: "
+                        f"{type(cause).__name__}: {str(cause)[:300]}"
+                    )
+                    if not self.execution_manager.update_execution_status(
+                        db,
+                        execution_id=execution.id,
+                        status=BackgroundExecutionStatus.FAILED,
+                        error_message=error,
+                        skip_notifications=True,
+                    ):
+                        if event.status in {"COMPLETED", "FAILED", "CANCELLED"}:
+                            await self._cleanup_finished_subscription_executor(
+                                db, execution, event.task_id
+                            )
+                        return
+                    execution.status = BackgroundExecutionStatus.FAILED.value
+                    status = BackgroundExecutionStatus.FAILED
+                    is_silent_exit = False
+                    event = dataclasses.replace(event, status="FAILED", error=error)
+
+                if status in (
+                    BackgroundExecutionStatus.COMPLETED,
+                    BackgroundExecutionStatus.COMPLETED_SILENT,
+                    BackgroundExecutionStatus.FAILED,
+                    BackgroundExecutionStatus.CANCELLED,
+                ):
+                    await self._cleanup_finished_subscription_executor(
+                        db, execution, event.task_id
+                    )
 
                 # Write back result to inbox message if this is an inbox-triggered execution
                 # inbox_message_id is NOT NULL DEFAULT 0; 0 means no inbox message
@@ -157,14 +208,6 @@ class SubscriptionTaskCompletionHandler:
                             f"{wb_err}",
                             exc_info=True,
                         )
-
-                if status in (
-                    BackgroundExecutionStatus.COMPLETED,
-                    BackgroundExecutionStatus.COMPLETED_SILENT,
-                ):
-                    await self._cleanup_completed_managed_subscription_executor(
-                        db, execution, event.task_id
-                    )
 
                 # Skip notifications for silent exits
                 if is_silent_exit:
@@ -341,13 +384,19 @@ class SubscriptionTaskCompletionHandler:
             "auto-delete task",
         )
 
-    async def _cleanup_completed_managed_subscription_executor(
+    async def _cleanup_finished_subscription_executor(
         self,
         db: Session,
         execution: BackgroundExecution,
         task_id: int,
     ) -> None:
-        """Delete executors immediately for completed subscription tasks."""
+        """Delete the executors as soon as a subscription run ends.
+
+        The cleanup applies whatever the outcome was: a finished run never
+        reuses its container (each run gets a new task), so keeping it only
+        holds a node slot. Cleanup is idempotent: once the subtasks are marked
+        executor_deleted_at, the runtime lookup finds nothing and returns.
+        """
         subscription = (
             db.query(Kind)
             .filter(
@@ -378,6 +427,10 @@ class SubscriptionTaskCompletionHandler:
             task_id,
             f"subscription {execution.subscription_id}",
         )
+
+    _cleanup_completed_managed_subscription_executor = (
+        _cleanup_finished_subscription_executor
+    )
 
     async def _cleanup_task_runtime(
         self,

@@ -31,6 +31,7 @@ use crate::background_jobs::subscription::model::{self, Execution};
 use crate::background_jobs::subscription::state;
 use crate::background_jobs::subscription::state::write_statistics;
 use crate::internal_callback::completion::{Completion, Tables, TaskCompletedEvent};
+use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
 
 /// The completion issues no Redis command before a status change is applied.
 struct NoRedis;
@@ -603,5 +604,158 @@ async fn the_post_commit_block_reloads_the_execution_first() {
         mysql.statements(),
         vec![normalize(&model::execution_by_id())],
         "only the reload runs before the block stops"
+    );
+}
+
+fn execution_row(status: &str) -> Row {
+    vec![
+        ("id", SqlValue::I64(2_539_501)),
+        ("user_id", SqlValue::I64(3650)),
+        ("subscription_id", SqlValue::I64(264_564)),
+        ("task_id", SqlValue::I64(501_652_180_355_339)),
+        ("inbox_message_id", SqlValue::I64(0)),
+        ("trigger_reason", SqlValue::Text(String::new())),
+        ("prompt", SqlValue::Text(String::new())),
+        ("status", SqlValue::Text(status.to_string())),
+        ("result_summary", SqlValue::Text(String::new())),
+        ("error_message", SqlValue::Text(String::new())),
+        ("version", SqlValue::I32(0)),
+        ("started_at", SqlValue::DateTime),
+        ("completed_at", SqlValue::DateTime),
+        ("created_at", SqlValue::DateTime),
+        ("updated_at", SqlValue::DateTime),
+    ]
+}
+
+fn subscription_row() -> Row {
+    vec![
+        ("id", SqlValue::I64(264_564)),
+        ("user_id", SqlValue::I64(3650)),
+        ("name", SqlValue::Text("daily-briefing".to_string())),
+        (
+            "json",
+            SqlValue::Bytes(
+                serde_json::to_vec(&serde_json::json!({
+                    "apiVersion": "agent.wegent.io/v1",
+                    "kind": "Subscription",
+                    "spec": { "displayName": "Daily Briefing" },
+                    "status": { "state": "Available", "executionCount": 1 },
+                    "_internal": { "execution_count": 1 }
+                }))
+                .unwrap(),
+            ),
+        ),
+        ("is_active", SqlValue::I8(1)),
+    ]
+}
+
+/// When `cancel_execution` already marked the execution `CANCELLED` before the
+/// executor's terminal `CANCELLED` callback arrives, `handle_task_completed`
+/// skips the status update and notifications, yet still opens the cleanup
+/// transaction to release the subscription's runtime.
+#[tokio::test]
+async fn an_already_cancelled_execution_still_runs_the_executor_cleanup_transaction() {
+    let server = MysqlRows::start_results(|sql| {
+        if sql.contains("FROM background_executions") && sql.contains("ORDER BY") {
+            let row = execution_row("CANCELLED");
+            return (row.clone(), vec![row]);
+        }
+        if sql.contains("FROM kinds") && sql.contains("Kind.kind = 'Subscription'")
+            || (sql.contains("FROM kinds") && sql.contains("'Subscription'"))
+        {
+            let row = subscription_row();
+            return (row.clone(), vec![row]);
+        }
+        (vec![("id", SqlValue::I64(0))], Vec::new())
+    })
+    .await;
+    let redis = NoRedis;
+    let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
+        .expect("executor-manager client");
+    let ctx = Completion {
+        app: None,
+        mysql: &server.mysql,
+        redis: &redis,
+        tables: tables(),
+        executor_manager: &manager,
+    };
+    let execution = running_execution();
+    let event = TaskCompletedEvent {
+        status: "CANCELLED",
+        ..completed_event(&execution)
+    };
+
+    handle_task_completed(&ctx, &event).await;
+
+    let queries = server.queries();
+    assert!(
+        !queries
+            .iter()
+            .any(|q| q.starts_with("UPDATE background_executions")),
+        "an already-terminal execution must not be updated: {queries:?}"
+    );
+    assert!(
+        queries
+            .iter()
+            .any(|q| q.contains("FROM kinds") && q.contains("Subscription")),
+        "the terminal event must still trigger subscription runtime cleanup: {queries:?}"
+    );
+    assert!(
+        queries
+            .iter()
+            .any(|q| q.contains("FROM `tasks_0030`") && q.contains("kind = 'Task'")),
+        "cleanup must probe the subscription task inside its transaction: {queries:?}"
+    );
+}
+
+/// `fail_unsaved_result` opens a fresh transaction to mark the execution
+/// `FAILED` when the initial status commit failed, and if a concurrent writer
+/// already moved the execution to a terminal state, it still triggers the
+/// runtime cleanup rather than leaking the container.
+#[tokio::test]
+async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished_the_run() {
+    let redis = NoRedis;
+    let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
+        .expect("executor-manager client");
+    let mut execution = running_execution();
+    execution.status = "CANCELLED".to_string();
+    let event = TaskCompletedEvent {
+        status: "COMPLETED",
+        ..completed_event(&execution)
+    };
+    let server_cancel = MysqlRows::start_results(|sql| {
+        if sql.contains("FROM background_executions") && sql.contains("ORDER BY") {
+            let row = execution_row("CANCELLED");
+            return (row.clone(), vec![row]);
+        }
+        if sql.contains("FROM kinds") && sql.contains("Subscription") {
+            let row = subscription_row();
+            return (row.clone(), vec![row]);
+        }
+        (vec![("id", SqlValue::I64(0))], Vec::new())
+    })
+    .await;
+    let ctx_cancel = Completion {
+        app: None,
+        mysql: &server_cancel.mysql,
+        redis: &redis,
+        tables: tables(),
+        executor_manager: &manager,
+    };
+
+    let fallback = super::fail_unsaved_result(
+        &ctx_cancel,
+        &server_cancel.mysql,
+        &event,
+        "The run finished but its result could not be saved: Data too long",
+    )
+    .await;
+    assert!(fallback.is_none());
+    let queries = server_cancel.queries();
+    assert!(
+        queries
+            .iter()
+            .any(|q| q.contains("FROM `tasks_0030`") && q.contains("kind = 'Task'")),
+        "concurrent terminal state during fallback must still release the executor: {queries:?}"
     );
 }
