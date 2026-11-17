@@ -737,11 +737,12 @@ fn interrupting_a_pending_quota_read_admits_the_replacement_without_stop_timeout
         assert_eq!(sent["status"], "queued", "{sent}");
         tokio::time::timeout(Duration::from_secs(2), running).await.unwrap().unwrap();
         assert!(!handler.is_active_local_task("waiting"));
-        let scheduler = handler.turn_scheduler.lock().unwrap();
-        let replacement = scheduler.queued_turns.iter().find(|turn| turn.local_task_id == "waiting").unwrap();
-        assert_eq!(replacement.request.prompt, json!("replacement"));
-        assert!(!replacement.request.extra.contains_key(MARKER));
-        drop(scheduler);
+        {
+            let scheduler = handler.turn_scheduler.lock().unwrap();
+            let replacement = scheduler.queued_turns.iter().find(|turn| turn.local_task_id == "waiting").unwrap();
+            assert_eq!(replacement.request.prompt, json!("replacement"));
+            assert!(!replacement.request.extra.contains_key(MARKER));
+        }
         handler.codex_app_server.restart().await;
         let _ = fs::remove_dir_all(root);
     });
