@@ -195,6 +195,7 @@ export function createRuntimeImQuestions({ workspacePath, uiTimeoutMs, modelResp
         assert.equal(created.accepted, true, created.error)
         return taskId
       }
+      control.performance.recordExternalServiceProtocols(['dingtalk'])
       api = createServer(async (req, res) => {
         try {
           const body = await readRequestBody(req)

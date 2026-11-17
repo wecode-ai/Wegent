@@ -695,6 +695,7 @@ export async function createDesktopScenario({
           'plugin-account-auth-dws',
           async () => {
             await verifyDwsCloudAccount({
+              control,
               cloud,
               resultDir,
               executorHome,
