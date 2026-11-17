@@ -89,7 +89,8 @@ export function CollaborationPlatformNavigation({
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, [setMobileNavigationOpen]);
-  const host: CollaborationPlatformHostAdapter = {
+  const host = sourceHost;
+  const navigationHost: CollaborationPlatformHostAdapter = {
     ...sourceHost,
     navigate: (location) => {
       closeNavigation();
@@ -158,6 +159,9 @@ export function CollaborationPlatformNavigation({
   const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
   const [retryingNavigation, setRetryingNavigation] = useState(false);
   const fullSidebar = host.capabilities.sidebarPresentation !== "context";
+  const projectSettings = Boolean(
+    host.location.projectId && host.location.projectView === "manage",
+  );
   // Expansion follows the selected workspace during render so it cannot land
   // after the user has already clicked the toggle that was just rendered.
   if (autoExpandedWorkspaceSelection !== autoExpandedWorkspaceId) {
@@ -175,7 +179,7 @@ export function CollaborationPlatformNavigation({
     workspaceId: string,
     collaborationDomain: CollaborationDomain,
   ) =>
-    host.navigate({
+    navigationHost.navigate({
       platformView: "spaces",
       collaborationDomain,
       workspaceId,
@@ -280,7 +284,7 @@ export function CollaborationPlatformNavigation({
                 icon: Settings,
                 testId: "collaboration-workspace-nav-settings",
                 onSelect: () => {
-                  host.navigate({
+                  navigationHost.navigate({
                     platformView: "spaces",
                     workspaceId: candidate.id,
                     collaborationDomain: candidate.location,
@@ -409,7 +413,7 @@ export function CollaborationPlatformNavigation({
               <ProjectNavigationRow
                 key={project.id}
                 project={project}
-                host={host}
+                host={navigationHost}
                 messages={messages}
                 onArchiveProject={onArchiveProject}
               />
@@ -421,20 +425,29 @@ export function CollaborationPlatformNavigation({
   };
   return (
     <aside
-      className={`collaboration-platform-sidebar collaboration-platform-sidebar-${host.capabilities.sidebarPresentation ?? "full"}${mobileNavigationOpen ? " is-mobile-open" : ""}`}
+      className={`collaboration-platform-sidebar collaboration-platform-sidebar-${host.capabilities.sidebarPresentation ?? "full"}${projectSettings ? " collaboration-platform-sidebar-settings" : ""}${mobileNavigationOpen ? " is-mobile-open" : ""}`}
       data-testid="collaboration-platform-sidebar"
+      data-navigation-expanded={mobileNavigationOpen}
     >
-      {fullSidebar ? (
+      {fullSidebar || projectSettings ? (
         <button
           ref={toggleRef}
           type="button"
-          className="collaboration-mobile-navigation-toggle"
-          data-testid="collaboration-navigation-toggle"
+          className={`collaboration-mobile-navigation-toggle${projectSettings ? " collaboration-settings-navigation-toggle" : ""}`}
+          data-testid={
+            projectSettings
+              ? "collaboration-settings-navigation-toggle"
+              : "collaboration-navigation-toggle"
+          }
           aria-expanded={mobileNavigationOpen}
           aria-controls={navigationId}
           onClick={() => setMobileNavigationOpen(!mobileNavigationOpen)}
         >
-          <span>{messages.navigation}</span>
+          <span>
+            {projectSettings
+              ? messages.settingsNavigation
+              : messages.navigation}
+          </span>
           <ChevronRight aria-hidden="true" />
         </button>
       ) : null}
@@ -451,7 +464,7 @@ export function CollaborationPlatformNavigation({
             </div>
             <CollaborationPrimaryNavigation
               domain={domain}
-              host={host}
+              host={navigationHost}
               messages={messages}
             />
           </>
@@ -538,7 +551,7 @@ export function CollaborationPlatformNavigation({
         {fullSidebar ? (
           <CollaborationManagementNavigation
             domain={domain}
-            host={host}
+            host={navigationHost}
             messages={messages}
           />
         ) : null}

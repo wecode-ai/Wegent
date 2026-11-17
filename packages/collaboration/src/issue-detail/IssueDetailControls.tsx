@@ -172,6 +172,8 @@ export interface IssueDetailSearchableSelectProps<TValue extends string> {
   contentClassName?: string
   modal?: boolean
   groupLimit?: number
+  open?: boolean
+  onOpenChange?(open: boolean): void
   showAllLabel?(group: string, count: number): string
   onChange(value: TValue): void
 }
@@ -220,12 +222,19 @@ export function IssueDetailSearchableSelect<TValue extends string>({
   modal = false,
   groupLimit,
   showAllLabel,
+  open: controlledOpen,
+  onOpenChange,
   onChange,
 }: IssueDetailSearchableSelectProps<TValue>) {
   const portalTheme = useCollaborationPortalTheme()
   const searchInputRef = useRef<HTMLInputElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const setOpen = (value: boolean) => {
+    setInternalOpen(value)
+    onOpenChange?.(value)
+  }
   useEscapeKey(() => setOpen(false), open, contentRef)
   const [activeValue, setActiveValue] = useState<string | null>(null)
   const [query, setQuery] = useState('')

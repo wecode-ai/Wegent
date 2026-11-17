@@ -452,19 +452,19 @@ function ScopedCollaborationTemplatePage({
           embedded={embedded}
           footerTarget={footerTarget}
           title={selected.document.spec.displayName}
-          closeLabel={m.close}
+          closeLabel={embedded ? m.backToTemplates : m.close}
           onClose={() => setSelected(null)}
           busy={busy}
           footer={
             <>
-              {!embedded && (
+              {(!embedded || !onDetailChange) && (
                 <button
                   type="button"
                   data-testid="template-detail-cancel"
                   disabled={busy}
                   onClick={() => setSelected(null)}
                 >
-                  {m.cancel}
+                  {embedded ? m.backToTemplates : m.cancel}
                 </button>
               )}
               {mode === 'marketplace' ? (
