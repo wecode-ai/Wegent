@@ -225,6 +225,16 @@ export function createDesktopScenario({
           row => JSON.parse(row.metadata).compacted === true,
           'Scheduled maintenance must compact expired event payloads'
         )
+        await until(
+          async () =>
+            database
+              .prepare(
+                "SELECT count(*) AS count FROM loop_items WHERE id IN ('history-expired-action','history-expired-route','history-legacy-expired-stand_in_event','history-legacy-expired-stand_in_action','history-legacy-expired-stand_in_route')"
+              )
+              .get().count,
+          count => count === 0,
+          'Scheduled maintenance must finish deleting expired actions, routes and legacy records'
+        )
         assert.equal(
           database
             .prepare(
