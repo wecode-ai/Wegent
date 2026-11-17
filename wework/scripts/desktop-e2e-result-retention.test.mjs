@@ -96,7 +96,7 @@ describe('desktop E2E result retention', () => {
     }
   )
 
-  test.each(['electron-logs', 'release-logs'])(
+  test.each(['electron-logs', 'release-logs', 'scenario-diagnostics'])(
     'preserves %s through runner and CI cleanup',
     async name => {
       const resultRoot = await temporaryRoot()

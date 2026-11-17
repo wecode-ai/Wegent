@@ -315,7 +315,12 @@ console.log('HOOK_WRITES_COMPLETE')
           uiTimeoutMs
         )
         if (installed) await rpc('runtime.hooks.delete', { pluginId })
-        if (!verified) await cp(root, join(resultDir, 'async-hooks-failure'), { recursive: true })
+        if (!verified) {
+          const diagnostics = join(resultDir, 'scenario-diagnostics')
+          await mkdir(diagnostics, { recursive: true })
+          await mkdir(join(root, 'logs'), { recursive: true })
+          await cp(join(root, 'logs'), join(diagnostics, 'async-hooks'), { recursive: true })
+        }
         await rm(root, { recursive: true, force: true })
       }
     },

@@ -22,6 +22,7 @@ const RETAINED_TOP_LEVEL_DIRECTORIES = new Set([
   'backend-rs-logs',
   'electron-logs',
   'release-logs',
+  'scenario-diagnostics',
 ])
 const TRANSIENT_TOP_LEVEL_FILES = new Set(['wegent-executor', 'wegent-executor.exe'])
 const TRANSIENT_TOP_LEVEL_ARCHIVE_PATTERN = /\.(?:tar(?:\.(?:gz|zst))?|tgz|zip)$/iu
