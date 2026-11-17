@@ -11,10 +11,47 @@ import {
   verifyTemplateDeletion,
   verifyTemplateDeletionPermissions,
 } from '../modules/template-deletion-flow.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
 const testId = name => scoped(`[data-testid="${name}"]`)
+const PROJECT_DIALOG =
+  '[data-testid="workspace-tab-content-fixed-board"] [data-testid="collaboration-project-create-dialog"]'
+
+export async function submitConfiguredTemplateProject(
+  control,
+  { projectName, uiTimeoutMs, workbenchReadyTimeoutMs, beforeSubmit }
+) {
+  await control.command('clickWhenEnabled', testId('project-create-template-configuration-apply'), {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('waitFor', testId('collaboration-project-create-confirm'), {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('fill', testId('collaboration-project-name-input'), {
+    value: projectName,
+  })
+  await beforeSubmit()
+  await control.command('clickWhenEnabled', testId('collaboration-project-create-confirm'), {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  // The form stays mounted while template resources are configured. Its footer
+  // can be hidden by configuration navigation before submission has completed.
+  await waitForValue(
+    () => control.command('getElementCount', PROJECT_DIALOG),
+    count => Number(count) === 0,
+    'Template project configuration did not finish',
+    workbenchReadyTimeoutMs
+  )
+  await control.command('waitFor', testId('cloud-project-header-title'), {
+    text: projectName,
+    timeoutMs: uiTimeoutMs,
+  })
+}
 
 export async function fillTemplateRoleBindings(control, count) {
   await control.command('waitFor', testId('template-customize-main'))
@@ -381,19 +418,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'Unbound roles did not block project creation'
       )
       await fillTemplateRoleBindings(control, 6)
-      await control.command('fill', testId('collaboration-project-name-input'), {
-        value: projectName,
+      await submitConfiguredTemplateProject(control, {
+        projectName,
+        uiTimeoutMs,
+        workbenchReadyTimeoutMs,
+        beforeSubmit: () => capture(control, '03-create-bindings'),
       })
-      await capture(control, '03-create-bindings')
-      await control.command('clickWhenEnabled', testId('collaboration-project-create-confirm'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      // Creation configures template resources before onCreated closes the form.
-      await control.command('waitFor', testId('collaboration-project-create-confirm'), {
-        visible: false,
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
-      await wait(control, 'cloud-project-header-title', projectName)
       await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
       await click(control, 'collaboration-project-settings-sharing')
       await wait(control, 'project-template-settings')
