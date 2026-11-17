@@ -403,11 +403,13 @@ fn quota_wait_protocol_checks_windows_and_rejects_changed_native_owners() {
     verify_quota_wait_protocol(false);
 }
 
+#[cfg(unix)]
 #[test]
 fn quota_interrupt_during_account_read_does_not_wait_for_the_send_gate() {
     verify_quota_wait_protocol(true);
 }
 
+#[cfg(unix)]
 fn verify_quota_wait_protocol(interrupt: bool) {
     use std::os::unix::fs::PermissionsExt;
     let _lock = crate::test_env::lock();
