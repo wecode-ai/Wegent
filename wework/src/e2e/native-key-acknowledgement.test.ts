@@ -96,3 +96,27 @@ test('acknowledges native input retargeted through a shadow host', async () => {
   })
   expect(vi.getTimerCount()).toBe(0)
 })
+
+test('requires every native key in a batch and rejects a missing final event', async () => {
+  vi.useFakeTimers()
+  const target = document.createElement('textarea')
+  let listener: ((event: KeyboardEvent) => void) | undefined
+  vi.spyOn(window, 'addEventListener').mockImplementation((type, callback) => {
+    if (type === 'keydown') listener = callback as (event: KeyboardEvent) => void
+  })
+  const acknowledged = vi.fn()
+  const result = sendNativeKeyAndWait(target, 'press', async () => {}, 2).then(acknowledged)
+  listener?.(nativeEvent(target))
+  for (let tick = 0; tick < 10; tick += 1) await Promise.resolve()
+  expect(acknowledged).not.toHaveBeenCalled()
+  listener?.(nativeEvent(target))
+  await result
+  expect(acknowledged).toHaveBeenCalledOnce()
+
+  const missing = sendNativeKeyAndWait(target, 'press', async () => {}, 2)
+  const rejected = expect(missing).rejects.toThrow('Native keydown did not reach its target')
+  listener?.(nativeEvent(target))
+  await vi.advanceTimersByTimeAsync(10_000)
+  await rejected
+  expect(vi.getTimerCount()).toBe(0)
+})

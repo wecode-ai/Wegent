@@ -102,6 +102,19 @@ export async function sendE2EText(
   requireE2EControl(environment)
   requireAvailableContents(contents)
   await focusInputContents(contents, focusWindow)
-  await contents.insertText(text)
+  // Chromium's insertText truncates multiline text in structured editors.
+  // Keep native Enter events, but avoid a renderer/host round trip per line.
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  for (const [index, line] of lines.entries()) {
+    requireAvailableContents(contents)
+    if (index > 0) await sendE2EKey(contents, 'Enter', focusWindow, environment, 'press', false)
+    if (line || lines.length === 1) await contents.insertText(line)
+    if (lines.length > 1) {
+      // Controlled editors must commit this native edit before the next one.
+      await contents.executeJavaScript(
+        'new Promise(resolve => requestAnimationFrame(() => resolve()))'
+      )
+    }
+  }
   return { backend: 'electron-insert-text', textLength: text.length }
 }

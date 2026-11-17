@@ -1007,10 +1007,14 @@ describe('Electron desktop E2E automation', () => {
       ).toEqual([
         ['e2e.focusMainWindow', undefined],
         ['e2e.pressKey', selectAll],
-        ['e2e.insertText', 'first'],
-        ['e2e.pressKey', 'Enter'],
-        ['e2e.insertText', 'second'],
+        ['e2e.insertText', 'first\nsecond'],
       ])
+      expect(nativeKey.sendNativeKeyAndWait).toHaveBeenLastCalledWith(
+        editor,
+        'press',
+        expect.any(Function),
+        1
+      )
       native.mockClear()
       await fillDesktopControlElement(editor, '')
       expect(native.mock.calls.map(([method, params]) => [method, params?.key])).toEqual([

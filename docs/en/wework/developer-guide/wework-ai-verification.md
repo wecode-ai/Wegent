@@ -240,6 +240,8 @@ The controller listens only on `127.0.0.1` and creates a single-use Bearer token
 
 ## Control protocol
 
+Rich-text `fill` selects text through a native shortcut, then sends lines and native Enter events sequentially within one host call. Each line waits for an editor frame, and the renderer acknowledges every Enter reaching its target before returning. Empty lines, Chinese text, and normalized line endings are preserved. Passing multiline text directly to Chromium `insertText` can retain only its first line in structured editors. The existing Electron CI runs `editor-native-input.test.mjs` against the real description editor, comparing Markdown and paragraph structure with individual native input, including 31 paragraphs. Business E2E assertions and deadlines remain unchanged.
+
 After startup, the WebView calls `/ready` and then short-polls `/commands`. The controller immediately returns `204` when the queue is empty; the WebView briefly throttles through `/control-tick` before polling again. After receiving a command, the WebView calls `/started` and `/results` in order to acknowledge execution and submit the final result.
 
 `ai:verify` and desktop E2E share this protocol, so endpoint and polling semantics must remain aligned when either side changes. Do not convert `/commands` to long polling: it conflicts with the WebView control loop, leaves later commands queued, and surfaces as repeated timeouts. The controller must also remove a timed-out command from the queue so a later poll cannot execute stale work.

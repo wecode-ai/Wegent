@@ -1848,15 +1848,12 @@ export async function fillDesktopControlElement(element: HTMLElement, value: str
       await pressKey('Backspace')
       return
     }
-    const lines = value.replace(/\r\n?/g, '\n').split('\n')
-    for (const [index, line] of lines.entries()) {
-      if (index > 0) {
-        await pressKey('Enter')
-      }
-      if (!line) continue
-      await invokeDesktopHost('e2e.insertText', { windowLabel, text: line })
-      await waitForDesktopControlTick()
-    }
+    const text = value.replace(/\r\n?/g, '\n')
+    const insert = () => invokeDesktopHost('e2e.insertText', { windowLabel, text })
+    const lineBreaks = text.split('\n').length - 1
+    if (lineBreaks) await sendNativeKeyAndWait(element, 'press', insert, lineBreaks)
+    else await insert()
+    await waitForDesktopControlTick()
     return
   } else {
     const selection = window.getSelection()

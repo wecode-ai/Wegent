@@ -13,6 +13,7 @@ function fixture() {
     isFocused: vi.fn(() => false),
     focus: vi.fn(),
     insertText: vi.fn(),
+    executeJavaScript: vi.fn(),
     sendInputEvent: vi.fn(),
   }
   return { view, contents: view as unknown as WebContents, focusWindow: vi.fn() }
@@ -169,6 +170,59 @@ describe('isolated native keyboard verification', () => {
     expect(settled).not.toHaveBeenCalled()
     fail(new Error('Native insertion failed'))
     await expect(insertion).rejects.toThrow('Native insertion failed')
+  })
+
+  test('batches multiline native input while retaining empty and trailing paragraphs', async () => {
+    const { view, contents, focusWindow } = fixture()
+    view.isFocused.mockReturnValue(true)
+    const events: string[] = []
+    view.insertText.mockImplementation(async text => {
+      events.push(`text:${text}`)
+    })
+    view.sendInputEvent.mockImplementation(event => {
+      if (event.type === 'keyDown') events.push(`key:${event.keyCode}`)
+    })
+
+    await sendE2EText(contents, '\r\nfirst\r\n\rsecond\n', focusWindow, environment)
+
+    expect(events).toEqual([
+      'key:Enter',
+      'text:first',
+      'key:Enter',
+      'key:Enter',
+      'text:second',
+      'key:Enter',
+    ])
+    expect(focusWindow).not.toHaveBeenCalled()
+  })
+
+  test('stops a native batch at the original insertion failure', async () => {
+    const { view, contents, focusWindow } = fixture()
+    view.insertText.mockRejectedValueOnce(new Error('Native insertion failed'))
+
+    await expect(sendE2EText(contents, 'first\nsecond', focusWindow, environment)).rejects.toThrow(
+      'Native insertion failed'
+    )
+    expect(view.insertText).toHaveBeenCalledExactlyOnceWith('first')
+    expect(view.sendInputEvent).not.toHaveBeenCalled()
+  })
+
+  test('waits for the editor frame before delivering the next native edit', async () => {
+    const { view, contents, focusWindow } = fixture()
+    let commit!: () => void
+    view.executeJavaScript.mockReturnValueOnce(
+      new Promise<void>(resolve => {
+        commit = resolve
+      })
+    )
+    const insertion = sendE2EText(contents, 'first\nsecond', focusWindow, environment)
+    await vi.waitFor(() => expect(view.executeJavaScript).toHaveBeenCalledOnce())
+    expect(view.insertText).toHaveBeenCalledExactlyOnceWith('first')
+    expect(view.sendInputEvent).not.toHaveBeenCalled()
+    commit()
+    await insertion
+    expect(view.insertText.mock.calls).toEqual([['first'], ['second']])
+    expect(view.executeJavaScript).toHaveBeenCalledTimes(2)
   })
 
   test.each([{}, { WEWORK_E2E_CONTROL_URL: environment.WEWORK_E2E_CONTROL_URL }])(

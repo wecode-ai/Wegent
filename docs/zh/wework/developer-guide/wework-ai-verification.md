@@ -242,6 +242,8 @@ pnpm --filter wework ai:verify stop --session /path/to/session.json
 
 可用操作包括 `snapshot`、`text`、`click`、`fill`、`press`、`wait-for`、`status` 和 `stop`。命令返回结构化 JSON；WebView 不可用、元素不存在或断言超时时，命令以非零状态退出。
 
+富文本编辑器的 `fill` 先通过原生快捷键选择文本，再由宿主在一次调用中顺序输入各行及原生 Enter。每行输入后等待编辑器帧提交，renderer 确认全部 Enter 到达目标后才返回；保留空行、中文和换行格式转换。不要直接把多行字符串交给 Chromium `insertText`，它在结构化编辑器中可能只保留第一行。现有 Electron CI 中的 `editor-native-input.test.mjs` 使用真实描述编辑器，对比逐行输入与批量输入的 Markdown 和段落结构，覆盖 31 段文本；不放宽业务 E2E 的断言或超时。
+
 ## 安全边界
 
 控制器只监听 `127.0.0.1`，并为每个会话生成一次性 Bearer token。该通道只有在 `ai:verify start` 启动的开发实例中通过 Vite 环境变量启用；普通开发与生产构建不会暴露控制接口。session 文件包含 token，应视为短期本地凭据，不应提交或共享。
