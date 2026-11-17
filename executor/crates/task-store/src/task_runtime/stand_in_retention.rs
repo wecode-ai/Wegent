@@ -175,7 +175,7 @@ impl LocalTaskStore {
                    JOIN stand_in_history newer ON newer.id=newer_ref.owner_id
                    JOIN loop_items newer_item ON newer_item.id=newer.id
                    WHERE newer_ref.event_id=e.id AND newer.user_id=h.user_id
-                     AND newer.resource_type='stand_in_action' AND newer.status='failed'
+                     AND newer.resource_type='stand_in_action' AND newer.status='failed' AND newer.kind=h.kind
                      AND (newer_item.created_at>l.created_at OR (newer_item.created_at=l.created_at AND newer.id>h.id))
                  ) AND h.status='failed'
                ) )"

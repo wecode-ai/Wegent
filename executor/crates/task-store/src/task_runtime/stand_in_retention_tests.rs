@@ -312,6 +312,125 @@ fn indexed_write_replaces_references_atomically() {
 }
 
 #[test]
+fn explicit_retry_indexes_legacy_and_existing_actions_before_retention() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let at = Utc::now();
+    let old = at - chrono::Duration::days(8);
+    {
+        let connection = store.connection().unwrap();
+        for id in ["legacy", "indexed"] {
+            let event = format!("event-{id}");
+            indexed(
+                &connection,
+                "stand_in_event",
+                json!({"id":event,"userId":7,"status":"pending"}),
+                at,
+            );
+            indexed(
+                &connection,
+                "stand_in_action",
+                json!({"id":id,"userId":7,"kind":"create_work","status":"failed","arguments":{"eventIds":[event]}}),
+                at,
+            );
+        }
+        connection
+            .execute("DELETE FROM stand_in_history WHERE id='legacy'", [])
+            .unwrap();
+        indexed(
+            &connection,
+            "stand_in_processing",
+            json!({"id":"stand-in-processing:7","userId":7,"routingRetry":{"id":"request","before":(at + chrono::Duration::seconds(1)).to_rfc3339()}}),
+            at,
+        );
+    }
+    assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 2);
+    let connection = store.connection().unwrap();
+    for id in ["legacy", "indexed"] {
+        let status: String = connection
+            .query_row(
+                "SELECT status FROM stand_in_history WHERE id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "pending");
+        let reference: String = connection
+            .query_row(
+                "SELECT event_id FROM stand_in_history_refs WHERE owner_id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(reference, format!("event-{id}"));
+        connection
+            .execute(
+                "UPDATE loop_items SET updated_at=?2 WHERE id=?1",
+                params![id, old.to_rfc3339()],
+            )
+            .unwrap();
+    }
+    assert_eq!(prune(&connection, at), 0);
+    let retained: usize = connection
+        .query_row(
+            "SELECT count(*) FROM loop_items WHERE id IN ('legacy','indexed')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(retained, 2);
+}
+
+#[test]
+fn failure_of_another_action_kind_preserves_explicit_create_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+    let at = Utc::now();
+    let old = at - chrono::Duration::days(8);
+    {
+        let connection = store.connection().unwrap();
+        indexed(
+            &connection,
+            "stand_in_event",
+            json!({"id":"event","userId":7,"status":"pending"}),
+            old,
+        );
+        for (id, kind, created) in [
+            ("create", "create_work", old),
+            (
+                "continue",
+                "continue_work",
+                old + chrono::Duration::seconds(1),
+            ),
+        ] {
+            indexed(
+                &connection,
+                "stand_in_action",
+                json!({"id":id,"userId":7,"kind":kind,"status":"failed","arguments":{"eventIds":["event"]}}),
+                created,
+            );
+        }
+        assert_eq!(prune(&connection, at), 0);
+        indexed(
+            &connection,
+            "stand_in_processing",
+            json!({"id":"stand-in-processing:7","userId":7,"routingRetry":{"id":"request","before":at.to_rfc3339()}}),
+            at,
+        );
+    }
+    assert_eq!(store.retry_failed_stand_in_routing(7).unwrap(), 1);
+    let connection = store.connection().unwrap();
+    let status: String = connection
+        .query_row(
+            "SELECT status FROM stand_in_history WHERE id='create'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "pending");
+}
+
+#[test]
 fn opening_existing_database_adds_indexes_without_backfilling_payloads() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("tasks.sqlite");
