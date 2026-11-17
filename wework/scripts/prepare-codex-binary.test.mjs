@@ -1,8 +1,10 @@
 // @vitest-environment node
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { createServer } from 'node:http'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
@@ -17,6 +19,39 @@ afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true }))
   )
+})
+
+test('direct execution through a directory link still runs the native preparation command', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-codex-main-'))
+  temporaryDirectories.push(directory)
+  const root = join(directory, 'actual')
+  await mkdir(join(root, 'scripts/lib'), { recursive: true })
+  await cp(
+    new URL('./prepare-codex-binary.mjs', import.meta.url),
+    join(root, 'scripts/prepare-codex-binary.mjs')
+  )
+  await cp(
+    new URL('./lib/process-lock.mjs', import.meta.url),
+    join(root, 'scripts/lib/process-lock.mjs')
+  )
+  await writeFile(join(root, 'codex-binaries.lock.json'), '{"targets":{}}')
+  await symlink(
+    resolve('node_modules'),
+    join(root, 'node_modules'),
+    process.platform === 'win32' ? 'junction' : 'dir'
+  )
+  const alias = join(directory, 'alias')
+  await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir')
+  await expect(
+    promisify(execFile)(process.execPath, [
+      join(alias, 'scripts/prepare-codex-binary.mjs'),
+      '--target',
+      'unsupported-goal-test',
+    ])
+  ).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining('Unsupported Codex target: unsupported-goal-test'),
+  })
 })
 
 describe('downloadWithRetry', () => {

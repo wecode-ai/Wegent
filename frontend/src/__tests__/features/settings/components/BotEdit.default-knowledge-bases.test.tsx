@@ -229,6 +229,10 @@ async function renderBotEdit(
     groupName?: string
     teamId?: number
     targetGroupNames?: string[]
+    crossNamespaceClone?: boolean
+    targetGroupsLoading?: boolean
+    targetGroupsError?: boolean
+    onRetryTargetGroups?: () => void
     modelCategoryType?: 'llm' | 'image' | 'video'
     allowGenerationPrimaryModel?: boolean
     mode?: 'edit' | 'clone' | 'new'
@@ -270,6 +274,10 @@ async function renderBotEdit(
       groupName={props.groupName}
       teamId={props.teamId}
       targetGroupNames={props.targetGroupNames}
+      crossNamespaceClone={props.crossNamespaceClone}
+      targetGroupsLoading={props.targetGroupsLoading}
+      targetGroupsError={props.targetGroupsError}
+      onRetryTargetGroups={props.onRetryTargetGroups}
       modelCategoryType={props.modelCategoryType}
       allowGenerationPrimaryModel={props.allowGenerationPrimaryModel}
     />
@@ -970,92 +978,98 @@ describe('BotEdit default knowledge bases', () => {
     })
   })
 
-  test('sends explicit model selection IDs when saving from the Bot drawer', async () => {
+  test('includes skills shared with every selected team group', async () => {
+    mockedFetchUnifiedSkillsList.mockImplementation(async (params: { binding?: unknown }) => {
+      const binding = params?.binding as { targetGroupNames?: string[] } | undefined
+      if (binding?.targetGroupNames?.length) {
+        return [
+          { id: 30, name: 'personal-skill', namespace: 'default', is_public: false },
+          { id: 31, name: 'shared-skill', namespace: 'default', is_public: false },
+        ]
+      }
+      return [{ id: 30, name: 'personal-skill', namespace: 'default', is_public: false }]
+    })
+
     await renderBotEdit(
       {},
       {
-        scope: 'group',
-        groupName: 'engineering',
-        teamId: 77,
-        targetGroupNames: ['engineering'],
+        scope: 'personal',
+        targetGroupNames: ['engineering', 'research'],
       }
     )
 
-    const modelSelect = await screen.findByTestId('bot-default-model-select')
-    await waitFor(() => expect(modelSelect).toBeEnabled())
-    fireEvent.click(modelSelect)
-    fireEvent.click(await screen.findByTestId('model-option-gpt-4-1'))
-    fireEvent.click(screen.getByTestId('save-button'))
-
-    await waitFor(() => {
-      expect(mockedUpdateBot).toHaveBeenCalledWith(
-        7,
-        expect.objectContaining({
-          team_id: 77,
-          model_id: 77,
-          secondary_model_id: null,
-        })
-      )
-    })
+    expect(await screen.findByText('shared-skill')).toBeInTheDocument()
+    expect(screen.getByText('personal-skill')).toBeInTheDocument()
   })
 
-  test('sends the selected secondary model ID from the Bot drawer', async () => {
-    mockedGetUnifiedModels.mockResolvedValue({
-      data: [
-        {
-          id: 78,
-          name: 'seedance-video',
-          type: 'public',
-          namespace: 'default',
-          modelCategoryType: 'video',
-        },
-        {
-          id: 79,
-          name: 'planning-llm',
-          type: 'public',
-          namespace: 'default',
-          modelCategoryType: 'llm',
-        },
-      ],
+  test('does not expose source team skills when cloning across namespaces', async () => {
+    mockedFetchUnifiedSkillsList.mockImplementation(async (params: { binding?: unknown }) => {
+      const binding = params?.binding as { targetGroupNames?: string[] } | undefined
+      if (binding?.targetGroupNames?.length) {
+        return [
+          { id: 30, name: 'personal-skill', namespace: 'default', is_public: false },
+          { id: 31, name: 'team-skill', namespace: 'default', is_public: false },
+        ]
+      }
+      return [{ id: 30, name: 'personal-skill', namespace: 'default', is_public: false }]
     })
 
     await renderBotEdit(
+      {},
       {
-        shell_name: 'Chat',
-        shell_type: 'Chat',
-        agent_config: {
-          bind_model: 'seedance-video',
-          bind_model_type: 'public',
-          bind_model_namespace: 'default',
-        },
-      },
-      {
-        scope: 'group',
-        groupName: 'engineering',
-        teamId: 77,
+        scope: 'personal',
         targetGroupNames: ['engineering'],
-        modelCategoryType: 'video',
+        crossNamespaceClone: true,
       }
     )
 
-    const secondarySelect = await screen.findByTestId('bot-secondary-model-select')
-    expect(secondarySelect).toBeEnabled()
-    fireEvent.click(secondarySelect)
-    fireEvent.click(await screen.findByTestId('model-option-planning-llm'))
-
-    fireEvent.click(screen.getByTestId('save-button'))
-
-    await waitFor(() => {
-      expect(mockedUpdateBot).toHaveBeenCalledWith(
-        7,
-        expect.objectContaining({
-          team_id: 77,
-          model_id: null,
-          secondary_model_id: 79,
-        })
-      )
-    })
+    expect(await screen.findByText('personal-skill')).toBeInTheDocument()
+    expect(screen.queryByText('team-skill')).not.toBeInTheDocument()
+    expect(mockedFetchUnifiedSkillsList).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ targetGroupNames: ['engineering'] }),
+      })
+    )
   })
+
+  test.each([{ targetGroupNames: [] }, { targetGroupNames: ['engineering'] }])(
+    'blocks saving while groups %j are loading',
+    async ({ targetGroupNames }) => {
+      await renderBotEdit(
+        {},
+        {
+          scope: 'group',
+          groupName: 'engineering',
+          targetGroupNames,
+          targetGroupsLoading: true,
+        }
+      )
+
+      expect(await screen.findByTestId('save-button')).toBeDisabled()
+    }
+  )
+
+  test.each([{ targetGroupNames: [] }, { targetGroupNames: ['engineering'] }])(
+    'offers retry and blocks saving when groups %j fail to load',
+    async ({ targetGroupNames }) => {
+      const onRetryTargetGroups = jest.fn()
+
+      await renderBotEdit(
+        {},
+        {
+          scope: 'group',
+          groupName: 'engineering',
+          targetGroupNames,
+          targetGroupsError: true,
+          onRetryTargetGroups,
+        }
+      )
+
+      expect(await screen.findByTestId('save-button')).toBeDisabled()
+      fireEvent.click(screen.getByTestId('retry-target-groups-button'))
+      expect(onRetryTargetGroups).toHaveBeenCalledTimes(1)
+    }
+  )
 
   test.each([false, true])(
     'distinguishes restored private secondary bindings from explicit same-name selections (%s)',

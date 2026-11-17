@@ -26,8 +26,15 @@ impl Default for HistoryReadAdmission {
     }
 }
 
+pub(super) const CANCELLABLE_READ_METHODS: &[&str] = &[
+    "runtime.tasks.transcript",
+    "runtime.connections.git.read",
+    "runtime.connections.mcp",
+    "runtime.connections.cli",
+];
+
 pub(super) fn is_cancellable_read(method: Option<&str>) -> bool {
-    method == Some("runtime.tasks.transcript")
+    method.is_some_and(|method| CANCELLABLE_READ_METHODS.contains(&method))
 }
 
 type PendingReads = StdMutex<HashMap<String, watch::Sender<bool>>>;

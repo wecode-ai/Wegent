@@ -14,6 +14,7 @@ export interface ModelApi {
     clientOrigin?: string,
     modelCategoryType?: string
   ): Promise<UnifiedModel>
-  refresh?(): void
+  /** A committed local edit invalidates reads started before that edit. */
+  refresh?(options?: { invalidateLocal?: boolean }): void
   subscribe?(onChange: () => void): () => void
 }

@@ -1,22 +1,29 @@
 import { randomBytes } from 'node:crypto'
 import { handleConnectionRpc } from './rpc.js'
 import { installedProviders } from './installed-providers.js'
-import { connectionTools } from '@wegent/dsh-plugin-runtime/connection-tools'
+import { createConnectionRuntime } from '@wegent/dsh-plugin-runtime/connection-runtime'
+import {
+  collectObservation,
+  initializeObservation,
+} from '@wegent/dsh-plugin-runtime/connection-observations'
+import {
+  cloudObservationClient,
+  runCloudObservation,
+} from '@wegent/dsh-plugin-runtime/cloud-observations'
 import { satisfies } from 'semver'
 import { ExecutorRuntimeClient } from '@wegent/dsh-executor-runtime/client'
-import {
-  ConnectionRegistry,
-  ConnectionError,
-  parseConnections,
-  dependencySources,
-} from '@wegent/dsh-plugin-runtime/connections'
+import { ConnectionError, parseConnections } from '@wegent/dsh-plugin-runtime/connections'
 import { ConnectionDependencies } from '@wegent/dsh-plugin-runtime/connection-dependencies'
 
 export const name = 'wework-connection-host'
-export const inject = ['webServer']
+export const inject = ['webServer', 'profileContext']
 export const BASE_PATH = '/wework/connections/v1/rpc'
 
 export async function apply(ctx) {
+  const configuredOwner = process.env.WEWORK_CONNECTION_OWNER_ID
+  const boundOwner = configuredOwner === undefined ? undefined : Number(configuredOwner)
+  if (boundOwner !== undefined && (!Number.isSafeInteger(boundOwner) || boundOwner <= 0))
+    throw new ConnectionError('observation_owner_required', 'Connection service owner is invalid')
   const client = ExecutorRuntimeClient.fromEnvironment()
   await client.start()
   const token = randomBytes(32).toString('hex')
@@ -27,24 +34,14 @@ export async function apply(ctx) {
         : client.request('runtime.codex.app_server.request', { method, params }),
     satisfies
   )
-  const registry = new ConnectionRegistry({
-    inventory: () => dependencies.inventory(),
+  const runtime = createConnectionRuntime({
+    dependencies,
+    request: (method, params, options) =>
+      client.request(method, params, undefined, undefined, options),
     satisfies,
-    context: identity =>
-      Object.freeze({
-        ...identity,
-        ...connectionTools(
-          identity,
-          dependencies,
-          async (method, params) => {
-            await publishHost()
-            identity.signal.throwIfAborted()
-            return client.request(method, params)
-          },
-          satisfies
-        ),
-      }),
+    beforeRequest: () => publishHost(),
   })
+  const { registry } = runtime
   let stopped = false
   let timer
   const publishHost = async () => {
@@ -53,23 +50,7 @@ export async function apply(ctx) {
       await client.request('runtime.connections.host', {
         url: `http://127.0.0.1:${port}${BASE_PATH}`,
         token,
-        providerGuidance: [...registry.entries.values()]
-          .filter(entry => entry.provider.assistance)
-          .map(entry => ({
-            providerId: entry.id,
-            assistance: entry.provider.assistance,
-          })),
-        dependencyReferences: [...registry.entries.values()].flatMap(entry =>
-          entry.provider.uses.flatMap(alias =>
-            dependencySources(entry.definition.dependencies[alias]).map(source => ({
-              providerId: entry.id,
-              alias,
-              ...source,
-              readTools: entry.provider.mcpReadTools?.[alias] ?? [],
-              cliReadTools: entry.provider.cliReadTools?.[alias] ?? null,
-            }))
-          )
-        ),
+        ...runtime.registration(),
       })
   }
   const heartbeat = async () => {
@@ -97,19 +78,50 @@ export async function apply(ctx) {
             await publishHost()
             return {
               items: await installedProviders(
-                process.env.DSH_HOME,
+                ctx.profileContext.dir,
                 await registry.catalog(),
                 parseConnections
               ),
             }
           }
-          if (body.method === 'installDependencies') {
+          if (['planDependencyInstallation', 'dependencyPlan'].includes(body.method)) {
+            await publishHost()
             const entry = registry.entries.get(body.providerId)
             if (!entry)
               throw new ConnectionError('connection_unavailable', 'Connection is not active')
-            return dependencies.install(entry.definition, body.input.aliases)
+            return body.method === 'dependencyPlan'
+              ? dependencies.plan(entry.definition)
+              : dependencies.installationPlan(
+                  entry.definition,
+                  body.input.aliases,
+                  body.input.catalog
+                )
           }
-          return registry.call(body.providerId, body.method, body.input ?? {})
+          if (body.method === 'initializeObservation')
+            return initializeObservation(registry, body.providerId, body.input)
+          if (body.method === 'collectCloudObservation') {
+            if (
+              !Number.isSafeInteger(body.input?.expectedOwnerId) ||
+              body.input.expectedOwnerId <= 0
+            )
+              throw new ConnectionError(
+                'observation_owner_required',
+                'Observation account is required'
+              )
+            if (boundOwner !== undefined && body.input.expectedOwnerId !== boundOwner)
+              throw new ConnectionError(
+                'observation_owner_changed',
+                'Connection service belongs to another account'
+              )
+            return runCloudObservation(
+              registry,
+              cloudObservationClient(body.input.backendUrl, body.input.collectorToken),
+              { expectedOwnerId: body.input.expectedOwnerId }
+            )
+          }
+          return body.method === 'collectObservation'
+            ? collectObservation(registry, body.providerId, body.input ?? {})
+            : registry.call(body.providerId, body.method, body.input ?? {})
         }),
     })
     void heartbeat()

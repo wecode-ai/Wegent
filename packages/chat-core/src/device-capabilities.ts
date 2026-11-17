@@ -218,3 +218,10 @@ export function supportsDeviceMetrics(device: Pick<DeviceInfo, 'device_type'>): 
 export function supportsCloudLifecycleActions(device: Pick<DeviceInfo, 'device_type'>): boolean {
   return isCloudDevice(device)
 }
+
+/** A version number or a broad runtime wildcard is not an event protocol declaration. */
+export function supportsConnectionEvents(
+  device: Pick<DeviceInfo, 'runtime_features'> | null | undefined
+): boolean {
+  return device?.runtime_features?.connectionEvents?.protocolVersion === 1
+}

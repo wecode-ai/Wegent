@@ -11,6 +11,7 @@ export function createProvider() {
       let authTarget
       try {
         authTarget = await ctx.cli.describe('dingtalk')
+        await requireAuthentication(ctx)
         await activeProfile(ctx)
         return { status: 'ready', authTarget }
       } catch (error) {
@@ -23,6 +24,7 @@ export function createProvider() {
     },
     async listResources(ctx, input) {
       const profile = await activeProfile(ctx)
+      await requireAuthentication(ctx)
       const kind = input.kind
       if (!['group', 'direct'].includes(kind)) throw invalid('Invalid conversation kind')
       if (input.scope === 'all') {
@@ -44,7 +46,21 @@ export function createProvider() {
       if (query.length > 256) throw invalid('Search query is too long')
       const args = { query, profile }
       if (kind === 'group' && input.cursor) args.cursor = input.cursor
-      const response = await readTool(ctx, kind === 'group' ? 'searchGroups' : 'searchUsers', args)
+      let response
+      try {
+        response = await readTool(ctx, kind === 'group' ? 'searchGroups' : 'searchUsers', args)
+      } catch (error) {
+        if (
+          !['connection_cli_request_unavailable', 'connection_cli_request_failed'].includes(
+            error.code
+          )
+        )
+          throw error
+        // A token can expire between connection checks. Re-read auth state before
+        // showing a generic provider failure.
+        await requireAuthentication(ctx)
+        throw error
+      }
       const rows = kind === 'group' ? response.result?.groups : response.result
       if (!Array.isArray(rows)) throw invalid('Invalid search response')
       return {
@@ -330,6 +346,15 @@ async function activeProfile(ctx) {
     })
   }
   return response.currentProfile
+}
+
+async function requireAuthentication(ctx) {
+  const response = await readTool(ctx, 'authStatus')
+  if (response.authenticated !== true || response.token_valid === false)
+    throw Object.assign(new Error('Authorize the account'), {
+      code: 'connector_auth_required',
+    })
+  return response
 }
 
 async function ownIdentity(ctx, profile, cache) {

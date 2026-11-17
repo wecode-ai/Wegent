@@ -12,11 +12,36 @@ fn unavailable() -> AppIpcError {
     )
 }
 pub(crate) fn configure(mut value: Value) -> Result<(), AppIpcError> {
+    validate_host(&value)?;
     value["registeredAt"] = json!(chrono::Utc::now().timestamp());
     *HOST
         .get_or_init(|| Mutex::new(None))
         .lock()
         .map_err(|_| unavailable())? = Some(value);
+    Ok(())
+}
+
+pub(super) fn validate_host(payload: &Value) -> Result<(), AppIpcError> {
+    let valid = payload["url"]
+        .as_str()
+        .and_then(|url| url::Url::parse(url).ok())
+        .is_some_and(|url| {
+            url.scheme() == "http"
+                && url.host_str() == Some("127.0.0.1")
+                && url.port().is_some()
+                && url.path() == "/wework/connections/v1/rpc"
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+        });
+    let token = payload["token"].as_str().unwrap_or_default();
+    if !valid || token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(AppIpcError::new(
+            "invalid_connection_host",
+            "Invalid connection runtime endpoint",
+        ));
+    }
     Ok(())
 }
 
@@ -137,7 +162,13 @@ pub(crate) async fn call(
     let response = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(
+            if method == "collectCloudObservation" {
+                420
+            } else {
+                60
+            },
+        ))
         .build()
         .map_err(|_| unavailable())?
         .post(host["url"].as_str().unwrap())

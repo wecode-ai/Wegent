@@ -115,7 +115,7 @@ fn route_id(row: &DeviceKindRow, device_type: DeviceType) -> String {
 /// `EXECUTOR_SESSION_GATEWAY_DEFAULT_PORT`.
 const DEFAULT_RUNTIME_TRANSFER_PORT: i64 = 17888;
 /// `DEVICE_ONLINE_TTL`.
-const ONLINE_TTL_SECONDS: u64 = 90;
+pub(super) const ONLINE_TTL_SECONDS: u64 = 90;
 
 /// `_match_cloud_device_sync`'s write of the matched cloud row: it only marks
 /// `json` dirty, so `Kind.updated_at`'s ORM `onupdate=func.now()` renders the

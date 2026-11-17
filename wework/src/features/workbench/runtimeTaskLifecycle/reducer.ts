@@ -4,6 +4,7 @@ import {
   isRuntimeTaskAuthoritativeCompletion,
   isRuntimeTaskConfirmedActive,
   normalizeRuntimeTaskSummary,
+  mergeRuntimeTaskSnapshotMetadata,
   isRuntimeTurnRunningStatus,
 } from './projection'
 import type { RuntimeTaskLifecycleEvent, RuntimeTaskLifecycleState } from './types'
@@ -13,13 +14,15 @@ function reduceNativeSnapshot(
   event: Extract<RuntimeTaskLifecycleEvent, { type: 'executor_snapshot_received' }>
 ): RuntimeTaskLifecycleState {
   const execution = event.task.executionState
-  if (!execution) return state
   const previous = state.task?.executionState
-  if (previous && BigInt(execution.revision) <= BigInt(previous.revision)) return state
+  if (!execution || (previous && BigInt(execution.revision) <= BigInt(previous.revision))) {
+    const task = state.task ? mergeRuntimeTaskSnapshotMetadata(state.task, event.task) : state.task
+    return task === state.task ? state : { ...state, task }
+  }
   return {
     ...state,
     address: mergeAddress(state.address, event.address),
-    task: event.task,
+    task: state.task ? mergeRuntimeTaskSnapshotMetadata(event.task, state.task) : event.task,
     executionPhase: execution.phase,
     turnPhase: execution.turnId
       ? 'streaming'

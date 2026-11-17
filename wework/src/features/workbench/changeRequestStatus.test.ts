@@ -1,6 +1,9 @@
 // @vitest-environment node
 
 import { describe, expect, it } from 'vitest'
+import { createInstance } from 'i18next'
+import zh from '@/i18n/locales/zh-CN/common.json'
+import en from '@/i18n/locales/en/common.json'
 import type { ChangeRequest } from '@/types/environment'
 import {
   autoRepairStatus,
@@ -51,10 +54,13 @@ describe('changeRequestStatus', () => {
     expect(stoppedTaskNeedsAttention(null)).toBe(false)
   })
 
-  it('builds a continuation prompt that keeps the existing PR', () => {
+  it('builds a continuation prompt that keeps the existing PR', async () => {
+    const i18n = createInstance()
+    await i18n.init({ lng: 'zh-CN', resources: { 'zh-CN': { common: zh } } })
     const prompt = buildChangeRequestRepairPrompt(
       { ...pullRequest, mergeQueue: 'timed_out', mergeQueueReason: 'Checks timed out' },
       '修复 MQ',
+      i18n.getFixedT('zh-CN', 'common'),
       '不要通过重试隐藏问题'
     )
 
@@ -63,4 +69,21 @@ describe('changeRequestStatus', () => {
     expect(prompt).toContain('不要创建重复 PR/MR')
     expect(prompt).toContain('不要通过重试隐藏问题')
   })
+
+  it.each(['zh-CN', 'en'])(
+    'uses human-readable %s status instead of internal codes',
+    async language => {
+      const i18n = createInstance()
+      await i18n.init({ lng: language, resources: { 'zh-CN': { common: zh }, en: { common: en } } })
+      const t = i18n.getFixedT(language, 'common')
+      const prompt = buildChangeRequestRepairPrompt(
+        { ...pullRequest, checks: 'failure' },
+        'Fix CI',
+        t
+      )
+      expect(prompt).toContain(t('workbench.change_request_status_checks_failed'))
+      expect(prompt).not.toContain('checks_failed')
+      expect(prompt).not.toContain('合并问题')
+    }
+  )
 })

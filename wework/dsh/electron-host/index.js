@@ -60,7 +60,18 @@ async function describe(req, res, client) {
     methodNotAllowed(res, 'GET, HEAD')
     return
   }
-  sendJson(res, 200, client.describe(), req.method === 'HEAD')
+  const description = client.describe()
+  sendJson(
+    res,
+    200,
+    {
+      ...description,
+      capabilities: description.capabilities.filter(
+        capability => !capability.startsWith('secureStorage.')
+      ),
+    },
+    req.method === 'HEAD'
+  )
 }
 
 async function invoke(req, res, client) {
@@ -72,6 +83,10 @@ async function invoke(req, res, client) {
     const body = await readJsonBody(req)
     if (!isRecord(body) || typeof body.capability !== 'string' || !isRecord(body.params)) {
       throw new ElectronHostError('invalid_params', 'Request must contain capability and params')
+    }
+    // Secret operations are available only to trusted DSH services over the private host pipe.
+    if (body.capability.startsWith('secureStorage.')) {
+      throw new ElectronHostError('capability_denied', 'Secret storage is not available over HTTP')
     }
     const result = await client.invoke(body.capability, body.params)
     sendJson(res, 200, { ok: true, result: result ?? null })

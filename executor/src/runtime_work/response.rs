@@ -56,6 +56,7 @@ fn default_supervisor_interval_seconds() -> u64 {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct RuntimeTaskLink {
+    pub snapshot_revision: Option<String>,
     pub local_task_id: String,
     pub thread_id: Option<String>,
     pub workspace_path: String,
@@ -117,6 +118,7 @@ impl RuntimeTaskLink {
         let now = now_ms();
         Self {
             local_task_id,
+            snapshot_revision: None,
             thread_id: None,
             workspace_path,
             title,
@@ -163,6 +165,7 @@ impl RuntimeTaskLink {
     ) -> Self {
         let now = now_ms();
         Self {
+            snapshot_revision: None,
             local_task_id,
             thread_id: None,
             workspace_path,
@@ -281,6 +284,9 @@ impl RuntimeTaskLink {
                 .or_else(|| string_field(thread, "preview"))
                 .unwrap_or_else(|| "Codex conversation".to_owned()),
             runtime: "codex".to_owned(),
+            snapshot_revision: local_link
+                .as_ref()
+                .and_then(|link| link.snapshot_revision.clone()),
             status,
             running,
             continuable: !local_archived,
@@ -347,6 +353,7 @@ impl RuntimeTaskLink {
 
     pub fn list_summary(&self) -> Self {
         Self {
+            snapshot_revision: self.snapshot_revision.clone(),
             local_task_id: self.local_task_id.clone(),
             thread_id: self.thread_id.clone(),
             workspace_path: self.workspace_path.clone(),
@@ -477,6 +484,7 @@ impl Default for RuntimeTaskLink {
     fn default() -> Self {
         let now = now_ms();
         Self {
+            snapshot_revision: None,
             local_task_id: String::new(),
             thread_id: None,
             workspace_path: String::new(),
@@ -697,6 +705,9 @@ pub(crate) fn local_task_json(mut link: RuntimeTaskLink) -> Value {
         task.insert("executionState".to_owned(), json!(state));
     }
     task.insert("runtimeHandle".to_owned(), Value::Object(runtime_handle));
+    if let Some(revision) = link.snapshot_revision {
+        task.insert("snapshotRevision".to_owned(), json!(revision));
+    }
     if let Some(queue_position) = link
         .runtime_handle
         .get("queuePosition")
