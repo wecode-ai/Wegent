@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.mcp_server.auth import MCPAuthInfo
+from app.mcp_server.project_admin_feature import require_project_admin_write_enabled
 from app.mcp_server.tool_catalog import ProjectAdminSpaceUpdate
 from app.mcp_server.tools.decorator import mcp_tool
 from app.models.cloud_project import LoopItemTaskBinding
@@ -390,6 +391,13 @@ def update_space(
     from app.mcp_server.tools.wework_project_admin import project_admin_error
 
     try:
+        require_project_admin_write_enabled(
+            space_fields=(
+                project.model_fields_set
+                if isinstance(project, ProjectAdminSpaceUpdate)
+                else project if isinstance(project, dict) else None
+            )
+        )
         with SessionLocal() as db:
             resolved = _space_id(db, token_info, space_id)
             updated = cloud_project_service.update(

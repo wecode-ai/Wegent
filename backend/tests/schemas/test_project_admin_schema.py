@@ -16,6 +16,7 @@ from app.mcp_server.tool_catalog import (
 )
 from app.schemas.cloud_project import CloudProjectResponse, CloudProjectUpdate
 from app.schemas.project_admin import ProjectAdminWriteResult
+from app.schemas.tagging import normalize_tags
 
 
 def _view() -> dict:
@@ -159,6 +160,22 @@ def test_project_tag_limits_apply_after_shared_normalization(
 ) -> None:
     with pytest.raises(ValidationError):
         model(version=1, tags=tags)
+
+
+@pytest.mark.parametrize(
+    "model", [CloudProjectUpdate, ProjectTagsUpdate, ProjectAdminSpaceUpdate]
+)
+@pytest.mark.parametrize("tags", ["design", {"name": "design"}])
+def test_project_tag_writes_require_an_array(model: type, tags: object) -> None:
+    with pytest.raises(ValidationError) as failure:
+        model(version=1, tags=tags)
+
+    assert failure.value.errors()[0]["loc"] == ("tags",)
+
+
+def test_tag_reads_still_tolerate_malformed_legacy_metadata() -> None:
+    assert normalize_tags("design") == []
+    assert normalize_tags({"name": "design"}) == []
 
 
 @pytest.mark.parametrize(

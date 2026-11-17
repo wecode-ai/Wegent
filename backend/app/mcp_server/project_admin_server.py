@@ -13,6 +13,7 @@ from mcp.types import CallToolResult, TextContent, Tool
 from pydantic import ValidationError
 
 from app.mcp_server.context import get_mcp_context
+from app.mcp_server.project_admin_feature import require_project_admin_write_enabled
 from app.mcp_server.tool_catalog import (
     PROJECT_ADMIN_OPERATIONS,
     ProjectAdminSpaceUpdateResult,
@@ -84,6 +85,14 @@ class ProjectAdminMCP(FastMCP):
                         ],
                     },
                 )
+            operation = ADMIN_OPERATIONS_BY_TOOL.get(name)
+            if name == "update_space":
+                project = arguments.get("project")
+                require_project_admin_write_enabled(
+                    space_fields=project if isinstance(project, dict) else None
+                )
+            elif operation is not None and not operation.read_only:
+                require_project_admin_write_enabled()
             result = await self._tool_manager.call_tool(
                 name, arguments, context=self.get_context(), convert_result=False
             )

@@ -38,8 +38,15 @@ def normalize_tags(value: object) -> list[str]:
     return tags
 
 
+def normalize_tag_write(value: object) -> list[str]:
+    """Reject malformed replacements before normalizing their tag values."""
+    if not isinstance(value, list):
+        raise ValueError("Tags must be an array")
+    return normalize_tags(value)
+
+
 NormalizedTags = Annotated[
     list[TagName],
-    BeforeValidator(normalize_tags),
+    BeforeValidator(normalize_tag_write),
     Field(max_length=MAX_TAGS_PER_ITEM),
 ]

@@ -460,10 +460,16 @@ async fn apply_space_update(
                 "project must be a typed configuration object.",
             )
         })?;
-    let fields = [
+    let legacy_fields = [
         "name",
         "description",
         "tags",
+        "version",
+        "operation_id",
+        "idempotency_key",
+        "dry_run",
+    ];
+    let admin_fields = [
         "tag_change",
         "board_config",
         "board_views",
@@ -473,17 +479,13 @@ async fn apply_space_update(
         "pull_request_automation",
         "member_changes",
         "assistant_roster_changes",
-        "version",
-        "operation_id",
-        "idempotency_key",
-        "dry_run",
     ];
     for field in request
         .as_object()
         .into_iter()
         .flat_map(|value| value.keys())
     {
-        if !fields.contains(&field.as_str()) {
+        if !legacy_fields.contains(&field.as_str()) && !admin_fields.contains(&field.as_str()) {
             return Err(field_failure(
                 "unsupported_field",
                 &format!("project.{field}"),
@@ -491,9 +493,20 @@ async fn apply_space_update(
             ));
         }
     }
-    // Existing generic writes also require the Backend's audited configuration contract.
-    // A disabled flag hides dedicated writes without disabling this existing entry point.
+    // Preserve legacy generic writes while the new configuration tools are disabled.
     let catalog = catalog_from_detail(&project_detail(context).await?)?;
+    if catalog.get("enabled") == Some(&json!(false))
+        && request
+            .as_object()
+            .into_iter()
+            .flat_map(|value| value.keys())
+            .any(|field| admin_fields.contains(&field.as_str()))
+    {
+        return Err(failure(
+            "feature_disabled",
+            "Project administration tools are disabled for this configuration update.",
+        ));
+    }
     schema_guard::validate(arguments, &catalog["updateSpaceInputSchema"])?;
     let updated = patch_project(context, request).await?;
     let mut result = serde_json::Map::new();

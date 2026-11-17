@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.security import create_access_token
 from app.mcp_server.auth import MCPAuthInfo
 from app.mcp_server.tools import wework_project_admin, wework_space
@@ -73,6 +74,54 @@ def test_page_and_mcp_replay_the_same_operation(
     assert project_schema["additionalProperties"] is False
     assert "board_views" in project_schema["properties"]
     assert "provider_config" not in project_schema["properties"]
+
+
+@pytest.mark.parametrize("tags", ["design", {"name": "design"}])
+def test_malformed_tag_patch_preserves_saved_configuration(
+    test_client: TestClient, test_db: Session, test_token: str, tags: object
+) -> None:
+    project, headers = _create(test_client, test_token)
+    saved = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=headers,
+        json={"version": project["version"], "tags": ["design"]},
+    )
+    assert saved.status_code == 200
+    project = saved.json()
+    stored = test_db.get(CloudProject, project["id"])
+    before = deepcopy(stored.metadata_json)
+
+    result = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=headers,
+        json={"version": project["version"], "tags": tags},
+    )
+
+    assert result.status_code == 422
+    assert result.json()["reason_code"] == "invalid_config"
+    test_db.refresh(stored)
+    assert stored.metadata_json == before
+    assert stored.version == project["version"]
+
+
+def test_page_configuration_writes_remain_enabled_during_mcp_rollback(
+    test_client: TestClient, test_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "WEWORK_PROJECT_ADMIN_TOOLS_V1", False)
+    project, headers = _create(test_client, test_token)
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=headers,
+        json={
+            "version": project["version"],
+            "collaboration_policy": {"content": "Page configuration stays writable"},
+        },
+    )
+
+    assert updated.status_code == 200, updated.text
+    policy = updated.json()["project_admin_result"]["after"]["collaboration_policy"]
+    assert policy["content"] == "Page configuration stays writable"
 
 
 @pytest.mark.parametrize("first_transport", ["page", "generic", "dedicated"])

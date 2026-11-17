@@ -535,6 +535,47 @@ describe('createHttpClient', () => {
     })
   })
 
+  test.each(['reason_code', 'error_code', 'code'] as const)(
+    'preserves nested %s when the HTTP exception wrapper includes a numeric error code',
+    async codeField => {
+      const detail = {
+        [codeField]: 'version_conflict',
+        message: 'Reload the project.',
+        fields: [{ path: 'version', message: 'Stale version.' }],
+        projectVersion: 8,
+      }
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        text: async () => JSON.stringify({ error_code: 409, detail }),
+      })
+      const client = createHttpClient({ baseUrl: '/api' })
+
+      await expect(client.patch('/v1/cloud-projects/12', { version: 7 })).rejects.toMatchObject({
+        message: 'Reload the project.',
+        status: 409,
+        errorCode: 'version_conflict',
+        detail,
+      })
+    }
+  )
+
+  test('uses the HTTP exception wrapper error code when detail has no code', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      text: async () => JSON.stringify({ error_code: 409, detail: 'Reload the project.' }),
+    })
+    const client = createHttpClient({ baseUrl: '/api' })
+
+    await expect(client.patch('/v1/cloud-projects/12', {})).rejects.toMatchObject({
+      message: 'Reload the project.',
+      status: 409,
+      errorCode: 409,
+      detail: 'Reload the project.',
+    })
+  })
+
   test('preserves top-level project validation codes with the legacy detail message', async () => {
     const fields = [{ path: 'board_views.0.columns.0.status_id', message: 'Unknown status.' }]
     fetchMock.mockResolvedValueOnce({

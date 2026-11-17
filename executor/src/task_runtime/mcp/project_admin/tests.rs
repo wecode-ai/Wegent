@@ -134,14 +134,17 @@ async fn catalog_disabled_preserves_existing_generic_update() {
     let address = listener.local_addr().unwrap();
     let app = Router::new()
         .route("/api/v1/projects/12", get(|| async { Json(json!({"project_admin_capabilities": catalog(false)})) }))
-        .route("/api/v1/cloud-projects/12", axum::routing::patch(|| async { Json(json!({"id": "12", "project_key": "WORK", "name": "Updated", "description": "", "task_provider": "local", "tags": [], "version": 2, "project_admin_result": {"auditId": "audit-1"}})) }));
+        .route("/api/v1/cloud-projects/12", axum::routing::patch(|Json(body): Json<Value>| async move {
+            assert_eq!(body, json!({"version": 1, "name": "Updated", "description": "Details", "tags": ["review"], "operation_id": "operation-1", "idempotency_key": "retry-1", "dry_run": true}));
+            Json(json!({"id": "12", "project_key": "WORK", "name": "Updated", "description": "Details", "task_provider": "local", "tags": ["review"], "version": 2, "project_admin_result": {"auditId": "audit-1"}}))
+        }));
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let (_directory, runtime, context) = bound_runtime(format!("http://{address}"));
 
     let result = super::super::call_tool_with_runtime_context(
         &runtime,
         "update_space",
-        json!({"project": {"version": 1, "name": "Updated"}}),
+        json!({"project": {"version": 1, "name": "Updated", "description": "Details", "tags": ["review"], "operation_id": "operation-1", "idempotency_key": "retry-1", "dry_run": true}}),
         &context,
     )
     .await;
@@ -152,6 +155,71 @@ async fn catalog_disabled_preserves_existing_generic_update() {
         "audit-1"
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn generic_updates_gate_all_new_fields_including_explicit_null_before_patch() {
+    for enabled in [false, true] {
+        let patches = Arc::new(AtomicUsize::new(0));
+        let recorded_patches = Arc::clone(&patches);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route("/api/v1/projects/12", get(move || async move { Json(json!({"project_admin_capabilities": catalog(enabled)})) }))
+            .route("/api/v1/cloud-projects/12", axum::routing::patch(move || {
+                let patches = Arc::clone(&recorded_patches);
+                async move {
+                    patches.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({"id": "12", "project_key": "WORK", "name": "Updated", "description": "", "task_provider": "local", "tags": [], "version": 2, "project_admin_result": {"auditId": "audit-1"}}))
+                }
+            }));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (_directory, runtime, context) = bound_runtime(format!("http://{address}"));
+        let mut expected_patches = 0;
+        for field in [
+            "tag_change",
+            "board_config",
+            "board_views",
+            "collaboration_policy",
+            "workflow_definition",
+            "ai_automation",
+            "pull_request_automation",
+            "member_changes",
+            "assistant_roster_changes",
+        ] {
+            for value in [Value::Null, json!({})] {
+                let result = super::super::call_tool_with_runtime_context(
+                    &runtime,
+                    "update_space",
+                    json!({"project": {"version": 1, "name": "Updated", field: value}}),
+                    &context,
+                )
+                .await;
+                if enabled {
+                    expected_patches += 1;
+                    assert_eq!(result["isError"], false, "{field}: {result}");
+                    assert_eq!(
+                        result["structuredContent"]["project_admin_result"]["auditId"],
+                        "audit-1"
+                    );
+                } else {
+                    assert_eq!(
+                        patches.load(Ordering::SeqCst),
+                        0,
+                        "Disabled update_space forwarded {field}"
+                    );
+                    assert_eq!(result["isError"], true, "{field}: {result}");
+                    assert_eq!(
+                        result["structuredContent"]["error"]["reason_code"],
+                        "feature_disabled"
+                    );
+                    assert_eq!(result["structuredContent"]["error"]["status_code"], 409);
+                }
+                assert_eq!(patches.load(Ordering::SeqCst), expected_patches);
+            }
+        }
+        server.abort();
+    }
 }
 
 fn catalog(enabled: bool) -> Value {

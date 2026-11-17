@@ -10,9 +10,9 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.db.session import SessionLocal
 from app.mcp_server.auth import MCPAuthInfo
+from app.mcp_server.project_admin_feature import require_project_admin_write_enabled
 from app.mcp_server.tool_catalog import (
     ProjectAssistantRosterUpdate,
     ProjectAutomationUpdate,
@@ -93,14 +93,7 @@ def _write(
     space_id: str,
 ) -> dict[str, Any]:
     try:
-        if not settings.WEWORK_PROJECT_ADMIN_TOOLS_V1:
-            raise HTTPException(
-                409,
-                {
-                    "reason_code": "feature_disabled",
-                    "message": "wework.projectAdminTools.v1 is disabled",
-                },
-            )
+        require_project_admin_write_enabled()
         validated = request_type.model_validate(request)
         values = CloudProjectUpdate.model_validate(
             validated.model_dump(exclude_unset=True)

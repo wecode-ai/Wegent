@@ -134,7 +134,7 @@ async function parseError(response: Response): Promise<ApiError> {
         errorCode = json.detail.reason_code ?? json.detail.error_code ?? json.detail.code
       }
     }
-    if (json.error_code) {
+    if (errorCode === undefined && json.error_code) {
       errorCode = json.error_code
     }
     if (typeof json.reason_code === 'string') {

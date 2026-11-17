@@ -169,6 +169,171 @@ def test_feature_disabled_hides_and_denies_writes(
     assert read["configuration"]["tags"] == ["design"]
 
 
+@pytest.mark.parametrize("transport", ["dedicated", "generic"])
+@pytest.mark.parametrize("tags", ["design", {"name": "design"}])
+def test_malformed_tag_write_keeps_configuration_unchanged(
+    managed_project: CloudProject,
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    transport: str,
+    tags: object,
+) -> None:
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    before = deepcopy(managed_project.metadata_json)
+    version = managed_project.version
+    write = (
+        wework_project_admin.update_project_tags
+        if transport == "dedicated"
+        else wework_space.update_space
+    )
+
+    result = write(
+        _token(test_user), {"version": version, "tags": tags}, str(managed_project.id)
+    )
+
+    assert result["error"]["reason_code"] == "invalid_config"
+    test_db.refresh(managed_project)
+    assert managed_project.metadata_json == before
+    assert managed_project.version == version
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "tag_change",
+        "board_config",
+        "board_views",
+        "collaboration_policy",
+        "workflow_definition",
+        "ai_automation",
+        "pull_request_automation",
+        "member_changes",
+        "assistant_roster_changes",
+    ],
+)
+def test_disabled_generic_space_update_rejects_explicit_admin_fields(
+    managed_project: CloudProject,
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    monkeypatch.setattr(settings, "WEWORK_PROJECT_ADMIN_TOOLS_V1", False)
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    before = deepcopy(managed_project.metadata_json)
+    version = managed_project.version
+
+    result = wework_space.update_space(
+        _token(test_user),
+        {"version": version, "name": "Must stay unchanged", field: None},
+        str(managed_project.id),
+    )
+
+    assert result["error"]["reason_code"] == "feature_disabled"
+    test_db.refresh(managed_project)
+    assert managed_project.metadata_json == before
+    assert managed_project.version == version
+    assert managed_project.name == "Project administration"
+
+
+def test_disabled_generic_space_update_preserves_legacy_writes_and_controls(
+    managed_project: CloudProject,
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "WEWORK_PROJECT_ADMIN_TOOLS_V1", False)
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    token = _token(test_user)
+    space_id = str(managed_project.id)
+    request = {
+        "version": managed_project.version,
+        "name": "Legacy update",
+        "description": "Legacy description",
+        "tags": ["design", "legacy"],
+        "operation_id": "legacy-update",
+        "idempotency_key": "legacy-update",
+    }
+
+    written = wework_space.update_space(token, request, space_id)
+
+    assert "error" not in written
+    assert written["name"] == "Legacy update"
+    assert written["description"] == "Legacy description"
+    assert written["tags"] == ["design", "legacy"]
+    assert wework_space.update_space(token, request, space_id) == written
+    test_db.refresh(managed_project)
+    before = deepcopy(managed_project.metadata_json)
+    version = managed_project.version
+    preview = wework_space.update_space(
+        token,
+        {
+            "version": version,
+            "tags": ["preview"],
+            "operation_id": "legacy-preview",
+            "dry_run": True,
+        },
+        space_id,
+    )
+    assert preview["project_admin_result"]["dryRun"] is True
+    test_db.refresh(managed_project)
+    assert managed_project.metadata_json == before
+    assert managed_project.version == version
+    read = wework_project_admin.get_project_config(token, space_id)
+    assert read["configuration"]["tags"] == ["design", "legacy"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (
+            "member_changes",
+            [{"operation": "add", "user_id": 999, "permission_role": "Viewer"}],
+        ),
+        ("board_views", {"unsupported": "Rejected before configuration validation"}),
+    ],
+)
+async def test_remote_disabled_space_admin_write_has_no_partial_mutation(
+    managed_project: CloudProject,
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    monkeypatch.setattr(settings, "WEWORK_PROJECT_ADMIN_TOOLS_V1", False)
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    before = deepcopy(managed_project.metadata_json)
+    version = managed_project.version
+    server = ProjectAdminMCP("project-admin-rollback")
+    _register_tool(server, wework_space.update_space._mcp_tool_info, "wework_space")
+    context = set_mcp_context(
+        MCPRequestContext(
+            token_info=_token(test_user),
+            tool_name="update_space",
+            server_name="wework_space",
+        )
+    )
+    try:
+        result = await server.call_tool(
+            "update_space",
+            {
+                "space_id": str(managed_project.id),
+                "project": {"version": version, field: value},
+            },
+        )
+    finally:
+        reset_mcp_context(context)
+
+    assert result.isError is True
+    assert result.structuredContent["error"]["reason_code"] == "feature_disabled"
+    test_db.refresh(managed_project)
+    assert managed_project.metadata_json == before
+    assert managed_project.version == version
+
+
 def test_typed_tools_apply_and_read_configuration_without_desktop(
     managed_project: CloudProject, test_user: User
 ) -> None:
