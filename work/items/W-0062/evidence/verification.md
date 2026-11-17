@@ -102,6 +102,10 @@ pnpm --filter wework test src/features/todo/CloudTodoWorkspace.test.tsx src/feat
 
 本地验证：共享创建与模板 32 文件、237 项，完整平台 196 项，普通入口与资源工厂 73 项，双语文档契约 8 项全部通过。共享构建、Wework typecheck、完整 lint（0 错误、4 项既有警告）、按目标文件原风格的格式检查及差异检查通过。未执行本地 E2E 或 ai:verify，未放宽断言或等待时限；包含本轮整合的新 head 必须取得自身的全部 CI 结果后再交 QA。
 
+整合提交 `126016bbf` 推送期间，主线新增异步生命周期 Hook 与取消发送改动。`git merge-tree` 确认与 `99963cc43` 在 `executor/src/runtime_work/handler/turns.rs` 存在真实冲突。本轮继续合入该主线：保留原阶段诊断，在校验后、能力准备前启动 lifecycle，observer drain 后完成 hooks，保持主线取消与失败状态分支，未持锁跨 `await`。
+
+Rust 验证通过：`runtime_work::handler::turns::tests` 17 项、`runtime_work::handler::hooks::tests` 1 项、`hooks::lifecycle::tests` 2 项；均使用 locked、all-features 的既有 lib 测试。Rustfmt 与差异检查通过。新主线整合后 Wework typecheck、双语文档契约 8 项再次通过。后续交接只采用最终新 head 的完整 CI 与可合并状态，不沿用 `126016bbf` 因冲突尚未启动的桌面检查。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
