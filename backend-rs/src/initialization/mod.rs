@@ -13,7 +13,7 @@ mod plugins;
 mod skills;
 
 #[cfg(test)]
-pub(crate) use connectors::verify_concurrent_completion;
+pub(crate) use connectors::{verify_admin_edits_during_backfill, verify_concurrent_completion};
 
 static DIRECTORIES: OnceLock<RwLock<Vec<PathBuf>>> = OnceLock::new();
 

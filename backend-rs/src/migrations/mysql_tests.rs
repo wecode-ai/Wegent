@@ -154,6 +154,7 @@ async fn verify_connector_initialization(mysql: &MysqlService) -> Result<()> {
         assert_eq!(app.payload.0["spec"]["authType"], "oauth2");
         assert_eq!(app.payload.0["spec"]["toolLoadingMode"], "lazy");
     }
+    crate::initialization::verify_admin_edits_during_backfill(mysql).await?;
     mysql.execute("UPDATE kinds SET json=JSON_SET(json,'$.spec.enabled',false,'$.spec.toolLoadingMode','static','$.spec.keywords',JSON_ARRAY('custom')) WHERE kind='ConnectorApp' AND namespace='system' AND user_id=0 AND name='dingtalk_docs'", ()).await?;
     crate::initialization::connectors(mysql).await?;
     let after = read().await?;

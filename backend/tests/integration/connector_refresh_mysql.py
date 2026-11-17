@@ -10,7 +10,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
+from app.models.system_config import SystemConfig
 from app.models.user import User
+from app.services.connector_builtin_apps import (
+    BUILTIN_COMPLETION_KEY,
+    BUILTIN_CONNECTOR_APPS,
+)
 from app.services.connector_connections import connector_connection_service
 from app.services.connector_runtime import ConnectorRuntimeService
 
@@ -220,3 +226,49 @@ def test_rejection_expires_only_the_used_grant(mysql_engine) -> None:
 @pytest.mark.asyncio
 async def test_rate_limited_refresh_recovers(mysql_engine) -> None:
     await verify_rate_limited_refresh_recovers(mysql_engine)
+
+
+@pytest.fixture
+def builtin_catalog(mysql_engine):
+    """Isolate the built-in catalog while reusing the existing MySQL fixture."""
+    with Session(mysql_engine) as db:
+        rows = db.query(Kind).filter(
+            Kind.kind == "ConnectorApp",
+            Kind.namespace == "system",
+            Kind.user_id == 0,
+            Kind.name.in_([definition.slug for definition in BUILTIN_CONNECTOR_APPS]),
+        )
+        marker = db.query(SystemConfig).filter_by(config_key=BUILTIN_COMPLETION_KEY)
+        rows.delete(synchronize_session=False)
+        marker.delete(synchronize_session=False)
+        db.commit()
+        try:
+            yield db
+        finally:
+            db.rollback()
+            rows.delete(synchronize_session=False)
+            marker.delete(synchronize_session=False)
+            db.commit()
+
+
+@pytest.mark.parametrize(
+    "failed_slug", [definition.slug for definition in BUILTIN_CONNECTOR_APPS] + [None]
+)
+def test_builtin_bootstrap_rollback_and_retry_with_mysql(
+    builtin_catalog: Session, failed_slug: str | None
+) -> None:
+    from tests.services.test_connector_builtin_apps import (
+        verify_failed_bootstrap_rolls_back_and_can_retry,
+    )
+
+    verify_failed_bootstrap_rolls_back_and_can_retry(builtin_catalog, failed_slug)
+
+
+def test_completed_bootstrap_preserves_deletion_with_mysql(
+    builtin_catalog: Session,
+) -> None:
+    from tests.services.test_connector_builtin_apps import (
+        test_deleted_app_is_not_recreated_after_successful_bootstrap,
+    )
+
+    test_deleted_app_is_not_recreated_after_successful_bootstrap(builtin_catalog)

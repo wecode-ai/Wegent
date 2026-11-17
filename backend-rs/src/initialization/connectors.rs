@@ -78,7 +78,13 @@ async fn seed(tx: &mut impl MysqlTransaction, definitions: &[Definition]) -> Mys
         payload: Json<Value>,
     }
     for definition in definitions {
-        if let Some(existing) = super::kind(tx, "ConnectorApp", &definition.slug, "system").await? {
+        let existing: Option<super::Kind> = tx
+            .fetch_optional(
+                "SELECT id,json AS payload,is_active FROM kinds WHERE user_id=0 AND kind=? AND name=? AND namespace=? LIMIT 1 FOR UPDATE",
+                ("ConnectorApp", definition.slug.as_str(), "system"),
+            )
+            .await?;
+        if let Some(existing) = existing {
             let mut value = existing.payload.0;
             if existing.is_active == Some(true) && backfill(&mut value, definition) {
                 tx.execute(
@@ -164,7 +170,9 @@ pub(super) async fn apply(mysql: &MysqlService) -> Result<()> {
 mod persistence_tests;
 
 #[cfg(test)]
-pub(crate) use persistence_tests::verify_concurrent_completion;
+pub(crate) use persistence_tests::{
+    verify_admin_edits_during_backfill, verify_concurrent_completion,
+};
 
 #[cfg(test)]
 mod tests {

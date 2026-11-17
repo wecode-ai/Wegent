@@ -4,21 +4,25 @@ use brz_mysql::{
     MysqlArgs, MysqlError, MysqlExecution, MysqlIsolationLevel, MysqlTransactionOptions,
 };
 
-pub(crate) async fn verify_concurrent_completion(mysql: &MysqlService) -> Result<()> {
-    #[derive(FromMysqlRow)]
-    struct Count {
-        n: i64,
-    }
+async fn writer_service(mysql: &MysqlService) -> Result<MysqlService> {
     #[derive(FromMysqlRow)]
     struct Schema {
         name: String,
     }
     let schema: Schema = mysql.fetch_one("SELECT DATABASE() AS name", ()).await?;
     let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")?;
-    let writer = crate::migrations::connect(&format!(
+    Ok(crate::migrations::connect(&format!(
         "mysql://root@{address}/{}?ssl-mode=disabled",
         schema.name
-    ))?;
+    ))?)
+}
+
+pub(crate) async fn verify_concurrent_completion(mysql: &MysqlService) -> Result<()> {
+    #[derive(FromMysqlRow)]
+    struct Count {
+        n: i64,
+    }
+    let writer = writer_service(mysql).await?;
     let definitions = definitions()?;
     let options = MysqlTransactionOptions::default()
         .with_isolation_level(MysqlIsolationLevel::RepeatableRead);
@@ -47,6 +51,50 @@ pub(crate) async fn verify_concurrent_completion(mysql: &MysqlService) -> Result
         )
         .await?;
     assert_eq!(apps.n, 4);
+    Ok(())
+}
+
+pub(crate) async fn verify_admin_edits_during_backfill(mysql: &MysqlService) -> Result<()> {
+    mysql
+        .execute(
+            "DELETE FROM system_configs WHERE config_key=?",
+            (COMPLETION_KEY,),
+        )
+        .await?;
+    mysql.execute("UPDATE kinds SET json=JSON_REMOVE(json,'$.spec.builtinToolLoadingMode','$.spec.builtinKeywordsSeeded') WHERE user_id=0 AND kind='ConnectorApp' AND name='dingtalk_docs' AND namespace='system'", ()).await?;
+    let definitions = definitions()?;
+    let writer = writer_service(mysql).await?;
+    let options = MysqlTransactionOptions::default()
+        .with_isolation_level(MysqlIsolationLevel::RepeatableRead);
+    let result = mysql
+        .with_transaction_options(options, async |tx| {
+            // An administrator commits after the initializer establishes its snapshot.
+            let before = crate::initialization::kind(tx, "ConnectorApp", "dingtalk_docs", "system")
+                .await?.unwrap();
+            assert_eq!(before.payload.0["spec"]["enabled"], true);
+            assert_eq!(before.payload.0["spec"]["toolAllowlist"], json!([]));
+            writer.with_transaction(async |tx| {
+                tx.execute("UPDATE kinds SET json=JSON_SET(json,'$.spec.enabled',false,'$.spec.toolAllowlist',JSON_ARRAY('admin-tool')),updated_at=NOW() WHERE user_id=0 AND kind='ConnectorApp' AND name='dingtalk_docs' AND namespace='system'", ()).await?;
+                Ok(())
+            }).await?;
+            apply_transaction(tx, &definitions).await
+        })
+        .await;
+    writer.close().await;
+    result?;
+    let after = mysql
+        .with_transaction(async |tx| {
+            crate::initialization::kind(tx, "ConnectorApp", "dingtalk_docs", "system").await
+        })
+        .await?
+        .unwrap();
+    assert_eq!(after.payload.0["spec"]["enabled"], false);
+    assert_eq!(
+        after.payload.0["spec"]["toolAllowlist"],
+        json!(["admin-tool"])
+    );
+    assert_eq!(after.payload.0["spec"]["builtinToolLoadingMode"], "lazy");
+    assert_eq!(after.payload.0["spec"]["builtinKeywordsSeeded"], true);
     Ok(())
 }
 

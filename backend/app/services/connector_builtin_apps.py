@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
+from app.models.system_config import SystemConfig
 from app.schemas.connector import ConnectorAppWrite
 from app.services.connector_apps import (
     CONNECTOR_APP_KIND,
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 BUILTIN_TOOL_LOADING_MODE = "lazy"
 BUILTIN_TOOL_LOADING_MODE_MARKER = "builtinToolLoadingMode"
 BUILTIN_KEYWORDS_MARKER = "builtinKeywordsSeeded"
+BUILTIN_COMPLETION_KEY = "builtin_connector_apps_initialized"
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,8 @@ def _active_builtin_row(db: Session, slug: str) -> Kind | None:
             Kind.user_id == CONNECTOR_APP_USER_ID,
             Kind.is_active,
         )
+        .populate_existing()
+        .with_for_update()
         .first()
     )
 
@@ -113,8 +117,8 @@ def _set_builtin_loading_mode(row: Kind, *, keywords: tuple[str, ...]) -> bool:
     return True
 
 
-def ensure_builtin_connector_apps(db: Session) -> list[str]:
-    """Create the missing built-in apps and return the slugs that were created."""
+def _seed_builtin_connector_apps(db: Session) -> tuple[list[str], list[str]]:
+    """Stage the catalog changes in the bootstrap transaction."""
     created: list[str] = []
     updated: list[str] = []
     for definition in BUILTIN_CONNECTOR_APPS:
@@ -144,13 +148,37 @@ def ensure_builtin_connector_apps(db: Session) -> list[str]:
             ),
             # No human administrator exists at startup; 0 marks a bootstrap.
             SimpleNamespace(id=0),
+            commit=False,
         )
         app_row = _active_builtin_row(db, definition.slug)
         if app_row is not None:
             _set_builtin_loading_mode(app_row, keywords=definition.keywords)
         created.append(definition.slug)
-    if updated or created:
+    return created, updated
+
+
+def ensure_builtin_connector_apps(db: Session) -> list[str]:
+    """Publish once, atomically with the completion marker shared with Rust."""
+    try:
+        completion = (
+            db.query(SystemConfig)
+            .filter(SystemConfig.config_key == BUILTIN_COMPLETION_KEY)
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
+        if completion and (completion.config_value or {}).get("completed") is True:
+            return []
+        created, updated = _seed_builtin_connector_apps(db)
+        if completion is None:
+            completion = SystemConfig(config_key=BUILTIN_COMPLETION_KEY, version=1)
+        completion.config_value = {"completed": True}
+        completion.updated_by = 0
+        db.add(completion)
         db.commit()
+    except Exception:
+        db.rollback()
+        raise
     if updated:
         logger.info(
             "[Connectors] Backfilled built-in apps to %s loading: %s",

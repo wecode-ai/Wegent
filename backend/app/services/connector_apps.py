@@ -133,7 +133,7 @@ class ConnectorAppService:
 
     @staticmethod
     def create_app(
-        db: Session, payload: ConnectorAppWrite, admin: User
+        db: Session, payload: ConnectorAppWrite, admin: User, *, commit: bool = True
     ) -> ConnectorApp:
         if ConnectorAppService._find_row_by_slug(db, payload.slug):
             raise HTTPException(
@@ -158,7 +158,10 @@ class ConnectorAppService:
             is_active=True,
         )
         db.add(row)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(row)
         return ConnectorAppService._row_to_app(row)
 
