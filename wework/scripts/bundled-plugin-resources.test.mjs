@@ -31,10 +31,7 @@ describe('bundled plugin resources', () => {
     expect(claudeEntry.version).toEqual(expect.any(String))
     for (const directory of ['.codex-plugin', '.claude-plugin']) {
       const manifest = JSON.parse(
-        await readFile(
-          join(marketplaceRoot, claudeEntry.source, directory, 'plugin.json'),
-          'utf8'
-        )
+        await readFile(join(marketplaceRoot, claudeEntry.source, directory, 'plugin.json'), 'utf8')
       )
       expect(manifest.name).toBe(claudeEntry.name)
       expect(manifest.version).toBe(claudeEntry.version)
