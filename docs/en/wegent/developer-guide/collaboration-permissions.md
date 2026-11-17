@@ -4,13 +4,15 @@ sidebar_position: 36
 
 # Collaboration permission architecture and invariants
 
-Assistant conclusion publication locks the Issue and validates current membership and an active task binding on the caller's owned device before writing content and server-derived provenance in one transaction. Notifications and shared pushes observe only the complete committed message. Retries require the same source and content; ordinary comments cannot impersonate confirmed AI conclusions. An old conversation may still publish public replies, but completing the current assignment requires both its current humanAssignmentId and matching task binding. Completion receipts additionally match the current Runtime turn, thread and generation. Shared pushes remove execution text, sub-agent process content and private parameters. Native runtime ownership is separate from the trigger author, including valid local owner 0. Canonical project execution records retain their existing Issue-authorized shared source entry; private assistant bindings grant no such authority. Focused provenance, push, stale-assignment and native publication tests, plus existing CI desktop scenarios, protect this chain. CP01–CP20 remain unchanged.
+Assistant conclusion publication locks the Issue and validates current membership and an active task binding on the caller's owned device before writing content and server-derived provenance in one transaction. Notifications and shared pushes observe only the complete committed message. Publication requires a nonempty idempotency key; retries require the same source and content; ordinary comments cannot impersonate confirmed AI conclusions. An old conversation may still publish public replies, but completing the current assignment requires both its current humanAssignmentId and matching task binding. Completion receipts additionally match the current Runtime turn, thread and generation. Room broadcasts and cross-process pushes remove execution text, sub-agent process content and private parameters; owner request acknowledgements retain the full view. Native runtime ownership is recorded from the verified binding separately from the publisher and trigger author, including valid local owner 0. Canonical project execution records retain their existing Issue-authorized shared source entry; private assistant bindings grant no such authority. Focused provenance, push, stale-assignment and native publication tests, plus existing CI desktop scenarios, protect this chain. CP01–CP20 remain unchanged.
 
 ```mermaid
 flowchart TD
     Source[Current user and Issue permission] --> Lock[Lock Issue and owned active task binding]
     Lock --> Commit[Atomically persist content and verified provenance]
-    Commit --> Public[Public conclusion and summary]
+    Commit --> Owner[Full view in owner acknowledgement only]
+    Commit --> Filter[Room projection removes private process and parameters]
+    Filter --> Public[Public conclusion and summary]
     Public --> Receipt{Current assignment and Runtime turn match}
     Receipt -->|Yes| Complete[Update current assignment receipt]
     Receipt -->|No| History[Retain public reply and assignment state]

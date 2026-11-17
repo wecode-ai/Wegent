@@ -1,5 +1,7 @@
 """Derive public authorship from persisted identities, never message text."""
 
+from typing import Any
+
 from sqlalchemy.orm import Session
 
 from app.models.delivery import ProjectChatAgent
@@ -38,6 +40,25 @@ def is_private_execution_message(message_type: str, metadata: object) -> bool:
     return message_type in {"agent_status", "agent_chunk"} or (
         isinstance(metadata, dict) and metadata.get("kind") == "task_ai_subagent"
     )
+
+
+def shared_project_chat_message(message: dict[str, Any]) -> dict[str, Any]:
+    """Return the room-safe projection without changing the owner's response."""
+    shared = dict(message)
+    if is_private_execution_message(
+        str(message.get("type", "")), message.get("metadata")
+    ):
+        shared["content"] = ""
+        if shared.get("type") == "text":
+            shared["type"] = "agent_chunk"
+    if "metadata" in shared:
+        shared["metadata"] = shared_message_metadata(shared["metadata"])
+    if "runtimeAddress" in shared:
+        shared["runtimeAddress"] = None
+        shared["traceState"] = (
+            "restricted" if shared.get("traceRef") else "history-unavailable"
+        )
+    return shared
 
 
 def message_actor_id(db: Session, row: ProjectChatMessage) -> int | None:

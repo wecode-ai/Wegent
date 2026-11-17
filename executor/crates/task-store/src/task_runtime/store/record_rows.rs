@@ -263,7 +263,13 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
             .map(|id| id.to_string())
     };
     Ok(LocalComment {
-        runtime_owner_user_id: actor_user_id.clone(),
+        runtime_owner_user_id: if verified_publication {
+            metadata["assistant_publication"]["runtime_owner_user_id"]
+                .as_i64()
+                .map(|id| id.to_string())
+        } else {
+            actor_user_id.clone()
+        },
         actor_user_id,
         actor_display_name: if sender_type == "user" {
             Some(row.get(7)?)

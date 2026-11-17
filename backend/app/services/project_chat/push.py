@@ -51,24 +51,10 @@ def push_project_chat_message(message: dict[str, Any]) -> None:
             project_chat_room,
         )
         from app.services.project_chat.message_provenance import (
-            is_private_execution_message,
-            shared_message_metadata,
+            shared_project_chat_message,
         )
 
-        shared = dict(message)
-        if is_private_execution_message(
-            str(message.get("type", "")), message.get("metadata")
-        ):
-            shared["content"] = ""
-            if shared.get("type") == "text":
-                shared["type"] = "agent_chunk"
-        if "metadata" in shared:
-            shared["metadata"] = shared_message_metadata(shared["metadata"])
-        if "runtimeAddress" in shared:
-            shared["runtimeAddress"] = None
-            shared["traceState"] = (
-                "restricted" if shared.get("traceRef") else "history-unavailable"
-            )
+        shared = shared_project_chat_message(message)
         project_id = str(shared["projectId"])
         task_id = shared.get("taskId")
         _publish_manager().emit(

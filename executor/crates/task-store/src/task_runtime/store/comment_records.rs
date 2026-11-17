@@ -130,6 +130,15 @@ impl LocalTaskStore {
         device: &str,
         task: &str,
     ) -> Result<LocalComment, TaskRuntimeError> {
+        if !create
+            .client_message_id
+            .as_deref()
+            .is_some_and(|id| !id.trim().is_empty())
+        {
+            return Err(TaskRuntimeError::Invalid(
+                "Assistant publication requires a client message identity".into(),
+            ));
+        }
         let mut connection = self.connection()?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let binding =
@@ -148,7 +157,7 @@ impl LocalTaskStore {
                 "Assistant publication source does not match its owner and Issue".into(),
             ));
         }
-        let publication = json!({"verified":true,"published_by":"human","binding_id":binding.id,"device_id":device,"task_id":task});
+        let publication = json!({"verified":true,"published_by":"human","binding_id":binding.id,"device_id":device,"task_id":task,"runtime_owner_user_id":binding.task_user_id});
         let existing = tx.query_row(
             "SELECT message_id FROM loop_item_comments WHERE project_id=?1 AND task_id=?2 AND sender_type='user' AND sender_id=?3 AND client_message_id=?4 AND deleted_at IS NULL",
             params![create.project_id, create.task_id, create.sender_id, create.client_message_id], |row| row.get::<_,String>(0),
@@ -347,6 +356,13 @@ mod stand_in_reply_tests {
             )
             .unwrap();
         let mut input: LocalCommentCreate = serde_json::from_value(json!({"project_id":project.id,"task_id":issue.id,"client_message_id":"once","sender_type":"user","sender_id":"0","sender_name":"Owner","content":"Published summary","metadata":{}})).unwrap();
+        for identity in [None, Some("".into()), Some("  ".into())] {
+            let mut invalid = input.clone();
+            invalid.client_message_id = identity;
+            assert!(store
+                .publish_assistant_comment(&invalid, "mac", "private")
+                .is_err());
+        }
         assert!(store
             .publish_assistant_comment(&input, "mac", "foreign")
             .is_err());
@@ -367,6 +383,7 @@ mod stand_in_reply_tests {
             .publish_assistant_comment(&signed_in, "mac", "private")
             .unwrap();
         assert_eq!(signed_in.actor_user_id.as_deref(), Some("86"));
+        assert_eq!(signed_in.runtime_owner_user_id.as_deref(), Some("0"));
         assert_eq!(signed_in.generation_source, "ai");
         store.connection().unwrap().execute("UPDATE loop_items SET task_user_id=7 WHERE resource_type='execution' AND device_id='mac' AND task_id='private'", []).unwrap();
         let mut foreign = input.clone();
