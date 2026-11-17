@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.services.plugin_write_errors import PluginWriteError
+from app.services.plugin_write_revision import write_revision
 
 
 def kind_revision(row: Kind) -> int:
@@ -29,9 +30,15 @@ def replace_installed_kind(
     name: str | None = None,
 ) -> None:
     """Replace one install only if its observed business revision still matches."""
+    if db.info.get("plugin_write_leases") and row.id not in db.info.get(
+        "plugin_installation_write_revisions", {}
+    ):
+        raise PluginWriteError("plugin_write_conflict")
     revision = kind_revision(row)
     replacement = deepcopy(payload)
     replacement.setdefault("spec", {})["revision"] = revision + 1
+    parent_revision = write_revision(row.json)
+    replacement["spec"]["writeRevision"] = parent_revision
     values: dict[Any, Any] = {Kind.json: replacement}
     if is_active is not None:
         values[Kind.is_active] = is_active
@@ -48,9 +55,15 @@ def replace_installed_kind(
                 Kind.name == row.name,
                 func.coalesce(Kind.json["spec"]["revision"].as_integer(), 0)
                 == revision,
+                func.coalesce(Kind.json["spec"]["writeRevision"].as_integer(), 0)
+                == parent_revision,
             )
             .update(values, synchronize_session=False)
         )
         if updated != 1:
             raise PluginWriteError("plugin_write_conflict")
+        db.info["plugin_desired_changed"] = True
+        expected = db.info.get("plugin_installation_write_revisions", {}).get(row.id)
+        if expected is not None and name is not None:
+            expected.name = name
         db.refresh(row)

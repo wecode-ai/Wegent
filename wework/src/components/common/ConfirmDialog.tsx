@@ -1,11 +1,12 @@
 import { Loader2 } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 
 interface ConfirmDialogProps {
   open: boolean
   title: string
-  description: string
+  description: ReactNode
   cancelLabel: string
   confirmLabel: string
   confirmTestId: string
@@ -14,6 +15,7 @@ interface ConfirmDialogProps {
   destructive?: boolean
   pending?: boolean
   confirmDisabled?: boolean
+  overlayClassName?: string
   onClose: () => void
   onConfirm: () => void
 }
@@ -30,6 +32,7 @@ export function ConfirmDialog({
   destructive = false,
   pending = false,
   confirmDisabled = false,
+  overlayClassName = 'z-modal',
   onClose,
   onConfirm,
 }: ConfirmDialogProps) {
@@ -44,7 +47,9 @@ export function ConfirmDialog({
   if (!open) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4">
+    <div
+      className={`fixed inset-0 flex items-center justify-center bg-black/35 p-4 ${overlayClassName}`}
+    >
       <div
         ref={dialogRef}
         data-testid={dialogTestId}

@@ -36,6 +36,7 @@
     "edit": "编辑",
     "save": "保存",
     "cancel": "取消",
+    "authorize_connector": "打开应用授权",
     "re_edit": "重新编辑",
     "re_edit_tooltip": "重新编辑",
     "forward": "发送到协作"

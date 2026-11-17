@@ -931,6 +931,8 @@ async def test_runtime_task_update_master_switch_suppresses_session_targets(
         test_db, session=session, runtime_task=address
     )
 
+    await im_session_service.disable_global_notification(test_user.id)
+
     send_text = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(im_notification_dispatcher, "send_text", send_text)
 

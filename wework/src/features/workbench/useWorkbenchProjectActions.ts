@@ -5,6 +5,7 @@ import {
   assertLocalRuntimeSidebarIdentity,
   type LocalRuntimeSidebarIdentity,
 } from '@/lib/local-runtime-sidebar-identity'
+import { isCloudDevice } from '@/lib/device-capabilities'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { projectEditingDeviceRevision } from '@/lib/project-editing-capabilities'
 import {
@@ -357,8 +358,16 @@ export function useWorkbenchProjectActions({
         ensureSameRuntime,
         onRejected: message => dispatch({ type: 'error_set', error: message }),
         messages: {
-          upgrade: t('workbench.project_settings_upgrade_required'),
-          plugins: t('workbench.project_plugins_upgrade_required'),
+          upgrade: t(
+            isCloudDevice(device)
+              ? 'workbench.project_cloud_device_restart_hint'
+              : 'workbench.project_settings_upgrade_required'
+          ),
+          plugins: t(
+            isCloudDevice(device)
+              ? 'workbench.project_cloud_device_plugins_restart_hint'
+              : 'workbench.project_plugins_upgrade_required'
+          ),
           rejected: t('workbench.project_save_verification_failed'),
           mismatch: t('workbench.project_save_verification_failed'),
         },
@@ -813,7 +822,15 @@ export function useWorkbenchProjectActions({
 
   const listEnvironmentBranches = useCallback(
     (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) => {
-      return listProjectBranches(executorClient.commands, project, workspaceTarget)
+      return listProjectBranches(
+        {
+          executeCommand: (deviceId, data) =>
+            executorClient.commands.executeCommand(deviceId, data),
+          preflightWorktree: data => executorClient.runtime.preflightWorktree(data),
+        },
+        project,
+        workspaceTarget
+      )
     },
     [executorClient]
   )

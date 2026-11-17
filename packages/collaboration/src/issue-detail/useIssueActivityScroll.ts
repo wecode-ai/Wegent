@@ -301,7 +301,7 @@ function markVisibleActivitiesRead(
   })()
 }
 
-function findTaskCommentScrollContainer(element: HTMLElement | null): HTMLElement | null {
+export function findTaskCommentScrollContainer(element: HTMLElement | null): HTMLElement | null {
   if (!element) return null
   let current: HTMLElement | null = element
   while (current) {

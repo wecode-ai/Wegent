@@ -1,0 +1,80 @@
+// @vitest-environment node
+
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { expect, onTestFinished, test } from 'vitest'
+import { settleRetainedPluginBaseline } from '../e2e/desktop/scenarios/plugin-periodic-reconcile.scenario.mjs'
+
+async function fixture() {
+  const home = await mkdtemp(join(tmpdir(), 'plugin-reconcile-baseline-'))
+  onTestFinished(() => rm(home, { recursive: true, force: true }))
+  await mkdir(join(home, 'capabilities'))
+  const retained = { installedId: 75 }
+  const before = {
+    managed: true,
+    installed_plugin_id: 75,
+    name: 'retained',
+    checksum: 'sha256:unchanged',
+    enabled: true,
+    component_states: { 'skill:retained': true },
+    runtime: { codex_link: '/unchanged/plugin' },
+    plugin_sync_generation: 25,
+  }
+  const request = {
+    at: 200,
+    namespace: '/local-executor,',
+    id: '6',
+    pluginIds: ['74', '75'],
+    pluginSync: { version: 2, generation: 31, complete: true },
+  }
+  const acknowledgement = { ...request, at: 210, success: true }
+  const target = {
+    home,
+    kind: 'app',
+    retainedBefore: before,
+    baseline: { retained: before },
+    observation: { capabilities: [request], acknowledgements: [acknowledgement] },
+  }
+  async function write(plugin) {
+    await writeFile(
+      join(home, 'capabilities/manifest-v2.json'),
+      JSON.stringify({ plugins: { retained: plugin } })
+    )
+  }
+  await write({ ...before, plugin_sync_generation: 31 })
+  return { target, retained, before, acknowledgement, write }
+}
+
+test('uses an acknowledged full sync that occurred while aligning another Runtime window', async () => {
+  const { target, retained, before, acknowledgement } = await fixture()
+  const settled = await settleRetainedPluginBaseline(target, retained, 1000)
+  expect(target.baseline.retained.plugin_sync_generation).toBe(25)
+  expect(settled.plugin).toEqual({ ...before, plugin_sync_generation: 31 })
+  expect(settled.acknowledgement).toEqual(acknowledgement)
+})
+
+test('does not accept unacknowledged ordering metadata as the recovery baseline', async () => {
+  const { target, retained } = await fixture()
+  target.observation.acknowledgements = []
+  await expect(settleRetainedPluginBaseline(target, retained, 1)).rejects.toThrow(
+    'retained plugin baseline did not settle'
+  )
+})
+
+test.each(['checksum', 'enabled', 'component_states', 'runtime'])(
+  'still rejects changes to the retained plugin %s before fault injection',
+  async field => {
+    const { target, retained, before, write } = await fixture()
+    const changed = {
+      checksum: 'sha256:changed',
+      enabled: false,
+      component_states: { 'skill:retained': false },
+      runtime: { codex_link: '/changed/plugin' },
+    }
+    await write({ ...before, plugin_sync_generation: 31, [field]: changed[field] })
+    await expect(settleRetainedPluginBaseline(target, retained, 1000)).rejects.toThrow(
+      'Reconcile window alignment altered the retained plugin runtime'
+    )
+  }
+)

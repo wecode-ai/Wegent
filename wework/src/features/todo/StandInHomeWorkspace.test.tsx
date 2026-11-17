@@ -1,6 +1,6 @@
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import type { CollaborationProject, WorkspaceMyWorkItem } from '@wegent/collaboration'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { StandInInboxWork } from '@/api/standIn'
@@ -38,8 +38,27 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
 }))
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   conversation.mockClear()
   navigate.mockClear()
+})
+
+it('refreshes the displayed running status while the assistant conversation remains open', async () => {
+  vi.useFakeTimers()
+  const running = work('running')
+  running.task = { ...running.task!, status: 'running', running: true }
+  const done = { ...running, task: { ...running.task!, status: 'done', running: false } }
+  const inbox = vi
+    .fn()
+    .mockResolvedValueOnce({ items: [running], sourceErrors: [] })
+    .mockResolvedValue({ items: [done], sourceErrors: [] })
+  await setup([], { inbox })
+  await act(async () => {})
+  fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
+  expect(screen.getByTestId('personal-home-assistant-work-status')).toHaveTextContent('1 running')
+  await act(async () => vi.advanceTimersByTimeAsync(3000))
+  expect(screen.getByTestId('personal-home-assistant-work-status')).not.toHaveTextContent('running')
+  expect(inbox).toHaveBeenCalledTimes(2)
 })
 
 function work(id: string): StandInInboxWork {
@@ -118,7 +137,7 @@ it('opens an independent collaboration chat and retains its draft across work vi
   expect(chat).toHaveAttribute('data-scope', 'collaboration')
   expect(chat).toHaveAttribute('data-owner', '7:bound')
   expect(chat).toHaveAttribute('data-active', 'true')
-  expect(api.inbox).not.toHaveBeenCalled()
+  expect(api.inbox).toHaveBeenCalledOnce()
   fireEvent.change(chat, { target: { value: 'Discuss project work' } })
   fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
   await screen.findByText('No assistant tasks yet')
@@ -175,6 +194,30 @@ it('shows inbox failures and retries through a local recovery entry', async () =
   await setup([], { inbox })
   fireEvent.click(await screen.findByTestId('personal-home-work-retry'))
   await screen.findByText('Work restored')
+})
+
+it('surfaces known running work in chat without counting another owner or starting another inbox read', async () => {
+  const own = work('own')
+  own.task = { ...own.task!, status: 'running', running: true }
+  const other = work('other')
+  other.task = {
+    ...other.task!,
+    status: 'running',
+    running: true,
+    runtimeHandle: { origin: { ...other.task!.runtimeHandle!.origin, userId: 8 } },
+  }
+  const { api } = await setup([own, other])
+  await screen.findByText('Work own')
+  fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
+  const status = screen.getByTestId('personal-home-assistant-work-status')
+  expect(status).toHaveTextContent('1 running')
+  expect(status).toHaveAttribute('role', 'status')
+  expect(status).toHaveAttribute('aria-live', 'polite')
+  expect(status.closest('button')).toBeNull()
+  expect(screen.getByTestId('personal-home-assistant-view-toggle')).toHaveAccessibleName(
+    'Assistant tasks'
+  )
+  expect(api.inbox).toHaveBeenCalledOnce()
 })
 
 it('groups work by role with active and terminal tasks in separate sections', async () => {
@@ -251,6 +294,11 @@ it('uses collaboration Issues for Needs my input and opens their original detail
   rerender(
     <StandInHomeWorkspace {...props} collaborationWork={{ pendingIssues: [issue], onOpenIssue }} />
   )
+  fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
+  expect(screen.getByTestId('personal-home-assistant-work-status')).toHaveTextContent(
+    '1 awaiting you'
+  )
+  fireEvent.click(screen.getByTestId('personal-home-assistant-view-toggle'))
   expect(screen.getByTestId('personal-home-collaboration-pending')).toHaveTextContent(
     'Which release?'
   )

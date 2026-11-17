@@ -277,6 +277,8 @@ const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 30
 const TURN_NAVIGATION_ONLY_TURN_COUNT = 55
 const TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN = 6
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
+const CANCELLATION_RUNNING_PROMPT =
+  'WEWORK_DESKTOP_E2E_CANCEL_RUNNING: keep this response open until cancellation is acknowledged.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const SEND_REJECTION_RUNNING_PROMPT =
   'WEWORK_DESKTOP_E2E_SEND_REJECTION_RUNNING: keep this turn active.'
@@ -506,13 +508,13 @@ const PROVIDER_SWITCH_LUNA_LABELS = [
   'GPT 5.6 Luna (海外)',
 ]
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
-// The local E2E Codex catalog is classified as third-party (custom provider), so
-// the official option is served from the cloud model catalog with a canonical
-// model id that does not collide with the local Codex catalog.
+// Runtime model selections use the catalog name as the upstream model id.
 const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT-5.5'
+const PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID = 'wework-model-switch-e2e'
+const PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN = 'wework-model-switch-e2e-access'
 const PROVIDER_SWITCH_PROMPT =
   'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with official GPT.'
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
@@ -520,6 +522,10 @@ const PROVIDER_SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_GPT_COMPL
 const PROVIDER_SWITCH_RESUME_PROMPT =
   'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_RESUME: continue the loaded official thread with Luna.'
 const PROVIDER_SWITCH_RESUME_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_RESUME_LUNA_COMPLETE'
+const PROVIDER_SWITCH_REASONING_PROMPT =
+  'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_REASONING: continue this thread with official GPT.'
+const PROVIDER_SWITCH_REASONING_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_REASONING_COMPLETE'
+const PROVIDER_SWITCH_FOREIGN_REASONING = 'WEWORK_DESKTOP_E2E_FOREIGN_REASONING_SUMMARY'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const TELEMETRY_CAPTURE_PATH = '/e/'
 const TELEMETRY_TEST_PROJECT_KEY = 'wework-desktop-e2e'
@@ -1584,27 +1590,34 @@ async function selectE2EModel(
     label === DEFAULT_MODEL_LABEL ? [label, 'GPT-5.6 Luna'] : [label]
   )
   const modelSelectorButton = `${composerSelector} [data-testid="model-selector-button"]`.trim()
-  await control.command('waitFor', modelSelectorButton, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    visible: true,
-  })
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const pickerOpen = initialSnapshot.testIds.includes('model-selector-menu')
+  if (!pickerOpen) {
+    await control.command('waitFor', modelSelectorButton, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      visible: true,
+    })
+  }
   if (expectedProviderId) {
     // The recovery control stays mounted while startup reconciles the local catalog.
     await control.command('ensureLocalModelCatalogReady', 'body', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
   }
-  const selectedModelLabel = await control.command('getText', modelSelectorButton, {
-    visible: true,
-  })
-  const selectedProviderId = await control.command('getAttribute', modelSelectorButton, {
-    value: 'data-model-provider-id',
-  })
-  if (
-    labels.some(label => selectedModelLabel.includes(label)) &&
-    (!expectedProviderId || selectedProviderId === expectedProviderId)
-  ) {
-    return
+  // An open modal picker isolates its background trigger, including retry entry points.
+  if (!pickerOpen) {
+    const selectedModelLabel = await control.command('getText', modelSelectorButton, {
+      visible: true,
+    })
+    const selectedProviderId = await control.command('getAttribute', modelSelectorButton, {
+      value: 'data-model-provider-id',
+    })
+    if (
+      labels.some(label => selectedModelLabel.includes(label)) &&
+      (!expectedProviderId || selectedProviderId === expectedProviderId)
+    ) {
+      return
+    }
   }
 
   await ensureModelOptionVisible(control, modelIds, modelSelectorButton, expectedProviderId)
@@ -1860,6 +1873,7 @@ export {
   TURN_NAVIGATION_ONLY_TURN_COUNT,
   TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN,
   CANCELLATION_PROMPT,
+  CANCELLATION_RUNNING_PROMPT,
   CANCELLATION_COMPLETION_TEXT,
   SEND_REJECTION_RUNNING_PROMPT,
   SEND_REJECTION_RETRY_PROMPT,
@@ -1951,11 +1965,16 @@ export {
   PROVIDER_SWITCH_OFFICIAL_LABEL,
   PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
   PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
   PROVIDER_SWITCH_PROMPT,
   PROVIDER_SWITCH_FAILURE,
   PROVIDER_SWITCH_COMPLETION,
   PROVIDER_SWITCH_RESUME_PROMPT,
   PROVIDER_SWITCH_RESUME_COMPLETION,
+  PROVIDER_SWITCH_REASONING_PROMPT,
+  PROVIDER_SWITCH_REASONING_COMPLETION,
+  PROVIDER_SWITCH_FOREIGN_REASONING,
   BLOCKED_CLOUD_MODEL_PATH,
   TELEMETRY_CAPTURE_PATH,
   TELEMETRY_TEST_PROJECT_KEY,

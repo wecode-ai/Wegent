@@ -221,6 +221,12 @@ export function ActionMenu({
 
   const handleItemSelect = async (item: ActionMenuItem) => {
     if (item.disabled || item.children?.length || !item.onSelect) return;
+    // A selected action can mount a dialog immediately. Leave a stable opener
+    // before removing the focused menu item, rather than stealing focus later.
+    const returnFocus = contextMenuPosition
+      ? contextMenuPreviousFocusRef.current
+      : triggerRef.current;
+    returnFocus?.focus();
     closeMenu();
     await item.onSelect();
   };
@@ -611,7 +617,7 @@ export function ActionMenu({
                   }}
                   onKeyDown={(event) => handleItemKeyDown(event, item)}
                   className={[
-                    "flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]",
+                    "flex h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px] md:h-8",
                     item.danger
                       ? "text-red-500 hover:bg-red-50"
                       : "text-text-primary hover:bg-muted",
@@ -694,7 +700,7 @@ export function ActionMenu({
                     }}
                     onKeyDown={(event) => handleItemKeyDown(event, item, true)}
                     className={[
-                      "flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]",
+                      "flex h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px] md:h-8",
                       item.danger
                         ? "text-red-500 hover:bg-red-50"
                         : "text-text-primary hover:bg-muted",

@@ -15,9 +15,10 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Team
@@ -33,6 +34,7 @@ from app.services.chat.storage.task_manager import (
 )
 from app.services.chat.task_device_resolution import ensure_task_device_id
 from app.services.readers.kinds import KindType, kindReader
+from app.services.subscription.history_window import resolve_subscription_history_limit
 from app.services.task_fork_history import task_fork_history_resolver
 from app.services.task_status import mark_task_pending_payload
 from app.stores.tasks import subtask_store
@@ -52,6 +54,7 @@ class ExecutionSessionSetup:
     user_subtask: Subtask
     assistant_subtask: Optional[Subtask]
     existing_subtasks: List[Subtask]
+    memory_history: List[Subtask]
     bot_ids: List[int]
     bot_name: str
     bot_namespace: str
@@ -351,15 +354,47 @@ def prepare_execution_session(
         task = create_new_task(db, user, team, resolved_task_params)
         subtask_user_id = user.id
 
-    existing_subtasks = [
-        item.subtask
-        for item in task_fork_history_resolver.resolve_for_task(
-            db,
-            task_id=task.id,
-            user_id=subtask_user_id,
-            current_task=task,
+    resolved_task_params.history_window = resolve_subscription_history_limit(
+        db, task, resolved_task_params.history_window
+    )
+    existing_subtasks = (
+        []
+        if (
+            resolved_task_params.history_window is not None
+            and resolved_task_params.history_window <= 0
         )
-    ]
+        else [
+            item.subtask
+            for item in task_fork_history_resolver.resolve_for_task(
+                db,
+                task_id=task.id,
+                user_id=subtask_user_id,
+                current_task=task,
+                limit=resolved_task_params.history_window,
+            )
+        ]
+    )
+    if resolved_task_params.history_window is not None:
+        memory_history = (
+            [
+                item.subtask
+                for item in task_fork_history_resolver.resolve_for_task(
+                    db,
+                    task_id=task.id,
+                    user_id=subtask_user_id,
+                    current_task=task,
+                    limit=settings.MEMORY_CONTEXT_MESSAGES - 1,
+                    statuses=(SubtaskStatus.COMPLETED,),
+                    roles=(SubtaskRole.USER, SubtaskRole.ASSISTANT),
+                )
+            ]
+            if settings.MEMORY_CONTEXT_MESSAGES > 1
+            else []
+        )
+        # The memory context builder consumes history newest-first.
+        memory_history.reverse()
+    else:
+        memory_history = existing_subtasks
     next_message_id = task_fork_history_resolver.get_next_message_id(
         db,
         task_id=task.id,
@@ -435,6 +470,7 @@ def prepare_execution_session(
         user_subtask=user_subtask,
         assistant_subtask=assistant_subtask,
         existing_subtasks=existing_subtasks,
+        memory_history=memory_history,
         bot_ids=bot_ids,
         bot_name=first_bot_name,
         bot_namespace=first_bot_namespace,

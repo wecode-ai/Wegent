@@ -11,7 +11,7 @@ import {
   type Ref,
   type ReactNode,
 } from 'react'
-import { ChevronRight, Folder, Plus, Trash2 } from 'lucide-react'
+import { Folder, Plus, Trash2 } from 'lucide-react'
 import { dequal } from 'dequal'
 import type {
   CollaborationProject,
@@ -23,12 +23,13 @@ import {
   newStandInRole,
   standInRoleName,
   roleIncludesProject,
+  roleSelectsProject,
   disconnectStandInProject,
   type PersonalStandInSettings,
   type StandInRole,
 } from '@/api/personalStandIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import type { DeviceInfo } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -43,9 +44,11 @@ import {
   StandInSettingsHeader,
   StandInSettingsActions,
   StandInSettingsEntry,
+  StandInSettingsError,
 } from './StandInSettingsLayout'
 import { StandInRequirements } from './StandInRequirements'
 import { StandInComposer } from './StandInComposer'
+import { useStandInRuntimeWork } from './useStandInRuntimeWork'
 import { useStableEvent } from '@/features/workbench/useStableEvent'
 import { saveStandInRoleDevice } from './saveStandInRoleDevice'
 
@@ -119,8 +122,11 @@ function StandInSettingsEditor({
   )
   const [notice, setNotice] = useState(false)
   const [roleNameError, setRoleNameError] = useState(false)
+  const roleNameInput = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (roleNameError) roleNameInput.current?.focus()
+  }, [roleNameError, view])
   const [confirmDiscard, setConfirmDiscard] = useState(false)
-  const [runtimeWork, setRuntimeWork] = useState<RuntimeWorkListResponse | null>(null)
   const projectRef = useMemo(
     () =>
       initialProject && {
@@ -139,6 +145,7 @@ function StandInSettingsEditor({
     draft?.roles[0]
   const executionDeviceId = role?.executionDeviceId ?? draft?.executionDeviceId
   const [scheduleDirty, setScheduleDirty] = useState(false)
+  const [connectionDraftDirty, setConnectionDraftDirty] = useState(false)
   const [calendarOpen, setCalendarOpen] = useState(initialCalendar)
   const [connectionDetailOpen, setConnectionDetailOpen] = useState(initialCalendar)
   const [connectionTitle, setConnectionTitle] = useState<string | null>(null)
@@ -151,25 +158,16 @@ function StandInSettingsEditor({
     },
     [onCalendarViewChange]
   )
-  const dirty = Boolean(draft && saved && !dequal(draft, saved)) || scheduleDirty
+  const dirty =
+    Boolean(draft && saved && !dequal(draft, saved)) || scheduleDirty || connectionDraftDirty
   useEffect(() => {
     onSavingChange?.(saving)
   }, [saving, onSavingChange])
-  useEffect(() => {
-    if (view !== 'advanced' || !executionDeviceId || !services.runtimeWorkApi) return
-    let active = true
-    void services.runtimeWorkApi
-      .listRuntimeWork({ deviceId: executionDeviceId })
-      .then(value => {
-        if (active) setRuntimeWork(value)
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [view, executionDeviceId, services, setError])
+  const { runtimeWork, runtimeError, retryRuntimeWork } = useStandInRuntimeWork(
+    services.runtimeWorkApi,
+    executionDeviceId,
+    view === 'advanced'
+  )
 
   const openView = (next: View) => {
     setRoleNameError(false)
@@ -190,9 +188,6 @@ function StandInSettingsEditor({
     setRoleNameError(false)
     if (view !== (initialProject ? 'project' : 'main')) {
       const entry = history.at(-1)
-      const previous = entry?.draft ?? saved
-      if (previous) setDraft(previous)
-      setSelectedId(previous?.roles.some(row => row.id === selectedId) ? selectedId : '')
       setHistory(current => current.slice(0, -1))
       setView(entry?.view ?? (initialProject ? 'project' : 'main'))
     } else if (dirty) setConfirmDiscard(true)
@@ -205,12 +200,32 @@ function StandInSettingsEditor({
   )
   const requestLeave = useStableEvent((action: () => void) => {
     if (connectionRef.current)
-      connectionRef.current.requestLeave(() => navigation.requestLeave(action))
+      connectionRef.current.requestLeave(discarded =>
+        discarded ? action() : navigation.requestLeave(action)
+      )
     else navigation.requestLeave(action)
   })
   const close = () =>
     connectionRef.current ? connectionRef.current.requestLeave(closeView) : closeView()
   const closeSettings = () => requestLeave(() => onCancel?.())
+  const cancelView = () => {
+    const nestedCreation = view === 'create' && !initialCreate
+    if (!nestedCreation && (onCancel || view === (initialProject ? 'project' : 'main'))) {
+      closeSettings()
+      return
+    }
+    const cancelChanges = () => {
+      const entry = history.at(-1)
+      const previous = entry?.draft ?? saved
+      if (previous) setDraft(previous)
+      setSelectedId(previous?.roles.some(row => row.id === selectedId) ? selectedId : '')
+      setRoleNameError(false)
+      setHistory(current => current.slice(0, -1))
+      setView(entry?.view ?? (initialProject ? 'project' : 'main'))
+    }
+    if (connectionRef.current) connectionRef.current.requestLeave(cancelChanges)
+    else cancelChanges()
+  }
   const dialogRef = useDialogKeyboard<HTMLElement>(
     close,
     Boolean(initialCreate || initialProfileId) && !confirmDiscard
@@ -220,8 +235,10 @@ function StandInSettingsEditor({
     requestLeave,
   }))
   const save = async (disconnectProject = false) => {
-    if (!draft || !role || moving) return
-    if (view === 'create' && !role.name.trim()) {
+    if (!draft || !role || moving || connectionDraftDirty) return
+    if (!saved?.roles.some(value => value.id === role.id) && !role.name.trim()) {
+      if (view === 'project') openView('create')
+      else if (view === 'advanced' || view === 'connections') closeView()
       setRoleNameError(true)
       return
     }
@@ -336,13 +353,18 @@ function StandInSettingsEditor({
   )
   const included = role
     ? availableProjects.filter(project =>
-        roleIncludesProject(role, {
+        roleSelectsProject(role, {
           id: project.id,
           store: project.project_store === 'local' ? 'local' : 'cloud',
         })
       )
     : []
   const title = view === 'main' ? 'personal.settings_title' : `personal.${view}_title`
+  const projectConfigured =
+    role && (role.collaboration.allProjects || role.collaboration.projects.length > 0)
+  const receivingSources = Boolean(
+    role?.enabled && ((projectConfigured && role.collaboration.enabled) || role.connections?.length)
+  )
 
   return (
     <section
@@ -427,7 +449,7 @@ function StandInSettingsEditor({
                 data-testid="stand-in-list-configure"
                 disabled={saving || loading}
                 onClick={createRole}
-                className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-text-muted hover:bg-muted disabled:opacity-40"
+                className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-40 md:min-h-8"
               >
                 <Plus className="h-4 w-4" />
                 {t('standIn.personal.add_role')}
@@ -436,7 +458,7 @@ function StandInSettingsEditor({
           }
         />
         {loading ? (
-          <p role="status" className="px-5 py-8 text-text-muted">
+          <p role="status" className="px-5 py-8 text-text-secondary">
             {t('standIn.loading')}
           </p>
         ) : draft && role ? (
@@ -479,6 +501,7 @@ function StandInSettingsEditor({
                     )}
                   </span>
                   <input
+                    ref={roleNameInput}
                     autoFocus={view === 'create'}
                     data-testid="stand-in-role-name"
                     value={role.name}
@@ -489,7 +512,7 @@ function StandInSettingsEditor({
                       setRoleNameError(false)
                       changeRole({ ...role, name: event.target.value })
                     }}
-                    className="min-h-9 rounded-md border border-border bg-background px-2"
+                    className="min-h-11 rounded-md border border-border bg-background px-2 placeholder:text-text-secondary md:min-h-9"
                     placeholder={
                       view === 'create'
                         ? t('standIn.personal.role_name_placeholder')
@@ -538,17 +561,17 @@ function StandInSettingsEditor({
                       disabled={saving}
                       onClick={() => openView('connections')}
                     />
-                    {role.collaboration.enabled || role.connections?.length ? (
+                    {projectConfigured || role.connections?.length ? (
                       <div
                         className="flex items-start gap-3 py-2 text-sm text-text-secondary"
                         data-testid="stand-in-source-summary"
                       >
                         <Folder className="mt-0.5 h-4 w-4 shrink-0" />
                         <div>
-                          {role.collaboration.enabled && (
+                          {projectConfigured && (
                             <>
                               <p>{t('standIn.personal.collaboration')}</p>
-                              <p className="mt-1 text-xs text-text-muted">
+                              <p className="mt-1 text-xs text-text-secondary">
                                 {t(
                                   role.collaboration.allProjects
                                     ? 'standIn.personal.connected_all'
@@ -556,10 +579,15 @@ function StandInSettingsEditor({
                                   { count: included.length }
                                 )}
                               </p>
+                              {!role.collaboration.enabled && receivingSources && (
+                                <p className="mt-1 text-xs text-text-secondary">
+                                  {t('standIn.workspace.connection_receiving_paused')}
+                                </p>
+                              )}
                             </>
                           )}
                           {!!role.connections?.length && (
-                            <p className="mt-1 text-xs text-text-muted">
+                            <p className="mt-1 text-xs text-text-secondary">
                               {t('standIn.workspace.source_connections', {
                                 count: role.connections.length,
                               })}
@@ -567,9 +595,17 @@ function StandInSettingsEditor({
                           )}
                         </div>
                       </div>
-                    ) : (
-                      <p className="text-sm text-text-muted" data-testid="stand-in-sources-empty">
-                        {t('standIn.personal.no_sources')}
+                    ) : null}
+                    {!receivingSources && (
+                      <p
+                        className="text-sm text-text-secondary"
+                        data-testid="stand-in-sources-empty"
+                      >
+                        {t(
+                          projectConfigured || role.connections?.length
+                            ? 'standIn.personal.no_receiving_sources'
+                            : 'standIn.personal.no_sources'
+                        )}
                       </p>
                     )}
                   </div>
@@ -577,19 +613,13 @@ function StandInSettingsEditor({
               )}
               {(view === 'main' || view === 'create') && (
                 <>
-                  <button
-                    type="button"
-                    data-testid="stand-in-advanced-open"
+                  <StandInSettingsEntry
+                    testId="stand-in-advanced-open"
                     disabled={saving}
                     onClick={() => openView('advanced')}
-                    className="flex w-full items-center gap-2 border-t border-border pt-4 text-left"
-                  >
-                    <span className="flex-1 font-medium">{t('standIn.personal.more')}</span>
-                    <span className="text-xs text-text-muted">
-                      {t('standIn.personal.more_summary')}
-                    </span>
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
+                    label={t('standIn.personal.more')}
+                    description={t('standIn.personal.more_summary')}
+                  />
                 </>
               )}
               {view === 'connections' && (
@@ -604,6 +634,7 @@ function StandInSettingsEditor({
                   savedConfiguration={saved?.roles.find(item => item.id === role.id)}
                   scheduling={{ userId, roleId: role.id }}
                   onScheduleDirtyChange={setScheduleDirty}
+                  onDraftDirtyChange={setConnectionDraftDirty}
                   projects={projects}
                   focusedProjectId={initialProject?.id}
                   disabled={saving}
@@ -636,7 +667,7 @@ function StandInSettingsEditor({
                       }))
                     }}
                   />
-                  <span className="text-xs text-text-muted">
+                  <span className="text-xs text-text-secondary">
                     {t('standIn.personal.device_change_help')}
                   </span>
                 </label>
@@ -663,22 +694,26 @@ function StandInSettingsEditor({
                   services={services}
                 />
               )}
-              {state.error && (
-                <div role="alert" className="text-sm text-error">
-                  <p>{state.error}</p>
-                  <button
-                    type="button"
-                    data-testid="stand-in-reload"
-                    disabled={saving}
-                    onClick={state.reload}
-                    className="mt-1 underline"
-                  >
-                    {t('standIn.reload')}
-                  </button>
-                </div>
+              {view === 'advanced' && (
+                <StandInSettingsError
+                  error={runtimeError}
+                  retry={{ testId: 'stand-in-role-environment-retry', onClick: retryRuntimeWork }}
+                />
               )}
+              <StandInSettingsError
+                error={state.error}
+                retry={{
+                  testId: 'stand-in-reload',
+                  disabled: saving,
+                  onClick: () => requestLeave(state.reload),
+                }}
+              />
               {notice && (
-                <p role="status" data-testid="stand-in-saved" className="text-sm text-text-muted">
+                <p
+                  role="status"
+                  data-testid="stand-in-saved"
+                  className="text-sm text-text-secondary"
+                >
                   {t('standIn.saved')}
                 </p>
               )}
@@ -697,6 +732,8 @@ function StandInSettingsEditor({
                 }}
                 onConfirm={() => {
                   setDraft(saved)
+                  setSelectedId(saved?.roles.some(row => row.id === selectedId) ? selectedId : '')
+                  setRoleNameError(false)
                   setConfirmDiscard(false)
                   navigation.confirmLeave(() => onCancel?.())
                 }}
@@ -706,12 +743,17 @@ function StandInSettingsEditor({
             {!scheduleDirty && (
               <StandInSettingsActions
                 prefix="stand-in"
+                busy={saving}
                 leading={footerLeading}
                 disabled={saving}
                 saveDisabled={
-                  saving || moving || scheduleDirty || (view === 'project' && !projectRoleId)
+                  saving ||
+                  moving ||
+                  scheduleDirty ||
+                  connectionDraftDirty ||
+                  (view === 'project' && !projectRoleId)
                 }
-                onCancel={close}
+                onCancel={cancelView}
                 onSave={() => void save(view === 'project' && projectEnabled)}
                 saveLabel={t(
                   saving
@@ -736,13 +778,13 @@ function StandInSettingsEditor({
                       data-testid="stand-in-role-delete"
                       disabled={saving || loading}
                       onClick={() => setConfirmDelete(true)}
-                      className="inline-flex min-h-9 items-center gap-2 rounded-md px-2 text-sm text-error hover:bg-muted"
+                      className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-error hover:bg-muted md:min-h-9"
                     >
                       <Trash2 className="h-4 w-4" />
                       {t('standIn.personal.delete_role')}
                     </button>
                   )}
-                <span className="mr-auto text-xs text-text-muted">
+                <span className="mr-auto text-xs text-text-secondary">
                   {view === 'connections' ? (
                     t('standIn.personal.connections_only')
                   ) : initialProject && view === 'create' ? (
@@ -772,7 +814,7 @@ function StandInSettingsEditor({
                     data-testid="stand-in-role-delete-cancel"
                     disabled={saving}
                     onClick={() => setConfirmDelete(false)}
-                    className="min-h-8 rounded-md px-3 hover:bg-muted"
+                    className="min-h-11 rounded-md px-3 hover:bg-muted md:min-h-8"
                   >
                     {t('standIn.cancel')}
                   </button>
@@ -791,7 +833,7 @@ function StandInSettingsEditor({
                         onCancel?.()
                       }
                     }}
-                    className="min-h-8 rounded-md bg-text-primary px-3 text-background disabled:opacity-50"
+                    className="min-h-11 rounded-md bg-text-primary px-3 text-background disabled:opacity-50 md:min-h-8"
                   >
                     {t('standIn.personal.confirm_delete_role')}
                   </button>
@@ -800,16 +842,11 @@ function StandInSettingsEditor({
             )}
           </>
         ) : (
-          <div className="px-5 pb-5" role="alert">
-            <p className="text-error">{state.error}</p>
-            <button
-              type="button"
-              data-testid="stand-in-reload"
-              onClick={state.reload}
-              className="mt-2 underline"
-            >
-              {t('standIn.reload')}
-            </button>
+          <div className="px-5 pb-5">
+            <StandInSettingsError
+              error={state.error}
+              retry={{ testId: 'stand-in-reload', onClick: state.reload }}
+            />
           </div>
         )}
       </div>

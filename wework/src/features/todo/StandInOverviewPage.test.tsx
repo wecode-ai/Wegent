@@ -13,14 +13,11 @@ import '@/i18n'
 import { WORKSPACE_NAVIGATION_EVENT } from '@/lib/navigation'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import {
-  runnerModelKey,
-  type CollaborationProject,
-  type SharedWorkspaceApi,
-} from '@wegent/collaboration'
+import { runnerModelKey, type CollaborationProject } from '@wegent/collaboration'
 import { expect, it, vi } from 'vitest'
 import { StandInConversation } from './StandInConversation'
 import { StandInOverviewPage } from './StandInOverviewPage'
+import { standInOverviewFixture as fixture } from './StandInOverviewPage.testFixtures'
 const menuMocks = vi.hoisted(() => ({ leave: vi.fn((action: () => void) => action()) }))
 vi.mock('@/features/automations/AutomationsPage', async () => {
   const { useImperativeHandle } = await import('react')
@@ -71,45 +68,6 @@ vi.mock('./StandInConversation', () => ({
     )
   ),
 }))
-
-function fixture(roles: StandInRole[] = [newStandInRole('device', 'default')]) {
-  let settings: PersonalStandInSettings = {
-    userId: 7,
-    executionDeviceId: 'device',
-    version: 0,
-    roles,
-  }
-  const personalAgents = vi.fn(async () => [])
-  const personalSave = vi.fn(async (_user, value: PersonalStandInSettings) => {
-    settings = value
-    return settings
-  })
-  const props = {
-    userId: 7,
-    api: {} as SharedWorkspaceApi,
-    devices: [],
-    projects: [
-      { id: '12', name: 'Example project', project_store: 'backend' },
-    ] as CollaborationProject[],
-    services: {
-      getLocalRuntimeSidebarIdentity: async () => ({ deviceId: 'device' }),
-      modelApi: { listModels: async () => ({ data: [] }) },
-      standInApi: {
-        onboarding: vi.fn(async () => ({ state: { version: 1, completed: true } })),
-        connectionProviders: vi.fn(async () => ({ items: [] })),
-        catalog: async () => ({ models: [] }),
-        personalGet: vi.fn(async () => settings),
-        memories: vi.fn(async () => []),
-        inbox: vi.fn(async () => ({ items: [], sourceErrors: [] })),
-        proposal: vi.fn(async () => null),
-        processingStatus: vi.fn(async () => ({ pendingCount: 0, running: false, actions: [] })),
-        personalSave,
-        personalAgents,
-      },
-    } as unknown as WorkbenchServices,
-  }
-  return { props, personalAgents, personalSave }
-}
 
 async function renderLoadedOverview(props: ReturnType<typeof fixture>['props']) {
   const api = props.services.standInApi!
@@ -372,6 +330,24 @@ it('selects the primary conversation and inserts the chosen example as an editab
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 })
 
+it.each([0, 1])(
+  'keeps unnamed role %i identity consistent between its tab and details',
+  async index => {
+    const roles = [newStandInRole('device', 'default'), newStandInRole('device', 'second')]
+    roles[0].name = '   '
+    const { props } = fixture(roles)
+    const user = userEvent.setup()
+    render(<StandInOverviewPage {...props} />)
+    await openRoles()
+    const tab = screen.getByTestId(`stand-in-overview-role-${roles[index].id}`)
+    const expectedName = index ? '默认助理 2' : '默认助理'
+    expect(tab).toHaveTextContent(expectedName)
+    await user.click(tab)
+    const identity = await navigationEntry('stand-in-details-identity')
+    expect(within(identity).getByRole('heading', { name: expectedName })).toBeVisible()
+  }
+)
+
 it('lists existing stand-ins without execution history and keeps project names separate', async () => {
   const role = newStandInRole('device', 'default')
   role.collaboration = {
@@ -390,6 +366,18 @@ it('lists existing stand-ins without execution history and keeps project names s
   expect(row).toHaveTextContent('已连接 1 个项目')
   expect(row).toHaveTextContent('未开启')
   expect(await screen.findByTestId('identity-conversation')).toHaveTextContent('primary')
+})
+
+it('retains project names and configured counts in a paused role tab', async () => {
+  const role = newStandInRole('device', 'default')
+  role.collaboration.enabled = false
+  const { props } = fixture([role])
+  render(<StandInOverviewPage {...props} />)
+  await openRoles()
+  const row = await screen.findByTestId('stand-in-overview-role-default')
+  expect(row).toHaveTextContent('Example project')
+  expect(row).toHaveTextContent('已连接 1 个项目')
+  expect(row).toHaveTextContent('未开启')
 })
 
 it('opens settings for the selected stand-in and reflects its renamed identity', async () => {

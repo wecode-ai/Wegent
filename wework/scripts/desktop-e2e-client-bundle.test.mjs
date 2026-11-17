@@ -174,9 +174,45 @@ test('the shared build imports the mobile scenario and executes production paylo
     assert.throws(() => createRequire(import.meta.url).resolve('vite'), { code: 'MODULE_NOT_FOUND' })
     const scene = await import(pathToFileURL(process.argv[1]))
     assert.equal(typeof scene.createDesktopScenario, 'function')
+    const worktreeScene = await import(pathToFileURL(process.argv[3]))
+    assert.equal(typeof worktreeScene.createDesktopScenario, 'function')
     const { loadMobileLocalPayloadBuilders } = await import(pathToFileURL(process.argv[2]))
     const builders = await loadMobileLocalPayloadBuilders()
     const provider = builders.modelInterfaceProviderId('mobile-fixture')
+    const savedSelection = {
+      modelName: 'task-model', modelType: 'runtime',
+      options: { runnerModelProvider: provider, reasoning: 'high' }
+    }
+    const work = builders.adaptRuntimeWorkListResponse({ workspaces: [{
+      workspacePath: '/workspace/mobile-fixture', workspaceKind: 'chat',
+      tasks: [{ taskId: 'mobile-fixture-task', threadId: 'native-thread', modelSelection: savedSelection }]
+    }] }, 'fixture-device')
+    const [conversation] = builders.flattenConversations(work)
+    assert.equal(conversation.address.threadId, 'native-thread')
+    const selection = builders.modelSelectionFromRuntimeHandle(conversation.address.runtimeHandle)
+    assert.deepEqual(selection, savedSelection)
+    const catalog = builders.runnerModelCatalog([
+      { runtime: 'codex', provider, model_id: 'task-model', local_model_id: 'task-model', label: 'Task model', supported_reasoning_efforts: ['low', 'medium', 'ultra'], default_reasoning_effort: 'medium' }
+    ], [{ name: 'other-default', type: 'public', provider: 'cloud' }], 'codex')
+    assert.equal(builders.findModelForSelection(catalog.map(entry => entry.model), selection)?.runtime.provider, provider)
+    const selectedModel = builders.findModelForSelection(catalog.map(entry => entry.model), selection)
+    assert.deepEqual(builders.reasoningEfforts(selectedModel), ['low', 'medium', 'ultra'])
+    assert.equal(builders.resolvedReasoningEffort(selectedModel, undefined), 'medium')
+    const transcript = builders.projectMobileRuntimeTranscript({
+      taskId: 'mobile-fixture-task', workspacePath: '/workspace/mobile-fixture', runtime: 'codex', messages: [], runtimeTurns: [],
+      turns: [{ id: 'turn', status: 'inProgress', items: [
+        { id: 'input', type: 'user_message', message: { id: 'provider-input', clientUserMessageId: 'client-input', role: 'user', content: 'Question' } },
+        { id: 'reply', type: 'assistant_text', content: 'Reply' }
+      ] }]
+    })
+    const partial = builders.chatReducer([], { type: 'replace', messages: transcript.messages.filter(message => message.role === 'assistant') })
+    const merged = builders.chatReducer(partial, { type: 'merge-latest', messages: transcript.messages })
+    assert.deepEqual(merged.map(message => message.content), ['Question', 'Reply'])
+    const branches = await builders.listWorkspaceBranches(async input => {
+      assert.deepEqual(input, { deviceId: 'fixture-device', sourcePath: '/workspace/mobile-fixture', includeBranches: true })
+      return { success: true, gitRepository: true, currentBranch: 'feature/mobile', branches: ['main', 'feature/mobile'] }
+    }, { deviceId: 'fixture-device', sourcePath: '/workspace/mobile-fixture' })
+    assert.deepEqual(branches, ['feature/mobile', 'main'])
     const modelConfig = builders.modelInterfaceRuntimeConfig({
       id: 'mobile-fixture', modelId: 'fixture-model', displayName: 'Fixture',
       baseUrl: 'http://127.0.0.1:9000', apiFormat: 'openai-responses'
@@ -207,6 +243,7 @@ test('the shared build imports the mobile scenario and executes production paylo
       script,
       join(fixture.desktop, 'scenarios/mobile-local-payload.scenario.mjs'),
       join(fixture.desktop, 'modules/mobile-local-payload-builders.mjs'),
+      join(fixture.desktop, 'scenarios/mobile-worktrees.scenario.mjs'),
     ],
     fixture.options
   )

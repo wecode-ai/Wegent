@@ -542,13 +542,10 @@ fn named_skill_row(name: &str, kinds_user_id: i64, namespace: &str, spec: Value)
     }
 }
 
-/// `_build_skill_data`'s user-managed provider branch
-/// (`request_builder.py:2004-2035`): a public `default`-namespace Skill whose
-/// name is registered by a user-mode provider removes its `mcpServers` and
-/// replaces `prompt` with the configuration guidance when the request user has
-/// not configured that service.
+/// Connector-managed provider Skills defer availability to the caller's
+/// connector grant instead of asking for an unrelated personal MCP URL.
 #[test]
-fn an_unconfigured_user_managed_runtime_skill_requires_configuration() {
+fn a_connector_managed_runtime_skill_defers_availability_to_the_connector() {
     let skill = named_skill_row(
         "dingtalk-docs",
         0,
@@ -562,11 +559,46 @@ fn an_unconfigured_user_managed_runtime_skill_requires_configuration() {
     let data = build_skill_data(&skill, Some("")).expect("skill data");
     let object = data.as_object().expect("object");
     assert!(!object.contains_key("mcpServers"));
-    assert_eq!(object["configuration_required"], json!(true));
-    let prompt = object["prompt"].as_str().expect("prompt");
-    assert_eq!(prompt.chars().count(), 836);
-    assert!(prompt.starts_with("## Configuration Required\n"));
-    assert!(prompt.contains("wegent://modal/mcp-provider-config?provider=dingtalk&service=docs"));
+    assert!(!object.contains_key("configuration_required"));
+    assert_eq!(object["connector_slug"], json!("dingtalk_docs"));
+    assert_eq!(object["connector_available"], json!(false));
+    assert_eq!(object["prompt"], json!("# skill prompt"));
+}
+
+#[test]
+fn an_unconfigured_non_connector_provider_still_requires_personal_configuration() {
+    use crate::mcp_provider_registry::{
+        McpProviderDefinition, McpProviderServiceDefinition, register_mcp_provider,
+    };
+    static SERVICES: &[McpProviderServiceDefinition] = &[McpProviderServiceDefinition {
+        service_id: "service",
+        server_name: "personal-server",
+        detail_url: "",
+        skill_name: "skills-test-personal-provider",
+        display_name: "Personal service",
+        message_keywords: &[],
+        oauth_supported: false,
+        connector_slug: None,
+    }];
+    register_mcp_provider(McpProviderDefinition {
+        provider_id: "skills-test-personal",
+        display_name: "Personal provider",
+        configuration_mode: "user",
+        message_keywords: &[],
+        services: SERVICES,
+    });
+    let skill = named_skill_row(
+        "skills-test-personal-provider",
+        0,
+        "default",
+        json!({"prompt":"# skill prompt","mcpServers":{"personal-server":{"url":"https://personal.invalid"}}}),
+    );
+    let data = build_skill_data(&skill, Some("")).unwrap();
+    assert!(data.get("mcpServers").is_none());
+    assert_eq!(data["configuration_required"], true);
+    assert!(data["prompt"].as_str().unwrap().contains(
+        "wegent://modal/mcp-provider-config?provider=skills-test-personal&service=service"
+    ));
 }
 
 /// When the user has an enabled service with a usable URL the branch leaves
@@ -643,6 +675,7 @@ fn a_system_mode_provider_skips_the_user_configuration_branch() {
             server_name: "skills-test-system-server",
             detail_url: "",
             skill_name: "skills-test-system-skill",
+            connector_slug: None,
             display_name: "System",
             message_keywords: &[],
             oauth_supported: false,
@@ -719,7 +752,9 @@ fn loaded_builder_preferences_keep_configured_runtime_servers() {
     let without_document = build_skill_data(&skill, None).expect("skill data");
     let object = without_document.as_object().expect("object");
     assert!(!object.contains_key("mcpServers"));
-    assert_eq!(object["configuration_required"], json!(true));
+    assert!(!object.contains_key("configuration_required"));
+    assert_eq!(object["connector_slug"], json!("dingtalk_sheet"));
+    assert_eq!(object["connector_available"], json!(false));
 }
 
 /// A stub `ensure_access_token_sync`: it returns the synthetic token and
@@ -913,8 +948,8 @@ async fn legacy_hyphenated_server_name_receives_the_header() {
     assert_eq!(tokens.calls().len(), 1);
 }
 
-/// An unconfigured user-managed provider service renders the configuration
-/// guidance and never asks for a token.
+/// An unconfigured connector-managed provider keeps its Skill prompt and
+/// defers authorization to the connector rather than requesting an OAuth token.
 #[tokio::test]
 async fn unconfigured_runtime_skill_requests_no_token() {
     let skill = named_skill_row(
@@ -936,7 +971,9 @@ async fn unconfigured_runtime_skill_requests_no_token() {
         .expect("skill data");
 
     assert!(!data.as_object().expect("object").contains_key("mcpServers"));
-    assert_eq!(data["configuration_required"], json!(true));
+    assert_eq!(data["connector_slug"], json!("dingtalk_sheet"));
+    assert_eq!(data["connector_available"], json!(false));
+    assert_eq!(data["prompt"], json!("# skill prompt"));
     assert!(tokens.calls().is_empty());
 }
 

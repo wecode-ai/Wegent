@@ -13,21 +13,20 @@ use super::{
 use crate::internal_callback::py_json::python_dumps;
 
 // Redis strings contain UTF-8 bytes; offsets count Unicode code points.
-const APPEND_IDENTIFIED_TEXT: &str = r#"
+const APPEND_IDENTIFIED_TEXT: &str = concat!(
+    include_str!("block_index.lua"),
+    r#"
 local count = tonumber(ARGV[2])
 local current = tonumber(redis.call('GET', KEYS[3]) or '0')
 local offset = tonumber(ARGV[1]) or current
 if offset + count <= current then return 0 end
 if offset > current then return redis.error_reply('Non-contiguous text block offset') end
 local function finish_block(id)
-    local blocks = redis.call('LRANGE', KEYS[4], 0, -1)
-    for index, raw in ipairs(blocks) do
+    local index, raw = find_block(KEYS[4], KEYS[7], id, ARGV[5])
+    if index then
         local block = cjson.decode(raw)
-        if block.id == id then
-            block.status = 'done'
-            redis.call('LSET', KEYS[4], index - 1, cjson.encode(block))
-            break
-        end
+        block.status = 'done'
+        redis.call('LSET', KEYS[4], index, cjson.encode(block))
     end
 end
 local previous = redis.call('GET', KEYS[5])
@@ -48,7 +47,8 @@ for index = 1, skip do
     end
 end
 if redis.call('EXISTS', KEYS[3]) == 0 then
-    redis.call('RPUSH', KEYS[4], ARGV[4])
+    local index = redis.call('RPUSH', KEYS[4], ARGV[4]) - 1
+    redis.call('HSET', KEYS[7], 'block:' .. ARGV[6], index)
 end
 local delta = string.sub(ARGV[3], cursor)
 redis.call('APPEND', KEYS[1], delta)
@@ -58,8 +58,10 @@ redis.call('SET', KEYS[5], ARGV[6], 'EX', ARGV[5])
 redis.call('EXPIRE', KEYS[1], ARGV[5])
 redis.call('EXPIRE', KEYS[2], ARGV[5])
 redis.call('EXPIRE', KEYS[4], ARGV[5])
+redis.call('EXPIRE', KEYS[7], ARGV[5])
 return count - skip
-"#;
+"#
+);
 
 /// Atomically append the unseen UTF-8 suffix to the stream and identified block.
 /// Offsets count Unicode code points: replays are ignored, overlaps are trimmed,
@@ -88,6 +90,7 @@ pub(super) async fn append<R: Redis>(
         blocks_key(subtask_id),
         text_block_key(subtask_id),
         thinking_block_key(subtask_id),
+        super::block_index::key(subtask_id),
     ];
     let arguments = [
         offset.map(|offset| offset.to_string()).unwrap_or_default(),

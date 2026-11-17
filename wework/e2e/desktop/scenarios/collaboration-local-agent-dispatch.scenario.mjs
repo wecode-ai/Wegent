@@ -145,6 +145,21 @@ async function createIssueAndAssignAgent(control, agentId, timeoutMs) {
     text: ASSIGNED_TASK,
     timeoutMs,
   })
+  const availability = scoped('[data-testid="issue-collaborators-unavailable"]')
+  const addParticipant = scoped('[data-testid="cloud-todo-add-collaborator"]')
+  await control.command('waitFor', availability, {
+    text: '此项目暂不支持编辑参与者',
+    visible: true,
+  })
+  await control.command('waitFor', `${addParticipant}:disabled`)
+  assert.equal(
+    await control.command('getAttribute', addParticipant, { value: 'aria-describedby' }),
+    await control.command('getAttribute', availability, { value: 'id' }),
+    'The unavailable local participant action must explain its capability boundary'
+  )
+  await control.command('waitFor', scoped('[data-testid="cloud-todo-collaborator-select"]'), {
+    visible: false,
+  })
   await control.command('waitFor', scoped('[data-testid="cloud-todo-save"]'), {
     visible: false,
   })
@@ -605,6 +620,24 @@ export async function createDesktopScenario({
       })
       await captureScreenshot(control, 'local-agent-dispatch-06-follow-ups-completed.png', CONTENT)
       for (const mode of ['create', 'edit']) {
+        // Retain the native providers, then hide the interactions Activity.
+        // A tab-owned singleton handler would be cleared on that transition.
+        for (const tab of ['task', 'board']) {
+          const selector = `[data-testid="workspace-tab-select-fixed-${tab}"]`
+          await control.command('clickWhenEnabled', selector)
+          await control.command('waitFor', `${selector}[aria-selected="true"]`)
+        }
+        await control.command('clickWhenEnabled', '[data-testid="workspace-tab-add"]')
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="workspace-tab-add-pending-interactions"]'
+        )
+        await control.command('waitFor', scoped('[data-testid="runtime-interactions-page"]'))
+        await control.command(
+          'clickWhenEnabled',
+          '[data-testid="workspace-tab-select-fixed-board"]'
+        )
+        await control.command('waitFor', scoped('[data-testid="cloud-todo-detail"]'))
         await verifyLocalIssueAssigneeRecovery(control, {
           contentSelector: CONTENT,
           ...fixture,

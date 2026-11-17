@@ -29,6 +29,7 @@ import {
 import i18n from '@/i18n'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useScopedComposerAttachments } from '@/features/workbench/useScopedComposerAttachments'
 import {
   compareMessageStyles,
   summarizeRuntimePaneMemory,
@@ -136,6 +137,7 @@ import {
   replaceRuntimeConversationFromUserMessage,
   runtimeConversationSnapshotSettlesLatestTurn,
   runtimeConversationKey,
+  settleOptimisticallyInterruptedRuntimeConversation,
   subscribeRuntimeConversation,
   restoreOptimisticallyInterruptedRuntimeConversation,
   takeInterruptedRuntimeConversationGuidance,
@@ -219,11 +221,6 @@ const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 5
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 export { RUNTIME_RETRY_CONTINUATION_PROMPT } from './runtimeRetry'
-const EMPTY_ATTACHMENT_STATE = {
-  attachments: [],
-  uploadingFiles: new Map(),
-  errors: new Map(),
-}
 
 export function useWorkbenchPaneSession({
   currentRuntimeTask,
@@ -300,29 +297,15 @@ export function useWorkbenchPaneSession({
   const inputScopeKey = currentRuntimeTask
     ? getRuntimeTaskChatScopeKey(currentRuntimeTask)
     : projectChat.scopeKey
-  const attachmentState =
-    projectChat.attachmentStateByScope[inputScopeKey] ?? EMPTY_ATTACHMENT_STATE
+  const attachmentState = useScopedComposerAttachments(projectChat, inputScopeKey)
   const addExistingAttachmentForScope = projectChat.addExistingAttachmentForScope
-  const addExistingAttachment = useCallback(
-    (attachment: Attachment) => addExistingAttachmentForScope(inputScopeKey, attachment),
-    [addExistingAttachmentForScope, inputScopeKey]
-  )
-  const handleFileSelect = useCallback(
-    (files: File | File[]) => projectChat.handleFileSelectForScope(inputScopeKey, files),
-    [inputScopeKey, projectChat]
-  )
-  const removeAttachment = useCallback(
-    (attachmentId: number) => projectChat.removeAttachmentForScope(inputScopeKey, attachmentId),
-    [inputScopeKey, projectChat]
-  )
-  const resetAttachments = useCallback(
-    () => projectChat.resetAttachmentsForScope(inputScopeKey),
-    [inputScopeKey, projectChat]
-  )
-  const dismissAttachmentError = useCallback(
-    (filename: string) => projectChat.dismissAttachmentErrorForScope(inputScopeKey, filename),
-    [inputScopeKey, projectChat]
-  )
+  const {
+    addExistingAttachment,
+    handleFileSelect,
+    removeAttachment,
+    resetAttachments,
+    dismissAttachmentError,
+  } = attachmentState
   const input = projectChat.inputByScope[inputScopeKey] ?? ''
   const setInputForScope = projectChat.setInputForScope
   const getInputRevisionForScope = projectChat.getInputRevisionForScope
@@ -1269,6 +1252,9 @@ export function useWorkbenchPaneSession({
           })
         }
         return false
+      }
+      if (interruptedTurn) {
+        settleOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
       }
 
       if (deferLocalMessage && !queued) {
@@ -2797,6 +2783,7 @@ export function useWorkbenchPaneSession({
     let accepted: boolean | null = null
     let queuePauseRequested = false
     let restoreQueue: (() => void) | undefined
+    let interruptedTurn: ReturnType<typeof optimisticallyInterruptRuntimeConversation> = null
     let abortReason: 'goal-pause-rejected' | null = null
     try {
       if (goalPauseRequired) {
@@ -2811,11 +2798,24 @@ export function useWorkbenchPaneSession({
       queuePauseRequested = getRuntimeConversationQueuePausedByKey(
         runtimeConversationKey(currentRuntimeTask)
       )
-      const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
+      interruptedTurn = optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
+      const cancelled =
+        interruptedTurn?.turnId === null && interruptedTurn.clientUserMessageId
+          ? await cancelRuntimePaneTask(currentRuntimeTask, {
+              pendingClientUserMessageId: interruptedTurn.clientUserMessageId,
+            })
+          : await cancelRuntimePaneTask(currentRuntimeTask)
       accepted = cancelled
       if (!cancelled) return
     } finally {
-      if (accepted !== true) restoreQueue?.()
+      if (accepted !== true) {
+        restoreQueue?.()
+        if (interruptedTurn) {
+          restoreOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
+        }
+      } else if (interruptedTurn) {
+        settleOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
+      }
       logRuntimeQueueStage(currentRuntimeTask, 'queue-stop-result', {
         source: 'composer',
         accepted,

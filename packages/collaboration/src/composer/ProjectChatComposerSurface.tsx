@@ -2,11 +2,11 @@ import { useEffect, useRef, useState, type FormHTMLAttributes, type ReactNode } 
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import styles from './ProjectChatComposer.module.css'
 
-export const PROJECT_CHAT_EDITOR_CLASS = `min-h-12 w-full resize-none bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55 ${styles.input}`
+export const PROJECT_CHAT_EDITOR_CLASS = `min-h-12 w-full resize-none bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-secondary ${styles.input}`
 export const PROJECT_CHAT_TOOLBAR_CLASS = styles.toolbar
 export const PROJECT_CHAT_SCROLL_CONTAINER_CLASS = styles.inputViewport
 export const DOCUMENT_EDITOR_CLASS =
-  'min-h-32 max-h-[60vh] w-full overflow-y-auto whitespace-pre-wrap bg-transparent py-2 text-chat text-text-primary [outline-style:none] placeholder:text-text-muted/55'
+  'min-h-32 max-h-[60vh] w-full overflow-y-auto whitespace-pre-wrap bg-transparent py-2 text-chat text-text-primary [outline-style:none] placeholder:text-text-secondary'
 
 /** One PC composer surface; host adapters own draft and runtime effects. */
 export function ProjectChatComposerSurface({
@@ -79,13 +79,15 @@ export function ProjectChatComposerSurface({
     <div
       data-testid="project-chat-composer"
       data-presentation={presentation}
-      className={
+      className={cn(
+        styles.surface,
+        'min-w-0',
         presentation === 'configuration'
           ? 'relative w-full rounded-xl border border-border/70 bg-background'
           : presentation === 'document'
             ? 'relative w-full rounded-2xl border border-border/60 bg-background shadow-sm keyboard:focus-within:border-focus/70 transition-colors'
             : 'relative w-full'
-      }
+      )}
     >
       {workBar}
       {embeddedInForm ? (

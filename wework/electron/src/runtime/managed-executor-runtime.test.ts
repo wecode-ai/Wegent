@@ -367,6 +367,21 @@ describe('managed executor runtime', () => {
     }
   })
 
+  test('reports the last endpoint error when readiness times out', async () => {
+    const directory = await temporaryDirectory('managed-endpoint-timeout-')
+    const endpoint =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\managed-endpoint-${process.pid}-${Date.now()}`
+        : join(directory.path, 'missing.sock')
+    try {
+      await expect(
+        waitForEndpointAuthentication(endpoint, 'test-token', AbortSignal.timeout(100))
+      ).rejects.toThrow(/did not become ready:.*(?:ENOENT|ECONNREFUSED|no such file)/i)
+    } finally {
+      await directory.remove()
+    }
+  })
+
   test('retries an early authentication close without outliving its deadline', async () => {
     const directory = await temporaryDirectory('exec-closed-')
     const endpoint =

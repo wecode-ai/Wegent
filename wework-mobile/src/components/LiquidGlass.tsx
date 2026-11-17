@@ -1,3 +1,4 @@
+import { recordMobileDiagnosticFailure } from '@/services/mobileDiagnostics'
 import {
   GlassContainer,
   GlassView,
@@ -54,7 +55,7 @@ function subscribeToTransparency(listener: () => void) {
         if (revision === transparencyRevision) updateReducedTransparency(value)
       },
       error => {
-        console.warn('Unable to read the reduced transparency setting', error)
+        recordMobileDiagnosticFailure('Unable to read the reduced transparency setting', error)
         if (revision === transparencyRevision) updateReducedTransparency(true)
       }
     )

@@ -58,7 +58,7 @@ export function StandInImConnectionDialog({
           <p className="text-sm text-text-secondary">
             {t('standIn.im.target_help', { name, channel })}
           </p>
-          {deviceName && <p className="text-xs text-text-muted">{deviceName}</p>}
+          {deviceName && <p className="text-xs text-text-secondary">{deviceName}</p>}
         </div>
         {offline && (
           <p role="status" className="text-sm text-text-secondary">
@@ -73,7 +73,7 @@ export function StandInImConnectionDialog({
               <p
                 role="status"
                 data-testid="stand-in-im-loading"
-                className="text-sm text-text-muted"
+                className="text-sm text-text-secondary"
               >
                 {t('standIn.im.loading')}
               </p>

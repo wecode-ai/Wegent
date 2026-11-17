@@ -12,7 +12,11 @@ export function StandInHomeSetupPrompt() {
     <section className="space-y-3 p-5" data-testid="personal-home-setup">
       <h2 className="text-heading-sm font-medium">{t('personalHome.setupTitle')}</h2>
       <p className="text-sm text-text-secondary">{t('personalHome.setupHelp')}</p>
-      <Button data-testid="personal-home-setup-assistant" onClick={() => navigateTo('/stand-in')}>
+      <Button
+        data-testid="personal-home-setup-assistant"
+        className="max-md:min-h-11 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)]"
+        onClick={() => navigateTo('/stand-in')}
+      >
         {t('personalHome.setupAction')}
       </Button>
     </section>

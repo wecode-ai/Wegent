@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { verifyPluginDuplicateDelivery } from './plugin-duplicate-delivery.mjs'
+import { verifyPluginReconciliationBusy } from './plugin-reconciliation-busy.mjs'
+import { verifyPluginHttpReinstall } from './plugin-http-reinstall.mjs'
 import {
   accountPlugin,
   materializedPlugin,
@@ -21,6 +24,10 @@ export async function verifyPluginLocalSync({
   localDeviceId,
   deviceId,
   evidence,
+  packageProxy,
+  resultDir,
+  timeoutMs,
+  captureScreenshot,
 }) {
   const flags = { ...cloud.backendEnv }
   const current = await requestPluginExecutor(control, 'executor.backend.status')
@@ -42,8 +49,29 @@ export async function verifyPluginLocalSync({
       ...flags,
       PLUGIN_LOCAL_SYNC_ENABLED: 'true',
     }
-    apiProxy.disconnectWebSockets(true)
     await cloud.launchBackend()
+    await verifyPluginHttpReinstall({ cloud, control, apiProxy, executorHome, timeoutMs, evidence })
+    await verifyPluginDuplicateDelivery({
+      cloud,
+      control,
+      apiProxy,
+      packageProxy,
+      executorHome,
+      resultDir,
+      timeoutMs,
+      evidence,
+    })
+    await verifyPluginReconciliationBusy({
+      cloud,
+      control,
+      apiProxy,
+      executorHome,
+      resultDir,
+      timeoutMs,
+      evidence,
+      captureScreenshot,
+    })
+    apiProxy.disconnectWebSockets(true)
     for (const row of rows)
       await cloud.executeDatabase('UPDATE kinds SET is_active = 0 WHERE user_id = 1 AND id = %s', [
         row.id,

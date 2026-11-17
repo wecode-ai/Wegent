@@ -31,6 +31,10 @@ Process attribution and collection have the following limits:
 
 ## Use top-level tabs
 
+In narrow windows, the strip reveals the current tab and fits each tab within the available width. Mobile tabs, new-tab, notification and feedback controls provide targets of at least 44px; empty workspace action slots leave their width available to tabs. Arrow keys, Home and End move focus; Enter or Space activates the focused tab. Moving focus does not automatically open a sign-in flow.
+
+On Windows and Linux, the mobile layout places workspace tabs below the window action bar, keeping the application menu, notifications, feedback and window controls available.
+
 The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.
 
 The first main window restores **Settings → General → Fixed tabs** and activates its chosen startup item. Use top-bar **+** to add Tasks, Collaboration, Agent or other available tabs. Each tab independently retains conversations, drafts, projects and routes; switching does not synchronize another tab's content.
@@ -53,7 +57,7 @@ Open **top + → Collaboration → project → Project settings → Automatic pr
 
 Scheduled rules offer **Run only on mainland China statutory workdays**. This filter defaults to off and uses Beijing dates to exclude statutory days off and include make-up working weekends. Choose Daily to cover all make-up workdays; other Cron date constraints still apply. Existing Monday–Friday rules retain their meaning. Summaries and the editor preserve the setting for both local and cloud projects. Event triggers do not use this filter.
 
-Click **Save** after editing, then check the trigger and workday filter summary in the rule list. Disable a rule to suspend future automatic triggers. Reopening the editor restores the saved filter. Saving a rule does not prove completion; check Issue activity and execution records for actual results.
+Click **Save** after editing. The editor stays in its saving state until the rule list refresh completes, then closes so you can check the updated trigger and workday filter summary. Disable a rule to suspend future automatic triggers. Reopening the editor restores the saved filter. If you switch projects while saving, the previous project’s result leaves the new project’s draft open. Saving a rule does not prove completion; check Issue activity and execution records for actual results.
 
 ## Manage issues and tasks in workspaces
 
@@ -85,28 +89,25 @@ Local projects do not each create a separate board. Their tasks share **My tasks
 
 ## Create issues from external systems
 
-Maintainers of a cloud workspace can create an event subscription for a source (GitHub, GitLab) from inside the automation rule configuration. Configure the generated Webhook URL in GitHub, GitLab, Sentry, Grafana, an alerting platform, or any system that supports HTTP callbacks. Each accepted external event is deterministically converted into an unassigned issue in the workspace inbox. Existing `task.created` automation rules continue to run after the issue is created.
+**Automatic rules → External event** selects an event source already connected to the cloud project. The current settings UI has no connection, address rotation or credential-management form. If the source list is empty, a project administrator must connect a source through the existing management API, then return here, choose **Refresh sources**, select a supported event and save the rule.
 
-> Note: Event subscriptions are created and managed together with the automation rule that consumes them. Pick a source (GitHub, GitLab), then add the resource URL; the Webhook URL for the created subscription is shown on the same page, ready to copy into the external system.
+Administrators can read `GET /api/v1/cloud-projects/event-sources/catalog` for supported source types, collection modes and events. With an authenticated API session that has project management permission, submit the configuration to `POST /api/v1/cloud-projects/{project_id}/incoming-hooks`. For example, a generic Webhook source needs a stable external resource identifier:
 
-The hook address contains its own credential. Treat it as a secret and do not store it in a public repository or log. Select **Rotate address** if it is exposed; the old address becomes invalid immediately. Disable the hook when intake must be paused. This capability currently supports cloud workspaces whose tasks are managed by Wework.
-
-Built-in adapters recognize GitHub Issue `opened` and `reopened` events, GitLab Issue `open` and `reopen` events, and unresolved Sentry and Grafana alerts. Closed, resolved, or titleless events do not create issues, but their receipt is recorded. The same external event ID, delivery ID, or request body is processed only once.
-
-Other systems do not need to implement a Wework-specific protocol. They can send JSON, form data, or plain text. Generic JSON must provide at least one of `title`, `subject`, `summary`, `name`, or `message`:
-
-```bash
-curl -X POST '<Hook address>' \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: incident-2026-08-16-001' \
-  -d '{
-    "title": "Production payment failures",
-    "description": "The error rate crossed its threshold. Investigate and restore service.",
-    "url": "https://monitor.example.com/incidents/001"
-  }'
+```json
+{
+  "name": "Release events",
+  "source_type": "generic",
+  "collection_mode": "webhook",
+  "resource": {
+    "external_id": "release-events",
+    "display_name": "Release events"
+  }
+}
 ```
 
-For plain-text requests, the first line becomes the title and the complete body becomes the description. Request bodies are limited to 1 MiB. The service returns HTTP `202` with a `status` of `created`, `duplicate`, `ignored`, or `failed`; a `created` response also includes the new issue's `loop_item_id`.
+Configure the returned `webhook_url` in the external system and deliver events using that source's catalog protocol. Polling or hybrid collection also requires a valid `credential_ref`; never place credentials in rule descriptions. Connection configuration and event receipt do not establish real compatibility with an external service.
+
+The Webhook URL contains a credential. Treat it as a secret and keep it out of public repositories and logs. Read, disable, delete and rotate sources through the project event-source management API; the automation page selects existing sources only. Refresh the list after connection and explicitly save the rule.
 
 ## Move between issues and runtime tasks
 
@@ -172,17 +173,23 @@ For one project, open **Collaboration → select project → board**, then selec
 
 Open **titlebar bell → Notification center**, not the obsolete account-area away-reminder bubble.
 
-| Action        | Steps and limits                                                                                                                                                                        |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Browse        | Select task, stand-in, collaboration or general sources and open the original task/project; reading is not handling or approval                                                         |
-| Mark all read | Mark the aggregated notification set read; does not complete tasks or submit outstanding answers                                                                                        |
-| Refresh/more  | Refresh and load further records when available; inspect errors and retry without repeating business actions                                                                            |
-| Channels      | Center → Settings → configure in-app, system and IM per source. Task/stand-in IM requires the runtime API, not all their channels. Collaboration/general preferences require cloud APIs |
-| IM target     | Select the receiving conversation in settings and connect its account when prompted; selecting a channel is not app authorization                                                       |
+| Action         | Steps and limits                                                                                                                                                                        |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browse         | Select task, stand-in, collaboration or general sources and open the original task/project; reading is not handling or approval                                                         |
+| Mark all read  | Mark the aggregated notification set read; does not complete tasks or submit outstanding answers                                                                                        |
+| Refresh/more   | Refresh and load further records when available; inspect errors and retry without repeating business actions                                                                            |
+| Channels       | Center → Settings → configure in-app, system and IM per source. Task/stand-in IM requires the runtime API, not all their channels. Collaboration/general preferences require cloud APIs |
+| IM connections | Stand-ins and tasks share existing account IM conversations by default without a target picker; platform authorization is still required                                                |
 
 System notification permission also applies. The center differs from **Needs your input**, which retains business questions and their handling state.
 
 Wegent chat mode remains available. In stand-in mode, connect IM private conversations to a primary stand-in or scenario role under [stand-in details popover → IM channel](./personal-stand-in.md#im-conversations). Task notification subscriptions remain independent; replies quoting a notification in stand-in mode enter the currently connected stand-in.
+
+Both synchronous and asynchronous Codex business questions can be answered in IM. Desktop tasks share existing account IM conversations by default without choosing a recipient. Desktop-task delivery respects an explicit opt-out from IM notifications. When enabled, questions are sent even while the desktop is active. Tasks started from a bound private IM conversation send questions back to that conversation. Question messages identify the task and whether it is waiting for your answer or continuing other work. Quoting a question with text or an option number answers the original task directly. Ordinary messages enter the stand-in conversation, where it considers pending questions and recent chat: clear answers are submitted, unrelated requests are handled normally, and ambiguity is clarified first. A single pending question never automatically consumes an ordinary message. Requests containing several questions ask them one at a time and submit the collected answers to the original task. Quoted question replies take priority over ordinary chat and stand-in routing. Ordinary messages are not consumed by the question reply handler. Task subscriptions control foreground notifications rather than selecting recipients.
+
+Turning off **Task updates → IM** stops proactive desktop-task notifications. Conversations started in a private IM chat still ask and receive answers in that originating chat, independently of the desktop notification switch.
+
+Synchronous answers release the original waiting request. Asynchronous answers steer the original running task or continue its idle conversation, preserving its model and execution configuration. Questions already answered on the desktop, cancelled, or expired cannot be submitted again. Business answers in IM do not replace execution approvals, MCP confirmations, or account authorization.
 
 ## Split tasks by dragging
 
@@ -223,6 +230,8 @@ When no task is running, the Wework Popout Window uses a compact composer with a
 The titlebar's **Open workspace location** and neighboring IDE dropdown open the working directory and select an available IDE, with a remembered preference. This differs from the device-oriented IDE entry under bottom-panel +; verify device and directory first.
 
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
+
+In a Markdown preview in the right-side Files tab, click a text link to an image or another file to open its file tab. Select the original Markdown tab to return to the document. Relative paths resolve from the current Markdown document’s directory, such as `./screenshot.png` or `../images/screenshot.png`, and load from the device that owns the tab. Missing files show a read error; retry or select the document again to continue browsing.
 
 Selecting a writable plain text file opens it directly in the editor without a separate **Edit** action. Changes autosave after about three seconds, so the editor does not show a manual **Save** button. Markdown and HTML files open in rendered preview by default and switch to the editor through **Source**; read-only text and binary files remain in preview mode.
 

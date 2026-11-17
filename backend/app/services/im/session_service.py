@@ -187,12 +187,12 @@ class IMSessionService:
     async def get_global_notification_settings(
         self, user_id: int
     ) -> "IMGlobalNotificationSettings":
-        data = await cache_manager.get(self._global_notification_key(user_id))
+        data = await cache_manager.get_or_raise(self._global_notification_key(user_id))
         if not isinstance(data, dict):
             return IMGlobalNotificationSettings()
         session_key = data.get("session_key")
         return IMGlobalNotificationSettings(
-            enabled=bool(data.get("enabled")),
+            enabled=bool(data.get("enabled", True)),
             session_key=session_key if isinstance(session_key, str) else None,
         )
 
@@ -230,17 +230,7 @@ class IMSessionService:
         enabled: bool,
         session_key: str | None = None,
     ) -> "IMGlobalNotificationSettings":
-        current = await self.get_global_notification_settings(user_id)
-        next_session_key = (
-            session_key if session_key is not None else current.session_key
-        )
-        if enabled and not next_session_key:
-            from fastapi import HTTPException, status
-
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="IM notification session is required",
-            )
+        next_session_key = session_key
         if next_session_key:
             session = await self.get_session(next_session_key)
             if session is None or session.user_id != user_id:
@@ -677,5 +667,5 @@ im_session_service = IMSessionService()
 class IMGlobalNotificationSettings:
     """User-level IM notification switch and default private session."""
 
-    enabled: bool = False
+    enabled: bool = True
     session_key: str | None = None

@@ -154,7 +154,10 @@ export function StandInEmailConnections({
     }
   }
   return (
-    <section className="space-y-4" data-testid="stand-in-email-connections">
+    <section
+      className="space-y-4 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
+      data-testid="stand-in-email-connections"
+    >
       <StandInConnectionHeader
         icon={Mail}
         title={t('standIn.email.title')}
@@ -201,7 +204,7 @@ export function StandInEmailConnections({
         <details className="space-y-2">
           <summary
             data-testid="stand-in-email-manage"
-            className="min-h-9 cursor-pointer text-sm text-text-secondary"
+            className="min-h-11 cursor-pointer text-sm text-text-secondary md:min-h-9"
           >
             {t('standIn.email.manage')}
           </summary>
@@ -276,12 +279,14 @@ export function StandInEmailConnections({
                   autoComplete={key === 'password' ? 'new-password' : 'off'}
                   value={form[key]}
                   onChange={event => setForm(value => ({ ...value, [key]: event.target.value }))}
-                  className="min-h-9 w-full rounded-md border border-border bg-background px-3"
+                  className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
                 />
               </label>
             ))}
-            <p className="text-xs text-text-muted">{t('standIn.email.password_help')}</p>
-            {form.id && <p className="text-xs text-text-muted">{t('standIn.email.update_help')}</p>}
+            <p className="text-xs text-text-secondary">{t('standIn.email.password_help')}</p>
+            {form.id && (
+              <p className="text-xs text-text-secondary">{t('standIn.email.update_help')}</p>
+            )}
             {(['imap', 'smtp'] as const).map(protocol => (
               <fieldset
                 key={protocol}
@@ -305,7 +310,7 @@ export function StandInEmailConnections({
                           [protocol]: { ...value[protocol], host: event.target.value },
                         }))
                       }
-                      className="min-h-9 w-full rounded-md border border-border bg-background px-3"
+                      className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
                     />
                   </label>
                   <label className="space-y-1 text-sm">
@@ -323,7 +328,7 @@ export function StandInEmailConnections({
                           [protocol]: { ...value[protocol], port: Number(event.target.value) },
                         }))
                       }
-                      className="min-h-9 w-full rounded-md border border-border bg-background px-3"
+                      className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
                     />
                   </label>
                   <label className="space-y-1 text-sm">
@@ -348,7 +353,7 @@ export function StandInEmailConnections({
                           },
                         }))
                       }
-                      className="min-h-9 w-full rounded-md border border-border bg-background px-2"
+                      className="min-h-11 w-full rounded-md border border-border bg-background px-2 md:min-h-9"
                     >
                       <option value="tls">TLS</option>
                       <option value="starttls">STARTTLS</option>

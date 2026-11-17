@@ -6,5 +6,6 @@
 //! Executor round-barrier human status read, and the project execution queue.
 
 mod executions;
+pub(crate) use executions::ACTIVE_STATUSES;
 mod handler;
 mod statuses;

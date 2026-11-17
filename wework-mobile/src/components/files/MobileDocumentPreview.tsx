@@ -1,3 +1,4 @@
+import { recordMobileDiagnosticFailure } from '@/services/mobileDiagnostics'
 import { useEffect, useRef, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { ActivityIndicator, useTheme } from 'react-native-paper'
@@ -65,7 +66,9 @@ export function MobileDocumentPreview(props: MobileDocumentPreviewProps) {
         opened = value
         if (!controller.signal.aborted) setSession({ ...value, documentKey })
         else
-          void value.release().catch(error => console.warn('[FilePreview] Cleanup failed', error))
+          void value
+            .release()
+            .catch(error => recordMobileDiagnosticFailure('[FilePreview] Cleanup failed', error))
       })
       .catch(error => {
         if (!controller.signal.aborted)
@@ -73,7 +76,9 @@ export function MobileDocumentPreview(props: MobileDocumentPreviewProps) {
       })
     return () => {
       controller.abort()
-      void opened?.release().catch(error => console.warn('[FilePreview] Cleanup failed', error))
+      void opened
+        ?.release()
+        .catch(error => recordMobileDiagnosticFailure('[FilePreview] Cleanup failed', error))
     }
   }, [documentKey])
 

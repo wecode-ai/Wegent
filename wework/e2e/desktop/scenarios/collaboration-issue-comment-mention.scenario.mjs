@@ -138,6 +138,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         cardReplyToggleTestId,
         'The posted comment did not render its reply action in the Issue activity'
       )
+      await control.command('scrollIntoView', board(`[data-testid="${cardReplyToggleTestId}"]`))
       await control.command('click', board(`[data-testid="${cardReplyToggleTestId}"]`), {
         visible: true,
       })

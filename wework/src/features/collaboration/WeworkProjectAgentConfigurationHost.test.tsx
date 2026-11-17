@@ -58,7 +58,9 @@ async function selectProjectNativeModel(prefix: string) {
   await waitFor(() =>
     expect(screen.getByTestId(`${prefix}-model`)).toHaveValue(modelValue(codexModel))
   )
-  fireEvent.click(screen.getByTestId(`${dialog}-tab-basic`))
+  expect(screen.getByTestId(`${prefix}-system-prompt`)).toBeVisible()
+  fireEvent.click(screen.getByTestId(`${dialog}-tab-runtime`))
+  expect(screen.getByTestId(`${dialog}-tab-runtime`)).toHaveAttribute('aria-expanded', 'false')
 }
 
 function setRichInputValue(testId: string, value: string) {
@@ -190,7 +192,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
     }
   )
 
-  it('creates an Agent from the basic tab using the first cloud model without device discovery', async () => {
+  it('creates an Agent from responsibilities using the first cloud model without device discovery', async () => {
     const cloudModel = {
       name: 'cloud-model',
       type: 'public' as const,
@@ -219,10 +221,8 @@ describe('weworkProjectAgentConfigurationHost', () => {
     expect(api.listEnvironments).not.toHaveBeenCalled()
     expect(api.listModels).toHaveBeenCalledOnce()
     await waitFor(() => expect(screen.getByTestId('wework-agent-resource-create')).toBeEnabled())
-    expect(screen.getByTestId('wework-agent-resource-creator-tab-basic')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-agent-system-prompt')).toBeVisible()
     expect(screen.getByTestId('wework-agent-resource-creator-runtime-summary')).toHaveTextContent(
       'cloud-model'
     )
@@ -290,7 +290,7 @@ describe('weworkProjectAgentConfigurationHost', () => {
     expect(await screen.findByTestId('local-skill-option-review')).toBeVisible()
   })
 
-  it('preserves prompt and manual capabilities across tabs and exposes runtime conflicts on the basic tab', async () => {
+  it('preserves responsibilities and manual tools across independent runtime disclosure changes', async () => {
     const otherModel = { ...codexModel, model_id: 'other-model' }
     const createAgent = vi.fn(async () => ({ id: 53, name: 'review', displayName: 'Review' }))
     const api = {
@@ -347,25 +347,30 @@ describe('weworkProjectAgentConfigurationHost', () => {
     fireEvent.click(await screen.findByTestId('wework-agent-environment-option-2'))
     expect(screen.getByTestId('wework-agent-model')).toHaveValue('')
     expect(screen.getByTestId('wework-agent-resource-create')).toBeDisabled()
-    fireEvent.keyDown(screen.getByTestId('wework-agent-resource-creator-tab-runtime'), {
-      key: 'Home',
-    })
-    expect(screen.getByTestId('wework-agent-resource-creator-tab-basic')).toHaveFocus()
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-tab-runtime'))
+    expect(screen.getByTestId('wework-agent-resource-creator-tab-runtime')).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    expect(screen.getByTestId('wework-agent-model')).not.toBeVisible()
     expect(screen.getByTestId('wework-agent-resource-create')).toBeDisabled()
     expect(screen.getByTestId('wework-agent-system-prompt')).toHaveValue('Keep this draft.')
     expect(screen.getByTestId('wework-agent-capability-mode-manual')).toBeChecked()
     expect(screen.getByTestId('wework-agent-mcp')).toHaveValue('{"browser":{"command":"node"}}')
-    fireEvent.keyDown(screen.getByTestId('wework-agent-resource-creator-tab-basic'), {
-      key: 'ArrowRight',
-    })
-    expect(screen.getByTestId('wework-agent-resource-creator-tab-runtime')).toHaveFocus()
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-tab-runtime'))
+    expect(screen.getByTestId('wework-agent-resource-creator-tab-runtime')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
     fireEvent.change(screen.getByTestId('wework-agent-model'), {
       target: { value: modelValue(otherModel) },
     })
-    expect(screen.getByTestId('wework-agent-resource-creator-runtime-summary')).toHaveTextContent(
-      'Other runner · Other model'
-    )
-    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-tab-basic'))
+    fireEvent.click(screen.getByTestId('wework-agent-resource-creator-tab-runtime'))
+    const summary = screen.getByTestId('wework-agent-resource-creator-runtime-summary')
+    expect(summary).toHaveTextContent('workbench.runner_environment')
+    expect(summary).toHaveTextContent('Other runner')
+    expect(summary).toHaveTextContent('workbench.agent_creator_model')
+    expect(summary).toHaveTextContent('Other model')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('wework-agent-resource-create'))
     await waitFor(() =>
@@ -534,10 +539,8 @@ describe('weworkProjectAgentConfigurationHost', () => {
     )
     expect(screen.queryByTestId('wework-agent-resource-name')).not.toBeInTheDocument()
     expect(screen.queryByTestId('wework-agent-runtime')).not.toBeInTheDocument()
-    expect(screen.getByTestId('wework-agent-resource-creator-tab-basic')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-agent-system-prompt')).toBeVisible()
     expect(screen.getByTestId('wework-agent-environment')).not.toBeVisible()
     expect(screen.getByTestId('wework-agent-owner')).toHaveValue('workspace-alpha')
     fireEvent.change(screen.getByTestId('wework-agent-owner'), {
@@ -1135,173 +1138,25 @@ it('creates portable template resources without carrying source identity or cred
   })
 })
 
-it('resolves explicit destination defaults instead of importing source model or device identities', async () => {
-  const local = {
-    listRunnerEnvironments: vi.fn(async () => [
-      {
-        id: 'destination',
-        device_key: 'destination',
-        models: [
-          {
-            runtime: 'codex',
-            provider: 'openai',
-            model_id: 'default-model',
-            is_default: true,
-            source: 'native',
-          },
-          { runtime: 'codex', provider: 'other', model_id: 'another-model', is_default: false },
-        ],
-      },
-    ]),
-  } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
-  const host = createWeworkProjectAgentConfigurationHost(undefined, local)
-  expect(await host.resolveTemplateAgentRouting!('codex', 'local', 'project')).toEqual({
-    executionPolicy: { mode: 'fixed', environment_id: 'destination' },
-    modelPolicy: {
-      mode: 'fixed',
-      model: { runtime: 'codex', provider: 'openai', model_id: 'default-model', source: 'native' },
-    },
+it('creates template definitions without querying devices or models', async () => {
+  const createAgent = vi.fn(async () => ({ id: 98 }))
+  const listEnvironments = vi.fn(async () => {
+    throw new Error('Devices unavailable')
   })
-  await expect(
-    host.resolveTemplateAgentRouting!('claude_code', 'local', 'project')
-  ).rejects.toThrow('template_model_default_unavailable')
-})
-
-it.each([0, 2])(
-  'refuses to guess a model when %i destination defaults are configured',
-  async count => {
-    const local = {
-      listRunnerEnvironments: vi.fn(async () => [
-        {
-          id: 'destination',
-          models: Array.from({ length: 2 }, (_, index) => ({
-            runtime: 'codex',
-            provider: 'openai',
-            model_id: `model-${index}`,
-            is_default: index < count,
-          })),
-        },
-      ]),
-    } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
-    const host = createWeworkProjectAgentConfigurationHost(undefined, local)
-    await expect(host.resolveTemplateAgentRouting!('codex', 'local')).rejects.toThrow(
-      'template_model_default_unavailable'
-    )
-  }
-)
-
-it('does not authorize a current device that the destination cloud project has not granted', async () => {
-  const local = {
-    listRunnerEnvironments: vi.fn(async () => [
-      {
-        id: 'local-device',
-        device_key: 'device-key',
-        models: [{ runtime: 'codex', provider: 'openai', model_id: 'default', is_default: true }],
-      },
-    ]),
-  } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
-  const listEnvironments = vi.fn(async () => [
-    { id: '73', device_key: 'device-key', project_authorized: false, status: 'online' },
-  ])
-  const createAgent = vi.fn()
-  const host = createWeworkProjectAgentConfigurationHost(
-    { listEnvironments, createAgent } as unknown as ReturnType<typeof createAgentResourceApi>,
-    local
+  const host = createWeworkProjectAgentConfigurationHost({
+    createAgent,
+    listEnvironments,
+  } as unknown as ReturnType<typeof createAgentResourceApi>)
+  await host.createTemplateAgent!(
+    { key: 'reviewer', name: 'Reviewer', runtime: 'codex', systemPrompt: 'Review' },
+    'default',
+    { executionPolicy: { mode: 'user_select' }, modelPolicy: { mode: 'user_select' } }
   )
-  await expect(host.resolveTemplateAgentRouting!('codex', 'cloud')).resolves.toMatchObject({
-    executionPolicy: { mode: 'fixed', environment_id: '73' },
-  })
-  expect(listEnvironments).toHaveBeenCalledWith(undefined)
-  await expect(
-    host.resolveTemplateAgentRouting!('codex', 'cloud', 'private-project')
-  ).rejects.toThrow('template_environment_unavailable')
-  expect(listEnvironments).toHaveBeenCalledWith('private-project')
-  expect(createAgent).not.toHaveBeenCalled()
-})
-
-it('matches the current APP device through its app device id', async () => {
-  const local = {
-    listRunnerEnvironments: vi.fn(async () => [
-      {
-        id: 'electron-current',
-        device_key: 'electron-current',
-        models: [{ runtime: 'codex', provider: 'openai', model_id: 'default', is_default: true }],
-      },
-    ]),
-  } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
-  const listEnvironments = vi.fn(async () => [
-    {
-      id: '73',
-      device_key: 'app-record-73',
-      app_device_id: 'electron-current',
-      project_authorized: true,
-      status: 'online',
-    },
-  ])
-  const host = createWeworkProjectAgentConfigurationHost(
-    { listEnvironments, createAgent: vi.fn() } as unknown as ReturnType<
-      typeof createAgentResourceApi
-    >,
-    local
+  expect(createAgent).toHaveBeenCalledWith(
+    expect.objectContaining({
+      executionPolicy: { mode: 'user_select' },
+      modelPolicy: { mode: 'user_select' },
+    })
   )
-
-  await expect(
-    host.resolveTemplateAgentRouting!('codex', 'cloud', 'private-project')
-  ).resolves.toMatchObject({
-    executionPolicy: { mode: 'fixed', environment_id: '73' },
-  })
+  expect(listEnvironments).not.toHaveBeenCalled()
 })
-
-it.each([
-  {
-    statuses: ['offline', 'online', 'offline'],
-    grants: [false, false, false],
-    projectId: undefined,
-    expectedId: '2',
-  },
-  { statuses: ['online', 'offline'], grants: [true, true], projectId: 'project', expectedId: '1' },
-  { statuses: ['offline'], grants: [true], projectId: undefined, expectedId: null },
-  { statuses: ['online', 'online'], grants: [true, true], projectId: undefined, expectedId: null },
-  {
-    statuses: ['offline', 'online'],
-    grants: [true, false],
-    projectId: 'project',
-    expectedId: null,
-  },
-])(
-  'resolves only a unique online authorized alias: $statuses / $grants',
-  async ({ statuses, grants, projectId, expectedId }) => {
-    const host = createWeworkProjectAgentConfigurationHost(
-      {
-        listEnvironments: vi.fn(async () =>
-          statuses.map((status, index) => ({
-            id: String(index + 1),
-            device_key: `app-record-${index + 1}`,
-            app_device_id: 'electron-current',
-            status,
-            project_authorized: grants[index],
-          }))
-        ),
-      } as unknown as ReturnType<typeof createAgentResourceApi>,
-      {
-        listRunnerEnvironments: vi.fn(async () => [
-          {
-            id: 'electron-current',
-            device_key: 'electron-current',
-            models: [
-              { runtime: 'codex', provider: 'openai', model_id: 'default', is_default: true },
-            ],
-          },
-        ]),
-      } as unknown as Parameters<typeof createWeworkProjectAgentConfigurationHost>[1]
-    )
-    const routing = host.resolveTemplateAgentRouting!('codex', 'cloud', projectId)
-    if (expectedId) {
-      await expect(routing).resolves.toMatchObject({
-        executionPolicy: { mode: 'fixed', environment_id: expectedId },
-      })
-    } else {
-      await expect(routing).rejects.toThrow('template_environment_unavailable')
-    }
-  }
-)

@@ -19,6 +19,59 @@ vi.mock('@/lib/runtime-environment', async importOriginal => ({
 describe('ScrollableMessageArea: navigation-targets', () => {
   installScrollTestEnvironment()
 
+  test.each([false, true])(
+    'keeps an opened context readable on resize until user scrolls (cancel=%s)',
+    cancel => {
+      const scroller = document.createElement('div')
+      const content = document.createElement('div')
+      const anchor = document.createElement('article')
+      anchor.dataset.messageId = 'context'
+      content.append(anchor)
+      scroller.append(content)
+      document.body.append(scroller)
+      let height = 600
+      let width = 900
+      Object.defineProperties(scroller, {
+        clientHeight: { get: () => height, configurable: true },
+        clientWidth: { get: () => width, configurable: true },
+        scrollHeight: { value: 600, configurable: true },
+        scrollTop: { value: 0, writable: true, configurable: true },
+      })
+      mockRect(scroller, 0, height)
+      mockScrollRelativeRect(anchor, scroller, 160, 72)
+      scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+        if (typeof top === 'number') scroller.scrollTop = top
+      })
+      const view = render(
+        <MessageTurnNavigation
+          translate={key => key}
+          messages={[{ id: 'context', role: 'assistant', content: 'Original context' }]}
+          messageTarget={{ messageId: 'context', requestKey: 'notification' }}
+          scrollRef={{ current: scroller }}
+          contentRef={{ current: content }}
+        />
+      )
+      act(() => vi.advanceTimersByTime(16))
+      if (cancel) fireEvent.wheel(scroller, { deltaY: 100 })
+      height = 251
+      width = 480
+      mockRect(scroller, 0, height)
+      scroller.scrollTop = 349
+      act(() => {
+        for (const callback of [...allResizeCallbacks]) callback([], {} as ResizeObserver)
+        vi.advanceTimersByTime(16)
+      })
+      expect(scroller.scrollTop).toBe(cancel ? 349 : 64)
+      vi.mocked(scroller.scrollTo).mockClear()
+      act(() => {
+        for (const callback of [...allResizeCallbacks]) callback([], {} as ResizeObserver)
+      })
+      expect(scroller.scrollTo).not.toHaveBeenCalled()
+      view.unmount()
+      scroller.remove()
+    }
+  )
+
   test('cancels an unfinished target when another question opens, including queued layout callbacks', () => {
     const frames = new Map<number, FrameRequestCallback>()
     let nextFrame = 1

@@ -46,7 +46,8 @@ import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
-import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -83,6 +84,7 @@ import {
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
   isClaudeCodeDevice,
+  isCloudDevice,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
   isRemoteTaskDevice,
@@ -1562,24 +1564,41 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ]
   )
 
+  const cloudConnection = useOptionalCloudConnection()
   const connectorAuthRecovery = useLocalConnectorAuthRecovery({
     active: paneActive && paneVisible && workbenchVisible,
     onError: message => paneSession.setError(message),
     messages: paneSession.messages,
+    cloudConnection: {
+      apiBaseUrl: cloudConnection.apiBaseUrl,
+      token: cloudConnection.token,
+    },
     onResumeSend: async input => {
       await paneSession.sendContinuation(input)
     },
   })
 
   const connectorAuthCard = connectorAuthRecovery.pending ? (
-    <ConnectorAuthCard
-      target={connectorAuthRecovery.pending.target}
-      title={connectorAuthRecovery.pending.title}
-      onSuccess={() => {
-        void connectorAuthRecovery.completePending()
-      }}
-      onCancel={connectorAuthRecovery.clearPending}
-    />
+    connectorAuthRecovery.pending.cloud ? (
+      <CloudConnectorAuthCard
+        slug={connectorAuthRecovery.pending.cloud.slug}
+        apiBaseUrl={cloudConnection.apiBaseUrl}
+        token={cloudConnection.token}
+        onSuccess={() => {
+          void connectorAuthRecovery.completePending()
+        }}
+        onCancel={connectorAuthRecovery.clearPending}
+      />
+    ) : (
+      <ConnectorAuthCard
+        target={connectorAuthRecovery.pending.target}
+        title={connectorAuthRecovery.pending.title}
+        onSuccess={() => {
+          void connectorAuthRecovery.completePending()
+        }}
+        onCancel={connectorAuthRecovery.clearPending}
+      />
+    )
   ) : null
 
   const submitPaneInput = useCallback(
@@ -3165,10 +3184,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           t('workbench.current_device', '当前设备'),
       })
     : activeDeviceVersionUnsupported
-      ? t('workbench.device_status_active_upgrade_required', {
-          device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
-          version: WEWORK_MIN_EXECUTOR_VERSION,
-        })
+      ? t(
+          activeDevice && isCloudDevice(activeDevice)
+            ? 'workbench.device_status_cloud_version_required'
+            : 'workbench.device_status_active_upgrade_required',
+          {
+            device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+            version: WEWORK_MIN_EXECUTOR_VERSION,
+          }
+        )
       : noStandaloneCompatibleDevice
         ? t('workbench.device_status_no_online_device')
         : undefined

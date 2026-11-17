@@ -9,11 +9,23 @@ import type {
   CollaborationPlatformLocation,
 } from '@wegent/collaboration'
 
-import { CollaborationTemplateStore, templateIdentity } from '@wegent/collaboration/templates'
+import {
+  CollaborationTemplateStore,
+  localizeBuiltinTemplateRecord,
+  templateIdentity,
+} from '@wegent/collaboration/templates'
 
 import { CollaborationPage } from '@/features/collaboration/CollaborationPage'
 import { collaborationLocationPath } from '@/features/collaboration/routes'
 import { apiClient } from '@/apis/client'
+
+// jsdom does not expose the browser structured-clone API used by template localization.
+if (typeof globalThis.structuredClone !== 'function') {
+  Object.defineProperty(globalThis, 'structuredClone', {
+    configurable: true,
+    value: <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T,
+  })
+}
 
 const mockPush = jest.fn()
 const mockReplace = jest.fn()
@@ -21,6 +33,7 @@ let mockPathname = '/collaboration'
 let mockSearchParams = new URLSearchParams()
 let capturedHost: CollaborationPlatformHostAdapter | null = null
 let capturedApi: unknown
+let mockLanguage = 'zh-CN'
 let mockAccountScope = 'backend:auth-generation-1'
 let mockUser: { id: number; user_name: string } | null = { id: 7, user_name: 'current-user' }
 const mockGetProject = jest.fn()
@@ -99,7 +112,7 @@ jest.mock('@/features/collaboration/shared-api', () => ({
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    getCurrentLanguage: () => 'zh-CN',
+    getCurrentLanguage: () => mockLanguage,
     t: (key: string) => key,
   }),
 }))
@@ -110,6 +123,7 @@ jest.mock('sonner', () => ({
 
 describe('CollaborationPage platform routing', () => {
   beforeEach(() => {
+    mockLanguage = 'zh-CN'
     mockUserLoading = false
     mockAccountScope = 'backend:auth-generation-1'
     mockUser = { id: 7, user_name: 'current-user' }
@@ -501,21 +515,30 @@ describe('CollaborationPage platform routing', () => {
       expect(capturedHost?.location.platformView).toBe('spaces')
     }
   )
-  it('resolves the marketplace template in the current account and consumes its URL request', async () => {
-    mockTemplateStore = new CollaborationTemplateStore({
-      scope: 'web-7',
-      ownerId: 7,
-      persistence: { read: async () => [], write: async () => {} },
-    })
-    const record = mockTemplateStore.getSnapshot().records[0]
-    mockSearchParams = new URLSearchParams({ template: templateIdentity(record) })
-    render(<CollaborationPage />)
-    await waitFor(() =>
-      expect(capturedHost?.projectTemplateRequest?.document).toEqual(record.document)
-    )
-    capturedHost!.projectTemplateRequest!.onHandled()
-    expect(mockReplace).toHaveBeenCalledWith('/collaboration', { scroll: false })
-  })
+  it.each(['zh-CN', 'en'] as const)(
+    'resolves the %s marketplace template in the current account and consumes its URL request',
+    async locale => {
+      mockLanguage = locale
+      mockTemplateStore = new CollaborationTemplateStore({
+        scope: 'web-7',
+        ownerId: 7,
+        persistence: { read: async () => [], write: async () => {} },
+      })
+      const record = mockTemplateStore.getSnapshot().records[0]
+      const localized = localizeBuiltinTemplateRecord(record, locale)
+      mockSearchParams = new URLSearchParams({ template: templateIdentity(record) })
+      render(<CollaborationPage />)
+      await waitFor(() =>
+        expect(capturedHost?.projectTemplateRequest?.document).toEqual(localized.document)
+      )
+      expect(mockTemplateStore.getSnapshot().records[0].document).toEqual(record.document)
+      expect(
+        capturedHost?.projectTemplateRequest?.document.spec.resources.collaboration.groups[0].name
+      ).toBe(locale === 'en' ? 'Product lifecycle team' : '产品全流程小组')
+      capturedHost!.projectTemplateRequest!.onHandled()
+      expect(mockReplace).toHaveBeenCalledWith('/collaboration', { scroll: false })
+    }
+  )
 
   it('allows retry when the selected template cannot be loaded', async () => {
     mockTemplateStore = new CollaborationTemplateStore({

@@ -156,6 +156,7 @@ mod thread_action;
 mod thread_resume;
 
 use debug_stdout::CodexStdout;
+pub(crate) use diagnostics::redact_diagnostic_text;
 use diagnostics::{json_scalar_field, json_string_field};
 #[cfg(test)]
 use home::prepare_wework_codex_home;
@@ -165,7 +166,7 @@ use home::WEGENT_CODEX_HOME_ENV;
 #[cfg(test)]
 use home::WEWORK_CODEX_SUBSCRIPTION_ENABLED_ENV;
 pub(crate) use home::{
-    executor_home, prepare_provider_migration, replace_config,
+    executor_home, prepare_provider_migration, provider_state_is_current, replace_config,
     select_wework_codex_user_instructions, wework_codex_home,
 };
 use home::{read_wework_codex_user_instructions, CODEX_HOME_ENV};
@@ -2492,6 +2493,20 @@ async fn run_codex_app_server_turn_on_shared_client(
                 )
                 .await?;
         }
+        if request_model_provider_switched(request) {
+            turn_request_context
+                .request(
+                    client,
+                    "thread/inject_items",
+                    provider_switch_boundary_inject_params(&thread_id),
+                    &launch_config,
+                )
+                .await?;
+            log_executor_event(
+                "codex provider switch boundary injected",
+                &[("thread_id", thread_id.clone())],
+            );
+        }
 
         // Thread initialization captures native capabilities; model work must not
         // keep capability publication or other task startups waiting.
@@ -2906,6 +2921,22 @@ async fn run_codex_app_server_turn_with_runtime(
                 ),
             )
             .await?;
+        }
+        if request_model_provider_switched(request) {
+            with_rpc_timeout(
+                "thread/inject_items",
+                timeout_seconds,
+                rpc.request(
+                    "thread/inject_items",
+                    provider_switch_boundary_inject_params(&thread_id),
+                    &mut state,
+                ),
+            )
+            .await?;
+            log_executor_event(
+                "codex provider switch boundary injected",
+                &[("thread_id", thread_id.clone())],
+            );
         }
         drop(capability_lease.take());
         if !request.ephemeral {
@@ -4683,6 +4714,7 @@ fn configure_codex_router(
     vision_sidecar: Option<VisionSidecarUpstream>,
 ) {
     upstream.routing_model_id = routing_model_id;
+    let official_chatgpt = upstream.is_official_chatgpt_codex();
     log_executor_event(
         "codex local model router configuring",
         &[
@@ -4704,25 +4736,52 @@ fn configure_codex_router(
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
-    configure_codex_router_registration(launch_config, local_token);
+    configure_codex_router_registration(launch_config, local_token, official_chatgpt);
 }
 
-fn configure_codex_router_registration(launch_config: &mut CodexLaunchConfig, local_token: String) {
+fn configure_codex_router_registration(
+    launch_config: &mut CodexLaunchConfig,
+    local_token: String,
+    official_chatgpt: bool,
+) {
     let provider = codex_model_catalog::PROVIDER_ID;
     launch_config.local_proxy_registration = Some(Arc::new(LocalProxyRegistration(local_token)));
     launch_config.model_provider = Some(provider.to_owned());
-    launch_config
-        .config_overrides
-        .push("forced_login_method=api".to_owned());
-    launch_config
-        .config_overrides
-        .extend(codex_router_provider_overrides());
+    if official_chatgpt {
+        let token = launch_config
+            .local_proxy_registration
+            .as_deref()
+            .expect("local proxy registration")
+            .0
+            .clone();
+        launch_config
+            .config_overrides
+            .extend(native_provider::official_proxy_overrides(format!(
+                "{}/{token}",
+                codex_router_base_url()
+            )));
+    } else {
+        launch_config
+            .config_overrides
+            .push("forced_login_method=api".to_owned());
+        launch_config
+            .config_overrides
+            .extend(codex_router_provider_overrides());
+    }
 }
 
 fn request_model_switched(request: &ExecutionRequest) -> bool {
     request
         .extra
         .get("wework_model_switched")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn request_model_provider_switched(request: &ExecutionRequest) -> bool {
+    request
+        .extra
+        .get("wework_model_provider_switched")
         .and_then(Value::as_bool)
         .unwrap_or(false)
 }
@@ -6812,6 +6871,13 @@ fn side_boundary_inject_params(thread_id: &str) -> Value {
                 "text": SIDE_BOUNDARY_PROMPT,
             }],
         }],
+    })
+}
+
+fn provider_switch_boundary_inject_params(thread_id: &str) -> Value {
+    json!({
+        "threadId": thread_id,
+        "items": [local_model_proxy::provider_switch_boundary_item()],
     })
 }
 

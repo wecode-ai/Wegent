@@ -17,6 +17,10 @@ import { useMobileRuntime, type MobileRuntimeState } from './useMobileRuntime'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const mocks = vi.hoisted(() => ({
+  cloudConnection: { connected: true, error: null as Error | null },
+  disconnected: { connected: false, error: null as Error | null },
+  cloudListeners: new Set<() => void>(),
+  reconnectCloud: vi.fn(async () => {}),
   readCache: vi.fn(),
   writeCache: vi.fn(),
   readLocalCache: vi.fn(),
@@ -49,8 +53,21 @@ vi.mock('@/services/runtimeCache', () => ({
 }))
 vi.mock('@/services/runtimeStream', () => ({
   RuntimeStream: class {
+    enabled = true
+    getCloudConnection = () => (this.enabled ? mocks.cloudConnection : mocks.disconnected)
+    subscribeCloudConnection = (listener: () => void) => {
+      mocks.cloudListeners.add(listener)
+      return () => mocks.cloudListeners.delete(listener)
+    }
+    reconnectCloud = mocks.reconnectCloud
     updateAccessToken() {}
-    updateBackend() {}
+    constructor(config: RuntimeSessionConfig | null) {
+      this.enabled = Boolean(config)
+    }
+    updateBackend(config: RuntimeSessionConfig | null) {
+      this.enabled = Boolean(config)
+      mocks.cloudListeners.forEach(listener => listener())
+    }
     listWork = mocks.listWork
     async getTranscript(address: { taskId: string }) {
       return { taskId: address.taskId, running: false, messages: [] }
@@ -100,6 +117,9 @@ const cloudWork: RuntimeWorkListResponse = {
           title: 'Cloud task',
           runtime: 'codex',
           workspacePath: '/cloud/work',
+          runtimeHandle: {
+            modelSelection: { modelName: 'public-model', modelType: 'public', options: {} },
+          },
         },
       ],
     },
@@ -193,6 +213,8 @@ describe('native phone device inventory publication', () => {
   }
 
   beforeEach(async () => {
+    mocks.cloudConnection = { connected: true, error: null }
+    mocks.cloudListeners.clear()
     fixture = nativeFixture()
     await fixture.runtime.initialize()
     mocks.readCache.mockReset().mockResolvedValue(emptyCache)
@@ -377,7 +399,7 @@ describe('native phone device inventory publication', () => {
     await mount()
     await publish('running')
     await act(async () => {
-      await state.refresh()
+      await state.refreshDevices()
     })
     expect(mocks.devices).toHaveBeenCalledTimes(2)
     expect(state.devices.filter(device => device.device_type === 'cloud')).toEqual([
@@ -472,6 +494,32 @@ describe('native phone device inventory publication', () => {
     await act(async () => backend.resolve(new Response(JSON.stringify({ items: [cloud] }))))
   })
 
+  it('keeps fresh phone conversations visible when an older empty cache arrives last', async () => {
+    const cache = deferred<RuntimeCacheSnapshot>()
+    const backend = deferred<Response>()
+    const fresh = { ...cloudWork, chats: [{ ...cloudWork.chats[0]!, deviceId: phoneId }] }
+    mocks.readLocalCache.mockReturnValue(cache.promise)
+    mocks.devices.mockReturnValue(backend.promise)
+    mocks.listWork.mockImplementation(async (id: string) => (id === phoneId ? fresh : cloudWork))
+    await mount()
+    await publish('running')
+    expect(state.work).toEqual(fresh)
+    await act(async () =>
+      cache.resolve({
+        ...emptyCache,
+        devices: [fixture.runtime.device()!],
+        selectedDeviceId: phoneId,
+        workByDevice: { [phoneId]: emptyWork },
+      })
+    )
+    expect(state.work).toEqual(fresh)
+    expect(state.conversations).toHaveLength(1)
+    expect(state.loading).toBe(false)
+    await act(async () => backend.resolve(new Response(JSON.stringify({ items: [cloud] }))))
+    expect(state.work).toEqual(fresh)
+    expect(mocks.listWork.mock.calls.filter(([id]) => id === phoneId)).toHaveLength(1)
+  })
+
   it('settles a failed initial phone read without waiting for cloud or retrying on readiness', async () => {
     const backend = deferred<Response>()
     mocks.devices.mockReturnValue(backend.promise)
@@ -553,6 +601,94 @@ describe('native phone device inventory publication', () => {
     expect(mocks.listWork.mock.calls.length).toBeGreaterThan(calls)
   })
 
+  it.each(['phone', 'all'] as const)(
+    'refreshes phone work in the %s view while Backend discovery is unreachable',
+    async selection => {
+      await mount()
+      await publish('running')
+      if (selection === 'all') await act(() => state.selectAllDevices())
+      else await act(() => state.selectDevice(phoneId))
+      const discoveryCalls = mocks.devices.mock.calls.length
+      mocks.cloudConnection = { connected: false, error: new Error('Company network unavailable') }
+      await act(() => mocks.cloudListeners.forEach(listener => listener()))
+      const fresh = { ...cloudWork, chats: [{ ...cloudWork.chats[0]!, deviceId: phoneId }] }
+      mocks.listWork.mockImplementation(async (id: string) => (id === phoneId ? fresh : cloudWork))
+      const before = mocks.listWork.mock.calls.filter(([id]) => id === phoneId).length
+      let refresh!: Promise<void>
+      await act(async () => {
+        refresh = state.refresh()
+      })
+      expect(mocks.listWork.mock.calls.filter(([id]) => id === phoneId)).toHaveLength(before + 1)
+      expect(state.work.chats.some(chat => chat.deviceId === phoneId)).toBe(true)
+      expect(state.loading).toBe(false)
+      await act(async () => {
+        await refresh
+      })
+      expect(mocks.listWork.mock.calls.filter(([id]) => id === phoneId)).toHaveLength(before + 1)
+      expect(state.work.chats.some(chat => chat.deviceId === phoneId)).toBe(true)
+      expect(state.error).toBeNull()
+      expect(state.connectionError).toContain('Company network unavailable')
+      expect(state.refreshing).toBe(false)
+      expect(mocks.devices).toHaveBeenCalledTimes(discoveryCalls)
+      expect(state.devices.map(device => device.device_id)).toEqual([phoneId])
+    }
+  )
+
+  it.each(['cloud', 'all'] as const)(
+    'does not block phone refresh behind a pending %s list refresh',
+    async view => {
+      await mount()
+      await publish('running')
+      await act(() =>
+        view === 'cloud' ? state.selectDevice(cloud.device_id) : state.selectAllDevices()
+      )
+      const remote = deferred<RuntimeWorkListResponse>()
+      mocks.listWork.mockImplementation((id: string) =>
+        id === cloud.device_id ? remote.promise : Promise.resolve(emptyWork)
+      )
+      let remoteRefresh!: Promise<void>
+      await act(() => {
+        remoteRefresh = state.refresh()
+      })
+      expect(state.refreshing).toBe(true)
+      await act(() => state.selectDevice(phoneId))
+      expect(state.refreshing).toBe(false)
+      const before = mocks.listWork.mock.calls.filter(([id]) => id === phoneId).length
+      await act(() => state.refresh())
+      expect(mocks.listWork.mock.calls.filter(([id]) => id === phoneId)).toHaveLength(before + 1)
+      expect(state.refreshing).toBe(false)
+      await act(async () => {
+        remote.resolve(cloudWork)
+        await remoteRefresh
+      })
+      expect(state.selectedDeviceId).toBe(phoneId)
+      expect(state.work).toEqual(emptyWork)
+    }
+  )
+
+  it('keeps the phone usable when cloud connectivity disappears from a selected remote list', async () => {
+    await mount()
+    await publish('running')
+    await act(() => state.selectDevice(cloud.device_id))
+    expect(state.selectedDeviceId).toBe(cloud.device_id)
+    const reads = mocks.listWork.mock.calls.length
+    await act(() => {
+      mocks.cloudConnection = { connected: false, error: new Error('offline') }
+      mocks.cloudListeners.forEach(listener => listener())
+    })
+    expect(state.devices.map(device => device.device_id)).toEqual([phoneId])
+    expect(state.selectedDeviceId).toBe(phoneId)
+    expect(state.loading).toBe(false)
+    expect(mocks.listWork).toHaveBeenCalledTimes(reads)
+    await act(() => {
+      mocks.cloudConnection = { connected: true, error: null }
+      mocks.cloudListeners.forEach(listener => listener())
+    })
+    expect(state.selectedDeviceId).toBe(phoneId)
+    expect(mocks.listWork).toHaveBeenCalledTimes(reads)
+    expect(mocks.devices).toHaveBeenCalledOnce()
+  })
+
   it('does not resurrect an online phone from a response that started before stopping', async () => {
     await mount()
     await publish('running')
@@ -596,7 +732,6 @@ describe('native phone device inventory publication', () => {
       const cached = deferred<RuntimeCacheSnapshot>()
       const backend = deferred<Response>()
       mocks.readCache.mockReturnValueOnce(cached.promise)
-      mocks.devices.mockReturnValueOnce(backend.promise)
       const workspace: RuntimeDeviceWorkspace = {
         deviceId: phoneId,
         deviceName: '这台手机',

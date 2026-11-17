@@ -27,7 +27,7 @@ export function IssueDrawerHeader({
       >
         <ArrowLeft className="h-4 w-4" />
       </button>
-      <span className="min-w-0 flex-1 truncate text-xs text-text-muted">
+      <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
         {title}
       </span>
       {actions}
