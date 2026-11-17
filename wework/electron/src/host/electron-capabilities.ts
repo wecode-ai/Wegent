@@ -879,13 +879,22 @@ export function createElectronCapabilityRouter(
       workspaceWindows: e2eHost.workspaceWindowSnapshots(),
     }
   })
-  router.register('e2e.setMainWindowSize', params => {
-    return setE2EWindowSize(
-      requiredWindow(window),
+  router.register('e2e.setMainWindowSize', async params => {
+    const target = requiredWindow(window)
+    const previous = await setE2EWindowSize(
+      target,
       requiredIntegerParam(params, 'width'),
       requiredIntegerParam(params, 'height'),
       params.maximized === undefined ? false : requiredBooleanParam(params, 'maximized')
     )
+    console.info('[desktop-e2e-native-window-size]', {
+      windowId: target.id,
+      webContentsId: target.webContents.id,
+      contentSize: target.getContentSize(),
+      bounds: target.getBounds(),
+      maximized: target.isMaximized(),
+    })
+    return previous
   })
   // Windows restores precision-touchpad input only while the native window
   // keeps Chromium's default visibility lifecycle; see window-background-policy.

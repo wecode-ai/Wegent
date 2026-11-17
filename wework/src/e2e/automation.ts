@@ -2938,13 +2938,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (nextSize.maximized !== undefined && typeof nextSize.maximized !== 'boolean') {
         throw new Error('setMainWindowSize maximized must be a boolean')
       }
-      return JSON.stringify(
-        await invokeDesktopHost('e2e.setMainWindowSize', {
-          width: Number(nextSize.width),
-          height: Number(nextSize.height),
-          maximized: nextSize.maximized ?? false,
-        })
-      )
+      const previous = await invokeDesktopHost('e2e.setMainWindowSize', {
+        width: Number(nextSize.width),
+        height: Number(nextSize.height),
+        maximized: nextSize.maximized ?? false,
+      })
+      console.info('[desktop-e2e-renderer-window-size]', {
+        windowLabel: getDesktopWindowLabel(),
+        topFrame: window === window.top,
+        requested: nextSize,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        screen: { width: window.screen.width, height: window.screen.height },
+        devicePixelRatio: window.devicePixelRatio,
+      })
+      return JSON.stringify(previous)
     }
     case 'getWindowFocusSnapshot':
       return getWindowFocusSnapshot()
