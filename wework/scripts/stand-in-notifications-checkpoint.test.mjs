@@ -30,6 +30,7 @@ function layoutControl({ height = 44, missingChannel, count = 4, discoveryFailur
   const measured = []
   const previous = JSON.stringify({ width: 1280, height: 720, maximized: true })
   let resized = false
+  let menuOpen = false
   return {
     calls,
     measured,
@@ -47,6 +48,18 @@ function layoutControl({ height = 44, missingChannel, count = 4, discoveryFailur
       }
       if (action === 'clickWhenEnabled' && discoveryFailure)
         throw new Error('Real IM discovery failed')
+      if (action === 'clickWhenEnabled') {
+        assert.equal(menuOpen, false, 'The open channel menu makes its background trigger inert')
+        menuOpen = true
+      }
+      if (action === 'nativePress') {
+        assert.equal(selector, '[data-testid="stand-in-im-add-channels-menu"]')
+        assert.equal(options.key, 'Escape')
+        assert.equal(menuOpen, true)
+        menuOpen = false
+        return ''
+      }
+      if (action === 'waitFor' && options?.visible === false) assert.equal(menuOpen, false)
       if (action === 'getElementCount') return String(count)
       if (action === 'getElementMetrics') {
         if (selector === 'body') return JSON.stringify([{ width: 760 }])
@@ -64,7 +77,8 @@ test('measures exactly all four channel identities with one narrow resize and re
   await verifyNarrowImMenu(control)
   assert.deepEqual(control.measured, ['dingtalk', 'telegram', 'discord', 'weibo'])
   assert.equal(control.calls.filter(call => call.action === 'setMainWindowSize').length, 2)
-  assert.equal(control.calls.filter(call => call.action === 'clickWhenEnabled').length, 2)
+  assert.equal(control.calls.filter(call => call.action === 'clickWhenEnabled').length, 1)
+  assert.equal(control.calls.filter(call => call.action === 'nativePress').length, 1)
   assert.equal(control.calls.at(-1).options.value, control.previous)
 })
 

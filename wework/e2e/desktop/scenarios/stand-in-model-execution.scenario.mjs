@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createCatalogScenario } from './stand-in-model-catalog.scenario.mjs'
+import { openExplicitModelMenu } from '../modules/model-menu-navigation.mjs'
 import { requestExecutor, writeCodexModelConfig } from '../modules/executor-rpc.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 import { waitForDeliveredCloudCatalog } from '../modules/stand-in-catalog-delivery.mjs'
@@ -787,16 +788,6 @@ export function createDesktopScenario(options) {
       }
     },
   }
-}
-
-async function openExplicitModelMenu(control, trigger) {
-  const menu = '[data-testid="model-selector-menu"]'
-  await control.command('clickWhenEnabled', trigger)
-  await control.command('waitFor', menu)
-  if ((await control.command('getAttribute', menu, { value: 'data-panel' })) === 'simple') {
-    await control.command('clickWhenEnabled', '[data-testid="model-advanced-toggle"]')
-  }
-  await control.command('waitFor', `${menu}[data-panel="advanced"]`)
 }
 
 async function cloudRequest(cloud, path, method = 'GET', body) {

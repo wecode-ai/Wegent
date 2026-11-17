@@ -13,6 +13,7 @@ import {
   stopBoundStandIn,
 } from '../modules/stand-in-instance-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { openExplicitModelMenu } from '../modules/model-menu-navigation.mjs'
 
 const PANEL = '[data-testid="stand-in-primary-profile"]'
 const models = [
@@ -122,15 +123,15 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           await control.command('waitFor', PANEL)
           const key = JSON.stringify(['codex', 'cloud', 'public', 'default', 0, model.name])
           const optionId = `model-option-${key}`
-          await control.command(
-            'clickWhenEnabled',
-            `${PANEL} [data-testid="model-selector-button"]`
-          )
+          await openExplicitModelMenu(control, `${PANEL} [data-testid="model-selector-button"]`)
           await control.command('waitFor', selector(optionId))
           await control.command('scrollIntoView', selector(optionId))
           await control.command('waitFor', selector(optionId), { text: model.label })
           await control.command('clickWhenEnabled', selector(optionId))
           await control.command('press', 'body', { key: 'Escape' })
+          await control.command('waitFor', '[data-testid="model-selector-menu"]', {
+            visible: false,
+          })
           await control.command('waitFor', `${PANEL} [data-testid="model-selector-button"]`, {
             text: model.label,
           })

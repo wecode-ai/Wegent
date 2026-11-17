@@ -4,7 +4,10 @@ import type { CollaborationProject } from '@wegent/collaboration'
 import { act, useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
-import { waitForTemplateProjectCreation } from '../../e2e/desktop/scenarios/collaboration-templates.scenario.mjs'
+import {
+  cancelTemplateProjectDraft,
+  waitForTemplateProjectCreation,
+} from '../../e2e/desktop/scenarios/collaboration-templates.scenario.mjs'
 import { runDesktopControlClient } from './automation'
 
 const confirmId = 'collaboration-project-create-confirm'
@@ -98,6 +101,60 @@ function nativeControl() {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+it('discards the template project draft before returning to template discovery', async () => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+    new DOMRect(10, 10, 200, 30)
+  )
+  const create = vi.fn()
+  const onClose = vi.fn()
+  const discover = vi.fn()
+  function Host() {
+    const [open, setOpen] = useState(true)
+    return (
+      <div data-workspace-tab-content aria-hidden="false">
+        <button data-testid="template-tab-discover" onClick={discover}>
+          Discover
+        </button>
+        {open && (
+          <ProjectCreateDialog
+            targets={[{ location: 'cloud', create }]}
+            defaultLocation="cloud"
+            labels={projectCreateLabels.en}
+            allowDingTalkAITable={false}
+            onClose={() => {
+              onClose()
+              setOpen(false)
+            }}
+            onCreated={vi.fn()}
+          />
+        )}
+      </div>
+    )
+  }
+  render(<Host />)
+  fireEvent.change(screen.getByTestId('cloud-project-name'), {
+    target: { value: 'Account template project' },
+  })
+  const native = nativeControl()
+  const control = {
+    async command(...args: Parameters<typeof native.command>) {
+      let value = ''
+      await act(async () => {
+        value = await native.command(...args)
+      })
+      return value
+    },
+  }
+
+  await cancelTemplateProjectDraft(control)
+  await control.command('click', '[data-testid="template-tab-discover"]')
+
+  expect(screen.queryByTestId('collaboration-project-create-dialog')).not.toBeInTheDocument()
+  expect(onClose).toHaveBeenCalledOnce()
+  expect(discover).toHaveBeenCalledOnce()
+  expect(create).not.toHaveBeenCalled()
 })
 
 it('waits for deferred creation and configuration while the mounted confirm is outside the viewport', async () => {

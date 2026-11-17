@@ -193,6 +193,12 @@ async function selectSupervisorModel(control) {
     'click',
     `[data-testid="model-selector-menu"] [data-testid="model-option-${CLOUD_PUBLIC_MODEL_NAME}"]`
   )
+  await control.command('press', '[data-model-selector-layer="true"]', { key: 'Escape' })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('model-selector-menu'),
+    'The supervisor model picker did not close after selection'
+  )
 }
 
 async function getSelectedSupervisorModel(control) {
@@ -1422,6 +1428,7 @@ async function verifyCloudGoalRestartRecoveryLifecycle({
 }
 
 export {
+  selectSupervisorModel,
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
   verifyCloudGoalRestartRecoveryLifecycle,

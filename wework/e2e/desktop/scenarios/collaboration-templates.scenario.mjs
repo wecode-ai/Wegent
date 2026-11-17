@@ -12,10 +12,18 @@ import {
   verifyTemplateDeletionPermissions,
 } from '../modules/template-deletion-flow.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
+import { confirmProjectDraftDiscard } from '../modules/project-create-draft.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
 const testId = name => scoped(`[data-testid="${name}"]`)
+
+export async function cancelTemplateProjectDraft(control) {
+  await control.command('clickWhenEnabled', testId('collaboration-project-create-cancel'))
+  await confirmProjectDraftDiscard(control)
+  await waitForTemplateProjectCreation(control, DEFAULT_STEP_TIMEOUT_MS)
+}
 
 export async function waitForTemplateProjectCreation(control, timeoutMs) {
   await waitForValue(
@@ -343,12 +351,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'collaboration-workspace-wework-local-workspace')
       await openTemplateProject(control, accountTemplate.document.spec.displayName)
       await capture(control, '00-account-download')
-      await control.command(
-        'click',
-        scoped(
-          '[data-testid="collaboration-project-create-dialog"] .collaboration-project-create-footer button[type="button"]'
-        )
-      )
+      await cancelTemplateProjectDraft(control)
       await wait(
         control,
         `template-card-${accountTemplate.document.metadata.name}`,

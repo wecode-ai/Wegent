@@ -831,6 +831,8 @@ export async function createDesktopScenario({
       await openStandInActivity(control)
       await control.command('waitFor', '[data-testid="stand-in-activity"]', { text: PROJECT })
       await captureScreenshot(control, 'stand-in-project-05-overview.png')
+      await control.command('clickWhenEnabled', '[data-testid="stand-in-work-dialog-close"]')
+      await control.command('waitFor', '[data-testid="stand-in-work-dialog"]', { visible: false })
       await control.command('waitFor', `[data-testid="stand-in-overview-role-${newRole.id}"]`)
       await control.command('click', `[data-testid="stand-in-overview-role-${newRole.id}"]`)
       await openStandInSettings(control)

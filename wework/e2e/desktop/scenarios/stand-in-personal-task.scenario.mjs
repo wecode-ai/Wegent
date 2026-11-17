@@ -20,6 +20,7 @@ import {
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
 import { selectE2EModel } from '../modules/shared.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
+import { openExplicitModelMenu } from '../modules/model-menu-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPLETE = 'PERSONAL_STAND_IN_COMPLETE'
@@ -289,8 +290,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
       const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
       assert.ok(model, 'The stand-in must use the registered E2E Codex model')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-advanced-open"]')
-      await control.command(
-        'clickWhenEnabled',
+      await openExplicitModelMenu(
+        control,
         '[data-testid="stand-in-settings"] [data-testid="model-selector-button"]'
       )
       const modelKey = JSON.stringify([model.runtime, model.provider, model.model_id])
@@ -298,6 +299,8 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         'clickWhenEnabled',
         `[data-testid=${JSON.stringify(`model-option-${modelKey}`)}]`
       )
+      await control.command('press', '[data-model-selector-layer="true"]', { key: 'Escape' })
+      await control.command('waitFor', '[data-testid="model-selector-menu"]', { visible: false })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-prompt"]')
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')

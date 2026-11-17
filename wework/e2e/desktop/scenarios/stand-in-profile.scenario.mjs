@@ -22,6 +22,7 @@ import { selectE2EModel } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { waitForTestIdByText } from '../modules/workspace-flows.mjs'
+import { openExplicitModelMenu } from '../modules/model-menu-navigation.mjs'
 
 const PANEL = '[data-testid="stand-in-primary-profile"]'
 const USER = 9001
@@ -178,13 +179,15 @@ export function createDesktopScenario({
         catalog.models.find(row => row.runtime === 'codex')
       assert.ok(model, 'The isolated executor must expose a Codex model')
       const modelKey = JSON.stringify(['codex', model.provider, model.model_id])
-      await control.command('click', `${PANEL} [data-testid="model-selector-button"]`)
+      await openExplicitModelMenu(control, `${PANEL} [data-testid="model-selector-button"]`)
       const optionSelector = selector(`model-option-${modelKey}`)
       if ((await control.command('getElementCount', optionSelector, { visible: true })) === '0') {
         await control.command('click', selector(`model-group-codex-provider:${model.provider}`))
       }
       await control.command('waitFor', optionSelector)
       await control.command('click', selector(`model-option-${modelKey}`))
+      await control.command('press', '[data-model-selector-layer="true"]', { key: 'Escape' })
+      await control.command('waitFor', '[data-testid="model-selector-menu"]', { visible: false })
       await captureScreenshot(control, '03-selected-environment.png', PANEL)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
       await control.command('waitFor', PANEL, { visible: false })
