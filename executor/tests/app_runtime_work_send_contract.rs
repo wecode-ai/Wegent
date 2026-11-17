@@ -4527,7 +4527,7 @@ async fn runtime_tasks_cancel_rejects_the_matching_pre_dispatch_send() {
     );
     seed_persisted_runtime_task(&executor_home, "local-task-1", "thread-1");
     let log_path = temp_path("runtime-cancel-pre-dispatch-log", "jsonl");
-    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let fake_codex = write_fake_codex_concurrent_send(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 
     let cancelled = handler
@@ -4535,7 +4535,7 @@ async fn runtime_tasks_cancel_rejects_the_matching_pre_dispatch_send() {
             "method": "runtime.tasks.cancel",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "taskId": "local-task-1",
+                "taskId": "thread-1",
                 "clientUserMessageId": "cancelled-before-dispatch"
             }
         }))
@@ -6230,6 +6230,9 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
       ;;
     *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
       ;;
     *'"method":"thread/read"'*)
       (

@@ -2389,8 +2389,9 @@ impl RuntimeWorkRpcHandler {
         stop_timeout: Duration,
         require_stopped: bool,
     ) -> Result<Value, AppIpcError> {
-        let local_task_id = runtime_task_id(&payload)
+        let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let local_task_id = self.canonical_local_task_id(&requested_task_id);
         let send_gate = self.task_send_gate(&local_task_id);
         let _send_guard = send_gate.lock().await;
         self.invalidate_stand_in_owner_request(&local_task_id);
@@ -2445,7 +2446,7 @@ impl RuntimeWorkRpcHandler {
         }
         let had_active_local_execution =
             self.request_active_turn_stop(&local_task_id) || had_active_local_execution;
-        if is_codex && !had_active_local_execution {
+        if is_codex && !had_active_local_execution && !cancels_pending_send {
             if let Some(thread_id) = thread_id.as_deref() {
                 if self
                     .settle_local_execution_from_terminal_codex_turn(
@@ -2470,8 +2471,14 @@ impl RuntimeWorkRpcHandler {
         }
         let local_stop = self.abort_active_turn_with_timeout(&local_task_id, stop_timeout);
         let provider_stop = async {
-            match (is_codex, had_active_local_execution, thread_id.as_deref()) {
-                (true, false, Some(thread_id)) => tokio::time::timeout(
+            match (
+                is_codex,
+                had_active_local_execution,
+                cancels_pending_send,
+                thread_id.as_deref(),
+            ) {
+                (_, _, true, _) => true,
+                (true, false, false, Some(thread_id)) => tokio::time::timeout(
                     stop_timeout,
                     self.interrupt_provider_active_turn(thread_id),
                 )
