@@ -23,28 +23,28 @@ const receipt = (text, activity = false) => ({
 })
 
 test('compares one loaded receipt snapshot across an intervening Issue version refresh', async () => {
-  const received = '本人已读 · 05:42 PM分身已接收 · 05:42 PM'
+  const received = '本人已读 · 05:42 PM助理已接收 · 05:42 PM'
   const snapshots = [[], [receipt(received)], [receipt(received), receipt(received, true)]]
-  await verifyAssignmentActivityReceipts(controlFor(snapshots), '分身已接收')
+  await verifyAssignmentActivityReceipts(controlFor(snapshots), '助理已接收')
   assert.equal(snapshots.length, 0)
 })
 
 test('still rejects different reception timestamps in one loaded snapshot', async () => {
   await assert.rejects(
     verifyAssignmentActivityReceipts(
-      controlFor([[receipt('分身已接收 · 05:42 PM'), receipt('分身已接收 · 05:43 PM', true)]]),
-      '分身已接收'
+      controlFor([[receipt('助理已接收 · 05:42 PM'), receipt('助理已接收 · 05:43 PM', true)]]),
+      '助理已接收'
     ),
     /must display the same reception timestamps/
   )
 })
 
 test('still rejects an empty duplicate activity receipt in the same loaded snapshot', async () => {
-  const received = '分身已接收 · 05:42 PM'
+  const received = '助理已接收 · 05:42 PM'
   await assert.rejects(
     verifyAssignmentActivityReceipts(
       controlFor([[receipt(received), receipt(received, true), receipt('', true)]]),
-      '分身已接收'
+      '助理已接收'
     ),
     /exactly the latest assignment activity/
   )

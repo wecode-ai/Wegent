@@ -191,6 +191,7 @@ fn chat_input<'a>(team: &'a KindRow, bot: &'a KindRow) -> BuildExecutionRequestI
         knowledge_base_names: &[],
         web_runtime_guidance: false,
         subtask_bot_resolved: true,
+        attachment_ids: &[],
     }
 }
 

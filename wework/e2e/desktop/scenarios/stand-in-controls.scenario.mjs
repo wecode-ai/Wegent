@@ -14,7 +14,7 @@ import {
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `分身独立控制-${process.pid}`
+const PROJECT = `助理独立控制-${process.pid}`
 const USER_ID = 9001
 const PROMPT = '[data-testid="stand-in-prompt"]'
 const SAVE = '[data-testid="stand-in-save"]'

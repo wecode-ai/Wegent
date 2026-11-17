@@ -113,6 +113,17 @@ describe('localExecutor', () => {
     expect(resolveProxy).not.toHaveBeenCalled()
   })
 
+  test('propagates optional native event protocol metadata without guessing support', async () => {
+    const description = await describeDshExecutorMock()
+    describeDshExecutorMock.mockResolvedValue({
+      ...description,
+      runtime_features: { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } },
+    })
+    await expect(ensureLocalExecutorStarted()).resolves.toMatchObject({
+      runtimeFeatures: { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } },
+    })
+  })
+
   test('reuses the initialized executor status for repeated startup checks', async () => {
     const first = await ensureLocalExecutorStarted()
 

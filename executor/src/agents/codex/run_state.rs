@@ -127,6 +127,9 @@ impl CodexRunState {
                 None
             }
             Some("thread/goal/updated") => {
+                if self.is_subagent_message(message_params(message)) {
+                    return None;
+                }
                 if let Some(status) = message_params(message)
                     .get("goal")
                     .and_then(|goal| goal.get("status"))
@@ -137,6 +140,9 @@ impl CodexRunState {
                 None
             }
             Some("thread/goal/cleared") => {
+                if self.is_subagent_message(message_params(message)) {
+                    return None;
+                }
                 self.clear_goal_status();
                 None
             }
