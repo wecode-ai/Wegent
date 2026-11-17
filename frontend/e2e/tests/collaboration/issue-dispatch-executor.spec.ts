@@ -590,10 +590,14 @@ test.describe('Collaboration group Executor coordination', () => {
           })
       const collectorCard = memberExecutionCard(`Coordinate Collector ${suffix}`)
       const reviewerCard = memberExecutionCard(`Coordinate Reviewer ${suffix}`)
-      const collectorAssignment = page
+      const managerAssignment = page
         .locator('[data-testid^="cloud-task-activity-card-"]')
         .filter({ hasText: collectorTask })
-      await expect(collectorAssignment).toBeVisible({ timeout: 60_000 })
+        .filter({
+          has: page.locator('[data-testid^="cloud-task-manager-execution-"]'),
+        })
+      await expect(managerAssignment).toBeVisible({ timeout: 60_000 })
+      await expect(managerAssignment).toContainText(reviewerTask)
       await expect(collectorCard).toBeVisible({ timeout: 60_000 })
       await expect(reviewerCard).toBeVisible({ timeout: 60_000 })
       await waitForHeldStreamResponse(request, collectorTask)
