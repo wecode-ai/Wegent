@@ -4,11 +4,12 @@
 
 """Built-in DingTalk connector apps backfill once and respect deletions."""
 
+import gc
 from copy import deepcopy
 
 import pytest
 from sqlalchemy import event
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import ORMExecuteState, Session
 
 from app.models.kind import Kind
 from app.models.system_config import SystemConfig
@@ -257,13 +258,29 @@ def verify_failed_bootstrap_rolls_back_and_can_retry(
     ]
 
 
+@pytest.mark.filterwarnings(
+    "error:Identity map already had an identity:sqlalchemy.exc.SAWarning"
+)
 @pytest.mark.parametrize(
     "failed_slug", [definition.slug for definition in BUILTIN_CONNECTOR_APPS] + [None]
 )
 def test_failed_bootstrap_rolls_back_apps_and_marker_and_can_retry(
     test_db: Session, failed_slug: str | None
 ) -> None:
-    verify_failed_bootstrap_rolls_back_and_can_retry(test_db, failed_slug)
+    def collect_during_expired_flush_load(execution: ORMExecuteState) -> None:
+        if execution.is_column_load and execution.session._flushing:
+            # Collect failed-attempt traceback cycles during expired row loads.
+            gc.collect()
+
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    event.listen(test_db, "do_orm_execute", collect_during_expired_flush_load)
+    try:
+        verify_failed_bootstrap_rolls_back_and_can_retry(test_db, failed_slug)
+    finally:
+        event.remove(test_db, "do_orm_execute", collect_during_expired_flush_load)
+        if gc_was_enabled:
+            gc.enable()
 
 
 def test_incomplete_marker_is_retried(test_db: Session) -> None:
