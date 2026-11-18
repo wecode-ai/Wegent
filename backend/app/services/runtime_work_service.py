@@ -4569,7 +4569,7 @@ def _apply_runtime_create_request(
     execution_request.cloud_project_id = (
         str(request.cloud_project_id) if request.cloud_project_id is not None else None
     )
-    execution_request.additionalContext = request.additional_context or {}
+    execution_request.additional_context = request.additional_context or {}
     execution_request.origin = request.origin
     if request.attachments:
         execution_request.attachments = list(request.attachments)

@@ -5297,7 +5297,7 @@ def test_build_runtime_send_execution_request_uses_complete_create_request(
     assert execution_request.project_workspace_path == "/repo/Wegent"
     assert execution_request.device_id == "device-1"
     assert execution_request.prompt == "continue"
-    assert execution_request.additionalContext == {
+    assert execution_request.additional_context == {
         "wework.terminal.current": {"kind": "application", "value": "terminal output"}
     }
 
@@ -5926,7 +5926,7 @@ def test_build_runtime_execution_request_uses_managed_project_space_tools_for_is
 
     assert execution_request.mcp_servers == []
     assert execution_request.prompt == request.message
-    assert execution_request.additionalContext == request.additional_context
+    assert execution_request.additional_context == request.additional_context
 
 
 @pytest.mark.parametrize("dispatch_role", ["manager", "executor", "member"])
@@ -5974,7 +5974,7 @@ def test_build_runtime_execution_request_uses_managed_space_tools_for_dispatch_r
 
     assert execution_request.mcp_servers == []
     assert execution_request.prompt == request.message
-    assert execution_request.additionalContext == request.additional_context
+    assert execution_request.additional_context == request.additional_context
 
 
 def test_claude_message_with_application_context_keeps_user_message_and_ignores_untrusted() -> (
