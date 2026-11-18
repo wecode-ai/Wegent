@@ -114,9 +114,15 @@ export const test = base.extend<{
               ? [network, { match: consoleError, count: 1 }]
               : [network]
           })
-          collector.assertErrors([...expectations, ...expectedErrors], {
-            byteLength: checkpoint.byteLength,
-          })
+          await collector.assertCollectedErrors(
+            {
+              command: async (action: string) => {
+                assert.equal(action, 'getErrorCollectionCheckpoint')
+                return JSON.stringify(journal.checkpoint())
+              },
+            },
+            [...expectations, ...expectedErrors]
+          )
         } finally {
           const summaryPath = testInfo.outputPath('error-summary.json')
           writeFileSync(summaryPath, JSON.stringify(collector.summary(), null, 2))
