@@ -9,7 +9,7 @@ impl RuntimeWorkRpcHandler {
         config: &Value,
     ) -> Result<Value, AppIpcError> {
         let catalog = if config["model"].is_null() {
-            self.runner_catalog().await?
+            self.runner_catalog(concat!(file!(), ":", line!())).await?
         } else {
             Value::Null
         };

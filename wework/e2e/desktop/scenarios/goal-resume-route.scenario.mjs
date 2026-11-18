@@ -35,8 +35,8 @@ export function createDesktopScenario(options) {
       restartDesktopApp = restart
       existing?.setRestartDesktopApp?.(restart)
     },
-    async handleHttp(request, response, url) {
-      if (!active) return existing?.handleHttp(request, response, url) ?? false
+    async handleHttp(request, response, url, modelRequest) {
+      if (!active) return existing?.handleHttp(request, response, url, modelRequest) ?? false
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)

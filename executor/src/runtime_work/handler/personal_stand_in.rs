@@ -119,7 +119,7 @@ impl RuntimeWorkRpcHandler {
         schema: Value,
         task: String,
     ) -> Result<ExecutionRequest, AppIpcError> {
-        let catalog = self.runner_catalog().await?;
+        let catalog = self.runner_catalog(concat!(file!(), ":", line!())).await?;
         let model = selected_model
             .filter(|model| model["runtime"] == "codex")
             .cloned()

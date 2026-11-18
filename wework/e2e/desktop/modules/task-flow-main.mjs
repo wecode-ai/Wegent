@@ -1,3 +1,4 @@
+import { finishDesktopTeardown } from './finish-desktop-teardown.mjs'
 import { publishSitesCreatorPlugins } from './sites-creator-plugins.mjs'
 import { SitesProtocolFixture } from './sites-protocol-fixture.mjs'
 import { BackendFaultGate } from './backend-fault-gate.mjs'
@@ -1887,11 +1888,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       if (DESKTOP_SEGMENT === 'local-harness') {
         await writeLocalHarnessDiagnostics(control, resultDir)
       }
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -1903,11 +1899,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The browser-multi-tabs checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
       )
       await desktopScenario.verify(control)
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       console.log(`Wework desktop browser-multi-tabs checkpoint passed. Evidence: ${resultDir}`)
       return
     }
@@ -1919,11 +1910,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The browser-toolbar-actions checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
       )
       await desktopScenario.verify(control)
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       console.log(
         `Wework desktop browser-toolbar-actions checkpoint passed. Evidence: ${resultDir}`
       )
@@ -1937,11 +1923,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The project-automation checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
       )
       await desktopScenario.verify(control)
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
       return
     }
@@ -1989,11 +1970,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           },
           workspacePath,
         })
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
         console.log(
           `Wework desktop cloud checkpoint ${SELECTED_DESKTOP_SEGMENT} passed. Evidence: ${resultDir}`
         )
@@ -2015,11 +1991,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopApp, workspacePath, {
         visionOnly: CLOUD_VISION_ONLY,
       })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       console.log(
         `Wework desktop ${CLOUD_VISION_ONLY ? 'cloud-vision' : CLOUD_FEATURES_ONLY ? 'cloud-features' : 'cloud-project'} E2E passed. Diagnostics: ${resultDir}`
       )
@@ -2096,11 +2067,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
       })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       console.log(`Wework guidance scroll desktop E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -2395,11 +2361,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
       phase = 'desktop-extension-scenario'
       await desktopScenario.verify(control)
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -2472,11 +2433,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         },
         workspacePath,
       })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       console.log(
         MODEL_SWITCH_ONLY
           ? `Wework desktop six-way model-switch E2E passed. Evidence: ${resultDir}`
@@ -2520,11 +2476,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           phase = value
         },
       })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       console.log(`Wework desktop project-ai-settings checkpoint passed. Evidence: ${resultDir}`)
       return
     }
@@ -3004,11 +2955,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         screenshotPrefix: 'mixed-assistant-tool-turn',
         workspacePath,
       })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       console.log(`Wework mixed assistant tool-turn desktop E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -3016,11 +2962,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (QUEUE_MANAGEMENT_ONLY) {
       phase = 'queue-management'
       await verifyPausedQueueLifecycle({ composerSelector, control })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       console.log(`Wework queue management desktop E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -3044,11 +2985,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         },
         workspacePath,
       })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
       if (shouldStopAfterDesktopCheckpoint('model-routing')) {
         console.log(`Wework desktop model-routing checkpoint passed. Evidence: ${resultDir}`)
         return
@@ -3127,11 +3063,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           text: FOLLOW_UP_COMPLETION_TEXT,
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
         console.log(`Wework desktop task-status-sync checkpoint passed. Evidence: ${resultDir}`)
         return
       }
@@ -3210,11 +3141,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
         await captureVerificationScreenshot(control, 'task-board-association-context-pill-open.png')
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
         console.log(
           `Wework desktop task-board-association checkpoint passed. Evidence: ${resultDir}`
         )
@@ -3280,11 +3206,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           })
         }
         if (QUEUE_NAVIGATION_ONLY) {
-          await writeFile(
-            join(resultDir, 'model-requests.json'),
-            `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-            'utf8'
-          )
           console.log(`Wework queue navigation desktop E2E passed. Evidence: ${resultDir}`)
           return
         }
@@ -3307,11 +3228,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           runningTaskRowTestId: taskRowTestId,
         })
         if (GUIDANCE_BACKGROUND_ONLY) {
-          await writeFile(
-            join(resultDir, 'model-requests.json'),
-            `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-            'utf8'
-          )
           console.log(`Wework background guidance desktop E2E passed. Evidence: ${resultDir}`)
           return
         }
@@ -3350,11 +3266,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           projectRowSelector,
           taskRowTestId,
         })
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
         console.log(`Wework message restoration desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
@@ -3404,11 +3315,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       })
       if (VIEW_IMAGE_ONLY) {
         await verifyViewImageProcessingBlock(control)
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
         console.log(`Wework view_image desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
@@ -3496,11 +3402,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       if (SIDE_CHAT_ONLY) {
         phase = 'side-chat-attachment-isolation'
         await verifySideChatAttachmentIsolation({ control, taskRowTestId })
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
         console.log(`Wework side-chat desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
@@ -3513,11 +3414,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           executorHome,
           sourceTaskRowTestId: taskRowTestId,
         })
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
         console.log(`Wework running-fork desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
@@ -3541,11 +3437,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         workspacePath,
       })
       if (COMPLETED_FORK_ONLY) {
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
         console.log(`Wework completed-fork desktop E2E passed. Evidence: ${resultDir}`)
         return
       }
@@ -5012,11 +4903,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
 
-    await writeFile(
-      join(resultDir, 'model-requests.json'),
-      `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-      'utf8'
-    )
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
     testFailed = true
@@ -5050,11 +4936,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'utf8'
       )
     }
-    await writeFile(
-      join(resultDir, 'model-requests.json'),
-      `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-      'utf8'
-    )
     await writeFile(
       join(resultDir, 'scenario-state.json'),
       `${JSON.stringify(
@@ -5166,7 +5047,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         teardownFailures.push({ error, label })
       }
     }
-    await runTeardownStep('performance evidence', async () => {
+    await runTeardownStep('final renderer snapshot', async () => {
       control.performance.recordExternalServiceProtocols([
         ...(desktopScenario?.externalServiceProtocols ?? []),
         ...(control.sitesProtocol?.requests.length ? ['sites'] : []),
@@ -5177,10 +5058,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           if (read.status === 'rejected')
             control.performance.errors.add('Final renderer snapshot was not acknowledged')
       }
-      await writeFile(
-        join(resultDir, 'performance.json'),
-        JSON.stringify(control.performance.report(!testFailed && !control.fatalError), null, 2)
-      )
     })
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
     await runTeardownStep('error evidence summary', async () => {
@@ -5242,24 +5119,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         cleanupError ??= error
       }
     }
-    for (const failure of teardownFailures) {
-      console.error(`[desktop-e2e] ${failure.label} teardown failed:`, failure.error)
-    }
-    if (testFailed) {
-      if (cleanupError) {
-        console.error(`[desktop-e2e] result cleanup failed: ${String(cleanupError)}`)
-      }
-    } else {
-      if (teardownFailures.length > 0) {
-        throw new AggregateError(
-          teardownFailures.map(failure => failure.error),
-          `Desktop E2E teardown failed: ${teardownFailures
-            .map(failure => failure.label)
-            .join(', ')}`
-        )
-      }
-      if (cleanupError) throw cleanupError
-    }
+    await finishDesktopTeardown({
+      control,
+      resultDir,
+      testFailed,
+      teardownFailures,
+      cleanupError,
+    })
   }
 }
 

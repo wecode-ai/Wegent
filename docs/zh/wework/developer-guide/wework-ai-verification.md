@@ -208,6 +208,8 @@ Session 的网络失败记录补充 `sinceSendHeadersMs`（首次发送请求头
 
 累计快照发生计数回退、来源复用或字段缺失时，`performance.json.rejectedSnapshots` 保留拒收的操作边界、前后耗时及回退计数，帮助区分重置与乱序；报告继续标为不完整，拒收值不覆盖已确认指标。
 
+桌面共享 runner 在关闭应用、控制器和服务以及结果清理完成后，才写入最终 `performance.json`。收尾断言或晚到的控制器错误使 `functionalPassed=false`，并保存 `failure.txt`；已有业务失败及其原始失败产物优先保留，写诊断失败不会把失败变为成功。模型请求与仅含数值／路由元数据的 HTTP 明细也在控制器关闭后统一写入 `model-requests.json`、`http-requests.json`，覆盖收尾期间到达的请求，移除各成功分支重复的提前写入。指标完整性与业务结果仍分开判断。模型发现的既有阶段日志同时携带编译期调用文件／行号和 query ID，区分用户目录读取与内部队列、协调、对话创建等发起点，不增加请求参数或响应内容。
+
 Windows 原生确认诊断进一步区分 UI Automation 程序集加载、窗口枚举开始／完成、所属窗口存在及标题匹配，各阶段只输出一次固定标记，不记录窗口文本。宿主在调用原生确认接口前记录仅含 action 的请求事件，与最终决定分开；该请求事件不证明操作系统已显示窗口。原有 PID／标题／按钮约束、10 秒查找与 12 秒进程期限保持不变，诊断不能使失败变为通过。
 
 Windows 共享确认客户端按 [微软 UI Automation 线程指南](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-threading)显式使用 PowerShell `-Mta`，并在失败时保留实际 apartment 状态；只接受固定的 `MTA`／`STA`／`Unknown`，缺失或其他值保持未知。PowerShell 的默认 STA 不作为桌面自动化客户端的执行约定。正确对话框中观测到零个按钮，不等于按钮枚举阻塞，也不能单凭线程设置改变就认定真实 Windows 故障已修复。

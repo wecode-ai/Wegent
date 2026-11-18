@@ -335,7 +335,7 @@ impl RuntimeWorkRpcHandler {
                     })?;
                 config["model"] = json!({"runtime":"codex","provider":"cloud_gateway","model_id":model_id,"source":"cloud","cloud_model":{"name":model_id,"type":options["modelType"],"namespace":namespace,"resource_user_id":owner}});
             } else {
-                let catalog = self.runner_catalog().await?;
+                let catalog = self.runner_catalog(concat!(file!(), ":", line!())).await?;
                 let provider = options["modelOptions"]["codexProviderId"].as_str();
                 let models = catalog["models"]
                     .as_array()

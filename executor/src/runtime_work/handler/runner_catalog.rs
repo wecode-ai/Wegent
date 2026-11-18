@@ -43,12 +43,12 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({"updated":true}))
     }
 
-    pub(super) async fn runner_catalog(&self) -> Result<Value, AppIpcError> {
+    pub(super) async fn runner_catalog(&self, caller: &'static str) -> Result<Value, AppIpcError> {
         let mut models = Vec::new();
         let mut runtimes = Vec::new();
         let mut errors = Vec::new();
         match self
-            .list_codex_models(json!({"includeHidden": false}))
+            .list_codex_models(json!({"includeHidden": false}), caller)
             .await
         {
             Ok(catalog) => {

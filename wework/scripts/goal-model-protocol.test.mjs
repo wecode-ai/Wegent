@@ -9,9 +9,13 @@ vi.mock('../e2e/desktop/scenarios/goal-state-sync.scenario.mjs', () => ({
 }))
 import { createDesktopScenario as createOutput } from '../e2e/desktop/scenarios/goal-output-identity.scenario.mjs'
 import { createDesktopScenario as createStopped } from '../e2e/desktop/scenarios/goal-stopped-state.scenario.mjs'
+import { createDesktopScenario as createResume } from '../e2e/desktop/scenarios/goal-resume-route.scenario.mjs'
 
-test('nested Goal scenarios preserve the shared model request context', async () => {
-  const scenario = createStopped({})
+test.each([
+  ['stopped', createStopped],
+  ['resume', createResume],
+])('nested %s Goal scenarios preserve the shared model request context', async (_name, create) => {
+  const scenario = create({})
   const args = [{}, {}, new URL('http://localhost/v1/messages'), { protocol: 'anthropic' }]
   await scenario.handleHttp(...args)
   expect(base.handleHttp).toHaveBeenLastCalledWith(...args)

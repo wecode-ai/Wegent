@@ -617,7 +617,10 @@ async fn memory_review_accepts_paused_intake_but_other_arrangements_do_not() {
         .unwrap();
     assert_eq!(prepared["origin"]["memoryReview"], true);
     assert_eq!(prepared["modelSelection"]["modelName"], "review-default");
-    let catalog = handler.runner_catalog().await.unwrap();
+    let catalog = handler
+        .runner_catalog(concat!(file!(), ":", line!()))
+        .await
+        .unwrap();
     let model = &catalog["models"][0];
     assert_eq!(model["default_reasoning_effort"], "low");
     assert_eq!(model["supported_reasoning_efforts"], json!(["low", "high"]));

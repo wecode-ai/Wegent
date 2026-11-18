@@ -100,7 +100,7 @@ impl RuntimeWorkRpcHandler {
             // Claim materializes nested runtime payloads. Always load the catalog
             // for a nonempty queue; a top-level routing probe can also race enqueue.
             let catalog = match store.has_queued_executions() {
-                Ok(true) => match self.runner_catalog().await {
+                Ok(true) => match self.runner_catalog(concat!(file!(), ":", line!())).await {
                     Ok(catalog) => Some(catalog),
                     Err(error) => {
                         log_executor_event(
