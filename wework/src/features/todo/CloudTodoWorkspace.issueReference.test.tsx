@@ -253,6 +253,13 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
     ...overrides,
   } as WorkbenchServices
   const deliveryApi = workbenchServices.deliveryApi!
+  deliveryApi.getCloudProject = vi.fn(async projectId => {
+    const found = (await deliveryApi.listCloudProjects()).items.find(
+      candidate => String(candidate.id) === String(projectId)
+    )
+    if (!found) throw new Error(`Project ${projectId} was not found`)
+    return found
+  })
   deliveryApi.getBoardSnapshot = vi.fn(async projectId => {
     const [{ items }, members, agents] = await Promise.all([
       deliveryApi.listLoopItems(projectId),
