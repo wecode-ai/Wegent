@@ -181,6 +181,9 @@ export async function createDesktopScenario({
           'POST'
         )
         fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
+        // Each baseline must reset account intent as well as the historical device override.
+        await update(fixture, null, { releaseId: fixture.releaseId })
+        assert.equal((await accountPlugin(cloud, fixture.slug)).spec.releaseId, fixture.releaseId)
         await update(fixture, installer.deviceId, { releaseId: fixture.releaseId })
         await update(fixture, installer.deviceId, {
           updatePolicy: 'manual',
@@ -337,8 +340,6 @@ export async function createDesktopScenario({
       expected: '"pnpmAvailable": true',
       skillPath: join(record.runtime.codex_link, 'skills', fixture.skillName, 'SKILL.md'),
       skillName: fixture.skillName,
-      pluginKey: fixture.slug,
-      version,
     }
     await control.command('click', testId('new-chat-button'))
     await selectE2EModel(control)
@@ -509,22 +510,6 @@ export async function createDesktopScenario({
         events = [assistantMessage(`${active.id} completed`)]
       } else if (active && JSON.stringify(body.input ?? '').includes(active.prompt)) {
         assert.ok(requestAdvertisesShellCommand(body))
-        if (!requestContainsSkillLocator(body, active.skillPath, active.skillName)) {
-          const record = await entry({ slug: active.pluginKey })
-          await writeFile(
-            join(resultDir, 'legacy-skill-discovery-failure.json'),
-            JSON.stringify(
-              {
-                expectedSkillPath: active.skillPath,
-                expectedVersion: active.version,
-                currentVersion: record?.version,
-                currentRuntime: record?.runtime,
-              },
-              null,
-              2
-            )
-          )
-        }
         assert.ok(
           requestContainsSkillLocator(body, active.skillPath, active.skillName),
           'Codex did not discover the historical plugin in its migrated native runtime'
