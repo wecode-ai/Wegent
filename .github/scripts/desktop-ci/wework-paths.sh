@@ -513,12 +513,7 @@ classify_wework_path() {
     wework/e2e/desktop/modules/collaboration-board-flows.mjs)
       select_target "core:collaboration-board-move-recovery"
       return
-      ;;
-    wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs)
-      select_target "core:collaboration-issue-archive"
-      return
-      ;;
-    wework/e2e/desktop/scenarios/collaboration-worktree-policy.scenario.mjs)
+      ;;    wework/e2e/desktop/scenarios/collaboration-worktree-policy.scenario.mjs)
       select_target "core:collaboration-worktree-policy"
       return
       ;;  esac

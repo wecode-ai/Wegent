@@ -113,7 +113,9 @@ for theme_foundation_path in \
   assert_desktop_case "theme foundations select all theme consumers: $theme_foundation_path" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"window-lifecycle"},{"id":"core-4","name":"Core / shard 4","segments":"streaming-content"},{"id":"core-5","name":"Core / shard 5","segments":"local-harness"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-personal-issues"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"window-lifecycle"},{"id":"core-4","name":"Core / shard 4","segments":"streaming-content"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-personal-issues"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-5","name":"Cloud / shard 5","segments":"window-lifecycle"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
     "$theme_foundation_path"
@@ -146,7 +148,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Issue badge changes retain board coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"collaboration-personal-issues"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-personal-issues"}]}
 wework_desktop_cloud_e2e=false
 wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
@@ -155,6 +157,12 @@ wework_desktop_macos_inspector_e2e=false' \
   "wework/src/features/change-requests/IssueChangeRequestBadges.tsx" \
   "wework/src/features/todo/IssueBadges.tsx"
 
+assert_desktop_case "Smart app model module retains its existing checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"harness-app-lifecycle,harness-app-models"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/harness-app-models.mjs"
 
 assert_desktop_case "Smart app deep-link fixtures run the lifecycle checkpoint" \
@@ -322,7 +330,6 @@ wework_desktop_macos_inspector_e2e=true' \
   "wework/electron/src/host/tray-manager.ts" \
   "wework/e2e/desktop/scenarios/tray-position.mjs"
 
-  "wework/src/components/layout/BackgroundTerminalsSummary.tsx"
 
 assert_desktop_case "local harness files select local harness coverage" \
   'wework_desktop_e2e=true

@@ -437,7 +437,7 @@ classify_path() {
       packages/collaboration/src/dto-mappers/workspaceDtoMappers*)
       select_target "core:remote-device-onboarding"
       select_target "core:collaboration-shared-core"
-      select_target "core:collaboration-issue-archive"
+      select_target "core:collaboration-milestones"
       select_target "core:collaboration-personal-issues"
       select_collaboration_dispatch_checkpoints
       if [[ "$path" == packages/collaboration/src/project-agent-config/* || \
@@ -464,7 +464,7 @@ classify_path() {
         select_target "core:task-attachments"
       fi
       select_target "core:collaboration-shared-core"
-      select_target "core:collaboration-issue-archive"
+      select_target "core:collaboration-milestones"
       select_target "core:collaboration-personal-issues"
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-assignment-activity"
