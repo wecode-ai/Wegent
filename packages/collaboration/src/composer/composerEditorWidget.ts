@@ -755,7 +755,8 @@ export function createComposerEditorWidget(initial: ComposerProseMirrorEditorPro
             attributes: editorAttributes(currentProps),
             editable: () => !currentProps.disabled,
           })
-        if (resumed || previous.services !== currentProps.services) bindWindowFocus()
+        if (resumed || previous.services !== currentProps.services || !releaseWindowFocus)
+          bindWindowFocus()
         if (resumed || previous.scrollContainerClassName !== currentProps.scrollContainerClassName)
           bindFade()
         if (previous.value !== props.value && props.value !== snapshot.value) {
@@ -778,6 +779,8 @@ export function createComposerEditorWidget(initial: ComposerProseMirrorEditorPro
       return () => {
         if (lease !== ticket) return
         attached = false
+        releaseWindowFocus?.()
+        releaseWindowFocus = undefined
         if (currentProps.textareaRef.current === currentView?.dom)
           (currentProps.textareaRef as { current: HTMLElement | null }).current = null
         queueMicrotask(() => {

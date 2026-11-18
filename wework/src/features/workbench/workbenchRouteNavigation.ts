@@ -50,6 +50,8 @@ export function createWorkbenchRouteNavigation(
         findRuntimeTask(current.runtimeWork, address) ??
         state.lifecycleStore.selectTask(lifecycle, address)?.task ??
         null,
+      isTaskAdmitted: address =>
+        state.lifecycleStore.selectTask(lifecycle, address)?.derived.isRunning ?? false,
       openRuntimeTask,
       tray,
     }

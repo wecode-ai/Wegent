@@ -72,6 +72,7 @@ export function createWorkbenchModelSource(api: ModelApi, traceId: string) {
   let validated: { scopeKey: string; selectionKey: string; models: UnifiedModel[] } | null = null
   let stopApi: (() => void) | undefined
   let catalogAttached = false
+  let apiAttached = false
   let stopObservation: (() => void) | undefined
   const patch = (value: Partial<ModelSnapshot>) => {
     snapshot = { ...snapshot, ...value }
@@ -290,10 +291,14 @@ export function createWorkbenchModelSource(api: ModelApi, traceId: string) {
       }
     }
   }
-  const detachCatalog = () => {
-    loadRevision += 1
+  const detachApi = () => {
     stopApi?.()
     stopApi = undefined
+    apiAttached = false
+  }
+  const detachCatalog = () => {
+    loadRevision += 1
+    detachApi()
     catalogAttached = false
   }
   function configure(next: WorkbenchModelInput) {
@@ -304,11 +309,14 @@ export function createWorkbenchModelSource(api: ModelApi, traceId: string) {
     if (catalogChanged && catalogAttached) detachCatalog()
     if (next.enabled && !catalogAttached) {
       catalogAttached = true
-      stopApi = api.subscribe?.(() => {
-        void loadModels()
-      })
       queueMicrotask(() => {
         if (catalogAttached && listeners.size) void loadModels()
+      })
+    }
+    if (next.enabled && !apiAttached) {
+      apiAttached = true
+      stopApi = api.subscribe?.(() => {
+        void loadModels()
       })
     }
     if (previous?.enabled !== next.enabled || previous.selectionReady !== next.selectionReady)
@@ -354,6 +362,7 @@ export function createWorkbenchModelSource(api: ModelApi, traceId: string) {
       configure(resolve())
       return () => {
         listeners.delete(notify)
+        if (!listeners.size) detachApi()
         queueMicrotask(() => {
           if (listeners.size) return
           detachCatalog()

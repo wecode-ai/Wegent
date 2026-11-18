@@ -48,6 +48,8 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
   const ownerKey = JSON.stringify([lifecycleStore.notificationScope, accountId ?? null])
   const listeners = new Set<() => void>()
   let readerController = new AbortController()
+  let goalReaderController = new AbortController()
+  let goalReadScope: readonly unknown[] | undefined
   let readScope: readonly unknown[] | undefined
   let queryRevision = 0
   let started = false
@@ -518,11 +520,15 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
             )
           : undefined
       }
-      const nextReadScope = [
-        current.runtimeTaskLoadTarget?.key,
-        state.transcriptReloadVersion,
-        current.getRuntimeGoal,
-      ]
+      const nextGoalReadScope = [current.runtimeTaskLoadTarget?.key, current.getRuntimeGoal]
+      if (differs(goalReadScope, nextGoalReadScope)) {
+        goalReadScope = nextGoalReadScope
+        goalReaderController.abort()
+        goalReaderController = new AbortController()
+        if (current.runtimeTaskLoadTarget)
+          hydrateRuntimePaneGoal(bind(), goalReaderController.signal)
+      }
+      const nextReadScope = [current.runtimeTaskLoadTarget?.key, state.transcriptReloadVersion]
       if (differs(readScope, nextReadScope)) {
         const previousTarget = readScope?.[0]
         readScope = nextReadScope
@@ -535,7 +541,6 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
         unsubscribeSearch = search.subscribe(searchOptions(), publish)
         const targetContext = bind()
         if (targetContext.frame.runtimeTaskLoadTarget) {
-          hydrateRuntimePaneGoal(targetContext, readerController.signal)
           hydrateRuntimePaneTranscript(targetContext, readerController.signal)
         } else {
           live.loadedRuntimeTranscriptKey = null
@@ -611,6 +616,8 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
           if (listeners.size) return
           started = false
           readerController.abort()
+          goalReaderController.abort()
+          goalReadScope = undefined
           cancelConversationPublication()
           readScope = undefined
           releaseQueue?.()

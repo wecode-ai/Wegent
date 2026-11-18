@@ -88,7 +88,7 @@ export function createWorkbenchDataRefreshSource(
   let started = false
   let projectionInitialized = false
   let needsReset = resetScope
-  const isActive = () => listeners.size > 0
+  const isActive = () => started || listeners.size > 0
   const captureOwner = () => {
     const revision = ownerRevision
     return () => isActive() && revision === ownerRevision

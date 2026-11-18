@@ -1,3 +1,4 @@
+import { WorkbenchOwnerLeaseContext } from './workbenchContexts'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
 import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
 import { DesktopGitAccountConfigurationProvider } from '@/components/settings/DesktopGitAccountConfigurationProvider'
@@ -17,6 +18,7 @@ export function WorkbenchContextProviders({
   sharedLifecycleStore,
   lifecycleStore,
   refreshDevicesAfterRestart,
+  retainOwner,
   children,
 }: {
   value: WorkbenchContextValue
@@ -24,6 +26,7 @@ export function WorkbenchContextProviders({
   sharedLifecycleStore: RuntimeTaskLifecycleStore
   lifecycleStore: RuntimeTaskLifecycleStore
   refreshDevicesAfterRestart: WorkbenchSessionOperations['refreshDevicesAfterRestart']
+  retainOwner: () => () => void
   children: ReactNode
 }) {
   return (
@@ -36,14 +39,16 @@ export function WorkbenchContextProviders({
         >
           <WorkbenchContext.Provider value={value}>
             <WorkbenchPaneContext.Provider value={paneValue}>
-              <DesktopGitAccountConfigurationProvider>
-                <WorkbenchCloudDeviceRestarts
-                  devices={value.state.devices}
-                  refreshDevices={refreshDevicesAfterRestart}
-                >
-                  <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
-                </WorkbenchCloudDeviceRestarts>
-              </DesktopGitAccountConfigurationProvider>
+              <WorkbenchOwnerLeaseContext.Provider value={retainOwner}>
+                <DesktopGitAccountConfigurationProvider>
+                  <WorkbenchCloudDeviceRestarts
+                    devices={value.state.devices}
+                    refreshDevices={refreshDevicesAfterRestart}
+                  >
+                    <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                  </WorkbenchCloudDeviceRestarts>
+                </DesktopGitAccountConfigurationProvider>
+              </WorkbenchOwnerLeaseContext.Provider>
             </WorkbenchPaneContext.Provider>
           </WorkbenchContext.Provider>
         </WorkspaceFileReaderProvider>

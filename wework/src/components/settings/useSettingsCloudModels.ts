@@ -14,7 +14,6 @@ export function useSettingsCloudModels(connection: CloudSettingsConnection) {
       createAsyncResource(
         'settings/cloud-models',
         async signal => {
-          await Promise.resolve()
           signal.throwIfAborted()
           return (
             await createSettingsModelApi({ isConnected: true, apiBaseUrl, token }).listModels()

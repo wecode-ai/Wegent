@@ -10,13 +10,13 @@ import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { AppPreferencesState } from './appPreferencesContext'
 
-export function createAppPreferencesStore() {
+export function createAppPreferencesStore(ownsLanguage = false) {
   let snapshot: AppPreferencesState = { preferences: defaultAppPreferences, loaded: false }
   let generation = 0
   const listeners = new Set<() => void>()
   let appliedLanguage: AppPreferencesState['preferences']['language'] | undefined
   const publish = (state: AppPreferencesState) => {
-    if (state.loaded && state.preferences.language !== appliedLanguage) {
+    if (ownsLanguage && state.loaded && state.preferences.language !== appliedLanguage) {
       appliedLanguage = state.preferences.language
       void applyLanguagePreference(appliedLanguage).catch(error => {
         console.error('[Wework] Failed to apply language preference:', error)

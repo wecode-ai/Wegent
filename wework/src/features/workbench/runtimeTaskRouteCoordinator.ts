@@ -16,6 +16,7 @@ export interface RouteInput {
   enabled: boolean
   state: Pick<WorkbenchContextValue['state'], 'currentRuntimeTask' | 'devices' | 'isBootstrapping'>
   resolveTask: ReturnType<typeof useRuntimeTaskSummaryResolver>
+  isTaskAdmitted?: (address: RuntimeTaskAddress) => boolean
   openRuntimeTask: WorkbenchContextValue['openRuntimeTask']
 }
 const locationKey = () => `${window.location.pathname}${window.location.search}`
@@ -32,12 +33,19 @@ export function resolveRuntimeTaskRoute(input: RouteInput): RuntimeTaskAddress |
     ? { ...current, deviceId: resolveWorkbenchDeviceId(state.devices, current.deviceId)! }
     : null
   const currentHasWorkspace = Boolean(current?.workspacePath || current?.workspaceKind === 'chat')
-  if ((task || currentHasWorkspace) && isSameRuntimeTaskAddress(currentAddress, route)) return null
+  // Local admission precedes persisted workspace metadata during task creation.
+  if (
+    (task || currentHasWorkspace || input.isTaskAdmitted?.(route)) &&
+    isSameRuntimeTaskAddress(currentAddress, route)
+  )
+    return null
   return task?.workspacePath ? { ...route, workspacePath: task.workspacePath } : route
 }
 /** The committed Workbench owner drives native restoration and owns its navigation receipt. */
 export function createRuntimeTaskRouteCoordinator(read: () => RouteInput) {
   let listening = false
+  let scheduled = false
+  let generation = 0
   let lastReceipt: string | undefined
   let lastTray: RouteTrayInput | undefined
   const synchronize = () => {
@@ -64,6 +72,8 @@ export function createRuntimeTaskRouteCoordinator(read: () => RouteInput) {
     void input.openRuntimeTask(next)
   }
   const stop = () => {
+    generation++
+    scheduled = false
     if (listening) window.removeEventListener('popstate', synchronize)
     listening = false
     lastReceipt = undefined
@@ -79,7 +89,15 @@ export function createRuntimeTaskRouteCoordinator(read: () => RouteInput) {
         listening = true
         window.addEventListener('popstate', synchronize)
       }
-      synchronize()
+      if (scheduled) return
+      scheduled = true
+      const version = generation
+      // Reducer and lifecycle publications belong to one navigation transaction.
+      queueMicrotask(() => {
+        if (version !== generation) return
+        scheduled = false
+        synchronize()
+      })
     },
     stop,
   }

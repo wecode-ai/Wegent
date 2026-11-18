@@ -1,3 +1,4 @@
+import { WorkbenchOwnerLeaseContext } from './workbenchContexts'
 import { renderRuntimeTaskLifecycle } from './runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator.fixtures'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { clearLocalCodexPluginsReadStateCache } from '@/api/local/codexPlugins'
@@ -1191,9 +1192,11 @@ const EPHEMERAL_STREAM_ADDRESS: RuntimeTaskAddress = {
 
 function RuntimeTopLevelStreamLifecycleProbe() {
   const { subscribeRuntimeTaskStream } = useWorkbench()
+  const retainOwner = useContext(WorkbenchOwnerLeaseContext)
   const store = useRuntimeTaskLifecycleStore()
   const subscribe = useCallback(
     (listener: () => void) => {
+      const releaseOwner = retainOwner?.()
       const stopLifecycle = store.subscribe(listener)
       const stopStream = subscribeRuntimeTaskStream(TOP_LEVEL_STREAM_ADDRESS, {
         onMessageAction: () => undefined,
@@ -1201,11 +1204,13 @@ function RuntimeTopLevelStreamLifecycleProbe() {
       return () => {
         stopStream()
         stopLifecycle()
+        releaseOwner?.()
       }
     },
-    [store, subscribeRuntimeTaskStream]
+    [store, subscribeRuntimeTaskStream, retainOwner]
   )
-  const lifecycle = useSyncExternalStore(subscribe, () => store.getTask(TOP_LEVEL_STREAM_ADDRESS))
+  const snapshot = useSyncExternalStore(subscribe, store.getSnapshot, store.getSnapshot)
+  const lifecycle = store.selectTask(snapshot, TOP_LEVEL_STREAM_ADDRESS)
 
   return (
     <span data-testid="top-level-runtime-stream-lifecycle">
@@ -15705,7 +15710,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   test('updates runtime titles without mutating Issues during lifecycle reconciliation', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
-      if (handlers.onChatStart) streamHandlers = handlers
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
       return vi.fn()
     })
     const updateLoopItem = vi.fn()

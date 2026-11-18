@@ -1,5 +1,6 @@
+import { WorkbenchOwnerLeaseContext } from '@/features/workbench/workbenchContexts'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useId, useState, useSyncExternalStore } from 'react'
+import { useContext, useId, useState, useSyncExternalStore } from 'react'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useScopedComposerAttachments } from '@/features/workbench/useScopedComposerAttachments'
 import { useRuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
@@ -24,6 +25,7 @@ export function useWorkbenchPaneSession({
   const { t } = useTranslation('common')
   const [draftEditVersions] = useState(() => new Map<string, number>())
   const workbench = useWorkbenchPaneContext()
+  const retainOwner = useContext(WorkbenchOwnerLeaseContext)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
   const inputScopeKey = currentRuntimeTask
     ? getRuntimeTaskChatScopeKey(currentRuntimeTask)
@@ -46,7 +48,14 @@ export function useWorkbenchPaneSession({
     setOwner(source)
   }
   return useSyncExternalStore(
-    listener => source.subscribe(external, listener),
+    listener => {
+      const releaseOwner = retainOwner?.()
+      const unsubscribe = source.subscribe(external, listener)
+      return () => {
+        unsubscribe()
+        releaseOwner?.()
+      }
+    },
     source.getSnapshot,
     source.getSnapshot
   )

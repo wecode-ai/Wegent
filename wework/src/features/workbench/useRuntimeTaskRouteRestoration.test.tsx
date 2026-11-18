@@ -196,16 +196,18 @@ describe('useRuntimeTaskRouteRestoration', () => {
     )
   })
 
-  test('does not repeat a failed unlisted metadata read on unrelated renders and retries on tab reveal', () => {
+  test('does not repeat a failed unlisted metadata read on unrelated renders and retries on tab reveal', async () => {
     workbenchState.currentRuntimeTask = { deviceId: 'local-device', taskId: 'unlisted' }
     window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=unlisted')
     const { rerender } = renderRoute({ enabled: true })
+    await act(async () => {})
     expect(openRuntimeTaskMock).toHaveBeenCalledOnce()
     workbenchState.currentRuntimeTask = { ...workbenchState.currentRuntimeTask }
     rerender({ enabled: true })
     expect(openRuntimeTaskMock).toHaveBeenCalledOnce()
     rerender({ enabled: false })
     rerender({ enabled: true })
+    await act(async () => {})
     expect(openRuntimeTaskMock).toHaveBeenCalledTimes(2)
   })
 })

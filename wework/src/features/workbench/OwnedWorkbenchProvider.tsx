@@ -969,6 +969,7 @@ export function OwnedWorkbenchProvider({
   return (
     <WorkbenchContextProviders
       value={value}
+      retainOwner={observation.retain}
       paneValue={paneValue}
       sharedLifecycleStore={sharedLifecycleStore}
       lifecycleStore={lifecycleStore}

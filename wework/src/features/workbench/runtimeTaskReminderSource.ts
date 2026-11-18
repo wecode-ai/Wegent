@@ -34,6 +34,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
   let snapshot: ReadonlySet<string> = new Set()
   let previousUnread: ReadonlySet<string> = new Set()
   const notified = new Set<string>()
+  const awaitingMetadata = new Map<string, WeworkNotificationPreferences>()
   const listeners = new Set<() => void>()
   let stopStore: (() => void) | undefined
   let stopFocus: (() => void) | undefined
@@ -76,15 +77,28 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         const byKey = new Map(current.items.map(item => [item.key, item]))
         const newlyUnread = [...lifecycle.unreadTaskKeys].filter(key => !previousUnread.has(key))
         previousUnread = new Set(lifecycle.unreadTaskKeys)
+        for (const key of awaitingMetadata.keys())
+          if (!lifecycle.unreadTaskKeys.has(key)) awaitingMetadata.delete(key)
+        const focused = isMainWindowFocused()
+        if (focused) awaitingMetadata.clear()
+        const candidates = new Set([...newlyUnread, ...awaitingMetadata.keys()])
         for (const key of lifecycle.runningTaskKeys) {
           const item = byKey.get(key)
           if (item) notified.delete(notificationIdentity(item))
         }
-        if (!isMainWindowFocused())
-          for (const key of newlyUnread) {
+        if (!focused)
+          for (const key of candidates) {
             const item = byKey.get(key)
+            if (!item) {
+              if (!awaitingMetadata.has(key))
+                awaitingMetadata.set(key, current.notificationPreferences)
+              continue
+            }
+            const originalPreferences = awaitingMetadata.get(key)
+            awaitingMetadata.delete(key)
             if (
-              !item ||
+              (originalPreferences &&
+                !originalPreferences[runtimeTaskNotificationCategory(item)].system) ||
               isStandInIdentity(item) ||
               standInOrigin(item) ||
               !current.notificationPreferences[runtimeTaskNotificationCategory(item)].system ||
@@ -139,6 +153,7 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         queueMicrotask(() => {
           if (listeners.size || revision !== observation) return
           generation += 1
+          awaitingMetadata.clear()
           stopStore?.()
           stopStore = undefined
           stopFocus?.()

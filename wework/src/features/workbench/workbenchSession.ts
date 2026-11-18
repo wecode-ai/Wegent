@@ -322,6 +322,55 @@ export function createWorkbenchSession(
   function startRequestedChat() {
     if (canNavigate() && consumeWorkbenchNewChatRequest()) operations.stableStartNewChat()
   }
+  /** Committed child readers hold the same native owner as the Provider state observer. */
+  function acquire(next: WorkbenchSessionInput) {
+    const previous = input
+    input = next
+    claimAccount()
+    observers += 1
+    observerVersion += 1
+    if (!stopTabs && tabs) stopTabs = tabs.subscribeSession(reconcile)
+    if (
+      previous &&
+      (previous.marketplaceCacheKey !== next.marketplaceCacheKey ||
+        previous.services !== next.services)
+    ) {
+      state.resources.localAppsLoadGenerationRef.current += 1
+      state.resources.localAppsInflightRef.current = null
+    }
+    reconcile()
+    diagnostics.update(isHeld() ? next.debugSnapshot : null)
+    if (isHeld())
+      notifications.update(
+        next.notificationRegistry ?? null,
+        next.notificationTaskReminders ?? null,
+        next.services,
+        canNavigate()
+      )
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      observers -= 1
+      const version = ++observerVersion
+      if (!observers)
+        queueMicrotask(() => {
+          if (observerVersion !== version || observers) return
+          routeNavigation.stop()
+          diagnostics.suspend()
+          notifications.release()
+          suspendAppshots()
+          workbenchTelemetry.deactivate()
+          coreDshModels.suspend()
+          if (!tabs || !tabId || !isHeld()) {
+            retire()
+            stopTabs?.()
+            stopTabs = null
+          }
+        })
+    }
+  }
+
   return {
     operations,
     resources: state.resources,
@@ -352,49 +401,13 @@ export function createWorkbenchSession(
     },
     observe(next: WorkbenchSessionInput) {
       return {
+        retain: () => acquire(next),
         subscribe(listener: () => void) {
-          const previous = input
-          input = next
-          claimAccount()
-          observers += 1
-          const version = ++observerVersion
-          if (!stopTabs && tabs) stopTabs = tabs.subscribeSession(reconcile)
-          if (
-            previous &&
-            (previous.marketplaceCacheKey !== next.marketplaceCacheKey ||
-              previous.services !== next.services)
-          ) {
-            state.resources.localAppsLoadGenerationRef.current += 1
-            state.resources.localAppsInflightRef.current = null
-          }
           const unsubscribe = state.subscribe(listener)
-          reconcile()
-          diagnostics.update(isHeld() ? next.debugSnapshot : null)
-          if (isHeld())
-            notifications.update(
-              next.notificationRegistry ?? null,
-              next.notificationTaskReminders ?? null,
-              next.services,
-              canNavigate()
-            )
+          const release = acquire(next)
           return () => {
             unsubscribe()
-            observers -= 1
-            if (!observers)
-              queueMicrotask(() => {
-                if (observerVersion !== version || observers) return
-                routeNavigation.stop()
-                diagnostics.suspend()
-                notifications.release()
-                suspendAppshots()
-                workbenchTelemetry.deactivate()
-                coreDshModels.suspend()
-                if (!tabs || !tabId || !isHeld()) {
-                  retire()
-                  stopTabs?.()
-                  stopTabs = null
-                }
-              })
+            release()
           }
         },
       }
