@@ -730,7 +730,7 @@ jobs = YAML.load_file(ARGV[0])['jobs']
   run = steps.index { |step| step['name'].match?(/Run (Windows )?Wework desktop Core shard E2E/) }
   abort "#{name} must prepare Electron before native verification" unless prepare && run && prepare < run
   step = steps[prepare]
-  ['workbench-mode', 'native-window-startup'].each do |segment|
+  ['workbench-mode', 'startup-fault-isolation'].each do |segment|
     abort "#{name} must install Electron for #{segment}" unless step['if'].include?("contains(matrix.segments, '#{segment}')")
   end
   expected_commands = [

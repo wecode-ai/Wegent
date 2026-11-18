@@ -82,7 +82,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "startup splash selects native startup coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"native-window-startup"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"startup-fault-isolation"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/electron/src/host/startup-splash.ts" \

@@ -188,7 +188,7 @@ test('reuses the existing history runner after its isolated checkpoint', async (
     'core-task-flow',
     'workspace-attachments',
     'conversation-state',
-    'native-window-startup',
+    'codex-invalid-launch-cwd',
     'plugin-development',
     'harness-app-lifecycle',
     'harness-app-models',

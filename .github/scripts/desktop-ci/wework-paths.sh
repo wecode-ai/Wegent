@@ -170,7 +170,7 @@ classify_wework_path() {
     # The native startup checkpoint owns splash-window creation and teardown.
     wework/electron/src/host/startup-splash* | \
       wework/electron/src/shell/startup-splash/*)
-      select_target "core:native-window-startup"
+      select_target "core:startup-fault-isolation"
       return
       ;;
 

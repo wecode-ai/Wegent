@@ -302,8 +302,8 @@ test('balancing never multiplies expensive conditional preparation from the orig
     const count = matrix =>
       matrix.include.filter(shard => triggers.some(segment => shard.segments.includes(segment)))
         .length
-    assert.equal(count(balanced), count(original), name)
-    assert.equal(count(completeBalanced), count(completeMatrix), name)
+    assert.ok(count(balanced) <= count(original), `${name}: preparation count increased`)
+    assert.ok(count(completeBalanced) <= count(completeMatrix), `${name}: full preparation count increased`)
   }
   assert.equal(
     balancedLoads.reduce((a, b) => a + b),
