@@ -1,0 +1,12 @@
+{
+  "order": 198500,
+  "scenario": "./scenarios/security-boundaries.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 146500,
+      "shard": 6,
+      "position": 9500
+    }
+  }
+}

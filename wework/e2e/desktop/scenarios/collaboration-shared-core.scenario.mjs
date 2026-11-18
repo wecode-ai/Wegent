@@ -7,6 +7,7 @@ import {
   openCollaborationIssueCreation,
 } from '../modules/collaboration-personal-home.mjs'
 import { verifyCollaborationDeviceCleanup } from '../modules/collaboration-device-cleanup.mjs'
+import { withLegacyBoardGrouping } from '../modules/base-board-status-grouping.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
@@ -40,7 +41,7 @@ import {
 } from '../modules/issue-activity-timeline.mjs'
 import { verifyCollaborationLocalProjectImport } from '../modules/collaboration-local-project-import.mjs'
 import { verifyMultiTagBoardDrag } from '../modules/collaboration-board-tag-drag.mjs'
-import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
+import { REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
 import {
   openDirectProjectCreation,
   configureFirstProjectExecutionEnvironment,
@@ -294,7 +295,7 @@ export function createDesktopScenario({
       projectOnlyNavigation.setRestartDesktopApp(restart)
     },
 
-    async verify(control) {
+    verify: withLegacyBoardGrouping(async control => {
       assert.ok(owner?.id, 'The collaboration owner fixture is missing')
       assert.ok(cloudEnvironment, 'The real cloud environment was not attached to the scenario')
       const remoteDevice = await cloudEnvironment.waitForDeviceType(
@@ -973,6 +974,12 @@ export function createDesktopScenario({
         const taskComposer = scoped(
           '[data-testid="work-item-new-task-chat-panel"] [data-testid="chat-message-input"]'
         )
+        await selectE2EModel(
+          control,
+          undefined,
+          undefined,
+          scoped('[data-testid="work-item-new-task-chat-panel"]')
+        )
         linkedIssueTaskModel = boardReplyModel.holdLinkedIssueTask(project.id, issue)
         await control.command('press', taskComposer, { key: 'Enter' })
         await control.command(
@@ -1063,7 +1070,7 @@ export function createDesktopScenario({
           }
         }
       }
-    },
+    }),
 
     async cleanup() {
       linkedIssueTaskModel?.release()

@@ -258,6 +258,48 @@ describe('useWorkbenchDataRefresh', () => {
     }
   )
 
+  test('retains fresh cloud device status while the task inventory is pending', async () => {
+    const remoteDevice: DeviceInfo = {
+      ...devices[0],
+      device_id: 'remote-device',
+      device_type: 'remote',
+      execution_target_id: 'remote-device',
+      is_default: false,
+      runtime_features: {
+        schemaVersion: 4,
+        remoteTaskAccess: { version: 1, enabled: true },
+      },
+    }
+    const pendingWork = deferred<RuntimeWorkListResponse>()
+    const pendingInventory = deferred<DeviceInfo[]>()
+    const cloudApi = {
+      listTeams: vi.fn().mockResolvedValue([]),
+      listDevices: vi.fn().mockResolvedValue([remoteDevice]),
+      listRuntimeWork: vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 }),
+    }
+    const hook = setup(undefined, undefined, { cloudBackgroundApi: cloudApi } as WorkbenchServices)
+    await waitFor(() => expect(hook.result.current.cloudWorkStatus.availability).toBe('available'))
+    cloudApi.listDevices
+      .mockResolvedValueOnce([{ ...remoteDevice, status: 'offline' }])
+      .mockReturnValue(pendingInventory.promise)
+    cloudApi.listRuntimeWork.mockReturnValue(pendingWork.promise)
+
+    await act(async () => hook.result.current.refreshDevices())
+    const remoteStatus = () =>
+      hook.result.current.state.devices.find(device => device.device_id === 'remote-device')?.status
+    await waitFor(() => expect(remoteStatus()).toBe('offline'))
+
+    await act(async () => hook.result.current.refreshDevices())
+    expect(remoteStatus()).toBe('offline')
+
+    await act(async () => {
+      pendingInventory.resolve([{ ...remoteDevice, status: 'offline' }])
+      pendingWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+    })
+    await waitFor(() => expect(hook.result.current.cloudWorkStatus.availability).toBe('available'))
+    expect(remoteStatus()).toBe('offline')
+  })
+
   test('keeps cloud navigation while refreshing only the changed work inventory', async () => {
     const cloudDevice = {
       ...devices[0],

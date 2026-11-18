@@ -231,6 +231,41 @@ describe('MessageTurnNavigation ownership', () => {
     }
   })
 
+  test('an early scrollend retargets the measured row before releasing navigation', () => {
+    const fixture = startSmoothNavigation()
+    try {
+      fixture.scroll.scrollTop = 700
+      mockScrollRelativeRect(fixture.content.firstElementChild!, fixture.scroll, 1550, 60)
+      fireEvent(fixture.scroll, new Event('scrollend'))
+      expect(fixture.onTarget).toHaveBeenLastCalledWith('latest')
+      expect(fixture.scrollTo).toHaveBeenLastCalledWith({ top: 1454, behavior: 'auto' })
+      act(() => vi.advanceTimersByTime(16))
+      expect(fixture.scroll.scrollTop).toBe(1454)
+      expect(fixture.onTarget).toHaveBeenLastCalledWith(null)
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  test('keeps the virtual target owned while its row remounts', () => {
+    const fixture = startSmoothNavigation()
+    try {
+      const anchor = fixture.content.firstElementChild!
+      anchor.remove()
+      act(() => vi.advanceTimersByTime(16))
+      fireEvent(fixture.scroll, new Event('scrollend'))
+      expect(fixture.onTarget).toHaveBeenLastCalledWith('latest')
+      fixture.content.append(anchor)
+      mockScrollRelativeRect(anchor, fixture.scroll, 1550, 60)
+      fixture.notifyResize()
+      act(() => vi.advanceTimersByTime(16))
+      expect(fixture.scroll.scrollTop).toBe(1454)
+      expect(fixture.onTarget).toHaveBeenLastCalledWith(null)
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
   test('a changed layout retargets native turn navigation and then releases ownership', () => {
     const fixture = startSmoothNavigation()
     try {

@@ -3,8 +3,11 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, onTestFinished, test } from 'vitest'
-import { settleRetainedPluginBaseline } from '../e2e/desktop/scenarios/plugin-periodic-reconcile.scenario.mjs'
+import { expect, onTestFinished, test, vi } from 'vitest'
+import {
+  settleReconcileBaselines,
+  settleRetainedPluginBaseline,
+} from '../e2e/desktop/scenarios/plugin-periodic-reconcile.scenario.mjs'
 
 async function fixture() {
   const home = await mkdtemp(join(tmpdir(), 'plugin-reconcile-baseline-'))
@@ -62,6 +65,51 @@ test('does not accept unacknowledged ordering metadata as the recovery baseline'
   )
 })
 
+test('revalidates every timer window after asynchronous baseline settlement', async () => {
+  const first = await fixture()
+  const second = await fixture()
+  const targets = [first.target, second.target]
+  let now = 1000
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+  onTestFinished(() => clock.mockRestore())
+  for (const target of targets) {
+    target.baseline.registeredAt = now
+    target.baseline.scheduledAt = now
+    target.observation.reconciliations = []
+  }
+  const capabilities = second.target.observation.capabilities
+  let advanced = false
+  Object.defineProperty(second.target.observation, 'capabilities', {
+    get() {
+      if (!advanced) {
+        advanced = true
+        now = 61_001
+        const timer = setTimeout(async () => {
+          now = 95_000
+          for (const item of [first, second]) {
+            const { target } = item
+            target.observation.reconciliations.push({ at: 94_999, completedAt: 95_000 })
+            const request = {
+              ...capabilities[0],
+              at: 94_999,
+              id: 'timer-sync',
+              pluginSync: { version: 2, generation: 32, complete: true },
+            }
+            target.observation.capabilities.push(request)
+            target.observation.acknowledgements.push({ ...request, at: 95_000, success: true })
+            await item.write({ ...item.before, plugin_sync_generation: 32 })
+          }
+        }, 100)
+        onTestFinished(() => clearTimeout(timer))
+      }
+      return capabilities
+    },
+  })
+  const settled = await settleReconcileBaselines(targets, first.retained, 1000)
+  expect(settled).toHaveLength(2)
+  for (const target of targets) expect(target.baseline.scheduledAt).toBe(94_999)
+})
+
 test.each(['checksum', 'enabled', 'component_states', 'runtime'])(
   'still rejects changes to the retained plugin %s before fault injection',
   async field => {
@@ -78,3 +126,29 @@ test.each(['checksum', 'enabled', 'component_states', 'runtime'])(
     )
   }
 )
+
+test('waits for a timer request already in flight to be acknowledged before baseline', async () => {
+  const { target, retained, before, write } = await fixture()
+  target.observation.reconciliations = [{ at: 220 }]
+  let settled = false
+  const pending = settleRetainedPluginBaseline(target, retained, 1000).then(value => {
+    settled = true
+    return value
+  })
+  // The old on-disk generation has a valid ACK, but predates the timer request.
+  await new Promise(resolve => setTimeout(resolve, 150))
+  expect(settled).toBe(false)
+  const request = {
+    ...target.observation.capabilities[0],
+    at: 230,
+    id: '7',
+    pluginSync: { version: 2, generation: 32, complete: true },
+  }
+  target.observation.capabilities.push(request)
+  target.observation.acknowledgements.push({ ...request, at: 240, success: true })
+  await write({ ...before, plugin_sync_generation: 32 })
+  await new Promise(resolve => setTimeout(resolve, 150))
+  expect(settled).toBe(false)
+  target.observation.reconciliations[0].completedAt = 245
+  expect((await pending).plugin.plugin_sync_generation).toBe(32)
+})

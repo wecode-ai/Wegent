@@ -14,6 +14,7 @@ import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schem
 import { RotatingLog } from './rotating-log.js'
 import { recoverReleaseLayout } from './release-layout-recovery.js'
 import { prepareMacosReleaseInstallation } from './macos-release-installation.js'
+import { assertCredentialStorageCompatibility } from './credential-storage-compatibility.js'
 
 export interface ReleasePreparationRequest {
   release: DesktopRelease
@@ -105,6 +106,7 @@ export async function prepareReleaseEnvironment(
     readableDataSchemas
   )
   const store = new ReleaseStore(request.storeRoot)
+  await assertCredentialStorageCompatibility(store, resources)
   const log = new RotatingLog({
     path: join(dirname(request.storeRoot), 'logs', 'release-preparation.log'),
   })
