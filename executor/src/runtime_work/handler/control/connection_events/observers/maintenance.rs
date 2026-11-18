@@ -5,8 +5,10 @@ impl RuntimeWorkRpcHandler {
     pub(in crate::runtime_work::handler) async fn poll_ui_observer_sources(
         &self,
     ) -> Result<(), AppIpcError> {
-        let sources =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+        let sources = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Active,
+            |state| {
                 validate_observer_map(state)?;
                 Ok(state["observers"]
                     .as_object()
@@ -25,7 +27,8 @@ impl RuntimeWorkRpcHandler {
                             <= now_ms()
                     })
                     .collect::<std::collections::BTreeSet<_>>())
-            })?;
+            },
+        )?;
         let cycle = uuid::Uuid::new_v4().to_string();
         let mut collection = stream::iter(sources)
             .map(|source| {
@@ -47,8 +50,10 @@ impl RuntimeWorkRpcHandler {
     pub(in crate::runtime_work::handler) async fn poll_ui_observers(
         &self,
     ) -> Result<(), AppIpcError> {
-        let candidate =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+        let candidate = event_store::update(
+            &self.event_subscription_path(),
+            event_store::Scope::Observers,
+            |state| {
                 validate_observer_map(state)?;
                 let Some(rows) = state.get_mut("observers").and_then(Value::as_object_mut) else {
                     return Ok(None);
@@ -67,7 +72,9 @@ impl RuntimeWorkRpcHandler {
                         record["last_stop_attempt"].as_i64().unwrap_or_default()
                     })
                     .map(|(id, _)| id.clone()))
-            })?;
+            },
+        )?;
+        self.reclaim_event_observations()?;
         let Some(id) = candidate else {
             return Ok(());
         };

@@ -133,17 +133,21 @@ impl RuntimeWorkRpcHandler {
         &self,
         cloud_id: &str,
     ) -> Result<Option<(String, Value)>, AppIpcError> {
-        workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-            Ok(state["operations"]
-                .as_object()
-                .unwrap()
-                .iter()
-                .find(|(_, record)| {
-                    record["cloud_subscription"]["id"] == cloud_id
-                        || record["cloud_registration"]["subscription_id"] == cloud_id
-                })
-                .map(|(id, record)| (id.clone(), record.clone())))
-        })
+        event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Cloud(cloud_id),
+            |state| {
+                Ok(state["operations"]
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .find(|(_, record)| {
+                        record["cloud_subscription"]["id"] == cloud_id
+                            || record["cloud_registration"]["subscription_id"] == cloud_id
+                    })
+                    .map(|(id, record)| (id.clone(), record.clone())))
+            },
+        )
     }
 
     async fn cloud_subscription_snapshot(&self, cloud_id: &str) -> Result<Value, AppIpcError> {
@@ -399,10 +403,11 @@ impl RuntimeWorkRpcHandler {
             self.collect_conversation_subscription(&id, record, "cloud-delivery")
                 .await?;
         }
-        let record =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                Ok(state["operations"][&id].clone())
-            })?;
+        let record = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("operations", &id),
+            |state| Ok(state["operations"][&id].clone()),
+        )?;
         let accepted = record["cloud_delivery_id"] == signal["deliveryId"]
             && record["cloud_delivery_id"].is_string()
             && matches!(

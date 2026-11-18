@@ -10,6 +10,8 @@ mod poll_schedule;
 mod refresh;
 mod resource_delivery;
 mod session;
+mod store;
+use self::store as event_store;
 
 #[cfg(test)]
 mod tests;
@@ -51,10 +53,11 @@ impl RuntimeWorkRpcHandler {
         if keys.is_empty() {
             return Ok(());
         }
-        let known =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                Ok(resource_delivery::event_facts(state, task))
-            })?;
+        let known = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::TaskEvents(task),
+            |state| Ok(resource_delivery::event_facts(state, task)),
+        )?;
         if keys.iter().any(|key| !known.contains_key(key)) {
             return Err(AppIpcError::new(
                 "bad_request",
@@ -67,7 +70,7 @@ impl RuntimeWorkRpcHandler {
     fn event_subscription_path(&self) -> PathBuf {
         self.store
             .index_path()
-            .with_file_name("conversation-event-subscriptions.json")
+            .with_file_name("conversation-event-subscriptions.sqlite")
     }
 
     fn subscription_id(&self, task: &str, key: &str) -> String {
@@ -86,8 +89,10 @@ impl RuntimeWorkRpcHandler {
         {
             persisted["cloud_cancel_pending"] = json!(true);
         }
-        let subscriptions =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+        event_store::update(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("operations", id),
+            |state| {
                 if state["operations"][id]["status"] == "cancelled"
                     && record["status"] != "cancelled"
                 {
@@ -102,28 +107,21 @@ impl RuntimeWorkRpcHandler {
                     persisted = state["operations"][id].clone();
                 }
                 state["operations"][id] = persisted;
+                Ok(())
+            },
+        )?;
+        let subscriptions = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::TaskProjection(record["task_id"].as_str().unwrap_or_default()),
+            |state| {
                 Ok(state["operations"]
                     .as_object()
                     .unwrap()
                     .values()
-                    .filter(|entry| entry["task_id"] == record["task_id"])
-                    .filter(|entry| {
-                        matches!(
-                            entry["status"].as_str(),
-                            Some(
-                                "preparing"
-                                    | "armed"
-                                    | "pending"
-                                    | "resuming_goal"
-                                    | "needs_attention"
-                                    | "error"
-                                    | "delivered"
-                            )
-                        )
-                    })
-                    .map(public_subscription)
+                    .cloned()
                     .collect::<Vec<_>>())
-            })?;
+            },
+        )?;
         if let Some(task) = record["task_id"].as_str() {
             let mut changed = false;
             self.store.update_task(task, |link| {
@@ -163,10 +161,11 @@ impl RuntimeWorkRpcHandler {
         self.authorize_control_target(context, &link).await?;
         let gate = self.task_send_gate(&format!("connection-events:{task}"));
         let _guard = gate.lock().await;
-        let records =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                Ok(state["operations"].as_object().unwrap().clone())
-            })?;
+        let records = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Task(task),
+            |state| Ok(state["operations"].as_object().unwrap().clone()),
+        )?;
         if operation == "list_connection_event_subscriptions" {
             return Ok(
                 json!({"items":records.values().filter(|r| r["task_id"] == *task).map(public_subscription).collect::<Vec<_>>()}),
@@ -219,6 +218,8 @@ impl RuntimeWorkRpcHandler {
         let provider = source["providerId"].as_str().unwrap().to_owned();
         self.connection_call("validate", Some(&provider), source.clone())
             .await?;
+        // Publish a consumer before maintenance may reclaim its new collector.
+        let _activation = self.connection_observation_activations.read().await;
         let (observation_id, after_sequence, initial_checkpoint) =
             self.attach_event_observation(&mut source).await?;
         let goal = if intent["wait_for_event"] == true {
@@ -302,8 +303,10 @@ impl RuntimeWorkRpcHandler {
         maintenance: bool,
     ) -> Result<(), AppIpcError> {
         let cycle = uuid::Uuid::new_v4().to_string();
-        let records =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+        let records = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Active,
+            |state| {
                 Ok(state["operations"]
                     .as_object()
                     .unwrap()
@@ -331,7 +334,8 @@ impl RuntimeWorkRpcHandler {
                     })
                     .map(|(id, record)| (id.clone(), record.clone()))
                     .collect::<serde_json::Map<String, Value>>())
-            })?;
+            },
+        )?;
         for (id, snapshot) in records {
             let cancelling =
                 snapshot["status"] == "cancelled" && snapshot["cloud_cancel_pending"] == true;
@@ -361,10 +365,11 @@ impl RuntimeWorkRpcHandler {
             let gate = self.task_send_gate(&format!("connection-events:{task}"));
             let _guard = gate.lock().await;
             // A model may cancel or replace a subscription while collection was scheduled.
-            let mut record =
-                workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                    Ok(state["operations"][&id].clone())
-                })?;
+            let mut record = event_store::read(
+                &self.event_subscription_path(),
+                event_store::Scope::Row("operations", &id),
+                |state| Ok(state["operations"][&id].clone()),
+            )?;
             let advanced = ["intent", "source", "waiting_goal", "task_id", "device_id"]
                 .iter()
                 .all(|field| record[field] == snapshot[field])
@@ -402,8 +407,9 @@ impl RuntimeWorkRpcHandler {
                 .collect_conversation_subscription(&id, record.clone(), &cycle)
                 .await
             {
-                let mut record = workbench_control::journal::transact(
+                let mut record = event_store::read(
                     &self.event_subscription_path(),
+                    event_store::Scope::Row("operations", &id),
                     |state| Ok(state["operations"][&id].clone()),
                 )?;
                 record["error_code"] = json!(error.code);
@@ -454,9 +460,11 @@ impl RuntimeWorkRpcHandler {
         }
         let gate = self.task_send_gate(&format!("goal-status:{task}"));
         let guard = gate.lock().await;
-        record = workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-            Ok(state["operations"][id].clone())
-        })?;
+        record = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("operations", id),
+            |state| Ok(state["operations"][id].clone()),
+        )?;
         if record["status"] == "resuming_goal" {
             return self.resume_event_goal(id, &mut record).await;
         }
@@ -476,13 +484,16 @@ impl RuntimeWorkRpcHandler {
             && matches!(record["status"].as_str(), Some("armed" | "pending"))
         {
             let observation = self.read_event_observation(&record, cycle, false).await?;
-            record =
-                workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+            record = event_store::read(
+                &self.event_subscription_path(),
+                event_store::Scope::Row("operations", id),
+                |state| {
                     state["operations"]
                         .get(id)
                         .cloned()
                         .ok_or_else(|| invalid("Subscription no longer exists"))
-                })?;
+                },
+            )?;
             if record["status"] == "cancelled" {
                 return Ok(());
             }
@@ -518,9 +529,11 @@ impl RuntimeWorkRpcHandler {
         // first cancels the wait and can never be overwritten by collection.
         let goal_gate = self.task_send_gate(&format!("goal-status:{task}"));
         let goal_guard = goal_gate.lock().await;
-        record = workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-            Ok(state["operations"][id].clone())
-        })?;
+        record = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("operations", id),
+            |state| Ok(state["operations"][id].clone()),
+        )?;
         if record["status"] != "pending" {
             return Ok(());
         }
@@ -620,10 +633,11 @@ impl RuntimeWorkRpcHandler {
         // Acceptance can precede actual worker capacity. Only that worker may
         // inject the source input and activate accounting; collection never
         // restarts a Goal whose event turn may already have finished.
-        let current =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                Ok(state["operations"][id].clone())
-            })?;
+        let current = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("operations", id),
+            |state| Ok(state["operations"][id].clone()),
+        )?;
         *record = current;
         Ok(())
     }
@@ -636,27 +650,28 @@ impl RuntimeWorkRpcHandler {
         if status == Some("blocked") {
             return;
         }
-        let result =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                Ok(state["operations"].as_object().unwrap().clone())
-            })
-            .and_then(|records| {
-                for (id, mut record) in records {
-                    if record["task_id"] != task || record["waiting_goal"].is_null() {
-                        continue;
-                    }
-                    let phase = record["status"].as_str().unwrap_or_default();
-                    if !matches!(phase, "preparing" | "armed" | "pending" | "resuming_goal") {
-                        continue;
-                    }
-                    if status == Some("active") && matches!(phase, "preparing" | "resuming_goal") {
-                        continue;
-                    }
-                    record["status"] = json!("cancelled");
-                    self.save_event_subscription(&id, &record)?;
+        let result = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Waiting(task),
+            |state| Ok(state["operations"].as_object().unwrap().clone()),
+        )
+        .and_then(|records| {
+            for (id, mut record) in records {
+                if record["task_id"] != task || record["waiting_goal"].is_null() {
+                    continue;
                 }
-                Ok(())
-            });
+                let phase = record["status"].as_str().unwrap_or_default();
+                if !matches!(phase, "preparing" | "armed" | "pending" | "resuming_goal") {
+                    continue;
+                }
+                if status == Some("active") && matches!(phase, "preparing" | "resuming_goal") {
+                    continue;
+                }
+                record["status"] = json!("cancelled");
+                self.save_event_subscription(&id, &record)?;
+            }
+            Ok(())
+        });
         if let Err(error) = result {
             log_executor_event(
                 "Goal event-wait cancellation failed",
