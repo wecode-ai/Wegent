@@ -168,9 +168,10 @@ stay unchanged. Rust is built inside the image; the host needs no Rust toolchain
 The runtime reuses the hybrid launcher with a prebuilt gateway and no Python
 development reloader. Container shutdown forwards termination to both processes;
 when either exits, the launcher cleans up the other, and the existing Compose
-restart policy restores the service. Health checks reach Python's `/api/health`
-through Rust. `GRACEFUL_SHUTDOWN_TIMEOUT` still controls Python's drain timeout;
-allow enough time for active requests when using `docker compose stop -t`.
+restart policy restores the service. Rust serves `GET /api/health` and reports
+database health and the same container's shutdown state. `GRACEFUL_SHUTDOWN_TIMEOUT`
+still controls Python's drain timeout.
+Allow enough time for active requests when using `docker compose stop -t`.
 
 Inject configuration through Compose's environment: real `.env` files and local
 Cargo `target` directories are excluded from the image build context.

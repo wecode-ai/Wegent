@@ -13,6 +13,7 @@ These tests verify that the shutdown manager correctly:
 """
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -66,6 +67,24 @@ class TestShutdownManager:
 
             # Duration should continue from first initiation
             assert shutdown_manager.shutdown_duration > first_duration
+
+    @pytest.mark.asyncio
+    async def test_hybrid_shutdown_marker_tracks_python_lifecycle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        marker = tmp_path / "shutting-down"
+        marker.touch()
+        monkeypatch.setenv("WEGENT_HYBRID_SHUTDOWN_FILE", str(marker))
+        manager = ShutdownManager()
+        assert not marker.exists()
+
+        with patch("app.core.cache.cache_manager") as mock_cache:
+            mock_cache.set = AsyncMock(return_value=True)
+            await manager.initiate_shutdown()
+            assert marker.is_file()
+
+        manager.reset()
+        assert not marker.exists()
 
     @pytest.mark.asyncio
     async def test_register_stream_success(self, shutdown_manager):

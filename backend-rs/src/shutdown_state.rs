@@ -5,16 +5,40 @@
 // Graceful shutdown state shared by the /api/shutdown/* endpoints.
 // Mirrors the process-local portion of source app/core/shutdown.py.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Default)]
 pub(crate) struct ShutdownState {
     shutting_down: AtomicBool,
+    python_marker: Option<PathBuf>,
 }
 
 impl ShutdownState {
+    pub(crate) fn from_env() -> Self {
+        Self {
+            python_marker: std::env::var_os("WEGENT_HYBRID_SHUTDOWN_FILE")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from),
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn is_shutting_down(&self) -> bool {
         self.shutting_down.load(Ordering::SeqCst)
+    }
+
+    pub(crate) async fn is_health_shutting_down(&self) -> bool {
+        if self.is_shutting_down() {
+            return true;
+        }
+        let Some(marker) = &self.python_marker else {
+            return false;
+        };
+        tokio::fs::try_exists(marker).await.unwrap_or_else(|error| {
+            tracing::warn!(%error, "failed to read hybrid Backend shutdown state");
+            false
+        })
     }
 
     /// `ShutdownManager.initiate_shutdown` process-local half: flip the flag

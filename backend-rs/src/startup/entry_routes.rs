@@ -85,7 +85,7 @@ async fn startup() -> StartupStatus {
 /// rollback statements are issued here.
 #[brz_http_server::get("/api/health", access = public)]
 async fn health_check(#[inject(state)] state: &AppState) -> brz_http_server::Response {
-    health_response(&state.mysql, state.shutdown.is_shutting_down()).await
+    health_response(&state.mysql, state.shutdown.is_health_shutting_down().await).await
 }
 
 /// `health_check`'s liveness statement
@@ -315,6 +315,15 @@ mod tests {
             .filter(|path| *path == "/api/health")
             .collect();
         assert_eq!(paths, ["/api/health"]);
+    }
+
+    #[test]
+    fn default_gateway_selects_get_health() {
+        let routes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
+        let config = crate::hybrid::load_routes_config(&routes).unwrap();
+        let table = crate::RouteTable::compile(config).unwrap();
+        assert!(table.matches(&http::Method::GET, "/api/health"));
+        assert!(!table.matches(&http::Method::POST, "/api/health"));
     }
 
     /// The recorded response body of `api-health/5f47f84b` (recording

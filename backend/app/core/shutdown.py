@@ -27,7 +27,9 @@ Usage:
 
 import asyncio
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -53,6 +55,23 @@ class ShutdownManager:
         self._active_streams: Set[int] = set()
         self._lock: asyncio.Lock = asyncio.Lock()
         self._shutdown_start_time: Optional[float] = None
+        marker = os.environ.get("WEGENT_HYBRID_SHUTDOWN_FILE")
+        self._hybrid_marker = Path(marker) if marker else None
+        # A reloaded Python worker starts with a fresh shutdown state.
+        self._set_hybrid_marker(False)
+
+    def _set_hybrid_marker(self, shutting_down: bool) -> None:
+        if self._hybrid_marker is None:
+            return
+        try:
+            if shutting_down:
+                self._hybrid_marker.touch(mode=0o600)
+            else:
+                self._hybrid_marker.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "Failed to update hybrid Backend shutdown state", exc_info=True
+            )
 
     @property
     def is_shutting_down(self) -> bool:
@@ -93,6 +112,7 @@ class ShutdownManager:
 
             self._shutting_down = True
             self._shutdown_start_time = time.time()
+            self._set_hybrid_marker(True)
             logger.info(
                 "Graceful shutdown initiated. Active streams: %d",
                 len(self._active_streams),
@@ -241,6 +261,7 @@ class ShutdownManager:
 
         reset_local_shutdown()
         self._shutting_down = False
+        self._set_hybrid_marker(False)
         self._shutdown_event.clear()
         self._active_streams.clear()
         self._shutdown_start_time = None

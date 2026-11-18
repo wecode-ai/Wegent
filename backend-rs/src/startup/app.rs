@@ -157,7 +157,7 @@ pub async fn build_with_clients(
         oidc_config: config,
         oidc,
         oidc_callback,
-        shutdown: Arc::new(ShutdownState::default()),
+        shutdown: Arc::new(ShutdownState::from_env()),
         attachment_http,
         decision_http,
         url_metadata_http,
