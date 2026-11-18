@@ -334,6 +334,9 @@ export async function createDesktopScenario({
     const { version } = fixture
     const record = await waitRuntime(fixture, version)
     await verifyDeliveredFiles(fixture, record.runtime.codex_link)
+    await openPlugin(control, fixture)
+    await refreshPluginInventory(control, workbenchReadyTimeoutMs)
+    await verifyPluginEnabledState(control, fixture, true, workbenchReadyTimeoutMs)
     const id = `legacy-business-${Date.now()}`
     active = {
       id,

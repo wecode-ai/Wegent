@@ -244,6 +244,8 @@ hongyu9 的最新评审要求把“部分成员添加失败后可恢复”从组
 
 `5931d754ea` 的 Test Wework (1/4) 复现了本分支旧的 `scripts/cloud-config-model-service.test.mjs` 仍以空 `{}` 调用刷新端点；主线新加的严格校验正确拒绝该请求，测试因未定义 `grant_type` 而超时。该测试现按真实 Codex 契约发送 `grant_type=refresh_token` 与同一 refresh token，同时继续验证三字段响应；新旧两个 cloud-config 协议测试共 2 项通过，Prettier 与 ESLint 通过。
 
+`d9b7669061` 的 Core10 再次通过，但 Cloud1 的 `plugin-legacy-upgrade` 在迁移插件调用处复现 `Codex did not discover the historical plugin in its migrated native runtime`。该检查在模型请求到达前只等待了运行时文件和账号安装记录；安装/刷新后的 composer inventory 尚未显式稳定。现在每次调用迁移插件前，先打开插件页执行真实 inventory 刷新，并用既有 `verifyPluginEnabledState` 等待共享成员目录、composer 投影和选择器一致，再发送带 plugin reference 的消息。原 skill locator、真实 shell 输出、禁用状态和重启不复活断言保持，新增前置只消除安装传播竞态。场景语法、Prettier、ESLint 与差异检查通过；实际跨边界结果仍须新 head CI。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
