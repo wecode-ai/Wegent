@@ -30,7 +30,7 @@ use crate::task_detail_api::assembly::{
     build_task_detail, extract_display_prompt, sanitize_client_payload,
 };
 use crate::task_detail_api::repository::{
-    ContextRow, accessible_task_ids, get_task_owner_for_caller, is_approved_member,
+    ContextRow, accessible_task_ids, get_task_owner_for_caller, is_approved_member, list_contexts,
     list_subtasks_by_task,
 };
 use crate::task_detail_api::views::{context_brief, conversation_task_id};
@@ -387,7 +387,17 @@ async fn incremental_subtasks(
         .into_iter()
         .filter(|subtask| subtask.message_id > cursor)
         .collect();
-    let contexts = listing.contexts.unwrap_or_default();
+    let contexts = match listing.contexts {
+        Some(contexts) => contexts,
+        None => {
+            // The default store leaves ordered-listing contexts to the caller.
+            // Incremental joins must still recover async artifact contexts.
+            let subtask_ids = rows.iter().map(|subtask| subtask.id).collect::<Vec<_>>();
+            list_contexts(&state.mysql, &subtask_ids)
+                .await
+                .map_err(|error| error.to_string())?
+        }
+    };
     let accessible = accessible_conversation_tasks(state, user_id, &contexts).await?;
     let mut output = Vec::with_capacity(rows.len());
     for subtask in rows {
