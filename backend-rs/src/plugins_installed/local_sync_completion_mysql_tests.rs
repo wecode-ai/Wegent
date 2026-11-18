@@ -379,6 +379,13 @@ struct Context<'a> {
 
 impl Context<'_> {
     async fn independent_mysql(&self) -> anyhow::Result<brz_mysql::MysqlService> {
+        self.independent_mysql_with_capacity(1).await
+    }
+
+    async fn independent_mysql_with_capacity(
+        &self,
+        capacity: u32,
+    ) -> anyhow::Result<brz_mysql::MysqlService> {
         #[derive(FromMysqlRow)]
         struct Database {
             name: String,
@@ -388,10 +395,10 @@ impl Context<'_> {
             .fetch_one("SELECT DATABASE() AS name", ())
             .await?;
         let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")?;
-        Ok(crate::migrations::connect(&format!(
-            "mysql://root@{address}/{}?ssl-mode=disabled",
-            database.name,
-        ))?)
+        Ok(brz_mysql::MysqlService::connect_lazy_with_options(
+            &format!("mysql://root@{address}/{}?ssl-mode=disabled", database.name),
+            crate::startup::mysql::pool_options().with_max_connections(capacity),
+        )?)
     }
 
     async fn post(&self, user: i64, path: &str, body: Value) -> anyhow::Result<brz_http::Response> {

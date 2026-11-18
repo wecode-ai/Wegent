@@ -4,7 +4,7 @@ sidebar_position: 42
 
 # Coordinating plugin authentication and installation writes
 
-Plugins use Redis installation leases and CAS on existing business records. No table, column, or index is added, and neither `FOR UPDATE` nor MySQL named locks is used. Different plugins can install, update, uninstall, and authenticate concurrently; writes to the same installation coordinate with each other.
+Plugins use Redis installation leases and CAS on existing business records. No table, column, or index is added, and MySQL named locks are not used. Before updating account sync state, receipt transactions use `FOR UPDATE` on the device-installation rows they will modify. Different plugins can install, update, uninstall, and authenticate concurrently; writes to the same installation coordinate with each other.
 
 ## Lease identity and duration
 
@@ -60,6 +60,8 @@ Foreground plugin operations do not join the full reconciliation queue. Full che
 Idempotent local intents and background device preparation retry `plugin_write_busy` and CAS conflicts within a 20-second retry window. Each retry rolls back and closes its session before reading the current intent again, without replaying an executed device RPC. Background reads do not acquire installation leases, and an empty peer-device list creates no pending rows. Source-device receipts still reconcile legacy device aliases.
 
 Native and registration receipts share a 20-second deadline across reads, lease acquisition, and transactions. Installations in the same acknowledgement progress independently, so a busy plugin cannot prevent an unblocked peer from committing. Batch acquisition does not poll a busy later plugin; each Redis request observes the absolute deadline, and failure releases earlier claims. Writers finish asynchronous cleanup before returning a timeout.
+
+The shared receipt flush first locks updated or deleted device rows in primary-key order, then existing insert targets in resource-identity order, before the account-state CAS and deferred device writes. Row-lock waits therefore precede the shared account write lock. A failed CAS still emits no deferred device writes. Alias reconciliation and pending preparation also process device rows first; metadata publication touches only account state. Python plugin writers acquire the same plugin leases before their transactions to prevent a reversed cross-entry lock order.
 
 The executor journals actual local application before requesting server confirmation. A transient confirmation failure retains the actual result, accepted operation, and `reconcilePending`, establishes no current confirmation proof, and displays a pending-confirmation message. Existing automatic checks and manual refresh revalidate and confirm that state. When a registered source device exists, only completed confirmation returns `localCompleted`; local operations without device registration remain independent of device receipts. Stale or unowned receipts cannot overwrite newer installation intents.
 
