@@ -6,6 +6,8 @@ import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import JSZip from 'jszip'
 
+import { waitForTerminalStatus } from '../test-support/export-status.mjs'
+
 import { apply } from './index.js'
 import { waitForTerminalStatus } from './test-support.mjs'
 

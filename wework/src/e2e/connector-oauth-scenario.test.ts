@@ -3,6 +3,7 @@
 import { Readable } from 'node:stream'
 import { expect, test, vi } from 'vitest'
 import { createDesktopScenario } from '../../e2e/desktop/scenarios/connector-oauth.scenario.mjs'
+import { waitForConnectorNativeTurn } from '../../e2e/desktop/modules/connector-native-turn.mjs'
 
 const prompt = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_CALL'
 const completion = 'WEWORK_DESKTOP_E2E_CONNECTOR_OAUTH_TOOL_COMPLETED'
@@ -57,6 +58,141 @@ function codeModeBody(input: string, output: string, callId: string, includeExec
     tools: includeExec ? [execDeclaration] : [],
   }
 }
+
+function lazyResult(output = 'CONNECTOR-OAUTH-ECHO-OK', resultCallId = 'connector-lazy-echo') {
+  const body = codeModeBody('unused', output, resultCallId)
+  body.input[0].content = 'WEWORK_DESKTOP_E2E_CONNECTOR_LAZY_CALL'
+  return body
+}
+
+function lazyTurnFixture({ renderReply = true } = {}) {
+  const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 10_000 })
+  const modelResponse = response()
+  let rendered = false
+  modelResponse.end.mockImplementation(() => {
+    rendered = renderReply
+  })
+  const command = vi.fn(
+    async (
+      action: string,
+      selector: string,
+      options: {
+        text?: string
+        timeoutMs: number
+      }
+    ) => {
+      expect(action).toBe('waitFor')
+      expect(selector).toBe('[data-testid="message-assistant"]')
+      expect(options.text).toBe('WEWORK_DESKTOP_E2E_CONNECTOR_LAZY_COMPLETED')
+      const deadline = Date.now() + options.timeoutMs
+      while (!rendered && Date.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 100))
+      if (!rendered) throw new Error('The connector reply did not become visible')
+    }
+  )
+  const wait = () =>
+    waitForConnectorNativeTurn(
+      { command },
+      {
+        completion: 'WEWORK_DESKTOP_E2E_CONNECTOR_LAZY_COMPLETED',
+        replySent: () => scenario.diagnostics().lazyReplySent,
+        modelResponseTimeoutMs: 30_000,
+        uiTimeoutMs: 10_000,
+      }
+    )
+  return { scenario, modelResponse, command, wait }
+}
+
+test('lazy native execution can finish after the UI budget before its reply is rendered', async () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(0)
+  try {
+    const { scenario, modelResponse, command, wait } = lazyTurnFixture()
+    setTimeout(() => {
+      void scenario.handleHttp(request(lazyResult()), modelResponse, url)
+    }, 11_000)
+    const completed = wait().then(
+      () => ({ completed: true }),
+      error => ({ error })
+    )
+    await vi.advanceTimersByTimeAsync(11_100)
+    expect(await completed).toEqual({ completed: true })
+    expect(scenario.diagnostics().lazyReplySent).toBe(true)
+    expect(command).toHaveBeenCalledOnce()
+    expect(itemWithType(events(modelResponse), 'message')?.content[0].text).toBe(
+      'WEWORK_DESKTOP_E2E_CONNECTOR_LAZY_COMPLETED'
+    )
+  } finally {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  }
+})
+
+test.each([
+  ['a different call ID', lazyResult('CONNECTOR-OAUTH-ECHO-OK', 'old-lazy-echo'), false],
+  ['an authorization error', lazyResult('connector_auth_required'), true],
+  ['a result without the upstream success marker', lazyResult('echo did not complete'), true],
+  ['the previous static call', codeModeBody('unused', 'CONNECTOR-OAUTH-ECHO-OK', callId), false],
+])(
+  'lazy native completion rejects %s under its bounded model budget',
+  async (_name, body, fails) => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    try {
+      const { scenario, modelResponse, command, wait } = lazyTurnFixture()
+      const handled = scenario.handleHttp(request(body), modelResponse, url)
+      if (fails) await expect(handled).rejects.toThrow()
+      else expect(await handled).toBe(true)
+      expect(scenario.diagnostics().lazyReplySent).toBe(false)
+
+      const failed = wait().then(
+        () => null,
+        error => error
+      )
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(await failed).toMatchObject({
+        message: 'The connector native turn did not return its successful upstream result',
+      })
+      expect(Date.now()).toBe(30_000)
+      expect(command).not.toHaveBeenCalled()
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  }
+)
+
+test('a sent native reply still has to become visible within the original UI budget', async () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(0)
+  try {
+    const { scenario, modelResponse, command, wait } = lazyTurnFixture({ renderReply: false })
+    await scenario.handleHttp(request(lazyResult()), modelResponse, url)
+    expect(scenario.diagnostics().lazyReplySent).toBe(true)
+    const failed = wait().then(
+      () => null,
+      error => error
+    )
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(await failed).toMatchObject({ message: 'The connector reply did not become visible' })
+    expect(Date.now()).toBe(10_000)
+    expect(command).toHaveBeenCalledOnce()
+  } finally {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  }
+})
+
+test('a failed model reply write cannot complete the native turn', async () => {
+  const { scenario, modelResponse } = lazyTurnFixture()
+  modelResponse.end.mockImplementation(() => {
+    throw new Error('The model response stream closed')
+  })
+  await expect(scenario.handleHttp(request(lazyResult()), modelResponse, url)).rejects.toThrow(
+    'The model response stream closed'
+  )
+  expect(scenario.diagnostics().lazyReplySent).toBe(false)
+})
 
 test('lazy discovery takes priority over a static call in conversation history', async () => {
   const scenario = createDesktopScenario({ resultDir: '/fixture', uiTimeoutMs: 1 })

@@ -6,10 +6,74 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
+  confirmPendingUpdateRetry,
   quitActiveRelease,
   readRollbackHistory,
 } from '../e2e/desktop/modules/failed-upgrade-retry.mjs'
 import { processIsAlive } from '../e2e/desktop/process-lifecycle.mjs'
+
+test('historical direct downloads do not require a rollback confirmation', async () => {
+  const progress = { phase: 'host', downloadedBytes: 10, totalBytes: 100 }
+  assert.equal(
+    await confirmPendingUpdateRetry(
+      {
+        async command(name) {
+          assert.equal(name, 'getAppUpdateProgress')
+          return JSON.stringify(progress)
+        },
+      },
+      '1.1.0'
+    ),
+    false
+  )
+})
+
+test('starts a rolled-back target only after confirming its existing retry dialog', async () => {
+  const version = '1.1.0'
+  let phase
+  let confirmationVisible = false
+  let confirmations = 0
+  assert.equal(
+    await confirmPendingUpdateRetry(
+      {
+        async command(name, selector, options) {
+          if (name === 'getAppUpdateProgress')
+            return JSON.stringify({ update: { retryConfirmation: { version } } })
+          if (name === 'waitFor') {
+            assert.equal(selector, '[data-testid="app-update-retry-dialog"]')
+            assert.equal(options.text, version)
+            confirmationVisible = true
+            return
+          }
+          assert.equal(name, 'clickWhenEnabled')
+          assert.equal(selector, '[data-testid="app-update-retry-confirm"]')
+          assert.equal(confirmationVisible, true)
+          confirmations++
+          phase = 'preparing'
+        },
+      },
+      version
+    ),
+    true
+  )
+  assert.equal(phase, 'preparing')
+  assert.equal(confirmations, 1)
+})
+
+test('cannot confirm a retry for another release', async () => {
+  await assert.rejects(
+    confirmPendingUpdateRetry(
+      {
+        async command(name) {
+          assert.equal(name, 'getAppUpdateProgress')
+          return JSON.stringify({ update: { retryConfirmation: { version: '1.2.0' } } })
+        },
+      },
+      '1.1.0'
+    ),
+    /another target/
+  )
+})
 
 test('retry restart waits for the current supervised release to exit', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-retry-quit-'))

@@ -568,8 +568,13 @@ export class ApiClient {
   }
 
   /**
-   * Generic PUT request
+   * Generic PATCH request
    */
+  async patch<T = unknown>(endpoint: string, data?: unknown): Promise<ApiResponse<T>> {
+    return this.call<T>('PATCH', endpoint, data)
+  }
+
+  /** Generic PUT request. */
   async put<T = unknown>(endpoint: string, data?: unknown): Promise<ApiResponse<T>> {
     return this.call<T>('PUT', endpoint, data)
   }

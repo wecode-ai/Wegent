@@ -30,6 +30,7 @@ import {
   mergeRuntimeTaskAddresses,
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
+  runtimeWorkContainsTask,
   updateRuntimeWorkTask,
   updateRuntimeWorkTaskPinned,
   updateRuntimeWorkTaskTitle,
@@ -40,10 +41,36 @@ import {
   shouldReplaceRuntimeTaskProjection,
 } from './runtimeTaskLifecycle/projection'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
+import { removeRuntimeProject, type RuntimeProjectRemoval } from './workbenchDataRefreshHelpers'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
 
 const OPTIMISTIC_TASK_PRESERVE_MS = 2 * 60 * 1000
+
+export function isRuntimeProjectSelectionRemoved(
+  state: Pick<WorkbenchState, 'currentProject' | 'currentRuntimeTask' | 'runtimeWork'>,
+  projectId: number,
+  runtimeWork: RuntimeWorkListResponse | null
+): boolean {
+  const currentProjectId = state.currentProject?.id
+  if (currentProjectId === projectId) return true
+  if (
+    currentProjectId != null &&
+    state.runtimeWork?.projects.some(
+      project => runtimeProjectUiId(project.project) === currentProjectId
+    ) &&
+    !runtimeWork?.projects.some(project => runtimeProjectUiId(project.project) === currentProjectId)
+  ) {
+    return true
+  }
+  return Boolean(
+    state.currentRuntimeTask &&
+    state.runtimeWork &&
+    runtimeWorkContainsTask(state.runtimeWork, state.currentRuntimeTask) &&
+    (!runtimeWork || !runtimeWorkContainsTask(runtimeWork, state.currentRuntimeTask))
+  )
+}
+
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
   projects: [],
@@ -124,7 +151,10 @@ export type WorkbenchAction =
       defaultProjectSpace: RuntimeProjectSpaceRef | null
       aiSettings: RuntimeProjectAiSettings | null
     }
-  | { type: 'runtime_project_removed'; projectId: number }
+  | {
+      type: 'runtime_project_removed'
+      removal: RuntimeProjectRemoval
+    }
   | { type: 'device_workspace_prepared'; mapping: DeviceWorkspaceResponse }
   | {
       type: 'runtime_workspace_opened'
@@ -1269,20 +1299,17 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
           : state.runtimeWork,
       }
     case 'runtime_project_removed': {
-      const removedCurrentProject = state.currentProject?.id === action.projectId
       const runtimeWork = state.runtimeWork
-        ? {
-            ...state.runtimeWork,
-            projects: state.runtimeWork.projects.filter(
-              project => runtimeProjectUiId(project.project) !== action.projectId
-            ),
-          }
-        : state.runtimeWork
+        ? removeRuntimeProject(state.runtimeWork, action.removal)
+        : null
+      const removedCurrentProject = isRuntimeProjectSelectionRemoved(
+        state,
+        action.removal.projectId,
+        runtimeWork
+      )
       return {
         ...state,
-        runtimeWork: runtimeWork
-          ? { ...runtimeWork, totalTasks: countRuntimeWorkTasks(runtimeWork) }
-          : runtimeWork,
+        runtimeWork,
         currentProject: removedCurrentProject ? null : state.currentProject,
         selectedDeviceWorkspaceId: removedCurrentProject ? null : state.selectedDeviceWorkspaceId,
         pendingProjectWorkspaceProjectId: removedCurrentProject

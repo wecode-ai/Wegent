@@ -410,6 +410,8 @@ impl RuntimeWorkRpcHandler {
         // retain their own context without changing the active native turn.
         for turn in starting {
             self.store.update_task(&turn.local_task_id, |link| {
+                // Admission owns capacity before preparation or the native RPC starts.
+                crate::runtime_work::lifecycle::begin_native_request(link);
                 store_runtime_execution_request(&mut link.runtime_handle, &turn.request);
             });
         }
@@ -573,7 +575,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let (previous, turn_to_start, queued_turns) = {
+        let (previous, turn_to_start, queued_turns, mut admission_diagnostics) = {
             let mut scheduler = self
                 .turn_scheduler
                 .lock()
@@ -586,6 +588,14 @@ impl RuntimeWorkRpcHandler {
                         || !queued.request.extra.contains_key(quota_recovery::MARKER)
                 });
             }
+            let kind = turn.task_kind();
+            let task_reserved = scheduler.active_task_ids.contains_key(&local_task_id);
+            let active_kind_count = scheduler.active(kind);
+            let kind_limit = scheduler.settings.limit(kind);
+            let ready_predecessor = scheduler.has_ready_queued_kind(kind);
+            let quota_ready = quota_recovery::is_ready(&turn, now_ms());
+            let automatic_input =
+                turn.request.extra.get("standInAutomatic") == Some(&Value::Bool(true));
             let turn_to_start = if queue_only {
                 scheduler.enqueue_queued(turn);
                 None
@@ -594,9 +604,31 @@ impl RuntimeWorkRpcHandler {
             } else {
                 scheduler.enqueue(turn)
             };
+            let admission_diagnostics = turn_to_start.is_none().then(|| {
+                json!({
+                    "method": match admission {
+                        TurnAdmission::Normal => "normal",
+                        TurnAdmission::Forced => "forced",
+                        TurnAdmission::Queue => "queue",
+                        TurnAdmission::Continuation => "continuation",
+                    },
+                    "queueOnly": queue_only,
+                    "taskReserved": task_reserved,
+                    "activeKindCount": active_kind_count,
+                    "kindLimit": kind_limit,
+                    "readyPredecessor": ready_predecessor,
+                    "quotaReady": quota_ready,
+                    "automaticInput": automatic_input,
+                })
+            });
             let queued_turns = scheduler.queued_turns.clone();
-            (previous, turn_to_start, queued_turns)
+            (previous, turn_to_start, queued_turns, admission_diagnostics)
         };
+        if let Some(diagnostics) = admission_diagnostics.as_mut() {
+            // Read ownership without the scheduler mutex, before persistence
+            // projects the queued follow-up onto native execution state.
+            diagnostics["ownership"] = self.turn_admission_ownership(&local_task_id);
+        }
         if let Err(error) = self
             .persist_turn_queue(
                 queued_turns,
@@ -643,10 +675,61 @@ impl RuntimeWorkRpcHandler {
         } else {
             log_executor_event(
                 "runtime work turn queued",
-                &[("local_task_id", local_task_id)],
+                &[
+                    ("local_task_id", local_task_id),
+                    (
+                        "admission",
+                        admission_diagnostics
+                            .expect("queued turn has admission facts")
+                            .to_string(),
+                    ),
+                ],
             );
         }
         Ok(true)
+    }
+
+    fn turn_admission_ownership(&self, local_task_id: &str) -> Value {
+        let (native, interaction_waiting) = self
+            .store
+            .read_task(local_task_id, |link| {
+                (
+                    crate::runtime_work::lifecycle::native_execution_state(link),
+                    link.interaction_status
+                        .as_deref()
+                        .is_some_and(|status| !status.is_empty()),
+                )
+            })
+            .unwrap_or_default();
+        let preparing = self
+            .preparing_turns
+            .lock()
+            .expect("preparation map poisoned")
+            .contains_key(local_task_id);
+        json!({
+            "localExecutionActive": self.is_active_local_task(local_task_id),
+            "localPreparationActive": preparing,
+            "localCodexTurnPresent": self.active_codex_turn(local_task_id).is_some(),
+            "nativePhase": native.as_ref().map(|state| state.phase),
+            "nativeGenerationPresent": native.as_ref().is_some_and(|state| state.process_generation.is_some()),
+            "nativeOutcome": native.as_ref().and_then(|state| state.execution_outcome.as_ref().or(state.outcome.as_ref())),
+            "interactionWaiting": interaction_waiting,
+        })
+    }
+
+    fn log_turn_cleanup_stage(&self, task_id: &str, execution_id: u64, stage: &str) {
+        log_executor_event(
+            "runtime work turn cleanup",
+            &[
+                ("local_task_id", task_id.to_owned()),
+                ("stage", stage.to_owned()),
+                (
+                    "local_execution_owned",
+                    self.is_current_local_task_execution(task_id, execution_id)
+                        .to_string(),
+                ),
+            ],
+        );
     }
 
     fn turn_runs_active_goal(&self, turn: &SpawnTurnRequest) -> bool {
@@ -777,6 +860,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn clear_active_goal_turn(&self, local_task_id: &str) {
+        self.release_goal_model_routes(local_task_id);
         let removed = self
             .active_goal_turns
             .lock()
@@ -982,9 +1066,14 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.store.update_task(&turn.local_task_id, |link| {
-            link.running = true;
-            link.status = "active".to_owned();
-            link.thread_status = "active".to_owned();
+            if turn.request.extra.contains_key(quota_recovery::MARKER) {
+                // Checking quota does not start the deferred native turn.
+                crate::runtime_work::lifecycle::queue_native_execution(link, 0, false);
+            } else {
+                link.running = true;
+                link.status = "active".to_owned();
+                link.thread_status = "active".to_owned();
+            }
             link.updated_at = now_ms();
         });
         self.preparing_turns
@@ -993,6 +1082,11 @@ impl RuntimeWorkRpcHandler {
             .insert(
                 turn.local_task_id.clone(),
                 PreparingTurn {
+                    owner_request: turn
+                        .request
+                        .extra
+                        .get(stand_in_proposal_continuations::OWNER)
+                        .cloned(),
                     cancellation_requested: false,
                 },
             );
@@ -1051,6 +1145,7 @@ impl RuntimeWorkRpcHandler {
 
     fn mark_deferred_worktree_cancelled(&self, local_task_id: &str) {
         self.store.update_task(local_task_id, |link| {
+            settle_pending_native_admission(link, "cancelled");
             link.running = false;
             link.status = "cancelled".to_owned();
             link.thread_status = "cancelled".to_owned();
@@ -1757,9 +1852,19 @@ impl RuntimeWorkRpcHandler {
                     .await
             }
             .await;
+            handler.log_turn_cleanup_stage(&turn_local_task_id, execution_id, "result_received");
+            let mapper_result = mapper_handle.await;
+            handler.log_turn_cleanup_stage(
+                &turn_local_task_id,
+                execution_id,
+                if mapper_result.is_ok() {
+                    "observer_drained"
+                } else {
+                    "observer_failed"
+                },
+            );
             if matches!(result.as_ref(),Err(error) if error==crate::agents::AUTOMATIC_INPUT_WAITING_FOR_HUMAN)
             {
-                let _ = mapper_handle.await;
                 if let Some(startup) = restore_startup.as_ref() {
                     startup.finish();
                 }
@@ -1774,8 +1879,6 @@ impl RuntimeWorkRpcHandler {
                     Ok(false) => {}
                     Err(error) => result = Err(error.message),
                 }
-            } else {
-                let _ = mapper_handle.await;
             }
             if result.is_err() {
                 handler.event_goal_admission_failed(&turn_local_task_id, &request);
@@ -1933,6 +2036,11 @@ impl RuntimeWorkRpcHandler {
                 &request,
                 active_turn.as_ref(),
                 result,
+            );
+            handler.log_turn_cleanup_stage(
+                &turn_local_task_id,
+                execution_id,
+                "local_result_settled",
             );
             handler.clear_active_codex_turn(&turn_local_task_id, execution_id);
             handler.clear_active_request_user_input(&turn_local_task_id, execution_id);
@@ -2935,3 +3043,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "preparation_terminal_tests.rs"]
+mod preparation_terminal_tests;

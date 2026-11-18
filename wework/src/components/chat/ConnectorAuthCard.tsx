@@ -11,7 +11,7 @@ import {
   waitForConnectorToolCatalog,
 } from '@/api/cloud/connectorApps'
 import { connectorDisplayName } from '@/components/plugins/connectorDisplayName'
-import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import {
   ConnectorSyncAbortedError,
@@ -88,7 +88,7 @@ export function CloudConnectorAuthCard({
         apiBaseUrl,
         token,
         slug,
-        openCloudAuthorizationWindow,
+        openConnectorAuthorizationWindow,
         { isCurrent: isCurrentAttempt }
       )
       if (!isCurrentAttempt()) return

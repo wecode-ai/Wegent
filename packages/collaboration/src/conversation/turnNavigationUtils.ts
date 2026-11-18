@@ -1,3 +1,4 @@
+import { splitCodexInlineVisualizations } from '@wegent/chat-core/codex-directives'
 import type { RefObject } from 'react'
 import { isHostActivityMessage } from './standInActivity'
 import type { RuntimeTurnNavigationItem } from '@wegent/chat-core/runtime'
@@ -150,7 +151,7 @@ function buildUserTurnsFromNavigation(
         ? item.messageIndex
         : (loadedTurn?.messageIndex ?? item.messageIndex),
       promptPreview: loadedTurn?.promptPreview ?? item.promptPreview,
-      responsePreview: loadedTurn?.responsePreview || item.responsePreview || '',
+      responsePreview: loadedTurn ? loadedTurn.responsePreview : (item.responsePreview ?? ''),
       cursor: item.cursor ?? null,
       loaded: Boolean(loadedMessageId),
     }
@@ -200,7 +201,10 @@ function getUserPromptPreview(message: NavigationMessage) {
 function getAssistantPreview(message: NavigationMessage) {
   const textBlockContent = getFirstTextBlockContent(message)
   const previewSource = message.content.trim() || textBlockContent
-  return truncatePreview(previewSource, RESPONSE_PREVIEW_LENGTH)
+  const prose = splitCodexInlineVisualizations(previewSource)
+    .map(part => part.kind === 'markdown' ? part.content : (part.title ?? ''))
+    .join('\n')
+  return truncatePreview(prose, RESPONSE_PREVIEW_LENGTH)
 }
 
 function getFirstTextBlockContent(message: NavigationMessage) {
@@ -356,7 +360,7 @@ export function getScrollMetrics(scroller: HTMLElement, anchor?: HTMLElement | n
 }
 
 export function logTurnNavigation(event: string, details: Record<string, unknown>) {
-  console.warn(`[Wework] Message turn navigation ${event}`, details)
+  console.warn(`[Wework] Message turn navigation ${event}`, JSON.stringify(details))
 }
 
 export function getMessageAnchorById(content: HTMLElement) {

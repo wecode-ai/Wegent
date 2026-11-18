@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict'
-import { nativeCloudAuthorization } from './native-cloud-authorization-client.mjs'
+import { nativeCloudAuthorizationFixture } from './native-cloud-authorization-client.mjs'
 import { verifyPositiveMcpCloudOwnership } from './mcp-app-cloud-positive.mjs'
 import { fetchLocalRuntime } from './runtime-request.mjs'
 
 /** Exercise native ownership through the real Backend and remote executor. */
 export async function verifyNativeMcpCloudRouting(control, cloudEnvironment, userDataDirectory) {
-  const snapshotId = crypto.randomUUID()
+  const authorization = nativeCloudAuthorizationFixture(
+    cloudEnvironment,
+    userDataDirectory,
+    control
+  )
   try {
-    await nativeCloudAuthorization(cloudEnvironment, userDataDirectory, snapshotId)
+    await authorization.authorize()
     const origin = await control.command('getLocationOrigin', 'body')
     const address = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).workbench
       .currentRuntimeTask
@@ -48,6 +52,6 @@ export async function verifyNativeMcpCloudRouting(control, cloudEnvironment, use
     )
     await verifyPositiveMcpCloudOwnership(control, cloudEnvironment, address, invoke)
   } finally {
-    await nativeCloudAuthorization(cloudEnvironment, userDataDirectory, snapshotId, true)
+    await authorization.restore()
   }
 }

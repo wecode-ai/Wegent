@@ -2704,10 +2704,6 @@
   font: inherit;
 }
 
-.task-detail-comment-editor.composer-prosemirror-placeholder {
-  color: rgb(var(--color-text-secondary)) !important;
-}
-
 .task-detail-new-comment-actions,
 .task-detail-comment-settings {
   display: flex;
@@ -3286,9 +3282,14 @@
 .task-detail-workspace-panel .task-detail-thread-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
   margin-left: 40px;
+}
+
+.task-detail-workspace-panel .task-detail-thread-actions > time {
+  margin-right: auto;
 }
 
 .task-detail-workspace-panel .task-detail-thread-actions > button {

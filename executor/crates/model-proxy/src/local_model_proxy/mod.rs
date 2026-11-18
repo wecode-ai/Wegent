@@ -672,6 +672,36 @@ pub fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Prediction forks inherit the parent's provider URL and must retain its route.
+/// Restored parents use the prepared route through existing stale-token recovery.
+pub fn bind_prediction_thread(
+    prepared_token: &str,
+    source_thread_id: &str,
+    thread_id: &str,
+) -> Result<String, String> {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    let mut parents = registry.routes.iter().filter_map(|(token, route)| {
+        route
+            .thread_ids
+            .contains(source_thread_id)
+            .then_some(token.clone())
+    });
+    let token = parents.next().unwrap_or_else(|| prepared_token.to_owned());
+    if parents.next().is_some() {
+        return Err("prediction parent has multiple local model proxy routes".to_owned());
+    }
+    let route = registry
+        .routes
+        .get_mut(&token)
+        .ok_or("prediction model proxy route is not registered")?;
+    route.thread_ids.insert(thread_id.to_owned());
+    route.active_references += 1;
+    route.last_used = Instant::now();
+    Ok(token)
+}
+
 pub fn bind_fork_thread(token: &str, thread_id: &str) -> Result<(), String> {
     bind_thread(token, thread_id)?;
     let mut registry = registry()
@@ -778,6 +808,7 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
 
 struct RequestThreadIdentity {
     thread_id: String,
+    turn_id: Option<String>,
     parent_thread_id: Option<String>,
 }
 

@@ -673,7 +673,9 @@ async function waitForControlSelectionOffset(control, selector, expected, messag
 async function waitForPersistedComposerInput(control, expected, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const snapshot = JSON.parse(
+      await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+    )
     if (snapshot.workbench?.composer?.currentInputLength === expected.length) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -703,7 +705,9 @@ async function waitForWorkbenchDebugState(
   const startedAt = Date.now()
   let lastSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
-    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const snapshot = JSON.parse(
+      await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+    )
     lastSnapshot = snapshot
     if (predicate(snapshot)) return snapshot
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
@@ -1777,7 +1781,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
     text: targetProjectName,
     visible: true,
@@ -1821,7 +1825,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: false,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command('fill', pickerSearch, { value: targetProjectName })
   await control.command('waitFor', '[data-testid="work-item-context-menu"] [role="option"]', {
     text: targetProjectName,
@@ -1854,7 +1858,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
     text: targetProjectName,
     visible: true,
@@ -1906,7 +1910,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command(
     'markElementWithText',
     '[data-testid="work-item-context-menu"] [data-testid^="work-item-workspace-option-"]',
@@ -2139,9 +2143,12 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     WORKBENCH_READY_TIMEOUT_MS
   )
   await control.command('hover', firstWorkspaceIdentity)
+  // The exact `collaboration-workspace-actions` testid only renders on the
+  // currently active workspace; an inactive workspace carries the suffixed
+  // form (see CollaborationPlatformNavigation). Match either state.
   await control.command(
     'click',
-    `${firstWorkspaceTree} [data-testid="collaboration-workspace-actions"]`
+    `${firstWorkspaceTree} [data-testid^="collaboration-workspace-actions"]`
   )
   await control.command('click', '[data-testid="collaboration-workspace-nav-settings"]')
   await control.command(

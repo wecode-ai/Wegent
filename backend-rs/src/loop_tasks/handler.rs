@@ -81,6 +81,12 @@ async fn require_item_access(
         .await
         .map_err(HttpError::internal)?
     else {
+        if super::issue_invitation::permits_read(&state.mysql, &item.id, user_id)
+            .await
+            .map_err(HttpError::internal)?
+        {
+            return Ok(());
+        }
         return Err(HttpError::cloud_project_not_found().into());
     };
     let Some(role) = role_for_priority(access.priority) else {

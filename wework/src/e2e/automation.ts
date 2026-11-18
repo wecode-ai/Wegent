@@ -1,3 +1,5 @@
+import { collectIssueDrawerDiagnostics } from './issue-drawer-diagnostics'
+import { waitForDomChange } from './waitForDomChange'
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
 import { collectConversationRenderingDiagnostics } from './conversation-rendering-diagnostics'
 import {
@@ -50,7 +52,11 @@ import {
   recordNativeTerminalKey,
 } from './native-terminal-diagnostics'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
-import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
+import {
+  createNativeKeyObservation,
+  readNativeTerminalViewport,
+  waitForNativeTerminalPageUp,
+} from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import {
   getRuntimeStreamDiagnostics,
@@ -1376,7 +1382,7 @@ async function pressNativeDesktopControlKey(
   selector: string,
   key: string,
   phase: 'press' | 'down' | 'up' = 'press',
-  measurement?: { selector: string }
+  measurement?: { selector: string; timeoutMs?: number }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
   recordNativeTerminalKey('focus-requested', key, findDesktopControlElements(selector)[0] ?? null)
@@ -1432,12 +1438,19 @@ async function pressNativeDesktopControlKey(
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
-  return observation && viewportTarget
-    ? JSON.stringify({
-        viewportBefore: observation.result(),
-        viewportAfter: readNativeTerminalViewport(viewportTarget),
-      })
-    : (desktopControlDeepActiveElement()?.getAttribute('data-testid') ?? '')
+  if (!observation || !viewportTarget)
+    return desktopControlDeepActiveElement()?.getAttribute('data-testid') ?? ''
+  const viewportBefore = observation.result()
+  // Native key delivery can precede xterm's asynchronous scroll notification.
+  const viewportAfter =
+    key === 'Shift+PageUp'
+      ? await waitForNativeTerminalPageUp(
+          viewportTarget,
+          viewportBefore,
+          startedAt + (measurement?.timeoutMs ?? 10_000)
+        )
+      : readNativeTerminalViewport(viewportTarget)
+  return JSON.stringify({ viewportBefore, viewportAfter })
 }
 
 let activeDesktopControlPointer: {
@@ -1768,7 +1781,7 @@ async function waitForDesktopControlElement(
       } else {
         matchedAt = null
       }
-      await waitForDesktopControlTick()
+      await waitForDomChange(document)
       continue
     }
 
@@ -1788,7 +1801,7 @@ async function waitForDesktopControlElement(
     } else {
       matchedAt = null
     }
-    await waitForDesktopControlTick()
+    await waitForDomChange(document)
   }
 
   const diagnostics = findDesktopControlElementsWithin(command.selector, command.target).map(
@@ -3640,11 +3653,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       stopRuntimeStreamDiagnostics()
       return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
+      if (command.value === 'state-only') return JSON.stringify(getWorkbenchDebugSnapshot())
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
         conversationRendering: await collectConversationRenderingDiagnostics(capability =>
           invokeDesktopHost(capability)
         ),
+        issueDrawers: collectIssueDrawerDiagnostics(),
         runtimeStream: getRuntimeStreamDiagnostics(),
         desktopControlTransport: getDesktopControlDiagnostics(),
         nativeTerminalKeys: getNativeTerminalDiagnostics(),
@@ -3972,7 +3987,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         command.selector,
         command.key ?? '',
         'press',
-        command.target ? { selector: command.target } : undefined
+        command.target ? { selector: command.target, timeoutMs: command.timeoutMs } : undefined
       )
     }
     case 'nativeKeyDownOnly': {

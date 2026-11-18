@@ -79,9 +79,11 @@ In the Wework desktop app, open **Plugins → Manage plugins** and switch betwee
 - **Codex plugins** provide Skills, MCP servers, applications, and commands to AI. They are installed through Codex or Wegent plugin marketplaces and are used in tasks and conversations.
 - **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. A Wework plugin is the outer delivery unit and may carry an official-format Codex plugin; only those nested Codex capabilities appear in conversations and the task plugin picker.
 
-From **Wework plugins**, install a plugin from an npm package, Git source, or absolute local directory. Wework shows a trust confirmation because the plugin and its installation scripts run with the current user's permissions. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
+From **Wework plugins**, install a plugin from an npm package, Git source, or absolute local directory. Before every installation or update, a native confirmation shows the source and execution risk: the plugin and its dependencies may execute code and access files and networks with the current user's permissions. Execution starts only after **Allow installation** or **Allow update**. **Cancel** is the default; cancelling or closing the window leaves the plugin configuration unchanged. The same policy covers direct API calls, accepts any npm, Git, or absolute local-directory source, and applies only to that operation. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
 
 Wework validates the resulting DSH profile after each install, update, enable, disable, or uninstall operation. If validation fails, it restores the previous dependencies and configuration so the runtime is not left unbootable. Installation and updates keep the current runtime active without applying incomplete changes. After successful changes, continue managing plugins and choose **Restart plugin runtime** once when ready. Enabled and disabled states persist across Wework restarts.
+
+Starting a plugin development instance also requires confirmation of the linked absolute source directory. Cancellation preserves the current development instance and starts no process. Once allowed, the development session executes that source and its subsequent HMR changes.
 
 ## Import a personal plugin
 
@@ -238,6 +240,8 @@ without launching an external browser. Restored sessions reuse the plugin set re
 were created, so restarting Wework does not remove their plugin capabilities.
 
 Type `/` in the composer to choose a Skill, or name the Skill in your request. Wework supplies its instructions to AI for that task.
+
+The collaboration home uses the same slash picker when creating an Issue task. Skills become selectable once their catalog is available, without waiting for plugin icons to load.
 
 ### Inspect and toggle individual Skills
 

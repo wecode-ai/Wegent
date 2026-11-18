@@ -193,6 +193,7 @@ fn list_spaces_remains_available_locally_without_backend_connection() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
         .arg("space-mcp-server")
         .env("WEGENT_EXECUTOR_HOME", executor_home.path())
+        .env("WEGENT_APP_IPC_DEVICE_ID", "contract-device")
         .env_remove("WEWORK_SPACE_BACKEND_URL")
         .env_remove("WEWORK_SPACE_AUTH_TOKEN")
         .stdin(Stdio::piped())
@@ -211,10 +212,17 @@ fn list_spaces_remains_available_locally_without_backend_connection() {
     let text = response["result"]["content"][0]["text"].as_str().unwrap();
 
     assert_eq!(response["result"]["isError"], false);
-    let projects = serde_json::from_str::<Value>(text).unwrap();
+    let page = serde_json::from_str::<Value>(text).unwrap();
+    assert_eq!(page.get("next_cursor"), Some(&Value::Null));
+    assert_eq!(page["matched_total"], 1);
+    assert_eq!(page["coverage"]["complete"], true);
+    let projects = &page["items"];
     assert_eq!(projects.as_array().unwrap().len(), 1);
     assert_eq!(projects[0]["id"], "default-work-items");
     assert_eq!(projects[0]["name"], "我的任务");
+    assert_eq!(projects[0]["space"]["project_store"], "local");
+    assert_eq!(projects[0]["space"]["space_id"], "default-work-items");
+    assert_eq!(projects[0]["space"]["device_id"], "contract-device");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -262,6 +270,7 @@ async fn list_spaces_merges_cloud_and_local_projects_for_the_signed_in_user() {
         .env("WEWORK_SPACE_BACKEND_URL", format!("http://{address}"))
         .env("WEWORK_SPACE_AUTH_TOKEN", "backend-token")
         .env_remove("WEWORK_SPACE_CONTEXT_GRANT")
+        .env("WEGENT_APP_IPC_DEVICE_ID", "contract-device")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -274,10 +283,14 @@ async fn list_spaces_merges_cloud_and_local_projects_for_the_signed_in_user() {
     .unwrap();
     let output = child.wait_with_output().unwrap();
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
-    let projects: Value =
+    let page: Value =
         serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
 
     assert_eq!(response["result"]["isError"], false);
+    assert_eq!(page.get("next_cursor"), Some(&Value::Null));
+    assert_eq!(page["matched_total"], 3);
+    assert_eq!(page["coverage"]["complete"], true);
+    let projects = &page["items"];
     assert_eq!(projects.as_array().unwrap().len(), 3);
     assert!(projects
         .as_array()
@@ -424,6 +437,7 @@ async fn space_mcp_routes_board_operations_through_backend() {
         .env("WEWORK_SPACE_CONTEXT_GRANT", context_grant("9001", None))
         .env("WEWORK_SPACE_BACKEND_URL", format!("http://{address}"))
         .env("WEWORK_SPACE_AUTH_TOKEN", "backend-token")
+        .env("WEGENT_APP_IPC_DEVICE_ID", "contract-device")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -534,12 +548,24 @@ async fn space_mcp_routes_board_operations_through_backend() {
         .and_then(Value::as_str)
         .is_some_and(|text| text.contains("403") && text.contains("Project access denied")));
     assert_eq!(std::fs::read(attachment_path).unwrap(), b"diagnostic");
-    let projects = responses[0]
+    let page = responses[0]
         .pointer("/result/content/0/text")
         .and_then(Value::as_str)
         .and_then(|value| serde_json::from_str::<Value>(value).ok())
         .unwrap();
-    assert_eq!(projects[0]["id"], 9001);
+    assert_eq!(page.get("next_cursor"), Some(&Value::Null));
+    assert_eq!(page["coverage"]["complete"], true);
+    let projects = page["items"].as_array().unwrap();
+    assert_eq!(page["matched_total"], projects.len());
+    let cloud_project = projects
+        .iter()
+        .find(|project| project["id"] == 9001)
+        .unwrap();
+    assert_eq!(cloud_project["id"], 9001);
+    assert_eq!(
+        cloud_project["space"],
+        json!({"project_store": "backend", "space_id": "9001"})
+    );
     let decoded = responses
         .iter()
         .take(10)

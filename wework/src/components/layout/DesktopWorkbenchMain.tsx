@@ -1068,6 +1068,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   )
   const paneStack = splitGroups ? (
     <SplitWorkbenchPaneStack
+      devices={state.devices}
       activePane={props.activePane}
       layout={splitGroups.activeLayout}
       showWorkbenchBackground={hasMainBackground}
@@ -1088,6 +1089,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   ) : (
     <SingleWorkbenchPane
       pane={props.activePane}
+      devices={state.devices}
       visible={props.visible ?? true}
       renderPane={renderWorkbenchPane}
     />
@@ -1536,7 +1538,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
       const draftEditVersion = getDraftEditVersion()
-      const cloudSubmission = await prepareSubmission(description)
+      const cloudSubmission = prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
         draftEditVersion,

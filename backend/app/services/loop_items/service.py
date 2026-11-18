@@ -63,7 +63,6 @@ from app.schemas.issue_workflow import (
     instantiate_workflow,
 )
 from app.schemas.project_chat import LoopItemApproval, LoopItemAssign
-from app.services.cloud_project_visibility import project_participant_ids
 from app.services.cloud_projects.access import (
     CloudProjectAccess,
     IssueAction,
@@ -105,6 +104,8 @@ from app.services.loop_items.access import (
     default_issue_security,
     item_security,
     related_item_filter,
+    require_active_issue_user,
+    require_item_access,
     visible_item_filter,
 )
 from app.services.loop_items.change_requests import update_change_request_source
@@ -260,9 +261,7 @@ class LoopItemService:
         *,
         read_context: LoopItemReadContext | None = None,
     ) -> dict[str, object]:
-        access = access or require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Viewer
-        )
+        access = access or require_item_access(db, item, user_id)
         context = read_context or LoopItemReadContext.load(db, [item], user_id, access)
         can_view_detail = item.id in context.visible_ids
         permissions = issue_permissions(
@@ -274,6 +273,9 @@ class LoopItemService:
             **item.__dict__,
             "created_at": database_datetime_as_utc(db, item.created_at),
             "updated_at": database_datetime_as_utc(db, item.updated_at),
+            "invited_only": any(
+                source.get("kind") == "issue_invitation" for source in access.sources
+            ),
             "can_view_detail": can_view_detail,
             "can_edit": permissions.edit_content,
             "security_level": item_security(item, access.project),
@@ -481,11 +483,18 @@ class LoopItemService:
         return parsed
 
     def _get_item_row(
-        self, db: Session, item_id: str, *, include_deleted: bool = False
+        self,
+        db: Session,
+        item_id: str,
+        *,
+        include_deleted: bool = False,
+        for_update: bool = False,
     ) -> LoopItem:
         query = db.query(LoopItem).filter(LoopItem.id == item_id)
         if not include_deleted:
             query = query.filter(loop_datetime_is_unset(LoopItem.deleted_at))
+        if for_update:
+            query = query.populate_existing().with_for_update()
         item = query.first()
         if item is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
@@ -499,9 +508,7 @@ class LoopItemService:
         *,
         action: IssueAction | None = None,
     ) -> CloudProjectAccess:
-        access = require_cloud_project_role(
-            db, item.cloud_project_id, user_id, BaseRole.Viewer
-        )
+        access = require_item_access(db, item, user_id)
         can_view_detail, _ = self._item_permissions(db, access, item, user_id)
         if not can_view_detail:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
@@ -524,14 +531,14 @@ class LoopItemService:
         *,
         commit: bool = True,
     ) -> LoopItemCollaborator:
-        """Ensure one project member participates in a TODO."""
+        """Ensure one active user explicitly participates in this Issue only."""
 
-        require_cloud_project_role(
-            db,
-            item.cloud_project_id,
-            collaborator_user_id,
-            BaseRole.Viewer,
-        )
+        require_active_issue_user(db, collaborator_user_id)
+        project = db.get(CloudProject, str(item.cloud_project_id))
+        if project is not None and project.task_provider != "local":
+            require_cloud_project_role(
+                db, item.cloud_project_id, collaborator_user_id, BaseRole.Viewer
+            )
         collaborator = (
             db.query(LoopItemCollaborator)
             .filter(
@@ -576,7 +583,7 @@ class LoopItemService:
     def add_collaborator(
         self, db: Session, item_id: str, collaborator_user_id: int, user_id: int
     ) -> dict[str, object]:
-        item = self.get(db, item_id, user_id)
+        item = self._get_item_row(db, item_id, for_update=True)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
         self.ensure_collaborator(db, item, collaborator_user_id, user_id, "manual")
         return next(
@@ -588,7 +595,7 @@ class LoopItemService:
     def remove_collaborator(
         self, db: Session, item_id: str, collaborator_user_id: int, user_id: int
     ) -> None:
-        item = self.get(db, item_id, user_id)
+        item = self._get_item_row(db, item_id, for_update=True)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
         collaborator = (
             db.query(LoopItemCollaborator)
@@ -1622,7 +1629,7 @@ class LoopItemService:
         emit_status_event: bool = True,
         automation_context: dict[str, Any] | None = None,
     ) -> LoopItem:
-        item = self.get(db, item_id, user_id)
+        item = self._get_item_row(db, item_id, for_update=True)
         position_order = None
         if values.position is not None:
             self._require_internal_task_project(
@@ -1658,6 +1665,18 @@ class LoopItemService:
             require_issue_action(
                 access,
                 action=action,
+                issue_creator_user_id=item.created_by_user_id,
+                user_id=user_id,
+            )
+        if (
+            {"execution_config", "workflow"} & values.model_fields_set
+            or values.assignee_agent_id
+            or values.assignee_team_id
+            or values.assignee_group_id
+        ):
+            require_issue_action(
+                access,
+                action=IssueAction.EXECUTE,
                 issue_creator_user_id=item.created_by_user_id,
                 user_id=user_id,
             )
@@ -2196,17 +2215,17 @@ class LoopItemService:
             and assignment is not None
             and assignment.metadata.get("trigger") == "default"
         )
-        project_id = int(item.cloud_project_id)
-        project = db.get(CloudProject, project_id)
-        if project is None or (
-            not is_implicit_creator_assignment
-            and target_user_id
-            not in project_participant_ids(
-                db, project, required_role=BaseRole.Developer
-            )
-        ):
-            raise HTTPException(422, "Assignee is not a member of this project")
+        project = db.get(CloudProject, str(item.cloud_project_id))
+        human = require_active_issue_user(db, target_user_id)
         if not notify:
+            logger.info(
+                "Stand-in Issue wakeup suppressed reason=notify_assignee_false "
+                "issue_id=%s project_id=%s user_id=%s assignment_id=%s",
+                item.id,
+                item.cloud_project_id,
+                target_user_id,
+                assignment.id if assignment else None,
+            )
             return
         from app.services.collaboration_human_assignments import (
             notify_direct_human_assignment,
@@ -2241,7 +2260,7 @@ class LoopItemService:
         assignment_comment_id: str | None = None,
         commit: bool = True,
     ) -> LoopItem:
-        """Assign a task to a project member, project robot, or Wegent Team.
+        """Assign a task to an active person, project robot, or Wegent Team.
 
         The task itself records who assigned it to whom (the chain) and the
         derived execution state. There is no separate queue storage: a task
@@ -2249,9 +2268,10 @@ class LoopItemService:
         queue.
         """
 
-        access = self._require_internal_task_project(db, project_id, user_id)
+        item = self._get_item_row(db, item_id, for_update=True)
+        access = self._require_item_access(db, item, user_id)
         project = access.project
-        item = self.get(db, item_id, user_id)
+        self._require_local_task_provider(project)
         if item.cloud_project_id != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
         position_order = None
@@ -2270,6 +2290,13 @@ class LoopItemService:
             issue_creator_user_id=item.created_by_user_id,
             user_id=user_id,
         )
+        if values.assignee_type != "user":
+            require_issue_action(
+                access,
+                action=IssueAction.EXECUTE,
+                issue_creator_user_id=item.created_by_user_id,
+                user_id=user_id,
+            )
         previous_assignee_user_id = item.assignee_user_id
         automation_run_requested = bool((automation_context or {}).get("run_id"))
         metadata = dict(item.metadata_json or {})
@@ -2378,14 +2405,7 @@ class LoopItemService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "User assignee id must be numeric",
                 ) from exc
-            member_ids = project_participant_ids(
-                db, project, required_role=BaseRole.Developer
-            )
-            if target_user_id not in member_ids:
-                raise HTTPException(
-                    status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    "Assignee is not a member of this project",
-                )
+            require_active_issue_user(db, target_user_id)
             from app.services.issue_assignments import issue_assignment_service
 
             _, assignment_created = issue_assignment_service.record(
@@ -2679,7 +2699,9 @@ class LoopItemService:
     def delete(self, db: Session, item_id: str, user_id: int) -> LoopItem:
         """Archive an editable TODO subtree; rows are kept for restoration."""
 
-        item = self.get(db, item_id, user_id)
+        from app.models.loop_item_execution import LoopItemExecution
+
+        item = self._get_item_row(db, item_id, for_update=True)
         self._require_item_access(db, item, user_id, action=IssueAction.EDIT_CONTENT)
         archived_at = self._now()
         pending_parent_ids = [item.id]
@@ -2692,6 +2714,8 @@ class LoopItemService:
                     LoopItem.parent_id.in_(pending_parent_ids),
                     loop_datetime_is_unset(LoopItem.deleted_at),
                 )
+                .order_by(LoopItem.id)
+                .with_for_update()
                 .all()
             )
             pending_parent_ids = [child.id for child in children]
@@ -2707,6 +2731,21 @@ class LoopItemService:
             item_ids=item_ids,
             user_id=user_id,
         )
+        active_runs = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.loop_item_id.in_(item_ids),
+                LoopItemExecution.status.in_(CANCELLABLE_EXECUTION_STATUSES),
+            )
+            .with_for_update()
+            .all()
+        )
+        execution_item_ids = {run.loop_item_id for run in active_runs}
+        for archived_item in archived_items:
+            if binding_targets or archived_item.id in execution_item_ids:
+                self._require_item_access(
+                    db, archived_item, user_id, action=IssueAction.EXECUTE
+                )
         for archived_item in archived_items:
             archived_item.deleted_at = archived_at
             archived_item.version += 1
@@ -2717,9 +2756,9 @@ class LoopItemService:
         # An archived Issue must not leave a Run owning a real process. Cancel
         # every cancellable Run of the archived subtree in the same transaction
         # so the recycle-bin rows never disagree with the execution queue.
-        cancelled_runs = self._cancel_runs_for_items(
+        cancelled_runs = self._cancel_runs(
             db,
-            item_ids=item_ids,
+            active=active_runs,
             note="Issue was archived while the Run was active",
         )
         binding_targets = uncovered_binding_cancellation_targets(
@@ -2736,23 +2775,9 @@ class LoopItemService:
         emit_runtime_cancellations(binding_targets)
         return item
 
-    def _cancel_runs_for_items(
-        self, db: Session, *, item_ids: list[str], note: str
-    ) -> list:
+    def _cancel_runs(self, db: Session, *, active: list, note: str) -> list:
         """Request cancellation for every cancellable Run of these TODOs."""
 
-        from app.models.loop_item_execution import LoopItemExecution
-
-        if not item_ids:
-            return []
-        active = (
-            db.query(LoopItemExecution)
-            .filter(
-                LoopItemExecution.loop_item_id.in_(item_ids),
-                LoopItemExecution.status.in_(CANCELLABLE_EXECUTION_STATUSES),
-            )
-            .all()
-        )
         cancelled_runs = []
         for execution in active:
             cancelled = loop_item_execution_service.cancel(

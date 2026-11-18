@@ -205,6 +205,7 @@ class LoopItemResponse(BaseModel):
     tags: list[str] = []
     created_by_user_id: int
     created_by_user_name: str | None = None
+    invited_only: bool = False
     can_view_detail: bool = True
     security_level: Literal["open", "related"] = "open"
     can_edit: bool = True

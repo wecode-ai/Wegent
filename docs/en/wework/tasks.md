@@ -26,6 +26,8 @@ After creating a Goal, inspect its status bar near the composer. Hover or focus 
 
 Goals may be active, paused, blocked, budget/usage-limited or complete. Exhausted budgets, tool failures and disconnections are not completion evidence. Resolve the reported condition before continuing. Deleting a goal differs from deleting its conversation.
 
+After restarting the app, start a stopped Goal in its original conversation. Wework restores the conversation’s execution configuration before continuing the original Goal, preserving its objective, budget and recorded usage.
+
 ### Model overload and quota recovery
 
 Local Codex tasks automatically retry an overloaded model after 10 seconds, 30 seconds, 2 minutes and 5 minutes. The countdown appears in the conversation. Recovery continues the original conversation and model with completed tool history preserved.
@@ -57,6 +59,9 @@ The same capability applies to finding conversations, restoring archived items a
 The interface height follows its content, and saved interaction state is restored when you reopen the conversation. You can scroll the conversation with the pointer over a card. Scrollable controls consume wheel movement first, then pass remaining movement to the conversation at their boundary. Use **Expand** for more space and return to the message afterwards. This capability requires personal control access in a Codex conversation and does not grant extra authority to delegated executions.
 
 <a id="connection-event-waits"></a>
+
+Event waits show the effective condition in the composer, including alternatives such as checks passing or failing in one subscription. Long conditions have a full tooltip. The left task sidebar indicates waiting, received or monitoring error status and returns to the running indicator when execution resumes.
+
 
 ### Ask AI to wait for connection events
 
@@ -123,6 +128,8 @@ Hover over a message table to copy its Markdown or expand it; press `Esc` to clo
 
 Click the PR/MR status beside a task and choose **Continue fixing with AI** when an abnormal status is shown. For a running task, the repair request guides the current response. For an idle task, it starts the next turn in the same conversation. If the current response finishes just after you click, the request is sent as the next turn. Delivery failures show an error so you can try sending again.
 
+<a id="task-board-association"></a>
+
 ## Add a conversation to a project-space board
 
 Runtime task and private conversation titles are independent of the bound Issue title. Runs started from tasks, Issue details, or Collaboration never overwrite an existing Issue title when the conversation title changes. Edit the title in Issue details to rename the Issue.
@@ -138,6 +145,8 @@ When creating an issue in Collaboration, enter at least a title or content. If y
 After selecting **Let AI handle it** in an issue detail, use the task composer to choose a local project, workspace or worktree, and branch before creating a local run linked to the issue. Project spaces and local code projects are separate resources. After a task is created successfully, Wework remembers the most recently used local project and workspace for that project space on the current device. The next task created from the same project space preselects that location, and a successful task created after a temporary selection change updates the mapping. The mapping does not sync to other devices.
 
 When an issue already has linked tasks, the **Linked tasks** section directly shows every running task and the two most recent tasks. If more history is available, use **Expand** and **Collapse** instead of opening a separate task-list view. The action for creating another task appears beside the section heading.
+
+If the task count cannot be read, the task summary above the composer shows **Task count failed. Retry**. Select it to read the current Issue's linked-task count again. A failed refresh preserves the last successful count and does not prevent sending messages.
 
 After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. When changing the link is supported, the entry remains available while project options refresh or are temporarily empty; you can select a destination once the options load. Wework offers two choices:
 

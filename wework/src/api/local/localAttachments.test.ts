@@ -1,3 +1,4 @@
+import * as runtimeEnvironment from '@/lib/runtime-environment'
 import { rememberNativeFilePath } from '@/desktop/nativeFilePaths'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createLocalAttachmentApi } from './localAttachments'
@@ -20,6 +21,30 @@ describe('local attachment API', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllEnvs()
+  })
+
+  test('converts a registered TIFF before staging and returns PNG metadata', async () => {
+    vi.spyOn(runtimeEnvironment, 'isElectronRuntime').mockReturnValue(true)
+    desktopMocks.invoke.mockImplementation(async capability => {
+      if (capability === 'clipboard.convertImageToPng') return 'data:image/png;base64,AQID'
+      if (capability === 'attachment.begin') return { uploadId: 'converted', chunkSize: 1024 }
+      if (capability === 'attachment.append') return 3
+      if (capability === 'attachment.finish') return '/draft/screenshot.png'
+      throw new Error('Unexpected capability: ' + capability)
+    })
+    const attachment = await createLocalAttachmentApi().uploadAttachment(
+      new File(['tiff'], 'screenshot.tiff', { type: 'image/tiff' })
+    )
+    expect(attachment).toMatchObject({
+      filename: 'screenshot.png',
+      mime_type: 'image/png',
+      file_size: 3,
+      local_path: '/draft/screenshot.png',
+    })
+    expect(desktopMocks.invoke).toHaveBeenCalledWith(
+      'attachment.begin',
+      expect.objectContaining({ filename: 'screenshot.png', size: 3 })
+    )
   })
 
   test('references an Electron-selected Windows file without creating a draft copy', async () => {
