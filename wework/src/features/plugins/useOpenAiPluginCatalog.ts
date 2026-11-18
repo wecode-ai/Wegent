@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { LocalCodexPluginApi } from '@/api/local/codexPlugins'
 import {
-  hasPersistedRemotePluginCatalog,
+  openAiRemoteCatalog,
+  RemotePluginCatalogIdentityChanged,
   type RemotePluginCatalogSnapshot,
 } from '@/api/local/codexRemoteCatalog'
 import {
@@ -35,6 +36,7 @@ export function useOpenAiPluginCatalog({
     getPluginMarketplaceAccountEpoch,
     getPluginMarketplaceAccountEpoch
   )
+  const [identityRevision, setIdentityRevision] = useState(0)
   const [state, setState] = useState<{
     cacheKey: string
     loading: boolean
@@ -53,7 +55,7 @@ export function useOpenAiPluginCatalog({
   }, [cacheKey])
 
   useEffect(() => {
-    if (!enabled && !(restoreForAll && hasPersistedRemotePluginCatalog())) return
+    if (!enabled && !(restoreForAll && openAiRemoteCatalog.hasSnapshotOrRefresh())) return
     let cancelled = false
     const isCurrent = () => !cancelled && getPluginMarketplaceAccountEpoch() === authRevision
     void Promise.resolve().then(async () => {
@@ -70,6 +72,7 @@ export function useOpenAiPluginCatalog({
           forceRefetch: force,
           cacheOnly: !enabled,
           accountScope,
+          canStart: isCurrent,
           onCached: (snapshot, resolvedDeviceId) => {
             cached = snapshot
             if (isCurrent()) projectOpenAiRemoteCatalog(cacheKey, resolvedDeviceId, snapshot)
@@ -80,8 +83,13 @@ export function useOpenAiPluginCatalog({
           projectOpenAiRemoteCatalog(cacheKey, result.deviceId, result.snapshot)
         if (enabled) setState({ cacheKey, loading: false, error: null })
       } catch (error) {
-        if (isCurrent() && enabled)
-          setState({ cacheKey, loading: false, error: remoteCatalogErrorKind(error) })
+        if (!isCurrent()) return
+        if (error instanceof RemotePluginCatalogIdentityChanged) {
+          detachOpenAiRemoteCatalog(cacheKey)
+          setIdentityRevision(value => value + 1)
+          return
+        }
+        if (enabled) setState({ cacheKey, loading: false, error: remoteCatalogErrorKind(error) })
       }
     })
     return () => {
@@ -96,6 +104,7 @@ export function useOpenAiPluginCatalog({
     readCatalog,
     revision,
     authRevision,
+    identityRevision,
   ])
 
   return {

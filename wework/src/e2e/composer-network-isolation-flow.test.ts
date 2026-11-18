@@ -28,8 +28,10 @@ vi.mock('../../e2e/desktop/modules/workspace-flows.mjs', async importOriginal =>
   waitForControlValueIncludes: vi.fn(),
 }))
 
-test('the CI plugin flow initiates and holds app/list before opening the local-only picker', async () => {
+test.each(['success', 'seed failure'])('the CI plugin flow handles %s', async outcome => {
+  vi.clearAllMocks()
   const root = await mkdtemp(join(tmpdir(), 'composer-isolation-'))
+  const seedFailure = new Error('Unable to write the isolated catalog')
   const read = Promise.withResolvers<unknown>()
   const proxy = {
     url: 'http://127.0.0.1:1',
@@ -50,6 +52,8 @@ test('the CI plugin flow initiates and holds app/list before opening the local-o
   })
   const control = {
     command: vi.fn(async (action: string) => {
+      if (outcome === 'seed failure' && action === 'removeLocalStorageItem')
+        throw new Error('Renderer unavailable after restart failed')
       if (action === 'previewPluginImport') return JSON.stringify({ valid: true })
       if (action === 'getWorkbenchDebugSnapshot')
         return JSON.stringify({ workbench: { currentProject: { id: 'project' } } })
@@ -67,15 +71,25 @@ test('the CI plugin flow initiates and holds app/list before opening the local-o
   try {
     const storagePath = join(root, 'renderer-local-storage.json')
     await writeFile(storagePath, JSON.stringify({ version: 1, entries: {} }))
-    await verifyComposerPluginNetworkIsolation({
+    const verification = verifyComposerPluginNetworkIsolation({
       blockingNetworkProxy: proxy,
       codexHome: root,
       control,
       electronUserDataDirectory: root,
       marketplacePath: root,
-      restartDesktopApp: async (afterStop: () => Promise<void>) => afterStop(),
+      restartDesktopApp: async (afterStop: () => Promise<void>) => {
+        if (outcome === 'seed failure') throw seedFailure
+        await afterStop()
+      },
       workspacePath: root,
     })
+    if (outcome === 'seed failure') {
+      await expect(verification).rejects.toBe(seedFailure)
+      await expect(readFile(join(root, 'auth.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(control.command).toHaveBeenCalledWith('setLocalProxyUrl', 'body', { value: '' })
+      return
+    }
+    await verification
     const storage = JSON.parse(await readFile(storagePath, 'utf8'))
     expect(JSON.parse(storage.entries['wework.plugins.openAiCatalog.v1'])).toMatchObject({
       version: 1,

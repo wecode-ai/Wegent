@@ -553,11 +553,11 @@ async function verifyComposerPluginNetworkIsolation({
   )
   assert.ok(deviceId && cloudConnection?.apiBaseUrl && cloudConnection?.user?.id != null)
   const authJson = `${JSON.stringify(syntheticChatGptAuth(), null, 2)}\n`
-  blockingNetworkProxy.block()
-  await writeFile(join(codexHome, 'auth.json'), authJson, 'utf8')
-  await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
-
+  let checkpointCompleted = false
   try {
+    blockingNetworkProxy.block()
+    await writeFile(join(codexHome, 'auth.json'), authJson, 'utf8')
+    await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
     // Restart to clear the renderer's in-memory plugin inventory. The installed
     // package remains in the isolated real Codex home, while every external
     // Codex request is held open by the proxy instead of returning an error.
@@ -674,18 +674,34 @@ async function verifyComposerPluginNetworkIsolation({
       `[data-testid="composer-plugin-picker-item-plugin:${pluginName}"]`
     )
     await closeComposerPluginPicker(control)
+    checkpointCompleted = true
   } finally {
-    blockingNetworkProxy.release()
-    await control.command('removeLocalStorageItem', 'body', { value: officialCatalogStorageKey })
-    await control.command('setLocalProxyUrl', 'body', { value: '' })
-    await rm(join(codexHome, 'auth.json'), { force: true })
-    await control.command('deleteLocalPluginPackage', 'body', {
-      value: JSON.stringify({
-        pluginId: 'composer-network-isolation-plugin@wework-personal',
-        pluginName: 'composer-network-isolation-plugin',
-      }),
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
+    const cleanupErrors = []
+    for (const cleanup of [
+      () => blockingNetworkProxy.release(),
+      () => rm(join(codexHome, 'auth.json'), { force: true }),
+      () => control.command('removeLocalStorageItem', 'body', { value: officialCatalogStorageKey }),
+      () => control.command('setLocalProxyUrl', 'body', { value: '' }),
+      () =>
+        control.command('deleteLocalPluginPackage', 'body', {
+          value: JSON.stringify({
+            pluginId: 'composer-network-isolation-plugin@wework-personal',
+            pluginName: 'composer-network-isolation-plugin',
+          }),
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }),
+    ]) {
+      try {
+        await cleanup()
+      } catch (error) {
+        cleanupErrors.push(error)
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      const error = new AggregateError(cleanupErrors, 'Composer network isolation cleanup failed')
+      if (checkpointCompleted) throw error
+      console.error(error)
+    }
   }
 }
 

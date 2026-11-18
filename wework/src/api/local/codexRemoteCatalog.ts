@@ -1,21 +1,22 @@
 import { emptyComponents } from '@wegent/chat-core/codex-installed-plugins'
+import { compressToUTF16, decompressFromUTF16 } from 'lz-string'
 import type { PluginInterface, PluginMarketplaceItem } from '@/types/api'
 import { isOpenAiOfficialRemoteMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { raceWithTimeout } from '@/lib/promise-timeout'
 
 export const REMOTE_PLUGIN_CATALOG_STORAGE_KEY = 'wework.plugins.openAiCatalog.v1'
 export const REMOTE_PLUGIN_CATALOG_FRESH_MS = 30 * 60_000
+const COMPACT_CATALOG_PREFIX = 'lz:'
+const MAX_INLINE_ASSET_LENGTH = 4096
 
 export interface RemotePluginCatalogSnapshot {
   items: PluginMarketplaceItem[]
   fetchedAt: number
 }
 
-export function hasPersistedRemotePluginCatalog(): boolean {
-  try {
-    return window.localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY) !== null
-  } catch {
-    return false
+export class RemotePluginCatalogIdentityChanged extends Error {
+  constructor() {
+    super('Plugin catalog scope changed')
   }
 }
 
@@ -87,6 +88,11 @@ function isCatalogItem(value: unknown): value is PluginMarketplaceItem {
     typeof item.featured === 'boolean' &&
     item.installed === false &&
     item.enabled === false &&
+    item.installedPluginId == null &&
+    item.installedLocally == null &&
+    item.installedVersion == null &&
+    item.updateAvailable == null &&
+    item.currentDeviceInstallation == null &&
     item.sourceType === 'marketplace' &&
     item.sourceProvider === 'codex' &&
     isCatalogInterface(item.interface) &&
@@ -99,7 +105,11 @@ function readPersistedCatalog(scope: string): PersistedCatalog | undefined {
   try {
     const raw = window.localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)
     if (!raw) return
-    const value = JSON.parse(raw) as Partial<PersistedCatalog> | null
+    const serialized = raw.startsWith(COMPACT_CATALOG_PREFIX)
+      ? decompressFromUTF16(raw.slice(COMPACT_CATALOG_PREFIX.length))
+      : raw
+    if (!serialized) return
+    const value = JSON.parse(serialized) as Partial<PersistedCatalog> | null
     if (
       value?.version === 1 &&
       value.scope === scope &&
@@ -117,10 +127,61 @@ function readPersistedCatalog(scope: string): PersistedCatalog | undefined {
   }
 }
 
+function compactInterface(value: PluginInterface | null | undefined) {
+  if (!value) return value
+  const keepAsset = (asset: string | null | undefined) =>
+    asset?.startsWith('data:') && asset.length > MAX_INLINE_ASSET_LENGTH ? null : asset
+  return {
+    ...value,
+    logo: keepAsset(value.logo),
+    logoDark: keepAsset(value.logoDark),
+    composerIcon: keepAsset(value.composerIcon),
+    screenshots: value.screenshots?.filter(asset => keepAsset(asset) != null),
+  }
+}
+
+function persistCatalog(snapshot: PersistedCatalog): boolean {
+  try {
+    const storage = window.localStorage
+    try {
+      storage.setItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, JSON.stringify(snapshot))
+    } catch (error) {
+      if (!(error instanceof DOMException) || error.name !== 'QuotaExceededError') throw error
+      const compact = {
+        ...snapshot,
+        items: snapshot.items.map(item => ({
+          ...item,
+          interface: compactInterface(item.interface),
+        })),
+      }
+      storage.setItem(
+        REMOTE_PLUGIN_CATALOG_STORAGE_KEY,
+        COMPACT_CATALOG_PREFIX + compressToUTF16(JSON.stringify(compact))
+      )
+    }
+    return true
+  } catch (error) {
+    console.warn('[Wework] Failed to persist OpenAI plugin catalog', {
+      errorType: error instanceof Error ? error.name : typeof error,
+    })
+    return false
+  }
+}
+
 /** Catalog freshness survives renderer and runtime restarts. */
 export function createSharedRemotePluginCatalog() {
   let active: { identity: string; pending?: Promise<RemotePluginCatalogSnapshot> } | undefined
   let latest: PersistedCatalog | undefined
+  let needsPersistence = false
+
+  function hasSnapshotOrRefresh(): boolean {
+    if (latest || active?.pending) return true
+    try {
+      return window.localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY) !== null
+    } catch {
+      return false
+    }
+  }
 
   function read({
     scope,
@@ -140,11 +201,15 @@ export function createSharedRemotePluginCatalog() {
     const requestScope =
       active?.identity === requestIdentity ? active : { identity: requestIdentity }
     active = requestScope
-    if (latest?.scope !== scope) latest = readPersistedCatalog(scope)
+    if (latest?.scope !== scope) {
+      latest = readPersistedCatalog(scope)
+      needsPersistence = false
+    }
     const cached = latest
     onCached(cached)
-    if (cacheOnly) return Promise.resolve(cached)
     if (requestScope.pending) return requestScope.pending
+    if (cached && needsPersistence) needsPersistence = !persistCatalog(cached)
+    if (cacheOnly) return Promise.resolve(cached)
     if (!force && cached && Date.now() - cached.fetchedAt < REMOTE_PLUGIN_CATALOG_FRESH_MS) {
       return Promise.resolve(cached)
     }
@@ -158,13 +223,7 @@ export function createSharedRemotePluginCatalog() {
         throw new Error('Incomplete remote plugin catalog')
       const result: PersistedCatalog = { version: 1, scope, fetchedAt: Date.now(), items }
       latest = result
-      try {
-        window.localStorage.setItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, JSON.stringify(result))
-      } catch (error) {
-        console.warn('[Wework] Failed to persist OpenAI plugin catalog', {
-          errorType: error instanceof Error ? error.name : typeof error,
-        })
-      }
+      needsPersistence = !persistCatalog(result)
       return result
     })
     requestScope.pending = request
@@ -178,6 +237,7 @@ export function createSharedRemotePluginCatalog() {
   function clear() {
     active = undefined
     latest = undefined
+    needsPersistence = false
     if (typeof window === 'undefined') return
     try {
       window.localStorage.removeItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)
@@ -188,7 +248,7 @@ export function createSharedRemotePluginCatalog() {
     }
   }
 
-  return { read, clear }
+  return { read, clear, hasSnapshotOrRefresh }
 }
 
 export const openAiRemoteCatalog = createSharedRemotePluginCatalog()

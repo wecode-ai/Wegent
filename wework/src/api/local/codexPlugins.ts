@@ -34,9 +34,11 @@ import { createSharedCodexAppCatalog } from './codexAppCatalog'
 import {
   isOpenAiOfficialRemoteMarketplaceItem,
   openAiRemoteCatalog,
+  RemotePluginCatalogIdentityChanged,
   type RemotePluginCatalogSnapshot,
 } from './codexRemoteCatalog'
 import { getLocalCodexAuthStatus } from './runtimeAuthStatus'
+import { raceWithTimeout } from '@/lib/promise-timeout'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
 import { createPluginDetailCache, type PluginDetailReadOptions } from './codexPluginDetails'
 import {
@@ -311,6 +313,7 @@ export interface LocalCodexPluginApi {
     forceRefetch: boolean
     cacheOnly?: boolean
     accountScope: string
+    canStart?: () => boolean
     onCached: (snapshot: RemotePluginCatalogSnapshot | undefined, deviceId: string) => void
   }): Promise<{ snapshot?: RemotePluginCatalogSnapshot; deviceId: string }>
   listInstalledPlugins(options?: {
@@ -2931,14 +2934,18 @@ async function fetchRemoteCatalogItems(
 const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async options => {
   if (!isDesktopRuntime()) return { deviceId: '' }
   const accountEpoch = getPluginMarketplaceAccountEpoch()
-  const identity = await readRemoteCatalogScope()
+  const identity = await raceWithTimeout(
+    readRemoteCatalogScope(),
+    30_000,
+    () => new Error('Remote plugin catalog identity check timed out')
+  )
   const { deviceId, authFingerprint, runtimeInstanceId } = identity
   // Runtime instance identity fences pending work, while the durable entry follows
   // the device and credentials across a restart.
   const scope = await sha256Hex(
     new Blob([JSON.stringify([deviceId, authFingerprint, options.accountScope])])
   )
-  if (getPluginMarketplaceAccountEpoch() !== accountEpoch)
+  if (getPluginMarketplaceAccountEpoch() !== accountEpoch || options.canStart?.() === false)
     throw new Error('Plugin catalog scope changed')
   const snapshot = await openAiRemoteCatalog.read({
     scope,
@@ -2955,7 +2962,7 @@ const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async option
         current.authFingerprint !== authFingerprint ||
         getPluginMarketplaceAccountEpoch() !== accountEpoch
       )
-        throw new Error('Plugin catalog scope changed')
+        throw new RemotePluginCatalogIdentityChanged()
       return items
     },
   })

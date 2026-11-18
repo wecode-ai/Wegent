@@ -599,7 +599,8 @@ export function projectOpenAiRemoteCatalog(
   catalog: RemotePluginCatalogSnapshot | undefined
 ): void {
   const previous = getPluginMarketplaceCache(cacheKey)
-  const current = previous?.deviceId === deviceId ? previous : null
+  const current =
+    previous && (!previous.deviceId || previous.deviceId === deviceId) ? previous : null
   if (!catalog && current?.openAiCatalogFetchedAt == null) return
   const installedPlugins = current?.installedPlugins ?? []
   setPluginMarketplaceCache(

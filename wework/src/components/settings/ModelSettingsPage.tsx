@@ -427,7 +427,7 @@ export function ModelSettingsPage({
       while (localLoginGenerationRef.current === generation) {
         const nextStatus = await getLocalCodexAuthStatus()
         if (localLoginGenerationRef.current !== generation) return
-        if (nextStatus.exists && nextStatus.sha256 !== initialAuthSha256) {
+        if (nextStatus.exists && nextStatus.sha256 && nextStatus.sha256 !== initialAuthSha256) {
           invalidateOpenAiRemoteCatalogAccount()
           localLoginIdRef.current = null
           setLocalLoginState('idle')
