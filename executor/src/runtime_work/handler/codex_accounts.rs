@@ -253,11 +253,11 @@ pub(super) fn quota_account_identity(request: &ExecutionRequest) -> Result<Optio
     )))
 }
 
-fn current_auth_path() -> PathBuf {
+pub(super) fn current_auth_path() -> PathBuf {
     crate::agents::wework_codex_home().join("auth.json")
 }
 
-fn account_store_directory() -> PathBuf {
+pub(super) fn account_store_directory() -> PathBuf {
     crate::agents::wework_codex_home().join(ACCOUNT_STORE_DIRECTORY)
 }
 
