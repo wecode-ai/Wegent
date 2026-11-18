@@ -17,6 +17,25 @@ import { findConfiguredLocalModelProviderProfile } from '../shared/model-provide
 const EMPTY_FILE =
   '# WeWork local model connections. Cloud models are managed separately.\nversion: 1\nproviders: []\n'
 const LAST_GOOD_KEY = 'wework-models.last-good'
+const CREDENTIAL_LOOKUP_TIMEOUT_MS = 2_000
+
+async function settleCredentialLookup<T>(
+  operation: Promise<T>,
+  fallback: T,
+  timeoutMs = CREDENTIAL_LOOKUP_TIMEOUT_MS
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>(resolve => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 interface LoadedConfiguration {
   path: string
@@ -251,7 +270,12 @@ export class ModelConfigurationStore {
           const { api_key: key, ...safe } = provider
           return {
             ...safe,
-            api_key_configured: Boolean(key || (await this.credential(provider))),
+            api_key_configured: key
+              ? true
+              : await settleCredentialLookup(
+                  this.credential(provider).then(value => Boolean(value)),
+                  Boolean(provider.api_key_ref)
+                ),
           }
         })
       ),
@@ -260,7 +284,7 @@ export class ModelConfigurationStore {
 
   private async restoreLastGood(path: string): Promise<void> {
     if (this.lastGood) return
-    const saved = await this.secrets.get(LAST_GOOD_KEY)
+    const saved = await settleCredentialLookup(this.secrets.get(LAST_GOOD_KEY), null)
     if (!saved) return
     const recovery = JSON.parse(saved) as { path: string; source: string }
     if (recovery.path !== path) return
