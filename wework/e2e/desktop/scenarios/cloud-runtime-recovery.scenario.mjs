@@ -50,9 +50,14 @@ export function createDesktopScenario(options) {
   return {
     ...existing,
     appEnvironment,
-    cloudModelCatalogOverrides: [CLOUD_PUBLIC_MODEL_NAME, 'desktop-e2e-public-upstream-model'].map(
-      slug => ({ slug, fields: { experimental_supported_tools: ['request_user_input_async'] } })
-    ),
+    // Cloud resources use this Codex capability identity independently of their
+    // public resource name and upstream model ID.
+    cloudModelCatalogOverrides: [
+      {
+        slug: 'wework-gpt-6.1-sol',
+        fields: { experimental_supported_tools: ['request_user_input_async'] },
+      },
+    ],
     async prepareCloud(value) {
       await existing.prepareCloud(value)
       proxy = await new TransportFaultProxy(value.backendUrl).start()
