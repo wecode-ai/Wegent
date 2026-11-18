@@ -101,6 +101,7 @@ interface CollaborationExecution {
   displayState: string
   observedState: string
   syncState: string
+  errorMessage: string | null
 }
 
 interface AgentCase {
@@ -195,9 +196,7 @@ test.describe('Collaboration agent execution', () => {
     const projectId = project!.id
     const prompt = `${TEST_PREFIX} MANAGED_CHAT_FIRST_TURN`
     const followup = `${TEST_PREFIX} MANAGED_CHAT_SECOND_TURN`
-    configuredPrompts.add(prompt)
     configuredPrompts.add(followup)
-    await configureToolScenario(request, prompt, [{ responseContent: 'MANAGED_CHAT_FIRST_RESULT' }])
     await configureToolScenario(request, followup, [
       { responseContent: 'MANAGED_CHAT_SECOND_RESULT' },
     ])
@@ -215,6 +214,13 @@ test.describe('Collaboration agent execution', () => {
       }
     )
     const issue = await createIssue(request, projectId, { title: prompt, description: prompt })
+    // Ordinary assignment has no additional instruction. Match the canonical
+    // board reference sent to the model rather than assuming an issue-text copy.
+    const firstInput = `task_id: ${issue.id}`
+    configuredPrompts.add(firstInput)
+    await configureToolScenario(request, firstInput, [
+      { responseContent: 'MANAGED_CHAT_FIRST_RESULT' },
+    ])
     await page.goto(
       `/collaboration/workspaces/${workspace!.id}/projects/${projectId}/issues/${issue.id}`
     )
@@ -232,6 +238,11 @@ test.describe('Collaboration agent execution', () => {
     expect(first.backendTaskId).toBeGreaterThan(0)
     expect(first.runtimeTaskId).toBe(String(first.backendTaskId))
     expect(first.runtimeDeviceId).toBeFalsy()
+    const firstBodies = await getScenarioModelBodies(request, firstInput)
+    expect(firstBodies).toHaveLength(1)
+    expect(modelRequestText(firstBodies)).toContain(
+      `cloud://projects/${projectId}/todos/${issue.id}`
+    )
     const participationPath = `/api/v1/loop-items/${issue.id}/assistant-participations`
     const sources = await apiRequest<AssistantParticipation[]>(request, participationPath)
     const source = sources.find(row => row.source.kind === 'binding')!
@@ -749,11 +760,14 @@ test.describe('Collaboration agent execution', () => {
             observedState: completed?.observedState,
             syncState: completed?.syncState,
             backendTaskId: completed?.backendTaskId,
+            errorMessage: completed?.errorMessage,
           })
           if (state !== observed) {
             console.info(`[collaboration-execution] ${state}`)
             observed = state
           }
+          expect(completed?.status, state).not.toBe('failed')
+          expect(completed?.status, state).not.toBe('cancelled')
           return completed?.status ?? 'missing'
         },
         {

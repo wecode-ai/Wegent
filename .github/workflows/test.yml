@@ -291,6 +291,16 @@ jobs:
           cargo test --locked --lib running_transition_commits_before_dispatch_when_replica_has_no_subtask -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/running-transition-mysql.log
 
+      - name: Verify managed execution recovery with MySQL and Redis
+        working-directory: backend-rs
+        env:
+          PROJECT_TEST_MYSQL_URL: mysql://root@127.0.0.1:3306/mysql
+          PROJECT_TEST_REDIS_ENDPOINT: 127.0.0.1:6379
+        run: |
+          set -o pipefail
+          cargo test --locked --lib background_jobs::project::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/managed-execution-recovery.log
+
       - name: Verify account HTTP plugin snapshots without Device registration
         working-directory: backend-rs
         env:

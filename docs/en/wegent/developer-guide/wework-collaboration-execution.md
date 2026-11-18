@@ -36,6 +36,8 @@ flowchart LR
 
 Managed Wegent Issue execution uses the default-enabled native jobs `wegent.managed_issue.scan` and `wegent.managed_issue.execute`. The scan follows the queue polling interval and creates real Tasks under a separate distributed lock; execution and state projection retain current authorization checks. This flow is independent of optional Python job migration switches. An explicit `WEGENT_RS_JOB_ALLOWLIST` must include both jobs; existing scheduler and embedded-worker controls still apply.
 
+Ordinary assignment requires no additional prompt: the managed Task uses the shared project, Issue, and execution reference, with optional instructions and continuation comments retained as supplementary text. A renewable execution lock protects each Task turn. If its process stops after committing `RUNNING`, durable redelivery can resume the same turn instead of skipping it solely because it is `RUNNING`. HTTP Executors reuse the automatic pipeline's turn idempotency key; Chat consumers clear old stream buffers before recovery and preserve terminal recovery. Terminal turns and mismatched identities are never dispatched again.
+
 The durable queue, atomic claim, and Runtime acceptance control task delivery. A wake notification only announces work; it carries no task and does not establish execution success.
 Routed work notifies eligible devices using their owners' connection identities, after checking current grants, models, and Issue runner affinity.
 `LOCAL_RUNTIME_WORK_POLL_INTERVAL` overrides the default five-second interval. Reconnection and availability notifications still initiate an immediate pull.

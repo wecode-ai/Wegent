@@ -44,10 +44,21 @@ pub(super) async fn create(app: &AppState, expected: &Execution) -> Result<()> {
     .context("Managed Shell unavailable")?;
     let chat = shell.json.0["spec"]["shellType"] == "Chat";
     let context = expected.context();
-    let prompt = context["execution_prompt"]
+    let instruction = if context["comment_trigger_message_id"]
         .as_str()
-        .filter(|value| !value.trim().is_empty())
-        .context("Managed prompt is empty")?;
+        .is_some_and(|id| !id.is_empty())
+    {
+        context["comment_prompt"].as_str().unwrap_or_default()
+    } else {
+        context["execution_prompt"].as_str().unwrap_or_default()
+    };
+    let prompt = profile::user_input(
+        &expected.cloud_project_id,
+        &expected.loop_item_id,
+        expected.id,
+        instruction,
+        "",
+    );
     let now = store::iso(chrono::Utc::now().naive_utc());
     let previous = context["comment_continue_backend_task_id"]
         .as_i64()
@@ -83,16 +94,16 @@ pub(super) async fn create(app: &AppState, expected: &Execution) -> Result<()> {
             user_id:row.executor_owner_user_id, owner_user_id:row.executor_owner_user_id.try_into().map_err(dependency)?, continuation,
             history_window:None,team_id:team.id,bot_ids:&bots.bot_ids,create_assistant:true,
             model_override_type:selection["model_type"].as_str(),model_options:selection["model_options"].as_object().map(|_| &selection["model_options"]),
-            input_text:prompt,user_result:None,additional_skills:&[],
+            input_text:&prompt,user_result:None,additional_skills:&[],
             crd:TaskCrdInput {
-                task_id:0,team_name:&team.name,team_namespace:&team.namespace,team_user_id:team.user_id,message:prompt,title:Some(&issue.title),
+                task_id:0,team_name:&team.name,team_namespace:&team.namespace,team_user_id:team.user_id,message:&prompt,title:Some(&issue.title),
                 task_type:Some("chat"),source:"project_automation",project_id:0,api_key_name:None,model_id:selection["model"].as_str().filter(|model|!model.is_empty()),
                 force_override_bot_model:selection["model"].as_str().is_some_and(|model|!model.is_empty()),is_group_chat:false,is_api_call:false,auto_delete_executor:Some("true"),omit_mcp_binary_output:false,device_id:None,git_workspace:false,created_at:&now,updated_at:&now,
             },
             repository:WorkspaceRepository {git_url:"",git_repo:"",git_repo_id:0,git_domain:"",branch_name:""},client_origin:"wework",project_id:0,created_at:&now,updated_at:&now,completed_at:"1970-01-01 00:00:00",
         };
         let setup = session::setup_chat_session(app.task_store.as_ref(),tx,&input).await.map_err(dependency)?;
-        let execute = managed::Execute {task_id:setup.task_id,assistant_subtask_id:setup.assistant_subtask_id,user_subtask_id:setup.user_subtask_id,team_id:row.team_id,user_id:row.executor_owner_user_id,prompt:prompt.to_owned(),developer_instruction:String::new()};
+        let execute = managed::Execute {task_id:setup.task_id,assistant_subtask_id:setup.assistant_subtask_id,user_subtask_id:setup.user_subtask_id,team_id:row.team_id,user_id:row.executor_owner_user_id,prompt,developer_instruction:String::new()};
         persist(app,tx,&row,&issue,&setup,&execute,chat).await
     }).await?;
     projection::publish(app, effects).await

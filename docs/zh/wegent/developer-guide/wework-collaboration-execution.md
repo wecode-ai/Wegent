@@ -36,6 +36,8 @@ flowchart LR
 
 Wegent 托管 Issue 执行使用默认启用的原生作业 `wegent.managed_issue.scan` 和 `wegent.managed_issue.execute`。扫描按队列轮询周期运行，通过独立分布式锁创建真实 Task；执行前及状态投影继续校验当前授权。该链路不依赖可选的 Python 作业迁移开关。显式设置 `WEGENT_RS_JOB_ALLOWLIST` 时，需包含这两个作业；调度和嵌入式 worker 的现有开关仍然有效。
 
+普通指派无需填写额外提示词：托管 Task 使用统一的项目、Issue 与执行编号引用，附加指令和续聊评论保留为补充正文。每个 Task 轮次通过可续租的执行锁保护；进程在提交 `RUNNING` 后中断，持久化作业重新投递时可恢复同一轮次，不能仅凭 `RUNNING` 跳过。HTTP Executor 复用自动流水线的轮次幂等键，Chat 消费者恢复前清理旧流缓存并保留终态恢复；终态和身份不匹配的轮次不会重新派发。
+
 设备领取仍由持久化队列、原子认领和 Runtime 接收确认控制。唤醒通知只提示有工作，不携带任务，也不证明任务已经启动。
 路由任务向满足当前授权、模型和 Issue 绑定的设备发送通知，并使用设备所有者的连接身份。
 `LOCAL_RUNTIME_WORK_POLL_INTERVAL` 可覆盖默认 5 秒间隔；连接恢复和通知仍触发立即领取。

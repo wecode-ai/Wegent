@@ -3,7 +3,7 @@ use anyhow::{Context, Result, bail};
 use brz_mysql::{FromMysqlRow, Json, MysqlTransaction};
 use serde_json::{Value, json};
 
-use super::super::project::{managed, store};
+use super::super::project::{managed, profile, store};
 use super::{
     authority,
     model::{COLUMNS, Execution},
