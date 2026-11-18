@@ -226,24 +226,38 @@ export function createMemoryConsolidation({
           `[data-testid="automation-run-open-${started.run.id}"]`,
           { timeoutMs: modelResponseTimeoutMs }
         )
-        await control.command('waitFor', '[data-testid="message-user"]', {
-          text: 'Consolidate useful durable memories',
-          timeoutMs: modelResponseTimeoutMs,
-        })
+        const runningRun = await until(
+          async () =>
+            (await rpc('runtime.automation_runs.list', { automationId: schedule.id })).items.find(
+              item => item.id === started.run.id
+            ),
+          item => Boolean(item?.taskId),
+          'The started run must expose its conversation task',
+          modelResponseTimeoutMs
+        )
+        await until(
+          async () =>
+            JSON.parse(
+              await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+            ).workbench?.currentRuntimeTask?.taskId ?? null,
+          taskId => taskId === runningRun.taskId,
+          'The calendar entry must open the exact memory review conversation',
+          uiTimeoutMs
+        )
         await until(
           async () => typeof releaseFinalResponse === 'function',
           Boolean,
           'Evidence must be committed before the held model response is released',
           modelResponseTimeoutMs
         )
-        const runningRun = (
-          await rpc('runtime.automation_runs.list', { automationId: schedule.id })
-        ).items.find(item => item.id === started.run.id)
-        assert.ok(runningRun?.taskId)
         const stored = await rpc('runtime.tasks.get', { taskId: runningRun.taskId })
         assertMemoryReviewModelSelection(stored.task, model, options)
         await assertMemoryReviewHiddenFromSidebar(control, rpc, runningRun.taskId)
         releaseFinalResponse()
+        await control.command('waitFor', '[data-testid="message-user"]', {
+          text: 'Consolidate useful durable memories',
+          timeoutMs: modelResponseTimeoutMs,
+        })
         await control.command('waitFor', '[data-testid="message-assistant"]', {
           text: 'Memory consolidation evidence committed.',
           timeoutMs: modelResponseTimeoutMs,
