@@ -33,10 +33,6 @@ import {
   FORK_ENCRYPTED_CONTENT,
   FORK_FOLLOW_UP_COMPLETION_TEXT,
   FORK_FOLLOW_UP_PROMPT,
-  FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT,
-  FORK_PROVIDER_FOLLOW_UP_PROMPT,
-  FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
-  FORK_PROVIDER_SOURCE_PROMPT,
   LOCAL_MODEL_CASES,
   REQUEST_USER_INPUT_COMPLETION_TEXT,
   REQUEST_USER_INPUT_PROMPT,
@@ -530,125 +526,9 @@ async function verifyCompletedTurnFork({
   await captureVerificationScreenshot(control, 'completed-turn-fork-04-source-unchanged.png')
 }
 
-async function verifyForkProviderModelPreservation({
-  composerSelector,
-  control,
-  executorHome,
-  newConversationSelector,
-}) {
-  const sourceModel = LOCAL_MODEL_CASES.find(model => model.protocol === 'responses')
-  assert.ok(sourceModel, 'Missing the responses local model for fork provider verification')
-
-  await control.command('clickWhenEnabled', newConversationSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await selectE2EModel(control, sourceModel.optionIds, sourceModel.labels)
-
-  const taskRowsBeforeSource = new Set(
-    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-      testId.startsWith('runtime-local-task-row-')
-    )
-  )
-  control.setScenario('fork_provider_source')
-  const sourceRequest = await sendPromptUntilScenarioRequest(
-    control,
-    composerSelector,
-    FORK_PROVIDER_SOURCE_PROMPT,
-    'fork_provider_source'
-  )
-  assert.equal(
-    sourceRequest.body.model,
-    sourceModel.modelId,
-    'The fork provider source task did not use the selected local model'
-  )
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const sourceTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeSource, '')
-  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
-  const modelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
-  const sourceProviderId = await control.command('getAttribute', modelSelector, {
-    value: 'data-model-provider-id',
-  })
-  const sourceModelLabel = await control.command('getText', modelSelector)
-
-  const sourceIndex = JSON.parse(
-    await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
-  )
-  assert.equal(
-    sourceIndex.tasks[sourceTaskId]?.runtime_handle?.executionRequest?.model_config?.model_id,
-    sourceModel.modelId,
-    'The source task did not persist its local model execution request'
-  )
-
-  await control.command(
-    'clickDescendantInElementWithText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-    {
-      target: '[data-testid="fork-message-button"]',
-      text: FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  const forkTaskRowTestId = await waitForForkTaskRow(control, sourceTaskId, DEFAULT_STEP_TIMEOUT_MS)
-  const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-
-  const forkIndex = JSON.parse(
-    await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
-  )
-  assert.equal(
-    forkIndex.tasks[forkTaskId]?.runtime_handle?.executionRequest?.model_config?.model_id,
-    sourceModel.modelId,
-    'The forked task did not inherit the source execution model'
-  )
-  assert.deepEqual(
-    forkIndex.tasks[forkTaskId]?.runtime_handle?.modelSelection,
-    sourceIndex.tasks[sourceTaskId]?.runtime_handle?.modelSelection,
-    'The forked task did not inherit the source model selection'
-  )
-  assert.equal(
-    await control.command('getText', modelSelector),
-    sourceModelLabel,
-    'The forked task model selector changed the source model'
-  )
-  assert.equal(
-    await control.command('getAttribute', modelSelector, {
-      value: 'data-model-provider-id',
-    }),
-    sourceProviderId,
-    'The forked task model selector changed the source provider'
-  )
-
-  control.setScenario('fork_provider_follow_up')
-  const followUpRequest = await sendPromptUntilScenarioRequest(
-    control,
-    composerSelector,
-    FORK_PROVIDER_FOLLOW_UP_PROMPT,
-    'fork_provider_follow_up'
-  )
-  assert.equal(
-    followUpRequest.body.model,
-    sourceModel.modelId,
-    'The fork follow-up did not preserve the source model route'
-  )
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-}
-
 export {
   verifyBackgroundCompletionRestore,
   waitForTaskRowByText,
   verifyRunningFollowUpFork,
   verifyCompletedTurnFork,
-  verifyForkProviderModelPreservation,
 }

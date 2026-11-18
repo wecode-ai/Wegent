@@ -135,11 +135,13 @@ classify_workbench_path() {
       return
       ;;
     wework/src/features/todo/TaskBoardView* | \
-      wework/src/features/workbench/runtimeTaskArchive* | \
-      wework/src/features/todo/ProjectAutomation* | \
+      wework/src/features/workbench/runtimeTaskArchive*)
+      select_target "core:core-task-flow"
+      return
+      ;;
+    wework/src/features/todo/ProjectAutomation* | \
       wework/src/features/todo/projectAutomationForm* | \
       wework/src/api/projectAutomations*)
-      select_target "core:project-automation"
       select_target "core:project-automation"
       return
       ;;
@@ -191,7 +193,7 @@ classify_workbench_path() {
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* || \
         "$path" == wework/src/features/todo/WorkItemComposerGuide* ]]; then
-        select_target "core:collaboration-first-use"
+        select_target "core:collaboration-personal-issues"
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* ]]; then
         select_target "core:collaboration-board-move-recovery"
@@ -211,7 +213,6 @@ classify_workbench_path() {
       ;;
     # The main sidebar also owns project creation, chats, and attachments.
     wework/src/components/layout/DesktopSidebar.tsx)
-      select_target "core:core-task-flow"
       select_target "core:core-task-flow"
       select_target "core:project-ai-settings"
       select_target "core:workspace-attachments"
@@ -254,7 +255,6 @@ classify_workbench_path() {
       fi
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
-        select_target "core:core-task-flow"
         select_target "core:core-task-flow"
       fi
       return
@@ -506,9 +506,12 @@ classify_workbench_path() {
       return
       ;;
 
-    wework/src/features/todo/IssueBadges* | \
-      wework/src/features/change-requests/*)
-      select_target "core:collaboration-first-use"
+    wework/src/features/todo/IssueBadges*)
+      select_target "core:collaboration-personal-issues"
+      return
+      ;;
+    wework/src/features/change-requests/*)
+      select_target "core:core-task-flow"
       return
       ;;
 

@@ -139,12 +139,9 @@ select_plugin_sync_checkpoints() {
 }
 
 select_rendering_checkpoints() {
-  select_target "core:streaming-content"
-  select_target "core:streaming-content"
-  select_target "core:streaming-content"
+  select_target "core:core-task-flow"
   select_target "core:streaming-content"
   select_target "core:transcript-sync"
-  select_target "core:streaming-content"
   select_target "core:streaming-subagent-guidance"
 }
 

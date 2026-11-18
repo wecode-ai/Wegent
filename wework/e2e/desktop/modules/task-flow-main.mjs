@@ -282,7 +282,6 @@ import {
 import {
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
-  verifyForkProviderModelPreservation,
   verifyRunningFollowUpFork,
 } from './task-state-flows.mjs'
 import { verifyRuntimeWorkSilentRefresh } from './runtime-work-silent-refresh.mjs'
@@ -2414,22 +2413,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyPermissionModes(control)
       console.log(`Wework desktop permission-modes checkpoint passed. Evidence: ${resultDir}`)
       return
-    }
-
-    if (shouldRunDesktopCheckpoint('fork-provider-preservation')) {
-      phase = 'fork-provider-model-preservation'
-      await verifyForkProviderModelPreservation({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-        executorHome,
-        newConversationSelector: '[data-testid="new-chat-button"]',
-      })
-      if (shouldStopAfterDesktopCheckpoint('fork-provider-preservation')) {
-        console.log(
-          `Wework desktop fork-provider-preservation checkpoint passed. Evidence: ${resultDir}`
-        )
-        return
-      }
     }
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {

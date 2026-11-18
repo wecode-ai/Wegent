@@ -280,11 +280,9 @@ classify_wework_path() {
       wework/src/features/dsh-plugins/* | \
       wework/electron/src/runtime/core-dsh-plugin-manager*)
       select_target "core:plugin-development"
-      select_target "core:plugin-development"
       return
       ;;
     wework/src/components/plugins/PluginManagementWorkspace*)
-      select_target "core:plugin-development"
       select_target "core:plugin-development"
       select_target "core:project-ai-settings"
       select_target "plugins:plugin-lifecycle"
@@ -432,7 +430,6 @@ classify_wework_path() {
       select_target "core:project-assignment-notification"
       select_target "core:core-task-flow"
       select_target "core:human-interactions"
-      select_target "core:human-interactions"
       select_target "core:human-interactions-hidden"
       select_target "core:human-interactions-issue"
       if [[ "$path" == wework/src/features/notifications/RuntimeInteractions* || \
@@ -471,7 +468,6 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/scenarios/project-automation.scenario.mjs)
-      select_target "core:project-automation"
       select_target "core:project-automation"
       select_target "cloud:all"
       return
@@ -525,11 +521,6 @@ classify_wework_path() {
     wework/e2e/desktop/scenarios/collaboration-worktree-policy.scenario.mjs)
       select_target "core:collaboration-worktree-policy"
       return
-      ;;
-    wework/e2e/desktop/scenarios/collaboration-first-use.scenario.mjs)
-      select_target "core:collaboration-first-use"
-      return
-      ;;
-  esac
+      ;;  esac
   classify_workbench_path "$path"
 }

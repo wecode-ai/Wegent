@@ -412,7 +412,6 @@ classify_path() {
       packages/collaboration/src/issue-detail/IssueDelivery* | \
       packages/collaboration/src/issue-detail/deliveryMessages*)
       select_target "core:collaboration-delivery-editing"
-      select_target "core:collaboration-delivery-editing"
       ;;
     wework/e2e/desktop/scenarios/collaboration-template-agents.scenario.mjs | \
     wework/e2e/desktop/scenarios/collaboration-template-app-device-routing.scenario.mjs | \
@@ -427,7 +426,7 @@ classify_path() {
       select_target "core:collaboration-templates"
       select_target "core:collaboration-template-app-device-routing"
       if [[ "$path" == packages/collaboration/src/templates/* ]]; then
-        select_target "core:collaboration-first-use"
+        select_target "core:collaboration-personal-issues"
       fi
       ;;
     packages/collaboration/src/platform/WorkspaceResourceConfiguration* | \
@@ -439,7 +438,7 @@ classify_path() {
       select_target "core:remote-device-onboarding"
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-issue-archive"
-      select_target "core:collaboration-first-use"
+      select_target "core:collaboration-personal-issues"
       select_collaboration_dispatch_checkpoints
       if [[ "$path" == packages/collaboration/src/project-agent-config/* || \
         "$path" == packages/collaboration/src/agent-form/runnerRouting* ]]; then
@@ -448,7 +447,6 @@ classify_path() {
       fi
       select_target "cloud:cloud-device-lifecycle"
       if [[ "$path" == packages/collaboration/src/dto-mappers/workspaceDtoMappers* ]]; then
-        select_target "core:collaboration-delivery-editing"
         select_target "core:collaboration-delivery-editing"
       fi
       ;;
@@ -467,9 +465,8 @@ classify_path() {
       fi
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-issue-archive"
-      select_target "core:collaboration-first-use"
+      select_target "core:collaboration-personal-issues"
       select_collaboration_dispatch_checkpoints
-      select_target "core:collaboration-issue-assignment-activity"
       select_target "core:collaboration-issue-assignment-activity"
       select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-comment-notification"
@@ -479,7 +476,6 @@ classify_path() {
       if [[ "$path" == packages/collaboration/src/issue-detail/IssueExecutionLists* ||
         "$path" == packages/collaboration/src/issue-detail/createSharedIssueDetailPort* ||
         "$path" == packages/collaboration/src/SharedIssueDetailEditor* ]]; then
-        select_target "core:collaboration-delivery-editing"
         select_target "core:collaboration-delivery-editing"
       fi
       ;;

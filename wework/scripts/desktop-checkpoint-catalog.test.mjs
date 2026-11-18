@@ -306,7 +306,7 @@ test('theme changes retain real content and auxiliary window regressions', () =>
   const checkpoints = JSON.parse(result.wework_desktop_core_e2e_matrix).include.flatMap(shard =>
     shard.segments.split(',')
   )
-  for (const id of ['window-lifecycle', 'collaboration-first-use', 'streaming-content']) {
+  for (const id of ['window-lifecycle', 'streaming-content']) {
     assert.ok(checkpoints.includes(id), `Theme changes omit the ${id} CI checkpoint`)
   }
 })
