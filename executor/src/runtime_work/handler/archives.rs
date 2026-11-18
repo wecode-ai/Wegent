@@ -406,7 +406,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_action_failure(&link, error.message));
         }
         let mut params = Map::new();
-        params.insert("threadId".to_owned(), Value::String(thread_id));
+        params.insert("threadId".to_owned(), Value::String(thread_id.clone()));
         if let Some(objective) = payload.get("objective").cloned() {
             params.insert("objective".to_owned(), objective);
         }
@@ -444,7 +444,12 @@ impl RuntimeWorkRpcHandler {
                     // A successful activation must survive shutdown even when
                     // no local send still owns the native continuation.
                     self.persist_current_turn_state().await?;
-                    self.resume_active_goal(&link.local_task_id).await?
+                    // A loaded Goal already owns native inference, even before its first turn notification.
+                    if self.codex_app_server.goal_requires_resume(&thread_id).await {
+                        self.resume_active_goal(&link.local_task_id).await?
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 };
