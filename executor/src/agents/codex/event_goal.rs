@@ -113,11 +113,8 @@ impl EventGoalAdmission {
             return Err("Event work cannot change its original native thread".into());
         }
         self.check(rpc).await?;
-        let mut item_id = format!(
-            "wework_event_{:x}",
-            Sha256::digest(self.operation.as_bytes())
-        );
-        item_id.truncate(45);
+        let digest = format!("{:x}", Sha256::digest(self.operation.as_bytes()));
+        let item_id = format!("msg_wework_event_{}", &digest[..32]);
         let item = json!({"type":"message","id":item_id,"role":"user","content":[{"type":"input_text","text":crate::runtime_work::prompt_text(&self.input)}]});
         let history = rpc
             .request(
