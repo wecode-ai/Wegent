@@ -1,6 +1,16 @@
 //! A blocked device row must not monopolize the account protocol row.
 use super::*;
 
+const BLOCK_DEVICE_ROW: &str = "UPDATE plugin_device_installations SET state=state WHERE user_id=81001 AND installed_kind_id=? AND device_id=?";
+
+struct ReleaseBlocker<'a>(&'a Notify);
+
+impl Drop for ReleaseBlocker<'_> {
+    fn drop(&mut self) {
+        self.0.notify_one();
+    }
+}
+
 pub(super) async fn verify(
     context: &Context<'_>,
     state: &crate::state::AppState,
@@ -18,8 +28,33 @@ pub(super) async fn verify(
         id: peer_row.id,
         device: context.device.clone(),
     };
+    let failure = tokio::time::timeout(Duration::from_secs(10), verify_receipt(
+        context, &peer, &writer_state, &blocker_pool, false,
+        "UPDATE missing_plugin_receipt_rows SET state=state WHERE installed_kind_id=? AND device_id=?",
+    )).await.expect("A failed blocker left the receipt waiting indefinitely").unwrap_err();
+    assert!(
+        failure.to_string().contains("missing_plugin_receipt_rows"),
+        "The fixture hid its blocker database error: {failure}"
+    );
+    write_coordination::PluginWriteLease::acquire_installed(
+        context.mysql,
+        state.redis.as_ref(),
+        81001,
+        Some(&[peer.id]),
+    )
+    .await?
+    .release()
+    .await;
     for registration in [false, true] {
-        verify_receipt(context, &peer, &writer_state, &blocker_pool, registration).await?;
+        verify_receipt(
+            context,
+            &peer,
+            &writer_state,
+            &blocker_pool,
+            registration,
+            BLOCK_DEVICE_ROW,
+        )
+        .await?;
     }
     context
         .mysql
@@ -43,6 +78,7 @@ async fn verify_receipt(
     state: &crate::state::AppState,
     blocker: &brz_mysql::MysqlService,
     registration: bool,
+    blocker_statement: &str,
 ) -> anyhow::Result<()> {
     context
         .set_intent(if registration { 84 } else { 83 }, true)
@@ -79,16 +115,18 @@ async fn verify_receipt(
     )
     .await?;
     let revision = context.write_revision().await?;
-    let locked = Notify::new();
+    let (locked, observed) = tokio::sync::oneshot::channel();
     let release = Notify::new();
     let hold = blocker.with_transaction(async |tx| {
-        tx.execute("UPDATE plugin_device_installations SET state=state WHERE user_id=81001 AND installed_kind_id=? AND device_id=?", (context.id, context.device.as_str())).await?;
-        locked.notify_one();
+        tx.execute(blocker_statement, (context.id, context.device.as_str()))
+            .await?;
+        let _ = locked.send(());
         release.notified().await;
         Ok(())
     });
     let write = async {
-        locked.notified().await;
+        let _release = ReleaseBlocker(&release);
+        observed.await?;
         let deadline = Instant::now() + Duration::from_secs(5);
         let outcome = if registration {
             registration_sync::record_registration_sync_result_until(
@@ -112,21 +150,20 @@ async fn verify_receipt(
         // Inspect through an independent connection before releasing A's row.
         let peer_state = peer.state().await?;
         let unchanged_revision = context.write_revision().await?;
-        release.notify_one();
-        assert_eq!(
+        anyhow::ensure!(
             outcome
                 .as_ref()
                 .err()
-                .and_then(write_coordination::plugin_write_error_code),
-            Some("plugin_write_busy")
+                .and_then(write_coordination::plugin_write_error_code)
+                == Some("plugin_write_busy"),
+            "Unexpected blocked receipt outcome: {outcome:?}"
         );
-        assert_eq!(
-            peer_state.as_deref(),
-            Some("installed"),
-            "A's row lock starved B: registration={registration}"
+        anyhow::ensure!(
+            peer_state.as_deref() == Some("installed"),
+            "A's row lock starved B: registration={registration}, state={peer_state:?}"
         );
-        assert_eq!(
-            unchanged_revision, revision,
+        anyhow::ensure!(
+            unchanged_revision == revision,
             "Blocked A committed its revision"
         );
         Ok::<_, anyhow::Error>(())
@@ -149,7 +186,7 @@ async fn verify_receipt(
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
         peer_lease.release().await;
-        if seen.is_err() {
+        if !matches!(&seen, Ok(Ok(()))) {
             release.notify_one();
         }
         seen??;
