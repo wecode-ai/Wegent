@@ -1,4 +1,4 @@
-"""Verify delivered image upgrades with the real Darwin iSH and executor, offline."""
+"""Verify image upgrades and executor health with the real Darwin iSH, offline."""
 
 import argparse
 import platform
@@ -17,6 +17,12 @@ def main() -> None:
     parser.add_argument("--native-source", type=Path, required=True)
     parser.add_argument("--native-build", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--vendor", type=Path, default=MODULE / "vendor")
+    parser.add_argument(
+        "--structured-stamp",
+        action="store_true",
+        help="Install the previous image using its manifest instead of a legacy release stamp",
+    )
     args = parser.parse_args()
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("The upgrade integration requires an Apple ARM64 host")
@@ -26,8 +32,8 @@ def main() -> None:
         MODULE / "ios/WWRuntime.c",
         MODULE / "ios/RuntimeStorage.c",
         MODULE / "ios/RuntimeMemory.c",
-        MODULE / "vendor/importer/fakefs.c",
-        MODULE / "vendor/importer/fchdir.c",
+        args.vendor / "importer/fakefs.c",
+        args.vendor / "importer/fchdir.c",
     ]:
         target = args.output / (source.stem + ".o")
         subprocess.run(
@@ -43,7 +49,7 @@ def main() -> None:
                 "-fblocks",
                 "-I" + str(args.native_source),
                 "-I" + str(args.native_build),
-                "-I" + str(MODULE / "vendor/include/archive"),
+                "-I" + str(args.vendor / "include/archive"),
                 str(source),
                 "-o",
                 str(target),
@@ -83,6 +89,7 @@ def main() -> None:
                 str(previous.resolve()),
                 str(args.resources.resolve()),
                 str((args.output / f"profile-{index}").resolve()),
+                *(["--structured-stamp"] if args.structured_stamp else []),
             ],
             check=True,
             timeout=180,

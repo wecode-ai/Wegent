@@ -36,6 +36,7 @@ jobs:
       knowledge_engine: ${{ steps.classify.outputs.knowledge_engine }}
       frontend: ${{ steps.classify.outputs.frontend }}
       wework: ${{ steps.classify.outputs.wework }}
+      wework_mobile_native: ${{ steps.classify.outputs.wework_mobile_native }}
       wegent_cli: ${{ steps.classify.outputs.wegent_cli }}
 
     steps:
@@ -1071,6 +1072,38 @@ jobs:
         run: |
           pytest tests/test_integration.py --integration -v
 
+  test-wework-mobile-native:
+    name: Wework Mobile Native Upgrade
+    needs: changes
+    if: needs.changes.outputs.wework_mobile_native == 'true'
+    runs-on: macos-15
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned ARM64 Zig
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/zig-aarch64-macos-0.15.2.tar.xz"
+          curl --fail --location --silent --show-error --connect-timeout 20 --max-time 300 \
+            https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz -o "$archive"
+          printf '%s  %s\n' '3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b' "$archive" |
+            shasum -a 256 -c -
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-aarch64-macos-0.15.2" >> "$GITHUB_PATH"
+
+      - name: Verify native image migration and restart
+        run: bash wework-mobile/scripts/test-local-runtime-upgrade-ci.sh "$RUNNER_TEMP/mobile-native-upgrade"
+
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
@@ -1087,6 +1120,7 @@ jobs:
         test-knowledge-engine,
         test-frontend,
         test-wework,
+        test-wework-mobile-native,
         test-wegent-cli,
         test-wegent-cli-integration,
       ]
@@ -1124,5 +1158,6 @@ jobs:
           assert_result "${{ needs.changes.outputs.knowledge_engine }}" "${{ needs.test-knowledge-engine.result }}" "Knowledge Engine tests"
           assert_result "${{ needs.changes.outputs.frontend }}" "${{ needs.test-frontend.result }}" "Frontend tests"
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
+          assert_result "${{ needs.changes.outputs.wework_mobile_native }}" "${{ needs.test-wework-mobile-native.result }}" "Wework Mobile native upgrade"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli-integration.result }}" "wegent CLI integration tests"

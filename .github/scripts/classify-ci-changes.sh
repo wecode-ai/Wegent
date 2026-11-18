@@ -14,6 +14,7 @@ declare -A changed=(
   [wegent_cli]=false
   [platform_e2e]=false
   [wework_e2e]=false
+  [wework_mobile_native]=false
 )
 
 mark_all() {
@@ -27,6 +28,16 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    wework-mobile/modules/wework-local-runtime/ios/* | \
+      wework-mobile/modules/wework-local-runtime/native/* | \
+      wework-mobile/modules/wework-local-runtime/patches/* | \
+      wework-mobile/modules/wework-local-runtime/scripts/* | \
+      wework-mobile/modules/wework-local-runtime/tests/* | \
+      wework-mobile/scripts/build-local-runtime-ios.py | \
+      wework-mobile/scripts/test-local-runtime-upgrade*)
+      changed[wework_mobile_native]=true
+      return
+      ;;
     .github/scripts/verify-native-event-goal.sh)
       changed[executor]=true
       return
@@ -282,6 +293,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in backend backend_rs executor executor_manager shared knowledge_engine frontend wework wegent_cli platform_e2e wework_e2e; do
+for key in backend backend_rs executor executor_manager shared knowledge_engine frontend wework wegent_cli platform_e2e wework_e2e wework_mobile_native; do
   printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
 done

@@ -153,7 +153,9 @@ export class RuntimeTaskLifecycleProjection {
   }
 
   transcriptReceived(observation: RuntimeTranscriptObservation, running: boolean): boolean {
-    if (this.executionByTask.has(observation.key)) return false
+    // A fresh idle read can repair a missed terminal event. Keep the native
+    // revision as the event watermark and reject unversioned running hints.
+    if (running && this.executionByTask.has(observation.key)) return false
     if ((this.revisionByTask.get(observation.key) ?? 0) !== observation.lifecycleRevision) {
       return false
     }

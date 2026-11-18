@@ -5,17 +5,25 @@ struct RuntimeImageUpgradeIntegration {
   private static let files = FileManager.default
 
   static func main() throws {
-    precondition(CommandLine.arguments.count == 4)
+    let structuredStamp = CommandLine.arguments.dropFirst(4).elementsEqual(["--structured-stamp"])
+    precondition(CommandLine.arguments.count == 4 || structuredStamp)
     let previous = URL(fileURLWithPath: CommandLine.arguments[1])
     let resources = URL(fileURLWithPath: CommandLine.arguments[2])
     let root = URL(fileURLWithPath: CommandLine.arguments[3])
     try files.createDirectory(at: root, withIntermediateDirectories: true)
     let oldImage = try JSONDecoder().decode(RuntimeImage.self,
       from: Data(contentsOf: previous.appendingPathComponent("manifest.json")))
+    let newImage = try JSONDecoder().decode(RuntimeImage.self,
+      from: Data(contentsOf: resources.appendingPathComponent("manifest.json")))
+    precondition(oldImage.executorSha256 != newImage.executorSha256, "The fixture must replace the executable")
     let guest = root.appendingPathComponent("guest")
-    try extract(previous.appendingPathComponent("runtime-rootfs.tar.gz"), guest)
     let stamp = root.appendingPathComponent("runtime-version")
-    try Data(oldImage.rootfsSha256.utf8).write(to: stamp)
+    if structuredStamp {
+      try prepare(root: root, resources: previous)
+    } else {
+      try extract(previous.appendingPathComponent("runtime-rootfs.tar.gz"), guest)
+      try Data(oldImage.rootfsSha256.utf8).write(to: stamp)
+    }
     try assertHealthy(guest: guest)
     let synthetic = root.appendingPathComponent("synthetic-user-file")
     try Data("user-project-and-auth-preservation".utf8).write(to: synthetic)
@@ -28,6 +36,10 @@ struct RuntimeImageUpgradeIntegration {
     let snapshot = try userSnapshot(guest)
     let identity = try files.attributesOfItem(atPath: guest.path)[.systemFileNumber] as! NSNumber
     try prepare(root: root, resources: resources)
+    let installed = try JSONDecoder().decode(RuntimeImage.self, from: Data(contentsOf: stamp))
+    precondition(installed == newImage, "The upgraded image record must be committed")
+    let installedExecutorHash = try RuntimeImageInstaller.digest(guest.appendingPathComponent("data/opt/wegent-executor"))
+    precondition(installedExecutorHash == newImage.executorSha256, "The replacement must match the new executable")
     let upgraded = try userSnapshot(guest)
     precondition(snapshot == upgraded, "Existing executor state and user files must survive byte for byte")
     let newIdentity = try files.attributesOfItem(atPath: guest.path)[.systemFileNumber] as! NSNumber
@@ -35,7 +47,8 @@ struct RuntimeImageUpgradeIntegration {
     try assertHealthy(guest: guest)
     try prepare(root: root, resources: resources)
     try assertHealthy(guest: guest)
-    print("PASS delivered image upgrade: legacy stamp, actual fakefs, unchanged user data, executor.ready, health, and restart")
+    let stampKind = structuredStamp ? "structured stamp" : "legacy stamp"
+    print("PASS delivered image upgrade: \(stampKind), actual fakefs, unchanged user data, executor.ready, health, and restart")
   }
 
   private static func extract(_ archive: URL, _ guest: URL) throws {
@@ -79,7 +92,12 @@ struct RuntimeImageUpgradeIntegration {
     let error = FileHandle(fileDescriptor: ww_runtime_error(executor), closeOnDealloc: true)
     let errorDrain = DispatchGroup()
     errorDrain.enter()
-    DispatchQueue.global().async { _ = try? error.readToEnd(); errorDrain.leave() }
+    DispatchQueue.global().async {
+      defer { errorDrain.leave() }
+      if let diagnostic = try? error.readToEnd() {
+        FileHandle.standardError.write(diagnostic)
+      }
+    }
     var ready = false
     var healthy = false
     try RuntimePipeReader.readLines(from: output.fileDescriptor) { line in
@@ -99,6 +117,6 @@ struct RuntimeImageUpgradeIntegration {
     ww_runtime_release(executor)
     try input.close(); try output.close()
     errorDrain.wait(); try error.close()
-    precondition(ready && healthy)
+    precondition(ready && healthy, "Executor did not reach ready and health (guest exit status: \(status))")
   }
 }

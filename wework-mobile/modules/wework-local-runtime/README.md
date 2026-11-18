@@ -105,6 +105,10 @@ flowchart TD
 静态库，验证实际 fakefs 迁移、字节级用户数据保留、executor.ready、health 和重启。
 该集成验证使用临时合成数据，不访问模型或真实凭据，也不代替 TestFlight 真机验收。
 
+GitHub CI 的 `Wework Mobile Native Upgrade` 使用两个固定工具链构建的静态 ARM64
+协议探针，执行同一个 Swift/C 测试。它检查实际 iSH/fakefs 的原地替换、版本记录、用户
+数据保留和重启。验证旧版本发布包时，仍给 Python 测试脚本传入对应的包内资源。
+
 ## 构建
 
 先通过 `scripts/prepare-ish-source.py` 准备锁定源代码。所有大文件和构建目录放在仓库外。
@@ -273,3 +277,8 @@ images, changed base systems, modified executors and symlink conflicts fail visi
 deleting data. This does not implement arbitrary Linux base-image upgrades. The native unit
 and real fakefs integration runners above cover the supported upgrade and recovery paths;
 TestFlight device acceptance remains separate.
+
+The `Wework Mobile Native Upgrade` CI job runs the same Swift/C integration using two
+static ARM64 protocol probes built with a pinned toolchain. It checks in-place replacement,
+the image record, user data preservation, and restart through real iSH/fakefs. To verify
+specific delivered versions, pass their packaged resources to the Python integration runner.

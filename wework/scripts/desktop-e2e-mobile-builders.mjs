@@ -8,6 +8,10 @@ export { runnerModelCatalog } from '../../packages/collaboration/src/agent-form/
 export { adaptRuntimeWorkListResponse } from '../../wework-mobile/src/domain/runtimeWorkAdapter.ts'
 export { flattenConversations } from '../../wework-mobile/src/domain/work.ts'
 export { MobileConversation } from '../../wework-mobile/src/domain/mobileConversation.ts'
+export {
+  RuntimeTaskLifecycleProjection,
+  runtimeTaskKey,
+} from '../../wework-mobile/src/domain/runtimeTaskLifecycle.ts'
 export { projectMobileRuntimeTranscript } from '../../wework-mobile/src/domain/runtimeTranscript.ts'
 export {
   reasoningEfforts,
