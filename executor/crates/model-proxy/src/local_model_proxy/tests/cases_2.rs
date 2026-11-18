@@ -935,7 +935,8 @@ fn prediction_thread_keeps_inherited_route_and_parent_scope() {
         unregister(&prepared);
     }
     assert_eq!(
-        bind_prediction_thread(None, "prediction-direct-parent", "prediction-direct-child").unwrap(),
+        bind_prediction_thread(None, "prediction-direct-parent", "prediction-direct-child")
+            .unwrap(),
         None
     );
 }

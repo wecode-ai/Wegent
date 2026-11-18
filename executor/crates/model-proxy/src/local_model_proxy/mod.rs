@@ -715,7 +715,10 @@ pub fn bind_prediction_thread(
             ("route_scope", route_scope),
             ("source_thread_id", source_thread_id.to_owned()),
             ("prediction_thread_id", thread_id.to_owned()),
-            ("prepared_route", (Some(token.as_str()) == prepared_token).to_string()),
+            (
+                "prepared_route",
+                (Some(token.as_str()) == prepared_token).to_string(),
+            ),
             ("source_registered", source_registered.to_string()),
             ("bound_threads", route.thread_ids.len().to_string()),
         ],
