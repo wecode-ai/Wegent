@@ -29,11 +29,9 @@ impl ShutdownState {
     }
 
     pub(crate) async fn is_health_shutting_down(&self) -> bool {
-        if self.is_shutting_down() {
-            return true;
-        }
+        // The hybrid endpoint preserves the shutdown state reported by Python.
         let Some(marker) = &self.python_marker else {
-            return false;
+            return self.is_shutting_down();
         };
         tokio::fs::try_exists(marker).await.unwrap_or_else(|error| {
             tracing::warn!(%error, "failed to read hybrid Backend shutdown state");
@@ -61,6 +59,25 @@ mod tests {
         assert!(state.initiate());
         assert!(state.is_shutting_down());
         assert!(!state.initiate());
+        assert!(state.is_shutting_down());
+    }
+
+    #[tokio::test]
+    async fn hybrid_health_reports_python_reset_during_rust_drain() {
+        let marker = std::env::temp_dir().join(format!(
+            "wegent-health-shutdown-test-{}",
+            std::process::id(),
+        ));
+        let state = ShutdownState {
+            python_marker: Some(marker.clone()),
+            ..ShutdownState::default()
+        };
+        assert!(state.initiate());
+        std::fs::File::create_new(&marker).unwrap();
+        let before_reset = state.is_health_shutting_down().await;
+        std::fs::remove_file(&marker).unwrap();
+        assert!(before_reset);
+        assert!(!state.is_health_shutting_down().await);
         assert!(state.is_shutting_down());
     }
 }

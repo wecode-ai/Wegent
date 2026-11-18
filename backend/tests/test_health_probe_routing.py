@@ -44,8 +44,7 @@ def test_probe_routes_match_early_and_preserve_responses(
         assert response.headers["access-control-allow-origin"] == "*"
 
     business_health = test_client.get(f"{settings.API_PREFIX}/health")
-    assert business_health.status_code == 200
-    assert "shutting_down" in business_health.json()
+    assert business_health.status_code == 404
 
 
 def test_empty_api_prefix_keeps_database_health_route_precedence(

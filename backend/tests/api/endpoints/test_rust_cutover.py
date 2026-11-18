@@ -14,6 +14,17 @@ from fastapi.routing import APIRoute
 from app.api.api import api_router
 
 ROUTES_FILE = Path(__file__).resolve().parents[4] / "backend-rs/config/routes.toml"
+HTTP_METHODS = (
+    "CONNECT",
+    "DELETE",
+    "GET",
+    "HEAD",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
+    "TRACE",
+)
 
 
 def _rust_owned_routes(path: Path = ROUTES_FILE) -> list[tuple[str, str]]:
@@ -29,7 +40,7 @@ def _rust_owned_routes(path: Path = ROUTES_FILE) -> list[tuple[str, str]]:
         (method, rule["path"])
         for rule in config["routes"]
         if not rule.get("admission")
-        for method in rule["methods"]
+        for method in rule["methods"] or HTTP_METHODS
         if rule["path"].startswith("/api")
     ]
 

@@ -63,7 +63,7 @@ def test_image_runtime_body_is_excluded_with_capture_enabled(monkeypatch) -> Non
     log_body.assert_not_called()
     assert not _should_capture_http_body(f"{IMAGE_EXECUTION_PATH}/")
 
-    client.post("/api/health", json={"probe": "visible"})
+    client.post("/health", json={"probe": "visible"})
     log_body.assert_called_once()
     assert log_body.call_args.args[0] == "http.request.body"
     assert "visible" in log_body.call_args.args[1]
@@ -90,19 +90,19 @@ def test_access_logs_include_forwarded_headers(test_client, caplog):
     }
 
     with caplog.at_level(logging.INFO, logger="app.main"):
-        response = test_client.get("/api/health", headers=headers)
+        response = test_client.get("/health", headers=headers)
 
     assert response.status_code == 200
 
     request_logs = [
         record.message
         for record in caplog.records
-        if record.message.startswith("request : GET /api/health")
+        if record.message.startswith("request : GET /health")
     ]
     response_logs = [
         record.message
         for record in caplog.records
-        if record.message.startswith("response: GET /api/health")
+        if record.message.startswith("response: GET /health")
     ]
 
     assert request_logs
@@ -118,7 +118,7 @@ def test_access_logs_include_forwarded_headers(test_client, caplog):
 
 def test_cors_exposes_request_id_header(test_client):
     response = test_client.get(
-        "/api/health",
+        "/health",
         headers={"Origin": "https://wework.example.com"},
     )
 
@@ -130,13 +130,13 @@ def test_cors_exposes_request_id_header(test_client):
 
 def test_access_logs_redact_sensitive_query_parameters(test_client, caplog):
     with caplog.at_level(logging.INFO, logger="app.main"):
-        response = test_client.get("/api/health?token=opencut-secret&probe=visible")
+        response = test_client.get("/health?token=opencut-secret&probe=visible")
 
     assert response.status_code == 200
     access_logs = [
         record.message
         for record in caplog.records
-        if "/api/health" in record.message
+        if "/health" in record.message
         and record.message.startswith(("request :", "response:"))
     ]
     assert len(access_logs) == 2

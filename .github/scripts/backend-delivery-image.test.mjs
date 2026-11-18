@@ -212,13 +212,13 @@ test("shutdown must exit with the expected signal, without OOM or a still-runnin
 
 test("probes fail if route selection no longer covers both real implementations", () => {
   const identity = { methods: ["GET"], path: "/api/users/me" };
-  const health = { methods: ["GET"], path: "/api/health" };
+  const health = { methods: [], path: "/api/health" };
   const rust = [identity, health];
   assert.doesNotThrow(() => assertRouteOwnership(rust));
   assert.throws(() => assertRouteOwnership([health]));
   assert.throws(() => assertRouteOwnership([identity]));
   assert.throws(() =>
-    assertRouteOwnership([...rust, { methods: ["POST"], path: "/api/health" }]),
+    assertRouteOwnership([identity, { methods: ["GET"], path: "/api/health" }]),
   );
   assert.throws(() =>
     assertRouteOwnership([...rust, { methods: ["GET"], path: "/api/*path" }]),

@@ -72,18 +72,27 @@ class TestShutdownManager:
     async def test_hybrid_shutdown_marker_tracks_python_lifecycle(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        marker = tmp_path / "shutting-down"
+        marker = tmp_path / "marker" / "shutting-down"
+        marker.parent.mkdir()
         marker.touch()
         monkeypatch.setenv("WEGENT_HYBRID_SHUTDOWN_FILE", str(marker))
         manager = ShutdownManager()
         assert not marker.exists()
+        marker.parent.rmdir()
 
-        with patch("app.core.cache.cache_manager") as mock_cache:
-            mock_cache.set = AsyncMock(return_value=True)
-            await manager.initiate_shutdown()
-            assert marker.is_file()
+        try:
+            with patch("app.core.cache.cache_manager") as mock_cache:
+                mock_cache.set = AsyncMock(return_value=True)
+                # A missing parent makes the first marker write fail.
+                assert await manager.initiate_shutdown() is True
+                assert not marker.exists()
 
-        manager.reset()
+                marker.parent.mkdir()
+                assert await manager.initiate_shutdown() is False
+                assert marker.is_file()
+                mock_cache.set.assert_awaited_once()
+        finally:
+            manager.reset()
         assert not marker.exists()
 
     @pytest.mark.asyncio

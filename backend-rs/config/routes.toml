@@ -788,7 +788,8 @@ path = "/api/git/repositories/search" # app/api/endpoints/repository.py:122
 #methods = ["PUT"]
 #path = "/api/groups/*group_name/members/batch/roles" # app/api/endpoints/groups.py:790
 [[routes]]
-methods = ["GET"]
+# The Rust router handles GET and returns the method error for other requests.
+methods = []
 path = "/api/health"
 #[[routes]]
 #methods = ["GET"]

@@ -319,12 +319,15 @@ mod tests {
     }
 
     #[test]
-    fn default_gateway_selects_get_health() {
+    fn default_gateway_routes_health_method_errors_to_rust() {
         let routes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/routes.toml");
         let config = crate::hybrid::load_routes_config(&routes).unwrap();
         let table = crate::RouteTable::compile(config).unwrap();
         assert!(table.matches(&http::Method::GET, "/api/health"));
-        assert!(!table.matches(&http::Method::POST, "/api/health"));
+        assert!(table.matches(&http::Method::POST, "/api/health"));
+        let custom = http::Method::from_bytes(b"CUSTOM").unwrap();
+        assert!(table.matches(&custom, "/api/health"));
+        assert!(!table.matches(&custom, "/api/health/detail"));
     }
 
     /// The recorded response body of `api-health/5f47f84b` (recording

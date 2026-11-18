@@ -66,6 +66,8 @@ Rust and Python processes. If you launch those processes separately with Rust
 handling `GET /api/health`, set `WEGENT_HYBRID_SHUTDOWN_FILE` to the same
 absolute path in both environments. Use a path unique to that Backend instance
 with a parent directory writable by Python and accessible to Rust.
+Hybrid health reports Python's shutdown state, including when Python resets it.
+A standalone Rust process reports its own shutdown state.
 
 Set `WEGENT_RS_UNIQUE_APP_DEVICE_NAMES=1` if a legacy MySQL schema enforces
 uniqueness on `kinds (user_id, kind, name, namespace)`. Rust App device

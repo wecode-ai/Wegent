@@ -93,7 +93,7 @@ class ShutdownManager:
         """Get a copy of active stream IDs."""
         return self._active_streams.copy()
 
-    async def initiate_shutdown(self) -> None:
+    async def initiate_shutdown(self) -> bool:
         """
         Initiate graceful shutdown.
 
@@ -101,18 +101,20 @@ class ShutdownManager:
         1. Sets the shutdown flag
         2. Records shutdown start time
         3. Optionally notifies other workers via Redis
+
+        Returns whether this call started the shutdown.
         """
         from app.core.local_shutdown import mark_local_shutdown
 
         mark_local_shutdown()
         async with self._lock:
+            self._set_hybrid_marker(True)
             if self._shutting_down:
                 logger.warning("Shutdown already initiated")
-                return
+                return False
 
             self._shutting_down = True
             self._shutdown_start_time = time.time()
-            self._set_hybrid_marker(True)
             logger.info(
                 "Graceful shutdown initiated. Active streams: %d",
                 len(self._active_streams),
@@ -120,6 +122,7 @@ class ShutdownManager:
 
             # Try to notify other workers via Redis
             await self._notify_shutdown_via_redis()
+            return True
 
     async def _notify_shutdown_via_redis(self) -> None:
         """Notify other workers about shutdown via Redis."""

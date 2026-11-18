@@ -116,7 +116,7 @@ export function assertRouteOwnership(routes) {
   const matches = (method, path) =>
     routes.some(
       (route) =>
-        route.methods.includes(method) &&
+        (route.methods.length === 0 || route.methods.includes(method)) &&
         new RegExp(
           "^" +
             route.path
@@ -143,8 +143,8 @@ export function assertRouteOwnership(routes) {
   );
   assert.equal(
     matches("POST", "/api/health"),
-    false,
-    "Health route selection must be limited to GET",
+    true,
+    "Rust must handle health method errors",
   );
   assert.equal(
     matches("GET", "/api/knowledge-bases/all-grouped"),
@@ -257,13 +257,17 @@ async function ready(name, base, secret) {
     if (state.Health?.Status !== "healthy") return false;
     try {
       assertHealthy(await request(base, "/api/health", token(secret)));
+      const body = await request(base, "/api/ready", token(secret));
+      assert.equal(
+        body.status,
+        "ready",
+        "Database must contain initialized users",
+      );
       return true;
     } catch {
       return false;
     }
   });
-  const body = await request(base, "/api/ready", token(secret));
-  assert.equal(body.status, "ready", "Database must contain initialized users");
 }
 
 async function verifyRoutes(name, base, secret) {
@@ -274,11 +278,18 @@ async function verifyRoutes(name, base, secret) {
       name,
       `
 import json, urllib.request
-print(urllib.request.urlopen('http://127.0.0.1:8004/api/health', timeout=5).read().decode())
+print(urllib.request.urlopen('http://127.0.0.1:8004/health', timeout=5).read().decode())
 `,
     ),
   );
-  assertHealthy(direct);
+  assert.deepEqual(direct, { status: "healthy" });
+  const wrongMethod = await fetch(base + "/api/health", {
+    method: "POST",
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(wrongMethod.status, 405);
+  assert.equal(wrongMethod.headers.get("allow"), "GET");
+  assert.deepEqual(await wrongMethod.json(), { detail: "Method Not Allowed" });
   const user = await request(base, "/api/users/me", token(secret));
   assert.equal(
     user.user_name,

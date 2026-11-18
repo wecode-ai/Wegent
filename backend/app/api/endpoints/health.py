@@ -41,10 +41,9 @@ async def health() -> dict[str, str]:
     return {"status": "healthy"}
 
 
-@router.get("/health")
 def health_check(db: Session = Depends(get_db)):
     """
-    This endpoint checks if the application is alive and responding.
+    Report database health for the Python root probe when the API prefix is empty.
     It should return 200 even during graceful shutdown (app is still alive,
     just not accepting new traffic).
     Returns:
@@ -119,15 +118,13 @@ async def initiate_shutdown():
     Returns:
         dict: Shutdown initiation status
     """
-    if shutdown_manager.is_shutting_down:
+    if not await shutdown_manager.initiate_shutdown():
         return {
             "status": "already_shutting_down",
             "message": "Shutdown was already initiated",
             "active_streams": shutdown_manager.get_active_stream_count(),
             "shutdown_duration": shutdown_manager.shutdown_duration,
         }
-
-    await shutdown_manager.initiate_shutdown()
 
     return {
         "status": "shutdown_initiated",
@@ -182,8 +179,7 @@ async def wait_for_shutdown():
     from app.core.config import settings
 
     # Initiate shutdown if not already
-    if not shutdown_manager.is_shutting_down:
-        await shutdown_manager.initiate_shutdown()
+    await shutdown_manager.initiate_shutdown()
 
     active_streams = shutdown_manager.get_active_stream_count()
 

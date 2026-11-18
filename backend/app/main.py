@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
-from app.api.endpoints.health import probe_router
+from app.api.endpoints.health import health_check, probe_router
 from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
 from app.core.cache import cache_manager
 from app.core.config import settings
@@ -968,6 +968,7 @@ def create_app():
     app.include_router(oauth_metadata_router)
     app.include_router(api_router, prefix=settings.API_PREFIX)
     if not settings.API_PREFIX:
+        app.add_api_route("/health", health_check, methods=["GET"], tags=["health"])
         app.include_router(probe_router)
 
     # Mount MCP Server endpoints

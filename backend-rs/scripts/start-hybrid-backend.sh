@@ -243,7 +243,8 @@ echo "Fallback upstream: http://127.0.0.1:$PYTHON_UPSTREAM_PORT"
 echo "Route config: $ROUTES_FILE"
 echo "Dotenv file: $RS_ENV_FILE"
 # Keep the shutdown state local to this pair of Backend processes.
-SHUTDOWN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/wegent-hybrid-shutdown.XXXXXXXX")
+SHUTDOWN_TMPDIR=$(cd -- "${TMPDIR:-/tmp}" && pwd -P)
+SHUTDOWN_DIR=$(mktemp -d "$SHUTDOWN_TMPDIR/wegent-hybrid-shutdown.XXXXXXXX")
 export WEGENT_HYBRID_SHUTDOWN_FILE="$SHUTDOWN_DIR/shutting-down"
 (
     # Rust resolves its default config/example.env relative to the current
