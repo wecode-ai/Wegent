@@ -1,3 +1,4 @@
+import type { AssistantInteractionRequest } from '@wegent/collaboration'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { type PrivateHistorySource } from '@/features/collaboration-exp/private/privateConversationHistory'
 import type { ConversationModelControls } from './conversationModelControls'
@@ -30,6 +31,13 @@ export interface TemporaryChatPanelProps {
     message: string,
     options: RuntimeTaskComposerCreateOptions
   ) => Promise<RuntimeTaskAddress | false>
+  assistantSend?: (input: {
+    message: string
+    clientUserMessageId: string
+    attachmentIds?: number[]
+    interruptWhenBusy?: boolean
+    runtimeOptions?: AssistantInteractionRequest['runtimeOptions']
+  }) => Promise<{ sent: boolean; queued?: boolean; error?: string | null }>
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
   runtimeContext?: Pick<
     RuntimeSendRequest,

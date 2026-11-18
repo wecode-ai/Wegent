@@ -6,7 +6,11 @@ import {
 } from './createExperienceIssueSubmission'
 import { ChevronDown, Loader2, ShieldCheck, Target, X } from 'lucide-react'
 import { canAssignCollaborationIssue, IssueDetailSearchableSelect } from '@wegent/collaboration'
-import type { CollaborationIssue, CollaborationProject } from '@wegent/collaboration'
+import type {
+  CollaborationIssue,
+  CollaborationProject,
+  ProjectAssistantRosterEntry,
+} from '@wegent/collaboration'
 import { DEFAULT_WORK_ITEM_PROJECT_ID, isDefaultWorkItemProject } from '@/api/deliveries'
 import { DialogForm } from '@/components/common/DialogForm'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
@@ -65,6 +69,8 @@ function CreateIssueForm({
   const [title, setTitle] = useState('')
   const [summary, setSummary] = useState('')
   const [dueDate, setDueDate] = useState(tomorrowDate)
+  const [riskLevel, setRiskLevel] = useState<'high' | 'low'>('high')
+  const [selectedAssistants, setSelectedAssistants] = useState<string[]>([])
   const [selection, setSelection] = useState('standalone')
   const [assignee, setAssignee] = useState('self')
   const [submission] = useState(createExperienceIssueSubmission)
@@ -81,6 +87,25 @@ function CreateIssueForm({
   const targetStore = standalone ? 'local' : selectedProject?.project_store
   const targetId = standalone ? DEFAULT_WORK_ITEM_PROJECT_ID : selectedProject?.id
   const source = sources.find(candidate => candidate.store === targetStore)
+  const assistantRosterScopeKey = JSON.stringify([source?.store, targetId])
+  const rosterResource = useMemo(
+    () =>
+      createAsyncResource<ProjectAssistantRosterEntry[]>(assistantRosterScopeKey, () =>
+        source!.api.projects.listAssistantRoster!(targetId!)
+      ),
+    [assistantRosterScopeKey, source, targetId]
+  )
+  const rosterQuery = useSyncExternalStore(
+    source?.store === 'backend' && targetId && source.api.projects.listAssistantRoster
+      ? rosterResource.subscribe
+      : subscribeIdleResource,
+    rosterResource.getSnapshot
+  )
+  const assistantRoster = rosterQuery.data ?? []
+  const assistantRosterKey = rosterQuery.data ? assistantRosterScopeKey : ''
+  const assignableAssistantRoster = assistantRoster.filter(entry => entry.enabled)
+  const currentAssistantRosterError =
+    rosterQuery.status === 'error' ? errorText(rosterQuery.error) : null
   const resource = useMemo(
     () =>
       createAsyncResource(JSON.stringify([targetStore, targetId]), async signal => {
@@ -126,6 +151,9 @@ function CreateIssueForm({
     update()
     setAssignee('self')
     submission.clearError()
+    submission.clearIntent()
+    setRiskLevel('high')
+    setSelectedAssistants([])
   }
 
   const submit = () => {
@@ -137,6 +165,10 @@ function CreateIssueForm({
       title,
       summary,
       dueDate,
+      riskLevel,
+      selectedRoster: assistantRoster.filter(
+        entry => entry.enabled && selectedAssistants.includes(entry.id)
+      ),
       assignee,
       standalone,
       viewerId,
@@ -268,7 +300,65 @@ function CreateIssueForm({
                   onChange={event => setSummary(event.target.value)}
                 />
               </label>
+              {assistantRosterKey === assistantRosterScopeKey &&
+              assignableAssistantRoster.length > 0 ? (
+                <label className="experience-create-field">
+                  <span>{t('create.riskLevel')}</span>
+                  {select(
+                    'riskLevel',
+                    riskLevel,
+                    t(`create.risk.${riskLevel}`),
+                    [
+                      { value: 'high', label: t('create.risk.high') },
+                      { value: 'low', label: t('create.risk.low') },
+                    ],
+                    value => {
+                      setRiskLevel(value === 'low' ? 'low' : 'high')
+                      submission.clearIntent()
+                    }
+                  )}
+                </label>
+              ) : null}
             </div>
+            {assistantRosterKey === assistantRosterScopeKey &&
+            assignableAssistantRoster.length > 0 ? (
+              <fieldset
+                className="experience-create-callout"
+                data-testid="collaboration-exp-create-assistant-roster"
+              >
+                <legend>{t('create.assistantRoster')}</legend>
+                {assignableAssistantRoster.map(entry => {
+                  const selected = selectedAssistants.includes(entry.id)
+                  return (
+                    <label key={entry.id}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        disabled={pending}
+                        data-testid={`collaboration-exp-create-assistant-${entry.id}`}
+                        onChange={() => {
+                          submission.clearIntent()
+                          setSelectedAssistants(current => {
+                            if (selected) return current.filter(id => id !== entry.id)
+                            return [
+                              ...current.filter(id => {
+                                const candidate = assistantRoster.find(item => item.id === id)
+                                return candidate?.userId !== entry.userId
+                              }),
+                              entry.id,
+                            ]
+                          })
+                        }}
+                      />
+                      <span>
+                        {entry.userName} · {entry.displayName}
+                      </span>
+                      <small>{t(`assistant.availability.${entry.availability}`)}</small>
+                    </label>
+                  )
+                })}
+              </fieldset>
+            ) : null}
             <div className="experience-create-callout">
               <ShieldCheck aria-hidden="true" />
               <span>{t('create.defaults')}</span>
@@ -283,6 +373,8 @@ function CreateIssueForm({
                   data-testid="collaboration-exp-create-retry"
                   onClick={() => {
                     void resource.reload()
+                    if (source?.store === 'backend' && source.api.projects.listAssistantRoster)
+                      void rosterResource.reload()
                   }}
                 >
                   {t('retry')}
@@ -294,6 +386,18 @@ function CreateIssueForm({
               <p role="alert">{t('create.permissionDenied')}</p>
             ) : null}
             {error ? <p role="alert">{error}</p> : null}
+            {currentAssistantRosterError ? (
+              <p role="alert">
+                {currentAssistantRosterError}{' '}
+                <button
+                  type="button"
+                  data-testid="collaboration-exp-create-assistant-roster-retry"
+                  onClick={() => void rosterResource.reload()}
+                >
+                  {t('retry')}
+                </button>
+              </p>
+            ) : null}
           </div>
           <footer className="experience-create-footer">
             <button

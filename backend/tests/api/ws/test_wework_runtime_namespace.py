@@ -542,21 +542,35 @@ async def test_runtime_event_projects_logical_id_but_publishes_runtime_route(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("delivery", ["event", "terminal"])
+@pytest.mark.parametrize(
+    "message_type,metadata",
+    [("agent_chunk", {}), ("agent_status", {}), ("text", {"kind": "task_ai_subagent"})],
+)
 async def test_device_runtime_event_persists_project_chat_before_browser_relay(
     monkeypatch,
+    message_type,
+    metadata,
+    delivery,
 ):
     namespace = DeviceNamespace()
     calls: list[str] = []
     sio = AsyncMock()
+    message = {
+        "projectId": "project-1",
+        "taskId": "task-1",
+        "type": message_type,
+        "content": "private process",
+        "metadata": {**metadata, "private_prompt": "secret"},
+        "runtimeAddress": {"deviceId": "device-1", "taskId": "private"},
+        "traceRef": "opaque",
+    }
 
     async def project_event(*args, **kwargs):
         calls.append("persist")
         return {
             "mode": "snapshot",
-            "message": {
-                "projectId": "project-1",
-                "taskId": "task-1",
-            },
+            "message": message,
         }
 
     async def emit(*args, **kwargs):
@@ -571,23 +585,37 @@ async def test_device_runtime_event_persists_project_chat_before_browser_relay(
     monkeypatch.setattr(device_namespace, "run_sync_in_executor", project_event)
     monkeypatch.setattr(device_namespace, "get_sio", lambda: sio)
 
-    result = await namespace.on_runtime_event(
-        "device-sid",
-        {
-            "event": "response.completed",
-            "payload": {
-                "taskId": "runtime-task-1",
-                "data": {"value": "done"},
+    if delivery == "event":
+        result = await namespace.on_runtime_event(
+            "device-sid",
+            {
+                "event": "response.completed",
+                "payload": {
+                    "taskId": "runtime-task-1",
+                    "data": {"value": "done"},
+                },
             },
-        },
-    )
+        )
 
-    assert result == {"success": True}
-    assert calls == ["persist", "emit", "emit"]
+        assert result == {"success": True}
+        assert calls == ["persist", "emit", "emit"]
+        assert sio.emit.await_args_list[1].args[0] == "runtime:event"
+    else:
+        result = await namespace.on_runtime_task_updated(
+            "device-sid",
+            {"localTaskId": "runtime-task-1", "status": "done", "content": "done"},
+        )
+        assert result == {"success": True, "notified": 0}
+        assert calls == ["persist", "emit"]
     assert sio.emit.await_args_list[0].args[0] == (
         "wework:project_chat:message:created"
     )
-    assert sio.emit.await_args_list[1].args[0] == "runtime:event"
+    shared = sio.emit.await_args_list[0].args[1]
+    assert shared["content"] == ""
+    assert shared["metadata"] == {}
+    assert shared["runtimeAddress"] is None
+    assert shared["traceState"] == "restricted"
+    assert message["content"] == "private process"
 
 
 @pytest.mark.asyncio
@@ -1042,7 +1070,12 @@ async def test_project_chat_subscribe_joins_project_room_and_returns_history(
 @pytest.mark.asyncio
 async def test_project_chat_send_broadcasts_only_its_task_room(monkeypatch):
     namespace = WeworkRuntimeNamespace()
-    message = {"sequenceNumber": 5, "messageId": "message-5"}
+    message = {
+        "sequenceNumber": 5,
+        "messageId": "message-5",
+        "content": "hello",
+        "metadata": {"mentions": [], "model": "private-model"},
+    }
     monkeypatch.setattr(
         namespace,
         "get_session",
@@ -1066,10 +1099,65 @@ async def test_project_chat_send_broadcasts_only_its_task_room(monkeypatch):
     )
 
     assert response["result"] == message
+    assert response["result"]["metadata"]["model"] == "private-model"
     assert namespace.emit.await_count == 1
+    assert namespace.emit.await_args.args[1]["metadata"] == {"mentions": []}
+    assert namespace.emit.await_args.args[1]["content"] == "hello"
     assert namespace.emit.await_args_list[0].kwargs["room"] == (
         "wework-project-chat:task:project-1:task-1"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message_type,metadata,expected_content",
+    [
+        ("agent_chunk", {}, ""),
+        ("agent_status", {}, ""),
+        ("text", {"kind": "task_ai_subagent"}, ""),
+        ("text", {"execution_dispatch": "comment_only"}, "Public conclusion"),
+    ],
+)
+async def test_project_agent_room_projection_preserves_owner_acknowledgement(
+    monkeypatch, message_type, metadata, expected_content
+):
+    namespace = WeworkRuntimeNamespace()
+    message = {
+        "messageId": "message",
+        "projectId": "project-1",
+        "type": message_type,
+        "content": "Public conclusion",
+        "metadata": {**metadata, "private_prompt": "secret"},
+        "runtimeAddress": {"deviceId": "device-1", "taskId": "private"},
+        "traceRef": "opaque",
+    }
+    monkeypatch.setattr(
+        namespace, "get_session", AsyncMock(return_value={"user_id": 7})
+    )
+    monkeypatch.setattr(namespace, "emit", AsyncMock())
+    monkeypatch.setattr(
+        wework_runtime_namespace,
+        "run_sync_in_executor",
+        AsyncMock(return_value=message),
+    )
+    response = await namespace.on_project_chat_agent_start(
+        "owner-sid",
+        {
+            "projectId": "project-1",
+            "agentId": "12",
+            "runtimeDeviceId": "device-1",
+            "runtimeTaskId": "private",
+        },
+    )
+    assert response == {"ok": True, "result": message}
+    shared = namespace.emit.await_args.args[1]
+    assert shared["content"] == expected_content
+    assert "private_prompt" not in shared["metadata"]
+    assert shared["runtimeAddress"] is None
+    assert shared["traceState"] == "restricted"
+    assert message["content"] == "Public conclusion"
+    assert message["metadata"]["private_prompt"] == "secret"
+    assert message["runtimeAddress"]["taskId"] == "private"
 
 
 @pytest.mark.asyncio

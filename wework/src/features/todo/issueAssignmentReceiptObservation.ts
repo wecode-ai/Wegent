@@ -45,7 +45,8 @@ function sameReceiptState(
         row.target_name === other.target_name &&
         row.receipt_tracking === other.receipt_tracking &&
         row.human_read_at === other.human_read_at &&
-        row.stand_in_received_at === other.stand_in_received_at
+        row.stand_in_received_at === other.stand_in_received_at &&
+        JSON.stringify(row.dispatch_receipt) === JSON.stringify(other.dispatch_receipt)
       )
     })
   )

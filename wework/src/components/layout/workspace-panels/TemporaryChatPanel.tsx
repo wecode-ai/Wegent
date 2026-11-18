@@ -1,3 +1,4 @@
+import { sendTemporaryConversationMessage } from './temporaryChatConversationSend'
 import { sendTemporaryChatMessage } from './temporaryChatSend'
 import type { TemporaryChatPanelProps } from './temporaryChatPanelTypes'
 import { createTemporaryChatSession } from './temporaryChatSession'
@@ -70,7 +71,6 @@ import { getErrorMessage } from '@/lib/error-message'
 
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
 
-import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   ModelOptions,
@@ -93,6 +93,7 @@ export function TemporaryChatPanel({
   controlledAddress,
   draft,
   createTask,
+  assistantSend,
   onAddressChange,
   runtimeContext,
   sendEphemeral = true,
@@ -502,45 +503,25 @@ export function TemporaryChatPanel({
     return false
   }
 
-  const sendConversationMessage = async (message: RuntimePaneQueuedMessage, interrupt = false) => {
-    if (!address || !active || readOnly || !sessionCommands.isCurrent())
-      return { sent: false, error: t('workbench.project_chat_send_failed') }
-    const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
-    let error: string | null = null
-    let queued = false
-    const sendMessage = interrupt ? interruptAndSendRuntimePaneMessage : sendRuntimePaneMessage
-    const sent = await sendMessage(
-      runtimeQueuedMessageRequest(
-        {
-          address,
-          ...(nativeConversation && !interrupt ? { queueIfBusy: true } : {}),
-          ...(sendEphemeral ? { ephemeral: true } : {}),
-        },
-        message
-      ),
+  const sendConversationMessage = (message: RuntimePaneQueuedMessage, interrupt = false) =>
+    sendTemporaryConversationMessage(
       {
-        silentBusyRetry: nativeConversation,
-        onError: value => {
-          error = value
-        },
-        onQueued: () => {
-          queued = true
-        },
-      }
+        address,
+        active,
+        readOnly,
+        nativeConversation,
+        sendEphemeral,
+        assistantSend,
+        lifecycleStore,
+        sessionCommands,
+        setMessages,
+        sendRuntimePaneMessage,
+        interruptAndSendRuntimePaneMessage,
+        failureText: t('workbench.project_chat_send_failed'),
+      },
+      message,
+      interrupt
     )
-    if (sent && !queued)
-      setMessages(
-        appendAcceptedRuntimeConversationMessage(
-          address,
-          createRuntimeUserMessage(message.content, message.attachments ?? [], {
-            id: message.id,
-          }),
-          lifecycleStore.getTask(address)?.turn.id ?? null,
-          turnIdsBeforeSend
-        )
-      )
-    return { sent, error }
-  }
 
   const queuePort: RuntimeConversationQueuePort<number> = {
     lifecycle: () => lifecycleStore.getTaskRevision(address),
@@ -589,6 +570,7 @@ export function TemporaryChatPanel({
         historySource,
         scopedHistory,
         paneStatus,
+        taskModelIdentityPending,
         sendConversationMessage,
         sendRuntimePaneGuidance,
         t,

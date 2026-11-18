@@ -1,22 +1,8 @@
-import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
-
-function runtimeSequence(message: ProjectChatMessage): bigint {
-  const sequence = message.metadata.runtime_event_sequence
-  return typeof sequence === 'string' && /^[1-9]\d{0,19}$/.test(sequence)
-    ? BigInt(sequence)
-    : BigInt(0)
-}
-
-function acceptsMessage(
-  previous: ProjectChatMessage,
-  incoming: ProjectChatMessage,
-  isDelta = false
-): boolean {
-  const previousSequence = runtimeSequence(previous)
-  const incomingSequence = runtimeSequence(incoming)
-  if (previousSequence !== incomingSequence) return previousSequence < incomingSequence
-  return (!isDelta || incomingSequence === BigInt(0)) && previous.updatedAt <= incoming.updatedAt
-}
+import {
+  acceptsProjectChatMessage,
+  type ProjectChatClient,
+  type ProjectChatMessage,
+} from '@wegent/chat-core'
 
 export function mergeIssueChatMessages(
   current: ProjectChatMessage[],
@@ -26,7 +12,8 @@ export function mergeIssueChatMessages(
   for (const message of incoming) {
     const previous = byId.get(message.messageId)
     // Runtime sequence distinguishes updates within the same SQL timestamp.
-    if (!previous || acceptsMessage(previous, message)) byId.set(message.messageId, message)
+    if (!previous || acceptsProjectChatMessage(previous, message))
+      byId.set(message.messageId, message)
   }
   return [...byId.values()].sort((a, b) => a.sequenceNumber - b.sequenceNumber)
 }
@@ -107,7 +94,11 @@ export function createIssueProjectChatSource(
               const message = messages.find(message => message.messageId === chunk.messageId)
               if (
                 message &&
-                !acceptsMessage(message, chunk, chunk.metadata.contentMode !== 'snapshot')
+                !acceptsProjectChatMessage(
+                  message,
+                  chunk,
+                  chunk.metadata.contentMode !== 'snapshot'
+                )
               )
                 return messages
               return mergeIssueChatMessages(messages, [

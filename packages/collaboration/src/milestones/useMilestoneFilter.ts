@@ -3,10 +3,20 @@ import { collectIssueSubtreeIds } from '../board'
 import { collectIssueChildrenProgress } from '../project-board/IssueChildrenProgress'
 import type { CollaborationIssue } from '../types'
 
+export interface MilestoneFilterValue {
+  milestoneId: string | null
+}
+
+export interface MilestoneFilterProps {
+  filter?: MilestoneFilterValue
+  onFilterChange?(milestoneId: string | null): void
+}
+
 export function useMilestoneFilter(
   projectId: string | undefined,
   view: string,
-  issues: CollaborationIssue[]
+  issues: CollaborationIssue[],
+  { filter, onFilterChange }: MilestoneFilterProps = {}
 ) {
   const [selection, setSelection] = useState<{
     projectId: string
@@ -21,7 +31,12 @@ export function useMilestoneFilter(
     setScope({ projectId, view })
     setDrilldown(null)
   }
-  const baseValue = selection?.projectId === projectId && selection ? selection.value : 'all'
+  const baseValue =
+    filter !== undefined
+      ? (filter.milestoneId ?? 'all')
+      : selection?.projectId === projectId && selection
+        ? selection.value
+        : 'all'
   const temporary = view === 'board' && drilldown?.projectId === projectId
   const value = temporary ? 'all' : baseValue
   const filteredIssues = issues.filter(
@@ -32,11 +47,13 @@ export function useMilestoneFilter(
     value,
     filteredIssues,
     select(value: string | null) {
-      if (projectId) setSelection({ projectId, value })
+      if (filter === undefined && projectId) setSelection({ projectId, value })
+      onFilterChange?.(value === 'all' ? null : value)
       setDrilldown(null)
     },
     clear() {
-      setSelection(null)
+      if (filter === undefined) setSelection(null)
+      onFilterChange?.(null)
       setDrilldown(null)
     },
     openChildren(issue: CollaborationIssue) {

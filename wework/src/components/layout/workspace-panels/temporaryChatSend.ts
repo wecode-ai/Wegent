@@ -44,6 +44,7 @@ interface TemporaryChatSendContext extends Pick<
   historySource: TemporaryChatPanelProps['historySource']
   scopedHistory: { available: boolean }
   paneStatus: { isBusy: boolean }
+  taskModelIdentityPending: boolean
   sendConversationMessage(
     message: RuntimePaneQueuedMessage,
     interrupt?: boolean
@@ -135,6 +136,16 @@ export async function sendTemporaryChatMessage(
     sessionCommands,
   } = context
 
+  if (runtimeContext?.conversationContext === 'private_discussion') {
+    console.debug('[runtime-v2] private conversation submit', {
+      taskId: address?.taskId,
+      active,
+      readOnly,
+      historyAvailable: !historySource || scopedHistory.available,
+      nativeSubmissionPending: sessionCommands.nativeSubmissionPending(),
+      modelIdentityPending: context.taskModelIdentityPending,
+    })
+  }
   if (!active || readOnly || !sessionCommands.isCurrent()) return false
   const draftValue = valueOverride ?? input
   const message = draftValue.trim()

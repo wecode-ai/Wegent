@@ -12,22 +12,34 @@ async function directories(path) {
   }
 }
 
-async function nativePluginState(profile, name, marketplace) {
+export async function collectLocalPluginCacheDiagnostics(codexHome, name, marketplace) {
   if (![name, marketplace].every(value => typeof value === 'string' && /^[\w.-]+$/u.test(value)))
     return null
-  const cache = join(profile, 'codex/plugins/cache', marketplace, name)
-  const versions = await Promise.all(
-    (await directories(cache)).map(async version => {
-      const metadata = await stat(join(cache, version))
-      return {
-        version,
-        createdAt: metadata.birthtime.toISOString(),
-        modifiedAt: metadata.mtime.toISOString(),
-      }
-    })
-  )
-  const source = join(profile, 'codex/plugins/marketplaces', marketplace, 'plugins', name)
-  return { versions, marketplaceTarget: await realpath(source).catch(() => null) }
+  const cache = join(codexHome, 'plugins/cache', marketplace, name)
+  const metadata = await stat(cache).catch(() => null)
+  const versions = (
+    await Promise.all(
+      (await directories(cache)).map(async version => {
+        const metadata = await stat(join(cache, version)).catch(() => null)
+        if (!metadata) return null
+        return {
+          version,
+          createdAt: metadata.birthtime.toISOString(),
+          modifiedAt: metadata.mtime.toISOString(),
+          entries: (await readdir(join(cache, version)).catch(() => [])).sort(),
+        }
+      })
+    )
+  ).filter(Boolean)
+  const source = join(codexHome, 'plugins/marketplaces', marketplace, 'plugins', name)
+  return {
+    cache,
+    exists: metadata !== null,
+    createdAt: metadata?.birthtime.toISOString() ?? null,
+    modifiedAt: metadata?.mtime.toISOString() ?? null,
+    versions,
+    marketplaceTarget: await realpath(source).catch(() => null),
+  }
 }
 
 async function profileState(profile) {
@@ -45,7 +57,11 @@ async function profileState(profile) {
         enabled: entry.enabled,
         installedPluginId: entry.installed_plugin_id,
         runtimePath: entry.runtime?.codex_link,
-        native: await nativePluginState(profile, entry.name, entry.marketplace),
+        native: await collectLocalPluginCacheDiagnostics(
+          join(profile, 'codex'),
+          entry.name,
+          entry.marketplace
+        ),
       }))
     )
     return { profile, plugins }

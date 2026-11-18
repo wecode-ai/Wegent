@@ -652,6 +652,11 @@ export function WeworkSharedProject({
       onCreateTask={onCreateTask}
       onDelete={onDelete}
       deleteLabel={createCollaborationTranslator(locale)('todo.archive_issue')}
+      onOpenRuntimeTask={
+        runtimePort
+          ? address => session.openIssueExecutionConversation(issue, address)
+          : onOpenRuntimeTask
+      }
       onStartHumanTaskFromReply={({ issueId, dispatch }) =>
         String(issueId) === String(issue.id)
           ? openNewTaskConversation(issue, humanTaskDispatchInput(dispatch))

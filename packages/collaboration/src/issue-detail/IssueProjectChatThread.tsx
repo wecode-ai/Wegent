@@ -76,8 +76,6 @@ export function IssueProjectChatThread({
   const attachments = useIssueCommentAttachments(upload, remove, thread.root.messageId)
   const mentionCandidates = useIssueMentionCandidates(members ?? [], agents ?? [], translate)
   const rootId = thread.root.messageId
-  const isExecutionTaskThread =
-    thread.root.sender.type === 'agent' && thread.root.metadata.dispatch_role !== 'manager'
   const displayReplies = thread.displayReplies ?? thread.replies
   const runs = [thread.root, ...displayReplies].filter(message => message.sender.type === 'agent')
   function renderMessage(message: ProjectChatMessage, eventOnly = false) {
@@ -201,10 +199,6 @@ export function IssueProjectChatThread({
       events={runs.length ? runs.map(message => renderMessage(message, true)) : null}
     />
   )
-
-  if (!isExecutionTaskThread) {
-    return activityThread
-  }
 
   return <div data-testid={`cloud-task-activity-card-${rootId}`}>{activityThread}</div>
 }

@@ -1,3 +1,4 @@
+import { milestonePageProps } from './collaborationAppMilestoneFilter'
 import {
   collaborationAppProjectViewCatalog,
   resolveCollaborationAppProjectView,
@@ -484,12 +485,8 @@ export function CollaborationApp({
                         project={project}
                         issues={issues}
                         locale={locale}
+                        {...milestonePageProps(milestoneFilter, project.id, commands)}
                         onOpenArchive={issueArchiveAvailable ? openArchiveDrawer : undefined}
-                        onChanged={() =>
-                          commands.loadProjectSnapshot(project.id, {
-                            invalidate: true,
-                          })
-                        }
                         renderIssues={(linkedIssues, linkedAssignments, emptyLabel, milestoneId) =>
                           renderIssueTable(linkedIssues, 'milestones', linkedAssignments, {
                             emptyLabel,
@@ -719,7 +716,13 @@ export function CollaborationApp({
                       }}
                       onOpen={(issue, board) => {
                         setIssueBoard(
-                          board ? { issueId: issue.id, projectId: project.id, board } : null
+                          board
+                            ? {
+                                issueId: issue.id,
+                                projectId: project.id,
+                                board,
+                              }
+                            : null
                         )
                         host.navigate({
                           projectId: project.id,

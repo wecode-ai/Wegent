@@ -234,7 +234,7 @@ export function useScrollRequest(
   {
     enabled = true,
     block = 'nearest',
-    inline = 'nearest',
+    inline,
     behavior,
     animationFrame = false,
     onScroll,
@@ -256,7 +256,11 @@ export function useScrollRequest(
       const node = enabled ? (target.current?.querySelector<HTMLElement>(selector) ?? null) : null
       observer.current?.('before', node)
       if (!enabled) return
-      node?.scrollIntoView?.({ block, inline, ...(behavior ? { behavior } : {}) })
+      node?.scrollIntoView?.({
+        block,
+        ...(inline ? { inline } : {}),
+        ...(behavior ? { behavior } : {}),
+      })
       observer.current?.('after', node)
     }
     if (!animationFrame || !enabled) {

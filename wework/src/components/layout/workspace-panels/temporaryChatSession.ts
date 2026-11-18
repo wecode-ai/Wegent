@@ -130,6 +130,7 @@ export function createTemporaryChatSession() {
   let historyAvailable: boolean | undefined
   let availabilityCallback: TemporaryChatSessionOptions['onHistorySourceAvailabilityChange']
   let viewed: { store: RuntimeTaskLifecycleStore; key: string; viewId: string } | null = null
+  let stopViewingFocus: (() => void) | undefined
   const nativeSubmissions = new Set<string>()
   const retries = new Set<string>()
   const observed = () => listeners.size > 0
@@ -175,6 +176,8 @@ export function createTemporaryChatSession() {
     )
   }
   function releaseViewed() {
+    stopViewingFocus?.()
+    stopViewingFocus = undefined
     if (!viewed) return
     viewed.store.messageReceipts?.setViewed(viewed.key, false, viewed.viewId)
     viewed = null
@@ -193,6 +196,10 @@ export function createTemporaryChatSession() {
     )
       releaseViewed()
     viewed = { store: lifecycleStore, key, viewId: messageViewId }
+    if (!stopViewingFocus)
+      stopViewingFocus = subscribeMainWindowFocus(() => {
+        if (observed()) updateViewed()
+      })
     lifecycleStore.messageReceipts?.setViewed(key, isMainWindowFocused(), messageViewId)
     if (isMainWindowFocused() && lifecycleStore.getTask(address)?.unread)
       lifecycleStore.markRead(address)
@@ -329,11 +336,6 @@ export function createTemporaryChatSession() {
           updateViewed()
           schedule()
         }
-      })
-    )
-    stops.push(
-      subscribeMainWindowFocus(() => {
-        if (isCurrent()) updateViewed()
       })
     )
   }
@@ -571,6 +573,7 @@ export function createTemporaryChatSession() {
             before?.lifecycleStore !== requested.lifecycleStore ||
             before?.queue !== requested.queue
           if (dataChanged) connectData(requested)
+          updateViewed()
           schedule()
           return () => {
             listeners.delete(listener)

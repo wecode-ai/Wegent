@@ -1,3 +1,4 @@
+import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import type { CollaborationIssue } from '@wegent/collaboration'
 import type { RuntimeTaskAddress, RuntimeTaskCreateRequest } from '@/types/api'
 import type {
@@ -196,6 +197,21 @@ export function createWeworkProjectSession({
               }
             : {}),
       },
+    })
+  }
+  function openIssueExecutionConversation(issue: CollaborationIssue, address: RuntimeTaskAddress) {
+    if (!input || !active()) return
+    conversationSequence += 1
+    const issueExecution = { projectId: String(project.id), issueId: issue.id }
+    const resolvedAddress = {
+      ...hydrateRuntimeTaskAddress(input.runtimeWork, address),
+      issueExecution,
+      ...(project.project_store === 'backend' ? { projectSession: issueExecution } : {}),
+    }
+    showConversation({
+      issue,
+      address: resolvedAddress,
+      conversationKey: `${issue.id}:${resolvedAddress.deviceId}:${resolvedAddress.taskId}`,
     })
   }
   async function openBoundConversation(issue: CollaborationIssue, address: RuntimeTaskAddress) {
@@ -458,6 +474,7 @@ export function createWeworkProjectSession({
     closeConversation,
     openNewConversation,
     openBoundConversation,
+    openIssueExecutionConversation,
     clearNotice() {
       if (active()) publish({ notice: null })
     },

@@ -17,3 +17,5 @@ export type {
   CollaborationProjectViewConfiguration,
   CollaborationProjectViewNavigationReceipt,
 } from './projectViewResolution'
+export * from './projectSurfaces'
+export * from './projectSurfaceRouting'

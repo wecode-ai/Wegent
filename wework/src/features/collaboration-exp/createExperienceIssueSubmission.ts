@@ -2,6 +2,7 @@ import {
   canAssignCollaborationIssue,
   type CollaborationIssue,
   type CollaborationMember,
+  type ProjectAssistantRosterEntry,
 } from '@wegent/collaboration'
 import type { ExperienceSource } from './data/useExperienceSources'
 import { projectScopeOf, type ExperienceProjectScope } from './model'
@@ -15,6 +16,8 @@ interface Submission {
   targetId: string
   title: string
   summary: string
+  riskLevel?: 'high' | 'low'
+  selectedRoster?: ProjectAssistantRosterEntry[]
   dueDate: string
   assignee: string
   standalone: boolean
@@ -28,6 +31,7 @@ interface Submission {
 /** The form's visible mutation state also owns admission and completion publication. */
 export function createExperienceIssueSubmission() {
   let snapshot: { pending: boolean; error: string | null } = { pending: false, error: null }
+  let intent: { id: string; fingerprint: string } | null = null
   let revision = 0
   const listeners = new Set<() => void>()
   const publish = (next: typeof snapshot) => {
@@ -45,6 +49,9 @@ export function createExperienceIssueSubmission() {
           snapshot = { pending: false, error: null }
         }
       }
+    },
+    clearIntent: () => {
+      intent = null
     },
     clearError: () => publish({ ...snapshot, error: null }),
     async submit(input: Submission) {
@@ -73,13 +80,47 @@ export function createExperienceIssueSubmission() {
                   selectableExperienceIssueMember(member)
               )?.user_id
         if (assigneeUserId === undefined) throw new Error(messages.assigneeUnavailable)
-        const issue = await source.api.issues.create(project.id, {
-          title: input.title.trim(),
-          description: input.summary.trim(),
-          assigneeUserId,
-          ...(input.dueDate ? { dueAt: input.dueDate } : {}),
-          ...(input.standalone && input.assignee === 'self' ? { personalTask: true } : {}),
-        })
+        const selectedRoster = input.selectedRoster ?? []
+        let issue: CollaborationIssue
+        if (
+          selectedRoster.length > 0 &&
+          source.store === 'backend' &&
+          source.api.projects.createAssistantDispatch
+        ) {
+          const fingerprint = JSON.stringify([
+            input.title.trim(),
+            input.summary.trim(),
+            input.dueDate,
+            input.riskLevel,
+            input.assignee,
+            selectedRoster.map(entry => entry.id),
+          ])
+          const intentId = intent?.fingerprint === fingerprint ? intent.id : crypto.randomUUID()
+          intent = { id: intentId, fingerprint }
+          const dispatch = await source.api.projects.createAssistantDispatch(project.id, {
+            intentId,
+            goal: input.title.trim(),
+            riskLevel: input.riskLevel ?? 'high',
+            description: input.summary.trim(),
+            ...(input.dueDate ? { dueAt: input.dueDate } : {}),
+            managerUserId: assigneeUserId,
+            confirmationState: 'confirmed',
+            assignments: selectedRoster.map(entry => ({
+              rosterEntryId: entry.id,
+              userId: entry.userId,
+              brief: input.summary.trim() || input.title.trim(),
+            })),
+          })
+          issue = await source.api.issues.get(dispatch.rootIssueId)
+        } else {
+          issue = await source.api.issues.create(project.id, {
+            title: input.title.trim(),
+            description: input.summary.trim(),
+            assigneeUserId,
+            ...(input.dueDate ? { dueAt: input.dueDate } : {}),
+            ...(input.standalone && input.assignee === 'self' ? { personalTask: true } : {}),
+          })
+        }
         if (isCurrent()) input.onCreated(projectScopeOf(project), issue)
       } catch (cause) {
         if (isCurrent())

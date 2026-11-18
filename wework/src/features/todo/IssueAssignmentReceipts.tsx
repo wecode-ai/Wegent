@@ -1,3 +1,6 @@
+import type { IssueAssignmentReceipt } from '@/api/deliveries'
+import { navigateTo } from '@/lib/navigation'
+import { getRuntimeConfig } from '@/config/runtime'
 import { Check, CircleAlert, CircleDashed, CircleHelp } from 'lucide-react'
 import { StandInIcon } from '@wegent/collaboration'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -69,6 +72,7 @@ export function IssueAssignmentReceipts({
         rows={scopedState?.rows ?? []}
         error={scopedState?.error ?? false}
         assigneeUserId={assigneeUserId}
+        currentUserId={currentUserId}
       />
     </span>
   )
@@ -78,7 +82,10 @@ export function IssueAssignmentReceiptStatus({
   rows,
   error,
   assigneeUserId,
-}: Pick<IssueAssignmentReceiptState, 'rows' | 'error' | 'assigneeUserId'>) {
+  currentUserId,
+}: Pick<IssueAssignmentReceiptState, 'rows' | 'error' | 'assigneeUserId'> & {
+  currentUserId?: string | number
+}) {
   const { t } = useTranslation('common')
   return (
     <>
@@ -96,6 +103,13 @@ export function IssueAssignmentReceiptStatus({
                 data-testid={`issue-assignment-receipt-${row.id}`}
                 className="inline-flex items-center gap-1"
               >
+                {row.dispatch_receipt &&
+                getRuntimeConfig().featureFlags?.['collab.humanAssignmentReceipts.v1'] !== false ? (
+                  <DispatchReceipt
+                    receipt={row.dispatch_receipt}
+                    canRepair={String(currentUserId) === String(row.dispatch_receipt.ownerUserId)}
+                  />
+                ) : null}
                 {row.human_read_at ? (
                   <ReceiptIcon
                     label={t('todo.assignment_human_read')}
@@ -126,6 +140,40 @@ export function IssueAssignmentReceiptStatus({
             ))
         ))}
     </>
+  )
+}
+
+function DispatchReceipt({
+  receipt,
+  canRepair,
+}: {
+  receipt: NonNullable<IssueAssignmentReceipt['dispatch_receipt']>
+  canRepair: boolean
+}) {
+  const { t } = useTranslation('common')
+  const repair = receipt.state === 'blocked_policy' || receipt.state === 'waiting_device'
+  const label =
+    receipt.reasonCode === 'tag_mismatch'
+      ? t('todo.dispatch.tag_mismatch')
+      : t(`todo.dispatch.${receipt.state}`)
+  return (
+    <span
+      data-testid="issue-assignment-dispatch"
+      className="inline-flex items-center gap-1"
+      title={`${label} · ${new Date(receipt.updatedAt).toLocaleString()}`}
+    >
+      <span>{label}</span>
+      {repair && canRepair && (
+        <button
+          type="button"
+          data-testid="issue-assignment-dispatch-repair"
+          className="underline"
+          onClick={() => navigateTo('/stand-in?profileId=@primary')}
+        >
+          {t('todo.dispatch.repair')}
+        </button>
+      )}
+    </span>
   )
 }
 

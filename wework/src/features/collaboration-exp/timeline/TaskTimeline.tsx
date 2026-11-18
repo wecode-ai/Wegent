@@ -1,3 +1,7 @@
+import { createAssistantParticipationSource } from './assistantParticipationSource'
+import { useMarkdownServices } from '@wegent/collaboration/markdown'
+import type { AssistantParticipation } from '@wegent/collaboration'
+import { isPublishedTimelineConclusion } from '../model/messageLayer'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { useFocusRequest, useScrollRequest } from '@wegent/collaboration/dom-events'
@@ -48,6 +52,7 @@ interface Props {
 
 /** Canonical shared messages and explicit persisted history share a read-only presentation. */
 export function TaskTimeline(props: Props) {
+  const { openExternalUrl } = useMarkdownServices()
   const { t } = useTranslation('collaborationExp')
   const { issue } = props.data
   const { timeline, conversations, loading, error } = props.stream
@@ -97,10 +102,41 @@ export function TaskTimeline(props: Props) {
     items: attachments.data ?? [],
     error: attachments.error === undefined ? null : String(attachments.error),
   }
+  const participationScopeKey = JSON.stringify([attachmentScope, props.data.participationViewer])
+  const participationSource = useMemo(
+    () => createAssistantParticipationSource(props.api, issue.id, participationScopeKey),
+    [props.api, issue.id, participationScopeKey]
+  )
+  const subscribeParticipations = useCallback(
+    (notify: () => void) =>
+      props.active && props.api.issues.listAssistantParticipations
+        ? participationSource.subscribe(notify, props.revision)
+        : subscribeIdleResource(),
+    [participationSource, props.active, props.api, props.revision]
+  )
+  const participationQuery = useSyncExternalStore(
+    subscribeParticipations,
+    participationSource.getSnapshot
+  )
+  const participations = {
+    items: participationQuery.data ?? [],
+    error: participationQuery.error === undefined ? null : String(participationQuery.error),
+  }
+  const openParticipation = async (participation: AssistantParticipation) => {
+    try {
+      const receipt = await participationSource.read(participation)
+      if (!receipt?.isCurrent()) return
+      const { workroom } = receipt
+      if (workroom.runtimeAddress) props.onExecution(workroom.runtimeAddress)
+      else if (workroom.backendTask) await openExternalUrl(workroom.backendTask.executionUrl)
+    } catch {
+      // The source access state remains authoritative and unchanged on a failed read.
+    }
+  }
   const nodes = timeline.nodes.filter(
     node =>
       filter === 'all' ||
-      (filter === 'attachments' ? node.attachments.length > 0 : node.kind === 'comment')
+      (filter === 'attachments' ? node.attachments.length > 0 : isPublishedTimelineConclusion(node))
   )
   const attachmentSources = new Map(
     timeline.nodes.flatMap(node =>
@@ -129,7 +165,7 @@ export function TaskTimeline(props: Props) {
     issue.assignee_group_name ??
     issue.assignee_agent_name ??
     issue.assignee_team_name ??
-    (issue.assignee_user_id == null ? null : t('tasks.unnamedUser', { id: issue.assignee_user_id }))
+    (issue.assignee_user_id == null ? null : t('timeline.unknownMember'))
   const security = issue.security_level ?? props.data.project.default_issue_security
   return (
     <div
@@ -213,6 +249,49 @@ export function TaskTimeline(props: Props) {
               />
             ))}
           </div>
+          {props.active && (participations?.items.length || participations?.error) ? (
+            <section
+              className="experience-matter-participations"
+              data-testid="collaboration-exp-assistant-participations"
+            >
+              <h2>{t('timeline.assistantSources')}</h2>
+              {participations.items.map(participation => (
+                <div
+                  key={participation.id}
+                  data-testid={`collaboration-exp-assistant-participation-${participation.id}`}
+                >
+                  <span>
+                    {participation.ownerDisplayName || t('timeline.unknownMember')} ·{' '}
+                    {participation.roleId}
+                  </span>
+                  <small>{t(`timeline.participation.${participation.historyState}`)}</small>
+                  {participation.historyState === 'unverified' &&
+                  props.api.issues?.readAssistantParticipation ? (
+                    <Button
+                      variant="ghost"
+                      data-testid={`collaboration-exp-open-assistant-participation-${participation.id}`}
+                      onClick={() => void openParticipation(participation)}
+                    >
+                      <ArrowRight size={13} aria-hidden="true" />
+                      {t('timeline.openAssistantSource')}
+                    </Button>
+                  ) : null}
+                </div>
+              ))}
+              {participations.error ? (
+                <p role="alert">
+                  {participations.error}{' '}
+                  <Button
+                    variant="ghost"
+                    data-testid="collaboration-exp-assistant-participations-retry"
+                    onClick={() => void participationSource.reload()}
+                  >
+                    {t('retry')}
+                  </Button>
+                </p>
+              ) : null}
+            </section>
+          ) : null}
           {timeline.state === 'ready' && !nodes.length ? (
             <p className="px-4 py-6 text-sm text-text-muted">{t('timeline.empty')}</p>
           ) : null}
