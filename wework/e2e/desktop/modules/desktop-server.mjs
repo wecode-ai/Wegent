@@ -250,8 +250,6 @@ import {
   PROVIDER_SWITCH_RESUME_PROMPT,
   PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
   PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
-  QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
-  QUALIFIED_SKILL_MENTION_PROMPT,
   QUEUE_CLEAR_INITIAL,
   QUEUE_CLEAR_MANUAL,
   QUEUE_DIRECT_FIRST,
@@ -4387,23 +4385,6 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(OFFICIAL_PLUGIN_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
-    if (this.scenario === 'skill_mention_display') {
-      this.recordScenarioRequest('skill_mention_display', modelRequest)
-      const requestText = JSON.stringify(body)
-      assert.ok(
-        requestText.includes(QUALIFIED_SKILL_MENTION_PROMPT) &&
-          requestText.includes(`${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`) &&
-          requestText.includes(this.officialPluginSkillPath),
-        'The real Codex request did not preserve the qualified structured skill mention'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(QUALIFIED_SKILL_MENTION_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return

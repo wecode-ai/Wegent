@@ -705,9 +705,6 @@ const AUTOMATION_NAME = 'Desktop E2E automation'
 const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
 const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
 const AUTOMATION_SCHEDULE_TIMEOUT_MS = 70_000
-const QUALIFIED_SKILL_MENTION_PROMPT = 'Verify the sent qualified skill mention.'
-const QUALIFIED_SKILL_MENTION_COMPLETION_TEXT =
-  'WEWORK_DESKTOP_E2E_QUALIFIED_SKILL_MENTION_COMPLETE'
 
 function readCommandLineOption(name) {
   const index = process.argv.indexOf(name)
@@ -2118,8 +2115,6 @@ export {
   AUTOMATION_PROMPT,
   AUTOMATION_COMPLETION_TEXT,
   AUTOMATION_SCHEDULE_TIMEOUT_MS,
-  QUALIFIED_SKILL_MENTION_PROMPT,
-  QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
   readCommandLineOption,
   getActiveOnlyModes,
   validateDesktopSegmentOptions,

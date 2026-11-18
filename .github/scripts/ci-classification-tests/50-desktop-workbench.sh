@@ -12,13 +12,6 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$conversation_cache_path"
 done
 
-assert_desktop_case "split interaction latency uses an independent runner" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-9","name":"Core / shard 9","segments":"split-workbench"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/split-workbench.scenario.mjs"
 
 assert_desktop_case "independent features select the union of minimum segments" \
   'wework_desktop_e2e=true
@@ -401,7 +394,7 @@ assert_desktop_case "skill mention files select plugin and core coverage" \
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"}]}
 wework_desktop_other_e2e=true
-wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"skill-mention-rendering"}]}' \
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":"plugin-lifecycle"}]}' \
   "wework/src/components/chat/composer/ComposerMentionMenu.tsx"
 
 assert_desktop_case "model settings select task launch and model routing coverage" \

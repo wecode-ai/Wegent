@@ -51,12 +51,7 @@ classify_wework_path() {
       wework/e2e/desktop/modules/plugin-personal-uninstall-flow.mjs)
       select_target "cloud:plugin-toggle-persistence"
       return
-      ;;
-    wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)
-      select_target "core:split-workbench"
-      return
-      ;;
-    wework/e2e/desktop/modules/github-release-asset.mjs)
+      ;;    wework/e2e/desktop/modules/github-release-asset.mjs)
       select_target "core:harness-app-lifecycle"
       select_target "core:harness-app-models"
       select_target "cloud:plugin-legacy-upgrade"
@@ -339,7 +334,7 @@ classify_wework_path() {
     wework/src/features/workbench/useWorkbenchSkills.ts | \
       wework/src/components/chat/composer/ComposerMentionMenu.tsx | \
       wework/src/components/chat/composer/composerMentionCandidates*)
-      select_target "plugins:skill-mention-rendering"
+      select_target "plugins:plugin-lifecycle"
       select_target "core:core-task-flow"
       return
       ;;

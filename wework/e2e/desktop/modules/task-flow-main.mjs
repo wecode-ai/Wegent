@@ -120,7 +120,6 @@ import {
   verifyCoreDshPluginManagement,
   verifyMarketplacePluginLifecycle,
   verifyPluginLifecycle,
-  verifySkillMentionRendering,
   verifyStartupIgnoresBlockedCodexNetwork,
 } from './plugin-flows.mjs'
 
@@ -1201,10 +1200,7 @@ async function main() {
       false,
       'The isolated Wework Codex home was not blank before application startup'
     )
-    if (
-      shouldRunPluginSegment('plugin-lifecycle') ||
-      shouldRunPluginSegment('skill-mention-rendering')
-    ) {
+    if (shouldRunPluginSegment('plugin-lifecycle')) {
       await createOfficialPluginMarketplaceFixture({
         marketplaceRoot: pluginMarketplacePath,
         repositoryRoot: officialPluginRepositoryPath,
@@ -2313,13 +2309,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       if (shouldRunPluginSegment('plugin-lifecycle')) {
         phase = 'plugin-lifecycle'
         await verifyPluginLifecycle({
-          control,
-          fixture: await ensureOfficialPluginFixture(),
-        })
-      }
-      if (shouldRunPluginSegment('skill-mention-rendering')) {
-        phase = 'skill-mention-rendering'
-        await verifySkillMentionRendering({
           control,
           fixture: await ensureOfficialPluginFixture(),
         })

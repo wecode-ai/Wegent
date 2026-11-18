@@ -200,7 +200,7 @@ test('reuses the existing history runner after its isolated checkpoint', async (
       { id: 'core-1', segments: checkpoints.slice(0, -1).join(',') },
       { id: 'core-2', segments: checkpoints.at(-1) },
       { id: 'core-6', segments: history },
-      { id: 'core-9', segments: 'split-workbench' },
+      { id: 'core-9', segments: 'human-interactions-hidden' },
       { id: 'core-10', segments: 'collaboration-template-agents' },
     ],
   }
@@ -586,7 +586,7 @@ test('one existing producer builds MinIO for exactly the consumers that need it 
   )
   for (const selection of [
     ...required,
-    { scope: 'core', segment: 'split-workbench' },
+    { scope: 'core', segment: 'task-attachments' },
     null,
   ]) {
     const outputs = Object.fromEntries(
