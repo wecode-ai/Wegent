@@ -2066,6 +2066,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn is_busy_local_task(&self, local_task_id: &str) -> bool {
         self.is_active_local_task(local_task_id)
+            || self.native_task_holds_capacity(local_task_id)
             || self.is_queued_local_task(local_task_id)
             || self
                 .preparing_turns
