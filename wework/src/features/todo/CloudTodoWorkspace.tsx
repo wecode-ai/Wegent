@@ -1,3 +1,4 @@
+import { resolveIssueReference } from './resolveIssueReference'
 import { issueRuntimePort } from './issueRuntimePort'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { requireIssueTaskAvailable } from './issueTaskAvailability'
@@ -5768,6 +5769,16 @@ export function CloudTodoWorkspace({
             projects={projects}
             projectItems={collaborationProjectItems}
             projectMembers={collaborationProjectMembers}
+            onResolveReference={reference =>
+              resolveIssueReference(reference, [
+                ...(localProjectManageApi
+                  ? [{ location: 'local' as const, api: localProjectManageApi }]
+                  : []),
+                ...(cloudWorkspaceApi
+                  ? [{ location: 'cloud' as const, api: cloudWorkspaceApi }]
+                  : []),
+              ])
+            }
             query={globalSearchQuery}
             onQueryChange={setGlobalSearchQuery}
             onClose={() => setGlobalSearchOpen(false)}

@@ -1,3 +1,5 @@
+import { GlobalTodoSearch } from './GlobalTodoSearch'
+import { resolveIssueReference } from './resolveIssueReference'
 import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
 import { IndependentIssuesProvider } from './IndependentIssuesProvider'
@@ -20,7 +22,7 @@ import { LOCAL_USER } from '@/api/local/localSession'
 import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
 import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
-import { ArrowUpRight, Maximize2, Minimize2, MessageSquare } from 'lucide-react'
+import { ArrowUpRight, Maximize2, Minimize2, MessageSquare, Search } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { StandInPopover } from './StandInPopover'
 import { navigateTo } from '@/lib/navigation'
@@ -1558,6 +1560,19 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
 /** Binds project navigation and stand-in indicators to the current account and project catalog. */
 function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
+  const [issueSearchOpen, setIssueSearchOpen] = useState(false)
+  const [issueSearchQuery, setIssueSearchQuery] = useState('')
+  useEffect(() => {
+    if (props.workspaceActive === false) return
+    const handleSearch = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setIssueSearchOpen(true)
+      } else if (event.key === 'Escape') setIssueSearchOpen(false)
+    }
+    window.addEventListener('keydown', handleSearch)
+    return () => window.removeEventListener('keydown', handleSearch)
+  }, [props.workspaceActive])
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
   const templateOwnerId =
@@ -1999,6 +2014,36 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
 
   return (
     <div className="h-full min-h-0 flex-1" data-testid="wework-collaboration-platform">
+      {issueSearchOpen && props.workspaceActive !== false && (
+        <GlobalTodoSearch
+          referenceOnly
+          projects={[]}
+          projectItems={{}}
+          projectMembers={{}}
+          query={issueSearchQuery}
+          onQueryChange={setIssueSearchQuery}
+          onClose={() => setIssueSearchOpen(false)}
+          onSelectProject={() => {}}
+          onResolveReference={reference =>
+            resolveIssueReference(reference, [
+              ...(localProjectApi ? [{ location: 'local' as const, api: localProjectApi }] : []),
+              ...(cloudConnection.isConnected && api ? [{ location: 'cloud' as const, api }] : []),
+            ])
+          }
+          onSelectItem={(project, item) => {
+            if (item.can_view_detail === false) return
+            const next = routeProjectLocation(
+              { projectStore: project.project_store, projectId: String(project.id) },
+              item.id
+            )
+            if (next) {
+              navigatePlatform(next)
+              setIssueSearchOpen(false)
+            }
+          }}
+        />
+      )}
+
       <ConfirmDialog
         open={Boolean(migrationProject && cloudConnection.isConnected)}
         title={t('localProjectMigration.title')}
@@ -2420,6 +2465,19 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                   })
                 }
               : undefined,
+            sidebarHeaderActions: (
+              <Tooltip label={t('todo.search_issues', '搜索 Issue')}>
+                <button
+                  type="button"
+                  data-testid="collaboration-issue-search-open"
+                  aria-label={t('todo.search_issues', '搜索 Issue')}
+                  onClick={() => setIssueSearchOpen(true)}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus"
+                >
+                  <Search className="h-4 w-4" />
+                </button>
+              </Tooltip>
+            ),
             workspaceOwnerOptions,
             projectAgentConfiguration,
           }}

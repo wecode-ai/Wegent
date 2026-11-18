@@ -18,6 +18,12 @@ sidebar_position: 3
 <!-- ui-source: src/features/todo/WeworkCollaborationPlatform.tsx -->
 <!-- ui-source: ../packages/collaboration/src/platform/CollaborationPlatformNavigation.tsx -->
 
+## Open an Issue by reference
+
+<a id="open-issue-by-reference"></a>
+
+In the collaboration workspace, click **Magnifying glass beside Collaboration at the top of the sidebar (Search issues)**, enter a full reference such as **WEG-123**, then click **Open Issue** or press **Enter** to query and open an accessible Issue directly. Opening its project or loading the board first is unnecessary. **⌘K (macOS) or Ctrl+K (Windows/Linux)** opens the same entry. Failures show the cause; check the reference, access, or connection and retry. Changing the reference or closing the dialog prevents stale navigation. If the same reference exists locally and in the cloud, choose the intended result. Press **Esc** to close. The personal task workspace also offers a magnifying glass at the top of its expanded sidebar for loaded-item search, including **#123**, **123**, and Issue IDs.
+
 ## Collaboration groups and global resource catalogs
 
 <a id="workspace-resource-controls"></a>

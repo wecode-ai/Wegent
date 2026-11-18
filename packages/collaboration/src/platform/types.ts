@@ -59,6 +59,7 @@ export interface CollaborationPlatformLocation {
 }
 
 export interface CollaborationPlatformHostAdapter {
+  sidebarHeaderActions?: ReactNode;
   settingsPages?: ComponentType<ProjectSettingsPagesProps>;
   /** Stable authentication and backend identity, independent of optional data readiness. */
   accountScope: string;
