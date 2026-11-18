@@ -15,6 +15,16 @@ const SIGNING: &str = "native-plugin-contract-test";
 const OWNER: i64 = 82001;
 const USER: &str = "native-plugin-owner";
 
+fn http_client() -> brz_http::Client {
+    // The default socket budget is shorter than a valid 3s plugin write lease wait.
+    brz_http::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .read_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap()
+}
+
 #[tokio::test]
 #[ignore = "requires disposable MySQL/Redis and plugin credential keyring"]
 async fn http_auth_execution_lifecycle_and_uncertain_recovery_without_device() -> anyhow::Result<()>
@@ -134,7 +144,7 @@ async fn verify(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
     });
     let api = Api {
         base: format!("http://{address}"),
-        client: brz_http::Client::new(),
+        client: http_client(),
     };
     // Session creation proves desktop key possession; no Device query or row exists.
     api.session(desktop_proof("/api/auth/wework/refresh"), 401)
