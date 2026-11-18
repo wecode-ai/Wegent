@@ -464,6 +464,7 @@ export interface WorkbenchContextValue {
     request: RuntimeSendRequest,
     options?: RuntimePaneActionOptions
   ) => Promise<boolean>
+  recordRuntimeTaskActivity?: (address: RuntimeTaskAddress) => void
   interruptAndSendRuntimePaneMessage: (
     request: RuntimeSendRequest,
     options?: RuntimePaneActionOptions

@@ -27,7 +27,8 @@ Wework 桌面端复用 Codex App 的侧栏状态语义。项目和实时任务�
 | 项目名称、根目录和类型   | Codex global state                     | 支持传统目录项目、`local-projects` 多目录项目和 `remote-projects` |
 | 项目顺序、置顶和外观     | Codex global state                     | 使用 `project-order`、`pinned-project-ids`、`project-appearances` |
 | 任务标题、时间和运行状态 | Codex app-server + Wework 远程摘要缓存 | Wework 不缓存任务正文；离线缓存中的运行状态始终为停止             |
-| 任务归属、最近活动和置顶 | Codex app-server + Codex global state  | 项目归属和置顶使用 Codex 状态；项目内普通会话只按最近活动排序     |
+| 任务归属和置顶           | Codex global state                     | 使用 assignment、workspace hint 和 pinned thread IDs              |
+| 会话最近活动             | Wework 本地状态 + Codex app-server     | Wework 更新 `recencyAt`；执行器快照维护 `updatedAt` 和运行状态    |
 | 展开状态和滚动偏好       | Wework localStorage                    | 仅保存不影响 Codex 的纯 UI 偏好                                   |
 
 项目的 UI 标识通常由“状态所属设备 + project key”计算。能够解析目标的远程入口使用目标项目的设备与 key，以保持同步前后的 UI 标识；已有入口在合并中保留自己的 UI 标识。数据合并采用下文的项目身份规则，不比较 UI 数字 ID。

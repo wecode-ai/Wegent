@@ -2147,6 +2147,7 @@ export function useWorkbenchRuntimeMessaging({
     createEphemeralRuntimeTask,
     createProjectRuntimeTask,
     pauseCurrentResponse,
+    recordRuntimeTaskActivity,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
   }

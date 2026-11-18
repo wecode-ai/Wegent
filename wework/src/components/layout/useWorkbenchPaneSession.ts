@@ -251,6 +251,7 @@ export function useWorkbenchPaneSession({
     cancelRuntimePaneTask,
     cancelRuntimeTask,
     forceStartRuntimeTask,
+    recordRuntimeTaskActivity,
     sendCurrentInput,
     refreshWorkLists,
   } = useWorkbenchPaneContext()
@@ -1940,6 +1941,7 @@ export function useWorkbenchPaneSession({
             if (paneIsBusy) {
               syncRuntimeGoal(lifecycleStore, currentRuntimeTask, draftGoal)
               setGoalDraftActive(false)
+              recordRuntimeTaskActivity?.(currentRuntimeTask)
               setQueuedMessages(messages => [...messages, queuedMessage])
               return true
             }
@@ -2254,6 +2256,7 @@ export function useWorkbenchPaneSession({
             }
             return sent
           }
+          recordRuntimeTaskActivity?.(currentRuntimeTask)
           setQueuedMessages(messages => [...messages, queuedMessage])
           clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           if (options.guideWhenBusy) {
@@ -2318,6 +2321,7 @@ export function useWorkbenchPaneSession({
         addExistingAttachmentForScope,
         queuedMessageBusyBlocks,
         readCurrentPaneBusy,
+        recordRuntimeTaskActivity,
         retainRuntimeQueuedMessage,
         resetAttachments,
         sendCurrentInput,

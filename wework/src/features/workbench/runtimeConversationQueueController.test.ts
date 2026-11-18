@@ -669,7 +669,7 @@ describe('RuntimeConversationQueueController', () => {
     detach()
     await flushQueue()
     expect(send).toHaveBeenCalledTimes(1)
-    expect(send.mock.calls[0]?.[1]?.recordActivity).not.toBe(false)
+    expect(send.mock.calls[0]?.[1]?.recordActivity).toBe(false)
     expect(controller.busyBlocks.has(item.id)).toBe(true)
     expect(getRuntimeConversationQueuedMessages(taskA)[0].status).toBe('queued')
 

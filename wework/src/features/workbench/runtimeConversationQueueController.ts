@@ -156,10 +156,7 @@ class RuntimeConversationQueueController {
     }
   }
 
-  async send(
-    message: RuntimePaneQueuedMessage,
-    options: { recordActivity?: boolean } = {}
-  ): Promise<void> {
+  async send(message: RuntimePaneQueuedMessage): Promise<void> {
     this.clearInvalidatedRequest()
     const dependencies = this.dependencies
     if (!dependencies || this.inFlight) {
@@ -206,7 +203,7 @@ class RuntimeConversationQueueController {
         onError: error => {
           sendError = error
         },
-        recordActivity: options.recordActivity,
+        recordActivity: false,
       })
       if (!operation.isCurrent()) return
       this.log('queue-send-result', message, {
@@ -291,13 +288,14 @@ class RuntimeConversationQueueController {
       this.observeDispatch(lifecycle?.continuable ? 'task-busy' : 'not-continuable', lifecycle)
       return
     }
-    const isBusyRetry = this.busyBlocks.has(next.id)
     if (!consumeRuntimeTaskLifecycleBlock(this.busyBlocks, next.id, lifecycle)) {
       this.observeDispatch('busy-retry-blocked', lifecycle)
       return
     }
     this.observeDispatch('ready', lifecycle)
-    void this.send(next, { recordActivity: !isBusyRetry })
+    // Activity was recorded when the message entered the local queue. Retries and
+    // transport drains must keep that admission timestamp.
+    void this.send(next)
   }
 
   private reconcileStartedMessages(lifecycle: RuntimeTaskLifecycleSnapshot | null): void {

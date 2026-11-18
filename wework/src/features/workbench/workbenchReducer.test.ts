@@ -1428,8 +1428,72 @@ describe('workbenchReducer', () => {
     expect(
       refreshed.runtimeWork?.projects[0].deviceWorkspaces[0]?.tasks.find(
         item => item.taskId === 'replied'
-      )?.recencyAt
-    ).toBe(300)
+      )
+    ).toMatchObject({ recencyAt: 300, executionState: { revision: '2' } })
+  })
+
+  test('adopts newer activity when another window keeps the same execution revision', () => {
+    const executionState = {
+      revision: '1',
+      phase: 'running' as const,
+      turnId: 'turn-1',
+      latestTurnId: 'turn-1',
+      outcome: null,
+    }
+    const task = (taskId: string, recencyAt: number) => ({
+      taskId,
+      workspacePath: '/workspace/repo',
+      title: taskId,
+      runtime: 'codex' as const,
+      recencyAt,
+      updatedAt: recencyAt,
+      executionState,
+    })
+    const workspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      tasks: [task('updated-elsewhere', 10), task('newer-until-refresh', 20)],
+    }
+    const refreshed = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        runtimeWork: {
+          projects: [{ project: { id: 7, name: 'Repo' }, deviceWorkspaces: [workspace] }],
+          chats: [],
+          totalTasks: 2,
+        },
+      },
+      {
+        type: 'runtime_work_refreshed',
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 7, name: 'Repo' },
+              deviceWorkspaces: [
+                {
+                  ...workspace,
+                  tasks: [task('updated-elsewhere', 30), task('newer-until-refresh', 20)],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 2,
+        },
+      }
+    )
+
+    const tasks = refreshed.runtimeWork?.projects[0].deviceWorkspaces[0]?.tasks ?? []
+    expect(tasks.find(item => item.taskId === 'updated-elsewhere')).toMatchObject({
+      recencyAt: 30,
+      executionState: { revision: '1' },
+    })
+    expect(
+      getRuntimeSidebarTaskItems(refreshed.runtimeWork?.projects[0].deviceWorkspaces ?? []).map(
+        item => item.task.taskId
+      )
+    ).toEqual(['updated-elsewhere', 'newer-until-refresh'])
   })
 
   test('keeps recency order after refresh despite cached manual sidebar slots', () => {

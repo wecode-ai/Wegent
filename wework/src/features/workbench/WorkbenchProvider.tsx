@@ -1542,6 +1542,7 @@ function OwnedWorkbenchProvider({
   const stableCheckoutEnvironmentBranch = useStableEvent(projectActions.checkoutEnvironmentBranch)
   const stableCreateEnvironmentBranch = useStableEvent(projectActions.createEnvironmentBranch)
   const stableSendRuntimePaneMessage = useStableEvent(runtimeMessaging.sendRuntimePaneMessage)
+  const stableRecordRuntimeTaskActivity = useStableEvent(runtimeMessaging.recordRuntimeTaskActivity)
   const stableInterruptAndSendRuntimePaneMessage = useStableEvent(
     runtimeMessaging.interruptAndSendRuntimePaneMessage
   )
@@ -1927,6 +1928,7 @@ function OwnedWorkbenchProvider({
       checkoutEnvironmentBranch: stableCheckoutEnvironmentBranch,
       createEnvironmentBranch: stableCreateEnvironmentBranch,
       sendRuntimePaneMessage: stableSendRuntimePaneMessage,
+      recordRuntimeTaskActivity: stableRecordRuntimeTaskActivity,
       interruptAndSendRuntimePaneMessage: stableInterruptAndSendRuntimePaneMessage,
       sendRuntimePaneGuidance: stableSendRuntimePaneGuidance,
       compactRuntimePaneTask: stableCompactRuntimePaneTask,

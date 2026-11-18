@@ -22,13 +22,14 @@ The shared `focus` control command establishes the focus prerequisite. In a back
 
 ## State ownership
 
-| Data                                       | Source of truth                                | Notes                                                                              |
-| ------------------------------------------ | ---------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Project names, roots, and kinds            | Codex global state                             | Covers legacy roots, multi-root `local-projects`, and `remote-projects`            |
-| Project order, pins, and appearance        | Codex global state                             | Uses `project-order`, `pinned-project-ids`, and `project-appearances`              |
-| Task title, timestamps, and runtime status | Codex app-server + Wework remote summary cache | Task bodies are not cached; cached runtime status is always stopped                |
-| Task grouping, activity, and pins          | Codex app-server + Codex global state          | Grouping and pins use Codex state; ordinary project conversations sort by activity |
-| Expansion and scroll preferences           | Wework localStorage                            | UI-only preferences that do not affect Codex                                       |
+| Data                                       | Source of truth                                | Notes                                                                            |
+| ------------------------------------------ | ---------------------------------------------- | -------------------------------------------------------------------------------- |
+| Project names, roots, and kinds            | Codex global state                             | Covers legacy roots, multi-root `local-projects`, and `remote-projects`          |
+| Project order, pins, and appearance        | Codex global state                             | Uses `project-order`, `pinned-project-ids`, and `project-appearances`            |
+| Task title, timestamps, and runtime status | Codex app-server + Wework remote summary cache | Task bodies are not cached; cached runtime status is always stopped              |
+| Task grouping and pins                     | Codex global state                             | Uses assignments, workspace hints, and pinned thread IDs                         |
+| Conversation recency                       | Wework local state + Codex app-server          | Wework records `recencyAt`; executor snapshots own `updatedAt` and runtime state |
+| Expansion and scroll preferences           | Wework localStorage                            | UI-only preferences that do not affect Codex                                     |
 
 Project UI ids normally derive from the state-owning device and project key. Resolved remote references use the target device and project key to preserve UI identity across synchronization; existing references retain their UI id during reconciliation. Data merging follows the project identity rules below rather than comparing numeric UI ids.
 

@@ -82,6 +82,19 @@ async function taskSnapshot(control, taskId, running, timeoutMs) {
   throw new Error(`Executor task ${taskId} did not become running=${running}`)
 }
 
+async function waitForNewTaskRow(control, knownRows, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const next = snapshot.testIds.find(
+      testId => testId.startsWith('runtime-local-task-row-') && !knownRows.has(testId)
+    )
+    if (next) return next
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('Timed out waiting for a new sidebar conversation row')
+}
+
 export function createDesktopScenario({ uiTimeoutMs, workspacePath }) {
   let active = false
   let release
@@ -190,18 +203,44 @@ export function createDesktopScenario({ uiTimeoutMs, workspacePath }) {
         })
         const projectId = debug.workbench.currentProject.id
         const newConversation = `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
+        const knownRows = new Set(
+          JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+            testId.startsWith('runtime-local-task-row-')
+          )
+        )
+        const fillerTaskIds = []
         // Move the live task below the preview limit through real completed tasks.
         for (let index = 0; index < 6; index += 1) {
           await control.command('click', newConversation)
           await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
           await control.command('fill', COMPOSER, { value: `${FILLER}${index}` })
           await control.command('press', COMPOSER, { key: 'Enter' })
+          const rowTestId = await waitForNewTaskRow(control, knownRows, uiTimeoutMs)
+          knownRows.add(rowTestId)
+          fillerTaskIds.push(rowTestId.replace('runtime-local-task-row-', ''))
           await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {
             text: `${FILLER}${index}_COMPLETE`,
             timeoutMs: uiTimeoutMs,
           })
         }
         await control.command('waitFor', spinner, { timeoutMs: uiTimeoutMs })
+        const taskOrder = JSON.parse(
+          await control.command(
+            'getTestIdOrder',
+            `[data-testid="project-runtime-task-list-${projectId}"]`
+          )
+        )
+          .filter(testId => testId.startsWith('runtime-local-task-row-'))
+          .map(testId => testId.replace('runtime-local-task-row-', ''))
+        const heldIndex = taskOrder.indexOf(address.taskId)
+        assert.ok(heldIndex >= 0, 'The held running conversation is missing from the sidebar')
+        for (const fillerTaskId of fillerTaskIds) {
+          const fillerIndex = taskOrder.indexOf(fillerTaskId)
+          assert.ok(
+            fillerIndex >= 0 && fillerIndex < heldIndex,
+            `Newer filler conversation ${fillerTaskId} is not before the held running conversation`
+          )
+        }
         assert.equal(
           Number(
             await control.command(

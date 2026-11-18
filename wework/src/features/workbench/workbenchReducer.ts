@@ -469,8 +469,11 @@ function mergeRuntimeTaskListState(
   current: RuntimeTaskSummary,
   next: RuntimeTaskSummary
 ): RuntimeTaskSummary {
+  const currentActivity = runtimeTaskActivityTime(current)
+  const nextActivity = runtimeTaskActivityTime(next)
   return {
     ...mergeRuntimeTaskSnapshotMetadata(current, next),
+    ...(nextActivity > currentActivity ? { recencyAt: next.recencyAt ?? nextActivity } : {}),
     ...(next.threadId ? { threadId: next.threadId } : {}),
     ...(next.pinned === undefined ? {} : { pinned: next.pinned }),
     ...(next.pinnedOrder === undefined ? {} : { pinnedOrder: next.pinnedOrder }),
