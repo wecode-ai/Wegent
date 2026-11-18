@@ -4,6 +4,8 @@ sidebar_position: 34
 
 # E2E Automation
 
+The coordination-history stress checkpoint retains 80,000 history records and every compaction, retention and duplicate-planning assertion. Only this checkpoint defaults WEWORK_E2E_HISTORY_MAINTENANCE_INTERVAL_MS to 1000 and WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS to 500, respecting explicit caller overrides. Production defaults remain 60 seconds for maintenance and 5 seconds for polling. The duplicate-planning observation covers two configured polling periods plus 500 milliseconds; maintenance retains its existing 100-millisecond transaction budget. These settings shorten timer waits without changing data volume or the maintenance algorithm. Complete runtime must be measured in CI.
+
 ## CI background task load policy
 
 `WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD` controls whether background idle tasks defer execution based on CPU and available memory. Normal startup defaults to `true`. Explicitly setting it to `false` preserves real load sampling and diagnostics while disabling CPU/memory threshold gating. User idle checks, renderer idle checks, probe failure protection, and serial execution remain enforced.

@@ -81,11 +81,15 @@ export async function openConnectionTypePicker(control) {
   await control.command('waitFor', '[data-testid="stand-in-connection-type-picker"]')
 }
 
-/** Observe a complete scheduler period plus jitter before asserting no dispatch. */
-export async function waitForStandInSchedulerCycle() {
+export function standInSchedulerIntervalMs() {
   const intervalMs = Number(process.env.WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS ?? 5000)
   if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
     throw new Error('WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS must be a positive integer')
   }
-  await new Promise(resolve => setTimeout(resolve, intervalMs + 500))
+  return intervalMs
+}
+
+/** Observe a complete scheduler period plus jitter before asserting no dispatch. */
+export async function waitForStandInSchedulerCycle() {
+  await new Promise(resolve => setTimeout(resolve, standInSchedulerIntervalMs() + 500))
 }

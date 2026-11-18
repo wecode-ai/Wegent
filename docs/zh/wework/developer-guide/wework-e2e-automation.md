@@ -4,6 +4,8 @@ sidebar_position: 34
 
 # E2E 自动化
 
+协调历史压力用例保留 80,000 条历史记录及全部压缩、保留和防重复规划断言。仅 `coordination-history` 检查点默认设置 `WEWORK_E2E_HISTORY_MAINTENANCE_INTERVAL_MS=1000` 和 `WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS=500`，并尊重调用方显式覆盖；生产默认维护周期为 60 秒、轮询周期为 5 秒。防重复观察窗口覆盖两个实际配置的轮询周期及 500 毫秒余量，维护事务仍使用原有 100 毫秒预算。该配置缩短等待触发的时间，不改变数据规模或维护算法；完整流程耗时须以 CI 实测为准。
+
 ## CI 后台任务负载策略
 
 `WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD` 控制后台空闲任务是否根据 CPU 和可用内存推迟执行。普通启动未设置时为 `true`；显式设为 `false` 后，调度器继续采集并记录真实负载，但不再以 CPU／内存阈值阻塞任务。用户空闲、渲染器空闲、探测失败保护和任务串行执行规则仍然生效。
