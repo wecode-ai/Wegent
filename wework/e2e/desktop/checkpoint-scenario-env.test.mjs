@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { checkpointScenarioEnv } from './checkpoint-environment.mjs'
+import { checkpointScenarioEnv } from './checkpoint-scenario-env.mjs'
 
 test('upgrade diagnostics do not relabel local regression fixtures as signed releases', () => {
   const environment = checkpointScenarioEnv(

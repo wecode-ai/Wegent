@@ -22,7 +22,6 @@ import { checkpointScenarioEnv } from './checkpoint-scenario-env.mjs'
 import { rejectRecordedCheckpointFailure } from './checkpoint-result.mjs'
 import { createXvfbDisplayAllocator, prepareXvfbSocketDirectory } from './xvfb-display.mjs'
 import { resolveDesktopCodexBinary } from './modules/desktop-build-flows.mjs'
-import { checkpointScenarioEnv } from './checkpoint-environment.mjs'
 import {
   compactInactiveDesktopE2EResults,
   resolveDesktopE2EResultRoot,
