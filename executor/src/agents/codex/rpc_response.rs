@@ -37,7 +37,7 @@ fn error_fields(
     message: &Value,
     method: &str,
     origin: CodexRpcOrigin,
-) -> Option<[(&'static str, String); 5]> {
+) -> Option<[(&'static str, String); 6]> {
     let error = message.get("error")?;
     let (scope, generation) = match origin {
         CodexRpcOrigin::Shared(generation) => ("shared", generation),
@@ -59,6 +59,7 @@ fn error_fields(
             "process_generation",
             generation.map_or_else(|| "unknown".to_owned(), |value| value.to_string()),
         ),
+        ("executor_pid", std::process::id().to_string()),
     ])
 }
 
@@ -122,6 +123,7 @@ mod tests {
         let fields = error_fields(&response, "config/batchWrite", origin).unwrap();
         assert_eq!(fields[0], ("method", "config/batchWrite".to_owned()));
         assert_eq!(fields[1], ("request_id", "42".to_owned()));
+        assert_eq!(fields[5], ("executor_pid", std::process::id().to_string()));
         let recorded: Value = serde_json::from_str(&fields[2].1).unwrap();
         assert_eq!(recorded["code"], -32600);
         assert_eq!(
