@@ -145,13 +145,22 @@ async fn verify_http(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
         let client = client.clone();
         let url = format!("http://{address}{path}");
         let token = token.to_owned();
+        let operation = body["action"].as_str().unwrap_or("non-command").to_owned();
+        let path = path.to_owned();
         async move {
+            let started = std::time::Instant::now();
             client
                 .post(url)?
                 .bearer_auth(token)
                 .json(&body)
                 .send()
                 .await
+                .map_err(|error| {
+                    anyhow::Error::new(error).context(format!(
+                        "Observation fixture POST {path} action={operation} elapsed_ms={}",
+                        started.elapsed().as_millis()
+                    ))
+                })
         }
     };
     let result=async {
