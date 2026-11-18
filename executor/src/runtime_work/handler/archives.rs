@@ -399,15 +399,16 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_goal_missing_session(&link));
         };
 
-        // Capture ownership before the route preparation below resumes the
-        // session to apply the execution profile.
-        let session_loaded = self.codex_app_server.thread_is_loaded(&thread_id).await;
         if let Err(error) = self
             .prepare_goal_model_route(&link, &thread_id, &payload)
             .await
         {
             return Ok(task_action_failure(&link, error.message));
         }
+        // A loaded session makes thread/goal/set start native work directly.
+        // Only a route preparation that could not load an idle session needs
+        // an explicit local recovery turn.
+        let session_loaded = self.codex_app_server.thread_is_loaded(&thread_id).await;
         let mut params = Map::new();
         params.insert("threadId".to_owned(), Value::String(thread_id.clone()));
         if let Some(objective) = payload.get("objective").cloned() {
