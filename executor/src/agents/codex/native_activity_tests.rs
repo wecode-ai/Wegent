@@ -46,6 +46,35 @@ fn native_thread_notifications_supply_models_for_direct_turns() {
 }
 
 #[test]
+fn accepted_turn_model_overrides_survive_direct_reuse() {
+    let mut activity = CodexNativeActivity::default();
+    activity.observe(&json!({"method":"thread/started","params":{"thread":{
+        "id":"thread", "model":"thread-model", "modelProvider":"openai"
+    }}}));
+    let turn = activity
+        .request_context(
+            1,
+            "turn/start",
+            &json!({"threadId":"thread","model":" turn-model "}),
+        )
+        .unwrap();
+    assert!(activity.observe_response(&turn, &json!({"turn":{"id":"turn-1"}})));
+    assert_eq!(
+        activity.model_identity("thread"),
+        (Some("turn-model".into()), Some("openai".into()))
+    );
+
+    // Direct reuse without an override still runs on the overridden model, and
+    // an older thread/read payload must not resurrect the superseded identity.
+    let read = request(&activity, "thread/read");
+    activity.observe_response(&read, &json!({"thread":{"id":"thread"}}));
+    assert_eq!(
+        activity.model_identity("thread").0.as_deref(),
+        Some("turn-model")
+    );
+}
+
+#[test]
 fn reading_thread_models_does_not_load_or_activate_native_work() {
     let mut activity = CodexNativeActivity::default();
     let read = request(&activity, "thread/read");

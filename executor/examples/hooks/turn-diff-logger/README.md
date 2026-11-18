@@ -53,7 +53,7 @@ Codex 的模型元数据采用本轮 turn/start 的模型参数；未覆盖时�
 `processQueue(root, { processJob, onArchive, onError })` 支持自定义消费。
 提供 `processJob` 时直接处理固定的前后快照，不生成默认归档；回调成功后才确认任务、释放引用，
 失败会保留任务并退避重试。`onArchive` 在默认归档持久化后调用。
-`startWorker(root, mode, { logFile })` 支持自定义工作模式，`logFile: null` 不创建工作日志。
+`startWorker(root, { logFile })` 以后台队列进程启动，`logFile: null` 不创建工作日志。
 `writeJson(path, value, { modifiedAt })` 在原子发布前持久化指定修改时间，便于外部插件管理数据寿命。
 默认日志插件继续归档所有快照差异，包含 pull／merge 引入的变化；不内置上报或过滤策略。
 
@@ -109,7 +109,7 @@ Reusable APIs include `gitStream(cwd, args, options)` for streamed Git output an
 `processQueue(root, { processJob, onArchive, onError })` for custom consumers. Supplying `processJob`
 processes fixed before/after snapshots without creating default archives. Successful consumption
 acknowledges jobs and releases refs; failures retain jobs and retry with backoff. `onArchive` runs
-after the default archive is durable. `startWorker(root, mode, { logFile })` supports a custom mode;
+after the default archive is durable. `startWorker(root, { logFile })` launches the queue worker;
 `logFile: null` creates no worker log. `writeJson(path, value, { modifiedAt })` durably sets the
 modification timestamp before atomic publication. Default logging still archives every snapshot
 difference, including pull/merge imports; reporting and filtering policies belong to custom plugins.

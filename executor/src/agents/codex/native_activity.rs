@@ -247,8 +247,16 @@ impl CodexNativeActivity {
                 }
                 false
             }
-            CodexNativeRequest::Turn(thread_id) => turn_start_response_id(response)
-                .is_some_and(|turn_id| self.start_turn(thread_id.clone(), turn_id)),
+            CodexNativeRequest::Turn { thread_id, model } => {
+                let started = turn_start_response_id(response)
+                    .is_some_and(|turn_id| self.start_turn(thread_id.clone(), turn_id));
+                if started {
+                    if let Some(model) = model {
+                        self.models.entry(thread_id.clone()).or_default().0 = Some(model.clone());
+                    }
+                }
+                started
+            }
             CodexNativeRequest::Goal {
                 thread_id,
                 observation,
@@ -330,7 +338,15 @@ impl CodexNativeActivity {
         let thread_id = stream_thread_id(params)?;
         let observation = self.goal_observation(&thread_id);
         match method {
-            "turn/start" => Some(CodexNativeRequest::Turn(thread_id)),
+            "turn/start" => Some(CodexNativeRequest::Turn {
+                model: params
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                    .map(str::to_owned),
+                thread_id,
+            }),
             "thread/goal/set" | "thread/goal/get" => Some(CodexNativeRequest::Goal {
                 observation,
                 request_id,
@@ -372,7 +388,10 @@ impl CodexNativeActivity {
 pub(super) enum CodexNativeRequest {
     LoadThread,
     ReadThread,
-    Turn(String),
+    Turn {
+        thread_id: String,
+        model: Option<String>,
+    },
     Goal {
         thread_id: String,
         observation: u64,

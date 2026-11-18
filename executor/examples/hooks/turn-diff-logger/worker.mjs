@@ -8,16 +8,12 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { BUFFER_BYTES, git, pin, unpin, withLock } from './git.mjs'
 import { digest, optionalJson, readJson, writeJson, syncDirectory } from './storage.mjs'
 
-export async function startWorker(
-  root,
-  mode = 'worker',
-  { logFile = join(root, 'worker.log') } = {}
-) {
+export async function startWorker(root, { logFile = join(root, 'worker.log') } = {}) {
   const output = logFile === null ? null : openSync(logFile, 'a', 0o600)
   try {
     const child = spawn(
       process.execPath,
-      [fileURLToPath(new URL('./bin/log-turn.mjs', import.meta.url)), mode, root],
+      [fileURLToPath(new URL('./bin/log-turn.mjs', import.meta.url)), 'worker', root],
       {
         detached: true,
         windowsHide: true,
@@ -224,13 +220,16 @@ async function drainQueue(
               const state = await optionalJson(join(root, 'executions', execution, 'state.json'))
               if (!state && (await optionalJson(path)))
                 throw new Error('Execution state is missing')
+              // Acknowledge the consumed job before releasing the trees it
+              // needs. A crash after this point can leak refs, but a retried
+              // job never reads a tree that Git may already have collected.
+              await rm(path, { force: true })
+              await syncDirectory(join(root, 'pending'))
               // A producer may die after queue publication but before baseline
               // publication. Keep the persisted state's tree reachable.
               if (state?.closed) await unpin(workspace, state.reference, hooks)
               else if (state) await pin(workspace, state.reference, state.tree, hooks)
               for (const reference of job.references) await unpin(workspace, reference, hooks)
-              await rm(path, { force: true })
-              await syncDirectory(join(root, 'pending'))
             })
           } catch (error) {
             failed = true
