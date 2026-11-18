@@ -127,6 +127,7 @@ impl JsonRpcConnection {
         method: &str,
         params: Value,
     ) -> Result<u64, String> {
+        let initialize_started = (method == "initialize").then(Instant::now);
         let request_id = self.next_id;
         self.next_id += 1;
         self.write_message(json!({
@@ -135,6 +136,15 @@ impl JsonRpcConnection {
             "params": params,
         }))
         .await?;
+        if let Some(started) = initialize_started {
+            crate::logging::log_executor_event(
+                "codex initialize request written",
+                &[
+                    ("request_id", request_id.to_string()),
+                    ("elapsed_ms", started.elapsed().as_millis().to_string()),
+                ],
+            );
+        }
         Ok(request_id)
     }
 

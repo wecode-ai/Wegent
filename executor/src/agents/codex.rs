@@ -1879,7 +1879,11 @@ async fn start_persistent_codex_app_server(
             rpc.request_ignoring_notifications("initialize", initialize_params()),
         )
         .await?;
-        configure_codex_log_db_filter(wework_codex_home()).await;
+        log_executor_event(
+            "codex shared app-server initialization acknowledged",
+            &[("process_id", process_id.clone())],
+        );
+        configure_codex_log_db_filter(home.clone()).await;
         with_rpc_timeout(
             "initialized",
             timeout_seconds,
@@ -2886,7 +2890,7 @@ async fn run_codex_app_server_turn_with_runtime(
             rpc.request("initialize", initialize_params(), &mut state),
         )
         .await?;
-        configure_codex_log_db_filter(wework_codex_home()).await;
+        configure_codex_log_db_filter(codex_home_for_launch_config(&launch_config)).await;
         with_rpc_timeout(
             "initialized",
             timeout_seconds,

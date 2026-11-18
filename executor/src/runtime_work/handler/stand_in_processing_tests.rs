@@ -2,6 +2,9 @@ use super::*;
 
 pub(super) fn fixture(root: &Path) -> (RuntimeWorkRpcHandler, LocalTaskStore, Value) {
     let mut handler = RuntimeWorkRpcHandler::new("mac", "unused");
+    handler
+        .configure_local_runtime_owner(json!({"userId":7}))
+        .unwrap();
     handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
     handler.store = RuntimeWorkStore::new(root.join("runtime.json"));
     handler.turn_queue_path = Arc::new(root.join("turn-queue.json"));
@@ -934,4 +937,43 @@ async fn paused_and_removed_source_backlogs_do_not_occupy_the_eligible_event_bud
         121
     );
     assert!(store.stand_in_actions(7).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn local_collection_and_processing_do_not_request_the_unavailable_cloud_owner() {
+    let root = tempfile::tempdir().unwrap();
+    let (handler, store, settings) = fixture(root.path());
+    *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
+        backend_url: "http://127.0.0.1:1".into(),
+        auth_token: "unavailable-cloud".into(),
+        ..Default::default()
+    });
+    let mut other = store.personal_stand_in(8, "mac").unwrap();
+    other["roles"] = settings["roles"].clone();
+    store.save_personal_stand_in(8, "mac", other).unwrap();
+    handler.poll_connection_stand_ins().await.unwrap();
+    handler
+        .coordination_snapshot_for_test(&store, 7)
+        .await
+        .unwrap();
+    assert_eq!(
+        handler
+            .coordination_snapshot_for_test(&store, 8)
+            .await
+            .unwrap_err()
+            .code,
+        "permission_denied"
+    );
+    handler
+        .configure_local_runtime_owner(json!({"userId":null}))
+        .unwrap();
+    handler.poll_connection_stand_ins().await.unwrap();
+    assert_eq!(
+        handler
+            .coordination_snapshot_for_test(&store, 7)
+            .await
+            .unwrap_err()
+            .code,
+        "permission_denied"
+    );
 }

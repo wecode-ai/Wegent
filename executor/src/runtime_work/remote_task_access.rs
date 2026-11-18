@@ -204,6 +204,7 @@ mod tests {
             "executor.remote_task_access.update",
             "executor.backend.configure",
             "runtime.settings.update",
+            "runtime.owner.configure",
             "runtime.codex.app_server.request",
             "device.execute_command",
             "runtime.worktrees.settings.update",

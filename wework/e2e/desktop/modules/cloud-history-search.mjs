@@ -342,9 +342,13 @@ export function createCloudHistorySearchVerification() {
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-transcript-history-start"]`
         )
         await control.command('waitFor', ANSWERS, { text: answer(TURN_COUNT - 1) })
+        // Visible tail messages do not prove that automatic pagination has settled.
         const original = await waitForPane(
           control,
-          pane => pane?.currentRuntimeTask?.taskId === taskId && !pane.transcript.loading,
+          pane =>
+            pane?.currentRuntimeTask?.taskId === taskId &&
+            !pane.transcript.loading &&
+            pane.transcript.loadingMoreBefore === false,
           'The original cloud conversation did not finish loading'
         )
         await assertAsyncHistoryUnloaded(control)
@@ -431,7 +435,10 @@ export function createCloudHistorySearchVerification() {
         await control.command('waitFor', ANSWERS, { text: answer(TURN_COUNT - 1) })
         const restored = await waitForPane(
           control,
-          pane => pane?.currentRuntimeTask?.taskId === taskId && !pane.transcript.loading,
+          pane =>
+            pane?.currentRuntimeTask?.taskId === taskId &&
+            !pane.transcript.loading &&
+            pane.transcript.loadingMoreBefore === false,
           'The original cloud conversation was not restored'
         )
         for (const field of ['hasMoreBefore', 'loadingMoreBefore', 'loadedRanges']) {

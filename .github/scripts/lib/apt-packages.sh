@@ -43,6 +43,11 @@ install_missing_apt_packages() {
 
   local privileged=()
   if ((EUID != 0)); then privileged=(sudo); fi
-  run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update || return
-  run_apt_with_diagnostics "${privileged[@]}" apt-get install --yes --no-install-recommends "${missing[@]}"
+  local sources=()
+  if [[ -n "${WEWORK_APT_SOURCE_LIST:-}" ]]; then
+    test -f "$WEWORK_APT_SOURCE_LIST" || return
+    sources=(-o "Dir::Etc::sourcelist=$WEWORK_APT_SOURCE_LIST" -o Dir::Etc::sourceparts=-)
+  fi
+  run_apt_with_diagnostics "${privileged[@]}" apt-get ${sources[@]+"${sources[@]}"} -o APT::Update::Error-Mode=any update || return
+  run_apt_with_diagnostics "${privileged[@]}" apt-get ${sources[@]+"${sources[@]}"} install --yes --no-install-recommends "${missing[@]}"
 }

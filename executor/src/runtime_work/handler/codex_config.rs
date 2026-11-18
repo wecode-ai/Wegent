@@ -325,6 +325,10 @@ impl RuntimeWorkRpcHandler {
             ],
         );
         let result = self.codex_app_server.request(method, params).await;
+        #[cfg(test)]
+        if let Err(error) = &result {
+            eprintln!("Model discovery fixture failure ({method}): {error}");
+        }
         let mut fields = vec![
             ("query_id", query_id.to_owned()),
             ("stage", method.to_owned()),

@@ -24,6 +24,8 @@ const HOST_STATE_VARS: &[&str] = &[
     "LOCAL_WORKSPACE_ROOT",
     "WEGENT_EXECUTOR_PROJECTS_DIR",
     "WEGENT_NATIVE_CODEX_HOME",
+    "WEGENT_CODEX_HOME",
+    "CODEX_HOME",
     "WEWORK_PYTHON_RUNTIME_URL",
     "WEWORK_PYTHON_RUNTIME_TOKEN",
 ];
@@ -48,6 +50,35 @@ pub fn lock() -> MutexGuard<'static, ()> {
     ENV_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Scoped environment mutation; callers must serialize environment-dependent tests.
+pub struct EnvGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvGuard {
+    pub fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    pub fn remove(key: &'static str) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::remove_var(key);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
 }
 
 /// Create a deterministic ZIP archive for package protocol fixtures.
@@ -92,6 +123,12 @@ mod tests {
                     "Inherited host state: {key}"
                 );
             }
+            for key in ["WEGENT_CODEX_HOME", "CODEX_HOME"] {
+                assert!(
+                    std::env::var_os(key).is_none(),
+                    "Native fixture inherited {key}"
+                );
+            }
             assert_eq!(std::env::var("WEGENT_EXTRA_PATHS").unwrap(), "test-path");
             return;
         }
@@ -107,6 +144,9 @@ mod tests {
         for key in HOST_STATE_VARS {
             command.env(key, "synthetic-host-state");
         }
+        // Model fixtures must not inherit the desktop account even if the scrub list regresses.
+        command.env("WEGENT_CODEX_HOME", "synthetic-host-codex");
+        command.env("CODEX_HOME", "synthetic-host-codex");
         let output = command.output().unwrap();
         assert!(
             output.status.success(),

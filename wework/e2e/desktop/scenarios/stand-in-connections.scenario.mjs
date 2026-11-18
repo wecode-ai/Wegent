@@ -1,3 +1,4 @@
+import { verifyStandInOfflineOwnership } from '../modules/stand-in-offline-ownership.mjs'
 import {
   openStandInSettings,
   verifyStandInProfileNavigation,
@@ -43,6 +44,7 @@ export function createDesktopScenario(options) {
         assert.deepEqual(provider.resourceKinds, ['group', 'direct'])
         assert.equal(provider.dependencies[0].source.pluginId, 'dingtalk@wework')
         await fixture.install(control)
+        await verifyStandInOfflineOwnership(control, USER, uiTimeoutMs)
         // Startup sync also restarts Codex. Both local markets and the installed
         // dependency must survive that boundary, rather than exist only in memory.
         const restarted = await requestExecutor(

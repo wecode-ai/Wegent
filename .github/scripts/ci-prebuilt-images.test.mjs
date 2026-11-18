@@ -331,11 +331,14 @@ test("Fork Executor consumers do not require a registry login for public images"
   const consumer = workflow("e2e-tests").jobs["executor-e2e-tests"];
   const login = consumer.steps.find((step) => step.name === "Log in to GHCR");
   const enabled = (eventName, headRepository) =>
-    login.if === undefined || runInNewContext(login.if, {
+    login.if === undefined ||
+    runInNewContext(login.if, {
       github: {
         event_name: eventName,
         repository: "wecode-ai/Wegent",
-        event: { pull_request: { head: { repo: { full_name: headRepository } } } },
+        event: {
+          pull_request: { head: { repo: { full_name: headRepository } } },
+        },
       },
     });
   assert.equal(enabled("pull_request", "fork-owner/Wegent"), false);
@@ -716,6 +719,8 @@ for (const published of [false, true]) {
     const temporary = mkdtempSync(join(tmpdir(), "unused-oci-tools-"));
     const bin = join(temporary, "bin");
     mkdirSync(bin);
+    const aptSource = join(temporary, "ubuntu.sources");
+    writeFileSync(aptSource, "Types: deb\n");
     const tools = spawnSync(
       "bash",
       ["-c", "command -v bash; command -v dirname; command -v grep"],
@@ -761,6 +766,7 @@ for (const published of [false, true]) {
             WEWORK_CI_DOWNLOAD_CACHE_DIR: join(temporary, "cache"),
             RUNNER_TEMP: temporary,
             APT_CALL_LOG: log,
+            WEWORK_APT_SOURCE_LIST: aptSource,
           },
         },
       );
@@ -768,7 +774,7 @@ for (const published of [false, true]) {
         assert.equal(result.status, 31, result.stderr);
         assert.equal(
           readFileSync(log, "utf8"),
-          "-o APT::Update::Error-Mode=any update\n",
+          `-o Dir::Etc::sourcelist=${aptSource} -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update\n`,
         );
       } else {
         assert.equal(result.status, 0, result.stderr);
@@ -879,6 +885,70 @@ test("download bundles are restored once and reject unexpected archive paths", (
       existsSync(join(directory, "unsafe-cache/ci-downloads-image")),
       false,
     );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("download provisioning isolates Ubuntu sources and preserves APT failures", () => {
+  const directory = mkdtempSync(join(tmpdir(), "ci-download-apt-"));
+  try {
+    const bin = join(directory, "bin");
+    mkdirSync(bin);
+    const executable = (name, body) => {
+      const path = join(bin, name);
+      writeFileSync(path, `#!/usr/bin/env bash\nset -euo pipefail\n${body}\n`);
+      chmodSync(path, 0o755);
+    };
+    executable("sudo", 'exec "$@"');
+    executable("dpkg-query", "exit 1");
+    executable(
+      "apt-get",
+      `printf '%s\\n' "$*" >> "$APT_CALL_LOG"
+if [[ "$*" != *"Dir::Etc::sourceparts=-"* ]]; then exit 100; fi
+if [[ "\${APT_FAIL_UPDATE:-}" == true && "$*" == *" update" ]]; then exit 100; fi`,
+    );
+    const source = join(directory, "ubuntu.sources");
+    writeFileSync(source, "Types: deb\n");
+    const log = join(directory, "calls");
+    const run = (overrides = {}) =>
+      spawnSync(
+        "bash",
+        [
+          "-c",
+          'source "$1"; install_missing_apt_packages skopeo',
+          "test",
+          new URL(".github/scripts/lib/apt-packages.sh", root).pathname,
+        ],
+        {
+          env: {
+            ...process.env,
+            CI: "false",
+            PATH: `${bin}:/usr/bin:/bin`,
+            APT_CALL_LOG: log,
+            WEWORK_APT_SOURCE_LIST: "",
+            ...overrides,
+          },
+          encoding: "utf8",
+        },
+      );
+    const unscoped = run();
+    assert.equal(unscoped.status, 100, unscoped.stderr);
+    writeFileSync(log, "");
+    const result = run({ WEWORK_APT_SOURCE_LIST: source });
+    assert.equal(result.status, 0, result.stderr);
+    const calls = readFileSync(log, "utf8").trim().split("\n");
+    assert.equal(calls.length, 2);
+    for (const call of calls)
+      assert.ok(call.includes(`Dir::Etc::sourcelist=${source}`));
+    assert.match(calls[0], /APT::Update::Error-Mode=any update$/);
+    assert.match(calls[1], /install --yes --no-install-recommends skopeo$/);
+    writeFileSync(log, "");
+    assert.equal(
+      run({ WEWORK_APT_SOURCE_LIST: source, APT_FAIL_UPDATE: "true" }).status,
+      100,
+    );
+    assert.equal(readFileSync(log, "utf8").trim().split("\n").length, 1);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

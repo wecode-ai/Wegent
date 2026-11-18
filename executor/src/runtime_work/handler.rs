@@ -561,6 +561,8 @@ pub struct RuntimeWorkRpcHandler {
         Arc<Mutex<HashMap<String, Weak<Mutex<goal_status::GoalStatusRevision>>>>>,
     cancelled_pending_sends: Arc<Mutex<HashMap<String, HashSet<String>>>>,
     stand_in_lifecycle_gate: Arc<Mutex<()>>,
+    // Unconfigured headless runtime, logged-out desktop, or active desktop owner.
+    local_runtime_owner: Arc<Mutex<Option<Option<i64>>>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
     active_goal_turns: Arc<Mutex<HashMap<String, SpawnTurnRequest>>>,
     connection_goal_reconciliations: Arc<Mutex<HashMap<String, u64>>>,
@@ -956,6 +958,7 @@ impl RuntimeWorkRpcHandler {
             goal_status_revisions: Arc::new(Mutex::new(HashMap::new())),
             cancelled_pending_sends: Arc::new(Mutex::new(HashMap::new())),
             stand_in_lifecycle_gate: Arc::new(Mutex::new(())),
+            local_runtime_owner: Arc::new(Mutex::new(None)),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
                 runtime_settings,
                 queued_turns,

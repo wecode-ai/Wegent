@@ -206,3 +206,93 @@ async fn cloud_denials_identify_the_request_without_leaking_response_content() {
     }
     server.abort();
 }
+
+#[tokio::test]
+async fn local_owner_survives_cloud_failure_and_rejects_other_accounts_and_logout() {
+    let handler = RuntimeWorkRpcHandler {
+        backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: "http://127.0.0.1:1".into(),
+            auth_token: "unavailable-cloud".into(),
+            ..Default::default()
+        }))),
+        ..RuntimeWorkRpcHandler::new("mac", "unused")
+    };
+    assert_eq!(
+        handler.verify_local_runtime_user(7).unwrap_err().code,
+        "permission_denied"
+    );
+    handler
+        .dispatch_method("runtime.owner.configure", json!({"userId":7}))
+        .await
+        .unwrap();
+    handler.verify_local_runtime_user(7).unwrap();
+    assert_eq!(
+        handler.verify_local_runtime_user(8).unwrap_err().code,
+        "permission_denied"
+    );
+    assert!(handler
+        .verify_runtime_user(&json!({"userId":7}))
+        .await
+        .is_err());
+    handler.verify_local_runtime_user(7).unwrap();
+    handler
+        .configure_local_runtime_owner(json!({"userId":8}))
+        .unwrap();
+    assert_eq!(
+        handler.verify_local_runtime_user(7).unwrap_err().code,
+        "permission_denied"
+    );
+    handler.verify_local_runtime_user(8).unwrap();
+    assert!(handler
+        .configure_local_runtime_owner(json!({"userId":-1}))
+        .is_err());
+    handler.verify_local_runtime_user(8).unwrap();
+    handler
+        .configure_local_runtime_owner(json!({"userId":null}))
+        .unwrap();
+    assert_eq!(
+        handler.verify_local_runtime_user(8).unwrap_err().code,
+        "permission_denied"
+    );
+}
+
+#[tokio::test]
+async fn headless_identity_keeps_cloud_validation_but_desktop_logout_never_uses_it() {
+    let router = Router::new().route("/api/users/me", get(|| async { Json(json!({"id":7})) }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let handler = RuntimeWorkRpcHandler {
+        backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url,
+            auth_token: "test".into(),
+            ..Default::default()
+        }))),
+        ..RuntimeWorkRpcHandler::new("headless", "unused")
+    };
+    handler.verify_personal_runtime_user(7).await.unwrap();
+    assert_eq!(
+        handler
+            .verify_personal_runtime_user(8)
+            .await
+            .unwrap_err()
+            .code,
+        "permission_denied"
+    );
+    handler
+        .configure_local_runtime_owner(json!({"userId":null}))
+        .unwrap();
+    assert_eq!(
+        handler
+            .verify_personal_runtime_user(7)
+            .await
+            .unwrap_err()
+            .code,
+        "permission_denied"
+    );
+    handler
+        .verify_runtime_user(&json!({"userId":7}))
+        .await
+        .unwrap();
+    server.abort();
+}

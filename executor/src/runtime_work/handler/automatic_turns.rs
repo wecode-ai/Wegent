@@ -131,8 +131,16 @@ impl RuntimeWorkRpcHandler {
                     "Automatic work has no execution identity",
                 )
             })?;
-        if self.backend_connection_snapshot()?.is_some() {
+        if turn
+            .request
+            .extra
+            .get("origin")
+            .is_some_and(|origin| origin["projectStore"] == "cloud")
+            && self.backend_connection_snapshot()?.is_some()
+        {
             self.verify_runtime_user(&json!({"userId":user})).await?;
+        } else {
+            self.verify_personal_runtime_user(user).await?;
         }
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(super::stand_in::settings_error)?;
@@ -686,6 +694,9 @@ mod tests {
     async fn accepted_automatic_input_revalidates_configuration_and_assignment_before_launch() {
         for revoke_configuration in [true, false] {
             let (mut handler, root) = isolated_runtime_work_handler("automatic-launch-revocation");
+            handler
+                .configure_local_runtime_owner(json!({"userId":7}))
+                .unwrap();
             handler.task_store_path = Arc::new(root.join("tasks.sqlite"));
             handler.command_journal.lock().unwrap().clear();
             let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();

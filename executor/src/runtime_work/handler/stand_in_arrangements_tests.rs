@@ -69,7 +69,12 @@ async fn collaboration_chat_inherits_primary_settings_with_separate_persistent_h
     let primary = handler
         .stand_in_conversation(json!({"userId":7,"message":"Personal chat"}))
         .await
-        .unwrap();
+        .unwrap_or_else(|error| {
+            panic!(
+                "Personal chat failed: {error:?}; native requests: {:?}",
+                fs::read_to_string(root.path().join("requests.jsonl"))
+            )
+        });
     let collaboration = handler
         .stand_in_conversation(json!({"userId":7,"message":"Discuss project work",
         "options":{"conversationScope":"collaboration"}}))
@@ -931,4 +936,46 @@ fn a_calendar_enqueue_failure_does_not_block_other_calendar_runs() {
             .status,
         AutomationRunStatus::Pending
     );
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // The fixture defines the default and named native homes.
+async fn named_native_process_filters_only_its_own_log_database() {
+    use rusqlite::OptionalExtension;
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let host = root.path().join("host-codex");
+    let native = root.path().join("native-home");
+    let _home = ScalarEnv::set("WEGENT_EXECUTOR_HOME", root.path().to_str().unwrap());
+    let _host = ScalarEnv::set("WEGENT_CODEX_HOME", host.to_str().unwrap());
+    for home in [&host, &native] {
+        fs::create_dir_all(home).unwrap();
+        rusqlite::Connection::open(home.join("logs_2.sqlite")).unwrap()
+            .execute_batch("CREATE TABLE logs (level TEXT); CREATE TRIGGER wework_codex_log_level_filter BEFORE INSERT ON logs WHEN NEW.level='TRACE' BEGIN SELECT RAISE(IGNORE); END;")
+            .unwrap();
+    }
+    let trigger_sql = |home: &Path| -> Option<String> {
+        rusqlite::Connection::open(home.join("logs_2.sqlite")).unwrap()
+            .query_row("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='wework_codex_log_level_filter'", [], |row| row.get(0)).optional().unwrap()
+    };
+    let original = trigger_sql(&host);
+    assert!(original.is_some());
+    let (handler, _claude_home) = memory_review_handler(root.path());
+    let response = handler
+        .codex_app_server
+        .request("config/read", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(response["config"]["model"], "review-default");
+    assert_eq!(
+        trigger_sql(&host),
+        original,
+        "A named process must leave the default account untouched"
+    );
+    assert_ne!(
+        trigger_sql(&native),
+        original,
+        "The named process must configure its own database"
+    );
+    handler.codex_app_server.restart().await;
 }

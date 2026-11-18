@@ -70,6 +70,32 @@ fn queued_wait(task: &str, deadline: i64) -> SpawnTurnRequest {
 }
 
 #[test]
+fn quota_waker_keeps_overdue_admissible_turns_scheduled() {
+    use super::super::concurrency::{RuntimeSettings, RuntimeTaskKind, RuntimeTurnScheduler};
+
+    let now = now_ms();
+    let mut scheduler = RuntimeTurnScheduler::new(RuntimeSettings::uniform(1), VecDeque::new());
+    scheduler
+        .queued_turns
+        .push_back(queued_wait("overdue", now - 1));
+    assert_eq!(scheduler.next_quota_check_at(now, true), Some(now - 1));
+    assert_eq!(scheduler.next_quota_check_at(now, false), None);
+    scheduler
+        .active_task_ids
+        .insert("overdue".into(), RuntimeTaskKind::Personal);
+    assert_eq!(scheduler.next_quota_check_at(now, true), None);
+    scheduler.active_task_ids.clear();
+    scheduler
+        .active_task_ids
+        .insert("busy".into(), RuntimeTaskKind::Personal);
+    assert_eq!(scheduler.next_quota_check_at(now, true), None);
+    scheduler
+        .queued_turns
+        .push_back(queued_wait("future", now + 1000));
+    assert_eq!(scheduler.next_quota_check_at(now, true), Some(now + 1000));
+}
+
+#[test]
 fn quota_wait_uses_the_last_exhausted_window_of_the_selected_bucket() {
     let limits = json!({"rateLimitsByLimitId":{
         "codex":{"primary":{"usedPercent":100,"resetsAt":20},"secondary":{"usedPercent":100,"resetsAt":40}},

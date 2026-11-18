@@ -50,6 +50,7 @@ from app.services.chat.trigger.unified import build_execution_request
 from app.services.context import context_service
 from app.services.task_fork_history import task_fork_history_resolver
 from app.stores.tasks import subtask_store, task_store
+from shared.telemetry.decorators import trace_async
 
 if TYPE_CHECKING:
     from shared.models.execution import ExecutionRequest
@@ -67,13 +68,14 @@ class PipelineHandoff:
     assistant_subtask: Subtask
 
 
+@trace_async("chat.pipeline_auto_advance", tracer_name="backend.chat")
 async def advance_pipeline_stage_from_auto_completion(
     intent: PipelineAutoAdvanceIntent,
 ) -> bool:
     """Resume the committed handoff and acknowledge only after dispatch is queued."""
     try:
         async with distributed_lock.acquire_watchdog_context_async(
-            _advance_lock(intent.completed_subtask_id)
+            _advance_lock(intent.completed_subtask_id), blocking=True
         ) as acquired:
             if not acquired:
                 raise RuntimeError("Pipeline handoff is already in progress")
@@ -234,6 +236,12 @@ async def _resume_auto_advance(intent: PipelineAutoAdvanceIntent) -> bool:
             return False
 
         task, user, team, pending, result = prepared
+        if pending.dispatch_acknowledged and pending.next_pair:
+            async with cache_manager._client_context() as redis:
+                if await redis.exists(
+                    _execution_lease(pending.task_id, pending.next_pair[1])
+                ):
+                    return True
         history = task_fork_history_resolver.resolve_for_task(
             db,
             task_id=task.id,

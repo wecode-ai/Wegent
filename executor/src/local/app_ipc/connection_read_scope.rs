@@ -237,6 +237,7 @@ mod tests {
             "runtime.codex.app_server.request",
             "executor.command",
             "executor.backend.configure",
+            "runtime.owner.configure",
             "executor.plugin_auth.run",
             "executor.remote_task_access.update",
             "runtime.connections.dependencies.install",

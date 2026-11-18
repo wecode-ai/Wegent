@@ -375,9 +375,22 @@ class DistributedLock:
         lock_name: str,
         expire_seconds: int = 60,
         extend_interval_seconds: int = 30,
+        *,
+        blocking: bool = False,
     ) -> AsyncGenerator[bool, None]:
         """Acquire a lock and keep extending it with an async watchdog task."""
-        acquired = await self.acquire_async(lock_name, expire_seconds)
+        owned = None
+        if blocking:
+            if self.async_redis_client is None:
+                raise DistributedLockUnavailableError("Redis client is unavailable")
+            owned = self.async_redis_client.lock(
+                f"{LOCK_KEY_PREFIX}{lock_name}",
+                timeout=expire_seconds,
+                thread_local=False,
+            )
+            acquired = await owned.acquire()
+        else:
+            acquired = await self.acquire_async(lock_name, expire_seconds)
         watchdog_task: Optional[asyncio.Task] = None
 
         if (
@@ -391,7 +404,10 @@ class DistributedLock:
                 try:
                     while True:
                         await asyncio.sleep(extend_interval_seconds)
-                        await self.extend_async(lock_name, expire_seconds)
+                        if owned is not None:
+                            await owned.extend(expire_seconds, replace_ttl=True)
+                        else:
+                            await self.extend_async(lock_name, expire_seconds)
                 except asyncio.CancelledError:
                     pass
 
@@ -407,7 +423,10 @@ class DistributedLock:
                 except asyncio.CancelledError:
                     pass
             if acquired:
-                await self.release_async(lock_name)
+                if owned is not None:
+                    await owned.release()
+                else:
+                    await self.release_async(lock_name)
 
 
 # Singleton instance

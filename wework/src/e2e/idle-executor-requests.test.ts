@@ -24,6 +24,7 @@ const row = (method: string, at = 500, extra: Record<string, unknown> = {}) => (
 })
 const fixture = () => [
   row('runtime.worktrees.capabilities'),
+  row('runtime.owner.configure'),
   row('runtime.stand_in.telemetry.configure', 500, { consentEnabled: false }),
   row('executor.events'),
   ...windows.flatMap(window => [
@@ -108,6 +109,7 @@ test('malformed RPCs and unclassified routes fail without printing request conte
 
 for (const method of [
   'runtime.worktrees.capabilities',
+  'runtime.owner.configure',
   'runtime.stand_in.telemetry.configure',
   'executor.events',
 ]) {

@@ -4,6 +4,7 @@ const EXECUTOR_PATH = '/wework/executor/v1'
 const BOOTSTRAP_REQUESTS = new Set([
   'runtime.keybindings.get',
   'executor.backend.configure',
+  'runtime.owner.configure',
   'runtime.connectors.clear',
   'runtime.codex.runtime_config.update',
   'runtime.codex.ensure_started',
@@ -89,6 +90,7 @@ export function assertIdleExecutorTraffic(rows, windows) {
     'Consent was written more than once'
   )
   assert.equal(count('executor.events'), 1, 'Renderer subscribers opened duplicate SSE streams')
+  assert.equal(count('runtime.owner.configure'), 1, 'Runtime owner was configured more than once')
   const consent = rows.find(row => row.method === 'runtime.stand_in.telemetry.configure')
   assert.equal(consent.consentEnabled, false, 'The isolated fixture must decline telemetry')
   assert.equal(consent.status, 200, 'Consent synchronization did not succeed')
@@ -126,6 +128,7 @@ export function assertIdleExecutorTraffic(rows, windows) {
           'runtime.worktrees.capabilities',
           'runtime.stand_in.telemetry.configure',
           'executor.events',
+          'runtime.owner.configure',
         ].includes(row.method)
       ),
       `${window.name} repeated startup configuration or discovery`

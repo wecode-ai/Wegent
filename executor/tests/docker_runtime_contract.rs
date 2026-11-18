@@ -4,7 +4,7 @@
 
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -27,6 +27,7 @@ use wegent_executor::{
     heartbeat::{start_heartbeat, HeartbeatConfig},
     server::create_docker_router_from_env,
 };
+use wegent_executor_test_support::EnvGuard;
 
 async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -35,27 +36,26 @@ async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
         .await
 }
 
-struct EnvGuard {
-    key: &'static str,
-    previous: Option<String>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(previous) = &self.previous {
-            std::env::set_var(self.key, previous);
-        } else {
-            std::env::remove_var(self.key);
-        }
-    }
+fn isolated_environment(root: &Path) -> Vec<EnvGuard> {
+    [
+        ("HOME", "home"),
+        ("WEGENT_EXECUTOR_HOME", "executor"),
+        ("WEGENT_WORKBENCH_HOME", "workbench"),
+        ("WEGENT_CLAUDE_HOME", "claude"),
+        ("CLAUDE_CONFIG_DIR", "claude"),
+        ("WEGENT_CAPABILITIES_HOME", "capabilities"),
+        ("WORKSPACE_ROOT", "projects"),
+        ("WEGENT_WORKSPACE_ROOT", "projects"),
+        ("LOCAL_WORKSPACE_ROOT", "projects"),
+        ("WEGENT_EXECUTOR_PROJECTS_DIR", "projects"),
+    ]
+    .into_iter()
+    .map(|(key, child)| {
+        let path = root.join(child);
+        fs::create_dir_all(&path).unwrap();
+        EnvGuard::set(key, path.to_str().unwrap())
+    })
+    .collect()
 }
 
 #[tokio::test]
@@ -69,6 +69,8 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reaso
     );
     let callback = CallbackCapture::start().await;
     let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _environment = isolated_environment(root.path());
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let _callback = EnvGuard::set("CALLBACK_URL", &callback.url);
     let _executor_name = EnvGuard::set("EXECUTOR_NAME", "pod-from-env");
@@ -115,6 +117,9 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reaso
         events[2]["data"]["response"]["output"][0]["content"][0]["text"],
         "docker done"
     );
+    assert!(root.path().join("claude/mcp.json").is_file());
+    assert!(root.path().join("claude/settings.json").is_file());
+    assert!(root.path().join("projects/91").is_dir());
 }
 
 #[tokio::test]
@@ -127,6 +132,8 @@ exec sleep 30
     );
     let callback = CallbackCapture::start().await;
     let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let _environment = isolated_environment(root.path());
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let _callback = EnvGuard::set("CALLBACK_URL", &callback.url);
     let app = create_docker_router_from_env().unwrap();
@@ -309,7 +316,14 @@ impl CallbackCapture {
             }
         })
         .await
-        .unwrap()
+        .unwrap_or_else(|error| {
+            let events = self.events.lock().unwrap();
+            let types: Vec<_> = events.iter().map(|event| &event["event_type"]).collect();
+            panic!(
+                "callback wait failed: {error}; expected {count}, received {}: {types:?}",
+                events.len()
+            );
+        })
     }
 }
 

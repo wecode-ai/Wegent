@@ -24,6 +24,7 @@ use wegent_executor::{
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
 };
+use wegent_executor_test_support::EnvGuard;
 
 #[path = "agent_process_engine_contract/claude_capabilities.rs"]
 mod claude_capabilities;
@@ -94,35 +95,6 @@ fn with_backend_identity(mut request: ExecutionRequest) -> ExecutionRequest {
         request.extra.entry(key.to_owned()).or_insert(value);
     }
     request
-}
-
-struct EnvGuard {
-    key: &'static str,
-    previous: Option<String>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self { key, previous }
-    }
-
-    fn remove(key: &'static str) -> Self {
-        let previous = std::env::var(key).ok();
-        std::env::remove_var(key);
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        if let Some(previous) = &self.previous {
-            std::env::set_var(self.key, previous);
-        } else {
-            std::env::remove_var(self.key);
-        }
-    }
 }
 
 #[cfg(unix)]
@@ -618,7 +590,12 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
     let outcome = engine.run(with_backend_identity(request)).await;
 
     assert_eq!(
-        fs::read_to_string(preflight_environment).unwrap(),
+        fs::read_to_string(&preflight_environment).unwrap_or_else(|error| {
+            panic!(
+                "missing preflight evidence at {}: {error}; outcome: {outcome:?}",
+                preflight_environment.display()
+            )
+        }),
         "0\n2048\n5\n"
     );
     if times_out {
