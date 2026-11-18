@@ -94,7 +94,7 @@ export async function configureTemplateProject(
   await api.projects.update(projectId, {
     version: latest.version,
     tags: [...new Set([...latest.tags, ...board.tags])],
-    ...(latest.board_config ? { boardConfig: { ...latest.board_config, group_by: 'tag' } } : {}),
+    ...(latest.board_config ? { boardConfig: { ...latest.board_config, group_by: 'status' } } : {}),
     ...(latest.card_display ? { cardDisplay: { ...latest.card_display, show_tags: true } } : {}),
     boardViews: {
       schema_version: 1,

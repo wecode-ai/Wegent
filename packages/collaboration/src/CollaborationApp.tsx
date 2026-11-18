@@ -960,6 +960,8 @@ export function CollaborationApp({
                   <div className="relative flex min-h-0 min-w-0 flex-1">
                     <ProjectBoardAdapter
                       structuralWritesEnabled={snapshotCanWrite}
+                      projectApi={api.projects}
+                      onProjectMigrated={commands.replaceProject}
                       participationUserId={participationUserId}
                       isIssueRunning={isIssueRunning}
                       parentGroupingEnabled={parentGroupingEnabled}
