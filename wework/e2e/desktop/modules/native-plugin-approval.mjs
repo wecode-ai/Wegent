@@ -36,46 +36,12 @@ export async function withNativePluginDecision(control, operation, { allow = tru
   }
 }
 
-async function clickNativeDecision(pid, allow, signal, evidenceDirectory) {
+export async function clickNativeDecision(pid, allow, signal, evidenceDirectory, decision = {}) {
   const options = { timeout: 12_000, signal, encoding: 'utf8' }
   if (process.platform === 'darwin') {
-    await execute(
-      '/usr/bin/osascript',
-      [
-        '-e',
-        `
-on run argv
-  set targetPid to (item 1 of argv) as integer
-  set allowInstall to (item 2 of argv) is "true"
-  tell application "System Events"
-    set targetProcess to first application process whose unix id is targetPid
-    repeat 100 times
-      repeat with w in windows of targetProcess
-        set dialogs to sheets of w
-        if subrole of w is "AXDialog" then set end of dialogs to w
-        repeat with dialogReference in dialogs
-        set nativeDialog to contents of dialogReference
-        set nativeElements to get entire contents of nativeDialog
-        repeat with elementReference in nativeElements
-          set nativeElement to contents of elementReference
-          if class of nativeElement is button then
-            set labelText to name of nativeElement
-            if (allowInstall and labelText is in {"Allow installation", "Allow update", "允许安装", "允许更新"}) or (not allowInstall and labelText is in {"Cancel", "取消"}) then
-              click nativeElement
-              return
-            end if
-          end if
-        end repeat
-        end repeat
-      end repeat
-      delay 0.1
-    end repeat
-  end tell
-  error "The isolated app did not display its native Core plugin decision"
-end run`,
-        String(pid),
-        String(allow),
-      ],
+    await clickMacosNativeDecision(
+      pid,
+      allow ? ['Allow installation', 'Allow update', '允许安装', '允许更新'] : ['Cancel', '取消'],
       options
     )
     return
@@ -114,8 +80,8 @@ $dialogCondition = [System.Windows.Automation.AndCondition]::new([System.Windows
   [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32770'),
   [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window)
 ))
-$expectedTitles = @(${TITLES.map(title => `'${title}'`).join(', ')})
-$allowedButtonNames = @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})
+$expectedTitles = @(${(decision.titles ?? TITLES).map(title => "'" + title.replaceAll("'", "''") + "'").join(', ')})
+$allowedButtonNames = @(${decision.labels ? decision.labels.map(label => "'" + label.replaceAll("'", "''") + "'").join(', ') : allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
 $iteration = 0
 while ([DateTime]::UtcNow -lt $deadline) {
@@ -204,6 +170,7 @@ ${WINDOWS_UIA_STRUCTURE_DIAGNOSTICS}
       $pattern = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
       Write-DecisionStage 'invoke-pattern-read'
       Write-DecisionStage 'invoke-started'
+      ${decision.focus ? '$button.SetFocus()' : ''}
       $pattern.Invoke()
       Write-DecisionStage 'invoke-completed'
       exit 0
@@ -511,4 +478,19 @@ async function recordNativeWindowDiagnostics(pid) {
   } catch (error) {
     console.error('[native-plugin-window-diagnostics]', String(error))
   }
+}
+
+/** Click the exact visible native button in one isolated process. */
+export async function clickMacosNativeDecision(pid, labels, options) {
+  assert.ok(Number.isSafeInteger(pid) && pid > 0)
+  await execute(
+    '/usr/bin/osascript',
+    [
+      '-e',
+      '\non run argv\n  set targetPid to (item 1 of argv) as integer\n  set acceptedLabels to items 2 thru -1 of argv\n  tell application "System Events"\n    set targetProcess to first application process whose unix id is targetPid\n    repeat 100 times\n      repeat with w in windows of targetProcess\n        set dialogs to sheets of w\n        if subrole of w is "AXDialog" then set end of dialogs to w\n        repeat with dialogReference in dialogs\n        set nativeDialog to contents of dialogReference\n        set nativeElements to get entire contents of nativeDialog\n        repeat with elementReference in nativeElements\n          set nativeElement to contents of elementReference\n          if class of nativeElement is button then\n            set labelText to name of nativeElement\n            if labelText is in acceptedLabels then\n              click nativeElement\n              return\n            end if\n          end if\n        end repeat\n        end repeat\n      end repeat\n      delay 0.1\n    end repeat\n  end tell\n  error "The isolated app did not display its native Core plugin decision"\nend run',
+      String(pid),
+      ...labels,
+    ],
+    options
+  )
 }
