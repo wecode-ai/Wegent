@@ -25,7 +25,7 @@ import { useScopedDraftInput } from '@/features/workbench/useScopedDraftInput'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { getPlatform } from '@/lib/platform'
 import { createConversationMentionReference } from '@/lib/conversation-mentions'
-import type { RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
+import type { Attachment, RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
 import type {
   RuntimeConversationTurn,
   RuntimePaneTranscript,
@@ -333,6 +333,12 @@ beforeEach(() => {
       models: [],
       setInputForScope: mocks.setInput,
       getInputRevisionForScope: (scope: string) => sharedRevisions.get(scope) ?? 0,
+      captureAttachmentsForScope: (scope: string) => {
+        const context = mocks.context.projectChat as {
+          attachmentStateByScope: Record<string, { attachments: Attachment[] }>
+        }
+        return context.attachmentStateByScope[scope]?.attachments ?? []
+      },
       resetAttachmentsForScope: mocks.resetAttachments,
       setComposerErrorForScope: mocks.setError,
     },
