@@ -59,6 +59,27 @@ PC、手机版和 API 启动的 Codex 会话，每轮都会通过 `additionalCon
 
 每轮上下文仅包含上述字段和简短使用说明；完整接口用法保留在本文，避免重复占用上下文。继续当前会话需要等待当前轮次结束，传 `conversation` 或 `previous_response_id` 二选一，不再传设备和标题。上下文不包含个人 API Key、登录令牌或模型密钥；实际 HTTP 调用仍需单独提供个人 API Key。
 
+## Codex 输入与应用上下文边界
+
+桌面、移动端和云端编译的 Codex 请求使用同一约定：用户正文保留在 `prompt`，由执行器转换为 `turn/start` 或 `turn/steer` 的 `input`；应用补充信息单独通过 `additionalContext` 传递。项目引用、终端状态和其他应用上下文不再拼接到用户正文。
+
+`kind: application` 表示应用上下文，`kind: untrusted` 表示外部来源内容；传递时保留原有类型，不把外部内容提升为应用指令。项目详情仍由模型调用授权工具读取。上下文字段不授予权限。
+
+```mermaid
+sequenceDiagram
+    participant C as 桌面或移动端
+    participant B as 后端（云端路径）
+    participant E as 执行器
+    participant X as Codex
+    C->>B: message + additionalContext
+    B->>E: prompt = message，独立 additionalContext
+    C->>E: 本地路径：prompt = message，独立 additionalContext
+    E->>X: input = 用户正文，additionalContext = 类型化上下文
+    X-->>C: 原生用户消息与执行结果
+```
+
+消息展示、搜索和转录不再解析或隐藏 `<application_context>`。历史消息或用户自行输入的同名标签按普通正文处理。附件和显式引用仍走现有路径。Claude 保留其专用的上下文传递方式。
+
 ## 创建任务
 
 先调用 `/devices` 选择设备，再调用 `/models` 获取模型 `id`。设备列表使用相同的个人 API Key，返回格式如下：

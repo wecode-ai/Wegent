@@ -4336,10 +4336,7 @@ def _build_team_runtime_execution_request(
     )
     task_id, subtask_id = _runtime_execution_ids()
     title = _runtime_task_title(request)
-    message = _message_with_application_context(
-        request.message,
-        request.additional_context,
-    )
+    message = _runtime_message(request)
     task = _transient_runtime_team_task(
         task_id=task_id,
         user_id=user.id,
@@ -4492,10 +4489,7 @@ def _build_direct_wework_runtime_execution_request(
         ),
         model_config=model_config,
         system_prompt=(request.project_instructions or "").strip(),
-        prompt=_message_with_application_context(
-            request.message,
-            request.additional_context,
-        ),
+        prompt=_runtime_message(request),
         enable_tools=True,
         enable_web_search=False,
         enable_deep_thinking=False,
@@ -4575,6 +4569,7 @@ def _apply_runtime_create_request(
     execution_request.cloud_project_id = (
         str(request.cloud_project_id) if request.cloud_project_id is not None else None
     )
+    execution_request.additionalContext = request.additional_context or {}
     execution_request.origin = request.origin
     if request.attachments:
         execution_request.attachments = list(request.attachments)
@@ -4582,7 +4577,15 @@ def _apply_runtime_create_request(
         execution_request.ephemeral = request.ephemeral
 
 
-def _message_with_application_context(
+def _runtime_message(request: RuntimeTaskCreateRequest) -> str:
+    if request.runtime in ("claude", "claudecode", "claude_code"):
+        return _claude_message_with_application_context(
+            request.message, request.additional_context
+        )
+    return request.message
+
+
+def _claude_message_with_application_context(
     message: str, context: Optional[dict[str, dict[str, Any]]]
 ) -> str:
     entries: list[str] = []

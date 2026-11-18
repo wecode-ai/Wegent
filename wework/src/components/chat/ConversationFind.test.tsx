@@ -41,12 +41,8 @@ afterEach(() => {
 })
 
 describe('conversation find', () => {
-  test('indexes visible Markdown prose and code, without hidden context, link URLs, tools or attachments', () => {
-    const user = message(
-      'user',
-      '<application_context>private-context</application_context>\n输出 **代码**',
-      'user'
-    )
+  test('indexes visible Markdown prose and code, without link URLs, tools or attachments', () => {
+    const user = message('user', '输出 **代码**', 'user')
     const assistant = message(
       'assistant',
       '[输出](https://hidden.example)\n\n```ts\nconst output = 1\n```\n\n![private-image](image.png)'
@@ -91,14 +87,7 @@ describe('conversation find', () => {
       totalMatches: 1,
       isCapped: false,
     })
-    for (const query of [
-      'private-context',
-      'hidden.example',
-      'private-tool',
-      'private-image',
-      '```ts',
-      '   ',
-    ]) {
+    for (const query of ['hidden.example', 'private-tool', 'private-image', '```ts', '   ']) {
       expect(findConversationMatches(index, query)).toEqual({
         matches: [],
         totalMatches: 0,

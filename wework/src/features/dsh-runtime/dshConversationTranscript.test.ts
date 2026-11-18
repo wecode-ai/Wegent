@@ -27,8 +27,7 @@ describe('loadDshConversationTranscript', () => {
                 role: 'user',
                 status: 'done',
                 createdAt: '2026-09-09T08:00:00.000Z',
-                content:
-                  '<application_context>hidden</application_context>\n\nExport this conversation',
+                content: 'Export this conversation',
                 attachments: [
                   {
                     id: 1,

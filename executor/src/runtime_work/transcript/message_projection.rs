@@ -332,46 +332,7 @@ pub(crate) fn visible_user_request_content(content: &str) -> &str {
         .map(|index| &content[index + CODEX_REQUEST_MARKER.len()..])
         .filter(|request| !request.trim().is_empty())
         .unwrap_or(content);
-    strip_leading_application_context(request_content)
-}
-
-fn strip_leading_application_context(content: &str) -> &str {
-    let trimmed = content.trim_start();
-    if !trimmed.starts_with(APPLICATION_CONTEXT_OPEN) {
-        return trimmed;
-    }
-    let Some(close_index) = matching_application_context_close_index(trimmed) else {
-        return trimmed;
-    };
-    trimmed[close_index + APPLICATION_CONTEXT_CLOSE.len()..].trim_start()
-}
-
-fn matching_application_context_close_index(content: &str) -> Option<usize> {
-    let mut depth = 1;
-    let mut offset = APPLICATION_CONTEXT_OPEN.len();
-
-    while offset < content.len() {
-        let next_open = content[offset..]
-            .find(APPLICATION_CONTEXT_OPEN)
-            .map(|index| offset + index);
-        let next_close = content[offset..]
-            .find(APPLICATION_CONTEXT_CLOSE)
-            .map(|index| offset + index)?;
-
-        if let Some(next_open) = next_open.filter(|index| *index < next_close) {
-            depth += 1;
-            offset = next_open + APPLICATION_CONTEXT_OPEN.len();
-            continue;
-        }
-
-        depth -= 1;
-        if depth == 0 {
-            return Some(next_close);
-        }
-        offset = next_close + APPLICATION_CONTEXT_CLOSE.len();
-    }
-
-    None
+    request_content.trim_start()
 }
 
 pub(crate) fn merge_missing_user_message_metadata(target: &mut Value, source: &Value) {
