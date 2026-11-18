@@ -190,7 +190,7 @@ impl RuntimeWorkRpcHandler {
             Ok(saved)
         } else {
             store
-                .personal_stand_in(user, &self.device_id)
+                .read_personal_stand_in(user, &self.device_id)
                 .map_err(settings_error)
         }
     }

@@ -919,7 +919,6 @@ export function createDesktopScenario({
   uiTimeoutMs,
 }) {
   return {
-    appEnvironment: {},
     async handleHttp(request, response, url) {
       if (request.method !== 'GET') return false
       const fixtures = {

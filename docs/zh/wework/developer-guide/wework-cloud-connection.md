@@ -8,6 +8,10 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 
 打包时可通过 `VITE_WEGENT_BACKEND_URL` 设置“连接云端”中的默认 Backend 地址。该值仅用于预填，用户仍可修改；本机已有的连接地址优先于打包默认值。配置该变量后，桌面端左下角账户区在未连接时显示“Wegent 账户 / 未登录”，点击后仍打开完整账户菜单；用户从菜单顶部的“登录 Wegent”进入云端授权。连接成功后，账户区显示云端用户名和邮箱；账户菜单中的“退出登录”只会断开云端连接。
 
+云端连接兼容 HTTP 和 HTTPS 服务，包括内网 IP 或内网域名。授权页可以与 Backend 使用不同主机或端口；通过服务端的 WEWORK_AUTHORIZE_BASE_URL 或 FRONTEND_URL 配置实际可访问的 Web 地址。HTTP 传输没有加密，部署方应按所在网络的安全要求选择协议。
+
+云端登录保持原有方式，在系统浏览器中打开授权页。Connector 授权继续使用应用内的一次性隔离窗口，并只接受 HTTPS 或本机回环地址的 HTTP；它的窗口和校验规则不用于云端登录。
+
 ## 状态归属
 
 云端连接状态由 `cloud-connection` 前端层管理，和网页版登录使用的全局 `auth_token` 分开存储。它持久化以下信息：
@@ -29,9 +33,7 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 `renderer-local-storage-origins.json`，同 origin 的 renderer 重建不会重复清理。
 首次还没有权威快照时保留浏览器存储，避免在建立持久化副本前丢失迁移数据。
 
-用户可以输入 Backend 根地址，也可以直接输入 `/api` 地址。前端会把地址归一化为 HTTP API 地址和 Socket.IO 连接信息。连接时先请求 `/health`，再调用 `/auth/wework/sessions` 创建短生命周期授权会话。Backend 返回完整 `authorize_url`，本地 Wework 在内置授权窗打开该云端授权页，并携带 `poll_token` 轮询会话结果。
-
-桌面端授权窗默认尺寸为 `1000 × 640`，最小尺寸为 `960 × 620`，以完整容纳没有响应式布局的企业登录页。窗口完成定位前保持隐藏，显示后置顶于普通窗口，并在 Wework 主窗口移动或显示器缩放比例变化时重新定位。位置以 Wework 当前显示器的可用区域为边界；macOS 直接使用 AppKit 的统一逻辑桌面坐标，因此在 Retina 与非 Retina 显示器之间移动时不会因物理像素和逻辑像素换算而漂移到屏幕外。
+用户可以输入 Backend 根地址，也可以直接输入 `/api` 地址。前端会把地址归一化为 HTTP API 地址和 Socket.IO 连接信息。连接时先请求 `/health`，再调用 `/auth/wework/sessions` 创建短生命周期授权会话。Backend 返回完整 `authorize_url`，本地 Wework 在系统浏览器中打开该云端授权页，并携带 `poll_token` 轮询会话结果。
 
 Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。如果桌面端连接的是本机 loopback Backend，而 Backend 返回的 Socket 地址仅把同一端口和路径换成另一主机名，则桌面端继续使用 loopback 地址；用户显式指定的 Socket 地址和独立端口的部署不受影响。启动时也会按同一优先级刷新并迁移已保存连接。Wework 会把最终解析出的地址通过 Electron IPC 传给本机 executor；executor 使用该地址建立 Backend Socket.IO 连接，而 HTTP API 仍使用 Backend 地址，因此分离部署不需要用户再次手工配置 WSS 地址。
 

@@ -4,15 +4,13 @@ import { expect, it, vi } from 'vitest'
 
 const prefix = 'wework.interactions:test:1:'
 
-function storageSnapshot(): Record<string, string> {
-  const entries: Record<string, string> = {}
-  for (let index = 0; index < localStorage.length; index += 1) {
-    const key = localStorage.key(index)
-    if (key === null) continue
-    const value = localStorage.getItem(key)
-    if (value !== null) entries[key] = value
-  }
-  return entries
+function storageSnapshot() {
+  return Object.fromEntries(
+    Array.from({ length: localStorage.length }, (_, index) => {
+      const key = localStorage.key(index)!
+      return [key, localStorage.getItem(key)!]
+    })
+  )
 }
 
 function hostQueue() {
