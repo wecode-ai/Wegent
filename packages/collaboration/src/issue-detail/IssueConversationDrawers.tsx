@@ -42,10 +42,13 @@ export function IssueConversationDrawers({
     diagnostic.record("request-close");
     setDismissing(true);
   };
-  onCloseRef.current = onClose;
   if (conversation && conversation !== retainedConversation) {
     setRetainedConversation(conversation);
   }
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useLayoutEffect(() => {
     if (!dismissing) {
