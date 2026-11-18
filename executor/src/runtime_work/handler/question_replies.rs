@@ -73,6 +73,7 @@ impl RuntimeWorkRpcHandler {
                     .and_then(|link| execution_request(&link.runtime_handle))
                     .map(|mut request| {
                         request.extra.insert("attachments".into(), json!([]));
+                        self.restore_question_execution_request(task, &mut request);
                         request
                     })
             })
@@ -91,6 +92,21 @@ impl RuntimeWorkRpcHandler {
             key: pending.key,
             answer,
         }))
+    }
+
+    pub(super) fn restore_question_execution_request(
+        &self,
+        task: &str,
+        request: &mut ExecutionRequest,
+    ) {
+        // Persisted profiles intentionally omit credentials and per-send identity.
+        // Restore them only in memory, after validating the pending question.
+        request.task_id = task.to_owned();
+        if request.subtask_id.trim().is_empty() {
+            request.subtask_id = uuid::Uuid::new_v4().to_string();
+        }
+        crate::runtime_work::api_context::bind_task_identity(request, &self.device_id, task);
+        self.apply_backend_connection(request);
     }
 
     fn pending_question_reply(

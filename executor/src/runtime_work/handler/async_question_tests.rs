@@ -237,6 +237,11 @@ async fn blocking_question_download_race(stop: bool) {
     } else {
         "question-download-duplicate"
     });
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task".into(),
+        root.to_string_lossy().into_owned(),
+        "Question download".into(),
+    ));
     handler.begin_active_codex_transcript("task", "thread", "turn");
     let execution_id = start_test_execution(&handler, "task");
     handler.record_active_codex_turn("task", execution_id, "thread".into(), "turn".into());
@@ -270,6 +275,7 @@ async fn blocking_question_download_race(stop: bool) {
             assert!(count > 0 && headers.len() < 8192);
             headers.extend_from_slice(&buffer[..count]);
         }
+        assert!(String::from_utf8_lossy(&headers).contains("Bearer test-token"));
         started.send(()).unwrap();
         download_release.await.unwrap();
         stream
@@ -277,14 +283,25 @@ async fn blocking_question_download_race(stop: bool) {
             .await
             .unwrap();
     });
-    let file = json!({"id":1,"original_filename":"brief.txt"});
+    let download_id = uuid::Uuid::new_v4().to_string();
+    let download_dir = crate::attachments::device_runtime_attachment_dir("task", &download_id);
+    let file = json!({"id":1,"original_filename":"brief.txt","subtask_id":download_id});
     let answer = json!({"requestId":42,"interactionScope":"turn","answers":{"q":{"answers":["Yes"],"attachments":[file.clone()]}}});
-    let request = json!({"task_id":"task","subtask_id":"answer","prompt":"","project_workspace_path":root,
-        "auth_token":"test-token","backend_url":format!("http://{address}/api/"),"attachments":[file]});
+    *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
+        backend_url: format!("http://{address}/api/"),
+        auth_token: "test-token".into(),
+        ..ConnectionConfig::default()
+    });
+    assert!(handler
+        .store
+        .update_task("task", |link| {
+            store_runtime_execution_request(&mut link.runtime_handle, &ExecutionRequest::default());
+        })
+        .is_some());
     let sending = {
         let handler = handler.clone();
         tokio::spawn(async move {
-            handler.send_message(json!({"taskId":"task","message":"Yes","requestUserInputResponse":answer,"executionRequest":request})).await
+            handler.send_message(json!({"taskId":"task","message":"Yes","requestUserInputResponse":answer,"attachments":[file]})).await
         })
     };
     tokio::time::timeout(Duration::from_secs(3), download_started)
@@ -339,6 +356,7 @@ async fn blocking_question_download_race(stop: bool) {
     );
     handler.finish_local_task_execution("task", execution_id);
     server.await.unwrap();
+    fs::remove_dir_all(download_dir).unwrap();
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -358,8 +376,31 @@ async fn async_question_attachment_groups_reach_new_turn_prompt() {
         })],
         None,
     );
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
+        backend_url: format!("http://{address}/api/"),
+        auth_token: "async-download-token".into(),
+        ..ConnectionConfig::default()
+    });
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut headers = Vec::new();
+        while !headers.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let mut buffer = [0; 1024];
+            let count = stream.read(&mut buffer).await.unwrap();
+            assert!(count > 0 && headers.len() < 8192);
+            headers.extend_from_slice(&buffer[..count]);
+        }
+        assert!(String::from_utf8_lossy(&headers).contains("Bearer async-download-token"));
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfirst")
+            .await
+            .unwrap();
+    });
     let files = json!([
-        {"id":-1,"original_filename":"a.txt","local_path":"/tmp/a.txt","status":"ready"},
+        {"id":1,"original_filename":"a.txt"},
         {"id":-2,"original_filename":"b.txt","local_path":"/tmp/b.txt","status":"ready"}
     ]);
     let mut link = RuntimeTaskLink::new_pending(
@@ -368,12 +409,11 @@ async fn async_question_attachment_groups_reach_new_turn_prompt() {
         "Question files".into(),
     );
     link.thread_id = Some("thread-1".into());
-    link.runtime_handle["executionRequest"] =
-        json!({"task_id":"task","subtask_id":"original","prompt":"Original prompt"});
+    store_runtime_execution_request(&mut link.runtime_handle, &ExecutionRequest::default());
     handler.upsert_local_task(link);
     let response = json!({"delivery":"async","itemId":"question","interactionScope":"turn-1",
     "answers":{
-        "question_1":{"answers":[],"attachments":[{"id":-1}]},
+        "question_1":{"answers":[],"attachments":[{"id":1}]},
         "question_2":{"answers":["First line\nSecond line"],"attachments":[{"id":-2}]}
     }});
     let mut payload = json!({"taskId":"task","message":"First line\nSecond line", "attachments":files,
@@ -395,9 +435,21 @@ async fn async_question_attachment_groups_reach_new_turn_prompt() {
             .unwrap(),
     )
     .unwrap();
+    let downloaded_path = request.extra["attachments"][0]["local_path"]
+        .as_str()
+        .unwrap();
+    assert_eq!(fs::read_to_string(downloaded_path).unwrap(), "first");
+    fs::remove_dir_all(Path::new(downloaded_path).parent().unwrap()).unwrap();
     assert!(groups["question_1"]["answers"]
         .to_string()
-        .contains("/tmp/a.txt"));
+        .contains(downloaded_path));
+    assert_eq!(request.task_id, "task");
+    assert!(!request.subtask_id.is_empty());
+    assert_eq!(request.extra["runtimeLocalTaskId"], "task");
+    server.await.unwrap();
+    let saved = handler.local_task_link("task").unwrap().runtime_handle["executionRequest"].clone();
+    assert!(saved["auth_token"].is_null());
+    assert!(saved["backend_url"].is_null());
     assert!(!groups["question_1"].to_string().contains("b.txt"));
     assert_eq!(
         groups["question_2"]["answers"][0],

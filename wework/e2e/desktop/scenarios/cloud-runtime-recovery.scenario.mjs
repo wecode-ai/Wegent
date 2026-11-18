@@ -50,6 +50,9 @@ export function createDesktopScenario(options) {
   return {
     ...existing,
     appEnvironment,
+    cloudModelCatalogOverrides: [CLOUD_PUBLIC_MODEL_NAME, 'desktop-e2e-public-upstream-model'].map(
+      slug => ({ slug, fields: { experimental_supported_tools: ['request_user_input_async'] } })
+    ),
     async prepareCloud(value) {
       await existing.prepareCloud(value)
       proxy = await new TransportFaultProxy(value.backendUrl).start()

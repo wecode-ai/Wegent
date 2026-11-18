@@ -619,7 +619,7 @@ fn mcp_elicitation_history_keeps_reused_request_ids_scoped_to_their_turn() {
 }
 
 #[tokio::test]
-async fn question_files_use_native_context_but_preserve_the_original_reply_in_history() {
+async fn question_files_use_current_connection_but_preserve_the_original_reply_in_history() {
     let (handler, root) = interaction_handler("question-files-history");
     let execution_id = start_test_execution(&handler, "task-1");
     handler.record_active_codex_turn("task-1", execution_id, "thread-1".into(), "turn-1".into());
@@ -636,9 +636,27 @@ async fn question_files_use_native_context_but_preserve_the_original_reply_in_hi
             sender,
         },
     );
-    let path = root.join("brief.txt");
-    fs::write(&path, "Real question file").unwrap();
-    let file = json!({"id": -1, "filename": "brief.txt", "local_path": path, "status": "ready"});
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
+        backend_url: format!("http://{address}/api/"),
+        auth_token: "current-download-token".into(),
+        ..ConnectionConfig::default()
+    });
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut headers = Vec::new();
+        while !headers.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let mut buffer = [0; 1024];
+            let count = stream.read(&mut buffer).await.unwrap();
+            assert!(count > 0 && headers.len() < 8192);
+            headers.extend_from_slice(&buffer[..count]);
+        }
+        assert!(String::from_utf8_lossy(&headers).contains("Bearer current-download-token"));
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 18\r\nConnection: close\r\n\r\nReal question file").await.unwrap();
+    });
+    let file = json!({"id": 1, "filename": "brief.txt", "original_filename":"brief.txt"});
     let response = json!({"requestId": 9, "interactionScope": "turn-1", "answers": {"choice": {"answers": ["Review"], "attachments": [file.clone()]}}});
     let mut stale = response.clone();
     stale["interactionScope"] = json!("old-turn");
@@ -667,8 +685,21 @@ async fn question_files_use_native_context_but_preserve_the_original_reply_in_hi
     // Backend blocking replies omit executionRequest and carry resolved files separately.
     request.extra.insert("attachments".into(), json!([]));
     handler.store.update_task("task-1", |link| {
-        link.runtime_handle["executionRequest"] = serde_json::to_value(&request).unwrap();
+        store_runtime_execution_request(&mut link.runtime_handle, &request);
     });
+    let connection = handler.backend_connection.lock().unwrap().take();
+    assert_eq!(
+        handler
+            .prepare_question_reply(&json!({"taskId":"task-1", "attachments":[file.clone()],
+        "requestUserInputResponse":response.clone()}))
+            .await
+            .err()
+            .unwrap()
+            .code,
+        "attachment_preparation_failed"
+    );
+    assert!(receiver.try_recv().is_err());
+    *handler.backend_connection.lock().unwrap() = connection;
     assert_eq!(
         handler
             .send_message(
@@ -684,6 +715,27 @@ async fn question_files_use_native_context_but_preserve_the_original_reply_in_hi
         .to_string()
         .contains("<attachment>"));
     assert!(native["answers"]["choice"].get("attachments").is_none());
+    let context = native["answers"]["choice"]["answers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .find(|text| text.contains("<attachment>"))
+        .unwrap();
+    let path = context
+        .lines()
+        .find(|line| line.starts_with("- brief.txt ("))
+        .unwrap()
+        .split_once("): ")
+        .unwrap()
+        .1;
+    assert_eq!(fs::read_to_string(path).unwrap(), "Real question file");
+    fs::remove_dir_all(Path::new(path).parent().unwrap()).unwrap();
+    server.await.unwrap();
+    let saved =
+        handler.local_task_link("task-1").unwrap().runtime_handle["executionRequest"].clone();
+    assert!(saved["auth_token"].is_null());
+    assert!(saved["backend_url"].is_null());
     assert_eq!(
         handler.active_codex_transcript_items.lock().unwrap()["task-1"].items[0]["renderPayload"]
             ["response"],
