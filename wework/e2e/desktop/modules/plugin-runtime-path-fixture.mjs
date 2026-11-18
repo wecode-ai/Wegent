@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, opendir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { testId } from './plugin-regression-fixture.mjs'
 
@@ -41,6 +41,63 @@ export function isolatedPath(root, path) {
 export function relocatedPath(path, oldRoot, newRoot) {
   isolatedPath(oldRoot, path)
   return join(newRoot, relative(oldRoot, path))
+}
+
+function runtimeMetadataEntry(metadata, path) {
+  return {
+    path,
+    type: metadata.isSymbolicLink()
+      ? 'symlink'
+      : metadata.isDirectory()
+        ? 'directory'
+        : metadata.isFile()
+          ? 'file'
+          : 'other',
+    bytes: metadata.size,
+    modifiedAt: metadata.mtime.toISOString(),
+    createdAt: metadata.birthtime.toISOString(),
+  }
+}
+
+/** Retain bounded filesystem metadata without reading contents or following links. */
+export async function runtimeRootMetadata(resultDir, path) {
+  isolatedPath(resultDir, path)
+  const root = relative(resolve(resultDir), resolve(path))
+  const report = { root: root.split(sep).join('/'), entries: [], truncated: false }
+  try {
+    let ancestor = resolve(resultDir)
+    for (const name of root.split(sep).slice(0, -1)) {
+      ancestor = join(ancestor, name)
+      if ((await lstat(ancestor)).isSymbolicLink()) {
+        return { ...report, errorCode: 'SYMLINK_ANCESTOR' }
+      }
+    }
+    const pending = [{ path: resolve(path), relative: '.', depth: 0 }]
+    while (pending.length > 0 && report.entries.length < 32) {
+      const item = pending.shift()
+      const metadata = await lstat(item.path)
+      const entry = runtimeMetadataEntry(metadata, item.relative)
+      report.entries.push(entry)
+      if (entry.type !== 'directory') continue
+      const directory = await opendir(item.path)
+      for await (const child of directory) {
+        if (item.depth >= 3 || pending.length + report.entries.length >= 32) {
+          report.truncated = true
+          break
+        }
+        const name = child.name.replace(/[\u0000-\u001f\u007f]/g, '?').slice(0, 96)
+        pending.push({
+          path: join(item.path, child.name),
+          relative: item.relative === '.' ? name : `${item.relative}/${name}`,
+          depth: item.depth + 1,
+        })
+      }
+    }
+    report.truncated ||= pending.length > 0
+  } catch (error) {
+    report.errorCode = /^[A-Z_]{1,32}$/.test(error.code ?? '') ? error.code : 'METADATA_UNAVAILABLE'
+  }
+  return report
 }
 
 export async function readCapabilityManifest(executorHome) {

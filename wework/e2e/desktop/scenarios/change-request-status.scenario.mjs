@@ -259,13 +259,19 @@ async function queryTimestamps(path) {
     .filter(Number.isFinite)
 }
 
-async function refreshEnvironment(control) {
-  await control.command('click', ENVIRONMENT_BUTTON)
+export async function showChangeRequestFixtureState(control, { statePath, state }) {
+  if (
+    Number(await control.command('getElementCount', '[data-testid="environment-info-popover"]')) > 0
+  ) {
+    await control.command('click', ENVIRONMENT_BUTTON)
+  }
   assert.equal(
     Number(await control.command('getElementCount', '[data-testid="environment-info-popover"]')),
     0,
     'The environment summary did not close before refresh'
   )
+  // Opening starts collection, so publish the fixture state before that single refresh.
+  await writeFile(statePath, `${state}\n`)
   await control.command('click', ENVIRONMENT_BUTTON)
   await control.command('waitFor', '[data-testid="environment-info-popover"]')
 }
@@ -593,11 +599,7 @@ export async function createDesktopScenario({
         1,
         'An equivalent runtime task refresh restarted the shared PR/MR observer'
       )
-      await control.command('click', ENVIRONMENT_BUTTON)
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
-
-      await writeFile(statePath, 'failure\n')
-      await refreshEnvironment(control)
+      await showChangeRequestFixtureState(control, { statePath, state: 'failure' })
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查失败',
       })
@@ -617,11 +619,7 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await capture(control, 'change-request-status-03-repair-user-message.png')
-      await control.command('click', ENVIRONMENT_BUTTON)
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
-
-      await writeFile(statePath, 'success\n')
-      await refreshEnvironment(control)
+      await showChangeRequestFixtureState(control, { statePath, state: 'success' })
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查通过',
       })
@@ -639,8 +637,7 @@ export async function createDesktopScenario({
       await capture(control, 'change-request-status-04-checks-passed.png')
       await control.command('click', '[data-testid="environment-change-request-status"]')
 
-      await writeFile(statePath, 'unavailable\n')
-      await refreshEnvironment(control)
+      await showChangeRequestFixtureState(control, { statePath, state: 'unavailable' })
       await control.command('waitFor', '[data-testid="change-request-lookup-hint"]', {
         text: '安装 GitHub CLI',
       })
