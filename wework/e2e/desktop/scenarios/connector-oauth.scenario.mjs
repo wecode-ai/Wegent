@@ -565,10 +565,14 @@ export function createDesktopScenario({
         'Provider consent did not restore the rejected connector grant',
         uiTimeoutMs
       )
+      const recoveryRefreshes = provider.refreshRequests - refreshBefore
+      // Background tool discovery may already have consumed the one rejected
+      // refresh before the user reaches the connection action. The action then
+      // observes the cleared grant and goes straight to consent.
       assert.equal(
         provider.refreshRequests,
-        refreshBefore + 1,
-        'The expired plugin connection must exercise exactly one rejected refresh'
+        1,
+        'The expired connection must exercise exactly one rejected refresh'
       )
       assert.equal(
         provider.authorizeRequests,
@@ -577,7 +581,7 @@ export function createDesktopScenario({
       )
       assert.equal(
         provider.tokenRequests,
-        tokenBefore + 2,
+        tokenBefore + 1 + recoveryRefreshes,
         'The refresh and consent fallback must each reach the token endpoint once'
       )
       await control.command('waitFor', `${manage}:not([disabled])`, {
