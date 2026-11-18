@@ -115,6 +115,7 @@ fn completion_releases_execution_claims_before_telemetry_writes() {
             released,
             "SQLite telemetry cannot retain the execution-control mutex"
         );
+        drop((writer, facts));
         fs::remove_dir_all(root).unwrap();
     }
 }
