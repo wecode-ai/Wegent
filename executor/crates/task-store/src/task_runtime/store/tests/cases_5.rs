@@ -885,3 +885,74 @@ fn creates_and_reuses_default_work_item_binding_atomically() {
         })
     );
 }
+
+#[test]
+fn startup_reads_do_not_acquire_database_or_initialization_write_locks() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    store
+        .ensure_code_project("startup", "Startup", &[], None)
+        .unwrap();
+    let before = store.personal_stand_in(7, "mac").unwrap();
+    let initialization = LOCAL_TASK_STORE_INITIALIZATION.lock().unwrap();
+    let mut writer = Connection::open(&path).unwrap();
+    let transaction = writer
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let reader_path = path.clone();
+    let expected = before.clone();
+    let reader_thread = std::thread::spawn(move || {
+        let reader = LocalTaskStore::open(reader_path)?;
+        let projects = reader.list_projects()?;
+        let personal = reader.personal_stand_in(7, "mac")?;
+        assert!(reader.list_stand_in_telemetry(7)?["items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let code_project = reader.code_project_visibility("startup", None)?;
+        sender.send((projects, personal, code_project)).unwrap();
+        Ok::<_, TaskRuntimeError>(reader)
+    });
+    let result = receiver.recv_timeout(Duration::from_secs(2));
+    transaction.rollback().unwrap();
+    drop(initialization);
+    let reader = reader_thread.join().unwrap().unwrap();
+    let (projects, personal, code_project) =
+        result.expect("startup reads waited for a writer or initializer");
+    assert!(!projects.is_empty());
+    assert_eq!(personal, expected);
+    assert_eq!(code_project, Some(true));
+    let saved = reader.save_personal_stand_in(7, "mac", before).unwrap();
+    assert_eq!(reader.personal_stand_in(7, "mac").unwrap(), saved);
+}
+
+#[test]
+fn opening_repairs_missing_history_indexes_before_using_the_read_path() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let connection = Connection::open(&path).unwrap();
+    assert!(stand_in_history_index::schema_is_current(&connection).unwrap());
+    connection
+        .execute_batch("DROP INDEX ix_stand_in_history_event_ref")
+        .unwrap();
+    assert!(!stand_in_history_index::schema_is_current(&connection).unwrap());
+    drop(store);
+    let reopened = LocalTaskStore::open(&path).unwrap();
+    assert!(stand_in_history_index::schema_is_current(&connection).unwrap());
+    let writer = connection.unchecked_transaction().unwrap();
+    writer
+        .execute(
+            "UPDATE loop_items SET title=title WHERE id=?1",
+            [DEFAULT_WORK_ITEM_PROJECT_ID],
+        )
+        .unwrap();
+    assert!(LocalTaskStore::open(&path)
+        .unwrap()
+        .get_project(DEFAULT_WORK_ITEM_PROJECT_ID)
+        .is_ok());
+    writer.rollback().unwrap();
+    drop(reopened);
+}

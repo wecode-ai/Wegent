@@ -57,6 +57,46 @@ fn settle_local_execution_link(
     }
 }
 
+fn complete_local_execution_link(
+    link: &mut RuntimeTaskLink,
+    thread_id: Option<String>,
+    status: &str,
+) {
+    if thread_id.is_some() {
+        link.thread_id = thread_id;
+    }
+    if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(link) {
+        if status == "done" || state.request_turn_id.is_some() {
+            crate::runtime_work::lifecycle::project_native_execution(link, &state);
+            return;
+        }
+    }
+    if status != "running" {
+        crate::runtime_work::lifecycle::settle_native_execution(
+            link,
+            match status {
+                "done" => "succeeded",
+                "failed" => "failed",
+                _ => "cancelled",
+            },
+        );
+    }
+    link.updated_at = now_ms();
+    if status != "running" {
+        link.completed_at = Some(link.updated_at);
+        link.status = status.to_owned();
+        if status != "done"
+            || link.interaction_status.as_deref() != Some(INTERACTION_AWAITING_USER_REPLY)
+        {
+            link.interaction_status = None;
+        }
+    }
+    apply_local_execution_state(link, status == "running", None);
+    if link.thread_id.is_some() {
+        clear_runtime_handle_messages(&mut link.runtime_handle);
+    }
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) fn start_local_task_execution(
         &self,
@@ -295,14 +335,14 @@ impl RuntimeWorkRpcHandler {
                 settle_local_execution_link(link, None, status);
             }
             settled_status = Some(link.status.clone());
+            if let Some(mut control) = active.remove(task_id) {
+                request_execution_stop(&mut control);
+            }
+            drop(active);
         });
         let Some(settled_status) = settled_status else {
             return false;
         };
-        if let Some(mut control) = active.remove(task_id) {
-            request_execution_stop(&mut control);
-        }
-        drop(active);
         self.publish_settled_local_execution(task_id, &settled_status, reason);
         true
     }
@@ -557,44 +597,25 @@ impl RuntimeWorkRpcHandler {
         thread_id: Option<String>,
         status: &str,
     ) -> bool {
-        if !self.finish_local_task_execution(local_task_id, execution_id) {
+        let mut active = self
+            .active_local_executions
+            .lock()
+            .expect("active local execution map lock should not be poisoned");
+        if !active
+            .get(local_task_id)
+            .is_some_and(|control| control.execution_id == execution_id)
+        {
             return false;
         }
-        self.store.update_task(local_task_id, |link| {
-            if thread_id.is_some() {
-                link.thread_id = thread_id;
-            }
-            if let Some(state) = crate::runtime_work::lifecycle::native_execution_state(link) {
-                if status == "done" || state.request_turn_id.is_some() {
-                    crate::runtime_work::lifecycle::project_native_execution(link, &state);
-                    return;
-                }
-            }
-            if status != "running" {
-                crate::runtime_work::lifecycle::settle_native_execution(
-                    link,
-                    match status {
-                        "done" => "succeeded",
-                        "failed" => "failed",
-                        _ => "cancelled",
-                    },
-                );
-            }
-            link.updated_at = now_ms();
-            if status != "running" {
-                link.completed_at = Some(link.updated_at);
-                link.status = status.to_owned();
-                if status != "done"
-                    || link.interaction_status.as_deref() != Some(INTERACTION_AWAITING_USER_REPLY)
-                {
-                    link.interaction_status = None;
-                }
-            }
-            apply_local_execution_state(link, status == "running", None);
-            if link.thread_id.is_some() {
-                clear_runtime_handle_messages(&mut link.runtime_handle);
-            }
+        let updated = self.store.update_task(local_task_id, |link| {
+            complete_local_execution_link(link, thread_id, status);
+            active.remove(local_task_id);
+            // Publish completion before releasing its claim, but release before any telemetry I/O.
+            drop(active);
         });
+        if updated.is_none() {
+            self.finish_local_task_execution(local_task_id, execution_id);
+        }
         if let Some(link) = self.local_task_link(local_task_id) {
             self.project_runtime_link_status_now(&link);
         }
@@ -605,3 +626,7 @@ impl RuntimeWorkRpcHandler {
         true
     }
 }
+
+#[cfg(test)]
+#[path = "execution_completion_tests.rs"]
+mod completion_tests;
