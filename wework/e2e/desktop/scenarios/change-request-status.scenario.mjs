@@ -322,14 +322,20 @@ function newChangeRequestObserverPredicate(before) {
     ).length === 1
 }
 
+export async function prepareChangeRequestRecovery(executorHome) {
+  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.sqlite')
+  return {
+    journalPath,
+    activationCompleted: newChangeRequestObserverPredicate(
+      await readNativeUiObservers(journalPath)
+    ),
+  }
+}
+
 export async function recoverChangeRequestStatus(
   control,
-  { statePath, executorHome, uiTimeoutMs }
+  { statePath, uiTimeoutMs, journalPath, activationCompleted }
 ) {
-  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.sqlite')
-  const activationCompleted = newChangeRequestObserverPredicate(
-    await readNativeUiObservers(journalPath)
-  )
   // Repair the provider before re-enabling its observer. Start may return cached facts.
   await writeFile(statePath, 'merged\n')
   await control.command('click', '[data-testid="change-request-status-switch"]')
@@ -738,6 +744,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="git-hosting-settings-page"]', {
         timeoutMs: uiTimeoutMs,
       })
+      const recovery = await prepareChangeRequestRecovery(executorHome)
       await control.command('click', '[data-testid="change-request-status-switch"]')
       await waitForAttribute(
         control,
@@ -764,7 +771,7 @@ export async function createDesktopScenario({
       })
       await capture(control, 'change-request-status-07-settings-disabled.png', 'body')
 
-      await recoverChangeRequestStatus(control, { statePath, executorHome, uiTimeoutMs })
+      await recoverChangeRequestStatus(control, { statePath, uiTimeoutMs, ...recovery })
       await capture(control, 'change-request-status-08-recovered-merged.png')
       await control.command('click', '[data-testid="environment-change-request-status"]')
     },

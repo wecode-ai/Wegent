@@ -11,7 +11,10 @@ import { ChangeRequestUiObserver } from '@/features/workbench/changeRequestUiObs
 import { createConnectionObserverFixture } from '@/test/connection-observer'
 import type { DeviceCommandRequest } from '@/types/api'
 import { createProvider } from '../../dsh/connection-git/provider.js'
-import { recoverChangeRequestStatus } from '../../e2e/desktop/scenarios/change-request-status.scenario.mjs'
+import {
+  prepareChangeRequestRecovery,
+  recoverChangeRequestStatus,
+} from '../../e2e/desktop/scenarios/change-request-status.scenario.mjs'
 
 const fileIo = vi.hoisted(() => ({
   pending: new Set<Promise<unknown>>(),
@@ -294,7 +297,7 @@ async function finishRecovery(fixture: Awaited<ReturnType<typeof recoveryFixture
   let result: { error: unknown } | undefined
   const recovery = recoverChangeRequestStatus(fixture.control, {
     statePath: fixture.statePath,
-    executorHome: fixture.executorHome,
+    ...(await prepareChangeRequestRecovery(fixture.executorHome)),
     uiTimeoutMs: 10_000,
   }).then(
     () => {
@@ -437,7 +440,7 @@ test('does not enable observation if repairing its provider fixture fails', asyn
   await expect(
     recoverChangeRequestStatus(fixture.control, {
       statePath: join(directory, 'missing', 'provider-state'),
-      executorHome: fixture.executorHome,
+      ...(await prepareChangeRequestRecovery(fixture.executorHome)),
       uiTimeoutMs: 10_000,
     })
   ).rejects.toThrow('ENOENT')
@@ -448,11 +451,9 @@ test('does not enable observation if repairing its provider fixture fails', asyn
 test('does not expose a malformed native journal in its failure', async () => {
   const fixture = await recoveryFixture()
   await writeFile(fixture.journalPath, '{"private":"synthetic-private-journal"')
-  const error = await recoverChangeRequestStatus(fixture.control, {
-    statePath: fixture.statePath,
-    executorHome: fixture.executorHome,
-    uiTimeoutMs: 10_000,
-  }).catch((failure: unknown) => failure)
+  const error = await prepareChangeRequestRecovery(fixture.executorHome).catch(
+    (failure: unknown) => failure
+  )
   expect((error as Error).message).toBe(
     'The native change-request observer journal could not be read'
   )
