@@ -2799,7 +2799,7 @@ async fn run_codex_app_server_turn_with_runtime(
     runtime_notifications: Option<CodexNotificationHub>,
 ) -> Result<CodexAppServerTurn, String> {
     let admission_client = CodexAppServerClient::new(binary).for_request(&request)?;
-    let _thread_admission = match options
+    let mut thread_admission = match options
         .resume_thread_id
         .as_deref()
         .or(options.direct_thread_id.as_deref())
@@ -2936,6 +2936,11 @@ async fn run_codex_app_server_turn_with_runtime(
                 thread_id
             }
         };
+        if thread_admission.is_none() {
+            // New and forked identities become visible to prediction below.
+            let gate = admission_client.thread_lifecycle_gate(&thread_id).await;
+            thread_admission = Some(gate.lock_owned().await);
+        }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
         let local_notifications = local_notifications::LocalNotificationSource::new(
@@ -3130,6 +3135,7 @@ async fn run_codex_app_server_turn_with_runtime(
         callback();
     }
     terminate_codex_app_server_child(&mut process.child).await;
+    drop(thread_admission);
     if let Some(runtime) = runtime_notifications.as_ref() {
         notify_shared_process_closed(runtime, "isolated Codex app-server stopped").await;
     }
