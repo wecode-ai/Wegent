@@ -1,0 +1,16 @@
+{
+  "order": 48010,
+  "scenario": "./scenarios/stand-in-automation-workflow.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/e2e/desktop/modules/stand-in-assignment-notifications.mjs",
+    "wework/e2e/desktop/modules/human-workflow-transition.mjs"
+  ],
+  "ci": {
+    "core": {
+      "order": 47100,
+      "shard": 8,
+      "position": 7100
+    }
+  }
+}

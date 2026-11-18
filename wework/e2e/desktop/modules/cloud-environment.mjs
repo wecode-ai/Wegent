@@ -1603,7 +1603,12 @@ class RealCloudEnvironment {
       appendProcessOutput(executor.stderr, logPath),
     ])
     await this.waitForDevice(deviceId, logPath)
-    return { home, logPath, executor }
+    return {
+      home,
+      logPath,
+      executor,
+      stop: () => stopProcessGroup(executor),
+    }
   }
 
   async createOfflineLocalSidebarAlias() {
