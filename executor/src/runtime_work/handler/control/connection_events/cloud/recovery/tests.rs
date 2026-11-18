@@ -112,7 +112,7 @@ fn cold_runtime_recovers_and_cancels_without_reinitializing_a_provider() {
             );
             let id = handler.subscription_id("task", "key");
             let mut recovered =
-                workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
+                event_store::transact(&handler.event_subscription_path(), |state| {
                     Ok(state["operations"][&id].clone())
                 })
                 .unwrap();
@@ -164,11 +164,10 @@ fn cold_cancelled_projection_clears_its_pending_acknowledgement() {
                 "cancelled"
             );
             let id = handler.subscription_id("task", "key");
-            let record =
-                workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
-                    Ok(state["operations"][&id].clone())
-                })
-                .unwrap();
+            let record = event_store::transact(&handler.event_subscription_path(), |state| {
+                Ok(state["operations"][&id].clone())
+            })
+            .unwrap();
             assert_eq!(record["cloud_cancel_acknowledged"], true);
             assert_eq!(record["cloud_cancel_pending"], false);
             handler
@@ -219,11 +218,11 @@ fn cold_recovery_cannot_recreate_another_owners_or_restricted_task_subscription(
                         .is_err(),
                     "{restriction}"
                 );
-                let operations = workbench_control::journal::transact(
-                    &handler.event_subscription_path(),
-                    |state| Ok(state["operations"].clone()),
-                )
-                .unwrap();
+                let operations =
+                    event_store::transact(&handler.event_subscription_path(), |state| {
+                        Ok(state["operations"].clone())
+                    })
+                    .unwrap();
                 assert!(operations.as_object().unwrap().is_empty());
                 assert!(handler.command_journal.lock().unwrap().is_empty());
                 assert_eq!(calls.lock().unwrap().len(), 1);
@@ -267,7 +266,7 @@ fn cold_recovery_preserves_pending_batches_without_interrupting_or_replaying() {
         let expected_status = if admitted { "needs_attention" } else { "pending" };
         assert_eq!(recovered["status"], expected_status);
         assert_eq!(handler.sync_cloud_connection_subscription(signal).await.unwrap()["status"], expected_status);
-        let record = workbench_control::journal::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&local_id].clone())).unwrap();
+        let record = event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&local_id].clone())).unwrap();
         if !health_first || admit_after_health {
             assert_eq!(record["events"].as_array().unwrap().len(), 1);
         }
