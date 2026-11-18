@@ -874,6 +874,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn clear_active_goal_turn(&self, local_task_id: &str) {
+        self.release_goal_model_routes(local_task_id);
         let removed = self
             .active_goal_turns
             .lock()
@@ -1111,6 +1112,11 @@ impl RuntimeWorkRpcHandler {
             .insert(
                 turn.local_task_id.clone(),
                 PreparingTurn {
+                    owner_request: turn
+                        .request
+                        .extra
+                        .get(stand_in_proposal_continuations::OWNER)
+                        .cloned(),
                     cancellation_requested: false,
                 },
             );

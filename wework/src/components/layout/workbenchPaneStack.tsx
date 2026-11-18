@@ -1,4 +1,5 @@
 /* eslint-disable react-hooks/refs -- Pane hosts intentionally preserve live task sessions across layout changes. */
+import { useE2ELifecycleTrace } from '@/e2e/useE2ELifecycleTrace'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Columns2,
@@ -22,7 +23,12 @@ import {
   type WorkbenchSidebarPaneDragData,
   type WorkbenchSidebarPaneDragEndData,
 } from './workbenchPaneDrag'
-import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
+import type { DeviceInfo } from '@/types/api'
+import {
+  getWorkbenchPaneKey,
+  workbenchPanesShareTask,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneIdentity'
 import {
   WorkbenchPaneHost,
   WorkbenchPanePortal,
@@ -44,6 +50,7 @@ const MIN_PANE_WIDTH = 320
 const MIN_PANE_HEIGHT = 240
 
 interface SplitWorkbenchPaneStackProps {
+  devices?: DeviceInfo[]
   activePane: WorkbenchPaneIdentity
   layout: WorkbenchLayoutState
   showWorkbenchBackground: boolean
@@ -91,6 +98,7 @@ interface LayoutLabels {
 }
 
 export function SplitWorkbenchPaneStack({
+  devices = [],
   activePane,
   layout,
   showWorkbenchBackground,
@@ -112,6 +120,7 @@ export function SplitWorkbenchPaneStack({
   const activeKey = getWorkbenchPaneKey(activePane)
   const paneCacheRef = useRef(new Map<string, WorkbenchPaneIdentity>())
   const paneHostCacheRef = useRef(new Map<string, HTMLDivElement>())
+  const paneMountKeysRef = useRef(new WeakMap<HTMLDivElement, string>())
   const sidebarDragActiveRef = useRef(false)
   paneCacheRef.current.set(activeKey, activePane)
   const [draggedPaneKey, setDraggedPaneKey] = useState<string | null>(null)
@@ -153,16 +162,35 @@ export function SplitWorkbenchPaneStack({
     [resolvePane]
   )
 
-  const getPaneHost = useCallback((paneKey: string) => {
+  const getPaneHost = (paneKey: string) => {
     const cached = paneHostCacheRef.current.get(paneKey)
     if (cached) return cached
+    const pane = paneCacheRef.current.get(paneKey)
+    const previous = [...paneHostCacheRef.current].find(([previousKey]) => {
+      const previousPane = paneCacheRef.current.get(previousKey)
+      return (
+        !mountedPaneKeys.includes(previousKey) &&
+        pane &&
+        previousPane &&
+        workbenchPanesShareTask(previousPane, pane, devices)
+      )
+    })
+    if (previous) {
+      const [previousKey, host] = previous
+      paneHostCacheRef.current.delete(previousKey)
+      paneCacheRef.current.delete(previousKey)
+      paneHostCacheRef.current.set(paneKey, host)
+      host.dataset.workbenchPaneHost = paneKey
+      return host
+    }
     if (typeof document === 'undefined') return null
     const host = document.createElement('div')
     host.className = 'h-full min-h-0 min-w-0'
     host.dataset.workbenchPaneHost = paneKey
     paneHostCacheRef.current.set(paneKey, host)
+    paneMountKeysRef.current.set(host, crypto.randomUUID())
     return host
-  }, [])
+  }
 
   const panes = collectWorkbenchPanes(layout.root)
   const splitMode = panes.length > 1
@@ -174,6 +202,17 @@ export function SplitWorkbenchPaneStack({
   )
   const mountedPaneKeys = [...layoutPaneKeys, ...retainedPaneKeys]
   const mountedPaneKeySignature = mountedPaneKeys.join('\u0000')
+  useE2ELifecycleTrace('SplitWorkbenchPaneStack', {
+    activeKey,
+    mountedPaneKeys,
+    cachedHostKeys: [...paneHostCacheRef.current.keys()],
+    devices: devices.map(device => ({
+      id: device.device_id,
+      appId: device.app_device_id,
+      socketId: device.socket_device_id,
+      runtimeInstanceId: device.runtime_instance_id,
+    })),
+  })
   const focusedViewPane =
     focusedViewPaneId === null ? null : findWorkbenchPane(layout.root, focusedViewPaneId)
   const effectiveFocusedViewPaneId = focusedViewPane?.id ?? null
@@ -301,7 +340,7 @@ export function SplitWorkbenchPaneStack({
         if (!pane || !host) return null
         return (
           <WorkbenchPanePortal
-            key={paneKey}
+            key={paneMountKeysRef.current.get(host)}
             pane={pane}
             host={host}
             renderPane={renderPane}

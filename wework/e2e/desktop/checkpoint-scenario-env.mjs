@@ -35,6 +35,7 @@ export function checkpointScenarioEnv(env, checkpoint) {
     checkpoint === 'window-background-policy' ||
     checkpoint === 'browser-multi-tabs' ||
     checkpoint === 'core-task-flow' ||
+    checkpoint === 'background-terminals' ||
     checkpoint === 'project-assignment-notification' ||
     checkpoint === 'stand-in-profile-settings' ||
     checkpoint === 'stand-in-git' ||

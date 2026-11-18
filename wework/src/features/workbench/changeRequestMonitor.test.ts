@@ -25,6 +25,41 @@ function deferred<T>() {
 }
 
 describe('ChangeRequestMonitor', () => {
+  it('loads a task registered while another task is refreshing', async () => {
+    const pending = deferred<DeviceCommandResponse>()
+    const reply = {
+      success: true,
+      stdout: { number: 1, url: 'https://github.com/org/repo/pull/1', state: 'OPEN' },
+    }
+    const executeCommand = vi
+      .fn<DeviceCommandApi['executeCommand']>()
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue(reply)
+    const monitor = new ChangeRequestMonitor({ executeCommand })
+    const first = {
+      ...linkedChangeRequestTarget('device', 'https://github.com/org/repo/pull/1')!,
+      taskId: 'first',
+    }
+    const second = { ...first, taskId: 'second' }
+    const stopFirst = monitor.register(first)
+    let stopSecond = () => {}
+    try {
+      const refresh = monitor.refresh()
+      await vi.waitFor(() => expect(executeCommand).toHaveBeenCalledTimes(1))
+      stopSecond = monitor.register(second)
+      // Let the new target's scheduled refresh join the already running collection.
+      await Promise.resolve()
+      pending.resolve(reply)
+      await refresh
+      await vi.waitFor(() => expect(monitor.getSnapshot(second)?.changeRequest?.number).toBe(1))
+      expect(monitor.getSnapshot(first)?.changeRequest?.number).toBe(1)
+    } finally {
+      pending.resolve(reply)
+      stopFirst()
+      stopSecond()
+    }
+  })
+
   it('keeps old devices on Git commands and switches protocols when metadata changes', async () => {
     const executeCommand = vi
       .fn<DeviceCommandApi['executeCommand']>()
