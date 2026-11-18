@@ -487,6 +487,10 @@ export function createDesktopScenario({
       // An expired grant whose refresh is rejected must still recover through
       // provider consent from the installed plugin detail. Recreate the grant
       // through the real OAuth provider so it carries a renewable token.
+      // Background discovery can refresh it before the plugin detail opens.
+      // Count the entire expired-grant phase and reject its first refresh.
+      const refreshBefore = provider.refreshRequests
+      provider.rejectRefresh(true)
       provider.setAccessTokenTtl(1)
       const expiredSession = await api(
         `/api/connector-apps/${CONNECTOR_OAUTH_SLUG}/oauth/sessions`,
@@ -504,7 +508,6 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       provider.setAccessTokenTtl(3600)
-      provider.rejectRefresh(true)
 
       const pluginRoot = join(resultDir, 'connector-oauth-plugin')
       await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
@@ -552,7 +555,6 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
 
-      const refreshBefore = provider.refreshRequests
       const authorizeBefore = provider.authorizeRequests
       const tokenBefore = provider.tokenRequests
       await control.command('clickWhenEnabled', manage, {
