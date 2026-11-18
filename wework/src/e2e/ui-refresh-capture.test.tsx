@@ -266,16 +266,24 @@ test('records queued browser stalls and only safe script attribution', () => {
     {
       entryType: 'long-animation-frame',
       startTime: at,
-      duration: 7600,
+      duration: 8000,
       scripts: [
         {
           startTime: at,
           duration: 7500,
-          forcedStyleAndLayoutDuration: 7000,
+          forcedStyleAndLayoutDuration: 0,
           sourceURL: 'https://private.example/assets/app-abcdefgh.js?token=PRIVATE_MARKER',
           sourceFunctionName: 'renderMessage',
           invokerType: 'event-listener',
         },
+        ...[20, 25, 30].map(forcedStyleAndLayoutDuration => ({
+          startTime: at,
+          duration: 100,
+          forcedStyleAndLayoutDuration,
+          sourceURL: 'https://private.example/assets/app-abcdefgh.js?token=PRIVATE_MARKER',
+          sourceFunctionName: 'measureLayout',
+          invokerType: 'event-listener',
+        })),
       ],
     } as unknown as PerformanceEntry,
   ]
@@ -284,11 +292,19 @@ test('records queued browser stalls and only safe script attribution', () => {
     longTaskCount: 1,
     longTaskMaxMs: 7577,
     frameCount: 1,
+    slowScriptCount: 4,
     slowScriptMaxMs: 7500,
   })
   expect(snapshot.responsiveness).not.toHaveProperty('events')
   const detail = capture.getUiResponsivenessDiagnostics()
-  expect(detail.captures[0].events).toHaveLength(3)
+  expect(detail.captures[0].events).toHaveLength(5)
+  expect(
+    detail.captures[0].events.find(event => event.kind === 'long-frame')?.details
+  ).toMatchObject({
+    slowScriptCount: 4,
+    slowScriptMaxMs: 7500,
+    omittedSlowScripts: 1,
+  })
   expect(JSON.stringify(detail)).toContain('app-abcdefgh.js')
   expect(JSON.stringify(detail)).not.toContain('PRIVATE_MARKER')
   expect(JSON.stringify(detail)).not.toContain('private.example')

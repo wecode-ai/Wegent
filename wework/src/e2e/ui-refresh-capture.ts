@@ -101,9 +101,11 @@ function recordResponsiveness(
       target.frameCount++
       target.frameTotalMs += elapsed
       target.frameMaxMs = Math.max(target.frameMaxMs, elapsed)
-    } else {
-      target.slowScriptCount++
-      target.slowScriptMaxMs = Math.max(target.slowScriptMaxMs, elapsed)
+      target.slowScriptCount += details.slowScriptCount as number
+      target.slowScriptMaxMs = Math.max(
+        target.slowScriptMaxMs,
+        Math.ceil(details.slowScriptMaxMs as number)
+      )
     }
     target.events.push({
       sequence: ++target.lastSequence,

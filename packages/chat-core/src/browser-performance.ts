@@ -23,6 +23,8 @@ export type RecordPerformanceEvent = (
   details: Record<string, number | string>
 ) => void
 
+const MAX_SCRIPT_ATTRIBUTIONS = 3
+
 const SCRIPT_INVOKER_TYPES = new Set([
   'user-callback',
   'event-listener',
@@ -61,10 +63,17 @@ export function observeBrowserPerformance(record: RecordPerformanceEvent) {
   const consume = (entries: PerformanceEntry[]) => {
     for (const entry of entries) {
       if (entry.entryType === 'longtask')
-        record('long-task', { startTime: entry.startTime, elapsedMs: entry.duration })
+        record('long-task', {
+          startTime: entry.startTime,
+          elapsedMs: entry.duration,
+        })
       else if (entry.entryType === 'long-animation-frame') {
-        record('long-frame', animationFrameDetails(entry as AnimationFrameEntry))
-        recordSlowScripts(entry as AnimationFrameEntry, record)
+        const frame = entry as AnimationFrameEntry
+        const scripts = [...(frame.scripts ?? [])].filter(
+          script => (script.forcedStyleAndLayoutDuration ?? 0) >= 16 || (script.duration ?? 0) >= 50
+        )
+        record('long-frame', animationFrameDetails(frame, scripts))
+        recordSlowScripts(frame, scripts, record)
       }
     }
   }
@@ -90,19 +99,22 @@ export function observeBrowserPerformance(record: RecordPerformanceEvent) {
   }
 }
 
-function recordSlowScripts(entry: AnimationFrameEntry, record: RecordPerformanceEvent): void {
-  const scripts = [...(entry.scripts ?? [])]
-    .filter(
-      script => (script.forcedStyleAndLayoutDuration ?? 0) >= 16 || (script.duration ?? 0) >= 50
-    )
+function recordSlowScripts(
+  entry: AnimationFrameEntry,
+  slowScripts: ScriptEntry[],
+  record: RecordPerformanceEvent
+): void {
+  const scripts = slowScripts
     .sort(
       (left, right) =>
         (right.forcedStyleAndLayoutDuration ?? 0) - (left.forcedStyleAndLayoutDuration ?? 0) ||
         (right.duration ?? 0) - (left.duration ?? 0)
     )
-    .slice(0, 3)
+    .slice(0, MAX_SCRIPT_ATTRIBUTIONS)
   for (const script of scripts) {
-    const details: Record<string, number | string> = { frameStartTime: entry.startTime }
+    const details: Record<string, number | string> = {
+      frameStartTime: entry.startTime,
+    }
     for (const key of [
       'startTime',
       'duration',
@@ -127,10 +139,19 @@ function recordSlowScripts(entry: AnimationFrameEntry, record: RecordPerformance
   }
 }
 
-function animationFrameDetails(entry: AnimationFrameEntry): Record<string, number> {
+function animationFrameDetails(
+  entry: AnimationFrameEntry,
+  slowScripts: ScriptEntry[]
+): Record<string, number> {
   const details: Record<string, number> = {
     startTime: entry.startTime,
     elapsedMs: entry.duration,
+    slowScriptCount: slowScripts.length,
+    slowScriptMaxMs: slowScripts.reduce(
+      (maximum, script) => Math.max(maximum, script.duration ?? 0),
+      0
+    ),
+    omittedSlowScripts: Math.max(0, slowScripts.length - MAX_SCRIPT_ATTRIBUTIONS),
   }
   if (typeof entry.blockingDuration === 'number') details.blockingDuration = entry.blockingDuration
   const frameEnd = entry.startTime + entry.duration
