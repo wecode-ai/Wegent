@@ -2139,9 +2139,12 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     WORKBENCH_READY_TIMEOUT_MS
   )
   await control.command('hover', firstWorkspaceIdentity)
+  // The exact `collaboration-workspace-actions` testid only renders on the
+  // currently active workspace; an inactive workspace carries the suffixed
+  // form (see CollaborationPlatformNavigation). Match either state.
   await control.command(
     'click',
-    `${firstWorkspaceTree} [data-testid="collaboration-workspace-actions"]`
+    `${firstWorkspaceTree} [data-testid^="collaboration-workspace-actions"]`
   )
   await control.command('click', '[data-testid="collaboration-workspace-nav-settings"]')
   await control.command(
