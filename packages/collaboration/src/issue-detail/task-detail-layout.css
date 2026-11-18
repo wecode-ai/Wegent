@@ -2704,10 +2704,6 @@
   font: inherit;
 }
 
-.task-detail-comment-editor.composer-prosemirror-placeholder {
-  color: rgb(var(--color-text-secondary)) !important;
-}
-
 .task-detail-new-comment-actions,
 .task-detail-comment-settings {
   display: flex;
