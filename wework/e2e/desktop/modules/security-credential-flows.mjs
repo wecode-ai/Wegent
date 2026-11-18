@@ -81,6 +81,7 @@ export async function verifyNativePluginAdmission({
   control,
   electronUserDataDirectory,
   resultDir,
+  workbenchReadyTimeoutMs,
 }) {
   // Exercise the public HTTP caller as well as the management UI; it cannot bypass native consent.
   const pluginRoot = join(resultDir, 'native-approval-plugin')
@@ -147,19 +148,40 @@ export async function verifyNativePluginAdmission({
   try {
     const session = await withNativePluginDecision(control, develop)
     assert.ok(session.electronPid > 0)
-    await until(
-      () => invokeLocalHost(control, 'pluginDevelopment.list'),
-      sessions =>
-        sessions.some(
-          item => item.id === session.id && item.status === 'ready' && item.coreDshPid > 0
-        ),
-      'Native-approved development source did not start its real Core runtime',
-      60_000
-    )
+    // A cold child prepares its own profile and loads a renderer, just like the workbench.
+    await waitForNativeDevelopmentRuntime(control, session.id, workbenchReadyTimeoutMs, resultDir)
   } finally {
     await invokeLocalHost(control, 'pluginDevelopment.stop', undefined, packageTransaction)
   }
   const [stopped] = await invokeLocalHost(control, 'pluginDevelopment.list')
   assert.equal(stopped.status, 'stopped')
   assert.equal(stopped.electronPid, null)
+}
+
+export async function waitForNativeDevelopmentRuntime(control, sessionId, timeoutMs, resultDir) {
+  assert.ok(Number.isFinite(timeoutMs) && timeoutMs > 0, 'A workbench startup budget is required')
+  let observed = null
+  try {
+    return await until(
+      async () => {
+        const sessions = await invokeLocalHost(control, 'pluginDevelopment.list')
+        observed = sessions.find(item => item.id === sessionId) ?? null
+        assert.ok(
+          !['error', 'stopped'].includes(observed?.status),
+          `Native-approved development runtime terminated: ${observed?.lastError?.message ?? observed?.status}`
+        )
+        return observed
+      },
+      session => session?.status === 'ready' && session.coreDshPid > 0,
+      'Native-approved development source did not start its real Core runtime',
+      timeoutMs
+    )
+  } catch (error) {
+    // Preserve the startup state before the caller's cleanup stops the child.
+    await writeFile(
+      join(resultDir, 'native-plugin-development-startup-failure.json'),
+      JSON.stringify(observed, null, 2)
+    ).catch(() => {})
+    throw error
+  }
 }

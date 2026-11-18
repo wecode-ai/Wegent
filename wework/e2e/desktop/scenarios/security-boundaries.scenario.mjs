@@ -31,6 +31,7 @@ export function createDesktopScenario({
   electronUserDataDirectory,
   restartDesktopApp,
   uiTimeoutMs,
+  workbenchReadyTimeoutMs,
   resultDir,
 }) {
   let nativeProbes = 0
@@ -105,7 +106,12 @@ export function createDesktopScenario({
         restartDesktopApp,
         resultDir,
       })
-      await verifyNativePluginAdmission({ control, electronUserDataDirectory, resultDir })
+      await verifyNativePluginAdmission({
+        control,
+        electronUserDataDirectory,
+        resultDir,
+        workbenchReadyTimeoutMs,
+      })
 
       const payload = `document.body.setAttribute('${MARKER}','yes')`
       const links = [
