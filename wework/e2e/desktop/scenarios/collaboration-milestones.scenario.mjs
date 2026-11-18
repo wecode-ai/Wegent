@@ -1,5 +1,6 @@
 import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 import assert from 'node:assert/strict'
+import { withLegacyBoardGrouping } from '../modules/base-board-status-grouping.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
@@ -311,7 +312,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await request(`/api/v1/loop-items/${hidden.id}`, 'DELETE')
     },
-    async verify(control) {
+    verify: withLegacyBoardGrouping(async control => {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('openWeworkScheme', 'body', { value: `wework://boards/${project.id}` })
       await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board'), {
@@ -704,7 +705,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await captureScreenshot(control, 'milestones-10-local-dark-form.png', 'body')
       await control.command('click', scoped('milestone-cancel'))
-    },
+    }),
     async cleanup() {
       if (project) {
         const current = await request(`/api/v1/cloud-projects/${project.id}`)

@@ -66,6 +66,25 @@ importers:
       vitest:
         specifier: 4.1.7
         version: 4.1.7(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(jiti@2.7.0)(yaml@2.9.0))
+    optionalDependencies:
+      '@trycua/cua-driver-darwin-arm64':
+        specifier: 0.52.13
+        version: 0.52.13
+      '@trycua/cua-driver-darwin-x64':
+        specifier: 0.52.13
+        version: 0.52.13
+      '@trycua/cua-driver-linux-arm64-gnu':
+        specifier: 0.52.13
+        version: 0.52.13
+      '@trycua/cua-driver-linux-x64-gnu':
+        specifier: 0.52.13
+        version: 0.52.13
+      '@trycua/cua-driver-win32-arm64-msvc':
+        specifier: 0.52.13
+        version: 0.52.13
+      '@trycua/cua-driver-win32-x64-msvc':
+        specifier: 0.52.13
+        version: 0.52.13
 
 packages:
 
