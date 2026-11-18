@@ -170,6 +170,9 @@ export function createCloudConfigModelService({ readUsage } = {}) {
         rejectModelWebSocketUpgrade(modelServer, socket)
       })
     },
+    authorization() {
+      return accessToken ? `Bearer ${accessToken}` : null
+    },
     async failBundle() {
       unavailable = true
       // Codex first loads bootstrap settings, then installs its long-lived cloud
