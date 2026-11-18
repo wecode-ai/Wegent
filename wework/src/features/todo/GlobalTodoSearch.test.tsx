@@ -88,13 +88,16 @@ describe('open Issue by reference', () => {
   })
 })
 
-function directSearch(resolve: (reference: string) => Promise<IssueReferenceResult[]>) {
+function directSearch(
+  resolve: (reference: string) => Promise<IssueReferenceLookup>,
+  query = 'WEG-999'
+) {
   const select = vi.fn()
   const props = {
     projects: [],
     projectItems: {},
     projectMembers: {},
-    query: 'WEG-999',
+    query,
     onQueryChange: vi.fn(),
     onClose: vi.fn(),
     onSelectProject: vi.fn(),
@@ -128,7 +131,7 @@ it('shows access/query failures and allows retry', async () => {
 })
 
 it('ignores old lookups after changing the reference', async () => {
-  let finish!: (matches: IssueReferenceResult[]) => void
+  let finish!: (result: IssueReferenceLookup) => void
   const { rerender, props, select } = directSearch(
     () =>
       new Promise(resolve => {
@@ -270,3 +273,19 @@ it('invalidates queries and displayed results when source scope changes without 
   ).not.toBeInTheDocument()
   expect(screen.getByTestId('cloud-global-search-open-issue')).toBeEnabled()
 })
+
+it.each([
+  ['team.web-999', 'TEAM.WEB-999'],
+  ['team:beta-999', 'TEAM:BETA-999'],
+  ['工程-999', '工程-999'],
+  ['café-999', 'CAFé-999'],
+])(
+  'accepts native project-key references without changing Unicode: %s',
+  async (query, reference) => {
+    const resolve = vi.fn().mockResolvedValue({ matches: [{ project, item }], failures: [] })
+    const { select } = directSearch(resolve, query)
+    fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
+    await waitFor(() => expect(select).toHaveBeenCalledWith(project, item))
+    expect(resolve).toHaveBeenCalledWith(reference)
+  }
+)

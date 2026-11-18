@@ -50,8 +50,9 @@ export function GlobalTodoSearch({
       revision.current += 1
     }
   }, [query, lookupScope])
-  const fullReference = /^[a-z0-9][a-z0-9_-]*-\d+$/i.test(query.trim())
-    ? query.trim().toUpperCase()
+  const trimmedQuery = query.trim()
+  const fullReference = /^.+-\d+$/u.test(trimmedQuery)
+    ? trimmedQuery.replace(/[a-z]/g, letter => letter.toUpperCase())
     : null
   const currentLookup = lookup?.query === query && lookup.scope === lookupScope ? lookup : null
   async function openReference() {
@@ -90,7 +91,7 @@ export function GlobalTodoSearch({
       })
     }
   }
-  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const normalizedQuery = trimmedQuery.toLocaleLowerCase()
   const matchingProjects = normalizedQuery
     ? projects.filter(project =>
         `${project.name} ${project.project_key} ${project.description}`
