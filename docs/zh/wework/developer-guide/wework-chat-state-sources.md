@@ -260,6 +260,8 @@ worker 中执行，不能占用 IPC reactor。并发枚举共用一个异步执�
 已启动的 worker 继续持有该锁直到结束，避免遗留查询叠加。枚举期间健康查询及其他
 IPC 请求仍可处理；不通过延长 UI 超时规避阻塞。
 
+为 `clipboard-history-image` 和 `browser-toolbar-actions` 开启的 E2E host-pipe 诊断会记录请求 ID、发送/接收/完成时间，以及两端进程的累计 CPU 时间和事件循环活动/空闲时间。出现延迟时应关联同一请求并比较相邻采样，区分处理耗时、进程忙碌和调度等待；单轮未复现不能作为已修复的证据。
+
 用户发送引导时，Wework 先把引导消息乐观插入当前 turn，再调用
 `runtime.tasks.guidance`。如果 Codex `turn/steer` 明确返回预期 turn ID 与实际活跃
 turn ID 不一致，executor 用返回的实际 ID 纠正本次引导目标并只重试一次，不回写

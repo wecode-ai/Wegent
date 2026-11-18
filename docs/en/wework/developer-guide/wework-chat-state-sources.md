@@ -314,6 +314,8 @@ with an active worker after caller timeout or disconnect until the work finishes
 Health queries and other IPC requests remain responsive during discovery; UI
 timeouts are not extended to hide blocking.
 
+E2E host-pipe diagnostics enabled for `clipboard-history-image` and `browser-toolbar-actions` record request IDs, send/receive/completion timestamps, and cumulative CPU and event-loop active/idle time in both processes. Correlate each request and compare adjacent samples to distinguish handler work, process activity, and scheduling waits. A single successful run is not evidence that an intermittent delay has been fixed.
+
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
 Codex `turn/steer` explicitly reports that the expected turn ID differs from
