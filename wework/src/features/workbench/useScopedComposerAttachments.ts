@@ -15,12 +15,17 @@ export function useScopedComposerAttachments(
 ) {
   const state = owner.attachmentStateByScope[scope] ?? empty
   const {
+    captureAttachmentsForScope,
     handleFileSelectForScope,
     addExistingAttachmentForScope,
     removeAttachmentForScope,
     dismissAttachmentErrorForScope,
     resetAttachmentsForScope,
   } = owner
+  const captureAttachments = useCallback(
+    () => captureAttachmentsForScope(scope),
+    [captureAttachmentsForScope, scope]
+  )
   const handleFileSelect = useCallback(
     (files: File | File[]) => handleFileSelectForScope(scope, files),
     [handleFileSelectForScope, scope]
@@ -46,6 +51,7 @@ export function useScopedComposerAttachments(
     isAttachmentReadyToSend:
       state.uploadingFiles.size === 0 &&
       state.attachments.every(attachment => attachment.status === 'ready'),
+    captureAttachments,
     handleFileSelect,
     addExistingAttachment,
     removeAttachment,

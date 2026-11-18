@@ -230,7 +230,8 @@ jobs:
       - name: Run Wework E2E tests
         env:
           CI: true
-        run: pnpm --filter wework e2e
+        # Initialize a real session bus before Chromium starts its worker threads.
+        run: dbus-run-session -- pnpm --filter wework e2e
 
       - name: Upload Wework Playwright report
         if: always()

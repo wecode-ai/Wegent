@@ -86,6 +86,7 @@ import { DesktopAppearanceController } from './host/appearance-theme.js'
 import { normalizeAppearanceThemeSnapshot } from './host/appearance-theme-contract.js'
 import {
   DesktopPreferencesController,
+  resolveAppshotsShortcut,
   resolvePopoutShortcut,
 } from './host/desktop-preferences-controller.js'
 import { PerformanceRecorder } from './host/performance-recorder.js'
@@ -109,6 +110,7 @@ import {
   dshBrowserRequestHeaders,
 } from './runtime/dsh-browser-auth.js'
 import { ComputerUseService } from './host/computer-use-service.js'
+import { AppshotsService } from './host/appshots-service.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
@@ -412,6 +414,7 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let desktopControlBridge: WeworkDesktopControlBridge | null = null
 let browserAnnotations: BrowserAnnotationController | null = null
 let computerUse: ComputerUseService | null = null
+let appshots: AppshotsService | null = null
 let systemDragWindow: BrowserWindow | null = null
 let pendingSystemDragWindow: BrowserWindow | null = null
 let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
@@ -2322,6 +2325,8 @@ async function shutdown(): Promise<void> {
   popoutWindowMode = 'composer'
   popoutShortcut?.dispose()
   popoutShortcut = null
+  const appshotsService = appshots
+  appshots = null
   embeddedBrowser?.stop()
   browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
@@ -2336,6 +2341,7 @@ async function shutdown(): Promise<void> {
     traceShutdownStep('browser-bridge', () => browserBridge?.stop()),
     traceShutdownStep('control-bridge', () => controlBridge?.stop()),
     traceShutdownStep('computer-use', () => computerUseService?.stop()),
+    traceShutdownStep('appshots', () => appshotsService?.stop()),
     traceShutdownStep('plugin-development', () => development?.stop()),
     traceShutdownStep('desktop-runtime', () => desktopRuntime?.stop()),
   ])
@@ -2636,6 +2642,7 @@ async function configureDesktopRuntime(): Promise<void> {
           executorHome:
             environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
           processExplorer: processExplorerService,
+          appshots: appshots ?? undefined,
           coreDshPlugins: () => desktopRuntime,
           pluginDevelopment: () =>
             pluginDevelopment
@@ -3050,12 +3057,38 @@ if (hasSingleInstanceLock) {
         dockVisible = false
       }
       preferences = new PreferencesStore(app.getPath('userData'))
+      const preferenceStore = preferences
       mainWindowState = new MainWindowStateController(preferences, error =>
         console.error('[window-state] Failed to save main window geometry', error)
       )
+      appshots = new AppshotsService({
+        captureRoot: join(
+          process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+          'workspace',
+          'attachments',
+          'draft',
+          'appshots'
+        ),
+        events: desktopHostEvents,
+        showMain: reactivateMainWindow,
+        playSound: async () => {
+          const preferences = await requiredPreferences().read()
+          if (preferences.appshotsPlaySound !== false) shell.beep()
+        },
+      })
+      try {
+        const storedPreferences = await preferenceStore.read().catch(() => ({}))
+        appshots.configure(resolveAppshotsShortcut(storedPreferences))
+      } catch (error) {
+        console.warn('[appshots] Global shortcut is unavailable', error)
+      }
       desktopPreferences = new DesktopPreferencesController(preferences, {
         isShuttingDown: () => quitting,
         configurePopoutShortcut: shortcut => popoutShortcut?.configure(shortcut),
+        configureAppshotsShortcut: shortcut => {
+          if (!appshots) throw new Error('Appshots are unavailable')
+          appshots.configure(shortcut)
+        },
         setPerformanceRecordingEnabled: async enabled => {
           if (quitting && enabled) throw new Error('The application is shutting down')
           if (!performanceRecorder) throw new Error('Performance recorder is unavailable')

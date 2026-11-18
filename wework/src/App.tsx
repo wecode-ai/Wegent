@@ -475,7 +475,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
           onStartupSettled={settleHarnessAppStartup}
         />
       ) : null}
-      {onOpenWeworkForAppshot && active && !iframe ? (
+      {onOpenWeworkForAppshot && active ? (
         <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
       ) : null}
       {renderWorkbench ? (
@@ -826,6 +826,9 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
                   id={tab.id}
                   active={tab.id === workspaceTabs.activeTabId}
                 />
+                {onOpenWeworkForAppshot && tab.id === workspaceTabs.activeTabId ? (
+                  <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
+                ) : null}
                 <RuntimeInteractionsPage
                   active={tab.id === workspaceTabs.activeTabId}
                   selectedId={new URL(tab.contentRoute, window.location.origin).searchParams.get(

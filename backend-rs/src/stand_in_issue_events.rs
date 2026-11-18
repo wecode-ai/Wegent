@@ -127,7 +127,32 @@ async fn list_stand_in_issue_events(
             tracing::error!(%error, "Stand-in Issue event read failed");
             FastApiError::internal()
         })?;
-    Ok(page(rows, query.after))
+    let result = page(rows, query.after);
+    if let Some(events) = result["events"]
+        .as_array()
+        .filter(|events| !events.is_empty())
+    {
+        let identities = events
+            .iter()
+            .map(|event| {
+                json!({
+                    "sequence": event["sequence"],
+                    "projectId": event["payload"]["projectId"],
+                    "itemId": event["payload"]["itemId"],
+                    "assignmentId": event["payload"]["assignmentId"],
+                    "commentId": event["payload"]["commentId"]
+                })
+            })
+            .collect::<Vec<_>>();
+        tracing::info!(user_id = user.id, after = query.after, cursor = %result["cursor"], events = %json!(identities), "Stand-in Issue event page served");
+    } else {
+        tracing::debug!(
+            user_id = user.id,
+            after = query.after,
+            "Stand-in Issue event page empty"
+        );
+    }
+    Ok(result)
 }
 
 #[cfg(test)]

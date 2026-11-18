@@ -309,6 +309,7 @@ export function useWorkbenchPaneSession({
   const addExistingAttachmentForScope = projectChat.addExistingAttachmentForScope
   const {
     addExistingAttachment,
+    captureAttachments,
     handleFileSelect,
     removeAttachment,
     resetAttachments,
@@ -1858,7 +1859,7 @@ export function useWorkbenchPaneSession({
             replaceInputForScope(scopeKey, value)
           }
         }
-        const currentAttachments = attachmentState.attachments
+        const currentAttachments = captureAttachments()
         const hasCodeComments = codeCommentContexts.length > 0
         const paneIsBusy = readCurrentPaneBusy()
         debugComposerEvent('pane-send-called', {
@@ -1988,6 +1989,7 @@ export function useWorkbenchPaneSession({
           let seededGoalAddress: RuntimeTaskAddress | null = null
           let errorScopeKey = inputScopeKey
           const sent = await sendCurrentInput(submittedInput, {
+            attachments: currentAttachments,
             optimisticUserMessage: optimisticMessage,
             initialGoal,
             additionalContext: goalContext,
@@ -2303,7 +2305,7 @@ export function useWorkbenchPaneSession({
       },
       [
         appendLocalUserMessage,
-        attachmentState.attachments,
+        captureAttachments,
         clearCodeCommentsAfterCommit,
         codeCommentContexts,
         compactRuntimePaneTask,
