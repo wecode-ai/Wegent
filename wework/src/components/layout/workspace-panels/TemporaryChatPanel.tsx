@@ -66,7 +66,6 @@ import {
 } from '@/features/workbench/runtimePaneStatus'
 import {
   appendAcceptedRuntimeConversationMessage,
-  appendOptimisticRuntimeConversationGuidance,
   applyRuntimeConversationAction,
   getRuntimeConversationMessages,
   getRuntimeConversationTurns,
@@ -904,41 +903,21 @@ export function TemporaryChatPanel({
           }
           const guideCurrentTurn =
             !queuedMessage.startNewSession && paneStatus.isBusy && options.guideWhenBusy
-          const guidanceResult = guideCurrentTurn
-            ? await sendRuntimePaneGuidance({
-                address,
-                message,
-                ...(queuedMessage.conversationContext
-                  ? { conversationContext: queuedMessage.conversationContext }
-                  : {}),
-                clientGuidanceId: queuedMessage.id,
-                attachments: localRuntimeAttachments(currentAttachments),
-                attachmentIds: remoteAttachmentIds(currentAttachments),
+          conversationQueue.enqueue(queuedMessage)
+          const interrupt =
+            !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
+          const sent = guideCurrentTurn
+            ? await conversationQueue.guide(queuedMessage.id, queuePort, true)
+            : await conversationQueue.send(queuedMessage.id, {
+                ...queuePort,
+                send: pending => sendConversationMessage(pending, Boolean(interrupt)),
               })
-            : null
-          const result =
-            guidanceResult ??
-            (await sendConversationMessage(
-              queuedMessage,
-              !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
-            ))
-          if (!result.sent) {
-            setError(result.error || t('workbench.project_chat_send_failed'))
+          const pending = conversationQueue.getSnapshot().find(item => item.id === queuedMessage.id)
+          if (!sent && pending?.status !== 'queued') {
+            setError(pending?.error || t('workbench.project_chat_send_failed'))
             if (!transactionalDraft) setInput(current => current || message)
             currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
             return false
-          }
-          if (
-            guidanceResult?.turnId &&
-            !getRuntimeConversationMessages(address).some(item => item.id === queuedMessage.id)
-          ) {
-            setMessages(
-              appendOptimisticRuntimeConversationGuidance(
-                address,
-                guidanceResult.turnId,
-                queuedMessage
-              )
-            )
           }
           submission?.clearIfUnchanged()
           if (historySource) setAcceptedSourceMessageIds(ids => [...ids, queuedMessage.id])
@@ -1112,7 +1091,6 @@ export function TemporaryChatPanel({
       scopedHistory.available,
       paneStatus.isBusy,
       sendConversationMessage,
-      sendRuntimePaneGuidance,
       t,
       goalDraftActive,
       createTask,
@@ -1122,6 +1100,7 @@ export function TemporaryChatPanel({
       input,
       busy,
       conversationQueue,
+      queuePort,
       sideChatProjectChat,
       captureAttachmentsForScope,
       instanceId,
