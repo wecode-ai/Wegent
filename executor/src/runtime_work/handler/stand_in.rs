@@ -374,6 +374,12 @@ impl RuntimeWorkRpcHandler {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
+        let poll_interval = std::env::var("WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .map(Duration::from_millis)
+            .unwrap_or(Duration::from_secs(5));
         let path = self.task_store_path.clone();
         runtime.spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -402,7 +408,7 @@ impl RuntimeWorkRpcHandler {
         });
         let receipt_handler = self.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(poll_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
@@ -426,7 +432,7 @@ impl RuntimeWorkRpcHandler {
         });
         let handler = self.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(poll_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
@@ -437,7 +443,7 @@ impl RuntimeWorkRpcHandler {
         });
         let handler = self.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(poll_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;

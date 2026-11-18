@@ -3,6 +3,9 @@ import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from './upgrade-suite.mjs'
 
 export function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (checkpoint === 'stand-in' || checkpoint === 'stand-in-cloud') {
+    nextEnv.WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS ??= '500'
+  }
   if (checkpoint === 'workspace-attachments') {
     nextEnv.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS = '1'
   }
