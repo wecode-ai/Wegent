@@ -15,7 +15,7 @@ import type {
 } from '@/features/workbench/workbenchServices'
 import i18n from '@/i18n'
 import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type {
   CollaborationApp,
   CollaborationPlatformLocation,
@@ -536,6 +536,35 @@ function createHomeDraft() {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it('closes the reference search after navigating to a directly resolved local Issue', async () => {
+    const localDeliveryApi = createLocalDeliveryApi()
+    localDeliveryApi.getLoopItem = vi.fn().mockResolvedValue({
+      id: 'LOCAL-1',
+      cloud_project_id: 'local-project',
+      sequence_number: 1,
+      title: 'Unloaded Issue',
+      version: 1,
+    })
+    render(
+      createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
+        user: { id: 1, user_name: 'local', email: 'local@example.com' } as never,
+        localProjects: [],
+        services: {
+          projectSpaceApis: { local: localDeliveryApi },
+          projectSpaceDetailServices: { local: createLocalDetailServices() },
+        } as never,
+      })
+    )
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    fireEvent.change(await screen.findByTestId('cloud-global-search-input'), {
+      target: { value: 'LOCAL-1' },
+    })
+    fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
+    await waitFor(() => expect(localDeliveryApi.getLoopItem).toHaveBeenCalledWith('LOCAL-1'))
+    await waitFor(() => expect(screen.queryByTestId('cloud-global-search')).not.toBeInTheDocument())
+  })
+
   it('keeps the cloud project choice available before cloud login', () => {
     render(
       createElement(WeworkCollaborationPlatform, {

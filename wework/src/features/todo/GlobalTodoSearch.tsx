@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { IssueReferenceResult, IssueReferenceLookup } from './resolveIssueReference'
 import { Cloud, Search, X } from 'lucide-react'
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
@@ -8,6 +8,7 @@ import { projectKey, type LocatedProjectSpace } from './projectSpaceSelection'
 import { emptyTaskSearchFilters, matchesIssueReference, searchTasks } from './taskSearch'
 
 interface GlobalTodoSearchProps {
+  lookupScope?: unknown
   referenceOnly?: boolean
   projects: LocatedProjectSpace[]
   projectItems: Record<string, CloudLoopItem[]>
@@ -21,6 +22,7 @@ interface GlobalTodoSearchProps {
 }
 
 export function GlobalTodoSearch({
+  lookupScope,
   referenceOnly = false,
   projects,
   projectItems,
@@ -35,25 +37,27 @@ export function GlobalTodoSearch({
   const { t } = useTranslation('common')
   const [lookup, setLookup] = useState<{
     query: string
+    scope: unknown
     busy: boolean
     error?: string
     matches?: IssueReferenceResult[]
   } | null>(null)
   const revision = useRef(0)
-  useEffect(() => {
+  // Invalidate during commit before native input can submit a lookup.
+  useLayoutEffect(() => {
     revision.current += 1
     return () => {
       revision.current += 1
     }
-  }, [query])
+  }, [query, lookupScope])
   const fullReference = /^[a-z0-9][a-z0-9_-]*-\d+$/i.test(query.trim())
     ? query.trim().toUpperCase()
     : null
-  const currentLookup = lookup?.query === query ? lookup : null
+  const currentLookup = lookup?.query === query && lookup.scope === lookupScope ? lookup : null
   async function openReference() {
     if (!fullReference || !onResolveReference || currentLookup?.busy) return
     const requestRevision = revision.current
-    setLookup({ query, busy: true })
+    setLookup({ query, scope: lookupScope, busy: true })
     try {
       const { matches, failures } = await onResolveReference(fullReference)
       if (revision.current !== requestRevision) return
@@ -75,11 +79,12 @@ export function GlobalTodoSearch({
           : matches.length === 0
             ? t('workbench.global_search_reference_missing')
             : undefined
-      setLookup({ query, busy: false, matches, error })
+      setLookup({ query, scope: lookupScope, busy: false, matches, error })
     } catch (error) {
       if (revision.current !== requestRevision) return
       setLookup({
         query,
+        scope: lookupScope,
         busy: false,
         error: error instanceof Error ? error.message : String(error),
       })

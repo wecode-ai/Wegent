@@ -795,6 +795,7 @@ export function CloudTodoWorkspace({
       })),
     [cloudWorkspace.state.projects]
   )
+  const globalSearchScope = useMemo(() => ({}), [cloudWorkspaceApi, localProjectManageApi, user.id])
   const projects = useMemo(() => {
     const allProjects = [...localProjectSpaces, ...cloudProjectSpaces]
     const preferredProjects =
@@ -5809,8 +5810,9 @@ export function CloudTodoWorkspace({
             projects={projects}
             projectItems={collaborationProjectItems}
             projectMembers={collaborationProjectMembers}
-            onResolveReference={async reference => {
-              const lookup = await resolveIssueReference(reference, [
+            lookupScope={globalSearchScope}
+            onResolveReference={reference =>
+              resolveIssueReference(reference, [
                 ...(localProjectManageApi
                   ? [{ location: 'local' as const, api: localProjectManageApi }]
                   : []),
@@ -5818,17 +5820,7 @@ export function CloudTodoWorkspace({
                   ? [{ location: 'cloud' as const, api: cloudWorkspaceApi }]
                   : []),
               ])
-              for (const { project } of lookup.matches) {
-                if (
-                  projects.some(candidate =>
-                    sameProjectSpace(projectSpaceRef(candidate), projectSpaceRef(project))
-                  )
-                )
-                  continue
-                prependProject(project)
-              }
-              return lookup
-            }}
+            }
             query={globalSearchQuery}
             onQueryChange={setGlobalSearchQuery}
             onClose={() => setGlobalSearchOpen(false)}
@@ -5840,6 +5832,13 @@ export function CloudTodoWorkspace({
             }}
             onSelectItem={(project, item) => {
               if (item.can_view_detail === false) return
+              if (
+                !projects.some(candidate =>
+                  sameProjectSpace(projectSpaceRef(candidate), projectSpaceRef(project))
+                )
+              ) {
+                prependProject(project)
+              }
               selectProject(project)
               setProjectView('board')
               openItemForProject(project, {

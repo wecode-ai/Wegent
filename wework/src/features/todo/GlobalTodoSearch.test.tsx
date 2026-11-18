@@ -1,3 +1,4 @@
+import { useLayoutEffect } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor, act } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CloudLoopItem } from '@/api/deliveries'
@@ -226,4 +227,46 @@ it('reports a missing or inaccessible reference', async () => {
   fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
   expect(await screen.findByRole('alert')).toHaveTextContent('Issue 不存在或你没有访问权限')
   expect(select).not.toHaveBeenCalled()
+})
+
+it('completes a lookup submitted before passive effects have run', async () => {
+  const select = vi.fn()
+  function EarlySubmit() {
+    useLayoutEffect(() => {
+      screen.getByTestId('cloud-global-search-open-issue').click()
+    }, [])
+    return (
+      <GlobalTodoSearch
+        projects={[]}
+        projectItems={{}}
+        projectMembers={{}}
+        query="WEG-999"
+        onQueryChange={vi.fn()}
+        onClose={vi.fn()}
+        onSelectProject={vi.fn()}
+        onSelectItem={select}
+        onResolveReference={async () => ({ matches: [{ project, item }], failures: [] })}
+      />
+    )
+  }
+  render(<EarlySubmit />)
+  await waitFor(() => expect(select).toHaveBeenCalledWith(project, item))
+})
+
+it('invalidates queries and displayed results when source scope changes without remounting', async () => {
+  let finish!: (result: IssueReferenceLookup) => void
+  const { props, rerender, select } = directSearch(
+    () =>
+      new Promise(resolve => {
+        finish = resolve
+      })
+  )
+  fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
+  rerender(<GlobalTodoSearch {...props} lookupScope="new-backend" />)
+  await act(async () => finish({ matches: [{ project, item }], failures: [] }))
+  expect(select).not.toHaveBeenCalled()
+  expect(
+    screen.queryByTestId('cloud-global-search-direct-backend:project-1')
+  ).not.toBeInTheDocument()
+  expect(screen.getByTestId('cloud-global-search-open-issue')).toBeEnabled()
 })
