@@ -35,6 +35,23 @@ function latestReconcileAt(observation, beforeAt) {
   return observation.reconciliations.filter(value => value.at < beforeAt).at(-1)?.at
 }
 
+export function assertReconcileSchedule(observation, registeredAt, request) {
+  const ticks = observation.reconciliations.filter(
+    value => value.reconcile && value.at >= registeredAt && value.at <= request.at
+  ).length
+  assert.ok(ticks > 0, 'Recovery must have an observed periodic reconcile request')
+  // Registration is observed before its ACK starts the timer. Successive HTTP
+  // arrival times are not timer starts: variable transport latency can make
+  // their difference shorter than the configured minimum interval.
+  const elapsedMs = request.at - registeredAt
+  assert.ok(
+    elapsedMs >= ticks * MIN_RECONCILE_DELAY_MS &&
+      elapsedMs <= ticks * MAX_RECONCILE_DELAY_MS + REGISTRATION_ACK_TIMEOUT_MS,
+    `Periodic request ${ticks} did not use the configured ${MIN_RECONCILE_DELAY_MS}–${MAX_RECONCILE_DELAY_MS}ms schedule: ${elapsedMs}ms since registration`
+  )
+  return { ticks, elapsedMs }
+}
+
 // Fixture setup can cross a production timer tick on a loaded runner. Align the
 // fault injection before the next tick instead of changing the timer interval.
 async function waitForSafeReconcileWindow(target) {
@@ -319,13 +336,8 @@ export async function createDesktopScenario({
         const request = requests[0]
         assert.equal(request.reconcile, true)
         assert.equal(request.deviceId, deviceRouteId, 'Periodic pull used a stale device route')
-        const elapsedMs = request.at - baseline.scheduledAt
-        assert.ok(
-          elapsedMs >= MIN_RECONCILE_DELAY_MS &&
-            elapsedMs <= MAX_RECONCILE_DELAY_MS + REGISTRATION_ACK_TIMEOUT_MS,
-          `Periodic request did not use the configured ${MIN_RECONCILE_DELAY_MS}–${MAX_RECONCILE_DELAY_MS}ms schedule: ${elapsedMs}ms`
-        )
-        return { current, request, elapsedMs }
+        const schedule = assertReconcileSchedule(observation, baseline.registeredAt, request)
+        return { current, request, ...schedule }
       }
       const unchanged = await materializedPlugin(home, retained.installedId)
       const sync = observedRetainedPluginSync(

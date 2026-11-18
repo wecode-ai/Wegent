@@ -2066,6 +2066,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn is_busy_local_task(&self, local_task_id: &str) -> bool {
         self.is_active_local_task(local_task_id)
+            || self.native_task_holds_capacity(local_task_id)
             || self.is_queued_local_task(local_task_id)
             || self
                 .preparing_turns
@@ -2408,6 +2409,7 @@ impl RuntimeWorkRpcHandler {
                             &event_request,
                             json!({
                                 "error": {"message": message},
+                                "type": turn.error_type,
                                 "startedAt": turn.started_at_ms,
                                 "completedAt": turn.completed_at_ms,
                                 "durationMs": turn.duration_ms,

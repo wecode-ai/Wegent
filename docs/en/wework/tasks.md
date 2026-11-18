@@ -258,6 +258,10 @@ Supervision settings belong to the current task. Select an independent review mo
 
 After supervision starts, the right-side **Environment** panel shows its status and the next scheduled review time. Select **Review now** to inspect the current progress immediately. The action is temporarily disabled while a review is already running so the task cannot start concurrent supervisor checks.
 
+## Inspect failures and retry status
+
+While a reply is retrying, the processing area distinguishes server overload, rate limiting, and reconnection, and shows attempt counts when supplied by the runtime. The status disappears when progress resumes. A terminal failure shows the relevant timeout, connection, or overload message below the reply, with **Retry** and **Switch model and retry** when available. Select **Error details** to expand the original diagnostics, or select it again to collapse them. Internal recovery information such as an app-server restart appears only in these details. A response timeout means no progress arrived within the stated interval; it does not establish that the model provider was slow.
+
 ## Review the processing timeline
 
 The **Processed** section in an AI response displays tool calls from top to bottom by their actual creation time. Even when executor events arrive out of order, commands, file operations, and other tools created earlier remain above later activity so the timeline reflects the real execution sequence.
