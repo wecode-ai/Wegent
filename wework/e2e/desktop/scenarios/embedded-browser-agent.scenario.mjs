@@ -17,6 +17,7 @@ import {
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
   FRESH_CHAT_PROMPT,
+  WORKBENCH_READY_TIMEOUT_MS,
 } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -796,7 +797,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
       })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FRESH_CHAT_COMPLETION_TEXT,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       const backgroundTaskId = await waitForDifferentRuntimeTaskId(control, taskId, uiTimeoutMs)
       const backgroundBrowserLabel = await readBrowserPanelLabel(
