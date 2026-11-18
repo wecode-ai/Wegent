@@ -148,7 +148,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         const fixture = join(plugin, 'bin', 'fixture.mjs')
         await writeFile(
           fixture,
-          `#!/usr/bin/env node
+          `#!${process.execPath}
 import { appendFile, readFile, access, writeFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { handleEvent } from '../logger.mjs'
@@ -182,7 +182,7 @@ try {
         await chmod(fixture, 0o755)
         await writeFile(
           join(plugin, 'bin', 'fixture.cmd'),
-          '@echo off\r\nnode "%~dp0fixture.mjs"\r\n'
+          `@echo off\r\n"${process.execPath}" "%~dp0fixture.mjs"\r\n`
         )
         writer = join(root, 'write.mjs')
         await writeFile(
@@ -364,7 +364,13 @@ console.log('HOOK_WRITES_COMPLETE')
             }
           }
         }
-        if (installed) await rpc('runtime.hooks.delete', { pluginId })
+        if (installed) {
+          const hookRuns = await rpc('runtime.hooks.list', {}).catch(error => ({
+            error: String(error),
+          }))
+          await writeFile(join(root, 'hook-runs.json'), JSON.stringify(hookRuns, null, 2))
+          await rpc('runtime.hooks.delete', { pluginId })
+        }
         if (!verified) await cp(root, join(resultDir, 'async-hooks-failure'), { recursive: true })
         await rm(root, { recursive: true, force: true })
       }
