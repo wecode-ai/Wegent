@@ -183,6 +183,7 @@ export interface SharedIssueDetailPort {
     ): Promise<SharedIssueDetailTaskBinding[]>;
   };
   members: {
+    searchUsers?: SharedWorkspaceApi["members"]["searchUsers"];
     list(projectId: string): Promise<CollaborationMember[]>;
   };
   agents: {

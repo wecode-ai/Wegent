@@ -161,18 +161,20 @@ export async function verifyPluginAuthCoordination({
   const enrollment = observePluginAuthEnrollment(reconcileMarker, installedId, 'mail')
   let attempt
   let pendingWait
+  // Independent inserts can split an InnoDB page and replace physical lock
+  // IDs while the same transactions still wait. Track transaction identity.
   const readPendingWait = async () => {
     const [row] = await cloud.queryDatabase(
       `SELECT EXISTS(SELECT 1 FROM performance_schema.data_lock_waits
-       WHERE REQUESTING_ENGINE_LOCK_ID = %s AND BLOCKING_ENGINE_LOCK_ID = %s) AS pending`,
-      [pendingWait.requestingLockId, pendingWait.blockingLockId]
+       WHERE REQUESTING_ENGINE_TRANSACTION_ID = %s AND BLOCKING_ENGINE_TRANSACTION_ID = %s) AS pending`,
+      [pendingWait.requestingTransactionId, pendingWait.blockingTransactionId]
     )
     return row.pending
   }
   try {
     await signalAutomaticRetry()
     pendingWait = await backgroundRow.waitFor('blocked')
-    assert.ok(pendingWait.requestingLockId && pendingWait.blockingLockId)
+    assert.ok(pendingWait.requestingTransactionId && pendingWait.blockingTransactionId)
     attempt = await until(
       () => enrollment.pending(),
       Boolean,

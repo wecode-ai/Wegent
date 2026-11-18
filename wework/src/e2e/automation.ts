@@ -1,3 +1,4 @@
+import { waitForDomChange } from './waitForDomChange'
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
 import { collectConversationRenderingDiagnostics } from './conversation-rendering-diagnostics'
 import {
@@ -10,7 +11,8 @@ import { completeDesktopControlCommand, type DesktopControlResult } from './desk
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
 import { createDesktopControlFile } from './file-fixture'
 import { selectDesktopControlFile } from './select-file'
-import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
+import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
+import { navigateTo } from '@/lib/navigation'
 import { createElementFrameSampler } from './element-frame-metrics'
 import { readElementVisibility, readSelectionVisibility } from './element-visibility'
 import { startScrollStabilitySampler, type ScrollStabilitySample } from './scroll-stability-sampler'
@@ -371,13 +373,10 @@ function desktopControlHeaders(): HeadersInit | undefined {
   return token ? { Authorization: `Bearer ${token}` } : undefined
 }
 
-function normalizeAppPath(path: string): string {
-  return path.startsWith('/') ? path : `/${path}`
-}
-
-function dispatchNavigationEvents() {
-  window.dispatchEvent(new PopStateEvent('popstate'))
+function navigateDesktopControl(path: string): string {
+  navigateTo(path.startsWith('/') ? path : `/${path}`)
   window.dispatchEvent(new CustomEvent('wework:e2e:navigation'))
+  return stripAppBasePath(window.location.pathname)
 }
 
 function embeddedBrowserStorageInput(command: DesktopControlCommand) {
@@ -564,13 +563,7 @@ function createBridge(): WeworkAutomationBridge {
     getRuntimeConfig,
     getRoute: () => stripAppBasePath(window.location.pathname),
     getControlDiagnostics: getDesktopControlDiagnostics,
-    navigate: path => {
-      const appPath = normalizeAppPath(path)
-      const nextPath = joinAppPath(getRuntimeConfig().appBasePath, appPath)
-      window.history.pushState(null, '', nextPath)
-      dispatchNavigationEvents()
-      return stripAppBasePath(window.location.pathname)
-    },
+    navigate: navigateDesktopControl,
     waitForTestId: (testId, options) => waitForTestId(testId, options?.timeoutMs),
     queryTestIds,
     setAuthToken: setToken,
@@ -1771,7 +1764,7 @@ async function waitForDesktopControlElement(
       } else {
         matchedAt = null
       }
-      await waitForDesktopControlTick()
+      await waitForDomChange(document)
       continue
     }
 
@@ -1791,7 +1784,7 @@ async function waitForDesktopControlElement(
     } else {
       matchedAt = null
     }
-    await waitForDesktopControlTick()
+    await waitForDomChange(document)
   }
 
   const diagnostics = findDesktopControlElementsWithin(command.selector, command.target).map(
@@ -3959,12 +3952,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await waitForDesktopControlTick()
       return result
     }
-    case 'navigate': {
-      const appPath = normalizeAppPath(command.value ?? '/')
-      window.history.pushState(null, '', joinAppPath(getRuntimeConfig().appBasePath, appPath))
-      dispatchNavigationEvents()
-      return stripAppBasePath(window.location.pathname)
-    }
+    case 'navigate':
+      return navigateDesktopControl(command.value ?? '/')
     case 'pointerMove':
       return moveDesktopControlPointer(command)
     case 'press': {

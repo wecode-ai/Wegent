@@ -11,7 +11,7 @@ import {
 } from '@/api/cloud/connectorApps'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
 
 type ConnectorConnectionRow = WegentInstalledConnectorApp & {
   name: string
@@ -106,9 +106,15 @@ function ConnectorConnectionsSession({ apiBaseUrl, token }: ConnectorConnections
         if (!activeRef.current) return
         notifyConnectorAuthorizationChanged()
       } else {
-        await authorizeWegentConnector(apiBaseUrl, token, app.slug, openCloudAuthorizationWindow, {
-          isCurrent: () => activeRef.current,
-        })
+        await authorizeWegentConnector(
+          apiBaseUrl,
+          token,
+          app.slug,
+          openConnectorAuthorizationWindow,
+          {
+            isCurrent: () => activeRef.current,
+          }
+        )
       }
       if (activeRef.current) setLoadRevision(revision => revision + 1)
     } catch (cause) {

@@ -366,6 +366,8 @@ async def assign_loop_item(
 
         background_tasks.add_task(consume_queues_background)
         return LoopItemResponse.model_validate(response)
+    source = loop_item_service.get(db, item_id, current_user.id)
+    access = loop_item_service._require_item_access(db, source, current_user.id)
     item = loop_item_service.assign(
         db,
         project_id=project_id,
@@ -382,7 +384,6 @@ async def assign_loop_item(
         reason="assignment",
         actor_user_id=current_user.id,
     )
-    access = cloud_project_service.access(db, project_id, current_user.id)
     return LoopItemResponse.model_validate(
         loop_item_service.response_values(db, item, current_user.id, access=access)
     )

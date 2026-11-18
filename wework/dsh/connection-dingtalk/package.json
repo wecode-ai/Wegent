@@ -75,6 +75,13 @@
                 "json"
               ],
               "operations": {
+                "authStatus": {
+                  "command": [
+                    "auth",
+                    "status"
+                  ],
+                  "parameters": {}
+                },
                 "listProfiles": {
                   "command": [
                     "profile",

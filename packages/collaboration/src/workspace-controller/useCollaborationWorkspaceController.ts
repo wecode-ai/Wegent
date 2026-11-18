@@ -492,7 +492,9 @@ function reduceWorkspaceState(
         agents: state.projectAgents[action.project.id] ?? [],
         taskBindings: state.projectTaskBindings[action.project.id] ?? [],
         selectedIssue:
-          state.project?.id === action.project.id ? state.selectedIssue : null,
+          state.selectedIssue?.cloud_project_id === action.project.id
+            ? state.selectedIssue
+            : null,
         error: null,
         errorSource: null,
       };
@@ -525,7 +527,11 @@ function reduceWorkspaceState(
         selectedIssue: state.selectedIssue
           ? (action.snapshot.items.find(
               (item) => item.id === state.selectedIssue?.id,
-            ) ?? null)
+            ) ??
+            (action.externalBoard &&
+            state.selectedIssue.cloud_project_id === action.project.id
+              ? state.selectedIssue
+              : null))
           : null,
         members: action.snapshot.members,
         agents: action.snapshot.agents,
@@ -1102,6 +1108,36 @@ export function createCollaborationWorkspaceControllerCommands({
         mutationGeneration !== projectMutationGeneration(projectId)
       )
         return;
+      const selected = getSelectedIssue();
+      if (
+        externalBoard &&
+        selected?.cloud_project_id === project.id &&
+        !snapshot.items.some((item) => item.id === selected.id)
+      ) {
+        try {
+          const currentIssue = await api.issues.get(selected.id);
+          if (
+            !isCurrent() ||
+            mutationGeneration !== projectMutationGeneration(projectId)
+          )
+            return;
+          if (getSelectedIssue()?.id === selected.id)
+            dispatch({ type: "replace-issue", issue: currentIssue });
+        } catch {
+          if (
+            !isCurrent() ||
+            mutationGeneration !== projectMutationGeneration(projectId)
+          )
+            return;
+          if (getSelectedIssue()?.id === selected.id)
+            dispatch({ type: "clear-selected-issue" });
+        }
+      }
+      if (
+        !isCurrent() ||
+        mutationGeneration !== projectMutationGeneration(projectId)
+      )
+        return;
       dispatch({
         type: "project-loaded",
         project,
@@ -1389,7 +1425,7 @@ export function createCollaborationWorkspaceControllerCommands({
         ]);
         const [loadedAssignments, executions] = await Promise.all([
           api.assignments ? api.assignments.list(issueId) : Promise.resolve([]),
-          api.executions?.list
+          api.executions && !issue.invited_only
             ? api.executions
                 .list(issue.cloud_project_id, { includeTerminal: true })
                 .then((items) =>
@@ -1780,22 +1816,53 @@ export function useCollaborationWorkspaceController({
         : undefined,
     [commands, currentProjectSection, location.projectId],
   );
+  const projectRequestScope = useMemo(
+    () => ({}),
+    [
+      commands,
+      currentProjectSection,
+      settingsReadRequest,
+      loadProjectOnLocation,
+      loadProjectSnapshotOnLocation,
+      location.projectId,
+      location.rootView,
+      myWorkEnabled,
+    ],
+  );
+  const loadedProjectScopeRef = useRef<object | null>(null);
   useEffect(() => {
     if (!commands) return;
     const revision = ++locationLoadRevisionRef.current;
     const isCurrent = () => locationLoadRevisionRef.current === revision;
     if (location.projectId) {
       const projectId = location.projectId;
-      if (loadProjectOnLocation) {
-        void commands.loadProject(projectId, true, {
-          isCurrent,
-          loadSnapshot: loadProjectSnapshotOnLocation,
-          refreshProject: Boolean(currentProjectSection),
-          settingsRead: settingsReadRequest,
-        });
-      } else {
-        void commands.loadProjectCatalog({ isCurrent });
-      }
+      const loadProject = async () => {
+        if (location.issueId) {
+          const issue = await commands.loadSelectedIssue(location.issueId);
+          if (!isCurrent()) return;
+          if (issue?.invited_only) {
+            dispatch({ type: "loading", value: false });
+            return;
+          }
+        }
+        if (
+          loadedProjectScopeRef.current === projectRequestScope &&
+          (!loadProjectOnLocation || stateRef.current.project?.id === projectId)
+        )
+          return;
+        if (loadProjectOnLocation) {
+          await commands.loadProject(projectId, true, {
+            isCurrent,
+            loadSnapshot: loadProjectSnapshotOnLocation,
+            refreshProject: Boolean(currentProjectSection),
+            settingsRead: settingsReadRequest,
+          });
+        } else {
+          await commands.loadProjectCatalog({ isCurrent });
+        }
+        if (isCurrent()) loadedProjectScopeRef.current = projectRequestScope;
+      };
+      void loadProject();
       if (myWorkEnabled && location.rootView === "my-work")
         void commands.loadMyWork();
     } else if (myWorkEnabled && location.rootView === "my-work") {
@@ -1815,29 +1882,44 @@ export function useCollaborationWorkspaceController({
     location.projectId,
     currentProjectSection,
     settingsReadRequest,
+    location.issueId,
     location.rootView,
     myWorkEnabled,
+    dispatch,
+    projectRequestScope,
   ]);
 
   useEffect(() => {
     if (!commands) return;
     const projectId = location.projectId;
-    if (!projectId || !loadBoardOnLocation || pollIntervalMs <= 0) return;
+    if (
+      !projectId ||
+      !loadBoardOnLocation ||
+      pollIntervalMs <= 0 ||
+      state.selectedIssue?.invited_only
+    )
+      return;
     const timer = window.setInterval(
       () => void commands.loadProject(projectId, false),
       pollIntervalMs,
     );
     return () => window.clearInterval(timer);
-  }, [commands, loadBoardOnLocation, location.projectId, pollIntervalMs]);
+  }, [
+    commands,
+    loadBoardOnLocation,
+    location.projectId,
+    pollIntervalMs,
+    state.selectedIssue?.invited_only,
+  ]);
 
   useEffect(() => {
     if (!commands) return;
-    if (location.issueId) {
+    if (location.issueId && !location.projectId) {
       void commands.loadSelectedIssue(location.issueId);
-    } else {
+    } else if (!location.issueId) {
       commands.clearSelectedIssue();
     }
-  }, [commands, location.issueId]);
+  }, [commands, location.issueId, location.projectId]);
 
   const selectedIssue =
     state.selectedIssue?.id === location.issueId

@@ -76,6 +76,14 @@ function pluginRuntime(plugin) {
   )
 }
 
+function baselineSyncComplete(target, request) {
+  const reconciliation = target.observation.reconciliations?.at(-1)
+  return (
+    !reconciliation ||
+    (reconciliation.completedAt !== undefined && request?.at >= reconciliation.at)
+  )
+}
+
 // Waiting for another Runtime's safe window can cross this Runtime's timer.
 // Refresh ordering metadata only after its observed generation is acknowledged.
 export async function settleRetainedPluginBaseline(target, retained, timeoutMs) {
@@ -101,10 +109,44 @@ export async function settleRetainedPluginBaseline(target, retained, timeoutMs) 
       }
     },
     value =>
+      // A timer request may already be in flight before its capability arrives.
+      baselineSyncComplete(target, value.request) &&
       value.acknowledgement?.success === true &&
       value.plugin.plugin_sync_generation === value.request.pluginSync.generation,
     `${target.kind} retained plugin baseline did not settle after window alignment`,
     timeoutMs
+  )
+}
+
+export async function settleReconcileBaselines(targets, retained, timeoutMs) {
+  return until(
+    async () => {
+      await Promise.all(targets.map(waitForSafeReconcileWindow))
+      const settled = await Promise.all(
+        targets.map(target => settleRetainedPluginBaseline(target, retained, timeoutMs))
+      )
+      // Filesystem reads and ACK settlement can outlive an earlier safe window.
+      // All targets must still be safe at the same fault-injection boundary.
+      const now = Date.now()
+      const scheduled = targets.map(
+        target => latestReconcileAt(target.observation, now) ?? target.baseline.registeredAt
+      )
+      if (
+        scheduled.some(
+          (at, index) =>
+            at + MIN_RECONCILE_DELAY_MS - now <= SETUP_RECONCILE_MARGIN_MS ||
+            !baselineSyncComplete(targets[index], settled[index].request)
+        )
+      )
+        return null
+      for (const [index, target] of targets.entries()) {
+        target.baseline.scheduledAt = scheduled[index]
+      }
+      return settled
+    },
+    Boolean,
+    'Runtime baselines did not settle inside a shared safe reconcile window',
+    MAX_RECONCILE_DELAY_MS + timeoutMs
   )
 }
 
@@ -483,10 +525,14 @@ export async function createDesktopScenario({
         retained: target.retainedBefore,
         capturedAt: Date.now(),
       }
-      target.baseline.scheduledAt = await waitForSafeReconcileWindow(target)
     }
-    for (const target of targets) {
-      const settled = await settleRetainedPluginBaseline(target, retained, workbenchReadyTimeoutMs)
+    const settledBaselines = await settleReconcileBaselines(
+      targets,
+      retained,
+      workbenchReadyTimeoutMs
+    )
+    for (const [index, target] of targets.entries()) {
+      const settled = settledBaselines[index]
       target.baseline.retained = settled.plugin
       evidence.push({
         case: 'retained-plugin-baseline-acknowledged-after-window-alignment',

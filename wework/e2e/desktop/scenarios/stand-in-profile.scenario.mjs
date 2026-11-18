@@ -2,6 +2,7 @@ import {
   openStandInSettings,
   openStandInMemory,
   openStandInActivity,
+  closeStandInActivity,
 } from '../modules/stand-in-profile-navigation.mjs'
 import { openConnectionTypePicker } from '../modules/stand-in-flows.mjs'
 import assert from 'node:assert/strict'
@@ -487,6 +488,7 @@ export function createDesktopScenario({
         2
       )
       await captureScreenshot(control, '22-work-split-undone.png')
+      await closeStandInActivity(control)
       await coordinator.verify(control)
     },
   }

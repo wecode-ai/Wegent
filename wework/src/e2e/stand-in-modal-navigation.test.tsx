@@ -7,7 +7,10 @@ import { standInOverviewFixture } from '@/features/todo/StandInOverviewPage.test
 import { StandInPrimaryProfile } from '@/features/todo/StandInPrimaryProfile'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openExplicitModelMenu } from '../../e2e/desktop/modules/model-menu-navigation.mjs'
-import { openStandInActivity } from '../../e2e/desktop/modules/stand-in-profile-navigation.mjs'
+import {
+  openStandInActivity,
+  closeStandInActivity,
+} from '../../e2e/desktop/modules/stand-in-profile-navigation.mjs'
 import { runDesktopControlClient } from './automation'
 import '@/i18n'
 
@@ -54,33 +57,30 @@ function mockVisibleLayout() {
   )
 }
 
-it('requires closing recent activity before switching the stand-in role', async () => {
-  mockVisibleLayout()
-  const { props } = standInOverviewFixture([
-    newStandInRole('device', 'default'),
-    { ...newStandInRole('device', 'project-role'), name: 'Project assistant' },
-  ])
-  render(<StandInOverviewPage {...props} initialSelectedRoleId="default" />)
-  await waitFor(() => expect(screen.getByTestId('stand-in-details-open')).toBeEnabled())
-  const control = nativeControl()
-  await openStandInActivity(control)
+it.each(['stand-in-primary-open', 'stand-in-overview-role-project-role'])(
+  'requires closing recent activity before switching to %s',
+  async testId => {
+    mockVisibleLayout()
+    const { props } = standInOverviewFixture([
+      newStandInRole('device', 'default'),
+      { ...newStandInRole('device', 'project-role'), name: 'Project assistant' },
+    ])
+    render(<StandInOverviewPage {...props} initialSelectedRoleId="default" />)
+    await waitFor(() => expect(screen.getByTestId('stand-in-details-open')).toBeEnabled())
+    const control = nativeControl()
+    await openStandInActivity(control)
 
-  const role = '[data-testid="stand-in-overview-role-project-role"]'
-  expect(screen.getByTestId('stand-in-work-dialog')).toBeVisible()
-  expect(
-    screen.getByTestId('stand-in-overview-role-project-role').closest('[inert]')
-  ).not.toBeNull()
-  await expect(control.command('click', role)).rejects.toThrow('is disabled')
+    const role = `[data-testid="${testId}"]`
+    expect(screen.getByTestId('stand-in-work-dialog')).toBeVisible()
+    expect(screen.getByTestId(testId).closest('[inert]')).not.toBeNull()
+    await expect(control.command('click', role)).rejects.toThrow('is disabled')
 
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-work-dialog-close"]')
-  await control.command('waitFor', '[data-testid="stand-in-work-dialog"]', { visible: false })
-  await control.command('clickWhenEnabled', role)
-  expect(screen.getByTestId('stand-in-overview-role-project-role').closest('[inert]')).toBeNull()
-  expect(screen.getByTestId('stand-in-overview-role-project-role')).toHaveAttribute(
-    'aria-current',
-    'page'
-  )
-})
+    await closeStandInActivity(control)
+    await control.command('clickWhenEnabled', role)
+    expect(screen.getByTestId(testId).closest('[inert]')).toBeNull()
+    expect(screen.getByTestId(testId)).toHaveAttribute('aria-current', 'page')
+  }
+)
 
 it('requires dismissing the selected model before saving the stand-in profile', async () => {
   mockVisibleLayout()

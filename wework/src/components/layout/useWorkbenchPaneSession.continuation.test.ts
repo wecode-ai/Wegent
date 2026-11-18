@@ -154,6 +154,13 @@ test.each(
     })
     await waitFor(() => expect(sendMethod).toHaveBeenCalledOnce())
     expect(pendingRequestUserInputPayload(result.current.messages)?.itemId).toBe('question-item')
+    expect(getRuntimeConversationQueuedMessages(address)).toContainEqual(
+      expect.objectContaining({
+        content: expect.stringContaining('Continue with project members only'),
+        status: 'sending',
+      })
+    )
+    expect(mocks.setInput).toHaveBeenCalledWith(scopeKey, '')
     await act(async () => {
       finish()
       await sending
@@ -226,6 +233,53 @@ test.each([false, true])(
     expect(result.current.answeredRequestUserInputIds.has('item:dismissed-question')).toBe(true)
   }
 )
+
+test('retains a rejected queued send and its attachments while a question is pending', async () => {
+  const { result } = await renderSession()
+  const queued = {
+    id: 'queued-question-retry',
+    content: 'Keep this retryable',
+    status: 'failed' as const,
+    createdAt: new Date().toISOString(),
+    attachments: [attachment],
+  }
+  act(() => {
+    cacheRuntimeConversationQueuePaused(address, true)
+    cacheRuntimeConversationQueuedMessages(address, [queued])
+    reconcileRuntimeConversationSnapshot(address, [
+      {
+        id: 'question-turn',
+        status: 'done',
+        items: [
+          {
+            id: 'question-item',
+            type: 'block',
+            block: {
+              id: 'question-item',
+              type: 'tool',
+              toolName: 'request_user_input',
+              status: 'done',
+              createdAt: 1,
+              renderPayload: {
+                kind: 'request_user_input',
+                delivery: 'async',
+                itemId: 'question-item',
+                questions: [{ id: 'audience', question: 'Who receives the report?' }],
+              },
+            },
+          },
+        ],
+      },
+    ])
+  })
+  mocks.send.mockResolvedValueOnce(false)
+  await act(async () => result.current.sendQueuedAsGuidance(queued.id))
+  expect(mocks.send).toHaveBeenCalledOnce()
+  expect(getRuntimeConversationQueuedMessages(address)).toEqual([
+    expect.objectContaining({ ...queued, status: 'failed', error: '发送失败' }),
+  ])
+  expect(pendingRequestUserInputPayload(result.current.messages)?.itemId).toBe('question-item')
+})
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -563,44 +617,24 @@ describe('pane transcript reload ownership', () => {
   )
 
   test.each([address, null])(
-    'preserves conversation mentions when sending from pane %s',
+    'sends conversation references without loading history from pane %s',
     async currentRuntimeTask => {
       const reference = { deviceId: address.deviceId, taskId: 'referenced-task' }
       const sendCurrentInput = vi.fn().mockResolvedValue(address)
       mocks.context.sendCurrentInput = sendCurrentInput
       const { result, rerender } = await renderSession(currentRuntimeTask)
       act(() => result.current.clearCodeComments())
-      const load = vi.fn<RuntimeTranscriptLoader>().mockResolvedValue({
-        messages: [
-          {
-            id: 'referenced-message',
-            role: 'user',
-            content: 'Referenced conversation content',
-            status: 'done',
-            createdAt: '2026-10-15T00:00:00Z',
-          },
-        ],
-        turns: [],
-      })
+      const load = vi.fn<RuntimeTranscriptLoader>(() => new Promise(() => {}))
       mocks.context.loadRuntimeTranscriptForPane = load
       rerender({ currentRuntimeTask })
       const input = createConversationMentionReference('Other conversation', reference)
       await act(async () => expect(await result.current.send(input)).toBe(true))
-      expect(load).toHaveBeenCalledWith(
-        expect.objectContaining(reference),
-        expect.objectContaining({
-          includeFullContent: true,
-          conversationContextOnly: true,
-          refresh: true,
-          signal: expect.any(AbortSignal),
-        })
-      )
+      expect(load).not.toHaveBeenCalled()
       const additionalContext = currentRuntimeTask
         ? mocks.send.mock.calls[0][0].additionalContext
         : sendCurrentInput.mock.calls[0][1].additionalContext
-      expect(additionalContext.referencedConversations.value).toContain(
-        'Referenced conversation content'
-      )
+      expect(additionalContext.referencedConversations.value).toContain('read_conversation')
+      expect(additionalContext.referencedConversations.value).toContain('"conversation_id":"conv_')
     }
   )
 
@@ -823,18 +857,89 @@ describe('explicit composer draft replacement', () => {
         await interruption
       })
 
-      if (change === 'none') {
+      if (change !== 'unpublished') {
         expect(mocks.setInput).toHaveBeenCalledExactlyOnceWith(
           scopeKey,
           `Queued message\n\n${draft}`
         )
-        expect(result.current.replaceDraftKey).toBe(replacementKey + 1)
+        expect(result.current.replaceDraftKey).toBe(replacementKey + (change === 'none' ? 1 : 0))
+        if (change === 'scope') {
+          expect(result.current.input).toBe('')
+          rerender({ currentRuntimeTask: address })
+          expect(result.current.input).toBe(`Queued message\n\n${draft}`)
+        }
       } else {
         expect(mocks.setInput).not.toHaveBeenCalled()
         expect(result.current.replaceDraftKey).toBe(replacementKey)
       }
     }
   )
+})
+
+test.each(['rejected', 'transport'])(
+  'admits goal guidance before its update and restores on %s failure',
+  async outcome => {
+    let finish!: (value: { accepted: false; error: string }) => void
+    let fail!: (cause: Error) => void
+    mocks.context.setRuntimeGoal = vi.fn(
+      () =>
+        new Promise((resolve, reject) => {
+          finish = resolve
+          fail = reject
+        })
+    )
+    Object.assign(mocks.context.projectChat as object, {
+      setSelectedModelOption: vi.fn(),
+      addExistingAttachmentForScope: vi.fn(),
+    })
+    const { result } = await renderSession()
+    act(() => result.current.clearCodeComments())
+    await act(async () => {
+      await result.current.setCurrentGoal()
+    })
+    act(() => lifecycleStore.turnStarted(address, 'active-turn'))
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = result.current.send(draft, { guideWhenBusy: true })
+    })
+    expect(mocks.setInput).toHaveBeenCalledWith(scopeKey, '')
+    expect(getRuntimeConversationQueuedMessages(address)).toContainEqual(
+      expect.objectContaining({ content: draft, status: 'sending' })
+    )
+    expect(mocks.guide).not.toHaveBeenCalled()
+    await act(async () => {
+      if (outcome === 'transport') fail(new Error('Goal rejected'))
+      else finish({ accepted: false, error: 'Goal rejected' })
+      expect(await sending).toBe(false)
+    })
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
+    expect(mocks.setInput).toHaveBeenLastCalledWith(scopeKey, draft)
+  }
+)
+
+test('rapid submissions have distinct message identities before either receipt', async () => {
+  const finish: ((accepted: boolean) => void)[] = []
+  mocks.send.mockImplementation(() => new Promise<boolean>(resolve => finish.push(resolve)))
+  const { result } = await renderSession()
+  act(() => result.current.clearCodeComments())
+  const now = vi.spyOn(Date, 'now').mockReturnValue(12345)
+  let submissions!: Promise<boolean>[]
+  try {
+    act(() => {
+      submissions = [result.current.send('First'), result.current.send('Second')]
+    })
+    const messages = getRuntimeConversationMessages(address).filter(
+      message => message.role === 'user'
+    )
+    expect(messages.map(message => message.content)).toEqual(['First', 'Second'])
+    expect(new Set(messages.map(message => message.id)).size).toBe(2)
+    await act(async () => {
+      finish.forEach(resolve => resolve(true))
+      expect(await Promise.all(submissions)).toEqual([true, true])
+    })
+  } finally {
+    now.mockRestore()
+  }
 })
 
 describe('composer draft ownership during delayed send acknowledgment', () => {
@@ -865,8 +970,10 @@ describe('composer draft ownership during delayed send acknowledgment', () => {
       let sending!: Promise<boolean>
       act(() => {
         sending = result.current.send(draft)
-        // BufferedChatInput clears synchronously, before the runtime acknowledges.
-        result.current.setInput('')
+        expect(mocks.setInput).toHaveBeenCalledWith(scopeKey, '')
+        expect(getRuntimeConversationMessages(address)).toContainEqual(
+          expect.objectContaining({ role: 'user', content: draft })
+        )
       })
       await waitFor(() => expect(mocks.send).toHaveBeenCalledOnce())
       act(() => result.current.setInput(nextDraft))
@@ -884,8 +991,7 @@ describe('composer draft ownership during delayed send acknowledgment', () => {
   test('does not clear again when submission context resolves after the buffered clear', async () => {
     const { result } = await renderSession()
     act(() => result.current.clearCodeComments())
-    // DesktopWorkbenchMain captures send, then awaits prepareSubmission. In the
-    // meantime BufferedChatInput clears and may hold an unflushed new draft.
+    // A previously captured send callback must not clear a newer composer revision.
     const sendAfterPreparingContext = result.current.send
     act(() => result.current.setInput(''))
     mocks.setInput.mockClear()
@@ -920,6 +1026,47 @@ describe('composer draft ownership during delayed send acknowledgment', () => {
 })
 
 describe('composer draft during an in-flight send', () => {
+  test.each(['unchanged', 'published', 'buffered', 'unmounted'] as const)(
+    'restores a rejected draft to its original scope after switching (%s)',
+    async mode => {
+      const restoreAttachment = vi.fn()
+      Object.assign(mocks.context.projectChat as object, {
+        addExistingAttachmentForScope: restoreAttachment,
+      })
+      const { result, rerender, unmount } = await renderSession()
+      act(() => result.current.clearCodeComments())
+      let finish!: (accepted: boolean) => void
+      mocks.send.mockImplementationOnce(() => new Promise<boolean>(resolve => (finish = resolve)))
+      let submission!: Promise<boolean>
+      act(() => {
+        submission = result.current.send(draft)
+      })
+      expect(mocks.setInput).toHaveBeenLastCalledWith(scopeKey, '')
+      if (mode === 'published') act(() => result.current.setInput('New draft in A'))
+      if (mode === 'buffered') act(() => result.current.onDraftEdit())
+      const otherTask = { ...address, taskId: 'other-draft-owner' }
+      const otherScope = getRuntimeTaskChatScopeKey(otherTask)
+      rerender({ currentRuntimeTask: otherTask })
+      act(() => result.current.setInput('Draft in B'))
+      act(() => result.current.onDraftEdit())
+      if (mode === 'unmounted') unmount()
+      mocks.setInput.mockClear()
+      await act(async () => {
+        finish(false)
+        expect(await submission).toBe(false)
+      })
+      if (mode === 'unchanged' || mode === 'unmounted') {
+        expect(mocks.setInput).toHaveBeenCalledWith(scopeKey, draft)
+      } else expect(mocks.setInput).not.toHaveBeenCalled()
+      expect(restoreAttachment).toHaveBeenCalledWith(scopeKey, attachment)
+      expect(
+        (mocks.context.projectChat as { inputByScope: Record<string, string> }).inputByScope[
+          otherScope
+        ]
+      ).toBe('Draft in B')
+    }
+  )
+
   test.each([true, false])(
     'preserves a newer draft after send acknowledgment (code comments=%s)',
     async withCodeComments => {
@@ -1228,6 +1375,8 @@ describe('pane continuation without composer submission', () => {
       submission = result.current.send(draft)
     })
     await waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(1))
+    expect(mocks.setInput).toHaveBeenCalledWith(scopeKey, '')
+    mocks.setInput.mockClear()
     unmount()
 
     await act(async () => {

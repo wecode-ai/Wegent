@@ -60,10 +60,13 @@ export async function signInDesktopCloud(
   assert.equal(created.length, 1, 'The account switch created ambiguous authorization sessions')
   const sessionId = created[0].split('wework_auth_session:').at(-1)
   assert.match(sessionId, /^[a-f0-9-]{36}$/)
+  await cloud.waitForAuthorizationPolling(sessionId)
   const approved = await pluginApi(account, `/auth/wework/sessions/${sessionId}/approve`, 'POST', {
     signal: AbortSignal.timeout(timeoutMs),
   })
   assert.equal(approved.status, 'approved')
+  // Return from the system browser before asserting the desktop's visible connection state.
+  await control.command('focusMainWindow', 'body')
   await control.command('waitFor', testId('cloud-connection-status-card'), {
     text: user.user_name,
     visible: true,

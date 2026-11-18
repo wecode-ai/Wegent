@@ -20,6 +20,7 @@ import {
   collaborationProjectViewSelector,
   selectCollaborationProjectView,
 } from '../modules/collaboration-project-navigation.mjs'
+import { waitForCollaborationGroupRemoval } from '../modules/collaboration-group-removal.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
 const WORKSPACE_NAME = '协作组验收空间'
@@ -641,6 +642,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           workspaceGroups.items.some(candidate => candidate.id === workspaceGroup.id),
           'Removing a Workspace collaboration group from a Project deleted the source resource'
         )
+        await waitForCollaborationGroupRemoval(
+          control,
+          ACTIVE_WORKBENCH_SELECTOR,
+          workspaceGroup.id
+        )
 
         await control.command(
           'click',
@@ -660,6 +666,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
           'Deleting the Project-owned collaboration group did not persist',
           uiTimeoutMs
         )
+        await waitForCollaborationGroupRemoval(control, ACTIVE_WORKBENCH_SELECTOR, projectGroup.id)
         await control.command(
           'waitFor',
           scoped(`[data-testid="collaboration-group-available-${workspaceGroup.id}"]`),

@@ -83,6 +83,7 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 添加附件、选择 Skill / 插件     | 任务输入区 → + 或能力选择入口                                                              | 见[与 AI 协作](./tasks.md)和[插件与 Skills](./plugins-and-skills.md)                                                                                                                                                                                            |
 | 切换只读、工作区、完整访问权限  | 输入框左侧工具区 → 快捷短语右边的权限图标                                                  | 悬停查看当前模式；切换权限不等于授权外部应用                                                                                                                                                                                                                    |
 | 查看文件 / 编辑文件             | 右侧工作区 → 文件                                                                          | 先打开工作区；可写文本自动保存，见[代码工作台](./workbench.md)                                                                                                                                                                                                  |
+| 重试 DOCX 预览                  | 右侧工作区 → 文件 → DOCX 预览错误 → 重试                                                   | 仅准备失败时显示，见[工作区文件预览](./developer-guide/wework-file-preview.md#docx-preview-retry)                                                                                                                                                               |
 | 查看 Diff / 审核代码            | 助手回复下方的文件变更 → 审核                                                              | 支持 Git 的任务；在执行设备读取变更                                                                                                                                                                                                                             |
 | 打开网页 / 预览网页             | 右侧工作区 → 新标签页菜单 → 浏览器                                                         | 不是外部 Chrome，见[内置浏览器](./browser.md)                                                                                                                                                                                                                   |
 | 打开终端                        | 底部面板 → + → Terminal                                                                    | 从当前任务工作目录启动；不会因展开面板而自动创建                                                                                                                                                                                                                |
@@ -100,6 +101,8 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 从侧栏的 **项目 → 新建项目 → 云端项目** 可在选择远程主机时添加设备，见[项目与工作区](./projects.md#add-device-from-project)。
 
+Issue 详情的 **参与者 → +** 支持搜索多选，负责人选择器也可搜索非项目成员；确认后仅授予该 Issue 的管理权限，见[项目成员与 Issue 协作](./projects.md#project-controls)。
+
 从 **项目设置 → AI 配置** 编辑智能体定义；项目 Maintainer 可以编辑项目内的非私有定义，共享源定义仍按原权限控制。导入和手动创建使用相同入口，分配设备冲突的排查步骤见[智能体配置](./projects.md#agent-capabilities)。
 
 ## 侧栏的功能入口
@@ -108,13 +111,15 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 任务首次加载或加载失败时，在桌面侧栏的 **任务** 标题下方查看状态；失败后可点击 **重试**。优先级视图中的提示位于列表上方，详见[左侧栏任务管理](./tasks.md#sidebar-task-management)。
 
+输入框上方的 Issue 摘要出现任务数读取失败时，使用摘要中的重试入口，见[将对话加入项目空间看板](./tasks.md#task-board-association)。
+
 ### 直接定位具体功能点
 
 | 功能关键词                                                                          | 具体操作说明                                                        |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | 发送快捷键、运行中追问、固定标签页、并发、隐私、外观、上下文、快照、电脑操控、Hooks | [设置页逐项操作](./settings.md#settings-controls)                   |
 | 浏览器完全控制、链接打开目标、历史、下载、缓存与 Cookie、设备模拟                   | [浏览器控件](./browser.md#browser-controls)及同页工具栏说明         |
-| 服务连接、模型搜索、单模型测试、手机版单独配置、模型能力和 Catalog                  | [模型页逐项操作](./user-guide/model-settings.md#model-controls)     |
+| 桌面端一步配置连接与模型、模型搜索、单模型测试、手机版单独配置、模型能力和 Catalog  | [模型页逐项操作](./user-guide/model-settings.md#model-controls)     |
 | 附件、绘图、计划模式、Goal、排队、任务视图、个人定时任务                            | [输入区与任务控制](./tasks.md#task-controls)                        |
 | 对话内操作、选择结果、补充表单或跳转功能                                            | [向 Codex 描述需要完成的操作](./tasks.md#conversation-interactions) |
 | 项目菜单、成员、转派、归档所有聊天、归档恢复、看板和执行环境                        | [项目操作](./projects.md#project-controls)                          |
@@ -172,7 +177,7 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 集成 → 浏览器       | 下载目录、浏览器数据与缓存                                                            | `/settings/browser`                     |
 | 编码 → 执行环境     | Node.js 等执行环境配置，见[设置与数据](./settings.md)                                 | `/settings/execution-environments`      |
 | 编码 → 编码工具     | OpenCode、Claude Code、Kimi Code；实验性功能                                          | `/settings/harnesses`                   |
-| 编码 → Hooks        | 配置工具与异步生命周期钩子；见[设置说明](./settings.md#hooks-controls) | `/settings/hooks` |
+| 编码 → Hooks        | 配置工具与异步生命周期钩子；见[设置说明](./settings.md#hooks-controls)                | `/settings/hooks`                       |
 | 编码 → 代码托管     | GitHub / GitLab 等连接；开发者模式的 Git 插件入口，见[Git 连接](./git-connections.md) | `/settings/git-hosting`                 |
 | 编码 → 工作树       | Worktree 位置、保留与清理；开发者模式的 Git 插件入口                                  | `/settings/worktrees`                   |
 | 已归档 → 已归档任务 | 搜索、恢复、删除归档对话                                                              | `/settings/archived-conversations`      |
@@ -200,3 +205,5 @@ Issue 动态中的图片、Markdown 和文件链接可打开附件预览，失�
 默认执行设备与新建事项设备授权入口见[协作设备设置](./devices.md#collaboration-device-defaults)：**协作 → 协作管理 → 执行设备 → 个人默认执行环境**；**协作 → 新建事项 → 运行环境（可选）→ 个人默认执行环境 → 保存个人默认设备** 明确保存个人偏好，关联项目时通过 **项目设备授权（立即生效）→ 选择或添加设备** 管理项目授权。参与者弹层、固定创建操作区和未保存修改保护见[独立事项](./projects.md#independent-issues)。
 
 关联已有任务：**协作 → Issue 详情 → 关联任务 → 关联已有任务**，参见[项目与 Issue](./projects.md)。
+
+从评论创建子事项：**协作 → Issue 详情 → 主评论底部操作栏 → 回复旁的创建子事项**。线程内回复保留独立入口，显示条件与步骤见[从评论创建子事项](./projects.md#comment-child-issues)。
