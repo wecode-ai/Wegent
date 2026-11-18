@@ -27,8 +27,10 @@ export function remoteAttachmentIds(attachments: Attachment[]): number[] {
 
 // Symbols survive in-memory message copies without putting promises into persisted JSON.
 const attachmentPreparation = Symbol('attachmentPreparation')
+const preparationFile = Symbol('preparationFile')
 type PreparingAttachment = Attachment & {
   [attachmentPreparation]?: Promise<Attachment>
+  [preparationFile]?: File
 }
 let pendingAttachmentSequence = 0
 
@@ -42,15 +44,18 @@ export function createPreparingAttachment(file: File, ready: Promise<Attachment>
     created_at: new Date().toISOString(),
     status: 'uploading',
     [attachmentPreparation]: ready,
+    [preparationFile]: file,
   }
   void ready.then(
-    result =>
-      Object.assign(attachment, {
+    result => {
+      delete attachment[preparationFile]
+      return Object.assign(attachment, {
         ...result,
         local_preview_url: result.local_preview_url?.startsWith('blob:')
           ? result.local_path
           : result.local_preview_url,
-      }),
+      })
+    },
     () => {
       attachment.status = 'failed'
     }
@@ -73,4 +78,10 @@ export async function resolvePreparingAttachments(
       return attachment
     })
   )
+}
+
+export function failedPreparationFile(attachment: Attachment): File | undefined {
+  return attachment.status === 'failed'
+    ? (attachment as PreparingAttachment)[preparationFile]
+    : undefined
 }

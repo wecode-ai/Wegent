@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import { createLocalAttachmentApi } from '@/api/local/localAttachments'
 import { rememberNativeFilePath } from '@/desktop/nativeFilePaths'
@@ -252,6 +252,10 @@ test('fails the accepted attachment preparation when upload fails instead of del
     await preparing
   })
   expect(result.current.attachments).toEqual([])
+  upload.mockResolvedValueOnce({ ...attachment, id: -43, filename: 'recovered.png' })
+  act(() => result.current.addExistingAttachment(accepted[0]))
+  await waitFor(() => expect(result.current.attachments.map(file => file.id)).toEqual([-43]))
+  expect(upload).toHaveBeenCalledTimes(2)
 })
 
 test('does not capture a cleared draft upload when a newer message is submitted', async () => {

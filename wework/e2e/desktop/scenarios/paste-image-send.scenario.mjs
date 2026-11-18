@@ -20,9 +20,8 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs }) {
         return false
       const body = await readRawRequestBody(request)
       const parsed = JSON.parse(body)
-      const turn = parsed.input
-        .filter(item => item.role === 'user')
-        .findLast(item => JSON.stringify(item.content).includes('PASTE_AND_SEND_'))
+      const input = Array.isArray(parsed.input) ? parsed.input : []
+      const turn = input.findLast(item => item.role === 'user')
       const marker = JSON.stringify(turn?.content ?? []).match(/PASTE_AND_SEND_(?:png|tiff)/)?.[0]
       if (!marker) return false
       const images = (turn.content ?? []).filter(item => item.type === 'input_image')
@@ -52,6 +51,11 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs }) {
       return true
     },
     async verify(control) {
+      await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-task"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]'
+      )
       await createSingleRootLocalProject(control, workspacePath, 'paste-image-send')
       await selectE2EModel(control)
       for (const type of process.platform === 'darwin' ? ['png', 'tiff'] : ['png']) {

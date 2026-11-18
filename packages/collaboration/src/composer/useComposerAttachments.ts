@@ -1,5 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { createPreparingAttachment } from '@wegent/chat-core/runtime-attachments'
+import {
+  createPreparingAttachment,
+  failedPreparationFile,
+} from '@wegent/chat-core/runtime-attachments'
 import type { Attachment } from '@wegent/chat-core/runtime'
 export interface MultiAttachmentUploadState {
   attachments: Attachment[]
@@ -106,29 +109,6 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
   const isAttachmentReadyToSend = useMemo(
     () => !isUploading && state.attachments.every(attachment => attachment.status === 'ready'),
     [isUploading, state.attachments]
-  )
-
-  const addExistingAttachmentForScope = useCallback(
-    (targetScopeKey: string, attachment: Attachment, file?: File) => {
-      if (file) {
-        const id = `${file.name}:${++uploadSequence.current}`
-        const source: AttachmentSource = { file, filename: file.name, cancelled: false, attachment }
-        const sources = sourcesByScope.current.get(targetScopeKey) ?? new Map()
-        sources.set(id, source)
-        sourcesByScope.current.set(targetScopeKey, sources)
-        const attachments = attachmentSourcesByScope.current.get(targetScopeKey) ?? new Map()
-        attachments.set(attachment.id, source)
-        attachmentSourcesByScope.current.set(targetScopeKey, attachments)
-      }
-      updateScopeState(targetScopeKey, current => {
-        if (current.attachments.some(item => item.id === attachment.id)) return current
-        return {
-          ...current,
-          attachments: [...current.attachments, attachment],
-        }
-      })
-    },
-    [updateScopeState]
   )
 
   const discardSourceAttachment = useCallback(
@@ -272,6 +252,13 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
             }
             previewTransferred = true
           }
+          if (pending.submitted) {
+            releaseAttachmentPreview(enrichedAttachment)
+            enrichedAttachment = {
+              ...enrichedAttachment,
+              local_preview_url: enrichedAttachment.local_path,
+            }
+          }
           if (source) source.attachment = enrichedAttachment
           pending.resolve(enrichedAttachment)
 
@@ -324,6 +311,34 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
       options.onAction,
       discardSourceAttachment,
     ]
+  )
+
+  const addExistingAttachmentForScope = useCallback(
+    (targetScopeKey: string, attachment: Attachment, file?: File) => {
+      const retryFile = failedPreparationFile(attachment)
+      if (retryFile) {
+        void handleFileSelectForScope(targetScopeKey, retryFile)
+        return
+      }
+      if (file) {
+        const id = `${file.name}:${++uploadSequence.current}`
+        const source: AttachmentSource = { file, filename: file.name, cancelled: false, attachment }
+        const sources = sourcesByScope.current.get(targetScopeKey) ?? new Map()
+        sources.set(id, source)
+        sourcesByScope.current.set(targetScopeKey, sources)
+        const attachments = attachmentSourcesByScope.current.get(targetScopeKey) ?? new Map()
+        attachments.set(attachment.id, source)
+        attachmentSourcesByScope.current.set(targetScopeKey, attachments)
+      }
+      updateScopeState(targetScopeKey, current => {
+        if (current.attachments.some(item => item.id === attachment.id)) return current
+        return {
+          ...current,
+          attachments: [...current.attachments, attachment],
+        }
+      })
+    },
+    [handleFileSelectForScope, updateScopeState]
   )
 
   const removeSourceFileForScope = useCallback(
