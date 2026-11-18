@@ -1014,7 +1014,7 @@ jobs:
           build-args: DEVICE_BASE_IMAGE=ubuntu:22.04
           outputs: type=local,dest=${{ runner.temp }}/executor-connection-runtime
           cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-connection-runtime-amd64
-          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-connection-runtime-amd64,mode=max
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/wegent-device:buildcache-connection-runtime-amd64,mode=max,ignore-error=true
 
       - name: Archive the connection runtime
         run: |
@@ -1285,6 +1285,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release-notes.outputs.tag }}
+          target_commitish: ${{ env.GIT_REF }}
           name: Release ${{ steps.release-notes.outputs.tag }}
           body: ${{ steps.release-notes.outputs.body }}
           draft: false

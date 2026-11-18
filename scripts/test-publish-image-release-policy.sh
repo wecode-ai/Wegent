@@ -59,7 +59,9 @@ runtime_job = 'build-executor-connection-runtime-linux-amd64'
     release = jobs.fetch('create-release-tag')
     raise 'Release must wait for both Executor and its connection runtime' unless
       %w[build-executor-local-linux-amd64 build-executor-connection-runtime-linux-amd64].all? { |job| release.fetch('needs').include?(job) }
-    assets = release.fetch('steps').find { |step| step['name'] == 'Create GitHub Release' }.fetch('with').fetch('files').lines.map(&:strip)
+    release_inputs = release.fetch('steps').find { |step| step['name'] == 'Create GitHub Release' }.fetch('with')
+    raise 'GitHub Release must pin the revision used to build its assets' unless release_inputs['target_commitish'] == '${{ env.GIT_REF }}'
+    assets = release_inputs.fetch('files').lines.map(&:strip)
     %W[wegent-executor-linux-amd64 #{bundle} #{bundle}.sha256].each do |asset|
       raise "Missing Linux amd64 release asset #{asset}" unless assets.include?("./executor-binaries/#{asset}")
     end
@@ -141,15 +143,20 @@ Dir.mktmpdir('executor-release-tags-') do |directory|
     raise 'Could not initialize release fixture' unless system('git', 'init', '-q')
     commit = %w[git -c user.name=Fixture -c user.email=fixture@example.com -c commit.gpgsign=false commit --allow-empty -qm]
     raise 'Could not create release fixture' unless system(*commit, 'first')
-    guard = ['bash', File.join(root, '.github/scripts/check-release-tag-revision.sh'), 'v1.2.3']
-    raise 'A new version must be allowed' unless system(*guard)
-    raise 'Could not create release tag fixture' unless
-      system('git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.com', 'tag', '-a', 'v1.2.3', '-m', 'release')
-    raise 'A retry at the tagged revision must be allowed' unless system(*guard)
+    guard = ['bash', File.join(root, '.github/scripts/check-release-tag-revision.sh')]
+    tags = {'v1.2.3' => %w[-a -m release], 'v1.2.4' => []}
+    tags.each do |tag, options|
+      raise 'A new version must be allowed' unless system(*guard, tag)
+      raise "Could not create release tag fixture #{tag}" unless
+        system('git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.com', 'tag', '--no-sign', *options, tag)
+      raise 'A retry at the tagged revision must be allowed' unless system(*guard, tag)
+    end
     raise 'Could not move release fixture to another revision' unless system(*commit, 'second')
-    _, error, status = Open3.capture3(*guard)
-    raise 'Reusing a release tag from another revision must fail' unless
-      !status.success? && error.include?('Release tag v1.2.3 points to')
+    tags.each_key do |tag|
+      _, error, status = Open3.capture3(*guard, tag)
+      raise "Reusing release tag #{tag} from another revision must fail" unless
+        !status.success? && error.include?("Release tag #{tag} points to")
+    end
   end
 end
 
