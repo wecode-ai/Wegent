@@ -707,6 +707,7 @@ export function createDesktopScenario({
         authorizeRequests: provider?.authorizeRequests ?? 0,
         tokenRequests: provider?.tokenRequests ?? 0,
         refreshRequests: provider?.refreshRequests ?? 0,
+        refreshEvents: provider?.refreshEvents ?? [],
         toolCalls: provider?.toolCalls ?? [],
         catalogAtResume,
         localSyncHold,
