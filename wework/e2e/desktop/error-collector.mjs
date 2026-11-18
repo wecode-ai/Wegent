@@ -11,6 +11,7 @@ export class DesktopErrorCollector {
     writeFileSync(path, '', { mode: 0o600 })
   }
 
+  /** @param {{ byteLength?: number, allowPending?: boolean }} [options] */
   records({ byteLength, allowPending = false } = {}) {
     const bytes = readFileSync(this.path)
     if (byteLength !== undefined)

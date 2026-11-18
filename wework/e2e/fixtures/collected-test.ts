@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
-import { test as base, expect, type Response, type Request } from '@playwright/test'
+import { test as base, expect, type Response, type Request, type Page } from '@playwright/test'
 import { E2EErrorLog, recordE2ERendererError } from '../../electron/src/host/e2e-error-log'
 import { DesktopErrorCollector } from '../desktop/error-collector.mjs'
 
@@ -20,7 +20,7 @@ export const test = base.extend<{
   }
 }>({
   errors: [
-    async ({ page }, runTest, testInfo) => {
+    async ({ context }, runTest, testInfo) => {
       const journalPath = testInfo.outputPath('errors.jsonl')
       const appLogPath = testInfo.outputPath('collector.log')
       writeFileSync(appLogPath, '')
@@ -39,15 +39,38 @@ export const test = base.extend<{
         }
         return id
       }
-      page.on('pageerror', error =>
+      const observedPages = new Set<Page>()
+      const observePage = (target: Page) => {
+        if (observedPages.has(target)) return
+        observedPages.add(target)
+        target.on('crash', () => journal.record('process', 'page-crashed', 'error', {}))
+        target.on('close', () => journal.record('process', 'page-closed', 'info', {}))
+        target.on('websocket', socket => {
+          const connectionId = randomUUID()
+          journal.record('network', 'websocket-opened', 'info', { connectionId, url: socket.url() })
+          socket.on('socketerror', message =>
+            journal.record('network', 'websocket-error', 'error', {
+              connectionId,
+              url: socket.url(),
+              message,
+            })
+          )
+          socket.on('close', () =>
+            journal.record('network', 'websocket-closed', 'info', {
+              connectionId,
+              url: socket.url(),
+            })
+          )
+        })
+      }
+      context.on('weberror', event => {
+        const error = event.error()
         journal.record('renderer', 'page-error', 'error', {
           message: error.message,
           stack: error.stack,
         })
-      )
-      page.on('crash', () => journal.record('process', 'page-crashed', 'error', {}))
-      page.on('close', () => journal.record('process', 'page-closed', 'info', {}))
-      page.on('console', message => {
+      })
+      context.on('console', message => {
         if (message.type() === 'error' || message.type() === 'warning')
           recordE2ERendererError(
             message.text(),
@@ -56,7 +79,9 @@ export const test = base.extend<{
             journal
           )
       })
-      page.on('requestfailed', request =>
+      context.on('page', observePage)
+      for (const target of context.pages()) observePage(target)
+      context.on('requestfailed', request =>
         journal.record('network', 'request-failed', 'error', {
           requestId: requestId(request),
           url: request.url(),
@@ -64,7 +89,7 @@ export const test = base.extend<{
           message: request.failure()?.errorText,
         })
       )
-      page.on('response', response =>
+      context.on('response', response =>
         journal.record('network', 'http-response', response.status() >= 400 ? 'error' : 'info', {
           requestId: requestId(response.request()),
           url: response.url(),
@@ -90,7 +115,7 @@ export const test = base.extend<{
         })
       } finally {
         try {
-          await page.close()
+          await context.close()
           const checkpoint = journal.checkpoint()
           assert.equal(checkpoint.failedWrites, 0)
           const records = collector.records({ byteLength: checkpoint.byteLength })
