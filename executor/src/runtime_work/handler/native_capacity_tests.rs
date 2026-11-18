@@ -23,15 +23,16 @@ async fn native_continuation_retains_capacity_after_local_control_finishes() {
         request
             .extra
             .insert("wegent_resume_goal_only".into(), json!(true));
-        let duplicate = handler
-            .send_message(json!({
-                "taskId":"task-1", "message":"resume", "executionRequest":request
-            }))
-            .await
-            .unwrap();
-        assert_eq!(duplicate["success"], false);
-        assert_eq!(duplicate["error"], "runtime task is already running");
-        assert_eq!(handler.queued_local_task_position("task-1"), None);
+        for payload in [
+            json!({"taskId":"task-1", "message":"duplicate recovery"}),
+            json!({"taskId":"task-1", "message":"resume", "executionRequest":request}),
+        ] {
+            let duplicate = handler.send_message(payload).await.unwrap();
+            assert_eq!(duplicate["success"], false);
+            assert_eq!(duplicate["code"], "bad_request");
+            assert_eq!(duplicate["error"], "runtime task is already running");
+            assert_eq!(handler.queued_local_task_position("task-1"), None);
+        }
 
         handler.route_codex_notification(json!({"method":"thread/goal/cleared",
             "params":{"threadId":"thread-1"}}));
