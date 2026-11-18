@@ -38,6 +38,8 @@ Managed Wegent Issue execution uses the default-enabled native jobs `wegent.mana
 
 Ordinary assignment requires no additional prompt: the managed Task uses the shared project, Issue, and execution reference, with optional instructions and continuation comments retained as supplementary text. A renewable execution lock protects each Task turn. If its process stops after committing `RUNNING`, durable redelivery can resume the same turn instead of skipping it solely because it is `RUNNING`. HTTP Executors reuse the automatic pipeline's turn idempotency key; Chat consumers clear old stream buffers before recovery and preserve terminal recovery. Terminal turns and mismatched identities are never dispatched again.
 
+Video and research polling turns persist their handoff before external submission. A saved video job ID uses the existing video polling recovery. If a handoff is interrupted without a recoverable job ID, execution fails explicitly with unknown acceptance; providers without request deduplication are never automatically submitted again.
+
 The durable queue, atomic claim, and Runtime acceptance control task delivery. A wake notification only announces work; it carries no task and does not establish execution success.
 Routed work notifies eligible devices using their owners' connection identities, after checking current grants, models, and Issue runner affinity.
 `LOCAL_RUNTIME_WORK_POLL_INTERVAL` overrides the default five-second interval. Reconnection and availability notifications still initiate an immediate pull.

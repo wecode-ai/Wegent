@@ -421,11 +421,70 @@ async fn dispatch_inner(
                 .await?;
         }
         CommunicationMode::Polling => {
+            if recovering
+                && !claim_polling_handoff(
+                    &state
+                        .mysql
+                        .route(crate::task_routing::ByTaskId(request.task_id as u64)),
+                    state.task_store.table_templates(),
+                    request.task_id,
+                    request.subtask_id,
+                    request.user_id,
+                )
+                .await?
+            {
+                return Ok(());
+            }
             crate::background_jobs::video::create::dispatch(state, request).await?
         }
         other => bail!("managed project execution cannot route {other:?}"),
     }
     Ok(())
+}
+
+/// Polling providers do not implement the executor queue's request deduplication.
+/// Persist the handoff before calling them; an interrupted, ambiguous submission
+/// must not silently create a second external job. Accepted videos already have
+/// a durable job identity consumed by the existing video recovery scanner.
+pub(super) async fn claim_polling_handoff<M: Mysql>(
+    mysql: &M,
+    tables: crate::task_store::TableTemplates,
+    task_id: i64,
+    subtask_id: i64,
+    user_id: i64,
+) -> Result<bool> {
+    #[derive(FromMysqlRow)]
+    struct Current {
+        result: Option<Json<Value>>,
+    }
+    let decision = mysql.with_transaction(async |tx| {
+        let row: Option<Current> = tx.fetch_optional(
+            format!("SELECT s.result FROM {} s JOIN {} t ON t.id=s.task_id WHERE s.id=? AND s.task_id=? AND s.user_id=? AND t.user_id=? AND t.is_active=1 AND s.role='ASSISTANT' AND s.status='RUNNING' FOR UPDATE", tables.subtasks, tables.tasks),
+            (subtask_id, task_id, user_id, user_id),
+        ).await?;
+        let Some(row) = row else { return Ok(None) };
+        let mut result = row.result.map(|v| v.0).unwrap_or_else(|| json!({}));
+        if result["managed_polling_dispatch_started"] == true || result.get("video_job").is_some() {
+            return Ok(Some((false, result)));
+        }
+        result["managed_polling_dispatch_started"] = json!(true);
+        tx.execute(format!("UPDATE {} SET result=?,updated_at=NOW() WHERE id=?", tables.subtasks), (Json(result.clone()), subtask_id)).await?;
+        Ok(Some((true, result)))
+    }).await?;
+    match decision {
+        None => Ok(false),
+        Some((true, _)) => Ok(true),
+        Some((false, result))
+            if result["video_job"]["job_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty()) =>
+        {
+            Ok(false)
+        }
+        Some((false, _)) => bail!(
+            "Polling execution was interrupted during provider handoff; acceptance is unknown and automatic resubmission is unsafe"
+        ),
+    }
 }
 
 #[cfg(test)]
