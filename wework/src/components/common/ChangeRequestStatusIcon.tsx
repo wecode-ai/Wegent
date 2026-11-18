@@ -23,6 +23,8 @@ import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import type { ChangeRequest } from '@/types/environment'
+import type { ResourceObservation } from '@/features/workbench/resourceObservation'
+import { ResourceObservationStatus } from './ResourceObservationStatus'
 
 interface ChangeRequestStatusGlyphConfig {
   mainClassName: string
@@ -34,6 +36,7 @@ interface ChangeRequestStatusGlyphConfig {
 interface ChangeRequestStatusSnapshot {
   changeRequest: ChangeRequest | null
   stale?: boolean
+  observation?: ResourceObservation
 }
 
 const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphConfig> = {
@@ -233,6 +236,11 @@ export function ChangeRequestStatusIcon({
                 {changeRequest.number} · {changeRequest.title}
               </span>
               <span className="mt-1 block text-xs text-text-secondary">{label}</span>
+              {snapshot?.observation && (
+                <span className="mt-1 block">
+                  <ResourceObservationStatus observation={snapshot.observation} />
+                </span>
+              )}
               {changeRequest.mergeQueueReason ? (
                 <span className="mt-1 line-clamp-3 block text-xs text-text-muted">
                   {changeRequest.mergeQueueReason}

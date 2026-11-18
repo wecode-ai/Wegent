@@ -1,3 +1,4 @@
+import { useTranslation } from '@/hooks/useTranslation'
 import { useId, useState, useSyncExternalStore } from 'react'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useScopedComposerAttachments } from '@/features/workbench/useScopedComposerAttachments'
@@ -20,6 +21,8 @@ export function useWorkbenchPaneSession({
   debugSnapshotEnabled = true,
 }: WorkbenchPaneSessionOptions) {
   const queueDiagnosticSessionId = useId()
+  const { t } = useTranslation('common')
+  const [draftEditVersions] = useState(() => new Map<string, number>())
   const workbench = useWorkbenchPaneContext()
   const lifecycleStore = useRuntimeTaskLifecycleStore()
   const inputScopeKey = currentRuntimeTask
@@ -27,6 +30,8 @@ export function useWorkbenchPaneSession({
     : workbench.projectChat.scopeKey
   const attachmentState = useScopedComposerAttachments(workbench.projectChat, inputScopeKey)
   const external = {
+    t,
+    draftEditVersions,
     currentRuntimeTask,
     debugSnapshotEnabled,
     queueDiagnosticSessionId,

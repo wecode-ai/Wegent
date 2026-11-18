@@ -1,3 +1,5 @@
+import { collectIssueDrawerDiagnostics } from './issue-drawer-diagnostics'
+import { waitForDomChange } from './waitForDomChange'
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
 import { collectConversationRenderingDiagnostics } from './conversation-rendering-diagnostics'
 import {
@@ -50,7 +52,11 @@ import {
   recordNativeTerminalKey,
 } from './native-terminal-diagnostics'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
-import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
+import {
+  createNativeKeyObservation,
+  readNativeTerminalViewport,
+  waitForNativeTerminalPageUp,
+} from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import {
   getRuntimeStreamDiagnostics,
@@ -93,6 +99,7 @@ import {
   releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
+import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
 import { cloudIdentityFailure } from './cloud-identity-diagnostics'
@@ -1375,7 +1382,7 @@ async function pressNativeDesktopControlKey(
   selector: string,
   key: string,
   phase: 'press' | 'down' | 'up' = 'press',
-  measurement?: { selector: string }
+  measurement?: { selector: string; timeoutMs?: number }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
   recordNativeTerminalKey('focus-requested', key, findDesktopControlElements(selector)[0] ?? null)
@@ -1431,12 +1438,19 @@ async function pressNativeDesktopControlKey(
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
-  return observation && viewportTarget
-    ? JSON.stringify({
-        viewportBefore: observation.result(),
-        viewportAfter: readNativeTerminalViewport(viewportTarget),
-      })
-    : (desktopControlDeepActiveElement()?.getAttribute('data-testid') ?? '')
+  if (!observation || !viewportTarget)
+    return desktopControlDeepActiveElement()?.getAttribute('data-testid') ?? ''
+  const viewportBefore = observation.result()
+  // Native key delivery can precede xterm's asynchronous scroll notification.
+  const viewportAfter =
+    key === 'Shift+PageUp'
+      ? await waitForNativeTerminalPageUp(
+          viewportTarget,
+          viewportBefore,
+          startedAt + (measurement?.timeoutMs ?? 10_000)
+        )
+      : readNativeTerminalViewport(viewportTarget)
+  return JSON.stringify({ viewportBefore, viewportAfter })
 }
 
 let activeDesktopControlPointer: {
@@ -1767,7 +1781,7 @@ async function waitForDesktopControlElement(
       } else {
         matchedAt = null
       }
-      await waitForDesktopControlTick()
+      await waitForDomChange(document)
       continue
     }
 
@@ -1787,7 +1801,7 @@ async function waitForDesktopControlElement(
     } else {
       matchedAt = null
     }
-    await waitForDesktopControlTick()
+    await waitForDomChange(document)
   }
 
   const diagnostics = findDesktopControlElementsWithin(command.selector, command.target).map(
@@ -2190,6 +2204,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   if (verificationResult.handled) return verificationResult.value
 
   switch (command.action) {
+    case 'verifyConnectorAuthorizationIsolation':
+      await verifyConnectorAuthorizationIsolation(command.value ?? '')
+      return 'true'
     case 'crashRenderer':
       rendererCrashStore.trigger()
       return 'Renderer crash requested'
@@ -2404,13 +2421,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         apiBaseUrl: string
         connectorToken: string
         expiresAtMs: number
+        syncRevision?: number
       }
       return JSON.stringify(
         await requestLocalExecutor('runtime.connectors.configure', {
           apiBaseUrl: input.apiBaseUrl,
           connectorToken: input.connectorToken,
           expiresAtMs: input.expiresAtMs,
-          syncRevision: nextConnectorSyncRevision(),
+          syncRevision: input.syncRevision ?? nextConnectorSyncRevision(),
         })
       )
     }
@@ -2441,12 +2459,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(root[E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY] ?? {})
     }
     case 'holdLocalExecutorRequests': {
-      const { method, phase } = JSON.parse(command.value ?? '{}') as {
+      const { method, phase, maxHeldCount } = JSON.parse(command.value ?? '{}') as {
         method?: string
         phase?: 'before-dispatch' | 'after-response'
+        maxHeldCount?: number
       }
       if (!method) throw new Error('holdLocalExecutorRequests requires a method')
-      holdLocalExecutorRequestsForE2E(method, phase)
+      if (maxHeldCount !== undefined && (!Number.isSafeInteger(maxHeldCount) || maxHeldCount < 1)) {
+        throw new Error('maxHeldCount must be a positive integer')
+      }
+      holdLocalExecutorRequestsForE2E(method, phase, maxHeldCount)
       return ''
     }
     case 'awaitLocalExecutorRequestHold':
@@ -2894,6 +2916,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'focusMainWindow':
       await invokeDesktopHost('e2e.focusMainWindow')
+      return ''
+    case 'blurMainWindow':
+      await invokeDesktopHost('e2e.blurMainWindow')
       return ''
     case 'pressWindowKey':
       await invokeDesktopHost('e2e.pressKey', {
@@ -3631,11 +3656,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       stopRuntimeStreamDiagnostics()
       return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
+      if (command.value === 'state-only') return JSON.stringify(getWorkbenchDebugSnapshot())
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
         conversationRendering: await collectConversationRenderingDiagnostics(capability =>
           invokeDesktopHost(capability)
         ),
+        issueDrawers: collectIssueDrawerDiagnostics(),
         runtimeStream: getRuntimeStreamDiagnostics(),
         desktopControlTransport: getDesktopControlDiagnostics(),
         nativeTerminalKeys: getNativeTerminalDiagnostics(),
@@ -3963,7 +3990,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         command.selector,
         command.key ?? '',
         'press',
-        command.target ? { selector: command.target } : undefined
+        command.target ? { selector: command.target, timeoutMs: command.timeoutMs } : undefined
       )
     }
     case 'nativeKeyDownOnly': {

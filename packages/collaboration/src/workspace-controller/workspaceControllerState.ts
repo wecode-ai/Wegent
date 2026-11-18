@@ -178,7 +178,8 @@ function reduceWorkspaceState(
         members: state.projectMembers[action.project.id] ?? [],
         agents: state.projectAgents[action.project.id] ?? [],
         taskBindings: state.projectTaskBindings[action.project.id] ?? [],
-        selectedIssue: state.project?.id === action.project.id ? state.selectedIssue : null,
+        selectedIssue:
+          state.selectedIssue?.cloud_project_id === action.project.id ? state.selectedIssue : null,
         error: null,
         errorSource: null,
       }
@@ -207,7 +208,10 @@ function reduceWorkspaceState(
         project: action.project,
         issues: action.snapshot.items,
         selectedIssue: state.selectedIssue
-          ? (action.snapshot.items.find(item => item.id === state.selectedIssue?.id) ?? null)
+          ? (action.snapshot.items.find(item => item.id === state.selectedIssue?.id) ??
+            (action.externalBoard && state.selectedIssue.cloud_project_id === action.project.id
+              ? state.selectedIssue
+              : null))
           : null,
         members: action.snapshot.members,
         agents: action.snapshot.agents,

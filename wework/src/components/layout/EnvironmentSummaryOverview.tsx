@@ -1,4 +1,4 @@
-import { Check, Cloud, Copy, FolderOpen, Laptop } from 'lucide-react'
+import { Check, Cloud, Copy, FolderOpen, Laptop, Server } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useDeadlineExpired } from '@wegent/collaboration/clock'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -47,7 +47,9 @@ export function EnvironmentSummaryOverview({
   const executionLabel =
     info.executionTarget === 'cloud'
       ? t('workbench.environment_cloud_device')
-      : t('workbench.environment_local', '本地')
+      : info.executionTarget === 'remote'
+        ? t('workbench.environment_remote_device', '远程设备')
+        : t('workbench.environment_local', '本地')
   const executionTargetLabel = t('workbench.environment_execution_target')
   const deviceLabel = t('workbench.environment_device')
   const deviceDisplayName = deviceName || t('workbench.environment_device_unknown')
@@ -55,7 +57,8 @@ export function EnvironmentSummaryOverview({
     info.executionTarget === 'cloud' && !isWorkbenchDeviceOnline(device ?? null)
       ? getWorkbenchDeviceUnavailableDisplayName(device ?? null) || deviceDisplayName
       : deviceDisplayName
-  const ExecutorIcon = info.executionTarget === 'cloud' ? Cloud : Laptop
+  const ExecutorIcon =
+    info.executionTarget === 'cloud' ? Cloud : info.executionTarget === 'remote' ? Server : Laptop
   const deviceTitle = [deviceLabel, deviceDisplayName].filter(Boolean).join(' · ')
   const offlineDeviceId = getExecutorOfflineDeviceId(info.error)
   const offlineDevice = offlineDeviceId ? findWorkbenchDevice(devices, offlineDeviceId) : null
@@ -174,7 +177,10 @@ export function EnvironmentSummaryOverview({
         </div>
       </section>
       {displayError && (
-        <p className="mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive wework:bg-red-50 wework:text-red-600">
+        <p
+          data-testid="environment-read-error"
+          className="mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive wework:bg-red-50 wework:text-red-600"
+        >
           {displayError}
         </p>
       )}

@@ -1,3 +1,4 @@
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { type PrivateHistorySource } from '@/features/collaboration-exp/private/privateConversationHistory'
 import type { ConversationModelControls } from './conversationModelControls'
 import { type ReactNode } from 'react'
@@ -59,6 +60,7 @@ export interface TemporaryChatPanelProps {
   onRestoreConversation?: () => void
   onFillSelectionToAnswer?: (text: string) => void
   initialScrollPosition?: 'restore' | 'latest'
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   coordinateUserInput?: boolean
   focusedRequest?: RequestUserInputPayload | null

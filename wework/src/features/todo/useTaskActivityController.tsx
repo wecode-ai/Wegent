@@ -202,6 +202,7 @@ export function useTaskActivityController({
   const activityInput = useMemo(
     () => ({
       task,
+      lifecycleTrace: { issueTimeline, linear },
       bindings: taskBindings,
       notification: notificationEntity,
       devices: state.devices,
@@ -213,6 +214,8 @@ export function useTaskActivityController({
     }),
     [
       task,
+      issueTimeline,
+      linear,
       taskBindings,
       notificationEntity,
       state.devices,

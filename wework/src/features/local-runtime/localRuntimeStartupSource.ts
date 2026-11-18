@@ -29,6 +29,7 @@ export function createLocalRuntimeStartupSource(enabled: boolean, slowStartupMs:
     else cloudService.dispose()
   }
   let resolve: StartupResolver | undefined
+  let prepareExecutor: (() => Promise<LocalRuntimeState | null>) | undefined
   let observing = false
   let generation = 0
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -53,16 +54,29 @@ export function createLocalRuntimeStartupSource(enabled: boolean, slowStartupMs:
     if (!enabled || !resolve || !listeners.size) return
     const current = ++generation
     const next = await resolve()
-    if (current === generation && listeners.size) publish({ state: next })
+    if (current !== generation || !listeners.size) return
+    publish({ state: next })
+    if (next.phase === 'ready' && prepareExecutor) {
+      const prepare = prepareExecutor
+      // Publish the usable workbench before preparing recovery and default plugins.
+      queueMicrotask(() => {
+        if (current !== generation || !listeners.size) return
+        void prepare().then(failure => {
+          if (failure && current === generation && listeners.size) publish({ state: failure })
+        })
+      })
+    }
   }
   return {
     getSnapshot: () => snapshot,
     subscribe(
       listener: () => void,
       resolver: StartupResolver,
-      cloudInput?: LocalExecutorCloudInput
+      cloudInput?: LocalExecutorCloudInput,
+      prepare?: () => Promise<LocalRuntimeState | null>
     ) {
       resolve = resolver
+      prepareExecutor = prepare
       cloud = cloudInput
       listeners.add(listener)
       synchronizeCloud()

@@ -71,16 +71,23 @@ export function createDesktopSidebarPreferences(scope: string) {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    subscribeSelection(listener: () => void, projectId: number | null, key: string | null) {
+    subscribeSelection(
+      listener: () => void,
+      projectId: number | null,
+      key: string | null,
+      pinned: { taskPinned: boolean; projectPinned: boolean }
+    ) {
       selectionListeners.add(listener)
       if (selection.projectId !== projectId || selection.key !== key) {
         selection = { projectId, key }
         if (projectId !== null && key && key !== lastExpandedKey) {
           lastExpandedKey = key
-          change('projectsExpanded', true)
-          change('expandedProjectIds', current =>
-            current.has(projectId) ? current : new Set([...current, projectId])
-          )
+          if (!pinned.taskPinned) {
+            if (!pinned.projectPinned) change('projectsExpanded', true)
+            change('expandedProjectIds', current =>
+              current.has(projectId) ? current : new Set([...current, projectId])
+            )
+          }
         }
         for (const observer of selectionListeners) observer()
       }

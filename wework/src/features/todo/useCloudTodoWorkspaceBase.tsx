@@ -301,6 +301,10 @@ export function useCloudTodoWorkspaceBase({
     },
     [setLocalProjectSpaces]
   )
+  const globalSearchScope = useMemo(
+    () => ({ cloudWorkspaceApi, localProjectManageApi, userId: user.id }),
+    [cloudWorkspaceApi, localProjectManageApi, user.id]
+  )
   const prependProject = useCallback(
     (project: LocatedCloudProject) => {
       if (project.location === 'cloud') {
@@ -551,6 +555,7 @@ export function useCloudTodoWorkspaceBase({
     issueChangeRequestMonitor,
     changeRequestMonitor,
     cloudWorkspaceApi,
+    globalSearchScope,
     deviceNamesById,
     runtimeTaskExecutionStatusByAddress,
     projectAgentConfigurationHost,

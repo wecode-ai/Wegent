@@ -41,7 +41,12 @@ function ScopedProviderConnectionTestButton({
         pending: false,
         failed: failures.length > 0,
         message: failures.length
-          ? failures.map(result => `${result.model}: ${result.error}`).join('\n')
+          ? failures
+              .map(
+                result =>
+                  `${result.model}: ${result.error === 'connection_test_failed' ? t('testFailed') : result.error}`
+              )
+              .join('\n')
           : t('testSuccess'),
       })
     } catch (error) {

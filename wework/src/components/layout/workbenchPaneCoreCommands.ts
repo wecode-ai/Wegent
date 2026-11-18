@@ -69,7 +69,7 @@ export function createPaneCoreCommands(sessionOwner: PaneCommandContext) {
   }
 
   const getDraftEditVersion = () => {
-    return sessionOwner.live.draftEditVersion
+    return sessionOwner.live.draftEditVersions.get(sessionOwner.frame.inputScopeKey) ?? 0
   }
 
   const setErrorForScope = (scopeKey: string, nextError: string | null) => {
@@ -103,7 +103,10 @@ export function createPaneCoreCommands(sessionOwner: PaneCommandContext) {
     const { clearError } = sessionOwner.commands
 
     if (sessionOwner.live.activeInputScope !== inputScopeKey) return
-    sessionOwner.live.draftEditVersion += 1
+    sessionOwner.live.draftEditVersions.set(
+      inputScopeKey,
+      (sessionOwner.live.draftEditVersions.get(inputScopeKey) ?? 0) + 1
+    )
     clearError()
   }
 

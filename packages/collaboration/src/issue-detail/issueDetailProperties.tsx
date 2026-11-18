@@ -1,3 +1,4 @@
+import { ConfirmationDialog } from '../controls/ConfirmationDialog'
 import { MilestonePicker } from '../milestones/MilestonePicker'
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from '../issue-card/priorityBadgeClasses'
 import { persistIssueDetailFields } from './persistIssueDetailFields'
@@ -37,6 +38,7 @@ import type { IssueDetailModel } from './useSharedIssueDetailModel'
 export function createIssueDetailProperties(model: IssueDetailModel) {
   const {
     props,
+    project,
     collections,
     editorPort,
     extensions,
@@ -59,6 +61,17 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
     startDate,
     dueDate,
     assigneeTarget,
+    outsidePeople,
+    assigneeQuery,
+    assigneeSearch,
+    outsideLabel,
+    confirmPersonLabel,
+    setAssigneeQuery,
+    outsideTargetUser,
+    confirmOutsideTarget,
+    searchIssueUsers,
+    outsideAssignee,
+    resolveOutsideAssignee,
     tags,
     notifyAssignee,
     setNotifyAssignee,
@@ -83,8 +96,6 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
     collaboratorEditingSupported,
     canEditCollaborators,
     collaboratorAvailabilityNote,
-    selectedCollaboratorId,
-    setSelectedCollaboratorId,
     collaboratorBusy,
     collaboratorError,
     setCollaboratorError,
@@ -118,6 +129,7 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
     value: IssueAssigneeTarget
     label: string
     group?: string
+    description?: string
   }> = [
     {
       value: '',
@@ -138,11 +150,26 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
         ]
       : []),
     ...projectMembers
-      .filter(member => member.can_be_assignee !== false && member.role !== 'Viewer')
+      .filter(
+        member =>
+          member.can_be_assignee !== false ||
+          ((project?.task_provider ?? 'local') === 'local' && member.role === 'Viewer')
+      )
       .map(member => ({
         value: `user:${member.user_id}` as IssueAssigneeTarget,
         label: member.user_name,
         group: t('todo.members', '成员'),
+      })),
+    ...outsidePeople
+      .filter(user => !projectMembers.some(member => member.user_id === user.id))
+      .map(user => ({
+        value: `user:${user.id}` as IssueAssigneeTarget,
+        label: user.user_name,
+        group: t('todo.members', '成员'),
+        description: outsideLabel,
+        searchText: assigneeSearch.users.some(result => result.id === user.id)
+          ? assigneeQuery
+          : undefined,
       })),
     ...projectAgents.map(agent => ({
       value: `agent:${agent.id}` as IssueAssigneeTarget,
@@ -164,7 +191,7 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
   ]
 
   const activityView =
-    item && editProps?.project && editProps.project.task_provider !== 'dingtalk_aitable'
+    item && editProps && editProps.project?.task_provider !== 'dingtalk_aitable'
       ? extensions?.renderActivity?.({
           commentActions,
           item,
@@ -174,7 +201,20 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
             canAssign || editable
               ? {
                   canAssignCurrent: canAssign,
-                  ...(editable ? { createChild: createCommentChild } : {}),
+                  ...(editable && editProps.project
+                    ? {
+                        createChild: async (
+                          input: import('./useCommentAssignment').CommentChildInput
+                        ) => {
+                          const target = input.target.includes(':')
+                            ? (input.target as IssueAssigneeTarget)
+                            : (`user:${input.target}` as IssueAssigneeTarget)
+                          if (input.target && !(await confirmOutsideTarget(target)))
+                            return false as const
+                          return createCommentChild(input)
+                        },
+                      }
+                    : {}),
                   options: assigneeOptions
                     .filter(option => option.value !== '')
                     .map(option => ({
@@ -193,6 +233,7 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
                     )?.value
                     if (!target) throw new Error('Assignee is no longer available')
                     if (!canAssign || saving) throw new Error(t('todo.saving', '保存中…'))
+                    if (!(await confirmOutsideTarget(target))) return false
                     const current = await editorPort.issues.get(item.id)
                     if (!collections.isActive() || issueAssigneeTarget(current) === target) return
                     const updated = await persistAssignee(current, target, true)
@@ -211,7 +252,8 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
           },
         })
       : null
-  const twoColumn = item !== null && editProps?.project !== undefined
+  const twoColumn =
+    item !== null && (editProps?.project !== undefined || item.invited_only === true)
 
   // Property controls, shared by the single-column chip row and the
   // two-column Xiaohongshu-style rail cells. The overlay select/input keeps
@@ -246,78 +288,128 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
     />
   )
   const assigneeSelect = (
-    <IssueDetailSearchableSelect<IssueAssigneeTarget>
-      testId={isCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}
-      accessibleLabel={t('todo.assignee', '负责人')}
-      value={assigneeTarget}
-      onChange={value => changeProperty('assigneeTarget', value)}
-      disabled={!canAssign}
-      className={cn(
-        'relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default',
-        workspacePanel && 'min-w-0 max-w-full'
-      )}
-      triggerContent={
-        <>
-          {assigneeTarget.startsWith('group:') ? (
-            <UsersRound aria-hidden="true" size={16} />
-          ) : assigneeTarget.startsWith('agent:') || assigneeTarget.startsWith('team:') ? (
-            <Bot aria-hidden="true" size={16} />
-          ) : (
-            <CircleUserRound aria-hidden="true" size={16} />
-          )}
-          <strong className={cn(workspacePanel ? 'min-w-0 truncate font-medium' : 'font-normal')}>
-            {assigneeName ?? t('todo.unassigned', '未指派')}
-          </strong>
-          {item && !assigneeChanged && !workspacePanel
-            ? extensions?.renderAssignmentReceipts?.(item)
-            : null}
-          {canAssign ? <ChevronDown aria-hidden="true" size={12} /> : null}
-        </>
-      }
-      searchPlaceholder={t('todo.search_assignee', '搜索负责人')}
-      emptyLabel={t('todo.no_matching_assignee', '没有匹配的负责人')}
-      actions={
-        isCreate && canAssign
-          ? [
-              ...(props.onAddAssigneeMember
-                ? [
-                    {
-                      label: t('todo.assignee_add_member', '添加人员'),
-                      icon: <UserPlus className="h-4 w-4" />,
-                      testId: 'cloud-todo-create-assignee-add-member',
-                      onSelect: props.onAddAssigneeMember,
-                    },
-                  ]
-                : []),
-              ...(props.onAddAssigneeAgent
-                ? [
-                    {
-                      label: t('todo.assignee_add_agent', '添加智能体'),
-                      icon: <Bot className="h-4 w-4" />,
-                      testId: 'cloud-todo-create-assignee-add-agent',
-                      onSelect: props.onAddAssigneeAgent,
-                    },
-                  ]
-                : []),
-            ]
-          : undefined
-      }
-      groupLimit={5}
-      showAllLabel={(_group, count) => t('todo.view_all_count', '查看全部 {{count}} 个', { count })}
-      footer={
-        !isCreate && canAssign ? (
-          <label className="flex min-h-8 items-center gap-2 text-sm text-text-secondary max-md:min-h-11">
-            <input
-              type="checkbox"
-              data-testid="cloud-todo-assignee-notify"
-              checked={notifyAssignee}
-              onChange={event => setNotifyAssignee(event.target.checked)}
-            />
-            {t('todo.notify_assignee')}
-          </label>
-        ) : undefined
-      }
-      options={assigneeOptions}
+    <>
+      <IssueDetailSearchableSelect<IssueAssigneeTarget>
+        testId={isCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}
+        accessibleLabel={t('todo.assignee', '负责人')}
+        value={assigneeTarget}
+        onSearchChange={setAssigneeQuery}
+        searchStatus={
+          assigneeSearch.error ? (
+            <p role="alert">
+              {assigneeSearch.error}
+              <button
+                type="button"
+                data-testid="cloud-todo-assignee-search-retry"
+                className="min-h-11 px-2 text-sm underline md:min-h-8"
+                onClick={assigneeSearch.retry}
+              >
+                {t('common.retry', '重试')}
+              </button>
+            </p>
+          ) : assigneeSearch.loading ? (
+            <p role="status">…</p>
+          ) : null
+        }
+        onChange={value => {
+          if (!outsideTargetUser(value)) {
+            changeProperty('assigneeTarget', value)
+            return
+          }
+          void confirmOutsideTarget(value).then(approved => {
+            if (approved) changeProperty('assigneeTarget', value)
+          })
+        }}
+        disabled={!canAssign}
+        className={cn(
+          'relative inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-inherit disabled:cursor-default',
+          workspacePanel && 'min-w-0 max-w-full'
+        )}
+        triggerContent={
+          <>
+            {assigneeTarget.startsWith('group:') ? (
+              <UsersRound aria-hidden="true" size={16} />
+            ) : assigneeTarget.startsWith('agent:') || assigneeTarget.startsWith('team:') ? (
+              <Bot aria-hidden="true" size={16} />
+            ) : (
+              <CircleUserRound aria-hidden="true" size={16} />
+            )}
+            <strong className={cn(workspacePanel ? 'min-w-0 truncate font-medium' : 'font-normal')}>
+              {assigneeName ?? t('todo.unassigned', '未指派')}
+            </strong>
+            {item && !assigneeChanged && !workspacePanel
+              ? extensions?.renderAssignmentReceipts?.(item)
+              : null}
+            {canAssign ? <ChevronDown aria-hidden="true" size={12} /> : null}
+          </>
+        }
+        searchPlaceholder={t('todo.search_assignee', '搜索负责人')}
+        emptyLabel={t('todo.no_matching_assignee', '没有匹配的负责人')}
+        actions={
+          isCreate && canAssign
+            ? [
+                ...(props.onAddAssigneeMember
+                  ? [
+                      {
+                        label: t('todo.assignee_add_member', '添加人员'),
+                        icon: <UserPlus className="h-4 w-4" />,
+                        testId: 'cloud-todo-create-assignee-add-member',
+                        onSelect: props.onAddAssigneeMember,
+                      },
+                    ]
+                  : []),
+                ...(props.onAddAssigneeAgent
+                  ? [
+                      {
+                        label: t('todo.assignee_add_agent', '添加智能体'),
+                        icon: <Bot className="h-4 w-4" />,
+                        testId: 'cloud-todo-create-assignee-add-agent',
+                        onSelect: props.onAddAssigneeAgent,
+                      },
+                    ]
+                  : []),
+              ]
+            : undefined
+        }
+        groupLimit={5}
+        showAllLabel={(_group, count) =>
+          t('todo.view_all_count', '查看全部 {{count}} 个', { count })
+        }
+        footer={
+          !isCreate && canAssign ? (
+            <label className="flex min-h-8 items-center gap-2 text-sm text-text-secondary max-md:min-h-11">
+              <input
+                type="checkbox"
+                data-testid="cloud-todo-assignee-notify"
+                checked={notifyAssignee}
+                onChange={event => setNotifyAssignee(event.target.checked)}
+              />
+              {t('todo.notify_assignee')}
+            </label>
+          ) : undefined
+        }
+        options={assigneeOptions}
+      />
+    </>
+  )
+  const outsideAssigneeDialog = outsideAssignee && (
+    <ConfirmationDialog
+      title={confirmPersonLabel}
+      subject={outsideAssignee.user_name}
+      description={outsideLabel}
+      labels={{
+        cancel: t('common.cancel', '取消'),
+        confirm: t('common.confirm', '确认'),
+        pending: t('common.saving', '保存中'),
+        failed: t('todo.save_failed', '保存失败'),
+      }}
+      testIdPrefix="issue-outside-assignee"
+      onClose={() => {
+        resolveOutsideAssignee(false)
+      }}
+      onConfirm={async () => {
+        resolveOutsideAssignee(true)
+      }}
     />
   )
   const notificationAvailable = assigneeTarget.startsWith('user:') && (isCreate || assigneeChanged)
@@ -496,12 +588,18 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
     </div>
   )
   const collaboratorPickerProps = {
-    value: selectedCollaboratorId,
     members: availableCollaborators,
-    onChange: setSelectedCollaboratorId,
-    onAdd: () => void addCollaborator(),
+    projectMemberIds: new Set(projectMembers.map(member => member.user_id)),
+    excludedUserIds: new Set(collaborators.map(member => member.user_id)),
+    onAdd: addCollaborator,
+    searchUsers: searchIssueUsers,
+    outsideLabel,
+    retryLabel: t('common.retry', '重试'),
+    confirmLabel: confirmPersonLabel,
+    cancelLabel: t('common.cancel', '取消'),
+    emptyLabel: t('todo.no_matching_collaborator', '没有匹配的参与者'),
     busy: collaboratorBusy,
-    label: t('todo.select_project_member', '选择项目空间成员'),
+    label: t('todo.select_project_member', '搜索并选择参与者'),
     addLabel: t('common.add', '添加'),
   }
   const railProps = (
@@ -665,6 +763,7 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
       />
     ) : null
   return {
+    outsideAssigneeDialog,
     assigneeOptions,
     activityView,
     twoColumn,

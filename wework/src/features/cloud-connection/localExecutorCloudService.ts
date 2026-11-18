@@ -1,7 +1,4 @@
-import {
-  issueWegentConnectorToken,
-  listWegentInstalledConnectorApps,
-} from '@/api/cloud/connectorApps'
+import { ConnectorSyncAbortedError, synchronizeConnectorApps } from './connectorAppSync'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
 import { configurePluginNativeAuthorization } from '@/features/plugins/pluginNativeAuthorization'
 import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
@@ -210,34 +207,20 @@ function startConnectors(input: LocalExecutorCloudInput) {
     const syncRevision = nextConnectorSyncRevision()
     const requestedAtMs = Date.now()
     try {
-      const connectorToken = await issueWegentConnectorToken(apiBaseUrl, authToken)
-      if (!isCurrentAttempt()) return
-      const expiresAtMs = requestedAtMs + connectorToken.expires_in * 1_000
-      await requestLocalExecutor('runtime.connectors.configure', {
+      const result = await synchronizeConnectorApps({
         apiBaseUrl,
-        connectorToken: connectorToken.access_token,
-        expiresAtMs,
+        token: authToken,
+        requestedAtMs,
         syncRevision,
+        isCurrent: isCurrentAttempt,
+        onConfigured: ({ expiresAtMs, expiresInSeconds }) => {
+          if (isCurrentAttempt())
+            scheduleConnectorSync(connectorRefreshDelayMs(expiresAtMs, expiresInSeconds))
+        },
       })
-      if (!isCurrentAttempt()) return
-      scheduleConnectorSync(connectorRefreshDelayMs(expiresAtMs, connectorToken.expires_in))
-      const installed = await listWegentInstalledConnectorApps(apiBaseUrl, authToken)
-      if (!isCurrentAttempt()) return
-      const result = await requestLocalExecutor<{ changed: boolean }>(
-        'runtime.connectors.apps.sync',
-        {
-          apps: installed.apps
-            .filter(app => app.enabled && app.callable)
-            .map(app => ({
-              slug: app.slug,
-              name: app.runtime_name ?? app.slug,
-              description: app.description ?? '',
-              tools: app.tool_summaries ?? [],
-            })),
-        }
-      )
       if (!cancelled && result.changed) notifyLocalPluginSkillsChanged()
     } catch (error) {
+      if (error instanceof ConnectorSyncAbortedError) return
       if (isCurrentAttempt()) {
         console.error('[CloudConnection] Failed to synchronize connector authorization', error)
         scheduleConnectorSync(30_000)

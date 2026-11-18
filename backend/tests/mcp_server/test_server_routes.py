@@ -1324,13 +1324,19 @@ def test_mounted_decorator_tool_servers_expose_request_context():
     request context and every tool call degrades to "Authentication
     required" even with a valid task token."""
     from app.mcp_server.server import (
+        _CONNECTORS_MCP_SPEC,
         _SYSTEM_MCP_SPEC,
         MCP_CONTEXT_SERVER_NAMES,
     )
 
     mounted = {spec.name for spec in MCP_APP_SPECS}
     # The system server registers its tools inline, not via @mcp_tool.
-    assert mounted - MCP_CONTEXT_SERVER_NAMES == {_SYSTEM_MCP_SPEC.name}
+    # Connectors builds its dynamic tool list directly and carries its own
+    # token context, so it also does not use @mcp_tool.
+    assert mounted - MCP_CONTEXT_SERVER_NAMES == {
+        _SYSTEM_MCP_SPEC.name,
+        _CONNECTORS_MCP_SPEC.name,
+    }
     assert "wiki" not in mounted
     assert "wiki" not in MCP_CONTEXT_SERVER_NAMES
 

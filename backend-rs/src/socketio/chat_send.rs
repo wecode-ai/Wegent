@@ -1304,6 +1304,7 @@ pub async fn handle(
             let task_id = payload.task_id.unwrap_or(0);
             let continuation = payload.task_id.map(|task_id| Continuation {
                 task_id,
+                is_subscription: scope.is_subscription,
                 task_json: scope.task_json.clone(),
             });
             let generation = payload.generation_options();
@@ -1388,7 +1389,8 @@ pub async fn handle(
                     user_id,
                     setup.user_subtask_id,
                     attachment_ids,
-                    &setup.existing_subtasks,
+                    setup.task_id,
+                    state.task_store.table_templates().subtasks,
                 )
                  .await
                 .map_err(|error| {

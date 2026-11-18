@@ -11,6 +11,7 @@ export function useLocalConnectorAuthRecovery(options: {
   onResumeSend: (input: string) => Promise<void> | void
   onError?: (message: string) => void
   active?: boolean
+  cloudConnection?: { apiBaseUrl?: string | null; token?: string | null }
 }) {
   const { t } = useTranslation('common')
   const [source] = useState(createLocalConnectorAuthRecoverySource)

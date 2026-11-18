@@ -271,10 +271,18 @@ jobs:
 
       - name: Verify native MySQL schema lifecycle and initialization
         working-directory: backend-rs
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+          SECRET_KEY: observation-fixture-signing-key
+          EXECUTOR_MANAGER_URL: http://127.0.0.1:1
+          WEWORK_PLUGIN_CREDENTIAL_KEYS: '{"native-test":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}'
+          WEWORK_PLUGIN_CREDENTIAL_ACTIVE_KEY_ID: native-test
         run: |
           set -o pipefail
           cargo test --locked --lib migrations::mysql_tests -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/migrations-mysql.log
+          cargo test --locked --lib runtime_observations -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/runtime-observations-mysql.log
 
       - name: Verify dispatch readiness with a lagging MySQL reader
         working-directory: backend-rs
@@ -307,6 +315,15 @@ jobs:
           set -o pipefail
           cargo test --locked --lib plugins_installed::auto_update::auto_update_mysql_tests -- --ignored --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-write-replica-mysql.log
+
+      - name: Verify plugin batch reads with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib plugins_installed::handler::mysql_tests -- --ignored --nocapture --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-installed-list-mysql.log
+          cargo test --locked --lib batch_mysql_tests -- --ignored --nocapture --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-batch-reads-mysql.log
 
       - name: Verify attachment API key authentication with MySQL
         working-directory: backend-rs
@@ -382,6 +399,13 @@ jobs:
           set -o pipefail
           cargo test --locked --test assignments_read_only -- --ignored --test-threads=1 --nocapture 2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignments-http.log
 
+      - name: Verify connector discovery keeps rotated grants with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib apps_installed::refresh_mysql_tests -- --ignored --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/connector-refresh-mysql.log
+
       - name: Upload Rust backend test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -435,14 +459,17 @@ jobs:
         env:
           PLUGIN_AUTH_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
           PLUGIN_AUTH_REDIS_TEST_URL: redis://127.0.0.1:6379/15
-        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py integration_checks/test_streaming_block_index_redis.py -n 0
+        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py integration_checks/test_plugin_batch_reads_mysql.py integration_checks/test_streaming_block_index_redis.py -n 0
 
       - name: Verify MCP OAuth refresh and authorization races with InnoDB and Redis
         working-directory: backend
         env:
           MCP_OAUTH_TEST_MYSQL_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
           MCP_OAUTH_TEST_REDIS_URL: redis://127.0.0.1:6379/15
-        run: uv run pytest integration_checks/test_user_mcp_oauth_mysql.py -n 0 --junitxml=reports/mcp-oauth-mysql.xml
+          CONNECTOR_REFRESH_TEST_MYSQL_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/
+        run: |
+          uv run pytest integration_checks/test_user_mcp_oauth_mysql.py -n 0 --junitxml=reports/mcp-oauth-mysql.xml
+          uv run pytest tests/integration/connector_refresh_mysql.py -n 0
 
       - name: Upload MCP OAuth concurrency results
         if: always()
@@ -486,6 +513,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Node for native connection service contracts
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.4"
+
       - name: Set up shared Rust toolchain and cache
         uses: ./.github/actions/setup-rust-cache
         with:
@@ -502,9 +534,15 @@ jobs:
         working-directory: ./executor
         run: cargo fmt --all --check
 
+      - name: Run asynchronous lifecycle Hook script tests
+        run: node --test executor/examples/hooks/turn-diff-logger/logger.test.mjs
+
       - name: Run executor Rust tests
         working-directory: ./executor
         run: cargo test --all-features
+
+      - name: Verify event Goal activation with the managed native Codex binary
+        run: bash .github/scripts/verify-native-event-goal.sh
 
       - name: Run executor Rust clippy
         working-directory: ./executor
@@ -587,6 +625,8 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: |
+          cargo test --all-features --lib runtime_work::git_connections::tests::hosting_cli_uses_path_shims_without_shell_interpolation
+          node --test --test-name-pattern='long snapshot refs' examples/hooks/turn-diff-logger/logger.test.mjs
           cargo test --all-features --lib runtime_work::store::tests::atomic_write
           cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::marketplace_sources::tests
           cargo test -p wegent-plugin-packages --all-features --lib services::workbench::recovery::tests
@@ -594,6 +634,7 @@ jobs:
           cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::journal::tests
           cargo test --all-features --lib claude_execution_home_publishes_runtime_selection_beyond_windows_max_path
           cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem --lib json_file::tests
+          cargo test -p wegent-subprocess --lib line_reader::tests
           cargo test --all-features --lib effective_instructions_tests
           cargo test -p wegent-executor --all-features --lib side_source
           cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem atomic_file::tests
@@ -823,7 +864,7 @@ jobs:
 
       - name: Verify immutable upgrade artifact consumption
         if: matrix.shard == 1
-        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/lib/packaged-component-assets.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs wework/scripts/subagent-request.test.mjs
+        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/lib/packaged-component-assets.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/macos-status-item.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs wework/scripts/subagent-request.test.mjs
 
       - name: Verify startup theme evidence
         if: matrix.shard == 1
@@ -840,7 +881,7 @@ jobs:
           sudo -n gdb --version
           sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
           sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
-          dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
+          dbus-run-session -- sh wework/e2e/desktop/run-with-xvfb.sh node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs wework/e2e/desktop/modules/startup-gdb-probe.test.mjs wework/e2e/desktop/modules/startup-gpu-probe.test.mjs wework/scripts/startup-gpu-evidence.test.mjs
 
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1

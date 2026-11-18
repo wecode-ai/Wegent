@@ -1,3 +1,4 @@
+import { resolveIssueReference } from './resolveIssueReference'
 import { CloudTodoWorkspaceSidebar } from './CloudTodoWorkspaceSidebar'
 import { createCloudTodoBoardSlots } from './cloudTodoBoardSlots'
 import { CloudTodoIssuePanel } from './CloudTodoIssuePanel'
@@ -24,7 +25,7 @@ import { track } from '@/telemetry/client'
 import { AutomationSelectionDialog } from '@/features/todo/AutomationSelectionDialog'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudProjectManageView } from './CloudProjectManageView'
-import { projectSpaceKey, projectSpaceRef } from './projectSpaceSelection'
+import { projectSpaceKey, projectSpaceRef, sameProjectSpace } from './projectSpaceSelection'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 import { GlobalTodoSearch } from './GlobalTodoSearch'
 import { parseDingTalkAITableLink } from './projectProviderConfig'
@@ -117,6 +118,7 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
     pendingAutomationSelection,
     projectAssistantOpen,
     setProjectAssistantOpen,
+    globalSearchScope,
     globalSearchOpen,
     setGlobalSearchOpen,
     globalSearchQuery,
@@ -543,6 +545,17 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
             projects={projects}
             projectItems={collaborationProjectItems}
             projectMembers={collaborationProjectMembers}
+            lookupScope={globalSearchScope}
+            onResolveReference={reference =>
+              resolveIssueReference(reference, [
+                ...(localProjectManageApi
+                  ? [{ location: 'local' as const, api: localProjectManageApi }]
+                  : []),
+                ...(cloudWorkspaceApi
+                  ? [{ location: 'cloud' as const, api: cloudWorkspaceApi }]
+                  : []),
+              ])
+            }
             query={globalSearchQuery}
             onQueryChange={setGlobalSearchQuery}
             onClose={() => setGlobalSearchOpen(false)}
@@ -554,6 +567,12 @@ export function CloudTodoWorkspaceView({ model }: { model: CloudTodoWorkspaceVie
             }}
             onSelectItem={(project, item) => {
               if (item.can_view_detail === false) return
+              if (
+                !projects.some(candidate =>
+                  sameProjectSpace(projectSpaceRef(candidate), projectSpaceRef(project))
+                )
+              )
+                prependProject(project)
               selectProject(project)
               setProjectView('board')
               openItemForProject(project, {

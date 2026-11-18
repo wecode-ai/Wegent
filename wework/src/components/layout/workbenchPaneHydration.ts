@@ -218,7 +218,7 @@ export function hydrateRuntimePaneTranscript(context: PaneCommandContext, signal
         setTranscriptBeforeCursor(null)
         setLoadedTranscriptRanges([])
         setTurnNavigation([])
-        setTranscriptError(error instanceof Error ? error.message : String(error))
+        setTranscriptError(error)
         console.error('[Wework] Runtime pane transcript load failed', {
           key: loadKey,
           address,

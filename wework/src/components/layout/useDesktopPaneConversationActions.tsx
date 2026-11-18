@@ -1,5 +1,6 @@
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useCallback } from 'react'
-import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
 import { updateAppPreferences } from '@/desktop/appPreferences'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
@@ -84,7 +85,7 @@ export function useDesktopPaneConversationActions({
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
       const draftEditVersion = getDraftEditVersion()
-      const cloudSubmission = await prepareSubmission(description)
+      const cloudSubmission = prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
         draftEditVersion,
@@ -116,24 +117,43 @@ export function useDesktopPaneConversationActions({
       setPendingSupervisorConfig,
     ]
   )
+  const cloudConnection = useOptionalCloudConnection()
   const connectorAuthRecovery = useLocalConnectorAuthRecovery({
     active: paneActive && paneVisible && workbenchVisible,
     onError: message => paneSession.setError(message),
     messages: paneSession.messages,
+    cloudConnection: {
+      apiBaseUrl: cloudConnection.apiBaseUrl,
+      token: cloudConnection.token,
+    },
     onResumeSend: async input => {
       await paneSession.sendContinuation(input)
     },
   })
+
   const connectorAuthCard = connectorAuthRecovery.pending ? (
-    <ConnectorAuthCard
-      target={connectorAuthRecovery.pending.target}
-      title={connectorAuthRecovery.pending.title}
-      onSuccess={() => {
-        void connectorAuthRecovery.completePending()
-      }}
-      onCancel={connectorAuthRecovery.clearPending}
-    />
+    connectorAuthRecovery.pending.cloud ? (
+      <CloudConnectorAuthCard
+        slug={connectorAuthRecovery.pending.cloud.slug}
+        apiBaseUrl={cloudConnection.apiBaseUrl}
+        token={cloudConnection.token}
+        onSuccess={() => {
+          void connectorAuthRecovery.completePending()
+        }}
+        onCancel={connectorAuthRecovery.clearPending}
+      />
+    ) : (
+      <ConnectorAuthCard
+        target={connectorAuthRecovery.pending.target}
+        title={connectorAuthRecovery.pending.title}
+        onSuccess={() => {
+          void connectorAuthRecovery.completePending()
+        }}
+        onCancel={connectorAuthRecovery.clearPending}
+      />
+    )
   ) : null
+
   const submitPaneInput = useCallback(
     async (
       value?: string,

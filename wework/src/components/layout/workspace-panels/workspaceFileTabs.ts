@@ -2,13 +2,14 @@ import {
   normalizeAbsoluteWorkspacePath,
   normalizeWorkspaceSeparators,
 } from '@/lib/workspace-file-contract'
-import type { WorkspaceTarget } from '@/types/workspace-files'
+import type { WorkspaceFileOpenRequest, WorkspaceTarget } from '@/types/workspace-files'
 
 export type WorkspaceFileTabId = `file:${string}`
 
 export interface WorkspaceFileTab {
   target: WorkspaceTarget
   path: string
+  openRequest?: WorkspaceFileOpenRequest
 }
 
 export type WorkspaceFileTabs = Partial<Record<WorkspaceFileTabId, WorkspaceFileTab>>

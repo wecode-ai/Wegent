@@ -10,6 +10,7 @@ import {
   writeMatrixReport,
 } from './model-matrix-audit.mjs'
 import { writeFileSync } from 'node:fs'
+import { performance } from 'node:perf_hooks'
 import {
   assertProgressiveHi,
   captureMatrixRequest,
@@ -358,6 +359,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'getTerminalText',
   'getText',
   'getValueWhenReady',
+  'getWorkbenchDebugSnapshot',
   'metrics',
   'snapshot',
   'text',
@@ -387,7 +389,8 @@ function requestContainsSkillLocator(body, skillPath) {
     return `${path.startsWith('//') ? '/' : ''}${posix.normalize(path)}`
   }
   const expectedPath = normalize(skillPath)
-  return Boolean(
+  const advertisedSkillLocators = []
+  const matched = Boolean(
     findNestedString(body, catalog => {
       const roots = new Map()
       let section = null
@@ -412,11 +415,22 @@ function requestContainsSkillLocator(body, skillPath) {
         const separator = locator.indexOf('/')
         const root = roots.get(locator.slice(0, separator))
         const expandedPath = root ? `${root}/${locator.slice(separator + 1)}` : locator
+        advertisedSkillLocators.push(normalize(expandedPath))
         if (normalize(expandedPath) === expectedPath) return true
       }
       return false
     })
   )
+  if (!matched) {
+    // A miss without the advertised paths cannot be attributed after the run.
+    console.error(
+      '[skill-locator] expected',
+      expectedPath,
+      'advertised',
+      JSON.stringify(advertisedSkillLocators.slice(0, 40))
+    )
+  }
+  return matched
 }
 
 /** Text of top-level user messages, excluding quoted messages inside tool output. */
@@ -1451,6 +1465,7 @@ class DesktopE2EServer {
         requestDiagnostic.finishedAtUnixMs - requestDiagnostic.startedAtUnixMs
     })
     if (await this.handleControlRoute(request, response, url)) return
+    let scenarioModelRequest
     try {
       if (
         this.desktopScenario &&
@@ -1458,6 +1473,7 @@ class DesktopE2EServer {
         ['/responses', '/v1/responses'].includes(url.pathname)
       ) {
         const body = await readRequestBody(request)
+        scenarioModelRequest = { body, scenario: this.scenario, failed: true }
         if (await this.writeNativeApprovalReview(response, body, 'responses')) return
         // Prediction history carries the task's ordinary markers. Route its
         // model request before scenario counters and held task responses.
@@ -1468,6 +1484,7 @@ class DesktopE2EServer {
       }
       if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
     } catch (error) {
+      if (scenarioModelRequest) this.modelRequests.push(scenarioModelRequest)
       console.error(
         `[desktop-e2e] scenario HTTP handler failed for ${request.method} ${url.pathname}`,
         error
@@ -2158,14 +2175,15 @@ class DesktopE2EServer {
           else pending.reject(replacementError)
         }
       }
-      this.ready = ready
+      const admittedReady = { ...ready, receivedAtMs: performance.now() }
+      this.ready = admittedReady
       this.readyCount += 1
-      this.readyResolver?.(ready)
+      this.readyResolver?.(admittedReady)
       this.readyResolver = null
       const remainingWaiters = []
       for (const waiter of this.readyWaiters) {
         if (this.readyCount > waiter.readyCount) {
-          waiter.resolve(ready)
+          waiter.resolve(admittedReady)
         } else {
           remainingWaiters.push(waiter)
         }

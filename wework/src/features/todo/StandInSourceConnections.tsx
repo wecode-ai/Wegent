@@ -57,6 +57,9 @@ function StandInSourceConnectionsContent({
       onChange,
       onReady,
       allResourcesLabel: t('standIn.workspace.all_resources'),
+      cliUnavailableLabel: t('standIn.workspace.connection_cli_request_unavailable', {
+        provider: provider.displayName,
+      }),
     }),
     [role, provider, api, deviceId, disabled, onChange, onReady, t]
   )

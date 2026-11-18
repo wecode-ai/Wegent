@@ -1,3 +1,8 @@
+import type { useTranslation } from '@/hooks/useTranslation'
+import {
+  findWorkbenchDevice,
+  getWorkbenchDeviceUnavailableDisplayName,
+} from '@/lib/workbench-device'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useScopedComposerAttachments } from '@/features/workbench/useScopedComposerAttachments'
 
@@ -44,6 +49,8 @@ import {
   getRuntimeConversationSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
 export interface PaneSessionExternal {
+  t: ReturnType<typeof useTranslation>['t']
+  draftEditVersions: Map<string, number>
   currentRuntimeTask: RuntimeTaskAddress | null
   debugSnapshotEnabled: boolean
   queueDiagnosticSessionId: string
@@ -127,7 +134,24 @@ export function createPaneSessionFrame(
       : localError
   const answeredRequestUserInputIds = state.answeredRequestUserInputIds
   const transcriptLoadingKey = state.transcriptLoadingKey
-  const transcriptError = state.transcriptError
+  const transcriptFailure = state.transcriptError
+  const transcriptError =
+    transcriptFailure == null
+      ? null
+      : typeof transcriptFailure === 'object' &&
+          'code' in transcriptFailure &&
+          transcriptFailure.code === 'device_offline'
+        ? external.t('workbench.conversation_device_offline_notice', {
+            device:
+              getWorkbenchDeviceUnavailableDisplayName(
+                currentRuntimeTask
+                  ? findWorkbenchDevice(workbenchState.devices ?? [], currentRuntimeTask.deviceId)
+                  : null
+              ) || external.t('workbench.current_device', '当前设备'),
+          })
+        : transcriptFailure instanceof Error
+          ? transcriptFailure.message
+          : String(transcriptFailure)
   const transcriptReloadVersion = state.transcriptReloadVersion
   const transcriptHasMoreBefore = state.transcriptHasMoreBefore
   const transcriptBeforeCursor = state.transcriptBeforeCursor

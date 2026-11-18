@@ -53,6 +53,7 @@ export function createWorkspaceControllerSource(initial: CollaborationWorkspaceC
   const listeners = new Set<() => void>()
   let commandRevision = 0
   let locationRevision = 0
+  let loadedProjectKeys: unknown[] | undefined
   let routeKeys: unknown[] | undefined
   let issueId: string | null | undefined
   let issueObserved = false
@@ -116,12 +117,35 @@ export function createWorkspaceControllerSource(initial: CollaborationWorkspaceC
     const myWorkEnabled = observation.myWorkEnabled ?? api?.myWork !== undefined
     const loadProject = observation.loadProjectOnLocation ?? true
     if (location.projectId) {
-      if (loadProject)
-        void currentCommands.loadProject(location.projectId, true, {
-          isCurrent,
-          loadSnapshot: location.view !== 'manage',
-        })
-      else void currentCommands.loadProjectCatalog({ isCurrent })
+      const projectId = location.projectId
+      const scope = [
+        currentCommands,
+        loadProject,
+        location.view !== 'manage',
+        projectId,
+        location.rootView,
+        myWorkEnabled,
+      ]
+      void (async () => {
+        if (location.issueId) {
+          const issue = await currentCommands.loadSelectedIssue(location.issueId)
+          if (!isCurrent()) return
+          if (issue?.invited_only) {
+            state = { ...state, loading: false }
+            listeners.forEach(listener => listener())
+            return
+          }
+        }
+        if (!changed(loadedProjectKeys, scope) && (!loadProject || state.project?.id === projectId))
+          return
+        if (loadProject)
+          await currentCommands.loadProject(projectId, true, {
+            isCurrent,
+            loadSnapshot: location.view !== 'manage',
+          })
+        else await currentCommands.loadProjectCatalog({ isCurrent })
+        if (isCurrent()) loadedProjectKeys = scope
+      })()
       if (myWorkEnabled && location.rootView === 'my-work') void currentCommands.loadMyWork()
     } else {
       currentCommands.clearProject()
@@ -155,18 +179,34 @@ export function createWorkspaceControllerSource(initial: CollaborationWorkspaceC
         const route = observation.location
         const loadProject = observation.loadProjectOnLocation ?? true
         const loadSnapshot = loadProject && route.view !== 'manage'
-        const nextRouteKeys = [route.projectId, route.rootView, loadProject, loadSnapshot]
+        const nextRouteKeys = [
+          route.projectId,
+          route.issueId,
+          route.rootView,
+          loadProject,
+          loadSnapshot,
+        ]
         if (changed(routeKeys, nextRouteKeys)) {
           routeKeys = nextRouteKeys
           startLocation()
         }
         const interval = observation.pollIntervalMs ?? 15_000
-        const nextPollKeys = [route.projectId, route.view !== 'manage', interval]
+        const nextPollKeys = [
+          route.projectId,
+          route.view !== 'manage',
+          interval,
+          state.selectedIssue?.invited_only,
+        ]
         if (changed(pollKeys, nextPollKeys)) {
           pollKeys = nextPollKeys
           if (timer !== undefined) clearInterval(timer)
           timer = undefined
-          if (route.projectId && route.view !== 'manage' && interval > 0) {
+          if (
+            route.projectId &&
+            route.view !== 'manage' &&
+            interval > 0 &&
+            !state.selectedIssue?.invited_only
+          ) {
             const projectId = route.projectId
             const currentCommands = commands
             timer = setInterval(() => {
@@ -180,8 +220,8 @@ export function createWorkspaceControllerSource(initial: CollaborationWorkspaceC
         if (!issueObserved || issueId !== route.issueId) {
           issueObserved = true
           issueId = route.issueId
-          if (issueId) void commands.loadSelectedIssue(issueId)
-          else commands.clearSelectedIssue()
+          if (issueId && !route.projectId) void commands.loadSelectedIssue(issueId)
+          else if (!issueId) commands.clearSelectedIssue()
         }
       }
       return () => {

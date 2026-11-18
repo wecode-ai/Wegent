@@ -24,6 +24,22 @@ function deferred<T>() {
 }
 
 describe('local transcript startup ordering', () => {
+  test('preserves advertised event support when adding worktree capabilities', async () => {
+    const runtimeFeatures = { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } }
+    const ready = { ...status, runtimeFeatures }
+    const services = createLocalAppServices({
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+      available: async () => ready,
+      ensure: async () => ready,
+      request: vi.fn().mockResolvedValue({ runtimeWorktrees: { version: 1, managed: true } }),
+    })
+    const devices = await services.deviceApi!.listDevices()
+    expect(devices[0].runtime_features).toMatchObject({
+      ...runtimeFeatures,
+      worktrees: { version: 1, managed: true },
+    })
+  })
+
   beforeEach(() => {
     localStorage.clear()
     clearLocalModelConfigs()
@@ -177,5 +193,95 @@ describe('local transcript startup ordering', () => {
       })
     ).rejects.toThrow('Proxy initialization failed')
     expect(request).not.toHaveBeenCalled()
+  })
+})
+
+test('model picker reads do not wait for runtime preparation or restart the app server', async () => {
+  localStorage.clear()
+  clearLocalModelConfigs()
+  resetLocalRuntimeChatStreamsForTests()
+  saveLocalModelConfig({
+    id: 'startup-read',
+    displayName: 'Startup read',
+    modelId: 'startup-read',
+    baseUrl: 'https://models.example.com/v1',
+    catalogEntry: createDefaultLocalModelCatalogEntry({
+      id: 'startup-read',
+      displayName: 'Startup read',
+      toolProfile: 'custom',
+    }),
+    catalogReady: false,
+  })
+  const ensure = vi.fn(() => new Promise<typeof status>(() => {}))
+  const request = vi.fn().mockResolvedValue({ data: [], models: [] })
+  const services = createLocalAppServices({
+    available: async () => status,
+    ensure,
+    request,
+    subscribe: vi.fn(),
+  })
+  const models = await services.modelApi.listModels()
+  expect(models.data).toEqual(
+    expect.arrayContaining([expect.objectContaining({ name: 'local-model:startup-read' })])
+  )
+  expect(ensure).not.toHaveBeenCalled()
+  expect(request.mock.calls.map(([method]) => method)).not.toContain(
+    'runtime.codex.catalog.custom.write'
+  )
+  expect(request.mock.calls.map(([method]) => method)).not.toContain(
+    'runtime.codex.app_server.restart'
+  )
+})
+
+test('execution prepares a pending local catalog before publishing creation profiles', async () => {
+  localStorage.clear()
+  clearLocalModelConfigs()
+  resetLocalRuntimeChatStreamsForTests()
+  saveLocalModelConfig({
+    id: 'execution-pending',
+    displayName: 'Execution pending',
+    modelId: 'execution-pending',
+    baseUrl: 'https://models.example.com/v1',
+    catalogEntry: createDefaultLocalModelCatalogEntry({
+      id: 'execution-pending',
+      displayName: 'Execution pending',
+      toolProfile: 'custom',
+    }),
+    catalogReady: false,
+  })
+  const ensure = vi.fn(async () => status)
+  const request = vi.fn().mockImplementation(async (method: string) => {
+    if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+    return { data: [], models: [] }
+  })
+  const services = createLocalAppServices({
+    available: async () => status,
+    ensure,
+    request,
+    subscribe: vi.fn(),
+  })
+  await services.modelApi.listModels()
+  expect(ensure).not.toHaveBeenCalled()
+  expect(
+    request.mock.calls.some(([method]) => method === 'runtime.codex.catalog.custom.write')
+  ).toBe(false)
+  request.mockClear()
+
+  await services.runtimeWorkApi!.prepareRuntimeModel({
+    deviceId: status.deviceId,
+    modelId: 'local-model:execution-pending',
+  })
+
+  expect(ensure).toHaveBeenCalled()
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    'runtime.codex.catalog.custom.write',
+    'runtime.codex.app_server.restart',
+    'runtime.models.sync_creation_profiles',
+  ])
+  expect(request).toHaveBeenCalledWith('runtime.models.sync_creation_profiles', {
+    deviceId: status.deviceId,
+    profiles: expect.arrayContaining([
+      expect.objectContaining({ runtime: 'codex', modelName: 'local-model:execution-pending' }),
+    ]),
   })
 })

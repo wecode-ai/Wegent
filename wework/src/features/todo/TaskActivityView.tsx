@@ -1,3 +1,4 @@
+import { IssueTimelineActions } from './IssueTimelineActions'
 import { boundCardSessionAddress } from './taskActivityHelpers'
 import { useContext } from 'react'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
@@ -46,36 +47,6 @@ import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChange
 import { useTaskActivityController } from './useTaskActivityController'
 import type { TaskActivityViewProps } from './taskActivityTypes'
 export type { StartHumanTaskFromReplyInput } from './taskActivityTypes'
-function TimelineReply({
-  rootId,
-  createdAt,
-  replyLabel,
-  active,
-  onReply,
-}: {
-  rootId: string
-  createdAt: string
-  replyLabel: string
-  active: boolean
-  onReply: () => void
-}) {
-  return (
-    <div className="task-detail-thread-actions">
-      <time dateTime={createdAt} className="text-xs text-text-secondary">
-        {formatIssueTimestamp(createdAt)}
-      </time>
-      <button
-        type="button"
-        data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
-        aria-expanded={active}
-        aria-controls="issue-reply-composer"
-        onClick={onReply}
-      >
-        {replyLabel}
-      </button>
-    </div>
-  )
-}
 function TaskActivityContent(props: TaskActivityViewProps) {
   const {
     acceptTask,
@@ -174,8 +145,7 @@ function TaskActivityContent(props: TaskActivityViewProps) {
     ) : null
   const renderActivityMessage = (
     message: ProjectChatMessage,
-    eventOnly = false,
-    hideTime = false
+    { eventOnly = false, isRoot = false }: { eventOnly?: boolean; isRoot?: boolean } = {}
   ) => {
     const role = issueActivityRole(message)
     const agentRole = role
@@ -206,7 +176,7 @@ function TaskActivityContent(props: TaskActivityViewProps) {
           taskAiState={task.ai_state}
           executionDeviceName={deviceNameForMessage(message)}
           taskSummary={taskSummaryForMessage(message)}
-          hideTime={hideTime}
+          hideTime={issueTimeline && isRoot}
           onOpenExecution={
             address && onOpenRuntimeTask
               ? () => onOpenRuntimeTask(address)
@@ -235,7 +205,7 @@ function TaskActivityContent(props: TaskActivityViewProps) {
           onStopExecution={address ? () => void stopRuntimeTask(message) : undefined}
           stopping={cancellingMessageId === message.messageId}
         />
-        {!eventOnly && renderCommentChildAction(message)}
+        {!eventOnly && !isRoot && renderCommentChildAction(message)}
       </div>
     )
   }
@@ -497,20 +467,23 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                               : undefined
                         }
                       />
-                      {renderCommentChildAction(card.root)}
                     </div>
                     <div data-testid={`cloud-task-activity-replies-${rootId}`}>
                       {card.replies.map(reply => renderActivityMessage(reply))}
                     </div>
-                    {humanDispatchForCard(card) && onStartHumanTaskFromReply ? (
-                      <TimelineReply
-                        rootId={rootId}
-                        createdAt={issueThreadActivityTimestamp(card)}
-                        replyLabel={cardReplyLabel(card)}
-                        active={replyTarget?.root.messageId === rootId}
-                        onReply={() => beginReply(card)}
-                      />
-                    ) : null}
+                    <IssueTimelineActions
+                      rootId={rootId}
+                      createdAt={issueThreadActivityTimestamp(card)}
+                      replyLabel={cardReplyLabel(card)}
+                      active={replyTarget?.root.messageId === rootId}
+                      onReply={
+                        humanDispatchForCard(card) && onStartHumanTaskFromReply
+                          ? () => beginReply(card)
+                          : undefined
+                      }
+                    >
+                      {renderCommentChildAction(card.root)}
+                    </IssueTimelineActions>
                   </div>
                 )
               }
@@ -524,7 +497,7 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                   cardAttributes={{
                     'data-testid': `cloud-task-activity-card-${rootId}`,
                   }}
-                  message={renderActivityMessage(card.root, false, issueTimeline)}
+                  message={renderActivityMessage(card.root, { isRoot: true })}
                   replies={
                     displayReplies.length
                       ? displayReplies.map(reply => renderActivityMessage(reply))
@@ -541,13 +514,15 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                         />
                       </div>
                       {issueTimeline ? (
-                        <TimelineReply
+                        <IssueTimelineActions
                           rootId={rootId}
                           createdAt={issueThreadActivityTimestamp(card)}
                           replyLabel={cardReplyLabel(card)}
                           active={replyTarget?.root.messageId === rootId}
                           onReply={() => beginReply(card)}
-                        />
+                        >
+                          {renderCommentChildAction(card.root)}
+                        </IssueTimelineActions>
                       ) : (
                         <CardCommentComposer
                           predictionAddress={boundCardSessionAddress(card, taskBindings)}
@@ -573,7 +548,9 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                   }
                   events={
                     !issueTimeline && executions.length
-                      ? executions.map(message => renderActivityMessage(message, true))
+                      ? executions.map(message =>
+                          renderActivityMessage(message, { eventOnly: true })
+                        )
                       : null
                   }
                   eventLabel={t('workbench.task_activity_execution_count', {

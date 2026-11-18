@@ -7,7 +7,6 @@ import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelS
 import { isRuntimeTaskBusyError } from '@/features/workbench/runtimePaneStatus'
 import {
   appendAcceptedRuntimeConversationMessage,
-  appendOptimisticRuntimeConversationGuidance,
   applyRuntimeConversationAction,
   getRuntimeConversationMessages,
   getRuntimeConversationTurnIds,
@@ -57,9 +56,14 @@ interface TemporaryChatSendContext extends Pick<
   input: string
   busy: boolean
   conversationQueue: ReturnType<typeof runtimePaneQueue>
+  queuePort: Parameters<ReturnType<typeof runtimePaneQueue>['send']>[1]
+  captureAttachmentsForScope: ReturnType<
+    typeof useWorkbenchAttachments
+  >['captureAttachmentsForScope']
+  instanceId: string
   sideChatProjectChat: Pick<
     ReturnType<typeof useWorkbenchAttachments>,
-    'attachments' | 'resetAttachments'
+    'attachments' | 'resetAttachments' | 'addExistingAttachment'
   >
   selectedModelFields: ReturnType<typeof selectedModelExecutionFields>
   runtimeContext: TemporaryChatPanelProps['runtimeContext']
@@ -97,7 +101,6 @@ export async function sendTemporaryChatMessage(
     scopedHistory,
     paneStatus,
     sendConversationMessage,
-    sendRuntimePaneGuidance,
     t,
     goalDraftActive,
     createTask,
@@ -107,6 +110,9 @@ export async function sendTemporaryChatMessage(
     input,
     busy,
     conversationQueue,
+    queuePort,
+    captureAttachmentsForScope,
+    instanceId,
     sideChatProjectChat,
     selectedModelFields,
     runtimeContext,
@@ -141,7 +147,8 @@ export async function sendTemporaryChatMessage(
   if (!transactionalDraft) setInput('')
   setTrialGuide(null)
 
-  const currentAttachments = sideChatProjectChat.attachments
+  const currentAttachments = captureAttachmentsForScope(instanceId)
+  sideChatProjectChat.resetAttachments()
   const initialGoal = goalDraftActive
     ? runtimeGoalCreateInput({
         objective: message,
@@ -170,46 +177,30 @@ export async function sendTemporaryChatMessage(
       }
       const guideCurrentTurn =
         !queuedMessage.startNewSession && paneStatus.isBusy && options.guideWhenBusy
-      const guidanceResult = guideCurrentTurn
-        ? await sendRuntimePaneGuidance({
-            address,
-            message,
-            ...(queuedMessage.conversationContext
-              ? { conversationContext: queuedMessage.conversationContext }
-              : {}),
-            clientGuidanceId: queuedMessage.id,
-            attachments: localRuntimeAttachments(currentAttachments),
-            attachmentIds: remoteAttachmentIds(currentAttachments),
+      conversationQueue.enqueue(queuedMessage)
+      const interrupt =
+        !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
+      const sent = guideCurrentTurn
+        ? await conversationQueue.guide(queuedMessage.id, queuePort, true)
+        : await conversationQueue.send(queuedMessage.id, {
+            ...queuePort,
+            send: pending => sendConversationMessage(pending, Boolean(interrupt)),
           })
-        : null
-      const result =
-        guidanceResult ??
-        (await sendConversationMessage(
-          queuedMessage,
-          !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
-        ))
-      if (!result.sent) {
-        setError(result.error || t('workbench.project_chat_send_failed'))
+      const pending = conversationQueue.getSnapshot().find(item => item.id === queuedMessage.id)
+      if (!sent && pending?.status !== 'queued') {
+        setError(pending?.error || t('workbench.project_chat_send_failed'))
         if (!transactionalDraft) setInput(current => current || message)
+        currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
         return false
       }
-      if (
-        guidanceResult?.turnId &&
-        !getRuntimeConversationMessages(address).some(item => item.id === queuedMessage.id)
-      ) {
-        setMessages(
-          appendOptimisticRuntimeConversationGuidance(address, guidanceResult.turnId, queuedMessage)
-        )
-      }
       submission?.clearIfUnchanged()
-      if (sessionCommands.isCurrent()) {
-        sideChatProjectChat.resetAttachments()
-        if (historySource) setAcceptedSourceMessageIds(ids => [...ids, queuedMessage.id])
-      }
+      if (sessionCommands.isCurrent() && historySource)
+        setAcceptedSourceMessageIds(ids => [...ids, queuedMessage.id])
       return true
     } catch (cause) {
       setError(getErrorMessage(cause, t('workbench.project_chat_send_failed')))
       if (!transactionalDraft) setInput(current => current || message)
+      currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
       return false
     } finally {
       submission?.release()
@@ -219,7 +210,6 @@ export async function sendTemporaryChatMessage(
   }
   if (address && busy && !options.interruptWhenBusy) {
     conversationQueue.enqueue(queuedMessage)
-    sideChatProjectChat.resetAttachments()
     if (options.guideWhenBusy) {
       return sendQueuedMessageAsGuidance(queuedMessage)
     }
@@ -279,6 +269,7 @@ export async function sendTemporaryChatMessage(
     updateAddress(null)
     if (nativeConversation) setInput(current => current || message)
     setSending(false)
+    currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
     return false
   }
   if (!address) {
@@ -286,7 +277,6 @@ export async function sendTemporaryChatMessage(
     setMessages(getRuntimeConversationMessages(targetAddress))
     updateAddress(targetAddress)
     setGoalDraftActive(false)
-    sideChatProjectChat.resetAttachments()
     setSending(false)
     return true
   }
@@ -363,6 +353,7 @@ export async function sendTemporaryChatMessage(
     }
   } else {
     handleError(sendError || '发送失败')
+    currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
     return false
   }
   setSending(false)

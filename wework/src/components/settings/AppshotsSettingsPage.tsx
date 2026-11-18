@@ -1,5 +1,6 @@
-import { Loader2, ScanLine } from 'lucide-react'
-import { useState, useSyncExternalStore } from 'react'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { Loader2, Pencil, ScanLine, Trash2 } from 'lucide-react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -13,6 +14,7 @@ import {
   openAppshotsPermissionSettings,
   type AppshotPermission,
 } from '@/desktop/appshots'
+import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import {
   SettingsGroup,
   SettingsPage,
@@ -48,16 +50,27 @@ export function AppshotsSettingsPage() {
     preferencesState.data?.appshotsPlaySound ?? defaultAppPreferences.appshotsPlaySound
   const loading = statusState.status === 'idle' || statusState.status === 'loading'
   const [saving, setSaving] = useState(false)
-  const [failure, setFailure] = useState<'save' | 'permission' | null>(null)
+  const [failure, setFailure] = useState<'save' | 'permission' | 'shortcut' | null>(null)
   const loadFailedText = t('workbench.appshots_load_failed', '应用快照设置加载失败')
   const error =
-    failure === 'save'
-      ? t('workbench.appshots_save_failed', '应用快照设置保存失败')
-      : failure === 'permission'
-        ? t('workbench.appshots_open_settings_failed', '无法打开系统设置')
-        : statusState.status === 'error' || preferencesState.status === 'error'
-          ? loadFailedText
-          : null
+    failure === 'shortcut'
+      ? t(
+          'workbench.appshots_shortcut_unavailable',
+          '快捷键已被其他应用占用，请退出冲突的应用后重启 Wework。'
+        )
+      : failure === 'save'
+        ? t('workbench.appshots_save_failed', '应用快照设置保存失败')
+        : failure === 'permission'
+          ? t('workbench.appshots_open_settings_failed', '无法打开系统设置')
+          : statusState.status === 'error' || preferencesState.status === 'error'
+            ? loadFailedText
+            : null
+  const [savingShortcut, setSavingShortcut] = useState(false)
+  const [recordingShortcut, setRecordingShortcut] = useState(false)
+
+  useWindowEvent('focus', () => {
+    void statusResource.reload()
+  })
 
   const updatePlaySound = async (value: boolean) => {
     setSaving(true)
@@ -73,8 +86,64 @@ export function AppshotsSettingsPage() {
     }
   }
 
+  const saveShortcut = useCallback(
+    async (shortcut: string | null) => {
+      setSavingShortcut(true)
+      setFailure(null)
+      try {
+        await updateAppPreferences({ appshotsShortcut: shortcut })
+        const nextStatus = await getAppshotsStatus()
+        statusResource.update(() => nextStatus)
+        setRecordingShortcut(false)
+      } catch (saveError) {
+        console.error('[Wework] Failed to save Appshots shortcut:', saveError)
+        const unavailable =
+          saveError instanceof Error && saveError.message.includes('Global shortcut is unavailable')
+        setFailure(unavailable ? 'shortcut' : 'save')
+      } finally {
+        setSavingShortcut(false)
+      }
+    },
+    [statusResource]
+  )
+
+  useWindowEvent(
+    'keydown',
+    event => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.key === 'Escape') {
+        setRecordingShortcut(false)
+        return
+      }
+      const shortcut = normalizeKeybinding(keybindingFromKeyboardEvent(event, true))
+      if (!shortcut || !shortcut.includes('+')) return
+      void saveShortcut(shortcut)
+    },
+    { enabled: recordingShortcut, capture: true }
+  )
+
   const shortcutReady = status?.supported && status.shortcutRegistered
+  const shortcutDescription = loading
+    ? t('common.loading', '加载中...')
+    : recordingShortcut
+      ? t('workbench.keyboard_shortcuts_recording', '按下快捷键')
+      : !status?.supported
+        ? t('workbench.appshots_macos_only', '应用快照目前仅支持 macOS。')
+        : !status.shortcut
+          ? t(
+              'workbench.appshots_shortcut_unassigned_description',
+              '录制一个快捷键，在任意应用中截取最前面的窗口。'
+            )
+          : shortcutReady
+            ? t('workbench.appshots_shortcut_description', '在任意应用中截取最前面的窗口')
+            : t(
+                'workbench.appshots_shortcut_unavailable',
+                '快捷键已被其他应用占用，请退出冲突的应用后重启 Wework。'
+              )
+
   const openPermissionSettings = (permission: AppshotPermission) => {
+    setFailure(null)
     void openAppshotsPermissionSettings(permission).catch(openError => {
       console.error('[Wework] Failed to open Appshots permission settings:', openError)
       setFailure('permission')
@@ -140,33 +209,48 @@ export function AppshotsSettingsPage() {
       <SettingsGroup>
         <SettingsRow
           label={t('workbench.appshots_shortcut', '快捷键')}
-          description={
-            loading
-              ? t('common.loading', '加载中...')
-              : statusState.status === 'error'
-                ? loadFailedText
-                : shortcutReady
-                  ? t('workbench.appshots_shortcut_description', '在任意应用中截取最前面的窗口')
-                  : status?.supported
-                    ? t(
-                        'workbench.appshots_shortcut_unavailable',
-                        '快捷键已被其他应用占用，请退出冲突的应用后重启 Wework。'
-                      )
-                    : t('workbench.appshots_macos_only', '应用快照目前仅支持 macOS。')
-          }
+          description={shortcutDescription}
           control={
             loading ? (
               <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
             ) : statusState.status === 'error' ? (
               <span className="text-xs text-text-secondary">{loadFailedText}</span>
             ) : (
-              <KeyboardShortcut
-                value={(status?.shortcut ?? 'CommandOrControl+Shift+2').replace(
-                  'CommandOrControl',
-                  'Command'
-                )}
-                className="bg-muted text-text-secondary"
-              />
+              <div className="flex min-w-[200px] items-center justify-end gap-1">
+                <button
+                  type="button"
+                  data-testid="appshots-shortcut-record-button"
+                  disabled={savingShortcut || !status?.supported}
+                  onClick={() => setRecordingShortcut(true)}
+                  className="inline-flex min-h-8 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label={t('workbench.appshots_shortcut_edit', '录制快捷键')}
+                >
+                  {recordingShortcut ? (
+                    <span className="rounded-full bg-muted px-2.5 py-1">
+                      {t('workbench.keyboard_shortcuts_recording', '按下快捷键')}
+                    </span>
+                  ) : status?.shortcut ? (
+                    <KeyboardShortcut
+                      value={status.shortcut.replace('CommandOrControl', 'Command')}
+                      className="bg-muted text-text-secondary"
+                    />
+                  ) : (
+                    <span>{t('workbench.keyboard_shortcuts_unassigned', '未设置')}</span>
+                  )}
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  data-testid="appshots-shortcut-clear-button"
+                  disabled={savingShortcut || !status?.supported || !status.shortcut}
+                  onClick={() => void saveShortcut(null)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label={t('workbench.keyboard_shortcuts_clear', '清除')}
+                  title={t('workbench.keyboard_shortcuts_clear', '清除')}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
             )
           }
         />

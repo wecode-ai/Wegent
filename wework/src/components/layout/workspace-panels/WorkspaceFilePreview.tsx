@@ -1,3 +1,4 @@
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import type { CodeViewFileItem } from '@pierre/diffs'
 import { CodeView, EditProvider, type CodeViewHandle } from '@pierre/diffs/react'
 import FileViewer from '@file-viewer/react'
@@ -12,14 +13,17 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ClipboardEvent,
   type CSSProperties,
   type KeyboardEvent,
   type ProfilerOnRenderCallback,
 } from 'react'
 import { useScrollRequest } from '@wegent/collaboration/dom-events'
+import type { MarkdownFileOpenOptions } from '@wegent/collaboration/markdown'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
+import { Button } from '@/components/ui/button'
 import { captureDiagramArtifact } from '@/components/chat/diagramImageExport'
 import { getRuntimeConfig } from '@/config/runtime'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
@@ -37,6 +41,7 @@ import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 import { useWorkspaceCodeEditor } from './useWorkspaceCodeEditor'
 import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
 import { isHtmlFile, isMarkdownFile, workspaceFileViewerType } from './workspaceFileTypes'
+import { isDocxPreviewFile, safeOfficePreviewFile } from '@/lib/safe-office-preview'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
@@ -121,6 +126,7 @@ interface WorkspaceFilePreviewProps {
   loading: boolean
   loadingProgress?: { loadedBytes: number; totalBytes: number | null } | null
   error?: string | null
+  onOpenFile?: (path: string, options?: MarkdownFileOpenOptions) => void
   onRetry: () => void
   targetLineStart?: number
   targetLineEnd?: number
@@ -141,6 +147,22 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   themeType: 'light' | 'dark'
 }) {
   const containerRef = useRef<HTMLElement>(null)
+  const { t } = useTranslation('common')
+  const [preparationAttempt, setPreparationAttempt] = useState(0)
+  const requiresPreparation = isDocxPreviewFile(file.file)
+  const preparation = useMemo(
+    () =>
+      createAsyncResource(`workspace-office-preview:${preparationAttempt}`, () =>
+        requiresPreparation ? safeOfficePreviewFile(file.file) : Promise.resolve(file.file)
+      ),
+    [file.file, requiresPreparation, preparationAttempt]
+  )
+  const prepared = useSyncExternalStore(
+    preparation.subscribe,
+    preparation.getSnapshot,
+    preparation.getSnapshot
+  )
+  const preparedFile = requiresPreparation ? prepared.data : file.file
   const viewerType = workspaceFileViewerType(file.name, file.file.type)
   const isDiagram = viewerType === 'mermaid' || viewerType === 'plantuml'
   const diagramFilename = `${file.name.replace(/\.[^.]+$/, '')}.png`
@@ -187,6 +209,40 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
     [file.traceId, viewerType]
   )
 
+  if (/\.(mp4|ogv|webm)$/i.test(file.name)) return <WorkspaceVideoPreview file={file.file} />
+
+  if (/\.xmind$/i.test(file.name)) {
+    return (
+      <WorkspaceXMindPreview key={`${file.path}:${file.size}`} file={file.file} name={file.name} />
+    )
+  }
+
+  if (!preparedFile) {
+    return (
+      <section
+        data-testid="workspace-office-preview-preparing"
+        className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 text-sm text-text-secondary"
+      >
+        {prepared.status === 'error'
+          ? t('workbench.workspace_file_preview_failed')
+          : t('workbench.workspace_file_preview_loading', '正在加载文件...')}
+        {prepared.status === 'error' && (
+          <Button
+            type="button"
+            data-testid="workspace-office-preview-retry-button"
+            variant="link"
+            size="sm"
+            onClick={() => {
+              setPreparationAttempt(attempt => attempt + 1)
+            }}
+          >
+            {t('workbench.workspace_file_retry', '重试')}
+          </Button>
+        )}
+      </section>
+    )
+  }
+
   return (
     <section
       data-testid="workspace-binary-file-preview"
@@ -198,7 +254,7 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
       ) : /\.xmind$/i.test(file.name) ? (
         <WorkspaceXMindPreview
           key={`${file.path}:${file.size}`}
-          file={file.file}
+          file={preparedFile}
           name={file.name}
         />
       ) : (
@@ -312,9 +368,11 @@ function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
 
 function WorkspaceMarkdownPreview({
   file,
+  onOpenFile,
   targetLineStart,
 }: {
   file: WorkspaceTextFileResponse
+  onOpenFile?: WorkspaceFilePreviewProps['onOpenFile']
   targetLineStart?: number
 }) {
   const { t } = useTranslation('common')
@@ -358,7 +416,12 @@ function WorkspaceMarkdownPreview({
       className="scrollbar-soft min-w-0 flex-1 overflow-y-scroll bg-background"
     >
       <div className="mx-auto max-w-4xl px-8 py-6 text-base leading-7 text-text-primary [&_[data-source-line-target=true]]:rounded-md [&_[data-source-line-target=true]]:bg-amber-100 [&_[data-source-line-target=true]]:ring-2 [&_[data-source-line-target=true]]:ring-amber-300 [&_[data-source-line-target=true]]:transition-colors [&_[data-source-line-target=true]]:duration-700 dark:[&_[data-source-line-target=true]]:bg-amber-900/30 dark:[&_[data-source-line-target=true]]:ring-amber-600/60">
-        <AssistantMarkdown content={file.content} variant="document" sourceLineAnchors />
+        <AssistantMarkdown
+          content={file.content}
+          variant="document"
+          sourceLineAnchors
+          onOpenFile={onOpenFile}
+        />
       </div>
       {file.truncated && (
         <div className="sticky bottom-0 border-t border-border bg-background/95 px-4 py-2 text-xs text-warning backdrop-blur-sm wework:text-amber-700">
@@ -740,6 +803,7 @@ export function WorkspaceFilePreview({
   loadingProgress,
   error,
   onRetry,
+  onOpenFile,
   targetLineStart,
   targetLineEnd,
   onAddCodeComment,
@@ -825,7 +889,13 @@ export function WorkspaceFilePreview({
   }
 
   if (!editing && isMarkdownFile(file.name) && previewMode === 'preview') {
-    return <WorkspaceMarkdownPreview file={file} targetLineStart={targetLineStart} />
+    return (
+      <WorkspaceMarkdownPreview
+        file={file}
+        targetLineStart={targetLineStart}
+        onOpenFile={onOpenFile}
+      />
+    )
   }
 
   return (

@@ -121,6 +121,13 @@ export function createWeworkPlatformNavigation(initial: PlatformNavigationInput)
     if (active()) input.onActiveProjectChange?.(project)
   }
   return {
+    getProjectStore(projectId: string): 'local' | 'cloud' | undefined {
+      if (String(snapshot.location.projectId ?? '') === projectId)
+        return snapshot.location.collaborationDomain
+      if (String(input.activeProject?.projectId ?? '') === projectId)
+        return input.activeProject?.projectStore === 'local' ? 'local' : 'cloud'
+      return undefined
+    },
     getSnapshot: () => snapshot,
     subscribe(listener: () => void, next: PlatformNavigationInput) {
       observers.set(listener, next)
@@ -141,7 +148,7 @@ export function createWeworkPlatformNavigation(initial: PlatformNavigationInput)
     updateLocation(location: CollaborationPlatformLocation) {
       if (active()) publish(location)
     },
-    navigate(location: CollaborationPlatformLocation) {
+    navigate(location: CollaborationPlatformLocation, resolvedProject?: LocatedProjectSpace) {
       if (!active()) return
       const revision = ++navigationRevision
       const epoch = generation
@@ -162,8 +169,7 @@ export function createWeworkPlatformNavigation(initial: PlatformNavigationInput)
       const projectId = String(location.projectId)
       const api = input.api
       if (!api?.projects.get) return
-      void api.projects
-        .get(projectId)
+      void (resolvedProject ? Promise.resolve(resolvedProject) : api.projects.get(projectId))
         .then(project => {
           if (!active() || epoch !== generation || revision !== navigationRevision) return
           publishActiveProject({

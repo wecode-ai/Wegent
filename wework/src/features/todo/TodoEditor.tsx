@@ -301,7 +301,7 @@ export function TodoEditor(props: TodoEditorProps) {
       />
     ),
     renderActivity: context =>
-      props.projectChatClient ? (
+      props.projectChatClient && context.project ? (
         <TaskActivityView
           assignmentReceipts={assignmentReceipts}
           commentAssignment={context.commentAssignment}

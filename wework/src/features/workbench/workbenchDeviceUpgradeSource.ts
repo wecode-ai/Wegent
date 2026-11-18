@@ -14,12 +14,6 @@ import {
   isTerminalDeviceUpgradeStatus,
 } from './workbenchProviderHelpers'
 import type { WorkbenchAction } from './workbenchReducer'
-import {
-  getDeviceEventId,
-  getDeviceEventName,
-  isDeviceStatus,
-  isRecord,
-} from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
 
 export interface WorkbenchDeviceUpgradeInput {
@@ -108,27 +102,9 @@ export function createWorkbenchDeviceUpgradeSource() {
       if (current()) void refresh({ useCacheFallback: false }).catch(() => undefined)
     }
     stopStream = stream.subscribe({
-      onDeviceOnline(payload: unknown) {
-        if (!current()) return
-        const deviceId = getDeviceEventId(payload)
-        if (deviceId)
-          input!.dispatch({
-            type: 'device_status_changed',
-            deviceId,
-            status: 'online',
-            name: getDeviceEventName(payload),
-          })
-        refreshAfterEvent()
-      },
+      onDeviceOnline: refreshAfterEvent,
       onDeviceOffline: refreshAfterEvent,
-      onDeviceStatus(payload: unknown) {
-        if (!current()) return
-        const deviceId = getDeviceEventId(payload)
-        const status = isRecord(payload) ? payload.status : undefined
-        if (deviceId && isDeviceStatus(status) && status !== 'offline')
-          input!.dispatch({ type: 'device_status_changed', deviceId, status })
-        refreshAfterEvent()
-      },
+      onDeviceStatus: refreshAfterEvent,
       onDeviceSlotUpdate(payload: DeviceSlotUpdatePayload) {
         if (current()) input!.dispatch({ type: 'device_slot_updated', payload })
       },

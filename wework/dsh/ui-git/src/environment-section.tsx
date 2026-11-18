@@ -1,3 +1,4 @@
+import { createCommitFeedbackSource } from './commitFeedbackSource'
 import {
   Check,
   CircleDot,
@@ -10,12 +11,13 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { useCallback, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useRef, useState, useSyncExternalStore, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
+import { ResourceObservationStatus } from '@/components/common/ResourceObservationStatus'
 import {
   WEWORK_HOST_SERVICES,
   type EnvironmentHostService,
@@ -158,9 +160,22 @@ function GitEnvironmentSectionContent({
   const { t } = useTranslation('common')
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
-  const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
-  const [commitProgressLabel, setCommitProgressLabel] = useState('')
-  const [commitError, setCommitError] = useState<string | null>(null)
+  const [commitFeedback] = useState(createCommitFeedbackSource)
+  const {
+    status: commitStatus,
+    progress: commitProgressLabel,
+    error: commitError,
+  } = useSyncExternalStore(
+    commitFeedback.subscribe,
+    commitFeedback.getSnapshot,
+    commitFeedback.getSnapshot
+  )
+  const {
+    setStatus: setCommitStatus,
+    setProgress: setCommitProgressLabel,
+    setError: setCommitError,
+    clearTimer: clearCommitFeedbackTimer,
+  } = commitFeedback
   const commitButtonRef = useRef<HTMLButtonElement>(null)
   const commitFormRef = useRef<HTMLFormElement>(null)
   const gitRepositoryAvailable = info.isGitRepository !== false
@@ -173,7 +188,7 @@ function GitEnvironmentSectionContent({
   const closeCommitForm = useCallback(() => {
     setCommitFormOpen(false)
     setCommitError(null)
-  }, [])
+  }, [setCommitError])
 
   useDocumentEvent(
     'pointerdown',
@@ -207,6 +222,13 @@ function GitEnvironmentSectionContent({
   const deletions = info.deletions || '-0'
   const branchLabel = info.branchName?.trim() || t('workbench.environment_branch_empty', '暂无分支')
   const changeRequest = info.changeRequest?.changeRequest
+  const lookupState =
+    info.changeRequestObservation?.error === 'git_cli_missing'
+      ? 'unavailable'
+      : info.changeRequest?.state
+  const lookupFailed = Boolean(
+    lookupState && ['unavailable', 'unauthenticated', 'error'].includes(lookupState)
+  )
 
   const getCommitErrorMessage = (error: unknown) => {
     const fallback = t('workbench.environment_commit_failed', '提交失败')
@@ -234,6 +256,8 @@ function GitEnvironmentSectionContent({
     if (action === 'commit-and-push' && !onCommitAndPushChanges) return
     if (action === 'push' && !onPushChanges) return
 
+    clearCommitFeedbackTimer()
+    const isCurrentFeedback = commitFeedback.captureOwner()
     setCommitError(null)
     setCommitProgressLabel(getCommitProgressLabel(action, trimmedMessage))
     setCommitStatus('committing')
@@ -242,13 +266,12 @@ function GitEnvironmentSectionContent({
       if (action === 'push') await onPushChanges?.()
       else if (action === 'commit-and-push') await onCommitAndPushChanges?.(trimmedMessage)
       else await onCommitChanges?.(trimmedMessage)
+      if (!isCurrentFeedback()) return
       setCommitStatus('success')
       if (action !== 'push') setCommitMessage('')
-      window.setTimeout(() => {
-        setCommitStatus('idle')
-        setCommitProgressLabel('')
-      }, 1600)
+      commitFeedback.scheduleReset()
     } catch (error) {
+      if (!isCurrentFeedback()) return
       setCommitStatus('idle')
       setCommitProgressLabel('')
       setCommitError(getCommitErrorMessage(error))
@@ -352,7 +375,10 @@ function GitEnvironmentSectionContent({
               </button>
             )}
             {changeRequest ? (
-              <ChangeRequestRow changeRequest={changeRequest} />
+              <ChangeRequestRow
+                changeRequest={changeRequest}
+                observation={info.changeRequestObservation}
+              />
             ) : (
               <button
                 type="button"
@@ -373,29 +399,46 @@ function GitEnvironmentSectionContent({
                 </span>
               </button>
             )}
-            {info.changeRequest &&
-            ['unavailable', 'unauthenticated', 'error'].includes(info.changeRequest.state) ? (
+            {lookupFailed ||
+            (info.changeRequestObservation &&
+              info.changeRequestObservation.state !== 'observing') ? (
               <div className="px-7 pb-1">
-                <p
-                  data-testid="change-request-lookup-hint"
-                  className="text-xs leading-4 text-text-muted"
-                >
-                  {t(
-                    `workbench.environment_change_request_${info.changeRequest.state}_${info.changeRequest.provider}`,
-                    ''
-                  )}
-                </p>
-                <button
-                  type="button"
-                  data-testid="change-request-open-settings"
-                  onClick={() => {
-                    onClose?.()
-                    navigateTo('/settings/git-hosting')
-                  }}
-                  className="mt-1 text-xs text-blue-500 hover:underline"
-                >
-                  {t('workbench.environment_change_request_configure', '配置代码托管工具')}
-                </button>
+                {changeRequest && info.changeRequestObservation?.stale ? (
+                  <p
+                    data-testid="environment-change-request-stale"
+                    className="text-xs text-text-muted"
+                  >
+                    {t('workbench.change_request_status_stale', '状态可能已过期')}
+                  </p>
+                ) : null}
+                {info.changeRequest && lookupFailed ? (
+                  <p
+                    data-testid="change-request-lookup-hint"
+                    className="text-xs leading-4 text-text-muted"
+                  >
+                    {t(
+                      `workbench.environment_change_request_${lookupState}_${info.changeRequest.provider}`,
+                      ''
+                    )}
+                  </p>
+                ) : info.changeRequestObservation ? (
+                  <p data-testid="environment-change-request-observation" role="status">
+                    <ResourceObservationStatus observation={info.changeRequestObservation} />
+                  </p>
+                ) : null}
+                {info.changeRequestObservation?.state !== 'refreshing' ? (
+                  <button
+                    type="button"
+                    data-testid="change-request-open-settings"
+                    onClick={() => {
+                      onClose?.()
+                      navigateTo('/settings/git-hosting')
+                    }}
+                    className="mt-1 text-xs text-blue-500 hover:underline"
+                  >
+                    {t('workbench.environment_change_request_configure', '配置代码托管工具')}
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </>
@@ -510,8 +553,10 @@ function GitEnvironmentSectionContent({
 
 function ChangeRequestRow({
   changeRequest,
+  observation,
 }: {
   changeRequest: NonNullable<EnvironmentInfo['changeRequest']>['changeRequest']
+  observation?: EnvironmentInfo['changeRequestObservation']
 }) {
   const { t } = useTranslation('common')
   if (!changeRequest) return null
@@ -533,7 +578,7 @@ function ChangeRequestRow({
   return (
     <div className="flex h-9 w-full items-center gap-2 rounded-md hover:bg-hover">
       <ChangeRequestStatusIcon
-        snapshot={{ changeRequest }}
+        snapshot={{ changeRequest, observation, stale: observation?.stale }}
         testId="environment-change-request-status"
         glyphSize="environment"
         mainIconTestId={
@@ -561,7 +606,11 @@ function ChangeRequestRow({
           >
             {changeRequest.title}
           </span>
-          <span data-testid="change-request-state" className="sr-only">
+          <span
+            data-testid="change-request-state"
+            className="shrink-0 text-xs text-text-secondary"
+            aria-hidden="true"
+          >
             {statusLabel}
           </span>
           {checksStatus && (status.startsWith('checks_') || status === 'merged') ? (

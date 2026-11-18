@@ -1,3 +1,4 @@
+import { createWorkspaceTabSurfaceBinding } from '@/features/workspace-tabs/workspaceTabSurfaceBinding'
 import { isPopoutWindowRuntime } from './appWindowIdentity'
 
 import { LOCAL_USER } from '@/api/local/localSession'
@@ -49,7 +50,6 @@ import { inferWorkspaceTabKind, type WorkspaceTab } from '@/features/workspace-t
 import { resolveRunningHarnessApp } from '@/features/harness-apps/harnessAppTabs'
 import type { User } from '@/types/api'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
-import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 import { DshAppSurface } from '@/features/dsh-runtime/DshAppSurface'
 import { DshRouteSurface } from '@/features/dsh-runtime/DshRouteSurface'
 import { DshWorkspaceTabSurface } from '@/features/dsh-runtime/DshWorkspaceTabSurface'
@@ -76,6 +76,7 @@ function buildCloudAppUrl(url: string, token: string | null): string {
 }
 
 interface AppRoutesProps {
+  onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
 }
 
@@ -184,6 +185,7 @@ interface WorkspaceTabSurfaceProps {
   lifecycleStore: RuntimeTaskLifecycleStore
   nativeWorkbenchKind?: 'task' | 'board'
   smartAppsEnabled?: boolean
+  onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   services: WorkbenchServices
   tab: WorkspaceTab
@@ -197,6 +199,7 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   lifecycleStore,
   nativeWorkbenchKind,
   smartAppsEnabled = false,
+  onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
   services,
   tab,
@@ -304,11 +307,43 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   const keepSurfaceActive =
     keepNativeWorkbenchActive || keepIframeActive || keepHarnessAppLaunchActive
 
+  const [surfaceBinding] = useState(createWorkspaceTabSurfaceBinding)
   const bindSurface = useCallback(
     (element: HTMLDivElement | null) => {
-      if (element && active) setActiveWorkspaceTabPortalOwner(tab.id)
+      if (!element) return
+      return surfaceBinding.attach(element, {
+        active,
+        tabId: tab.id,
+        native:
+          renderProvider && renderWorkbench && nativeDshApp
+            ? {
+                appId: nativeDshApp.id,
+                hasModule: Boolean(nativeDshApp.module),
+                tabId: tab.id,
+                active: active && nativeWorkbenchActive,
+              }
+            : undefined,
+        surface:
+          renderProvider && surfaceDshApp
+            ? {
+                appId: surfaceDshApp.id,
+                hasModule: Boolean(surfaceDshApp.module),
+                tabId: tab.id,
+                active,
+              }
+            : undefined,
+      })
     },
-    [active, tab.id]
+    [
+      surfaceBinding,
+      active,
+      tab.id,
+      renderProvider,
+      renderWorkbench,
+      nativeDshApp,
+      surfaceDshApp,
+      nativeWorkbenchActive,
+    ]
   )
 
   const workbenchContent = (
@@ -360,6 +395,11 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
           {renderProvider ? (
             <WorkbenchProvider
               lifecycleStore={lifecycleStore}
+              appshotReceiver={
+                active && onOpenWeworkForAppshot
+                  ? { onOpenWework: onOpenWeworkForAppshot }
+                  : undefined
+              }
               taskRouteActive={
                 active && nativeWorkbenchActive && nativeDshApp?.workspaceKinds?.[0] !== 'board'
               }
@@ -426,7 +466,10 @@ export const WorkspaceTabSurface = memo(function WorkspaceTabSurface({
   )
 })
 
-export function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
+export function AppRoutes({
+  onWorkbenchStartupReadyChange,
+  onOpenWeworkForAppshot,
+}: AppRoutesProps = {}) {
   const { t } = useTranslation('common')
   const { pathname: path, search } = useCurrentLocation()
   const registeredRoutes = useDshSlotEntries<WeworkDshRoute>(WEWORK_DSH_SLOTS.route)
@@ -682,6 +725,11 @@ export function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}
                 services={services}
                 user={user}
                 workspaceTabId={tab.id}
+                appshotReceiver={
+                  tab.id === workspaceTabs.activeTabId && onOpenWeworkForAppshot
+                    ? { onOpenWework: onOpenWeworkForAppshot }
+                    : undefined
+                }
                 loadTaskComposerCatalogs={tab.id === workspaceTabs.activeTabId}
                 composerAppsSourceActive={tab.id === workspaceTabs.activeTabId}
                 debugSnapshotEnabled={false}
@@ -705,6 +753,7 @@ export function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}
           </Activity>
         ) : (
           <WorkspaceTabSurface
+            onOpenWeworkForAppshot={onOpenWeworkForAppshot}
             key={tab.id}
             active={tab.id === workspaceTabs.activeTabId}
             lifecycleStore={lifecycleStore}

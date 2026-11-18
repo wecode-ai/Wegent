@@ -1,6 +1,13 @@
+import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
 import { useState } from 'react'
 import { requiresInstallConnectorAuth } from '@/features/plugins/connectorAuthPolicy'
-import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import {
+  authorizeWegentConnector,
+  listWegentConnectorApps,
+  connectorAuthorizationErrorMessage,
+  refreshWegentConnector,
+  notifyConnectorAuthorizationChanged,
+} from '@/api/cloud/connectorApps'
 import {
   isLocalBrowserConnector,
   isLocalConnector,
@@ -23,7 +30,6 @@ import type { LocalDeviceApp } from '@/types/api'
 import { openExternalUrl } from '@/lib/external-links'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
-import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
 import {
   LocalConnectorPluginSyncTimeoutError,
@@ -125,7 +131,8 @@ export function usePluginWorkspaceConnectors({
           cloudApiBaseUrl,
           cloudToken,
           requirement.slug,
-          openCloudAuthorizationWindow
+          openConnectorAuthorizationWindow,
+          { isCurrent }
         )
         if (!isCurrent()) return
       } finally {
@@ -420,14 +427,30 @@ export function usePluginWorkspaceConnectors({
         navigateTo('/settings/connections')
         return
       }
+      if (app.connection.status === 'expired') {
+        try {
+          const connection = await refreshWegentConnector(cloudApiBaseUrl, cloudToken, app.slug)
+          if (!detailIsCurrent()) return
+          if (connection.status === 'connected') {
+            notifyConnectorAuthorizationChanged()
+            navigateTo('/settings/connections')
+            return
+          }
+        } catch {
+          if (!detailIsCurrent()) return
+          // Token refresh is an optimization. A provider that rejects it must
+          // still recover through the normal consent flow.
+        }
+      }
       await authorizeWegentConnector(
         cloudApiBaseUrl,
         cloudToken,
         app.slug,
-        openCloudAuthorizationWindow
+        openConnectorAuthorizationWindow,
+        { isCurrent: detailIsCurrent }
       )
     } catch (error) {
-      reportDetailError(error instanceof Error ? error.message : 'Connector authorization failed')
+      reportDetailError(connectorAuthorizationErrorMessage(error, connectorDisplayName(slug), t))
     }
   }
 

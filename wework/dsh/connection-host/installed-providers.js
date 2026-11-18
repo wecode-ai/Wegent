@@ -2,9 +2,9 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 // Read metadata only. Disabled plugins are never imported or executed for discovery.
-export async function installedProviders(home, activeItems, parseConnections) {
-  if (!home) return activeItems
-  const profile = join(home, 'profiles', 'wework-core', 'package.json')
+export async function installedProviders(profileRoot, activeItems, parseConnections) {
+  if (!profileRoot) throw new Error('Connection profile root is required')
+  const profile = join(profileRoot, 'package.json')
   let manifest
   try {
     manifest = JSON.parse(await readFile(profile, 'utf8'))

@@ -8,6 +8,7 @@ import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 import { nativeCloudAuthorizationFixture } from './native-cloud-authorization-client.mjs'
+import { readInspectorEndpoint } from './inspect-before-start.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -58,6 +59,7 @@ import {
   buildExecutor,
   mcpElicitationConfigToml,
   prepareHarnessRuntimeRoots,
+  prepareRemoteDeviceConversationModel,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
   setMatrixUpstreamProtocol,
@@ -75,6 +77,7 @@ import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs
 
 import { DesktopE2EServer } from './desktop-server.mjs'
 import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
+import { prepareNativeKeychainPreferences } from './native-keychain-preferences.mjs'
 import { desktopApplicationDataDirectory, resolveUpgradeUserHome } from './upgrade-user-home.mjs'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
@@ -148,6 +151,7 @@ import {
   observeWindowsSocketExhaustion,
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
+import { collectPluginRuntimeDiagnostics } from './plugin-runtime-diagnostics.mjs'
 import { captureFailureFollowup, failedWaitCondition } from './failure-followup.mjs'
 import { startRendererCpuProfile } from './renderer-cpu-profile.mjs'
 import {
@@ -379,15 +383,20 @@ function assertDefaultIssueContextAbsent(request) {
   )
 }
 
-function assertDefaultIssueContextInjected(request) {
+function assertDefaultIssueReferenceIncluded(request) {
   const serializedRequest = JSON.stringify(request.body)
   assert.ok(
-    serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
-    'The follow-up request did not include the enriched default Issue title'
+    !serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
+    'The follow-up request eagerly included the default Issue title'
   )
   assert.match(
     serializedRequest,
-    /cloud:\/\/projects\/default-work-items\/todos\/WORK-\d+/,
+    /space_id\\?":\\?"default-work-items\\?"/,
+    'The follow-up request did not identify the default Issue project'
+  )
+  assert.match(
+    serializedRequest,
+    /item_id\\?":\\?"WORK-\d+\\?"/,
     'The follow-up request did not include the bound default Issue reference'
   )
 }
@@ -1156,6 +1165,7 @@ async function main() {
     mkdir(codexSqliteHome, { recursive: true }),
     mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  await prepareNativeKeychainPreferences(homePath)
   // Desktop scenarios own their viewport instead of inheriting first-launch defaults.
   // The host clamps these bounds to each runner's available display, as before.
   // Exercise consent explicitly; the product default already marks it as asked.
@@ -1320,6 +1330,8 @@ async function main() {
             : undefined,
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
+        modelCatalogOverrides: desktopScenario?.cloudModelCatalogOverrides ?? [],
+        remoteExecutorType: desktopScenario?.remoteExecutorType,
         scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
         workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
@@ -1553,19 +1565,16 @@ async function main() {
       for (const key of Object.keys(appEnvironment)) delete appEnvironment[key]
       Object.assign(appEnvironment, cleanEnvironment)
     }
-    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
-    if (desktopScenario?.requiresNativeCloudAuthorization) {
-      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
-      nativeCloudLogin = nativeCloudAuthorizationFixture(
-        cloudEnvironment,
-        electronUserDataDirectory,
-        appBinary
-      )
-      await nativeCloudLogin.authorize()
+    if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
+      await prepareRemoteDeviceConversationModel(electronUserDataDirectory, control.url)
     }
+    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
     await desktopScenario?.prepareUserDataLaunch?.()
+    const usesNativeCloudInspector =
+      cloudEnvironment && (!desktopScenario || desktopScenario.requiresNativeCloudAuthorization)
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
+        ...(usesNativeCloudInspector ? ['--inspect=127.0.0.1:0'] : []),
         ...(process.platform === 'win32'
           ? ['--enable-logging=file', `--log-file=${join(resultDir, 'electron.log')}`]
           : []),
@@ -1584,6 +1593,8 @@ async function main() {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       })
+      const nativeInspector = usesNativeCloudInspector ? readInspectorEndpoint(child) : null
+      nativeInspector?.catch(() => undefined)
       const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
       // Observe early failure now; the await below still propagates it after log setup.
       scenarioStartup?.catch(() => undefined)
@@ -1625,10 +1636,14 @@ async function main() {
       }
       try {
         await scenarioStartup
+        if (nativeInspector) {
+          control.nativeInspectorPort = Number(new URL(await nativeInspector).port)
+        }
       } catch (error) {
         await stopDesktopAppProcess(child)
         throw error
       }
+      control.applicationProcessId = child.pid
       return child
     }
     app = await startDesktopAppProcess()
@@ -1728,6 +1743,15 @@ async function main() {
       /^https?:/,
       'The Electron desktop controller did not connect from its local renderer origin'
     )
+    if (usesNativeCloudInspector) {
+      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
+      nativeCloudLogin = nativeCloudAuthorizationFixture(
+        cloudEnvironment,
+        electronUserDataDirectory,
+        control
+      )
+      await nativeCloudLogin.authorize()
+    }
     if (VERIFIES_INITIAL_TELEMETRY_CONSENT) {
       await verifyInitialTelemetryConsent(control, [
         workspacePath,
@@ -2664,11 +2688,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     await control.command('waitFor', secondaryProjectRowSelector, {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
     await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
 
     phase = 'composer-project-folder-select'
@@ -3083,7 +3107,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
         control.setScenario('checkpoint_task')
         const enrichedIssueRequest = await sendProjectAiCheckpointPrompt(control, composerSelector)
-        assertDefaultIssueContextInjected(enrichedIssueRequest)
+        assertDefaultIssueReferenceIncluded(enrichedIssueRequest)
         phase = 'cloud-issue-task-sidebar-restored'
         await reloadMainWindow(
           control,
@@ -4187,9 +4211,21 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await captureVerificationScreenshot(control, 'file-panel-anchor-01-before-open.png')
 
       await control.command('click', filePanelLinkSelector)
-      await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
+      const linkedFileWorkspaceSelector = '[data-workspace-tab-content][aria-hidden="false"]'
+      const activeLinkedFileTabSelector = `${linkedFileWorkspaceSelector} [data-testid^="right-workspace-file-tab-"][role="tab"][aria-selected="true"]`
+      await control.command('waitFor', activeLinkedFileTabSelector, {
+        text: FILE_PANEL_LINK_NAME,
+        visible: true,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      const linkedFileTabId = await control.command('getAttribute', activeLinkedFileTabSelector, {
+        value: 'data-testid',
+        text: FILE_PANEL_LINK_NAME,
+        visible: true,
+      })
+      assert.ok(linkedFileTabId, 'The linked file did not activate its workspace tab')
+      const linkedFileTabSelector = `${linkedFileWorkspaceSelector} [data-testid=${JSON.stringify(linkedFileTabId)}]`
+      const linkedFileTabCloseSelector = `${linkedFileWorkspaceSelector} [data-testid=${JSON.stringify(`${linkedFileTabId}-close-button`)}]`
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
         join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
@@ -4249,13 +4285,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           }
         )}`
       )
-      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+      await control.command('click', linkedFileTabCloseSelector)
       await waitForSnapshot(
         control,
-        snapshot => !snapshot.testIds.includes('right-workspace-file-tab'),
+        snapshot => !snapshot.testIds.includes(linkedFileTabId),
         'The file panel remained open after the anchor regression check',
         DEFAULT_STEP_TIMEOUT_MS,
-        ACTIVE_WORKBENCH_SELECTOR
+        linkedFileWorkspaceSelector
       )
       await control.command('finishAnimations', 'body')
       const filePanelScrollerAfterClose = await waitForElementWidth(
@@ -4281,7 +4317,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         `Closing the file panel moved the linked paragraph from ${filePanelAnchorBeforeOpen.top}px to ${filePanelAnchorAfterClose.top}px`
       )
       await control.command('click', filePanelLinkSelector)
-      await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
+      await control.command('waitFor', linkedFileTabSelector, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('finishAnimations', 'body')
@@ -4326,7 +4362,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await waitForSnapshot(
         control,
         snapshot =>
-          snapshot.testIds.includes('right-workspace-file-tab') &&
+          snapshot.testIds.includes(linkedFileTabId) &&
           !snapshot.testIds.includes('assistant-markdown-link-tooltip'),
         'The assistant file-link tooltip did not dismiss above the open file panel',
         DEFAULT_STEP_TIMEOUT_MS
@@ -4540,7 +4576,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'true',
         'The review tab was not active after switching back to the first task'
       )
-      await control.command('click', '[data-testid="right-workspace-file-tab"]')
+      await control.command('click', linkedFileTabSelector)
       await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
         target: activeTaskWorkbenchSelector,
         text: FILE_PREVIEW_RESTORE_MARKER,
@@ -4569,7 +4605,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The browser tab was not restored after switching conversations'
       )
       assert.ok(
-        restoredWorkspaceSnapshot.testIds.includes('right-workspace-file-tab'),
+        restoredWorkspaceSnapshot.testIds.includes(linkedFileTabId),
         'The file tab was not restored after switching conversations'
       )
       assert.ok(
@@ -4684,7 +4720,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await control.command('click', bottomWorkspaceTabCloseSelector)
       await control.command('hover', rightBrowserTabSelector)
       await control.command('click', rightBrowserTabCloseSelector)
-      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+      await control.command('click', linkedFileTabCloseSelector)
       await control.command('click', '[data-testid="right-workspace-review-tab-close-button"]')
 
       await control.command('fill', composerSelector, { value: '' })
@@ -4957,6 +4993,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
     const networkDiagnostics = collectWindowsNetworkDiagnostics()
+    await writeFile(
+      join(resultDir, 'plugin-runtime-diagnostics.json'),
+      `${JSON.stringify(await collectPluginRuntimeDiagnostics(homePath, executorHome, cloudEnvironment), null, 2)}\n`,
+      'utf8'
+    )
     await writeFile(
       join(resultDir, 'codex-sqlite-diagnostics.json'),
       `${JSON.stringify(await collectCodexSqliteDiagnostics(codexSqliteHome), null, 2)}\n`,

@@ -16,6 +16,7 @@ import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import {
   copyLocalExecutorDebugInfo,
   ensureLocalExecutorAvailable,
+  ensureLocalExecutorStarted,
   readLocalExecutorLog,
   type LocalExecutorLog,
   type LocalExecutorStatus,
@@ -237,9 +238,18 @@ export function LocalRuntimeInitializer({
     () => resolveLocalRuntimeState(fallbackError, runtimeErrorText),
     [fallbackError, runtimeErrorText]
   )
+  const prepareExecutor = useCallback(async (): Promise<LocalRuntimeState | null> => {
+    try {
+      await ensureLocalExecutorStarted()
+      return null
+    } catch (cause) {
+      return { phase: 'failed', error: errorMessage(cause, fallbackError), cause }
+    }
+  }, [fallbackError])
   const subscribeStartup = useCallback(
-    (listener: () => void) => startup.subscribe(listener, resolveStartup, cloudConnection),
-    [startup, resolveStartup, cloudConnection]
+    (listener: () => void) =>
+      startup.subscribe(listener, resolveStartup, cloudConnection, prepareExecutor),
+    [startup, resolveStartup, cloudConnection, prepareExecutor]
   )
   const { state, startupAttempt, slowStartupTimedOut } = useSyncExternalStore(
     subscribeStartup,

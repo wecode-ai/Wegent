@@ -26,6 +26,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
         "runtime.connections.host",
         "runtime.connections.catalog",
         "runtime.connections.resources",
+        "runtime.connections.observations.collect",
         "runtime.connections.dependencies.inventory",
         "runtime.python.has_demand",
     ] {
@@ -342,6 +343,7 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
             .expect("preparing turn map lock should not be poisoned")
             .get("task-1"),
         Some(&PreparingTurn {
+            owner_request: None,
             cancellation_requested: true
         })
     );
@@ -1188,6 +1190,8 @@ pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandl
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.codex_app_server =
+        CodexAppServerClient::isolated_for_test("/bin/false", root.join("codex"));
     handler.transcript_test_workers = Some(Arc::new(tokio::sync::Semaphore::new(2)));
     handler.store = RuntimeWorkStore::new(runtime_work_dir.join("index.json"));
     handler.worktrees = WorktreeManager::new(runtime_work_dir.join("worktrees.json"));
@@ -2214,6 +2218,7 @@ fn turn_result_persists_goal_status_before_native_execution_settles() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: None,
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "done".to_owned(),
@@ -2326,6 +2331,7 @@ fn stale_terminal_result_cannot_emit_or_finish_replacement_execution() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: None,
             thread_id: "thread-stale".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "stale".to_owned(),
@@ -2894,6 +2900,7 @@ fn failed_responses_emit_runtime_turn_duration() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: Some("server_overloaded".to_owned()),
             thread_id: "thread-failed-duration".to_owned(),
             outcome: ExecutionOutcome::Failed {
                 message: "upstream failed".to_owned(),
@@ -2912,6 +2919,7 @@ fn failed_responses_emit_runtime_turn_duration() {
         .try_recv()
         .expect("failed response should be emitted");
     assert_eq!(event["event"], "response.failed");
+    assert_eq!(event["payload"]["data"]["type"], "server_overloaded");
     assert_eq!(event["payload"]["subtaskId"], "turn-failed-duration");
     assert_eq!(event["payload"]["data"]["startedAt"], 1_780_000_000_000_i64);
     assert_eq!(event["payload"]["data"]["durationMs"], 2_500);
@@ -5596,8 +5604,33 @@ fn temp_runtime_work_index_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "wegent-runtime-work-{label}-{}-{}.json",
         std::process::id(),
-        now_ms()
+        uuid::Uuid::new_v4()
     ))
+}
+
+#[test]
+fn same_label_fixture_paths_are_unique_under_parallel_creation() {
+    let paths = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    (0..32)
+                        .map(|_| temp_runtime_work_index_path("preparation-terminal-state"))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let unique: std::collections::HashSet<_> = paths.iter().collect();
+    assert_eq!(
+        unique.len(),
+        paths.len(),
+        "Parallel fixtures must never share a runtime store"
+    );
 }
 
 fn initialize_test_repository(path: &Path) {

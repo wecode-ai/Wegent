@@ -249,8 +249,7 @@ export const ProjectComposerBody = forwardRef<ComposerInputHandle, ProjectCompos
                 if (text) appendText(text)
                 return
               }
-              void transferServices
-                .resolveTransfer(event.dataTransfer, 'drop')
+              void Promise.resolve(transferServices.resolveTransfer(event.dataTransfer, 'drop'))
                 .then(async ({ referenceEntries, attachmentFiles }) => {
                   const references = workspacePathReferenceText(referenceEntries)
                   if (references) appendText(references)

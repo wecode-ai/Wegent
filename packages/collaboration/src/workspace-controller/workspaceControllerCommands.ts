@@ -232,6 +232,23 @@ export function createCollaborationWorkspaceControllerCommands(
       const snapshot =
         externalBoard?.snapshot ?? homeSnapshot ?? (await loadStandardSnapshot(projectId))
       if (!isCurrent() || mutationGeneration !== projectMutationGeneration(projectId)) return
+      const selected = getSelectedIssue()
+      if (
+        externalBoard &&
+        selected?.cloud_project_id === project.id &&
+        !snapshot.items.some(item => item.id === selected.id)
+      ) {
+        try {
+          const currentIssue = await api.issues.get(selected.id)
+          if (!isCurrent() || mutationGeneration !== projectMutationGeneration(projectId)) return
+          if (getSelectedIssue()?.id === selected.id)
+            dispatch({ type: 'replace-issue', issue: currentIssue })
+        } catch {
+          if (!isCurrent() || mutationGeneration !== projectMutationGeneration(projectId)) return
+          if (getSelectedIssue()?.id === selected.id) dispatch({ type: 'clear-selected-issue' })
+        }
+      }
+      if (!isCurrent() || mutationGeneration !== projectMutationGeneration(projectId)) return
       dispatch({
         type: 'project-loaded',
         project,
@@ -508,7 +525,7 @@ export function createCollaborationWorkspaceControllerCommands(
         if (!ownerIsCurrent() || revision !== selectedIssueLoadRevision) return null
         const [loadedAssignments, executions] = await Promise.all([
           api.assignments ? api.assignments.list(issueId) : Promise.resolve([]),
-          api.executions?.list
+          api.executions && !issue.invited_only
             ? api.executions
                 .list(issue.cloud_project_id, { includeTerminal: true })
                 .then(items => items.filter(execution => execution.loop_item_id === issueId))

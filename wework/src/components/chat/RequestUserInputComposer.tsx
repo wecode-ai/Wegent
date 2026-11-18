@@ -14,12 +14,14 @@ export function RequestUserInputComposer({
   payload,
   source,
   renderQuestion,
+  questionContext,
   children,
 }: {
   payload: RequestUserInputPayload | null
   source?: RuntimeTaskAddress | null
   renderQuestion: (onCollapse?: () => void) => ReactNode
   children: ReactNode
+  questionContext?: ReactNode
 }) {
   const { t } = useTranslation('common')
   const key = payload
@@ -47,6 +49,14 @@ export function RequestUserInputComposer({
     <>
       {payload && (
         <div key={key} ref={panel} id={panelId} hidden={hidden} inert={hidden}>
+          {!hidden && questionContext && (
+            <div
+              data-testid="question-conversation-context"
+              className="mb-1 min-w-0 rounded-lg bg-background"
+            >
+              {questionContext}
+            </div>
+          )}
           {renderQuestion(
             canCollapse ? () => setState({ key, questionIds, collapsed: true }) : undefined
           )}

@@ -1,3 +1,6 @@
+import { retainAppshotReceiver } from '@/features/appshots/appshotReceiver'
+import type { Attachment } from '@/types/api'
+import { createWorkbenchOwnerObservations } from './workbenchOwnerObservations'
 import { createWorkbenchRouteNavigation } from './workbenchRouteNavigation'
 import { createHarnessAppLaunchActor } from '@/features/harness-apps/harnessAppLaunchActor'
 import {
@@ -41,6 +44,9 @@ import { consumeWorkbenchNewChatRequest } from '@/lib/workbenchComposerFocus'
 import type { LocalDeviceApp, UnifiedModel } from '@/types/api'
 
 export interface WorkbenchSessionInput extends WorkbenchStreamInput {
+  appshotReceiver?: { onOpenWework(): void }
+  addAppshotAttachment: (attachment: Attachment) => void
+  cloudConnected: boolean
   taskRouteActive?: boolean
   harnessAppLaunch: Parameters<ReturnType<typeof createHarnessAppLaunchActor>['observe']>[0]
   operations: WorkbenchSessionOperations
@@ -80,6 +86,11 @@ export function createWorkbenchSession(
 ) {
   let accountOwner: TabAccountOwner | null = null
   let input: WorkbenchSessionInput | null = null
+  let releaseAppshots: (() => void) | undefined
+  const suspendAppshots = () => {
+    releaseAppshots?.()
+    releaseAppshots = undefined
+  }
   let observers = 0
   let observerVersion = 0
   let running = false
@@ -147,6 +158,7 @@ export function createWorkbenchSession(
   const diagnostics = createWorkbenchDebugPublisher()
   const coreDshModels = createCoreDshModelPublisher()
   const workbenchTelemetry = createWorkbenchTelemetry(state)
+  const ownerObservations = createWorkbenchOwnerObservations(state, tabId)
   const projects = createWorkbenchSessionProjects(owner)
   function schedule() {
     if (scheduled) return
@@ -161,8 +173,10 @@ export function createWorkbenchSession(
     harnessLauncher.dispose()
     diagnostics.suspend()
     notifications.release()
+    suspendAppshots()
     if (!running) return
     running = false
+    ownerObservations.suspend()
     workbenchTelemetry.deactivate()
     coreDshModels.suspend()
     state.dispose()
@@ -233,6 +247,7 @@ export function createWorkbenchSession(
       })
     } else streams?.update()
     if (observers) {
+      ownerObservations.observe(input.services, input.cloudConnected)
       workbenchTelemetry.activate()
       coreDshModels.update(input.coreDshModels, input.services.localHarnessModelApi)
     } else {
@@ -291,6 +306,16 @@ export function createWorkbenchSession(
       observers > 0 && active && input.taskRouteActive === true,
       input.notificationTaskReminders
     )
+    if (observers && active && input.appshotReceiver) {
+      releaseAppshots ??= retainAppshotReceiver(
+        () => {
+          if (observers && canNavigate()) inputs().appshotReceiver?.onOpenWework()
+        },
+        attachment => {
+          if (observers && canNavigate()) inputs().addAppshotAttachment(attachment)
+        }
+      )
+    } else suspendAppshots()
     notifications.setActive(observers > 0 && active)
     projects.reconcile()
   }
@@ -361,6 +386,7 @@ export function createWorkbenchSession(
                 routeNavigation.stop()
                 diagnostics.suspend()
                 notifications.release()
+                suspendAppshots()
                 workbenchTelemetry.deactivate()
                 coreDshModels.suspend()
                 if (!tabs || !tabId || !isHeld()) {

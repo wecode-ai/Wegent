@@ -1,3 +1,4 @@
+import { useDesktopPaneConnectionEvents } from './useDesktopPaneConnectionEvents'
 import { useDesktopPaneProjectGuide } from './useDesktopPaneProjectGuide'
 import { useDesktopPanePanelActions } from './useDesktopPanePanelActions'
 import { useDesktopPaneLayout } from './useDesktopPaneLayout'
@@ -863,6 +864,14 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
     [compactContextAction]
   )
   const setCurrentGoal = useCallback(() => void setCurrentGoalAction(), [setCurrentGoalAction])
+  const { eventCancellationUnsupported, cancelCurrentEventSubscription, eventSubscriptionScope } =
+    useDesktopPaneConnectionEvents({
+      activeDevice,
+      activeDeviceUnavailable,
+      deviceApi: paneContext.deviceApi,
+      currentRuntimeTask: paneContext.currentRuntimeTask,
+      t: paneContext.t,
+    })
   const pauseCurrentGoal = useCallback(
     () => void pauseCurrentGoalAction(),
     [pauseCurrentGoalAction]
@@ -887,6 +896,10 @@ export function useDesktopWorkbenchPaneModel(props: DesktopWorkbenchPaneProps) {
 
   return {
     ...panelSession.resources,
+    activeDeviceUnavailable,
+    eventCancellationUnsupported,
+    cancelCurrentEventSubscription,
+    eventSubscriptionScope,
     ...paneLayout,
     ...panelActions,
     ...paneContext,

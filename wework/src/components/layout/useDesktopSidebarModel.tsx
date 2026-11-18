@@ -601,14 +601,34 @@ export function useDesktopSidebarModel({
     standaloneDeviceId,
     standaloneWorkspacePath,
   ])
+  const currentRuntimeTaskPinned = useMemo(
+    () =>
+      Boolean(
+        currentRuntimeTask &&
+        visiblePinnedTaskItems.some(({ workspace, task }) =>
+          isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
+        )
+      ),
+    [currentRuntimeTask, visiblePinnedTaskItems]
+  )
+  const selectedRuntimeProjectPinned = Boolean(
+    selectedRuntimeProject && runtimeWorkByProjectId.get(selectedRuntimeProject.id)?.project.pinned
+  )
   const subscribeSelectedProject = useCallback(
     (listener: () => void) =>
       sidebarPreferences.subscribeSelection(
         listener,
         selectedRuntimeProject?.id ?? null,
-        selectedRuntimeProject?.autoExpandKey ?? null
+        selectedRuntimeProject?.autoExpandKey ?? null,
+        { taskPinned: currentRuntimeTaskPinned, projectPinned: selectedRuntimeProjectPinned }
       ),
-    [sidebarPreferences, selectedRuntimeProject?.id, selectedRuntimeProject?.autoExpandKey]
+    [
+      sidebarPreferences,
+      selectedRuntimeProject?.id,
+      selectedRuntimeProject?.autoExpandKey,
+      currentRuntimeTaskPinned,
+      selectedRuntimeProjectPinned,
+    ]
   )
   const { projectId: selectedRuntimeProjectId } = useSyncExternalStore(
     subscribeSelectedProject,
@@ -662,22 +682,12 @@ export function useDesktopSidebarModel({
   const currentRuntimeTaskKey = currentRuntimeTask
     ? getRuntimeNotificationKey(currentRuntimeTask)
     : null
-  const currentRuntimeTaskPinned = useMemo(
-    () =>
-      Boolean(
-        currentRuntimeTask &&
-        visiblePinnedTaskItems.some(({ workspace, task }) =>
-          isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
-        )
-      ),
-    [currentRuntimeTask, visiblePinnedTaskItems]
-  )
   const currentRuntimeTaskRowVisible = Boolean(
     currentRuntimeTask &&
     !collapsedReadTaskKeys.has(getRuntimeTaskReminderKey(currentRuntimeTask)) &&
     (currentRuntimeTaskPinned ||
       (selectedRuntimeProjectId !== null &&
-        displayedProjectsExpanded &&
+        (selectedRuntimeProjectPinned || displayedProjectsExpanded) &&
         displayedExpandedProjectIds.has(selectedRuntimeProjectId)) ||
       (selectedRuntimeChatVisible && displayedChatsExpanded))
   )

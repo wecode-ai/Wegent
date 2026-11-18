@@ -1,3 +1,4 @@
+import type { DeviceInfo } from '@/types/api'
 import { useDOMEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import { useCallback, useRef, useState, type ReactNode } from 'react'
 import {
@@ -22,7 +23,11 @@ import {
   type WorkbenchSidebarPaneDragData,
   type WorkbenchSidebarPaneDragEndData,
 } from './workbenchPaneDrag'
-import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
+import {
+  getWorkbenchPaneKey,
+  workbenchPanesShareTask,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneIdentity'
 import {
   WorkbenchPaneHost,
   WorkbenchPanePortal,
@@ -44,6 +49,7 @@ const MIN_PANE_WIDTH = 320
 const MIN_PANE_HEIGHT = 240
 
 interface SplitWorkbenchPaneStackProps {
+  devices?: DeviceInfo[]
   activePane: WorkbenchPaneIdentity
   layout: WorkbenchLayoutState
   showWorkbenchBackground: boolean
@@ -91,6 +97,7 @@ interface LayoutLabels {
 }
 
 export function SplitWorkbenchPaneStack({
+  devices = [],
   activePane,
   layout,
   showWorkbenchBackground,
@@ -112,6 +119,7 @@ export function SplitWorkbenchPaneStack({
   const activeKey = getWorkbenchPaneKey(activePane)
   const [paneResources, setPaneResources] = useState(() => ({
     signature: '',
+    mountKeys: new WeakMap<HTMLDivElement, string>(),
     panes: new Map<string, WorkbenchPaneIdentity>(),
     hosts: new Map<string, HTMLDivElement>(),
   }))
@@ -156,19 +164,35 @@ export function SplitWorkbenchPaneStack({
     [paneResources.panes, resolvePane]
   )
 
-  const getPaneHost = useCallback(
-    (paneKey: string) => {
-      const cached = paneResources.hosts.get(paneKey)
-      if (cached) return cached
-      if (typeof document === 'undefined') return null
-      const host = document.createElement('div')
-      host.className = 'h-full min-h-0 min-w-0'
-      host.dataset.workbenchPaneHost = paneKey
+  const getPaneHost = (paneKey: string) => {
+    const cached = paneResources.hosts.get(paneKey)
+    if (cached) return cached
+    const pane = paneResources.panes.get(paneKey)
+    const previous = [...paneResources.hosts].find(([key]) => {
+      const previousPane = paneResources.panes.get(key)
+      return (
+        !mountedPaneKeys.includes(key) &&
+        pane &&
+        previousPane &&
+        workbenchPanesShareTask(previousPane, pane, devices)
+      )
+    })
+    if (previous) {
+      const [key, host] = previous
+      paneResources.hosts.delete(key)
+      paneResources.panes.delete(key)
       paneResources.hosts.set(paneKey, host)
+      host.dataset.workbenchPaneHost = paneKey
       return host
-    },
-    [paneResources.hosts]
-  )
+    }
+    if (typeof document === 'undefined') return null
+    const host = document.createElement('div')
+    host.className = 'h-full min-h-0 min-w-0'
+    host.dataset.workbenchPaneHost = paneKey
+    paneResources.hosts.set(paneKey, host)
+    paneResources.mountKeys.set(host, crypto.randomUUID())
+    return host
+  }
 
   const panes = collectWorkbenchPanes(layout.root)
   const splitMode = panes.length > 1
@@ -192,10 +216,15 @@ export function SplitWorkbenchPaneStack({
   )
 
   if (paneResources.signature !== mountedPaneKeySignature) {
+    for (const key of mountedPaneKeys) {
+      resolveCachedPane(key)
+      getPaneHost(key)
+    }
     const retainedKeys = new Set(mountedPaneKeys)
     // Host refs detach native nodes on commit. Hidden panes remain in the retained set.
     setPaneResources({
       signature: mountedPaneKeySignature,
+      mountKeys: paneResources.mountKeys,
       panes: new Map([...paneResources.panes].filter(([key]) => retainedKeys.has(key))),
       hosts: new Map([...paneResources.hosts].filter(([key]) => retainedKeys.has(key))),
     })
@@ -295,7 +324,7 @@ export function SplitWorkbenchPaneStack({
         if (!pane || !host) return null
         return (
           <WorkbenchPanePortal
-            key={paneKey}
+            key={paneResources.mountKeys.get(host)}
             pane={pane}
             host={host}
             renderPane={renderPane}

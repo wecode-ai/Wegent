@@ -78,6 +78,20 @@ export function applySharedChangeRequestSnapshot(
   snapshot: TaskChangeRequestSnapshot
 ): EnvironmentInfo {
   const provider = snapshot.provider ?? snapshot.changeRequest?.provider
+  const previous = snapshot.changeRequest ?? environmentInfo.changeRequest?.changeRequest
+  if ((snapshot.error || snapshot.stale) && previous) {
+    return {
+      ...environmentInfo,
+      changeRequest: { provider: previous.provider, state: 'found', changeRequest: previous },
+      changeRequestObservation: snapshot.observation ?? {
+        state: snapshot.lookupState === 'unauthenticated' ? 'auth_required' : 'error',
+        transport: 'poll',
+        lastSuccessAt: null,
+        stale: true,
+        error: snapshot.error,
+      },
+    }
+  }
   if (
     provider &&
     snapshot.lookupState &&
@@ -102,6 +116,7 @@ export function applySharedChangeRequestSnapshot(
   if (!resolvedProvider) return environmentInfo
   return {
     ...environmentInfo,
+    changeRequestObservation: snapshot.observation,
     changeRequest: snapshot.changeRequest
       ? {
           provider: resolvedProvider,

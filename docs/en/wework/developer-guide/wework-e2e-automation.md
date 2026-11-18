@@ -30,6 +30,16 @@ The first model-routing task and real Harness CLI launch use the workbench start
 
 Numeric Process Explorer filters match the exact PID, excluding matches in other processes' launch arguments or PID substrings. Text filters still search process names and launch details. The application-menu checkpoint retains its assertion that filtering by the application PID excludes unrelated helpers.
 
+Protocol-specific fixtures first confirm that the new conversation is active, then open the picker and actually choose the target model. Neither a previous composer nor a provisional default label establishes completed configuration. Independent catalogs may later restore the configured default; explicit selection pins the protocol fixture’s intended model. Model catalogs may publish reasoning capabilities after the picker opens. Keep the open model list on its current panel until an explicit model choice enters the effort panel. Catalog save waits observe native reload, editor dismissal, and restart confirmation together; a background reload log alone does not complete the save interaction. Mention-pagination fixtures use the shared batch processor for cleanup, with at most eight requests per batch and explicit failures, preventing teardown from exhausting the Backend pool and contaminating the next case.
+
+Windows Git connection adapters reuse the existing PATH/PATHEXT and Node batch-shim resolution so a preferred `gh.cmd` is not bypassed by the system CLI. Arguments pass directly to the native executable without shell interpolation; authentication failures remain explicit. Unix retains native PATH lookup, which skips non-executable same-name candidates. The shared runner removes startup-recovery workspaces inside the result directory after the app exits, rather than deleting a directory still held by native threads. Windows scheduling data adds only successful checkpoint start/end measurements and source links, preserving existing medians and excluding failed or unfinished checkpoints. Runner count, preparation, and timeouts remain unchanged. Native plugin decision failures retain window metadata scoped to the app process; Hook failures retain worker logs and run outcomes in a top-level diagnostic file that survives result compaction.
+
+Before verifying an experimental feature on another page, wait for both the target toggle state and its enabled state, confirming that native preference saving has finished. The Settings page’s optimistic toggle state does not prove that another page has applied the preference.
+
+The Issue sticky-header check uses a 1440×720 content viewport, first verifies overflow and that the editable title has scrolled out, then verifies the sticky title and restores the original size. The Windows native-decision helper records stages around assembly loading, window lookup, and button invocation, plus termination metadata. E2E builds record project-picker mounts, menu state, and close requests to distinguish native blocking, remounts, and close events. Original deadlines, matching conditions, and security assertions remain intact.
+
+Ordinary desktop E2E synchronously writes redacted `[shutdown-step]` and `[application-quit]` records into the captured `app.log` stream even without a release-slot directory, avoiding lost asynchronous output during native exit. Failed Linux exit waits also record the process’s thread states, wait channels, and readable kernel stacks; diagnostic read failures never replace the original failure. Only steps wrapped by `traceShutdownStep`, such as `desktop-runtime`, `control-bridge`, and `workspace-catalog-log`, record start, completion, or failure; `completed` means that the wrapped callback returned without throwing. `systemResume.stop()` is not wrapped. Because `performance-recording` catches recorder stop errors internally, its `completed` status does not prove that recorder flushing succeeded; also inspect `[performance]` error logs. These records distinguish unfinished traced cleanup from an Electron quit event followed by a surviving native process. Release slots retain their own `activation-diagnostics.log`. These diagnostics do not change exit budgets or process-liveness assertions.
+
 ## Running Tests
 
 Install the Playwright browser before the first run:
@@ -135,6 +145,8 @@ The test does not simulate Wework, Executor, or Codex. To keep regression result
 
 Reply predictions and their image-description requests are dispatched independently of the foreground scenario. A previous conversation's background image request can arrive after the protocol matrix starts. The model fixture identifies it first, retains the image-description protocol checks and response, and leaves matrix state unchanged. `desktop-reply-prediction-fixture.test.mjs` covers this cross-scenario path; foreground endpoint and model ID assertions remain intact.
 
+`reply-prediction-official` exercises reply suggestions through the local model proxy with an official CodeX subscription. Only the subscription model service is simulated; Electron, Codex, Executor, and task storage remain real. It verifies suggestions across consecutive turns, preservation of the parent conversation identity, prediction after a native app-server restart, and subsequent conversation turns. A prediction fork inherits its parent's provider URL, so it must reuse the parent thread's bound route and retain a reference while generating. The independent route rule for ordinary forks does not apply to predictions. If the parent route has not been restored, the existing stale-route recovery mechanism applies. Cold native app-server restoration also rebinds the parent thread and restores its provider URL and authentication settings without overriding the conversation model, reasoning effort, or instructions. The checkpoint runs in an existing core CI shard.
+
 The model protocol matrix defines 18 combinations across execution location, model source, and protocol:
 
 - Local execution covers local custom models, built-in Codex models, and cloud Model CRDs across all three protocols, for 9 complete text and tool lifecycles.
@@ -222,15 +234,17 @@ dedicated Linux shard so competing full-stack instances do not change the benchm
 CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
-Core and Cloud matrix jobs also provide suite-level parallelism across runners.
-The classifier provides 10 logical Core shards. Windows retains 10 runners;
-Linux sets `CORE_RUNNER_SCALE=1.5` and redistributes a full selection across
-15 runners using historical durations. Partial selections scale with their selected
-matrix, bounded by assignable checkpoints; selections without the history checkpoint
-retain their original matrix. The two Core benchmarks keep dedicated runners.
-Cloud uses 8 shards.
+Core and Cloud matrix jobs provide suite-level parallelism across runners.
+Linux Core, Windows Core and Linux Cloud balancing set `CORE_RUNNER_SCALE=1.5`.
+Full selections expand from 10, 10 and 8 runners to 15, 15 and 12 respectively.
+Partial selections scale their selected matrix, bounded by assignable checkpoints;
+a small change does not allocate the full suite's runner count. Per-runner checkpoint
+concurrency limits remain unchanged. The two Core benchmarks and exclusive Cloud
+shards stay isolated, and shared preparation groups stay together. Expansion adds
+setup costs. Historical timing replay predicts the test stage, not a measured
+speedup from a new CI run. Shared runner capacity can still introduce external queues.
 
-Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving new measured work. Original measured siblings move only when neither the known checkpoint peak nor the preparation-inclusive peak increases; otherwise they stay on their original runner. Partial selections without another measured destination retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Runner counts, benchmark isolation and the 40-minute test-step budget remain unchanged; failed scenario durations are not successful samples.
+Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving new measured work. Original measured siblings move only when neither the known checkpoint peak nor the preparation-inclusive peak increases; otherwise they stay on their original runner. Partial selections without another measured destination retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Capacity expansion retains benchmark isolation and the 40-minute test-step budget; failed scenario durations are not successful samples.
 Refresh existing weights as scenarios evolve, not only unknown entries. In run
 42411289396, Core 2 and 6 reached the step deadline after all completed checkpoints
 passed; profile-settings and plugin-bridge had been underestimated for three runs.
@@ -371,7 +385,7 @@ worker stacks with exit code `0xC00000FD`. Regressions enforce Clippy's
 for manual, assignment, and scheduler entry points; existing
 real desktop scenarios cover the complete execution flow.
 
-The plugin Python runtime checkpoints `python-runtime,plugin-development` reuse the existing Core 10 shard without adding a runner. Linux and Windows each retain ten Core shards, with every checkpoint and assertion preserved; `.github/scripts/classify-wework-desktop-e2e.sh --all` defines the actual grouping.
+The plugin Python runtime checkpoints `python-runtime,plugin-development` reuse the existing Core 10 shard without adding a runner. Logical Core groups preserve their checkpoints and assertions; capacity expansion determines the actual runner count, while `.github/scripts/classify-wework-desktop-e2e.sh --all` defines the actual grouping.
 
 The Python descriptor's 200ms deadline covers HTTP headers and body. Credential resolution and the
 final persisted Backend identity check run outside that HTTP deadline, so queued storage reads do not

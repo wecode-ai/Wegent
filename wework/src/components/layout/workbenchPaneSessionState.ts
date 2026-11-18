@@ -24,7 +24,7 @@ export interface PaneSessionState {
   localError: string | null
   answeredRequestUserInputIds: ReadonlySet<string>
   transcriptLoadingKey: string | null
-  transcriptError: string | null
+  transcriptError: unknown
   transcriptReloadVersion: number
   transcriptHasMoreBefore: boolean
   transcriptBeforeCursor: string | null

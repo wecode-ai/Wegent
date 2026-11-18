@@ -15,6 +15,7 @@ import {
 } from '@/features/workbench/changeRequestStatus'
 import { useTranslation } from '@/hooks/useTranslation'
 import { LOCAL_WORKBENCH_DEVICE_ALIAS } from '@/lib/workbench-device'
+import { observationLabelKey } from '@/features/workbench/resourceObservation'
 
 const visuals: Record<ChangeRequestVisualStatus, Pick<CollaborationIssueBadge, 'icon' | 'tone'>> = {
   draft: { icon: 'git-pull-request', tone: 'neutral' },
@@ -105,19 +106,22 @@ export function IssueChangeRequestBadges({
     const request = snapshot?.changeRequest
     if (!request) {
       const provider = target.changeRequestUrl!.includes('/-/merge_requests/') ? 'gitlab' : 'github'
-      const state = snapshot?.lookupState
-      const tooltip = snapshot
-        ? t(
+      const state =
+        snapshot?.observation?.state === 'auth_required' ? 'unauthenticated' : snapshot?.lookupState
+      const loading = !snapshot || snapshot.observation?.state === 'refreshing'
+      const tooltip = loading
+        ? t('todo.issue_pr_loading')
+        : t(
             `workbench.environment_change_request_${state === 'unavailable' || state === 'unauthenticated' ? state : 'error'}_${provider}`
           )
-        : t('todo.issue_pr_loading')
-      return { ...badge, tooltip, icon: snapshot ? badge.icon : 'loader' }
+      return { ...badge, tooltip, icon: loading ? 'loader' : badge.icon }
     }
     const status = changeRequestVisualStatus(request)
     const tooltip = [
       request.title,
       t(`workbench.change_request_status_${status}`),
       snapshot?.stale ? t('workbench.change_request_status_stale') : null,
+      snapshot?.observation ? t(observationLabelKey(snapshot.observation)) : null,
     ]
       .filter(Boolean)
       .join(' · ')

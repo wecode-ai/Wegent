@@ -1,11 +1,17 @@
 import { fileURLToPath } from 'node:url'
 import { fork, type ChildProcess } from 'node:child_process'
-import type { ToolResult } from '@trycua/cua-driver'
+import type {
+  GetWindowStateInput,
+  ListWindowsInput,
+  ListWindowsOutput,
+  ToolResult,
+  WindowStateOutput,
+} from '@trycua/cua-driver'
 import type { DriverRequest, DriverResponse } from './computer-use-driver-protocol.js'
 
 const LIFECYCLE_TIMEOUT_MS = 10_000
 const CANCELLATION_TIMEOUT_MS = 5_000
-type Result = string | ToolResult | undefined
+type Result = string | ToolResult | ListWindowsOutput | WindowStateOutput | undefined
 
 // Native AX calls against this app must cross a process boundary so AppKit
 // dispatches them on the app's main thread instead of the driver's Rust worker.
@@ -79,6 +85,22 @@ export class ComputerUseDriverProcess {
       { id: ++this.nextId, method: 'listTools' },
       options?.signal
     )) as string
+  }
+
+  async listWindows(input: ListWindowsInput): Promise<ListWindowsOutput> {
+    return (await this.request({
+      id: ++this.nextId,
+      method: 'listWindows',
+      input,
+    })) as ListWindowsOutput
+  }
+
+  async getWindowState(input: GetWindowStateInput): Promise<WindowStateOutput> {
+    return (await this.request({
+      id: ++this.nextId,
+      method: 'getWindowState',
+      input,
+    })) as WindowStateOutput
   }
 
   /** Forward cancellation to this request and await the native call's result. */

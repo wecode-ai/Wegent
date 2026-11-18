@@ -23,6 +23,7 @@ export interface SourceConnectionsInput {
   onChange(role: StandInRole): void
   onReady?(): void
   allResourcesLabel: string
+  cliUnavailableLabel?: string
 }
 interface State {
   adding: boolean
@@ -103,11 +104,16 @@ export function createSourceConnectionsModel(initial: SourceConnectionsInput) {
     setBusy(false)
   }
   const failSearch = (sequence: number, cause: unknown) => {
-    if (isCurrent(sequence))
-      setError({
-        message: getStandInErrorMessage(cause),
-        code: cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined,
-      })
+    if (!isCurrent(sequence)) return
+    const code =
+      cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : undefined
+    setError({
+      message:
+        code === 'connection_cli_request_unavailable' && input.cliUnavailableLabel
+          ? input.cliUnavailableLabel
+          : getStandInErrorMessage(cause),
+      code,
+    })
   }
   const search = async (cursor?: string) => {
     if (!listeners.size || state.busy || !state.query.trim()) return

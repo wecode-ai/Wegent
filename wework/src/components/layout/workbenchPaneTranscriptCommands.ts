@@ -71,7 +71,7 @@ export function createPaneTranscriptCommands(sessionOwner: PaneCommandContext) {
       )
     } catch (error) {
       if (!isTranscriptScopeCurrent()) return
-      setTranscriptError(error instanceof Error ? error.message : String(error))
+      setTranscriptError(error)
       console.error('[Wework] Runtime pane older transcript load failed', {
         key: loadKey,
         address,

@@ -195,6 +195,48 @@ describe('useCollaborationWorkspaceController location effects', () => {
     hookRuntime.reset()
   })
 
+  it('keeps the project mounted when opening and closing an Issue', async () => {
+    const api = createApi()
+    const location = {
+      projectId: projectA.id,
+      issueId: null as string | null,
+      view: 'board' as const,
+    }
+    renderController(api, location)
+    await vi.waitFor(() =>
+      expect(renderController(api, location).state.project?.id).toBe(projectA.id)
+    )
+    const reads = vi.mocked(api.issues.getBoardSnapshot).mock.calls.length
+    const opened = { ...location, issueId: issueA.id }
+    renderController(api, opened)
+    await vi.waitFor(() =>
+      expect(renderController(api, opened).state.selectedIssue?.id).toBe(issueA.id)
+    )
+    expect(renderController(api, opened).state.loading).toBe(false)
+    renderController(api, location)
+    await vi.waitFor(() => expect(renderController(api, location).state.selectedIssue).toBeNull())
+    expect(renderController(api, location).state.loading).toBe(false)
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(reads)
+  })
+
+  it('loads an invited Issue without requesting project authority', async () => {
+    const api = createApi()
+    const invited = { ...issueA, invited_only: true, can_edit: true }
+    api.issues.get = vi.fn().mockResolvedValue(invited)
+    const location = {
+      projectId: projectA.id,
+      issueId: issueA.id,
+      view: 'board' as const,
+    }
+    renderController(api, location)
+    await vi.waitFor(() => expect(renderController(api, location).state.loading).toBe(false))
+    expect(renderController(api, location).state.selectedIssue).toEqual(invited)
+    expect(api.projects.get).not.toHaveBeenCalled()
+    expect(api.projects.list).not.toHaveBeenCalled()
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled()
+    expect(renderController(api, location).state.error).toBeNull()
+  })
+
   it('keeps a host-managed project catalog loaded when switching between board and settings', async () => {
     const api = createApi()
     const location = {
@@ -228,6 +270,31 @@ describe('useCollaborationWorkspaceController location effects', () => {
     expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled()
     RenderControllerFixture(api, { ...location, view: 'board' })
     await vi.waitFor(() => expect(api.issues.getBoardSnapshot).toHaveBeenCalledWith(projectA.id))
+  })
+
+  it('retains the directly opened Issue when settings metadata arrives later', async () => {
+    const api = createApi()
+    let resolveProject!: (project: CollaborationProject) => void
+    api.projects.get = vi.fn(
+      () =>
+        new Promise(resolve => {
+          resolveProject = resolve
+        })
+    )
+    const location = {
+      projectId: projectA.id,
+      issueId: issueA.id,
+      view: 'manage' as const,
+    }
+    renderController(api, location)
+    await vi.waitFor(() =>
+      expect(renderController(api, location).state.selectedIssue?.id).toBe(issueA.id)
+    )
+    resolveProject(projectA)
+    await vi.waitFor(() =>
+      expect(renderController(api, location).state.project?.id).toBe(projectA.id)
+    )
+    expect(renderController(api, location).state.selectedIssue?.id).toBe(issueA.id)
   })
 
   it('defaults My Work closed and falls an old root location back to home', async () => {

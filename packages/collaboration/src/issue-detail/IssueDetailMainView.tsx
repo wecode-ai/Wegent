@@ -352,6 +352,7 @@ export function IssueDetailMainView({ model }: { model: IssueDetailModel }) {
             onClose: () => setStatusHistoryOpen(false),
           }) ?? null)
         : null}
+      {viewModel.outsideAssigneeDialog}
     </div>
   )
 }

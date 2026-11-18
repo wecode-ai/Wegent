@@ -34,9 +34,9 @@ export async function sendSystemNotification({
   if (!isElectronRuntime()) return
 
   const testState = systemNotificationTestState()
-  if (testState && !reply) {
+  if (testState) {
     testState.notifications.push({ title, body, address, url })
-    return
+    if (!reply) return
   }
 
   try {

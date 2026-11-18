@@ -26,6 +26,7 @@ export function TodoEditor(props: TodoEditorProps) {
     project?.access_role,
     props.mode === 'edit' ? props.editable : true,
     item?.can_view_detail,
+    item?.invited_only,
     props.canAssign,
     props.mode === 'create' ? (props.draftScope ?? props.initialStatus) : null,
   ])

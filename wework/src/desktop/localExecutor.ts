@@ -1,3 +1,4 @@
+import type { DeviceInfo } from '@/types/api'
 import type { RuntimeEvent as LocalExecutorEvent } from '@wegent/chat-core'
 import { readRuntimeTranscript } from '@wegent/chat-core'
 import {
@@ -10,6 +11,12 @@ import {
 import { resolveLocalCodexProxyUrl } from './systemProxy'
 import { createModelLoadingTrace, traceModelLoading } from '@/lib/model-loading-diagnostics'
 import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { flushDesktopLocalStoragePersistence } from './localStoragePersistence'
+import {
+  hasNativeModelReference,
+  isNativeModelRuntimeMethod,
+} from '../../electron/src/host/model-interface-runtime'
 
 export type UnlistenFn = () => void
 
@@ -35,6 +42,7 @@ export interface LocalExecutorStatus {
   runtimeInstanceId?: string
   codexInitializeElapsedMs?: number
   version?: string
+  runtimeFeatures?: DeviceInfo['runtime_features']
   error?: string
 }
 
@@ -230,6 +238,7 @@ let nextLocalExecutorRequestFailure: {
 type LocalExecutorRequestHold = {
   method: string
   phase: 'before-dispatch' | 'after-response'
+  maxHeldCount: number
   heldCount: number
   completedCount: number
   enteredWaiters: Array<() => void>
@@ -258,7 +267,8 @@ export function failNextLocalExecutorRequestForE2E(method: string, message: stri
  */
 export function holdLocalExecutorRequestsForE2E(
   method: string,
-  phase: LocalExecutorRequestHold['phase'] = 'after-response'
+  phase: LocalExecutorRequestHold['phase'] = 'after-response',
+  maxHeldCount = Number.POSITIVE_INFINITY
 ): void {
   if (!isLocalExecutorE2EMode()) {
     throw new Error('Local executor request holds are only available in E2E mode')
@@ -266,6 +276,7 @@ export function holdLocalExecutorRequestsForE2E(
   localExecutorRequestHold = {
     method,
     phase,
+    maxHeldCount,
     heldCount: 0,
     completedCount: 0,
     enteredWaiters: [],
@@ -510,6 +521,7 @@ export function ensureLocalExecutorAvailable(
           deviceRouteId: description.device_route_id?.trim() || undefined,
           runtimeInstanceId: description.runtime_instance_id,
           version: description.version,
+          runtimeFeatures: description.runtime_features,
         }
         availableLocalExecutorStatus = status
         return status
@@ -740,10 +752,16 @@ export function requestLocalExecutor<T = unknown>(
       failure.resolve()
       return Promise.reject(new Error(failure.message))
     }
-    const send = (query: Record<string, unknown>) =>
-      requestOptions
+    const send = async (query: Record<string, unknown>) => {
+      if (isNativeModelRuntimeMethod(method) && hasNativeModelReference(query)) {
+        await flushDesktopLocalStoragePersistence()
+        requestOptions?.signal?.throwIfAborted()
+        return invokeDesktopHost<T>('modelConfiguration.requestRuntime', { method, params: query })
+      }
+      return requestOptions
         ? requestDshExecutor<T>(method, query, requestOptions)
         : requestDshExecutor<T>(method, query)
+    }
     const request =
       method === 'runtime.tasks.transcript' && params.transcriptProtocolVersion === undefined
         ? readRuntimeTranscript<T>(params, send)
@@ -784,7 +802,9 @@ export function requestLocalExecutor<T = unknown>(
     })
   }
   const hold = localExecutorRequestHold
-  if (!hold || hold.method !== method || hold.released) return dispatch()
+  if (!hold || hold.method !== method || hold.released || hold.heldCount >= hold.maxHeldCount) {
+    return dispatch()
+  }
   const enterHold = () => {
     hold.heldCount += 1
     for (const notify of hold.enteredWaiters.splice(0)) notify()
@@ -799,6 +819,7 @@ export function requestLocalExecutor<T = unknown>(
       })
   }
   return dispatch().then(async value => {
+    if (hold.heldCount >= hold.maxHeldCount) return value
     await enterHold()
     hold.completedCount += 1
     return value

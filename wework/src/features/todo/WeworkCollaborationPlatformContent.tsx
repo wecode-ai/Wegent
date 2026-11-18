@@ -1,3 +1,8 @@
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { GlobalTodoSearch } from './GlobalTodoSearch'
+import { resolveIssueReference } from './resolveIssueReference'
+import { Search } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import { createWeworkPlatformNavigation } from './weworkPlatformNavigation'
 import { createWeworkProjectMigration } from './weworkProjectMigration'
 import { createAsyncResource } from '@wegent/chat-core/async-resource'
@@ -83,6 +88,18 @@ import type { WeworkCollaborationPlatformProps } from './weworkCollaborationType
 import { WeworkSharedProject } from './WeworkSharedProject'
 export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
+  const [issueSearchOpen, setIssueSearchOpen] = useState(false)
+  const [issueSearchQuery, setIssueSearchQuery] = useState('')
+  useWindowEvent(
+    'keydown',
+    event => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setIssueSearchOpen(true)
+      } else if (event.key === 'Escape') setIssueSearchOpen(false)
+    },
+    { enabled: props.workspaceActive !== false }
+  )
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
   const templateOwnerId =
@@ -230,8 +247,41 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
     api,
     props.services.projectSpaceApis?.local,
   ])
+  const activeProject =
+    String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
+      ? null
+      : (props.activeProjectRef ?? null)
+  const [navigationOwner, setNavigationOwner] = useState(() => ({
+    scope: templateScope,
+    source: createWeworkPlatformNavigation({
+      api: null,
+      activeProject,
+      focusedItemId: props.focusedItemId,
+      focusedCommentId: props.focusedCommentId,
+      focusedCommentRequestKey: props.focusedCommentRequestKey,
+      onActiveProjectChange: props.onActiveProjectChange,
+      startupActive: props.startupActive,
+    }),
+  }))
+  let currentNavigation = navigationOwner
+  if (navigationOwner.scope !== templateScope) {
+    currentNavigation = {
+      scope: templateScope,
+      source: createWeworkPlatformNavigation({
+        api: null,
+        activeProject,
+        focusedItemId: props.focusedItemId,
+        focusedCommentId: props.focusedCommentId,
+        focusedCommentRequestKey: props.focusedCommentRequestKey,
+        onActiveProjectChange: props.onActiveProjectChange,
+        startupActive: props.startupActive,
+      }),
+    }
+    setNavigationOwner(currentNavigation)
+  }
+  const navigation = currentNavigation.source
   const platformApi = useMemo(() => {
-    const platform = createWeworkPlatformApi(api, localProjectApi)
+    const platform = createWeworkPlatformApi(api, localProjectApi, navigation.getProjectStore)
     if (!platform || !props.services.standInApi || !props.services.getLocalRuntimeSidebarIdentity)
       return platform
     const standIn = async (projectId: string) => {
@@ -257,7 +307,7 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
           (await standIn(projectId)).run!(projectId, issueId, deviceId, id),
       },
     }
-  }, [api, localProjectApi, props.services, props.user.id])
+  }, [api, localProjectApi, navigation, props.services, props.user.id])
   const navigationApis = useMemo(
     () =>
       [
@@ -268,10 +318,6 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
       ].filter((candidate): candidate is SharedWorkspaceApi => Boolean(candidate)),
     [api, cloudConnection.isConnected, localProjectApi]
   )
-  const activeProject =
-    String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
-      ? null
-      : (props.activeProjectRef ?? null)
   const navigationInput = useMemo(
     () => ({
       api: platformApi,
@@ -292,19 +338,6 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
       props.startupActive,
     ]
   )
-  const [navigationOwner, setNavigationOwner] = useState(() => ({
-    scope: templateScope,
-    source: createWeworkPlatformNavigation(navigationInput),
-  }))
-  let currentNavigation = navigationOwner
-  if (navigationOwner.scope !== templateScope) {
-    currentNavigation = {
-      scope: templateScope,
-      source: createWeworkPlatformNavigation(navigationInput),
-    }
-    setNavigationOwner(currentNavigation)
-  }
-  const navigation = currentNavigation.source
   const subscribeNavigation = useCallback(
     (listener: () => void) => navigation.subscribe(listener, navigationInput),
     [navigation, navigationInput]
@@ -411,6 +444,36 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
 
   return (
     <div className="h-full min-h-0 flex-1" data-testid="wework-collaboration-platform">
+      {issueSearchOpen && props.workspaceActive !== false && (
+        <GlobalTodoSearch
+          key={`issue-reference-search:${templateScope}`}
+          referenceOnly
+          projects={[]}
+          projectItems={{}}
+          projectMembers={{}}
+          query={issueSearchQuery}
+          onQueryChange={setIssueSearchQuery}
+          onClose={() => setIssueSearchOpen(false)}
+          onSelectProject={() => {}}
+          onResolveReference={reference =>
+            resolveIssueReference(reference, [
+              ...(localProjectApi ? [{ location: 'local' as const, api: localProjectApi }] : []),
+              ...(cloudConnection.isConnected && api ? [{ location: 'cloud' as const, api }] : []),
+            ])
+          }
+          onSelectItem={(project, item) => {
+            if (item.can_view_detail === false) return
+            const next = routeProjectLocation(
+              { projectStore: project.project_store, projectId: String(project.id) },
+              item.id
+            )
+            if (next) {
+              navigatePlatform(next, project)
+              setIssueSearchOpen(false)
+            }
+          }}
+        />
+      )}
       <ConfirmDialog
         open={Boolean(migrationProject && cloudConnection.isConnected)}
         title={t('localProjectMigration.title')}
@@ -760,6 +823,19 @@ export function WeworkCollaborationPlatformContent(props: WeworkCollaborationPla
                   })
                 }
               : undefined,
+            sidebarHeaderActions: (
+              <Tooltip label={t('todo.search_issues', '搜索 Issue')}>
+                <button
+                  type="button"
+                  data-testid="collaboration-issue-search-open"
+                  aria-label={t('todo.search_issues', '搜索 Issue')}
+                  onClick={() => setIssueSearchOpen(true)}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus"
+                >
+                  <Search className="h-4 w-4" />
+                </button>
+              </Tooltip>
+            ),
             workspaceOwnerOptions,
             projectAgentConfiguration,
           }}

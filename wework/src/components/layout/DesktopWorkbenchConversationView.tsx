@@ -1,3 +1,4 @@
+import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import type { DesktopWorkbenchPaneRenderModel } from './desktopWorkbenchPaneChrome'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import { ChevronRight, Loader2, MessageCircle } from 'lucide-react'
@@ -78,6 +79,12 @@ export function DesktopWorkbenchConversationView({
     setCentralHarnessError,
     pendingSupervisorConfig,
     currentRuntimeConversationSource,
+    eventSubscriptionScope,
+    cancelCurrentEventSubscription,
+    eventCancellationUnsupported,
+    activeDeviceUnavailable,
+    deviceApi,
+    runtimeTaskSummary,
     cloudProjectMentionCandidates,
     handleSelectCloudProject,
     openBoundProjectSpaceTask,
@@ -386,6 +393,30 @@ export function DesktopWorkbenchConversationView({
                               <RequestUserInputComposer
                                 payload={pendingRequestUserInput}
                                 source={currentRuntimeTask}
+                                questionContext={
+                                  <ConversationEventContext
+                                    integrated
+                                    goal={paneSession.goal}
+                                    goalDraftActive={paneSession.goalDraftActive}
+                                    continuing={paneSession.goalContinuing}
+                                    executionStatus={paneSession.goalExecutionStatus}
+                                    eventSubscriptionScope={eventSubscriptionScope}
+                                    onCancelEventSubscription={cancelCurrentEventSubscription}
+                                    eventCancellationUnsupported={eventCancellationUnsupported}
+                                    eventCancellationUnavailable={
+                                      activeDeviceUnavailable || !deviceApi
+                                    }
+                                    subscriptions={
+                                      currentRuntimeConversationSource?.runtimeHandle
+                                        ?.connectionEventSubscriptions
+                                    }
+                                    interactionStatus={runtimeTaskSummary?.interactionStatus}
+                                    onEditGoal={paneSession.editCurrentGoal}
+                                    onPauseGoal={pauseCurrentGoal}
+                                    onResumeGoal={resumeCurrentGoal}
+                                    onClearGoal={clearCurrentGoal}
+                                  />
+                                }
                                 renderQuestion={onCollapse =>
                                   pendingRequestUserInput ? (
                                     <RequestUserInputCard
@@ -483,6 +514,17 @@ export function DesktopWorkbenchConversationView({
                                     goal={paneSession.goal}
                                     goalContinuing={paneSession.goalContinuing}
                                     goalExecutionStatus={paneSession.goalExecutionStatus}
+                                    eventSubscriptionScope={eventSubscriptionScope}
+                                    onCancelEventSubscription={cancelCurrentEventSubscription}
+                                    eventCancellationUnsupported={eventCancellationUnsupported}
+                                    eventCancellationUnavailable={
+                                      activeDeviceUnavailable || !deviceApi
+                                    }
+                                    eventSubscriptions={
+                                      currentRuntimeConversationSource?.runtimeHandle
+                                        ?.connectionEventSubscriptions
+                                    }
+                                    interactionStatus={runtimeTaskSummary?.interactionStatus}
                                     taskPlan={paneSession.taskPlan}
                                     goalDraftActive={paneSession.goalDraftActive}
                                     onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
@@ -770,6 +812,15 @@ export function DesktopWorkbenchConversationView({
                       goal={paneSession.goal}
                       goalContinuing={paneSession.goalContinuing}
                       goalExecutionStatus={paneSession.goalExecutionStatus}
+                      eventSubscriptionScope={eventSubscriptionScope}
+                      onCancelEventSubscription={cancelCurrentEventSubscription}
+                      eventCancellationUnsupported={eventCancellationUnsupported}
+                      eventCancellationUnavailable={activeDeviceUnavailable || !deviceApi}
+                      eventSubscriptions={
+                        currentRuntimeConversationSource?.runtimeHandle
+                          ?.connectionEventSubscriptions
+                      }
+                      interactionStatus={runtimeTaskSummary?.interactionStatus}
                       taskPlan={paneSession.taskPlan}
                       goalDraftActive={paneSession.goalDraftActive}
                       onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}

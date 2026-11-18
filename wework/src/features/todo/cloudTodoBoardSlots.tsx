@@ -1,3 +1,4 @@
+import { BaseBoardStatusMigrationNotice } from '@wegent/collaboration'
 import type {
   NativeBoardGroupBy,
   LocatedCloudProject,
@@ -153,6 +154,8 @@ export function createCloudTodoBoardSlots(
     setLocalProjectFilter,
     groupScopeBusy,
     boardError,
+    baseBoardMigration,
+    baseBoardStatusGrouping,
     setBoardError,
     dingtalkAuthPrompt,
     dingtalkAuthBusy,
@@ -719,15 +722,17 @@ export function createCloudTodoBoardSlots(
             }}
           />
         )}
-        renderGroupPicker={(value, onChange) => (
-          <AITableGroupFieldPicker
-            fields={nativeBoardGroupFields}
-            value={value}
-            testIdPrefix="cloud-board-group"
-            searchPlaceholder="搜索分组字段"
-            onChange={id => onChange(id as NativeBoardGroupBy)}
-          />
-        )}
+        renderGroupPicker={(value, onChange) =>
+          baseBoardStatusGrouping ? null : (
+            <AITableGroupFieldPicker
+              fields={nativeBoardGroupFields}
+              value={value}
+              testIdPrefix="cloud-board-group"
+              searchPlaceholder="搜索分组字段"
+              onChange={id => onChange(id as NativeBoardGroupBy)}
+            />
+          )
+        }
         renderBoardSettingsAction={
           !isMyTasksBoard && (isAITableProject || isExternalGitBoard)
             ? () => (
@@ -854,10 +859,12 @@ export function createCloudTodoBoardSlots(
                   : t('todo.dingtalk_board_connect')}
               </button>
             </div>
-          ) : boardError ? (
-            <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
-              {boardError}
-            </p>
+          ) : baseBoardMigration.error ? (
+            <BaseBoardStatusMigrationNotice
+              error={baseBoardMigration.error}
+              retry={baseBoardMigration.retry}
+              translate={boardTranslate}
+            />
           ) : null
         }
         rootLabel={isMyTasksBoard ? '任务' : isAITableProject ? '父任务' : 'Issue'}
@@ -879,7 +886,9 @@ export function createCloudTodoBoardSlots(
           !nativeGroupFilter &&
           !nativeBoardQuery.trim()
         )}
-        showSaveGlobal={Boolean(personalGroupKey && localStorage.getItem(personalGroupKey))}
+        showSaveGlobal={Boolean(
+          !baseBoardStatusGrouping && personalGroupKey && localStorage.getItem(personalGroupKey)
+        )}
       />
     ),
   }

@@ -82,7 +82,9 @@ export interface SharedIssueDetailExtensions {
     readAttachment(attachmentId: string): Promise<Blob>
     onInlineAttachmentIdsChange(attachmentIds: string[]): void
   }): ReactNode
-  renderActivity?(context: SharedIssueDetailExtensionContext): ReactNode
+  renderActivity?(
+    context: Omit<SharedIssueDetailExtensionContext, 'project'> & { project?: SharedEditorProject }
+  ): ReactNode
   renderAITableFields?(context: {
     item: SharedEditorIssue
     project: SharedEditorProject

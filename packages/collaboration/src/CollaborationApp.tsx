@@ -26,7 +26,7 @@ import { collaborationTestIds } from './testIds'
 import { IssueDetail } from './IssueDetail'
 import { IssueExecutionEnvironmentNotice } from './execution-environment/IssueExecutionEnvironmentNotice'
 import { useProjectExecutionEnvironmentReadiness } from './execution-environment/issueEnvironmentReadiness'
-import { IssueArchiveDialog, IssueArchiveDrawer } from './issue-archive'
+import { renderCollaborationAppArchiveDialogs } from './collaborationAppArchiveDialogs'
 import { useCollaborationAppState } from './useCollaborationAppState'
 import type { CollaborationAppProps } from './collaborationAppTypes'
 export type { CollaborationIssueDetailRenderContext } from './collaborationAppTypes'
@@ -354,6 +354,36 @@ export function CollaborationApp({
     )
   }
 
+  if (selectedIssue?.invited_only) {
+    return (
+      <section
+        className="collaboration-app collaboration-app-project issue-drawer-workspace"
+        data-testid={collaborationTestIds.root}
+      >
+        <IssueDetail
+          api={api}
+          issue={selectedIssue}
+          allIssues={[selectedIssue]}
+          comments={comments}
+          assignments={assignments}
+          messages={messages}
+          translate={translate}
+          onClose={() => {
+            commands.clearSelectedIssue()
+            host.navigate({ ...host.location, projectId: null, issueId: null })
+          }}
+          onChange={commands.replaceIssue}
+          onRead={commands.confirmIssueRead}
+          onCommentsChange={next => commands.replaceComments(selectedIssue.id, next)}
+          onConflict={async () => {
+            await commands.loadSelectedIssue(selectedIssue.id)
+          }}
+          onError={() => commands.reportError(messages.loadFailed)}
+        />
+      </section>
+    )
+  }
+
   if (loading) {
     return (
       <ProjectLoadingSkeleton
@@ -609,6 +639,8 @@ export function CollaborationApp({
                 board: (
                   <div className="relative flex min-h-0 min-w-0 flex-1">
                     <ProjectBoardAdapter
+                      projectApi={api.projects}
+                      onProjectMigrated={commands.replaceProject}
                       participationUserId={participationUserId}
                       isIssueRunning={isIssueRunning}
                       parentGroupingEnabled={parentGroupingEnabled}
@@ -939,33 +971,24 @@ export function CollaborationApp({
               />
             )
           ) : null}
-          {archiveIssueTargets?.length ? (
-            <IssueArchiveDialog
-              busy={archiveIssueBusy}
-              count={archiveIssueTargets.length}
-              error={archiveIssueError}
-              hasChildren={issues.some(
-                candidate => candidate.parent_id === archiveIssueTargets[0]?.id
-              )}
-              onCancel={closeIssueArchive}
-              onConfirm={() => void confirmIssueArchive()}
-              title={archiveIssueTargets[0]?.title}
-              translate={translate}
-            />
-          ) : null}
-          {archiveDrawerOpen ? (
-            <IssueArchiveDrawer
-              busyId={restoringIssueId}
-              error={archiveDrawerError}
-              items={archivedIssues}
-              loading={archiveDrawerLoading}
-              nextCursor={archiveNextCursor}
-              onClose={closeArchiveDrawer}
-              onLoadMore={() => void loadArchivedIssues(archiveNextCursor)}
-              onRestore={issue => void restoreArchivedIssue(issue)}
-              translate={translate}
-            />
-          ) : null}
+          {renderCollaborationAppArchiveDialogs({
+            archiveIssueTargets,
+            archiveIssueBusy,
+            archiveIssueError,
+            archiveDrawerOpen,
+            archivedIssues,
+            archiveNextCursor,
+            archiveDrawerLoading,
+            archiveDrawerError,
+            restoringIssueId,
+            confirmIssueArchive,
+            closeIssueArchive,
+            loadArchivedIssues,
+            closeArchiveDrawer,
+            restoreArchivedIssue,
+            issues,
+            translate,
+          })}
         </section>
       </BrowserTaskDrafts>
     </RuntimeConfigurationProvider>

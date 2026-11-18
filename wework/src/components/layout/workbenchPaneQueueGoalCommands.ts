@@ -249,7 +249,8 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
     setInput('')
     const submittedInputRevision = sessionOwner.live.inputRevision
     const submittedSharedInputRevision = getInputRevisionForScope(inputScopeKey)
-    const submittedDraftEditVersion = sessionOwner.live.draftEditVersion
+    const submittedDraftEditVersion =
+      sessionOwner.live.draftEditVersions.get(sessionOwner.frame.inputScopeKey) ?? 0
     resetAttachments()
     const sent = await interruptAndSendQueuedMessage(combinedMessage)
     if (sent) return
@@ -257,7 +258,8 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
       sessionOwner.live.activeInputScope === inputScopeKey &&
       sessionOwner.live.inputRevision === submittedInputRevision &&
       getInputRevisionForScope(inputScopeKey) === submittedSharedInputRevision &&
-      sessionOwner.live.draftEditVersion === submittedDraftEditVersion
+      (sessionOwner.live.draftEditVersions.get(sessionOwner.frame.inputScopeKey) ?? 0) ===
+        submittedDraftEditVersion
     ) {
       replaceInput(combinedMessage.displayContent ?? combinedMessage.content)
     }

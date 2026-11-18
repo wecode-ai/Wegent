@@ -5,15 +5,15 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@trycua/cua-driver@0.22.1': 1f161a52203b2bcd3207ec2f08bc914596e4abc7660028b035d0670b52368acd
+  '@trycua/cua-driver@0.52.13': 1f161a52203b2bcd3207ec2f08bc914596e4abc7660028b035d0670b52368acd
 
 importers:
 
   .:
     dependencies:
       '@trycua/cua-driver':
-        specifier: 0.22.1
-        version: 0.22.1(patch_hash=1f161a52203b2bcd3207ec2f08bc914596e4abc7660028b035d0670b52368acd)
+        specifier: 0.52.13
+        version: 0.52.13(patch_hash=1f161a52203b2bcd3207ec2f08bc914596e4abc7660028b035d0670b52368acd)
       archiver:
         specifier: 8.0.0
         version: 8.0.0
@@ -48,6 +48,9 @@ importers:
       '@types/semver':
         specifier: 7.8.0
         version: 7.8.0
+      '@types/yauzl':
+        specifier: 3.4.0
+        version: 3.4.0
       electron:
         specifier: 43.0.0
         version: 43.0.0
@@ -63,9 +66,25 @@ importers:
       vitest:
         specifier: 4.1.7
         version: 4.1.7(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(jiti@2.7.0)(yaml@2.9.0))
-      "@types/yauzl":
-        specifier: 3.4.0
-        version: 3.4.0
+    optionalDependencies:
+      '@trycua/cua-driver-darwin-arm64':
+        specifier: 0.52.13
+        version: 0.52.13
+      '@trycua/cua-driver-darwin-x64':
+        specifier: 0.52.13
+        version: 0.52.13
+      '@trycua/cua-driver-linux-arm64-gnu':
+        specifier: 0.52.13
+        version: 0.52.13
+      '@trycua/cua-driver-linux-x64-gnu':
+        specifier: 0.52.13
+        version: 0.52.13
+      '@trycua/cua-driver-win32-arm64-msvc':
+        specifier: 0.52.13
+        version: 0.52.13
+      '@trycua/cua-driver-win32-x64-msvc':
+        specifier: 0.52.13
+        version: 0.52.13
 
 packages:
 
@@ -295,40 +314,39 @@ packages:
     resolution: {integrity: sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==}
     engines: {node: '>=10'}
 
-  '@trycua/cua-driver-darwin-arm64@0.22.1':
-    resolution: {integrity: sha512-JKFlhjXXd8Ut15BTZjZPKMNCwKEqwIRWFXY59nsFjH6suVRI9c3T65s8+eCz3f64oKRNxvHh7OKbsTIZ1vyoFA==}
+  '@trycua/cua-driver-darwin-arm64@0.52.13':
+    resolution: {integrity: sha512-fbsf6nH6fhqZSYgizkA4yRFQgcHcylDh97aL0EU8MkUS2mcBymLv13T5Gkl1iDxQSreDEaDc7rSgzSWFzV8EwQ==}
     cpu: [arm64]
     os: [darwin]
 
-  '@trycua/cua-driver-darwin-x64@0.22.1':
-    resolution: {integrity: sha512-sxYp6qnA5TCmr//vEQqUi9uhA1m6wWI4TOo5uYggIkUL3ebJIrcP4RPnqy2dYF3Y/GHwK7Si3MIk5DkTAnYezA==}
+  '@trycua/cua-driver-darwin-x64@0.52.13':
+    resolution: {integrity: sha512-jKsH+/DHLfwbYtbrfneNPiKivNe+pWMSZHwM6llA7kn0REAplUvGbGfDxYaHKrVDqoQorIeFhScINyQVfteyOA==}
     cpu: [x64]
     os: [darwin]
 
-  '@trycua/cua-driver-linux-arm64-gnu@0.22.1':
-    resolution: {integrity: sha512-jel+5Y4I7A0cOfNIzqTwOKb79LHfjRkDQzI+naKdt6pghY04Iez0yK+8LPAzD3XAr73yTCdShgz++h6aZuFrZQ==}
+  '@trycua/cua-driver-linux-arm64-gnu@0.52.13':
+    resolution: {integrity: sha512-UXETYNXcDvC1ZI4f0N+CV7EIKWwzmsiXVLTgLElp0MRkyWv+/Nq1ZglpImmR96qnLdTLsaZ+T/O+GHhgbGItzw==}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
-  '@trycua/cua-driver-linux-x64-gnu@0.22.1':
-    resolution: {integrity: sha512-H8/lKF8zSS9ZgUuEiQZSNEukRLsHUUFCWEyPdpJy6+yiBbN5eyU9jrb9CZPO1dIU0Diex6WU1kofzxaQcGJbgQ==}
+  '@trycua/cua-driver-linux-x64-gnu@0.52.13':
+    resolution: {integrity: sha512-FCRuG/1kXLE8K/Vjxpub+5Vq+8xoNGZ4F7oJ5BYrJJoG+ff+238QX/zKIffhqAdqvRcsTgFLe21ltryQg/1zxw==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@trycua/cua-driver-win32-arm64-msvc@0.22.1':
-    resolution: {integrity: sha512-bD9jcQ3/FjcMCICfCYN+9fqHTqsBo/c8wHp6kbprIlmoFrxV47mbtV9SP9Edib2xNfUzJp2p59C8Rgf25lbvQw==}
+  '@trycua/cua-driver-win32-arm64-msvc@0.52.13':
+    resolution: {integrity: sha512-yStb4fqZ0cFVWMp3dE2/V+BE0l4mU7WYe/64eO3IwQL9WWzZyY1YRt2BKNeLoIR9I0F9LNsQVDPYNySJ8jrJ6A==}
     cpu: [arm64]
     os: [win32]
 
-  '@trycua/cua-driver-win32-x64-msvc@0.22.1':
-    resolution: {integrity: sha512-sOv3pjT5lCS1Rm6ZWTHwBkVn/sSMRPoY8X3p5TQAbQxloXrWUyWFLcHC+gt9PfFAQ8Nj5nFjVT3wsTeWOsZjPA==}
+  '@trycua/cua-driver-win32-x64-msvc@0.52.13':
+    resolution: {integrity: sha512-csbZHHOlP0qHT3FYQ+k5OGT9aMS7R8YQ1A2XsR1Cj20UhWcFyTtkcaItivZ2Gq4GP2xc9VLmO6cZ9N2uasDXlg==}
     cpu: [x64]
     os: [win32]
 
-  '@trycua/cua-driver@0.22.1':
-    resolution: {integrity: sha512-qiVmjjbRxn3D3eoUvxMwGiVHdVPKjRnSVanhYtuBq5ePdrSPPT0GTqfK9PYeka5guJMKr703gr0tfnRb2CERng==}
+  '@trycua/cua-driver@0.52.13':
+    resolution: {integrity: sha512-vQCtOyNKCH5JEatChgkA/tHaR50GMSJLGO9dan3CrNN0FxoXhhWjBxMvjnw1644dOs+T9ftKTgG/XdJNn9ul7A==}
 
   '@types/archiver@8.0.0':
     resolution: {integrity: sha512-YpXPbEuv9+eUIPPQWUPahj3cvs9isWRuF+J4z+KbdYVDO3rWorWQFxUVHnwPu2AgKwvgpki5F2VMX0Xx+mX45A==}
@@ -371,6 +389,9 @@ packages:
 
   '@types/semver@7.8.0':
     resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
+
+  '@types/yauzl@3.4.0':
+    resolution: {integrity: sha512-NRPn5w6h8dhcnmx3YIRQcqMywY/+nND/uOkJessedcrowO3C0AssHp3tMJpxKAwOhFOo0OV1y9VtsC5hbKKBAw==}
 
   '@ubjs/core@0.31.0-3':
     resolution: {integrity: sha512-39XrJgUZ2VVb561sSnkXPhczNoeBsNiSRArecsV0JE7CJq69ajFkcn9/tBAUS2NpgHkLIDU+z6Ks2+1wXnboxg==}
@@ -964,7 +985,7 @@ packages:
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
-    deprecated: Glob versions prior to v9 are no longer supported
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   global-agent@3.0.0:
     resolution: {integrity: sha512-PT6XReJ+D07JvGoxQMkT6qji/jVNfX/h364XHZOWeRzy64sSFr+xJ5OX7LI3b4MPQzdL4H8Y8M0xzPpsVMwA8Q==}
@@ -1844,8 +1865,6 @@ packages:
   zip-stream@7.0.5:
     resolution: {integrity: sha512-dSvYKdvLsAHCDqPOhIwk/q5CvuWtTB3Dgpoe0uVEFjTzIOAmsQpprX25InCvrvJsirEbu1OHyy67n/kAj1Sw/w==}
     engines: {node: '>=18'}
-  "@types/yauzl@3.4.0":
-    resolution: {integrity: sha512-NRPn5w6h8dhcnmx3YIRQcqMywY/+nND/uOkJessedcrowO3C0AssHp3tMJpxKAwOhFOo0OV1y9VtsC5hbKKBAw==}
 
 snapshots:
 
@@ -2106,35 +2125,35 @@ snapshots:
     dependencies:
       defer-to-connect: 2.0.1
 
-  '@trycua/cua-driver-darwin-arm64@0.22.1':
+  '@trycua/cua-driver-darwin-arm64@0.52.13':
     optional: true
 
-  '@trycua/cua-driver-darwin-x64@0.22.1':
+  '@trycua/cua-driver-darwin-x64@0.52.13':
     optional: true
 
-  '@trycua/cua-driver-linux-arm64-gnu@0.22.1':
+  '@trycua/cua-driver-linux-arm64-gnu@0.52.13':
     optional: true
 
-  '@trycua/cua-driver-linux-x64-gnu@0.22.1':
+  '@trycua/cua-driver-linux-x64-gnu@0.52.13':
     optional: true
 
-  '@trycua/cua-driver-win32-arm64-msvc@0.22.1':
+  '@trycua/cua-driver-win32-arm64-msvc@0.52.13':
     optional: true
 
-  '@trycua/cua-driver-win32-x64-msvc@0.22.1':
+  '@trycua/cua-driver-win32-x64-msvc@0.52.13':
     optional: true
 
-  '@trycua/cua-driver@0.22.1(patch_hash=1f161a52203b2bcd3207ec2f08bc914596e4abc7660028b035d0670b52368acd)':
+  '@trycua/cua-driver@0.52.13(patch_hash=1f161a52203b2bcd3207ec2f08bc914596e4abc7660028b035d0670b52368acd)':
     dependencies:
       '@ubjs/core': 0.31.0-3
       '@ubjs/node': 0.31.0-3
     optionalDependencies:
-      '@trycua/cua-driver-darwin-arm64': 0.22.1
-      '@trycua/cua-driver-darwin-x64': 0.22.1
-      '@trycua/cua-driver-linux-arm64-gnu': 0.22.1
-      '@trycua/cua-driver-linux-x64-gnu': 0.22.1
-      '@trycua/cua-driver-win32-arm64-msvc': 0.22.1
-      '@trycua/cua-driver-win32-x64-msvc': 0.22.1
+      '@trycua/cua-driver-darwin-arm64': 0.52.13
+      '@trycua/cua-driver-darwin-x64': 0.52.13
+      '@trycua/cua-driver-linux-arm64-gnu': 0.52.13
+      '@trycua/cua-driver-linux-x64-gnu': 0.52.13
+      '@trycua/cua-driver-win32-arm64-msvc': 0.52.13
+      '@trycua/cua-driver-win32-x64-msvc': 0.52.13
 
   '@types/archiver@8.0.0':
     dependencies:
@@ -2186,6 +2205,10 @@ snapshots:
       '@types/node': 24.13.3
 
   '@types/semver@7.8.0': {}
+
+  '@types/yauzl@3.4.0':
+    dependencies:
+      '@types/node': 24.13.3
 
   '@ubjs/core@0.31.0-3': {}
 
@@ -3669,6 +3692,3 @@ snapshots:
       compress-commons: 7.0.1
       normalize-path: 3.0.0
       readable-stream: 4.7.0
-  "@types/yauzl@3.4.0":
-    dependencies:
-      '@types/node': 24.13.3

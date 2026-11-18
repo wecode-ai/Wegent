@@ -159,6 +159,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onCloseTab,
   onHarnessSessionExit,
   onRefreshReview,
+  onOpenWorkspaceFile,
   onOpenReviewSourceFile,
   onApplyReviewPatch,
   onRestoreConversation,
@@ -173,10 +174,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const activeFilePanelTarget = activeFileTab?.target ?? fileWorkspaceTarget
   const activeFileOpenRequest =
     activeFileTab && isWorkspaceFileTab(activeView)
-      ? {
+      ? (activeFileTab.openRequest ?? {
           id: requestIdForWorkspaceFileTab(activeView),
           path: activeFileTab.path,
-        }
+        })
       : null
   const fileViewActive = activeView === 'files' || Boolean(activeFileTab)
   const primaryFilePath =
@@ -519,6 +520,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               expanded={expanded && activeView === tab}
               showWorkbenchBackground={showWorkbenchBackground}
               onRestoreConversation={onRestoreConversation}
+              onOpenWorkspaceFile={onOpenWorkspaceFile}
               testId={
                 activeView === tab
                   ? 'right-workspace-chat-panel'

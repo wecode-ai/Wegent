@@ -1,3 +1,4 @@
+import { createE2ELifecycleTrace } from '@/e2e/lifecycleTrace'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type {
   CloudLoopItem,
@@ -15,6 +16,7 @@ import { mergeProjectChatMessages } from './taskAiExecution'
 type DeliveryApi = ReturnType<typeof createDeliveryApi> | undefined
 type AgentApi = ReturnType<typeof createProjectChatAgentApi> | undefined
 export interface TaskActivityInput {
+  lifecycleTrace?: { issueTimeline: boolean; linear: boolean }
   task: CloudLoopItem
   bindings: LoopItemTaskBinding[]
   notification: ReturnType<typeof useNotificationEntity>
@@ -43,6 +45,7 @@ export function createTaskActivityState(
   projectId: string,
   issueId: string
 ) {
+  const lifecycleTrace = createE2ELifecycleTrace('TaskActivityView')
   let snapshot: ActivitySnapshot = {
     messages: [],
     projectChatAgents: [],
@@ -310,6 +313,13 @@ export function createTaskActivityState(
     subscribe(listener: () => void, next: TaskActivityInput) {
       observers.set(listener, next)
       input = next
+      lifecycleTrace.update({
+        taskId: issueId,
+        projectId,
+        ...next.lifecycleTrace,
+        clientReady: Boolean(client),
+        executionSupport: Boolean(client?.executeTaskComment),
+      })
       start()
       subscribeFeed()
       locateNotification()
@@ -319,6 +329,7 @@ export function createTaskActivityState(
         input = [...observers.values()].at(-1) ?? input
         queueMicrotask(() => {
           if (active()) return
+          lifecycleTrace.dispose()
           generation++
           feedGeneration++
           unsubscribeFeed?.()

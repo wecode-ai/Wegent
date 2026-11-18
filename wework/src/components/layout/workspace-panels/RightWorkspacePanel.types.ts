@@ -12,6 +12,7 @@ import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices
 import type {
   CodeCommentContext,
   WorkspaceFileApi,
+  WorkspaceFileOpenOptions,
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
 } from '@/types/workspace-files'
@@ -173,6 +174,7 @@ export interface RightWorkspacePanelProps {
   onCloseTab: (tab: RightWorkspacePanelTab) => void
   onHarnessSessionExit?: (sessionId: string) => void
   onRefreshReview?: () => void
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenReviewSourceFile?: (path: string, lineStart?: number, lineEnd?: number) => void
   onApplyReviewPatch?: (action: GitPatchAction, patch: string) => Promise<void>
   onRestoreConversation?: () => void

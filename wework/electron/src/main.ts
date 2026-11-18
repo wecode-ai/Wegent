@@ -1,4 +1,12 @@
 import { ModelConfigurationStore } from './host/model-configuration-store.js'
+import { ModelRuntimeRequest } from './host/model-runtime-request.js'
+import { CloudModelRuntime } from './host/cloud-model-runtime.js'
+import {
+  LOCAL_PROXY_SETTINGS_STORAGE_KEY,
+  storedLocalProxyConfig,
+  normalizeLocalProxyUrl,
+} from './shared/local-proxy-config.js'
+import { confirmCoreDshPluginInstall } from './host/core-dsh-plugin-approval.js'
 import { McpAppRuntime } from './host/mcp-app-runtime.js'
 import {
   readCloudConnection,
@@ -75,6 +83,7 @@ import { DesktopAppearanceController } from './host/appearance-theme.js'
 import { normalizeAppearanceThemeSnapshot } from './host/appearance-theme-contract.js'
 import {
   DesktopPreferencesController,
+  resolveAppshotsShortcut,
   resolvePopoutShortcut,
 } from './host/desktop-preferences-controller.js'
 import { PerformanceRecorder } from './host/performance-recorder.js'
@@ -98,6 +107,7 @@ import {
   dshBrowserRequestHeaders,
 } from './runtime/dsh-browser-auth.js'
 import { ComputerUseService } from './host/computer-use-service.js'
+import { AppshotsService } from './host/appshots-service.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
@@ -192,6 +202,7 @@ import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-star
 import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
 import { desktopE2EWindowOptions, keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import { desktopE2EApplicationName } from './host/e2e-application-name.js'
 import {
   applyWorkbenchBackgroundPolicy,
   workbenchBackgroundThrottling,
@@ -220,6 +231,7 @@ import {
   type LocalWorkspaceOpenRequest,
 } from './runtime/local-workspace-cli.js'
 import { SecureValueStore } from './host/secure-value-store.js'
+import { protectedCredentialDirectory } from './host/credential-storage-paths.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { installedMacosReleaseResources } from './runtime/macos-release-installation.js'
 import { syncDockBadge } from './host/dock-badge.js'
@@ -244,7 +256,14 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
   weworkDataSchema?: number
   weworkReadableDataSchemas?: number[]
 } & BrandRuntimeMetadata
-if (packageMetadata.weworkProductName?.trim()) app.setName(packageMetadata.weworkProductName.trim())
+if (packageMetadata.weworkProductName?.trim())
+  app.setName(
+    desktopE2EApplicationName(
+      packageMetadata.weworkProductName.trim(),
+      process.env,
+      process.platform
+    )
+  )
 const packagedApplication = isEffectivePackagedApplication(app.isPackaged, process.env)
 isolateDevelopmentEnvironment(process.env, {
   packaged: packagedApplication,
@@ -377,8 +396,10 @@ await mainProcessLog.setPath(join(app.getPath('logs'), 'wework-main.log')).catch
 const workspaceWindows = new Map<string, BrowserWindow>()
 const mcpAppCleanups = new Set<() => Promise<void>>()
 let mcpAppRuntime: McpAppRuntime | null = null
+let cloudModelRuntime: CloudModelRuntime | null = null
 const dshWindowLabels = new Map<number, string>()
 let applicationMenu: ApplicationMenu | null = null
+let nativeDialogLanguage: string | undefined
 let lastMenuWindow: BrowserWindow | null = null
 const menuCapabilities = new Map<string, ApplicationMenuCapabilityState>()
 let primaryDshLoaded = false
@@ -390,6 +411,7 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let desktopControlBridge: WeworkDesktopControlBridge | null = null
 let browserAnnotations: BrowserAnnotationController | null = null
 let computerUse: ComputerUseService | null = null
+let appshots: AppshotsService | null = null
 let systemDragWindow: BrowserWindow | null = null
 let pendingSystemDragWindow: BrowserWindow | null = null
 let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
@@ -695,8 +717,8 @@ const appUpdates = new AppUpdateService({
   },
   runtimeRoot:
     process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || packagedHarnessRuntimePaths().cache,
-  dataSchema: packageMetadata.weworkDataSchema ?? 1,
-  readableDataSchemas: packageMetadata.weworkReadableDataSchemas ?? [1],
+  dataSchema: packageMetadata.weworkDataSchema ?? 2,
+  readableDataSchemas: packageMetadata.weworkReadableDataSchemas ?? [1, 2],
   isPackaged: packagedApplication,
   log: event => appUpdateLogger.info(event),
   shutdown: async () => {
@@ -2275,6 +2297,8 @@ async function shutdown(): Promise<void> {
     mcpAppCleanups.clear()
     mcpAppRuntime?.dispose()
     mcpAppRuntime = null
+    cloudModelRuntime?.dispose()
+    cloudModelRuntime = null
   })
   systemResume.stop()
   systemSleep.stop()
@@ -2299,6 +2323,8 @@ async function shutdown(): Promise<void> {
   popoutWindowMode = 'composer'
   popoutShortcut?.dispose()
   popoutShortcut = null
+  const appshotsService = appshots
+  appshots = null
   embeddedBrowser?.stop()
   browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
@@ -2313,12 +2339,15 @@ async function shutdown(): Promise<void> {
     traceShutdownStep('browser-bridge', () => browserBridge?.stop()),
     traceShutdownStep('control-bridge', () => controlBridge?.stop()),
     traceShutdownStep('computer-use', () => computerUseService?.stop()),
+    traceShutdownStep('appshots', () => appshotsService?.stop()),
     traceShutdownStep('plugin-development', () => development?.stop()),
     traceShutdownStep('desktop-runtime', () => desktopRuntime?.stop()),
   ])
-  await localWorkspaceCatalogLog.flush().catch(() => {
-    console.warn('[Wework] Failed to flush local workspace catalog diagnostics')
-  })
+  await traceShutdownStep('workspace-catalog-log', () => localWorkspaceCatalogLog.flush()).catch(
+    () => {
+      console.warn('[Wework] Failed to flush local workspace catalog diagnostics')
+    }
+  )
   const stopFailures = stoppedServices.filter(result => result.status === 'rejected')
   if (stopFailures.length)
     throw new AggregateError(
@@ -2383,6 +2412,8 @@ async function configureDesktopRuntime(): Promise<void> {
       ...currentElectronLaunch(),
       environment,
       userDataDirectory: app.getPath('userData'),
+      confirmInstall: request =>
+        confirmCoreDshPluginInstall(request, mainWindow, nativeDialogLanguage),
       onStateChanged: state => {
         desktopHostEvents.publish(
           'plugin-development.state',
@@ -2426,8 +2457,32 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   const secureStorage = new SecureValueStore(app.getPath('userData'))
   const modelConfiguration = new ModelConfigurationStore(
-    join(app.getPath('userData'), 'model-connections'),
-    secureStorage
+    join(protectedCredentialDirectory(app.getPath('userData')), 'model-connections'),
+    secureStorage,
+    join(app.getPath('userData'), 'model-connections')
+  )
+  cloudModelRuntime = new CloudModelRuntime(
+    () => readCloudConnection(rendererStorage!),
+    async (apiBaseUrl, expectedUserId) =>
+      (await requiredCloudCredentials().refreshAccessToken(apiBaseUrl, expectedUserId)).accessToken
+  )
+  const modelRuntimeRequest = new ModelRuntimeRequest(
+    modelConfiguration,
+    {
+      request: (method, params) => {
+        if (!desktopRuntime) throw new Error('Desktop runtime is unavailable')
+        return desktopRuntime.requestExecutor(method, params)
+      },
+      dispose: () => {},
+    },
+    input => cloudModelRuntime!.transport(input),
+    async targetUrl => {
+      const raw = (await rendererStorage!.read())[LOCAL_PROXY_SETTINGS_STORAGE_KEY]
+      const config = storedLocalProxyConfig(raw ? JSON.parse(raw) : {})
+      if (config.mode === 'custom') return normalizeLocalProxyUrl(config.proxyUrl) || null
+      if (config.mode === 'direct') return null
+      return resolveSystemProxy(session.defaultSession, targetUrl)
+    }
   )
   embeddedBrowser = new EmbeddedBrowserManager(
     app.getPath('userData'),
@@ -2555,6 +2610,8 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   desktopRuntime = new DesktopRuntime({
     applicationId,
+    confirmPluginInstall: request =>
+      confirmCoreDshPluginInstall(request, mainWindow, nativeDialogLanguage),
     modelConfiguration,
     environment,
     dataDirectory: app.getPath('userData'),
@@ -2583,6 +2640,7 @@ async function configureDesktopRuntime(): Promise<void> {
           executorHome:
             environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
           processExplorer: processExplorerService,
+          appshots: appshots ?? undefined,
           coreDshPlugins: () => desktopRuntime,
           pluginDevelopment: () =>
             pluginDevelopment
@@ -2619,7 +2677,10 @@ async function configureDesktopRuntime(): Promise<void> {
             const window = applicationMenuWindow()
             if (window && menuLabelForWindow(window) === label) syncApplicationMenuCapabilities()
           },
-          updateApplicationMenuLanguage: language => applicationMenu?.setLanguage(language),
+          updateApplicationMenuLanguage: language => {
+            nativeDialogLanguage = language
+            applicationMenu?.setLanguage(language)
+          },
           quitApplication: () => requestApplicationShutdown(() => app.quit()),
           relaunchApplication: () => {
             app.relaunch()
@@ -2653,6 +2714,7 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           executorPid: () => desktopRuntime?.diagnostics().executorPid ?? null,
           modelConfiguration,
+          requestModelRuntime: input => modelRuntimeRequest.request(input),
           syncLocalModels: () => desktopRuntime!.syncLocalModels(),
           secureStorage,
           takePendingWorkspaceOpenRequests,
@@ -3004,12 +3066,38 @@ if (hasSingleInstanceLock) {
         dockVisible = false
       }
       preferences = new PreferencesStore(app.getPath('userData'))
+      const preferenceStore = preferences
       mainWindowState = new MainWindowStateController(preferences, error =>
         console.error('[window-state] Failed to save main window geometry', error)
       )
+      appshots = new AppshotsService({
+        captureRoot: join(
+          process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
+          'workspace',
+          'attachments',
+          'draft',
+          'appshots'
+        ),
+        events: desktopHostEvents,
+        showMain: reactivateMainWindow,
+        playSound: async () => {
+          const preferences = await requiredPreferences().read()
+          if (preferences.appshotsPlaySound !== false) shell.beep()
+        },
+      })
+      try {
+        const storedPreferences = await preferenceStore.read().catch(() => ({}))
+        appshots.configure(resolveAppshotsShortcut(storedPreferences))
+      } catch (error) {
+        console.warn('[appshots] Global shortcut is unavailable', error)
+      }
       desktopPreferences = new DesktopPreferencesController(preferences, {
         isShuttingDown: () => quitting,
         configurePopoutShortcut: shortcut => popoutShortcut?.configure(shortcut),
+        configureAppshotsShortcut: shortcut => {
+          if (!appshots) throw new Error('Appshots are unavailable')
+          appshots.configure(shortcut)
+        },
         setPerformanceRecordingEnabled: async enabled => {
           if (quitting && enabled) throw new Error('The application is shutting down')
           if (!performanceRecorder) throw new Error('Performance recorder is unavailable')
@@ -3276,7 +3364,13 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     }
     logStartupStep('wework-cli-install', 'completed')
   })
-  nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
+  // Expose bundled sidecars such as `dws` to agent shells. Without this entry
+  // skills fall back to scanning the home directory, which triggers macOS
+  // privacy prompts (for example, Photos).
+  const componentBin = components?.dws
+    ? dirname(components.dws)
+    : join(componentResourcesRoot, 'bin')
+  nodeRuntime.environment.PATH = [cliBin, componentBin, nodeRuntime.environment.PATH?.trim()]
     .filter(Boolean)
     .join(delimiter)
   const runtimeEnvironment = pythonRuntimeEnabled

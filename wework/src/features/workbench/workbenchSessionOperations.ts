@@ -1,3 +1,4 @@
+import type { useWorkbenchProjectActions } from './useWorkbenchProjectActions'
 import type { WorkbenchPaneContextValue } from './workbenchContextTypes'
 import type { RuntimeConversationStreamHandlers } from './runtimePaneMessages'
 import type { settleRuntimeConversationGuidance } from './runtimeConversationCache'
@@ -348,5 +349,41 @@ export function createWorkbenchSessionOperations(
     stableRevertTurnFileChanges: (
       ...args: Parameters<WorkbenchSessionOperations['stableRevertTurnFileChanges']>
     ) => read().stableRevertTurnFileChanges(...args),
+  }
+}
+
+/** Project operations use the same command mapping in every Workbench owner. */
+export function createWorkbenchProjectOperations(
+  projectActions: ReturnType<typeof useWorkbenchProjectActions>
+) {
+  return {
+    stableCreateProject: projectActions.createProject,
+    stableCreateLocalRuntimeProject: projectActions.createLocalRuntimeProject,
+    stableCreateGitWorkspaceProject: projectActions.createGitWorkspaceProject,
+    stablePrepareDeviceWorkspace: projectActions.prepareDeviceWorkspace,
+    stableDeleteDeviceWorkspace: projectActions.deleteDeviceWorkspace,
+    stableListGitRepositories: projectActions.listGitRepositories,
+    stableListGitBranches: projectActions.listGitBranches,
+    stableUpdateProjectName: projectActions.updateProjectName,
+    stableUpdateLocalRuntimeProject: projectActions.updateLocalRuntimeProject,
+    stableRemoveProject: projectActions.removeProject,
+    stableReorderRuntimeProjects: projectActions.reorderRuntimeProjects,
+    stableSetRuntimeProjectPinned: projectActions.setRuntimeProjectPinned,
+    stableSetRuntimeProjectAppearance: projectActions.setRuntimeProjectAppearance,
+    stableReorderRuntimeProjectTasks: projectActions.reorderRuntimeProjectTasks,
+    stableSetRuntimeTaskPinned: projectActions.setRuntimeTaskPinned,
+    stableGetDeviceHomeDirectory: projectActions.getDeviceHomeDirectory,
+    stableGetProjectWorkspaceRoot: projectActions.getProjectWorkspaceRoot,
+    stableListDeviceDirectories: projectActions.listDeviceDirectories,
+    stableCreateDeviceDirectory: projectActions.createDeviceDirectory,
+    stableCloneGitRepository: projectActions.cloneGitRepository,
+    stableLoadEnvironmentInfo: projectActions.loadEnvironmentInfo,
+    stableLoadEnvironmentDiff: projectActions.loadEnvironmentDiff,
+    stableCommitEnvironmentChanges: projectActions.commitEnvironmentChanges,
+    stableCommitAndPushEnvironmentChanges: projectActions.commitAndPushEnvironmentChanges,
+    stablePushEnvironmentChanges: projectActions.pushEnvironmentChanges,
+    stableListEnvironmentBranches: projectActions.listEnvironmentBranches,
+    stableCheckoutEnvironmentBranch: projectActions.checkoutEnvironmentBranch,
+    stableCreateEnvironmentBranch: projectActions.createEnvironmentBranch,
   }
 }

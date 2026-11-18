@@ -1,3 +1,4 @@
+import { useWorkspaceMarkdownFileNavigation } from './useWorkspaceFileNavigation'
 import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
 import { Code2, Eye, Folders, Loader2 } from 'lucide-react'
 import { useCallback, useImperativeHandle, useMemo, useSyncExternalStore, type Ref } from 'react'
@@ -130,6 +131,13 @@ export function FileWorkspacePanel({
     error: treeError,
   } = directory
   const { setPreviewMode, setEditing, setSaveError, navigate: navigateWithDirtyGuard } = source
+  const { openFile: openMarkdownFile, navigationError } = useWorkspaceMarkdownFileNavigation({
+    documentPath: preview?.path,
+    onOpenFile: source.openFilePath,
+    onOpenFileTab:
+      stableTarget && onOpenFileTab ? path => onOpenFileTab(stableTarget, path) : undefined,
+    navigateWithDirtyGuard,
+  })
   const canEditPreview = Boolean(preview?.editable && writeWorkspaceTextFile)
   useImperativeHandle(ref, () => ({ navigate: navigateWithDirtyGuard }), [navigateWithDirtyGuard])
   useWindowEvent(
@@ -255,6 +263,7 @@ export function FileWorkspacePanel({
       </WorkspaceFileToolbar>
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <WorkspaceFilePreview
+          onOpenFile={openMarkdownFile}
           file={displayedPreview}
           binaryFile={binaryPreview}
           loading={previewLoading}
@@ -293,6 +302,15 @@ export function FileWorkspacePanel({
           />
         </div>
       </div>
+      {navigationError && (
+        <p
+          role="alert"
+          data-testid="workspace-file-navigation-error"
+          className="px-4 py-2 text-sm text-destructive"
+        >
+          {t('workbench.workspace_file_preview_failed', '读取文件失败')}
+        </p>
+      )}
       {saveError && (
         <div
           data-testid="workspace-file-save-error"

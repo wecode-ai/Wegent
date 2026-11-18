@@ -1,3 +1,4 @@
+import { createWorkbenchDeviceReconnect } from '@/features/workbench/workbenchDeviceReconnect'
 import type { WorkbenchPaneContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -30,6 +31,7 @@ interface EnvironmentSnapshot {
 }
 /** A pane workspace owns target resolution, partial environment reads and active-run polling. */
 export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceInput) {
+  const reconnect = createWorkbenchDeviceReconnect()
   let input = initial
   let metadataKey: string | undefined
   const directTarget = input.currentRuntimeTask
@@ -284,6 +286,13 @@ export function createWorkbenchPaneEnvironmentSource(initial: EnvironmentSourceI
       input = next
       metadataKey = nextMetadataKey
       listeners.add(listener)
+      reconnect.update({
+        deviceId: snapshot.workspaceTarget?.deviceId,
+        devices: input.devices,
+        onReconnect: () => {
+          void load({ force: true, showLoading: true, shareInflight: false })
+        },
+      })
       const wasRefreshActive = refreshActive
       refreshActive = active
       if (!started || wasRefreshActive !== active) {

@@ -15,7 +15,10 @@ import {
 } from './useWorkbenchContextProjection'
 import { createWorkbenchSessionState } from './workbenchSessionState'
 import { createWorkbenchSession } from './workbenchSession'
-import type { WorkbenchSessionOperations } from './workbenchSessionOperations'
+import {
+  createWorkbenchProjectOperations,
+  type WorkbenchSessionOperations,
+} from './workbenchSessionOperations'
 import { WorkspaceTabsSessionContext } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { createPersonalHomeTaskDraftStore } from '../todo/personalHomeTaskDrafts'
@@ -136,6 +139,7 @@ export function OwnedWorkbenchProvider({
   lifecycleStore: providedLifecycleStore,
   onStartupReadyChange,
   harnessAppLaunch,
+  appshotReceiver,
   workspaceTabId,
   composerAppsSourceActive = true,
   debugSnapshotEnabled = true,
@@ -197,7 +201,12 @@ export function OwnedWorkbenchProvider({
   const { lifecycleStore, setProjectExecutionMode, setProjectWorktreeBranchState } = stateSource
   const observation = session.observe({
     services: resolvedServices,
+    cloudConnected: cloudConnection.isConnected,
     notificationRegistry,
+    appshotReceiver,
+    get addAppshotAttachment() {
+      return attachmentSelection.addExistingAttachment
+    },
     taskRouteActive,
     get harnessAppLaunch() {
       return harnessAppLaunchInput
@@ -529,6 +538,7 @@ export function OwnedWorkbenchProvider({
     user: workbenchIdentity,
     ownershipKey,
     stateSource,
+    canNavigate: canNavigateWorkspaceTab,
     executorClient,
     services: resolvedServices,
   })
@@ -830,6 +840,7 @@ export function OwnedWorkbenchProvider({
     setComposerErrorForScope,
     setSelectedSkills: skillSelection.setSelectedSkills,
     toggleSkill: skillSelection.toggleSkill,
+    captureAttachmentsForScope: attachmentSelection.captureAttachmentsForScope,
     handleFileSelect: attachmentSelection.handleFileSelect,
     handleFileSelectForScope: attachmentSelection.handleFileSelectForScope,
     addExistingAttachment: attachmentSelection.addExistingAttachment,
@@ -940,34 +951,7 @@ export function OwnedWorkbenchProvider({
     stableUnsubscribeRuntimeTaskNotifications: unsubscribeRuntimeTaskNotifications,
     stableRefreshDevices: refreshDevices,
     stableUpgradeDevice: upgradeDevice,
-    stableCreateProject: projectActions.createProject,
-    stableCreateLocalRuntimeProject: projectActions.createLocalRuntimeProject,
-    stableCreateGitWorkspaceProject: projectActions.createGitWorkspaceProject,
-    stablePrepareDeviceWorkspace: projectActions.prepareDeviceWorkspace,
-    stableDeleteDeviceWorkspace: projectActions.deleteDeviceWorkspace,
-    stableListGitRepositories: projectActions.listGitRepositories,
-    stableListGitBranches: projectActions.listGitBranches,
-    stableUpdateProjectName: projectActions.updateProjectName,
-    stableUpdateLocalRuntimeProject: projectActions.updateLocalRuntimeProject,
-    stableRemoveProject: projectActions.removeProject,
-    stableReorderRuntimeProjects: projectActions.reorderRuntimeProjects,
-    stableSetRuntimeProjectPinned: projectActions.setRuntimeProjectPinned,
-    stableSetRuntimeProjectAppearance: projectActions.setRuntimeProjectAppearance,
-    stableReorderRuntimeProjectTasks: projectActions.reorderRuntimeProjectTasks,
-    stableSetRuntimeTaskPinned: projectActions.setRuntimeTaskPinned,
-    stableGetDeviceHomeDirectory: projectActions.getDeviceHomeDirectory,
-    stableGetProjectWorkspaceRoot: projectActions.getProjectWorkspaceRoot,
-    stableListDeviceDirectories: projectActions.listDeviceDirectories,
-    stableCreateDeviceDirectory: projectActions.createDeviceDirectory,
-    stableCloneGitRepository: projectActions.cloneGitRepository,
-    stableLoadEnvironmentInfo: projectActions.loadEnvironmentInfo,
-    stableLoadEnvironmentDiff: projectActions.loadEnvironmentDiff,
-    stableCommitEnvironmentChanges: projectActions.commitEnvironmentChanges,
-    stableCommitAndPushEnvironmentChanges: projectActions.commitAndPushEnvironmentChanges,
-    stablePushEnvironmentChanges: projectActions.pushEnvironmentChanges,
-    stableListEnvironmentBranches: projectActions.listEnvironmentBranches,
-    stableCheckoutEnvironmentBranch: projectActions.checkoutEnvironmentBranch,
-    stableCreateEnvironmentBranch: projectActions.createEnvironmentBranch,
+    ...createWorkbenchProjectOperations(projectActions),
     stableSendRuntimePaneMessage: runtimeMessaging.sendRuntimePaneMessage,
     stableInterruptAndSendRuntimePaneMessage: runtimeMessaging.interruptAndSendRuntimePaneMessage,
     stableSendRuntimePaneGuidance: runtimeMessaging.sendRuntimePaneGuidance,

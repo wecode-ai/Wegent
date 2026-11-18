@@ -148,10 +148,11 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
       sendRuntimePaneMessage,
       answeredRequestUserInputIds,
     } = sessionOwner.frame
-    const { setError } = sessionOwner.commands
+    const { setError, setQueuedMessages } = sessionOwner.commands
 
     if (!currentRuntimeTask) return { accepted: false, queued: false }
     const operation = beginRuntimeConversationOperation(currentRuntimeTask)
+    let pendingAdmission = false
     try {
       const appendedLocalMessage =
         options.appendLocalMessage !== false &&
@@ -163,6 +164,13 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
         applyRuntimeConversationAction(currentRuntimeTask, {
           type: 'user_added',
           message: createRuntimeQueuedUserMessage(message),
+        })
+      }
+      if (options.appendLocalMessage !== false && !appendedLocalMessage) {
+        setQueuedMessages(messages => {
+          if (messages.some(item => item.id === message.id)) return messages
+          pendingAdmission = true
+          return [...messages, { ...message, status: 'sending' }]
         })
       }
       const result = await sendRuntimeQueuedMessage(
@@ -187,6 +195,8 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
       }
       return result
     } finally {
+      if (pendingAdmission)
+        setQueuedMessages(messages => messages.filter(item => item.id !== message.id))
       operation.dispose()
     }
   }
@@ -729,8 +739,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
     response: RequestUserInputResponse,
     options: SendRequestUserInputResponseOptions = {}
   ): Promise<boolean> => {
-    const { currentRuntimeTask, lifecycleStore, queuedMessages, sendRuntimePaneMessage } =
-      sessionOwner.frame
+    const { currentRuntimeTask, lifecycleStore, sendRuntimePaneMessage } = sessionOwner.frame
     const { setAnsweredRequestUserInputIds } = sessionOwner.actions
     const {
       applyLocalRequestUserInputResponses,
@@ -769,7 +778,7 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
         )
       if (answerIsUserMessage) {
         const answerMessage: RuntimePaneQueuedMessage = {
-          id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
+          id: `queued-runtime-pane-${crypto.randomUUID()}`,
           content: message,
           status: 'queued',
           createdAt: new Date().toISOString(),

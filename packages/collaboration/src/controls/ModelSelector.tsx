@@ -828,7 +828,7 @@ export function ModelSelector({
             closeMenu()
             return
           }
-          setDesktopMenuView('simple')
+          setDesktopMenuView(advancedReasoningAvailable ? 'simple' : 'advanced')
           setPowerSliderInteracting(false)
           popover.open()
         }}

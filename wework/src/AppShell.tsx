@@ -86,7 +86,8 @@ function AppShellContent() {
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const { key: ownershipKey } = resolveWorkbenchOwnership(cloudConnection, user)
-  const { activeAppKey } = useChromeTabs(path)
+  const { activeAppKey, navigateToApp } = useChromeTabs(path)
+  const openWeworkForAppshot = useCallback(() => navigateToApp('wework'), [navigateToApp])
   const isElectron = isElectronRuntime()
   const isDesktop = isDesktopRuntime()
   const isPopoutWindow = isPopoutWindowRuntime()
@@ -390,7 +391,10 @@ function AppShellContent() {
                 titlebarOverlaysContent ? 'h-full' : 'flex-1'
               )}
             >
-              <AppRoutes onWorkbenchStartupReadyChange={setWorkbenchStartupReady} />
+              <AppRoutes
+                onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
+                onOpenWeworkForAppshot={isDesktop ? openWeworkForAppshot : undefined}
+              />
             </div>
             {!isPopoutWindow && <WeworkDevInstanceBadge />}
             {!isPopoutWindow && !isWorkspaceWindow && <RuntimeInteractionNotice />}

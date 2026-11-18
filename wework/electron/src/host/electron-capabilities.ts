@@ -10,7 +10,7 @@ import { registerNotificationReplyE2E } from './notification-reply-e2e.js'
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
-import { focusE2EWindow } from './e2e-window-focus.js'
+import { blurE2EWindow, focusE2EWindow } from './e2e-window-focus.js'
 import { setE2EWindowSize } from './e2e-window-size.js'
 import { withDebuggerSession } from './debugger-session.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
@@ -46,6 +46,7 @@ import type { PreferencesStore } from './preferences-store.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
 import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type { ComputerUseService } from './computer-use-service.js'
+import type { AppshotsService } from './appshots-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
@@ -77,6 +78,12 @@ import type { SecureValueStore } from './secure-value-store.js'
 import type { BrowserAnnotationController } from './browser-annotation-controller.js'
 import { RotatingLog } from '../runtime/rotating-log.js'
 import { registerMicrophoneDiagnostics } from './microphone-diagnostics.js'
+import {
+  closeConnectorAuthorizationWindow,
+  isConnectorAuthorizationWindowOpen,
+  isConnectorAuthorizationUrl,
+  openConnectorAuthorizationWindow,
+} from './connector-authorization-window.js'
 import { readMacosMicrophoneChecks } from './macos-microphone-diagnostics.js'
 import type { WeworkSyncRequest } from './wework-sync-request.js'
 import type { ApplicationMenu, ApplicationMenuCapabilityState } from './application-menu.js'
@@ -146,10 +153,12 @@ export type ProcessExplorerHostService = ProcessExplorerClient
 export interface ElectronDesktopServices {
   modelConfiguration?: ModelConfigurationStore
   syncLocalModels?: () => Promise<void>
+  requestModelRuntime?: (input: Record<string, unknown>) => Promise<unknown>
   registerMcpAppCleanup?: (cleanup: () => Promise<void>) => void
   executorPid?: () => number | null
   requestMcpApp?: (payload: Record<string, unknown>) => Promise<unknown>
   executorHome: string
+  appshots?: AppshotsService
   processExplorer: ProcessExplorerHostService
   appUpdates?: AppUpdateController
   browserAnnotations?: BrowserAnnotationController
@@ -450,7 +459,8 @@ export function createElectronCapabilityRouter(
     desktopServices.secureStorage,
     desktopServices.events,
     desktopServices.modelConfiguration,
-    desktopServices.syncLocalModels
+    desktopServices.syncLocalModels,
+    desktopServices.requestModelRuntime
   )
   registerMicrophoneDiagnostics(router, readMacosMicrophoneChecks)
 
@@ -692,6 +702,22 @@ export function createElectronCapabilityRouter(
     await clipboard.writeText(rawStringParam(params, 'text'))
     return { written: true }
   })
+  const appshots = desktopServices.appshots
+  const requireAppshots = (): AppshotsService => {
+    if (!appshots) {
+      throw new HostCapabilityError('capability_unavailable', 'Appshots are unavailable')
+    }
+    return appshots
+  }
+  router.register('appshots.getStatus', () => requireAppshots().status())
+  router.register('appshots.capture', () => requireAppshots().capture())
+  router.register('appshots.openPermissionSettings', params => {
+    const permission = enumParam(params, 'permission', ['screenCapture', 'accessibility'])
+    if (permission !== 'screenCapture' && permission !== 'accessibility') {
+      throw new HostCapabilityError('invalid_params', 'permission is required')
+    }
+    return requireAppshots().openPermissionSettings(permission)
+  })
   router.register('computerUse.status', () => computerUse.status())
   router.register('computerUse.setEnabled', async params => {
     const enabled = booleanParam(params, 'enabled') ?? false
@@ -791,6 +817,15 @@ export function createElectronCapabilityRouter(
         minimized: !destroyed && target.isMinimized(),
         focusable: !destroyed && target.isFocusable(),
         focused: !destroyed && target.isFocused(),
+        focusedWindowId: BrowserWindow.getFocusedWindow()?.id ?? null,
+        primaryContentsFocused: e2eHost.captureTarget('main')?.isFocused() ?? null,
+        windows: BrowserWindow.getAllWindows().map(window => ({
+          id: window.id,
+          parentId: window.getParentWindow()?.id ?? null,
+          focused: window.isFocused(),
+          visible: window.isVisible(),
+          modal: window.isModal(),
+        })),
         appHidden: process.platform === 'darwin' ? app.isHidden() : null,
       })
       throw error
@@ -798,6 +833,23 @@ export function createElectronCapabilityRouter(
   })
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
+  })
+  router.register('e2e.blurMainWindow', async () => {
+    const target = requiredWindow(window)
+    try {
+      await blurE2EWindow(target, () => target.blur())
+    } catch (error) {
+      const destroyed = target.isDestroyed()
+      console.error('[desktop-e2e-window-blur-failed]', {
+        windowLabel: 'main',
+        pid: process.pid,
+        windowId: destroyed ? null : target.id,
+        destroyed,
+        visible: !destroyed && target.isVisible(),
+        focused: !destroyed && target.isFocused(),
+      })
+      throw error
+    }
   })
   router.register('e2e.insertText', params => {
     const label = optionalStringParam(params, 'windowLabel') ?? 'main'
@@ -1255,6 +1307,36 @@ export function createElectronCapabilityRouter(
   router.register('shell.openPath', async params => {
     const error = await shell.openPath(stringParam(params, 'path'))
     if (error) throw new HostCapabilityError('open_path_failed', error)
+  })
+  // Administrator-published connectors authorize inside the app, so the user
+  // keeps their place in the workbench and the flow stays observable.
+  router.register('auth.openConnectorAuthorization', async params => {
+    const url = stringParam(params, 'url')
+    if (!isConnectorAuthorizationUrl(url)) {
+      throw new HostCapabilityError(
+        'invalid_authorization_url',
+        'Connector authorization must use https or a loopback http origin'
+      )
+    }
+    await openConnectorAuthorizationWindow({
+      url,
+      requestId: stringParam(params, 'requestId'),
+      parent: requiredWindow(window),
+      // The consent window can stay open far longer than one host request may
+      // live, so the close travels as a durable event instead of a long call.
+      onClosed: requestId =>
+        desktopServices.events.publish('connectorAuthorization.closed', { requestId }),
+    })
+  })
+  // The poll loop owns the terminal state, so it also owns closing the window;
+  // an early close is how a user cancels. Both are scoped to one attempt.
+  // The state read keeps cancellation working even if the close event is
+  // missed, so no caller depends on one durable delivery.
+  router.register('auth.getConnectorAuthorizationState', params => ({
+    open: isConnectorAuthorizationWindowOpen(stringParam(params, 'requestId')),
+  }))
+  router.register('auth.closeConnectorAuthorization', params => {
+    closeConnectorAuthorizationWindow(stringParam(params, 'requestId'))
   })
   router.register('shell.showItemInFolder', params =>
     shell.showItemInFolder(stringParam(params, 'path'))

@@ -11,6 +11,8 @@ import {
   savedBoardColumns,
   useSavedBoardViews,
   saveProjectBoardViews,
+  isBaseBoardStatusGroupingEnabled,
+  useBaseBoardStatusMigration,
 } from '@wegent/collaboration'
 import { useCallback, useMemo } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
@@ -468,12 +470,41 @@ export function useCloudTodoWorkspaceBoard(base: CloudTodoWorkspaceBase) {
   const canManageViews =
     selectedProject?.location === 'local' ||
     ['Owner', 'Maintainer'].includes(selectedProject?.access_role ?? '')
+  const baseBoardStatusGrouping =
+    !isMyTasksBoard &&
+    !isAITableProject &&
+    !isExternalGitBoard &&
+    isBaseBoardStatusGroupingEnabled()
+  const baseBoardMigrationReady =
+    selectedProject?.location !== 'cloud' ||
+    (cloudWorkspace.state.project?.project_store === 'backend' &&
+      cloudWorkspace.state.project.id === String(selectedProject.id) &&
+      !cloudWorkspace.state.loading)
+  const baseBoardMigration = useBaseBoardStatusMigration({
+    api:
+      selectedProject?.location === 'cloud'
+        ? (cloudWorkspaceApi?.projects ?? null)
+        : (localProjectManageApi?.projects ?? null),
+    project: selectedProject
+      ? {
+          id: String(selectedProject.id),
+          project_store: selectedProject.project_store ?? 'backend',
+          board_config: selectedProject.board_config,
+        }
+      : null,
+    enabled: baseBoardStatusGrouping && baseBoardMigrationReady && projectView === 'board',
+    canManage: canManageViews,
+    onMigrated: project => {
+      if (selectedProject) replaceProject(selectedProject, toWeworkCloudProject(project))
+    },
+  })
   const tagFilter = useBoardTagFilter({
     scope: `${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
     tags: availableTags,
     translate: boardTranslate,
   })
   const standardBoardController = useStandardCloudBoardController({
+    baseBoardStatusGrouping,
     currentUserId: taskOwnerUserId,
     tagFilter: tagFilter.tags,
     tagLimitError: boardTranslate('todo.tag_limit_exceeded', '最多添加 20 个不同标签'),
@@ -673,6 +704,8 @@ export function useCloudTodoWorkspaceBoard(base: CloudTodoWorkspaceBase) {
     standardBoardExtensions,
     savedViews,
     canManageViews,
+    baseBoardMigration,
+    baseBoardStatusGrouping,
     tagFilter,
     standardBoardController,
     activeDragItemId,

@@ -1,5 +1,6 @@
 import { updateRuntimeWorkProject, type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
-import { mergeDeviceLists } from '@/lib/workbench-device'
+import { stripAppBasePath } from '@/config/runtime'
+import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { createModelLoadingTrace, logModelLoading } from '@/lib/model-loading-diagnostics'
 
@@ -28,13 +29,15 @@ import {
   selectVisibleDevices,
   startCloudRuntimeSync,
   timedWorkbenchBootstrapRequest,
+  updateCloudRuntimeDevices,
 } from './workbenchCloudStatus'
-import type { WorkbenchAction } from './workbenchReducer'
+import { isRuntimeProjectSelectionRemoved, type WorkbenchAction } from './workbenchReducer'
 import {
   findRuntimeTask,
   findRuntimeTaskForPinRequest,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
+  isSameRuntimeTaskAddress,
   removeRuntimeTasks,
   runtimeWorkContainsTask,
   updateRuntimeWorkTask,
@@ -55,6 +58,7 @@ import {
   type CloudBackgroundRefreshOptions,
   queueWorkRefreshAfterInventory,
   createCloudRuntimeStateWithCache,
+  createRuntimeProjectRemoval,
   localDeviceSnapshot,
   mergeRuntimeTaskAddresses,
   loadDevicesForRefresh,
@@ -263,9 +267,12 @@ export function createWorkbenchDataRefreshSource(
         transport.cloudBackgroundApi === backgroundApi &&
         devicesResult?.status === 'fulfilled'
       ) {
+        updateCloudRuntimeState(
+          updateCloudRuntimeDevices(cloudRuntimeState, revision, devicesResult.value)
+        )
         const devices = resolveDeviceListWithCache(
           cacheScope,
-          mergeDeviceLists(localDeviceSnapshot(baseDevices), devicesResult.value),
+          selectVisibleDevices(localDeviceSnapshot(baseDevices), cloudRuntimeState),
           { useCacheFallback: false }
         )
         dispatch({
@@ -562,23 +569,41 @@ export function createWorkbenchDataRefreshSource(
           workspacePath: normalizeRuntimeWorkspacePath(workspace.workspacePath),
         }
       : undefined
+    const selection = readState()
+    const removal = createRuntimeProjectRemoval(
+      selection.runtimeWork,
+      projectId,
+      normalizedWorkspace,
+      { devices: selection.devices }
+    )
+    const nextLocal = localRuntimeWork ? removeRuntimeProject(localRuntimeWork, removal) : null
+    const cached = removeRuntimeProject(cachedRemoteRuntimeWork.runtimeWork, removal)
+    const nextCloud = removeRuntimeProjectFromCloudState(cloudRuntimeState, removal)
+    const visible = selection.runtimeWork
+      ? removeRuntimeProject(selection.runtimeWork, removal)
+      : null
+    const removesSelection = isRuntimeProjectSelectionRemoved(selection, projectId, visible)
     cloudBackgroundRequest?.controller.abort()
     cloudBackgroundRequest = null
     workListRefreshRevision += 1
-    if (localRuntimeWork) {
-      localRuntimeWork = removeRuntimeProject(localRuntimeWork, projectId, normalizedWorkspace)
-    }
+    localRuntimeWork = nextLocal
     cachedRemoteRuntimeWork = {
       ...cachedRemoteRuntimeWork,
-      runtimeWork: writeCachedRemoteRuntimeWork(
-        cacheScope,
-        removeRuntimeProject(cachedRemoteRuntimeWork.runtimeWork, projectId, normalizedWorkspace),
-        readState().devices
-      ),
+      runtimeWork: writeCachedRemoteRuntimeWork(cacheScope, cached, removal.devices),
     }
-    updateCloudRuntimeState(
-      removeRuntimeProjectFromCloudState(cloudRuntimeState, projectId, normalizedWorkspace)
+    updateCloudRuntimeState(nextCloud)
+    dispatch({ type: 'runtime_project_removed', removal })
+    const activeRoute = parseRuntimeTaskRoute(
+      stripAppBasePath(window.location.pathname),
+      window.location.search
     )
+    if (
+      removesSelection &&
+      (observation.canNavigate?.() ?? true) &&
+      activeRoute &&
+      isSameRuntimeTaskAddress(selection.currentRuntimeTask, activeRoute)
+    )
+      navigateTo('/')
   }
 
   const refreshDevices = async (options?: { useCacheFallback?: boolean }) => {

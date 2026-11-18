@@ -7,6 +7,7 @@ import type { CloudTodoWorkspaceData } from './useCloudTodoWorkspaceData'
 export function createCloudTodoBoardActions(data: CloudTodoWorkspaceData) {
   const {
     t,
+    baseBoardStatusGrouping,
     workspaceSource,
     cloudWorkspaceApi,
     cloudWorkspaceMessages,
@@ -184,6 +185,7 @@ export function createCloudTodoBoardActions(data: CloudTodoWorkspaceData) {
     standardBoardController.moveDroppedItem(projectBoardDrop(event))
   }
   async function saveGlobalGroupBy() {
+    if (baseBoardStatusGrouping) return
     if (!selectedProject || groupScopeBusy) return
     const projectApi = projectSpaceApis[selectedProject.location]
     if (selectedProject.location === 'cloud' ? !cloudWorkspaceApi : !projectApi) return

@@ -35,6 +35,21 @@ export async function requestExternalBrowser(baseUrl, path, body, budgetMs, fetc
   }
 }
 
+export async function readExternalBrowserPage(request, sessionId, remaining) {
+  // Chrome error documents replace location.href with chrome-error://chromewebdata/.
+  // WebDriver preserves the actual navigation URL, including HTTP error responses.
+  const url = await request(`/session/${sessionId}/url`, undefined, remaining())
+  const page = await request(
+    `/session/${sessionId}/execute/sync`,
+    {
+      script: 'return {title: document.title, text: document.body?.innerText ?? ""}',
+      args: [],
+    },
+    remaining()
+  )
+  return { ...page, url }
+}
+
 function driverPort(child, timeoutMs) {
   return new Promise((resolve, reject) => {
     let output = ''
@@ -243,15 +258,7 @@ export async function prepareExternalBrowserFixture(resultDir, timeoutMs) {
         pages = []
         for (const handle of handles) {
           await request(`/session/${sessionId}/window`, { handle }, remaining())
-          const page = await request(
-            `/session/${sessionId}/execute/sync`,
-            {
-              script:
-                'return {url: location.href, title: document.title, text: document.body?.innerText ?? ""}',
-              args: [],
-            },
-            remaining()
-          )
+          const page = await readExternalBrowserPage(request, sessionId, remaining)
           pages.push(page)
           if (page.url === expectedUrl && page.text.includes(expectedText)) {
             evidence.push(page)

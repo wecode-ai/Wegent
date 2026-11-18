@@ -142,11 +142,17 @@ export function deriveWorkbenchModelSelection(
 ) {
   const selectedModel = snapshot.selectedModelByScope[scopeKey] ?? null
   const selectedModelOptions = snapshot.selectedModelOptionsByScope[scopeKey] ?? EMPTY_MODEL_OPTIONS
+  const currentDefaultModel =
+    !selectionConfig?.modelName && selectedModel
+      ? models.find(model => isSameModelSelection(model, selectedModel))
+      : null
   const effectiveSelectionConfig =
     selectionConfig?.modelName &&
     (findModelForSelection(models, selectionConfig) || !fallbackWhenConfiguredModelUnavailable)
       ? selectionConfig
-      : (defaultSelectionConfig?.(models) ?? selectionConfig ?? null)
+      : currentDefaultModel
+        ? toSelectionConfig(currentDefaultModel, selectedModelOptions)
+        : (defaultSelectionConfig?.(models) ?? selectionConfig ?? null)
   const selectionKey = getSelectionKey(effectiveSelectionConfig)
   const configuredModelAvailable = Boolean(
     effectiveSelectionConfig?.modelName && findModelForSelection(models, effectiveSelectionConfig)

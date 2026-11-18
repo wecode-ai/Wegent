@@ -83,7 +83,7 @@ export function createWorkbenchSessionProjects(owner: Owner) {
         activationRevision: refs.remoteProjectSyncActivationRevisionRef.current,
       }
       refs.remoteProjectSyncAttemptRef.current = attempt
-      await input.enqueueRemoteProjectStateMutation(async () => {
+      const synced = await input.enqueueRemoteProjectStateMutation(async () => {
         const current = () =>
           owner.isHeld() &&
           refs.remoteProjectSyncAttemptRef.current === attempt &&
@@ -105,8 +105,9 @@ export function createWorkbenchSessionProjects(owner: Owner) {
           { localSidebarIdentity: identity }
         )
         if (!response.accepted) throw new Error(response.error || 'Failed to sync remote projects')
-        if (owner.isHeld()) await owner.operations.stableRefreshWorkLists()
+        return true
       })
+      if (synced && owner.isHeld()) await owner.operations.stableRefreshWorkLists()
     })().catch(error => {
       if (!owner.isHeld()) return
       if (

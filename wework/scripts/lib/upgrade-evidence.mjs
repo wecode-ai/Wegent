@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { credentialRoundTripPassed } from '../../e2e/desktop/upgrade-suite.mjs'
 import {
   compareVersions,
   validateUpgradeCatalog,
@@ -61,6 +62,7 @@ export function verifiedUpgradeEdge({
     evidence.channel !== channel ||
     evidence.upgrade !== 'passed' ||
     evidence.rollback !== 'passed' ||
+    !credentialRoundTripPassed(evidence) ||
     manifest?.schemaVersion !== 2 ||
     manifest.restarted !== true ||
     manifest.rolledBack !== true ||

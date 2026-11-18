@@ -1,3 +1,4 @@
+import { changeRequestResourceEventKeys } from '@/features/workbench/changeRequestObservations'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import type { CloudTodoBoardTaskBinding } from './CloudTodoBoardCard'
 import type { CloudTodoWorkspaceObservation } from './cloudTodoWorkspaceObservation'
@@ -25,7 +26,8 @@ export function createCloudTodoChangeRequestRepair() {
   const repair = async (
     binding: CloudTodoBoardTaskBinding,
     snapshot: TaskChangeRequestSnapshot,
-    projectKey: string
+    projectKey: string,
+    automatic = false
   ) => {
     const input = current
     const project = input?.project
@@ -54,16 +56,19 @@ export function createCloudTodoChangeRequestRepair() {
     const prompt = buildChangeRequestRepairPrompt(
       request,
       binding.task_title || binding.task_id,
+      input.t,
       project.pull_request_automation?.prompt
     )
+    const resourceEventKeys = automatic ? changeRequestResourceEventKeys(snapshot) : []
     const accepted = await input.workbench.sendRuntimePaneMessage(
       {
         address,
         message: prompt,
-        source: { source: 'manual' },
+        source: { source: automatic ? 'connection_event' : 'manual' },
+        ...(resourceEventKeys.length ? { resourceEventKeys, queueIfBusy: true } : {}),
         cloudProjectId: String(project.id),
       },
-      { optimisticUserMessage: createRuntimeUserMessage(prompt) }
+      { optimisticUserMessage: automatic ? undefined : createRuntimeUserMessage(prompt) }
     )
     if (!accepted) throw new Error(input.repairFailedError)
   }
@@ -80,11 +85,14 @@ export function createCloudTodoChangeRequestRepair() {
       const status = request ? autoRepairStatus(request) : null
       if (
         !snapshot ||
+        snapshot.stale ||
+        snapshot.error ||
         !request ||
         !status ||
         !project.pull_request_automation.statuses.includes(status)
       )
         continue
+      if (input.monitor.hasHandledChange(binding.changeRequestTarget, request)) continue
       const eventKey = `${itemId}\0${binding.task_id}\0${changeRequestRepairEventKey(request)}`
       if (!claimChangeRequestAutoRepair(eventKey)) continue
       queueMicrotask(() => {
@@ -92,7 +100,7 @@ export function createCloudTodoChangeRequestRepair() {
           completeChangeRequestAutoRepair(eventKey, false)
           return
         }
-        void repair(binding, snapshot, projectSpaceKey(projectSpaceRef(project)))
+        void repair(binding, snapshot, projectSpaceKey(projectSpaceRef(project)), true)
           .then(() => completeChangeRequestAutoRepair(eventKey, true))
           .catch(error => {
             completeChangeRequestAutoRepair(eventKey, false)

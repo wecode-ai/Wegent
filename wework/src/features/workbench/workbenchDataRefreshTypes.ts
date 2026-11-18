@@ -9,4 +9,5 @@ export interface WorkbenchDataRefreshOptions {
   stateSource: Pick<WorkbenchSessionState, 'getSnapshot' | 'dispatch'>
   executorClient: ExecutorClient
   services: WorkbenchServices
+  canNavigate?: () => boolean
 }

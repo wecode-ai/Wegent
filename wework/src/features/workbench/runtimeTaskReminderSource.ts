@@ -24,6 +24,10 @@ interface Input {
   unreadMessageCounts: ReadonlyMap<string, number>
 }
 
+function notificationIdentity(item: RuntimeTaskReminderItem): string {
+  return `${item.task.taskId}\0${item.address.workspacePath ?? item.workspace.workspacePath ?? ''}`
+}
+
 /** Canonical read markers, delivery de-duplication and visible unread keys share one owner. */
 export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore) {
   let input: Input | undefined
@@ -72,7 +76,10 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
         const byKey = new Map(current.items.map(item => [item.key, item]))
         const newlyUnread = [...lifecycle.unreadTaskKeys].filter(key => !previousUnread.has(key))
         previousUnread = new Set(lifecycle.unreadTaskKeys)
-        for (const key of lifecycle.runningTaskKeys) notified.delete(key)
+        for (const key of lifecycle.runningTaskKeys) {
+          const item = byKey.get(key)
+          if (item) notified.delete(notificationIdentity(item))
+        }
         if (!isMainWindowFocused())
           for (const key of newlyUnread) {
             const item = byKey.get(key)
@@ -83,10 +90,10 @@ export function createRuntimeTaskReminderSource(store: RuntimeTaskLifecycleStore
               !current.notificationPreferences[runtimeTaskNotificationCategory(item)].system ||
               item.lifecycle?.interactionStatus ||
               item.task.interactionStatus ||
-              notified.has(key)
+              notified.has(notificationIdentity(item))
             )
               continue
-            notified.add(key)
+            notified.add(notificationIdentity(item))
             deliver(item)
           }
         for (const item of current.items) {

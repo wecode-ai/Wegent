@@ -1,3 +1,5 @@
+import { PlatformInvitedIssueAccess } from './PlatformInvitedIssueAccess'
+import { useInvitedIssueRoute } from './useInvitedIssueRoute'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -97,7 +99,9 @@ function CollaborationPlatformAppContent({
     !host.location.workspaceId &&
     Boolean(host.renderIssueList) &&
     Boolean(host.location.rootView?.startsWith('issues-'))
-  const ownsPageRequests = isDevicePage || isStandInPage || isTemplatePage || isPersonalIssuesPage
+  const isIssuePage = Boolean(host.location.projectId && host.location.issueId)
+  const ownsPageRequests =
+    isDevicePage || isStandInPage || isTemplatePage || isPersonalIssuesPage || isIssuePage
   const deviceCatalog = useDeviceCatalog(api, isDevicePage, refreshKey, host.currentUser)
   const { state, commands } = useCollaborationPlatformController({
     api,
@@ -220,6 +224,15 @@ function CollaborationPlatformAppContent({
       issueCreation.getSnapshot
     )
   const { startRootIssueCreation } = issueCreation
+  const invitedIssueRoute = useInvitedIssueRoute({
+    api: scopedApi,
+    projectId: host.location.projectId,
+    issueId: host.location.issueId,
+    projectReady: state.projects.some(project => String(project.id) === host.location.projectId),
+    enabled: Boolean(renderProject),
+    failureLabel: messages.loadFailed,
+  })
+  const invitedRouteMatches = invitedIssueRoute.invited
   const workspaceAgentConfigurationApi = useMemo(
     () =>
       host.location.workspaceId
@@ -416,7 +429,8 @@ function CollaborationPlatformAppContent({
     )
   } else if (
     host.location.projectId &&
-    (state.workspace ||
+    (isIssuePage ||
+      state.workspace ||
       state.workspaceNavigationContext ||
       state.projects.some(
         project => String(project.id) === host.location.projectId && !project.workspace_id
@@ -426,7 +440,14 @@ function CollaborationPlatformAppContent({
     const selectedProject =
       state.projects.find(project => String(project.id) === host.location.projectId) ?? null
     content =
-      selectedProject && renderProject ? (
+      renderProject && isIssuePage && !selectedProject && !invitedRouteMatches ? (
+        <PlatformInvitedIssueAccess
+          error={invitedIssueRoute.error}
+          loadError={state.error}
+          retry={invitedIssueRoute.retry}
+          translate={translate}
+        />
+      ) : selectedProject && renderProject && !invitedRouteMatches ? (
         renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp

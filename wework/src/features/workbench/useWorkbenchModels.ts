@@ -112,6 +112,7 @@ export function useWorkbenchModels({
     'window',
     LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
     () => {
+      api.refresh?.({ invalidateLocal: true })
       void source.loadModels()
     },
     { enabled }

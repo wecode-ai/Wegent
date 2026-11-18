@@ -1,8 +1,19 @@
 import { once } from 'node:events'
+import { randomUUID } from 'node:crypto'
 
-/** Attach only to the fresh child paused by this driver's --inspect-brk argument. */
-export async function inspectBeforeStart(child, expression, log = console.log) {
-  const socketUrl = await new Promise((accept, reject) => {
+/** Read the connected host identity through the native snapshot shipped by historical packages. */
+export async function readConnectedApplicationPid(control) {
+  const { applicationPid } = JSON.parse(
+    await control.command('getProcessExplorerWindowSnapshot', 'body')
+  )
+  if (!Number.isSafeInteger(applicationPid) || applicationPid <= 0)
+    throw new Error('The connected workbench has no valid application process ID')
+  return applicationPid
+}
+
+/** Discover only the loopback endpoint announced by this driver's fresh child. */
+export function readInspectorEndpoint(child) {
+  return new Promise((accept, reject) => {
     let output = ''
     const timer = setTimeout(
       () => finish(new Error('The isolated app inspector did not start')),
@@ -26,6 +37,11 @@ export async function inspectBeforeStart(child, expression, log = console.log) {
     child.once('exit', failed)
     child.once('error', finish)
   })
+}
+
+/** Attach only to the fresh child paused by this driver's --inspect-brk argument. */
+export async function inspectBeforeStart(child, expression, log = console.log) {
+  const socketUrl = await readInspectorEndpoint(child)
   await withInspector(
     socketUrl,
     async (command, socket) => {
@@ -61,8 +77,63 @@ export async function inspectBeforeStart(child, expression, log = console.log) {
 
 /** Reconnect only to the current host belonging to this isolated release store. */
 export async function inspectRunningApp(port, expectedPid, expression, log = console.log) {
+  log('[desktop-e2e-inspector] identify host', { expectedPid, ports: port })
+  if (Array.isArray(port)) port = await currentInspectorPort(port, expectedPid, log)
+  log('[desktop-e2e-inspector] selected host', { expectedPid, port })
+  const socketUrl = await inspectorTarget(port)
+  return withInspector(
+    socketUrl,
+    async command => {
+      const pid = await evaluate(command, 'process.pid')
+      if (pid !== expectedPid)
+        throw new Error('The inspector is connected to another release process')
+      log('[desktop-e2e-inspector] execute assertion', { expectedPid, port })
+      return evaluate(
+        command,
+        typeof expression === 'function' ? expression(port) : expression,
+        true,
+        log
+      )
+    },
+    log
+  )
+}
+
+/** Supervisors can retain an earlier handoff's arguments after a driver restart. */
+async function currentInspectorPort(ports, expectedPid, log) {
+  const matches = []
+  for (const port of new Set(ports)) {
+    const target = await inspectorTarget(port, true)
+    if (!target) continue
+    let pid
+    try {
+      pid = await withInspector(target, command => evaluate(command, 'process.pid'), log)
+    } catch (error) {
+      if (await inspectorTarget(port, true)) throw error
+      log('[desktop-e2e-inspector] endpoint closed during identity check', { port })
+      continue
+    }
+    log('[desktop-e2e-inspector] endpoint identity', { port, pid, expectedPid })
+    if (pid === expectedPid) matches.push(port)
+  }
+  if (matches.length !== 1)
+    throw new Error(
+      `Expected exactly one registered inspector for host PID ${expectedPid}; found ${matches.length}`
+    )
+  return matches[0]
+}
+
+async function inspectorTarget(port, allowClosed = false) {
+  if (!/^\d+$/.test(String(port)) || Number(port) < 1 || Number(port) > 65535)
+    throw new Error('The isolated inspector requires a registered TCP port')
   const origin = `http://127.0.0.1:${port}`
-  const response = await fetch(`${origin}/json/list`, { signal: AbortSignal.timeout(10_000) })
+  let response
+  try {
+    response = await fetch(`${origin}/json/list`, { signal: AbortSignal.timeout(10_000) })
+  } catch (cause) {
+    if (allowClosed && cause.cause?.code === 'ECONNREFUSED') return null
+    throw new Error(`The isolated inspector at port ${port} is unavailable`, { cause })
+  }
   if (!response.ok) throw new Error(`The isolated inspector returned HTTP ${response.status}`)
   const targets = await response.json()
   if (targets.length !== 1) throw new Error('The isolated inspector must identify exactly one host')
@@ -70,26 +141,65 @@ export async function inspectRunningApp(port, expectedPid, expression, log = con
   const target = new URL(socketUrl)
   if (target.protocol !== 'ws:' || target.hostname !== '127.0.0.1' || target.port !== String(port))
     throw new Error('The isolated inspector escaped its loopback endpoint')
-  await withInspector(
-    socketUrl,
-    async command => {
-      const pid = await evaluate(command, 'process.pid')
-      if (pid !== expectedPid)
-        throw new Error('The inspector is connected to another release process')
-      await evaluate(command, expression)
-    },
-    log
-  )
+  return socketUrl
 }
 
-async function evaluate(command, expression) {
-  const result = await command('Runtime.evaluate', { expression, returnByValue: true })
+async function evaluate(command, expression, awaitPromise = false, log = console.log) {
+  const objectGroup = awaitPromise ? `wework-native-inspection-${randomUUID()}` : undefined
+  const source = awaitPromise
+    ? `(value => {
+        const pending = process.getBuiltinModule('node:util').types.isPromise(value)
+          ? value : Promise.resolve(value)
+        // Preserve the original Promise and observe rejection before Node's event loop resumes.
+        Promise.prototype.then.call(pending, () => {}, () => {})
+        return pending
+      })((\n${expression}\n))`
+    : expression
+  const deadline = performance.now() + 10_000
+  const request = (method, params) => {
+    const remaining = deadline - performance.now()
+    if (remaining <= 0) throw new Error('Inspector command timed out: Runtime.evaluate')
+    return command(method, params, remaining)
+  }
+  let failed = false
+  try {
+    const object = evaluationResult(
+      await request('Runtime.evaluate', {
+        expression: source,
+        returnByValue: !awaitPromise,
+        awaitPromise: false,
+        ...(objectGroup && { objectGroup }),
+      })
+    )
+    if (!objectGroup) return object?.value
+    const result = await request('Runtime.awaitPromise', {
+      promiseObjectId: object.objectId,
+      returnByValue: true,
+    })
+    return evaluationResult(result)?.value
+  } catch (error) {
+    failed = true
+    throw error
+  } finally {
+    if (objectGroup) {
+      try {
+        await command('Runtime.releaseObjectGroup', { objectGroup })
+      } catch (error) {
+        if (!failed) throw error
+        log('[desktop-e2e-inspector] object cleanup deferred to disconnect')
+      }
+    }
+  }
+}
+
+function evaluationResult(result) {
   if (result.exceptionDetails)
     throw new Error(`Inspector setup failed: ${result.exceptionDetails.text}`)
-  return result.result?.value
+  return result.result
 }
 
 async function withInspector(socketUrl, operation, log) {
+  log('[desktop-e2e-inspector] connecting', socketUrl)
   const socket = new WebSocket(socketUrl)
   socket.addEventListener('close', () => log('[desktop-e2e-inspector] disconnected'))
   socket.addEventListener('message', event => {
@@ -101,13 +211,15 @@ async function withInspector(socketUrl, operation, log) {
   try {
     await once(socket, 'open', { signal: AbortSignal.timeout(10_000) })
     let id = 0
-    async function command(method, params = {}) {
+    async function command(method, params = {}, timeoutMs = 10_000) {
       log('[desktop-e2e-inspector] command', method)
+      if (socket.readyState !== WebSocket.OPEN)
+        throw new Error(`Inspector disconnected before command: ${method}`)
       const requestId = ++id
       const response = new Promise((accept, reject) => {
         const timer = setTimeout(
           () => finish(new Error(`Inspector command timed out: ${method}`)),
-          10_000
+          timeoutMs
         )
         const received = event => {
           const message = JSON.parse(event.data)
@@ -115,18 +227,26 @@ async function withInspector(socketUrl, operation, log) {
           log('[desktop-e2e-inspector] response', method, message.error ? 'error' : 'ok')
           finish(message.error && new Error(message.error.message), message.result)
         }
+        const disconnected = () =>
+          finish(new Error(`Inspector disconnected during command: ${method}`))
         function finish(error, result) {
           clearTimeout(timer)
           socket.removeEventListener('message', received)
+          socket.removeEventListener('close', disconnected)
           if (error) reject(error)
           else accept(result)
         }
         socket.addEventListener('message', received)
+        socket.addEventListener('close', disconnected)
+        try {
+          socket.send(JSON.stringify({ id: requestId, method, params }))
+        } catch (error) {
+          finish(error)
+        }
       })
-      socket.send(JSON.stringify({ id: requestId, method, params }))
       return response
     }
-    await operation(command, socket)
+    return await operation(command, socket)
   } catch (error) {
     setupError = error
     throw error

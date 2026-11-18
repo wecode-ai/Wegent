@@ -334,7 +334,6 @@ window.__ModuleLoader__.load({
       const contextContributions = new Map()
       const commandHandlers = new Map()
       const storage = options.storage ?? createMemoryStorage()
-      const secureStorage = options.secureStorage ?? null
       const backendFetch = options.fetch ?? window.fetch?.bind(window)
       const localization = createLocalizationService(
         options.locale ??
@@ -668,19 +667,6 @@ window.__ModuleLoader__.load({
             return createScopedStorage(storage, namespace, notify)
           },
         }),
-        secrets: Object.freeze({
-          scope(namespace) {
-            assertActive()
-            if (!secureStorage) throw new Error('Secure storage is unavailable')
-            const prefix = `${requiredContributionId(namespace, 'Secret namespace')}.`
-            const secretKey = key => `${prefix}${requiredContributionId(key, 'Secret key')}`
-            return Object.freeze({
-              get: key => secureStorage.get(secretKey(key)),
-              set: (key, value) => secureStorage.set(secretKey(key), value),
-              delete: key => secureStorage.delete(secretKey(key)),
-            })
-          },
-        }),
       })
 
       return {
@@ -953,7 +939,6 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       const extensionRuntime = createExtensionRuntime({
         saveDialog: options => ctx.weworkDesktop.dialog.save(options),
-        secureStorage: ctx.weworkDesktop?.secureStorage,
         storage: window.localStorage ?? createMemoryStorage(),
       })
       const slotRuntime = createSlotRuntime(ctx, extensionRuntime.service.contributions)

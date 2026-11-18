@@ -119,6 +119,7 @@ export function TemporaryChatPanel({
   onRestoreConversation,
   onFillSelectionToAnswer,
   initialScrollPosition = 'restore',
+  onOpenWorkspaceFile,
   onOpenRuntimeTask,
   coordinateUserInput = false,
   focusedRequest,
@@ -600,6 +601,9 @@ export function TemporaryChatPanel({
         busy,
         conversationQueue,
         sideChatProjectChat,
+        queuePort,
+        captureAttachmentsForScope: attachmentSelection.captureAttachmentsForScope,
+        instanceId,
         selectedModelFields,
         runtimeContext,
         sendQueuedMessageAsGuidance,
@@ -960,7 +964,9 @@ export function TemporaryChatPanel({
             : undefined
         }
         onOpenFileChangesReview={onOpenRuntimeTask ? openRuntimeTask : undefined}
-        onOpenWorkspaceFile={onOpenRuntimeTask ? openWorkspaceFile : undefined}
+        onOpenWorkspaceFile={
+          onOpenWorkspaceFile ?? (onOpenRuntimeTask ? openWorkspaceFile : undefined)
+        }
         onOpenLocalSkillFile={onOpenRuntimeTask ? openRuntimeTask : undefined}
         onRequestUserInputSubmit={
           address && active && !readOnly ? submitRequestUserInput : undefined

@@ -1,15 +1,12 @@
 import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { projectKey, type ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { ProjectSpacePickerMenu } from './ProjectSpacePickerMenu'
-import {
-  createAsyncResource,
-  getIdleResourceSnapshot,
-  subscribeIdleResource,
-} from '@wegent/chat-core/async-resource'
+import { createWorkItemGuideSource } from './workItemGuideSource'
+import { Button } from '@/components/ui/button'
 
 type TaskBinding = Awaited<ReturnType<ProjectSpaceApi['listTaskBindings']>>[number]
 
@@ -59,38 +56,36 @@ function WorkItemComposerGuideContent({
   const { t } = useTranslation('common')
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const [open, setOpen] = useState(false)
   const canChangeProject = Boolean(onSelectProject)
-  const menuOpen = open && canChangeProject
-  const closeMenu = useCallback(() => setOpen(false), [])
-
+  const pickerStoreKey = currentTask
+    ? `task:${currentTask.deviceId}:${currentTask.taskId}`
+    : (item?.id ?? null)
   const scope = project ? projectKey(project) : ''
-  const resources = useMemo(() => {
-    if (!api || !item) return null
-    const key = `work-item-guide:${scope}:${item.id}:${String(refreshKey)}`
-    return {
-      bindings: createAsyncResource(key, () => api.listTaskBindings(item.id)),
-      context: currentTask
-        ? createAsyncResource(key, () => api.findCloudContextForTask(currentTask))
-        : null,
-    }
-  }, [api, currentTask, item, refreshKey, scope])
-  const bindings = useSyncExternalStore(
-    resources?.bindings.subscribe ?? subscribeIdleResource,
-    resources?.bindings.getSnapshot ?? getIdleResourceSnapshot,
-    getIdleResourceSnapshot
+  const itemId = item?.id
+  const source = useMemo(
+    () => createWorkItemGuideSource(api, itemId, canChangeProject ? pickerStoreKey : null, scope),
+    [api, itemId, canChangeProject, pickerStoreKey, scope]
   )
-  const context = useSyncExternalStore(
-    resources?.context?.subscribe ?? subscribeIdleResource,
-    resources?.context?.getSnapshot ?? getIdleResourceSnapshot,
-    getIdleResourceSnapshot
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      source.subscribe(listener, {
+        refreshKey,
+        projectId: project?.id,
+        projectStore: project?.project_store,
+        taskId: currentTask?.taskId,
+      }),
+    [source, refreshKey, project?.id, project?.project_store, currentTask?.taskId]
   )
-  const taskBindings = bindings.data ?? (item ? null : [])
-  const refreshedItem = context.data?.loop_item
-  const resolvedItem =
-    refreshedItem?.id === item?.id && refreshedItem?.cloud_project_id === item?.cloud_project_id
-      ? (refreshedItem ?? item ?? null)
-      : (item ?? null)
+  const {
+    open,
+    bindings: taskBindings,
+    failed: readFailed,
+    loading: bindingsPending,
+  } = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
+  const setOpen = source.setOpen
+  const menuOpen = open && canChangeProject
+  const closeMenu = useCallback(() => source.setOpen(false), [source])
+  const resolvedItem = item ?? null
 
   const taskCount = taskBindings?.length ?? null
   const otherTaskCount =
@@ -102,14 +97,11 @@ function WorkItemComposerGuideContent({
             (taskBindings.some(binding => isCurrentBinding(binding, currentTask)) ? 1 : 0)
         )
 
-  const readFailed = bindings.status === 'error' || context.status === 'error'
   const readFailedText = t('workbench.runtime_work_load_failed')
   const taskSummary =
-    taskCount == null
-      ? bindings.status === 'error'
-        ? readFailedText
-        : t('workbench.loading_task_count', '任务同步中')
-      : taskCount > 1
+    taskCount == null && api && !readFailed
+      ? t('workbench.loading_task_count', '任务同步中')
+      : taskCount != null && taskCount > 1
         ? `${taskCount} 个任务${otherTaskCount ? `，还有 ${otherTaskCount} 个` : ''}`
         : null
 
@@ -181,21 +173,17 @@ function WorkItemComposerGuideContent({
             ) : null}
           </button>
           {readFailed ? (
-            <span role="alert" className="contents">
-              <button
-                type="button"
-                data-testid="work-item-guide-retry"
-                title={readFailedText}
-                aria-label={`${readFailedText} · ${t('workbench.retry')}`}
-                onClick={() => {
-                  if (bindings.status === 'error') void resources?.bindings.reload()
-                  if (context.status === 'error') void resources?.context?.reload()
-                }}
-                className="h-11 shrink-0 rounded-lg px-2 text-xs text-destructive hover:bg-background/70 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus/30 md:h-7"
-              >
-                {t('workbench.retry')}
-              </button>
-            </span>
+            <Button
+              variant="ghost"
+              type="button"
+              data-testid="work-item-guide-retry-task-count"
+              disabled={bindingsPending}
+              onClick={() => void source.reload()}
+              title={readFailedText}
+              className="h-6 shrink-0 px-1 py-0 text-xs text-text-muted"
+            >
+              {t('workbench.task_count_load_failed_retry', '任务数加载失败，重试')}
+            </Button>
           ) : null}
           {onOpen ? (
             <button

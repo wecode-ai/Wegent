@@ -22,6 +22,7 @@ interface Collections {
   wegentTeams: SharedEditorTeam[]
 }
 interface Observation {
+  invitedOnly: boolean
   scope: string
   groups: CollaborationGroup[] | undefined
   initialTasks: SharedIssueDetailTaskBinding[] | undefined
@@ -48,7 +49,7 @@ function createCollections(
     collaborators: [],
     projectMembers: [],
     projectAgents: [],
-    projectGroups: initial.groups ?? [],
+    projectGroups: initial.invitedOnly ? [] : (initial.groups ?? []),
     wegentTeams: [],
   }
   const listeners = new Set<() => void>()
@@ -135,6 +136,7 @@ function createCollections(
         rows => update('collaborators', rows)
       )
     }
+    if (observation.invitedOnly) return
     void load(
       'projectMembers',
       () => port.members.list(projectId),
@@ -181,7 +183,7 @@ function createCollections(
         previous.refreshKey !== next.refreshKey ||
         previous.loadTeams !== next.loadTeams
       ) {
-        if (next.groups?.length)
+        if (!next.invitedOnly && next.groups?.length)
           update('projectGroups', mergeGroups(snapshot.projectGroups, next.groups))
         refresh()
       }
@@ -238,8 +240,10 @@ export function useIssueDetailCollections(props: TodoEditorProps) {
     props.currentUserId ?? project?.current_user_id,
     project?.access_role,
     item?.can_view_detail,
+    item?.invited_only,
   ])
   const { initialTaskBindings: initialTasks, loadTeams, taskRefreshKey: refreshKey } = props
+  const invitedOnly = item?.invited_only === true
   const groups = project?.collaboration_groups
   const currentDeliveryId = item?.current_delivery_id
   const assignee = item?.assignee_agent_id
@@ -247,6 +251,7 @@ export function useIssueDetailCollections(props: TodoEditorProps) {
     () =>
       createCollections(props.port, issueId, projectId, {
         scope,
+        invitedOnly,
         groups: undefined,
         initialTasks: undefined,
         currentDeliveryId: undefined,
@@ -254,15 +259,34 @@ export function useIssueDetailCollections(props: TodoEditorProps) {
         refreshKey: undefined,
         loadTeams: undefined,
       }),
-    [props.port, issueId, projectId, scope]
+    [props.port, issueId, projectId, scope, invitedOnly]
   )
   const subscribe = useCallback(
     (listener: () => void) =>
       source.subscribe(
-        { scope, groups, initialTasks, currentDeliveryId, assignee, refreshKey, loadTeams },
+        {
+          scope,
+          invitedOnly,
+          groups,
+          initialTasks,
+          currentDeliveryId,
+          assignee,
+          refreshKey,
+          loadTeams,
+        },
         listener
       ),
-    [source, scope, groups, initialTasks, currentDeliveryId, assignee, refreshKey, loadTeams]
+    [
+      source,
+      scope,
+      invitedOnly,
+      groups,
+      initialTasks,
+      currentDeliveryId,
+      assignee,
+      refreshKey,
+      loadTeams,
+    ]
   )
   const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
   return { ...snapshot, ...source }

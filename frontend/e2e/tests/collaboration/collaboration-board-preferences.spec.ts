@@ -4,7 +4,11 @@
 import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
 import { LoginPage } from '../../pages/auth/login.page'
-import { showAllProjectIssues, webApi } from '../../utils/collaboration-test-support'
+import {
+  enableLegacyBoardGrouping,
+  showAllProjectIssues,
+  webApi,
+} from '../../utils/collaboration-test-support'
 import {
   boardTest,
   archive,
@@ -463,6 +467,7 @@ test('keeps unrelated tags during real multi-column drops and persists manual sa
   page,
 }) => {
   test.setTimeout(120_000)
+  await enableLegacyBoardGrouping(page.context())
   await page.goto('/collaboration')
   await expect(page.getByTestId('collaboration-platform-root')).toBeVisible()
   const suffix = crypto.randomUUID()

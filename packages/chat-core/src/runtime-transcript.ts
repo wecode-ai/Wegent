@@ -152,6 +152,7 @@ export function runtimeMessageToWorkbenchMessage(
   const source =
     role === "user" &&
     (message.source?.source === "im" ||
+      message.source?.source === "connection_event" ||
       message.source?.source === "stand_in_activity")
       ? ({ ...message.source } as MessageSource)
       : undefined;

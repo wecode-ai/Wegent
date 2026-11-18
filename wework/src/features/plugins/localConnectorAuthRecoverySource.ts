@@ -1,13 +1,15 @@
+import { isLocalConnectorPluginUnavailableError } from './waitForLocalConnectorAuthAvailability'
 import type { TFunction } from 'i18next'
 import type { LocalConnectorAuthTarget } from '@/api/local/localConnectorAuth'
 import { localConnectorAuthHealth } from '@/api/local/localConnectorAuth'
 import { GITHUB_CLI_TARGET, isGithubCliTarget } from '@/api/local/githubCli'
-import { latestConnectorAuthMessage, resolveLocalConnectorAuthHint } from './localConnectorAuthGate'
+import { latestConnectorAuthMessage, resolveConnectorAuthHint } from './localConnectorAuthGate'
 import type { WorkbenchMessage } from '@/types/workbench'
 
 export interface PendingConnectorAuth {
   target: LocalConnectorAuthTarget
   title?: string
+  cloud?: { slug: string }
 }
 
 export interface ConnectorAuthRecoveryInput {
@@ -15,6 +17,7 @@ export interface ConnectorAuthRecoveryInput {
   onResumeSend(input: string): Promise<void> | void
   onError?(message: string): void
   active?: boolean
+  cloudConnection?: { apiBaseUrl?: string | null; token?: string | null }
   t: TFunction
 }
 
@@ -51,7 +54,7 @@ export function createLocalConnectorAuthRecoverySource() {
     const candidate = latestConnectorAuthMessage(next.messages)
     const messageId = candidate?.message.id
     const status = candidate?.message.status
-    const hint = resolveLocalConnectorAuthHint(candidate?.text)
+    const hint = resolveConnectorAuthHint(candidate?.text)
     const nextScope = JSON.stringify([
       next.active !== false,
       messageId,
@@ -59,6 +62,7 @@ export function createLocalConnectorAuthRecoverySource() {
       hint?.pluginKey,
       hint?.connectorSlug,
       hint?.instance,
+      hint?.displayName,
     ])
     if (scope !== nextScope) {
       scope = nextScope
@@ -75,12 +79,35 @@ export function createLocalConnectorAuthRecoverySource() {
       pending ||
       request ||
       !messageId ||
-      !hint?.pluginKey ||
-      !hint.connectorSlug ||
+      !hint?.connectorSlug ||
       (status !== 'done' && status !== 'failed') ||
       handled.has(messageId)
     )
       return
+    if (!hint.pluginKey) {
+      const probe = { messageId, version }
+      request = probe
+      void Promise.resolve().then(() => {
+        if (
+          !listeners.size ||
+          input?.active === false ||
+          request !== probe ||
+          version !== probe.version ||
+          pending ||
+          handled.has(messageId)
+        )
+          return
+        request = null
+        handled.add(messageId)
+        pendingMessageId = messageId
+        pending = {
+          target: { pluginKey: '', connectorSlug: hint.connectorSlug },
+          cloud: { slug: hint.connectorSlug },
+        }
+        publish()
+      })
+      return
+    }
     const identifiedTarget = {
       pluginKey: hint.pluginKey,
       connectorSlug: hint.connectorSlug,
@@ -117,10 +144,16 @@ export function createLocalConnectorAuthRecoverySource() {
           ...(githubCli ? { title: input!.t('workbench.github_cli_login_title') } : {}),
         }
         publish()
-      } catch {
+      } catch (error) {
         if (!isCurrent()) return
         handled.add(messageId)
-        input?.onError?.(input.t('workbench.plugins_local_auth_health_failed'))
+        input?.onError?.(
+          isLocalConnectorPluginUnavailableError(error)
+            ? input.t('workbench.plugins_local_auth_plugin_missing', {
+                plugin: hint.displayName ?? hint.pluginKey,
+              })
+            : input.t('workbench.plugins_local_auth_health_failed')
+        )
       } finally {
         if (request === probe) request = null
       }

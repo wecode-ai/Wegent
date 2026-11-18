@@ -1,3 +1,4 @@
+import { createWorkbenchDeviceReconnect } from '@/features/workbench/workbenchDeviceReconnect'
 import { createPaneSessionDiagnostics } from './workbenchPaneSessionDiagnostics'
 import type { SetStateAction } from 'react'
 import type { RuntimeTranscriptLoader } from '@/types/workbench'
@@ -39,6 +40,7 @@ import {
 
 /** One pane owns query cancellation, local drafts and the shared conversation subscriptions. */
 export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
+  const reconnect = createWorkbenchDeviceReconnect()
   let external = initial
   let accountId = initial.workbench.state.user?.id
   let state = createPaneSessionState(initial.currentRuntimeTask)
@@ -118,7 +120,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
   const diagnostics = createPaneSessionDiagnostics({ readFrame: frame, isActive })
   const live: PaneTransactionState = {
     browserAnnotationCommandSequence: 0,
-    draftEditVersion: 0,
+    draftEditVersions: initial.draftEditVersions,
     loadedRuntimeTranscriptKey: null as string | null,
     displayedTranscriptIdentity: null as string | null,
     interruptAndSendInFlight: false,
@@ -473,6 +475,11 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
     reconciling = true
     try {
       let current = frame()
+      reconnect.update({
+        deviceId: current.runtimeTaskLoadTarget?.address.deviceId,
+        devices: current.workbenchState.devices,
+        onReconnect: commands.reloadRuntimeTranscript,
+      })
       const retained = current.ownerArchived
         ? null
         : (current.currentRuntimeTaskLoadTarget ?? state.retainedRuntimeTaskLoadTarget)
@@ -567,6 +574,8 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       const chat = next.workbench.projectChat
       const inputScope = currentInputScope()
       const signature = [
+        next.t,
+        next.workbench.state.devices,
         next.currentRuntimeTask ? runtimeTaskLoadAddressKey(next.currentRuntimeTask) : null,
         next.currentRuntimeTask?.runtime,
         next.workbench.state.runtimeWork,

@@ -285,6 +285,7 @@ export interface WorkbenchContextValue {
     setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
+    captureAttachmentsForScope: (scope: string) => Attachment[]
     handleFileSelect: (files: File | File[]) => Promise<void>
     handleFileSelectForScope: (scopeKey: string, files: File | File[]) => Promise<void>
     addExistingAttachment: (attachment: Attachment) => void
@@ -531,6 +532,7 @@ export type WorkbenchPaneContextValue = Omit<
 }
 
 export interface WorkbenchProviderProps {
+  appshotReceiver?: { onOpenWework(): void }
   taskRouteActive?: boolean
   harnessAppLaunch?: HarnessAppLaunchRequest
   children: ReactNode

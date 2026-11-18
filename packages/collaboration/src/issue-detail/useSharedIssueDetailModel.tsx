@@ -1,3 +1,4 @@
+import { useIssueOutsideAssignee } from './useIssueOutsideAssignee'
 import { useIssueDetailAttachmentActions } from './useIssueDetailAttachmentActions'
 import { useIssueDescriptionOverflow } from './useIssueDescriptionOverflow'
 import { useIssuePendingFiles } from './issuePendingFiles'
@@ -308,7 +309,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
       {t('todo.collaborators_unavailable', '此项目暂不支持编辑参与者')}
     </span>
   ) : null
-  const [selectedCollaboratorId, setSelectedCollaboratorId] = useState<number | null>(null)
+  const outside = useIssueOutsideAssignee(props, item, projectMembers)
   const [collaboratorBusy, setCollaboratorBusy] = useState(false)
   const [collaboratorError, setCollaboratorError] = useState<string | null>(null)
   const [descriptionExpanded, setDescriptionExpanded] = useState(false)
@@ -347,7 +348,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
 
   const workspaceAgents = useIssueAssigneeResources(
     editorPort,
-    project,
+    item?.invited_only ? undefined : project,
     setSaveError,
     item?.assignee_agent_id
   )
@@ -581,9 +582,10 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     (assigneeTarget ? assigneeTarget.slice(assigneeTarget.indexOf(':') + 1) : null)
   const canAssign =
     props.canAssign ??
-    (project !== undefined &&
-      (item === null || item.can_view_detail !== false) &&
-      canAssignCollaborationIssue(project))
+    (item?.invited_only === true ||
+      (project !== undefined &&
+        (item === null || item.can_view_detail !== false) &&
+        canAssignCollaborationIssue(project)))
   const commentActions =
     item && project && editProps && (editable || canAssign)
       ? createIssueCommentActions({
@@ -593,6 +595,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
           statuses: statusOptions,
           editable,
           canAssign,
+          confirmAssignee: target => outside.confirmOutsideTarget(target as IssueAssigneeTarget),
           issues: editorPort.issues,
           onUpdated: updated => {
             if (collections.isActive()) editProps.onUpdated(updated)
@@ -731,20 +734,11 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
         assignee_group_id: target.slice(6),
       })
     }
-    if (project) {
-      return editorPort.issues.assign(project.id, source.id, {
-        version: source.version,
-        assigneeType: target.slice(0, target.indexOf(':')) as 'user' | 'agent' | 'team',
-        assigneeId: target.slice(target.indexOf(':') + 1),
-        ...(target.startsWith('user:') ? { notifyAssignee: shouldNotify } : {}),
-      })
-    }
-    const assignment = parseIssueAssigneeTarget(target)
-    return editorPort.issues.update(source.id, {
+    return editorPort.issues.assign(source.cloud_project_id, source.id, {
       version: source.version,
-      assignee_user_id: assignment.assigneeUserId,
-      assignee_agent_id: assignment.assigneeAgentId,
-      assignee_team_id: assignment.assigneeTeamId,
+      assigneeType: target.slice(0, target.indexOf(':')) as 'user' | 'agent' | 'team',
+      assigneeId: target.slice(target.indexOf(':') + 1),
+      ...(target.startsWith('user:') ? { notifyAssignee: shouldNotify } : {}),
     })
   }
 
@@ -771,23 +765,29 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     setDescriptionExpanded(false)
   }
 
-  async function addCollaborator() {
-    if (!canEditCollaborators || !editItemId || selectedCollaboratorId === null || collaboratorBusy)
-      return
+  async function addCollaborator(ids: number[]) {
+    if (!canEditCollaborators || !editItemId || !ids.length || collaboratorBusy) return
     setCollaboratorBusy(true)
     setCollaboratorError(null)
+    const owner = collections.getOwner()
     try {
-      const collaborator = await editorPort.collaborators.add(editItemId, selectedCollaboratorId)
-      if (!collections.isActive()) return
-      setCollaborators(current => [...current, collaborator])
-      setSelectedCollaboratorId(null)
-      setAddingCollaborator(false)
+      for (const id of ids) {
+        const collaborator = await editorPort.collaborators.add(editItemId, id)
+        if (collections.isActive(owner))
+          setCollaborators(current => [
+            ...current.filter(entry => entry.user_id !== id),
+            collaborator,
+          ])
+      }
+      if (collections.isActive(owner)) setAddingCollaborator(false)
     } catch (cause) {
+      if (!collections.isActive(owner)) return
       setCollaboratorError(
         cause instanceof Error ? cause.message : t('todo.add_collaborator_failed', '添加参与者失败')
       )
+      throw cause
     } finally {
-      setCollaboratorBusy(false)
+      if (collections.isActive(owner)) setCollaboratorBusy(false)
     }
   }
 
@@ -831,6 +831,7 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     else if (editable) void attachmentActions.addAttachments(event.dataTransfer.files)
   }
   return {
+    ...outside,
     ...attachmentActions,
     props,
     allItems,
@@ -901,8 +902,6 @@ export function useSharedIssueDetailModel(props: TodoEditorProps) {
     collaboratorEditingSupported,
     canEditCollaborators,
     collaboratorAvailabilityNote,
-    selectedCollaboratorId,
-    setSelectedCollaboratorId,
     collaboratorBusy,
     collaboratorError,
     setCollaboratorError,

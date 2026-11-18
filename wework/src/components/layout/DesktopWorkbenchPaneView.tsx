@@ -433,6 +433,7 @@ export function DesktopWorkbenchPaneView({
               onCloseTab={closeRightPanelTab}
               onHarnessSessionExit={onLocalHarnessSessionExit}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
+              onOpenWorkspaceFile={openWorkspaceFileFromMessage}
               onOpenReviewSourceFile={(path, lineStart, lineEnd) =>
                 void openWorkspaceFileFromMessage(path, { lineStart, lineEnd })
               }

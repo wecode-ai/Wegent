@@ -857,3 +857,76 @@ async fn harness_route_strips_long_context_suffix_and_normalizes_overflow() {
     unregister_harness(&token);
     server.abort();
 }
+
+#[test]
+fn prediction_thread_keeps_inherited_route_and_parent_scope() {
+    let upstream = LocalModelProxyUpstream {
+        base_url: "https://example.com".to_owned(),
+        request_url: None,
+        api_format: "openai-responses".to_owned(),
+        convert_custom_tools: false,
+        native_tool_search: false,
+        native_namespace_tools: false,
+        api_key: "secret".to_owned(),
+        default_headers: Vec::new(),
+        proxy_url: None,
+        model_id: Some("upstream-model".to_owned()),
+        routing_model_id: Some("routing-model".to_owned()),
+        codex_request_mode: Default::default(),
+        max_output_tokens: None,
+        model_context_window: None,
+    };
+    for restored in [false, true] {
+        let scope = format!("prediction-parent-{restored}");
+        let parent_thread = format!("prediction-source-{restored}");
+        let prediction_thread = format!("prediction-child-{restored}");
+        let prepared = register(&format!("prediction-prepared-{restored}"), upstream.clone());
+        let parent = (!restored).then(|| {
+            let token = register(&scope, upstream.clone());
+            bind_thread(&token, &parent_thread).unwrap();
+            token
+        });
+        let inherited = parent.as_deref().unwrap_or(&prepared);
+        if parent.is_some() {
+            let mut entries = registry().lock().unwrap();
+            let route = entries.routes.get_mut(inherited).unwrap();
+            let body =
+                serde_json::to_vec(&json!({"client_metadata": {"thread_id": prediction_thread}}))
+                    .unwrap();
+            assert_eq!(
+                authorize_task_thread(route, &body).unwrap_err().status,
+                StatusCode::CONFLICT
+            );
+        }
+        let retained =
+            bind_prediction_thread(&prepared, &parent_thread, &prediction_thread).unwrap();
+        assert_eq!(retained, inherited);
+        let body =
+            serde_json::to_vec(&json!({"client_metadata": {"thread_id": prediction_thread}}))
+                .unwrap();
+        assert_eq!(bound_thread_token(&body).unwrap(), inherited);
+        {
+            let mut entries = registry().lock().unwrap();
+            let route = entries.routes.get_mut(inherited).unwrap();
+            authorize_task_thread(route, &body).expect("Inherited URL must accept prediction");
+            assert_eq!(
+                authorize_task_thread(
+                    route,
+                    br#"{"client_metadata":{"thread_id":"unrelated-prediction"}}"#
+                )
+                .unwrap_err()
+                .status,
+                StatusCode::CONFLICT
+            );
+            if parent.is_some() {
+                assert_eq!(entries.tokens_by_scope.get(&scope), Some(&retained));
+                assert_eq!(entries.routes.get(inherited).unwrap().active_references, 2);
+            }
+        }
+        unregister(&retained);
+        if let Some(parent) = parent {
+            unregister(&parent);
+        }
+        unregister(&prepared);
+    }
+}

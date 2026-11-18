@@ -21,7 +21,11 @@ export function bindGitProvider(providerId, provider, request, declaredAuthTarge
         context.signal.throwIfAborted()
         const call = async (method, params) => {
           context.signal.throwIfAborted()
-          const result = await request(method, { ...params, providerId })
+          const result = await request(
+            method,
+            { ...params, providerId },
+            { signal: context.signal }
+          )
           context.signal.throwIfAborted()
           return result
         }

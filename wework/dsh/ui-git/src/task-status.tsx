@@ -53,7 +53,7 @@ export default function GitTaskStatus({
     if (!workbench || !changeRequest || !autoRepairStatus(changeRequest)) return
     setRepairing(true)
     try {
-      const prompt = buildChangeRequestRepairPrompt(changeRequest, task.title)
+      const prompt = buildChangeRequestRepairPrompt(changeRequest, task.title, t)
       const address = { deviceId: workspace.deviceId, taskId: task.taskId }
       const userMessage = createRuntimeUserMessage(prompt)
       const busy =

@@ -251,23 +251,14 @@ pub(crate) async fn link_chat_attachments(
     user_id: i64,
     subtask_id: i64,
     mut ids: Vec<i64>,
-    existing_subtasks: &[brz_mysql::MysqlRow],
+    task_id: i64,
+    subtask_table: &str,
 ) -> MysqlResult<Vec<i64>> {
     use crate::request_sql::RouteKey;
     use crate::sql_support::StatementArg::Int;
 
     ids.sort_unstable();
     ids.dedup();
-    let owner_column = crate::task_store_statements::subtask_column_index("user_id")
-        .expect("subtask projection has an owner");
-    let id_column = crate::task_store_statements::subtask_column_index("id")
-        .expect("subtask projection has an id");
-    let mut owned_subtasks = std::collections::HashSet::new();
-    for row in existing_subtasks {
-        if row.get_at::<Option<i64>>(owner_column)? == Some(user_id) {
-            owned_subtasks.extend(row.get_at::<Option<i64>>(id_column)?);
-        }
-    }
     let mut invalid = Vec::new();
     for &id in &ids {
         let row = sql
@@ -281,7 +272,20 @@ pub(crate) async fn link_chat_attachments(
         let linked = row
             .map(|row| row.get_required::<i64>("subtask_id"))
             .transpose()?;
-        if !linked.is_some_and(|subtask| subtask == 0 || owned_subtasks.contains(&subtask)) {
+        // Authorization must not depend on a cropped conversation history.
+        let allowed = match linked {
+            Some(0) => true,
+            Some(linked_subtask) => sql
+                .fetch_optional_row(
+                    RouteKey::Task(task_id as u64),
+                    &format!("SELECT id FROM {subtask_table} WHERE id = ? AND task_id = ? AND user_id = ?"),
+                    vec![Int(linked_subtask), Int(task_id), Int(user_id)],
+                )
+                .await?
+                .is_some(),
+            None => false,
+        };
+        if !allowed {
             invalid.push(id);
         }
     }
@@ -407,6 +411,27 @@ pub fn executor_attachment_payload(context: &SubtaskContextRow) -> Value {
         ),
         ("subtask_id".to_string(), Value::from(context.subtask_id)),
     ]))
+}
+
+/// `_order_contexts_by_attachment_ids`: caller-ordered attachments first,
+/// followed by every other context in its stored order.
+pub(super) fn order_attachment_contexts(
+    mut contexts: Vec<SubtaskContextRow>,
+    attachment_ids: &[i64],
+) -> Vec<SubtaskContextRow> {
+    if attachment_ids.is_empty() {
+        return contexts;
+    }
+
+    // Stable sorting keeps unrequested contexts in their original order.
+    // Each stored row appears once, matching the attachment linking deduplication.
+    contexts.sort_by_key(|context| {
+        attachment_ids
+            .iter()
+            .position(|id| *id == context.id)
+            .unwrap_or(attachment_ids.len())
+    });
+    contexts
 }
 
 /// Prepare attachment metadata and inline content for the current user turn.
@@ -673,6 +698,49 @@ mod tests {
         sql.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
+    #[tokio::test]
+    async fn attachment_linking_checks_task_scope_without_reading_history() {
+        use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
+        for (linked, owned, valid) in [
+            (Some(0), false, true),
+            (Some(99), true, true),
+            (Some(99), false, false),
+            (None, false, false),
+        ] {
+            let fixture = MysqlRows::start_results(move |sql| {
+                if sql.starts_with("SELECT subtask_id FROM subtask_contexts") {
+                    assert_eq!(normalize(sql), "SELECT subtask_id FROM subtask_contexts WHERE id = ? AND user_id = ? AND context_type = 'attachment' AND status = 'ready' FOR UPDATE");
+                    let row = vec![("subtask_id", SqlValue::I64(linked.unwrap_or(0)))];
+                    return (row.clone(), if linked.is_some() { vec![row] } else { vec![] });
+                }
+                if sql.starts_with("SELECT id FROM subtasks_0007") {
+                    assert_eq!(sql, "SELECT id FROM subtasks_0007 WHERE id = ? AND task_id = ? AND user_id = ?");
+                    let row = vec![("id", SqlValue::I64(99))];
+                    return (row.clone(), if owned { vec![row] } else { vec![] });
+                }
+                assert_eq!(sql, "UPDATE subtask_contexts SET subtask_id = ? WHERE id = ? AND user_id = ?");
+                (vec![], vec![])
+            }).await;
+            let invalid = link_chat_attachments(
+                &mut &fixture.mysql,
+                7,
+                101,
+                vec![31, 12, 31],
+                9,
+                "subtasks_0007",
+            )
+            .await
+            .unwrap();
+            assert_eq!(invalid, if valid { vec![] } else { vec![12, 31] });
+            let updates = fixture
+                .queries()
+                .iter()
+                .filter(|sql| sql.starts_with("UPDATE "))
+                .count();
+            assert_eq!(updates, if valid { 2 } else { 0 });
+        }
+    }
+
     fn row(
         id: i64,
         subtask_id: i64,
@@ -748,6 +816,51 @@ mod tests {
             assert_eq!(prompt.as_array().unwrap().len(), 2);
             assert_eq!(prompt[1]["text"], "Describe this");
         }
+    }
+
+    #[test]
+    fn attachment_contexts_follow_the_requested_order() {
+        let first = row(
+            31,
+            9,
+            7,
+            "attachment",
+            json!({"original_filename": "first.pdf"}),
+        );
+        let second = row(
+            12,
+            9,
+            7,
+            "attachment",
+            json!({"original_filename": "second.pdf"}),
+        );
+        let rows = vec![first, second];
+        let ordered = order_attachment_contexts(rows, &[12, 31, 99]);
+        assert_eq!(
+            ordered.iter().map(|row| row.id).collect::<Vec<_>>(),
+            [12, 31]
+        );
+    }
+
+    #[test]
+    fn attachment_order_deduplicates_requested_ids_and_preserves_remaining_contexts() {
+        let rows = [31, 12, 43, 24]
+            .into_iter()
+            .map(|id| {
+                let mut context = row(id, 9, 7, "attachment", json!({}));
+                context.created_at += chrono::Duration::seconds(id);
+                context
+            })
+            .collect::<Vec<_>>();
+        let ids = |rows: &[SubtaskContextRow]| rows.iter().map(|row| row.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(&order_attachment_contexts(rows.clone(), &[])),
+            [31, 12, 43, 24]
+        );
+        assert_eq!(
+            ids(&order_attachment_contexts(rows, &[12, 12, 99])),
+            [12, 31, 43, 24]
+        );
     }
 
     /// The three reads keep the source's predicates and ordering

@@ -143,7 +143,7 @@ export function GitHostingSettingsPage() {
           label={t('workbench.git_hosting_status_switch', '显示 PR / MR 状态')}
           description={t(
             'workbench.git_hosting_status_switch_description',
-            '开启后，Wework 会通过当前设备上的 gh 或 glab 查询当前分支状态。关闭后不会执行这些查询。'
+            '开启后，任务与 Issue 列表会自动更新 PR / MR 状态。关闭后不再为这些视图更新状态；本页仍会检测 CLI 的可用性，AI 已设置的事件等待不受影响。'
           )}
           control={
             <SettingsSwitch
@@ -191,8 +191,27 @@ export function GitHostingSettingsPage() {
                         defaultValue: `命令：${config.tool}`,
                       })}
                   </p>
+                  {!providerLoading && status?.detectionError ? (
+                    <p
+                      data-testid={`git-hosting-cli-${provider}-error-help`}
+                      className="mt-1 text-xs leading-4 text-text-secondary"
+                    >
+                      {status.detectionError === 'timeout'
+                        ? t(
+                            'workbench.git_hosting_cli_timeout_help',
+                            'CLI 响应超时。请检查当前设备的网络或代理后重新检测。'
+                          )
+                        : t('workbench.git_hosting_cli_error_help', {
+                            tool: config.tool,
+                            defaultValue: `请在当前设备确认 ${config.tool} 命令可运行，并检查网络或代理后重新检测。`,
+                          })}
+                    </p>
+                  ) : null}
                   {status?.executablePath ? (
-                    <p className="mt-1 truncate text-code text-text-muted">
+                    <p
+                      title={status.executablePath}
+                      className="mt-1 truncate text-code text-text-muted"
+                    >
                       {status.executablePath}
                     </p>
                   ) : null}

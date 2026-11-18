@@ -219,6 +219,28 @@ pub trait TaskStore:
         self.get_active_task_owned(task_id, owner_user_id).await
     }
 
+    /// Read an owned regular or subscription task on the request transaction.
+    async fn get_active_states_task_owned_on(
+        &self,
+        sql: &mut dyn crate::request_sql::RequestSql,
+        task_id: i64,
+        owner_user_id: i32,
+    ) -> MysqlResult<Option<MysqlRow>> {
+        use crate::request_sql::RouteKey;
+        use crate::sql_support::StatementArg;
+        use crate::task_store_statements::active_states_task_owned_statement;
+
+        sql.fetch_optional_row(
+            RouteKey::Task(task_id as u64),
+            &active_states_task_owned_statement(self.table_templates().tasks),
+            vec![
+                StatementArg::Int(task_id),
+                StatementArg::Int(i64::from(owner_user_id)),
+            ],
+        )
+        .await
+    }
+
     /// `task_store.get_task_by_states` with `states =
     /// TaskResource.is_active_query()` (`[STATE_ACTIVE,
     /// STATE_SUBSCRIPTION]`) and no owner filter (the internal

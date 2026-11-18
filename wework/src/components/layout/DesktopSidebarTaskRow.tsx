@@ -1,3 +1,7 @@
+import { preferredEventSubscription } from '@/lib/sidebar-event-state'
+import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
+import { SidebarConnectionEventStatus } from './SidebarConnectionEventStatus'
+import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
 import {
   subscribePendingRuntimeTaskArchive,
   getPendingRuntimeTaskArchive,
@@ -231,6 +235,14 @@ export function RuntimeTaskRow({
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const conversationMenuActions = useDshMenuCommands('conversation.context')
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
+  const eventTask = taskLifecycle?.task ?? task
+  const eventSubscriptions = eventTask.runtimeHandle?.connectionEventSubscriptions
+  const eventRunning = isRuntimeTaskExecutionRunning(eventTask)
+  const eventSubscription = useMemo(() => {
+    if (eventRunning) return undefined
+    const subscriptions = connectionEventSubscriptions(eventSubscriptions)
+    return preferredEventSubscription(subscriptions)
+  }, [eventRunning, eventSubscriptions])
   const rateLimitWaiting = useRuntimeTaskRateLimitWait(taskAddress)
   const hasActiveGoal = taskLifecycle?.goalStatus === 'active'
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
@@ -562,6 +574,11 @@ export function RuntimeTaskRow({
                       <CircleHelp className="h-4 w-4" aria-hidden="true" />
                     </span>
                   </Tooltip>
+                ) : eventSubscription ? (
+                  <SidebarConnectionEventStatus
+                    subscription={eventSubscription}
+                    taskId={task.taskId}
+                  />
                 ) : taskLifecycle?.derived.shouldShowSidebarRunning && rateLimitWaiting ? (
                   <span
                     data-testid={`runtime-local-task-rate-limit-wait-${task.taskId}`}

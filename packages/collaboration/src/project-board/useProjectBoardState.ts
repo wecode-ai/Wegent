@@ -17,6 +17,7 @@ import {
 export type ProjectBoardGroupBy = 'status' | 'priority' | 'assignee' | 'tag'
 
 export interface ProjectBoardStateOptions {
+  fixedGroupBy?: ProjectBoardGroupBy
   defaultGroupBy: ProjectBoardGroupBy
   defaultSort?: ProjectBoardSort
   defaultColumnSorts?: ProjectBoardColumnSorts
@@ -27,6 +28,7 @@ export interface ProjectBoardStateOptions {
 }
 
 export function useProjectBoardState({
+  fixedGroupBy,
   defaultGroupBy,
   defaultSort = defaultProjectBoardSort,
   defaultColumnSorts,
@@ -35,12 +37,27 @@ export function useProjectBoardState({
   personalGroupStorageKey,
   personalSortStorageKey = null,
 }: ProjectBoardStateOptions) {
-  const groupScope = JSON.stringify([defaultGroupBy, personalGroupStorageKey, viewScope])
+  const groupScope = JSON.stringify([
+    defaultGroupBy,
+    fixedGroupBy,
+    personalGroupStorageKey,
+    viewScope,
+  ])
   const group = useMemo(
-    () => createBoardGroupPreference(groupScope, personalGroupStorageKey, defaultGroupBy),
-    [groupScope, personalGroupStorageKey, defaultGroupBy]
+    () =>
+      createBoardGroupPreference(
+        groupScope,
+        fixedGroupBy ? null : personalGroupStorageKey,
+        fixedGroupBy ?? defaultGroupBy
+      ),
+    [groupScope, fixedGroupBy, personalGroupStorageKey, defaultGroupBy]
   )
-  const groupBy = useSyncExternalStore(group.subscribe, group.getSnapshot, group.getServerSnapshot)
+  const selectedGroupBy = useSyncExternalStore(
+    group.subscribe,
+    group.getSnapshot,
+    group.getServerSnapshot
+  )
+  const groupBy = fixedGroupBy ?? selectedGroupBy
   const [previousScope, setPreviousScope] = useState(group.scope)
   const [groupFilter, setGroupFilter] = useState('')
   const [query, setQuery] = useState('')
@@ -87,13 +104,14 @@ export function useProjectBoardState({
 
   const selectGroupBy = useCallback(
     (nextGroupBy: ProjectBoardGroupBy) => {
+      if (fixedGroupBy) return
       if (groupBy !== nextGroupBy && scrollRef.current) {
         scrollRef.current.scrollLeft = 0
       }
       group.select(nextGroupBy)
       setGroupFilter('')
     },
-    [groupBy, group]
+    [fixedGroupBy, groupBy, group]
   )
 
   return {

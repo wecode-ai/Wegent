@@ -19,7 +19,7 @@ export interface PaneTransactionState {
   browserAnnotationCommandSequence: number
   mounted: boolean
   inputRevision: number
-  draftEditVersion: number
+  draftEditVersions: Map<string, number>
   activeInputScope: string
   loadedRuntimeTranscriptKey: string | null
   refreshWorkLists: PaneSessionFrame['refreshWorkLists']
