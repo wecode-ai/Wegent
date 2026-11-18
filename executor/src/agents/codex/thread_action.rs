@@ -32,6 +32,40 @@ impl Drop for ThreadActionActivity {
 }
 
 impl CodexAppServerClient {
+    pub(crate) async fn prepare_goal_activation_route(
+        &self,
+        request: &ExecutionRequest,
+        thread_id: &str,
+        thread_path: Option<&str>,
+    ) -> Result<Option<Arc<LocalProxyRegistration>>, String> {
+        let loaded = self
+            .state
+            .lock()
+            .await
+            .process
+            .as_ref()
+            .is_some_and(|process| {
+                process
+                    .notifications
+                    .native_activity
+                    .lock()
+                    .expect("Codex native activity registry should not be poisoned")
+                    .thread_is_loaded(thread_id)
+            });
+        if loaded {
+            return self
+                .resume_thread_for_model_action(request, thread_id, thread_path)
+                .await
+                .map(|(_, registration)| registration);
+        }
+        // A cold Goal must remain unloaded until its durable owner resumes it.
+        // Bind inference first without starting native work before admission.
+        ensure_codex_mcp_endpoints().await?;
+        let launch = build_codex_launch_config(request)?;
+        bind_local_proxy_thread(&launch, thread_id)?;
+        Ok(launch.local_proxy_registration)
+    }
+
     /// Model-consuming actions must apply their profile even when a thread is already loaded.
     pub(crate) async fn resume_thread_for_model_action(
         &self,

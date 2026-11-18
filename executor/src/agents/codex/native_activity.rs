@@ -285,6 +285,10 @@ impl CodexNativeActivity {
         }
     }
 
+    pub(super) fn thread_is_loaded(&self, thread_id: &str) -> bool {
+        self.loaded_threads.contains(thread_id)
+    }
+
     fn goal_requires_resume(&self, thread_id: &str) -> bool {
         self.goals
             .get(thread_id)
