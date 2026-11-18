@@ -497,10 +497,23 @@ jobs:
           test -x "$WEWORK_E2E_CODEX_BIN"
           if [[ ",$WEWORK_E2E_SEGMENTS," == *",plugin-development,"* ]]; then
             gdb --version
-            WEWORK_E2E_EXECUTOR_REAL_BIN=/usr/bin/test \
+            gdb_probe_output="$(WEWORK_E2E_EXECUTOR_REAL_BIN=/usr/bin/test \
               WEGENT_APP_IPC_ENDPOINT=diagnostic-fd-check \
               .github/scripts/run-wework-executor-with-gdb.sh \
-              -r /proc/self/fd/3 3</dev/null
+              -r /proc/self/fd/3 3</dev/null)"
+            printf '%s\n' "$gdb_probe_output"
+            printf '%s' "$gdb_probe_output" | node --input-type=module -e '
+              import assert from "node:assert/strict";
+              import fs from "node:fs";
+              const prefix = "[executor-gdb-inferior] ";
+              const identities = fs.readFileSync(0, "utf8").split(/\r?\n/)
+                .filter(line => line.startsWith(prefix)).map(line => JSON.parse(line.slice(prefix.length)));
+              assert.equal(identities.length, 1, "The GDB probe must identify exactly one real Executor process");
+              const { debuggerPid, executorPid } = identities[0];
+              assert.ok(Number.isSafeInteger(debuggerPid) && debuggerPid > 0);
+              assert.ok(Number.isSafeInteger(executorPid) && executorPid > 0);
+              assert.notEqual(debuggerPid, executorPid);
+            '
             cp .github/scripts/run-wework-executor-with-gdb.sh "$WEWORK_E2E_EXECUTOR_BIN.gdb"
             export WEWORK_E2E_EXECUTOR_BIN="$WEWORK_E2E_EXECUTOR_BIN.gdb"
           fi
