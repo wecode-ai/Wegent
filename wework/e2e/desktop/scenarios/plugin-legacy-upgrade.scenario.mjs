@@ -153,14 +153,6 @@ export async function createDesktopScenario({
       configPath,
       `${await readFile(configPath, 'utf8')}\n[skills]\nconfig = [{ path = ${JSON.stringify(userSkill)}, enabled = false }]\n[mcp_servers.legacy-user-disabled]\ncommand = "node"\nargs = ["--version"]\nenabled = false\n`
     )
-    const installer = await startHistoricalPluginExecutor({
-      release,
-      cloud,
-      root,
-      userHome: userHomeFor(release),
-      directory: join(resultDir, 'historical-executors', release.version),
-      token: releaseAssetToken,
-    })
     const delivered = await historicalPluginPackages(
       HISTORICAL_PLUGIN_SOURCE,
       join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_SOURCE.version),
@@ -172,20 +164,37 @@ export async function createDesktopScenario({
       ...delivered.evidence,
     })
     const fixtures = {}
+    for (const [role, original] of Object.entries(delivered.packages)) {
+      const fixture = await publish(original)
+      const existing = await accountPlugin(cloud, fixture.slug)
+      if (existing) {
+        fixture.installedId = Number(existing.metadata.labels.id)
+        // Re-pin before registration can sync the previous baseline's newer release.
+        if (existing.spec.releaseId !== fixture.releaseId)
+          await update(fixture, null, { releaseId: fixture.releaseId })
+      }
+      fixtures[role] = fixture
+    }
+    const installer = await startHistoricalPluginExecutor({
+      release,
+      cloud,
+      root,
+      userHome: userHomeFor(release),
+      directory: join(resultDir, 'historical-executors', release.version),
+      token: releaseAssetToken,
+    })
     try {
-      for (const [role, original] of Object.entries(delivered.packages)) {
-        const fixture = await publish(original)
-        await pluginApi(
-          cloud,
-          `/plugins/marketplace/${fixture.pluginId}/install?device_id=${installer.deviceId}`,
-          'POST'
-        )
-        fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
-        // Each baseline reuses the account but starts with a different device.
-        // Reset account intent too, so the modern device cannot inherit the
-        // previous baseline's upgraded release while native migration is checked.
-        await update(fixture, null, { releaseId: fixture.releaseId })
+      for (const [role, fixture] of Object.entries(fixtures)) {
+        // Installing again would select the marketplace's latest release.
+        if (fixture.installedId === undefined) {
+          await pluginApi(
+            cloud,
+            `/plugins/marketplace/${fixture.pluginId}/install?device_id=${installer.deviceId}`,
+            'POST'
+          )
+        }
         const desired = await accountPlugin(cloud, fixture.slug)
+        fixture.installedId = Number(desired.metadata.labels.id)
         assert.equal(desired.spec.releaseId, fixture.releaseId)
         assert.equal(desired.spec.version, fixture.version)
         await update(fixture, installer.deviceId, { releaseId: fixture.releaseId })
@@ -195,7 +204,6 @@ export async function createDesktopScenario({
             ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
             : {}),
         })
-        fixtures[role] = fixture
       }
       let observedState
       const original = await until(
