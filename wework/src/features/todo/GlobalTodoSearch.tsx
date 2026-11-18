@@ -46,7 +46,7 @@ export function GlobalTodoSearch({
       revision.current += 1
     }
   }, [query])
-  const fullReference = /^[a-z][a-z0-9_-]*-\d+$/i.test(query.trim())
+  const fullReference = /^[a-z0-9][a-z0-9_-]*-\d+$/i.test(query.trim())
     ? query.trim().toUpperCase()
     : null
   const currentLookup = lookup?.query === query ? lookup : null

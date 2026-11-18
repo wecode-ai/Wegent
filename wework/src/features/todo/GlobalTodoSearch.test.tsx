@@ -147,3 +147,24 @@ it('does not navigate to a lookup result without detail permission', async () =>
   expect(await screen.findByTestId('cloud-global-search-direct-backend:project-1')).toBeDisabled()
   expect(select).not.toHaveBeenCalled()
 })
+
+it.each(['12-999', '1ABC-999'])('accepts API-supported numeric project keys: %s', async query => {
+  const resolve = vi.fn().mockResolvedValue([{ project, item }])
+  const select = vi.fn()
+  render(
+    <GlobalTodoSearch
+      projects={[]}
+      projectItems={{}}
+      projectMembers={{}}
+      query={query}
+      onQueryChange={vi.fn()}
+      onClose={vi.fn()}
+      onSelectProject={vi.fn()}
+      onSelectItem={select}
+      onResolveReference={resolve}
+    />
+  )
+  fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
+  await waitFor(() => expect(resolve).toHaveBeenCalledWith(query))
+  expect(select).toHaveBeenCalledWith(project, item)
+})
