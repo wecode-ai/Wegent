@@ -41,7 +41,7 @@ const target = linkedChangeRequestTarget(
   'native-runtime',
   'https://github.com/wecode-ai/Wegent/pull/2631'
 )!
-const statusSelector = '[data-testid="change-request-state"]'
+const statusSelector = '[data-testid="change-request-button"]'
 const checksSelector = '[data-testid="change-request-checks"]'
 const environmentSelector = '[data-testid="environment-info-button"]'
 const healthSelector =
@@ -237,9 +237,8 @@ async function recoveryFixture(options: FixtureOptions = {}) {
     if (selector === '[data-testid="environment-info-popover"]')
       return environmentOpen ? '环境' : ''
     if (!environmentOpen) return ''
-    if (selector === '[data-testid="change-request-button"]') return '#2631'
     if (selector === statusSelector)
-      return snapshot?.changeRequest?.state === 'merged' ? '已合并' : ''
+      return snapshot?.changeRequest?.state === 'merged' ? '#2631 已合并' : '#2631'
     if (selector === checksSelector)
       return snapshot?.changeRequest?.checks === 'success' ? '检查通过' : ''
     if (selector === healthSelector)
@@ -249,7 +248,11 @@ async function recoveryFixture(options: FixtureOptions = {}) {
     throw new Error(`Unexpected selector: ${selector}`)
   }
   const command = vi.fn(
-    async (action: string, selector: string, input: { text?: string; timeoutMs?: number } = {}) => {
+    async (
+      action: string,
+      selector: string,
+      input: { text?: string; timeoutMs?: number; value?: string } = {}
+    ) => {
       if (action === 'click') {
         if (selector === '[data-testid="change-request-status-switch"]') {
           enabled = true
@@ -268,7 +271,15 @@ async function recoveryFixture(options: FixtureOptions = {}) {
         }
         return ''
       }
-      if (action === 'getAttribute') return String(enabled)
+      if (action === 'getAttribute') {
+        if (
+          selector === '[data-testid="change-request-status-switch"]' &&
+          input.value === 'aria-checked'
+        )
+          return String(enabled)
+        if (selector === statusSelector && input.value === 'aria-label') return text(selector)
+        throw new Error(`Unexpected attribute: ${selector} ${input.value}`)
+      }
       if (action === 'getElementCount') return String(Number(environmentOpen))
       if (action !== 'waitFor') throw new Error(`Unexpected action: ${action}`)
       const deadline = Date.now() + (input.timeoutMs ?? 10_000)
@@ -354,6 +365,14 @@ test.each([false, true])(
       [healthSelector, '状态同步正常'],
     ])
       expect(waits).toContainEqual(['waitFor', selector, { text: expected }])
+    expect(fixture.control.command).toHaveBeenCalledWith('getAttribute', statusSelector, {
+      value: 'aria-label',
+    })
+    expect(
+      fixture.control.command.mock.calls.some(
+        ([, selector]) => selector === '[data-testid="change-request-state"]'
+      )
+    ).toBe(false)
     expect(result.elapsedMs).toBeGreaterThanOrEqual(13_174)
     expect(result.elapsedMs).toBeLessThan(20_000)
   }

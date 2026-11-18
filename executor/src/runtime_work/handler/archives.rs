@@ -426,6 +426,26 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                log_executor_event(
+                    "runtime Goal mutation result",
+                    &[
+                        ("local_task_id", link.local_task_id.clone()),
+                        (
+                            "thread_id",
+                            result["goal"]["threadId"]
+                                .as_str()
+                                .unwrap_or("none")
+                                .to_owned(),
+                        ),
+                        (
+                            "goal_status",
+                            result["goal"]["status"]
+                                .as_str()
+                                .unwrap_or("none")
+                                .to_owned(),
+                        ),
+                    ],
+                );
                 let goal = result
                     .get("goal")
                     .cloned()
