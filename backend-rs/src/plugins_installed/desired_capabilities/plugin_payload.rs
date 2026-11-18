@@ -9,30 +9,63 @@ use super::{
 };
 use serde_json::{Map, Value};
 
-pub(super) fn release_id(installed: &InstalledKindRow, override_id: Option<i64>) -> Option<i64> {
-    let json = installed.json.0.to_value();
-    let spec = object_or_empty(json.get("spec"));
-    if object_or_empty(spec.get("packageRef")).is_empty() {
-        return None;
-    }
-    override_id.or_else(|| spec.get("releaseId").and_then(Value::as_i64))
+/// Retain only rendered fields and release lookup inputs, not the parsed manifest.
+pub(super) struct PreparedPluginPayload {
+    payload: Map<String, Value>,
+    installed_id: i64,
+    has_package: bool,
+    release_id: Option<i64>,
+    release_override: bool,
+    local_http: bool,
 }
 
-pub(super) fn render(
+pub(super) fn prepare(
     installed: &InstalledKindRow,
+    json: &Value,
     release_id_override: Option<i64>,
     local_http: bool,
-    release: Option<&PluginReleaseRow>,
-) -> Result<Value, BuildError> {
-    let json = installed.json.0.to_value();
-    let spec = object_or_empty(json.get("spec"));
-    let source = object_or_empty(spec.get("source")).clone();
-    let package_ref = object_or_empty(spec.get("packageRef")).clone();
+) -> PreparedPluginPayload {
+    let empty = Map::new();
+    let spec = json
+        .get("spec")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
+    let package_ref = spec
+        .get("packageRef")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
+    let has_package = !package_ref.is_empty();
+    let mut payload = base_payload(installed, json, spec, local_http);
+    if has_package {
+        payload.insert(
+            "checksum".into(),
+            package_ref.get("checksum").cloned().unwrap_or(Value::Null),
+        );
+    }
+    PreparedPluginPayload {
+        payload,
+        installed_id: installed.id,
+        has_package,
+        release_id: has_package
+            .then(|| release_id_override.or_else(|| spec.get("releaseId").and_then(Value::as_i64)))
+            .flatten(),
+        release_override: release_id_override.is_some(),
+        local_http,
+    }
+}
+
+fn base_payload(
+    installed: &InstalledKindRow,
+    json: &Value,
+    spec: &Map<String, Value>,
+    local_http: bool,
+) -> Map<String, Value> {
+    let source = object_or_empty(spec.get("source"));
     let mut payload = Map::new();
     payload.insert("installed_plugin_id".to_string(), Value::from(installed.id));
     payload.insert(
         "name".to_string(),
-        Value::String(plugin_payload_name(installed, &json, &spec, &source)),
+        Value::String(plugin_payload_name(installed, json, spec, &source)),
     );
     payload.insert(
         "display_name".to_string(),
@@ -55,89 +88,93 @@ pub(super) fn render(
         .cloned()
         .unwrap_or(Value::Null);
     payload.insert("marketplace".to_string(), marketplace);
-    payload.insert(
-        "version".to_string(),
-        spec.get("version").cloned().unwrap_or(Value::Null),
-    );
-    // Legacy uploaded/builtin manifests may omit a version. Match the existing
-    // installer default explicitly so receipts describe the same package key.
-    if local_http && payload["version"].as_str().is_none_or(str::is_empty) {
-        payload.insert("version".into(), Value::String("latest".into()));
-    }
-    if let Some(cloud_plugin_id) = cloud_plugin_id(&spec, &source) {
-        payload.insert("cloud_plugin_id".to_string(), Value::from(cloud_plugin_id));
+    let version = spec.get("version").cloned().unwrap_or(Value::Null);
+    // Legacy uploaded/builtin manifests use the installer's default version.
+    let version = if local_http && version.as_str().is_none_or(str::is_empty) {
+        Value::String("latest".into())
+    } else {
+        version
+    };
+    payload.insert("version".to_string(), version);
+    if let Some(id) = cloud_plugin_id(spec, &source) {
+        payload.insert("cloud_plugin_id".to_string(), Value::from(id));
     }
     payload.insert("source".to_string(), Value::Object(source));
-    if let Some(component_states) = spec
-        .get("componentStates")
-        .filter(|value| json_truthy(value))
-    {
-        payload.insert("component_states".to_string(), component_states.clone());
+    for (field, output) in [
+        ("componentStates", "component_states"),
+        ("components", "components"),
+    ] {
+        if let Some(value) = spec.get(field).filter(|value| json_truthy(value)) {
+            payload.insert(output.to_string(), value.clone());
+        }
     }
-    if let Some(components) = spec.get("components").filter(|value| json_truthy(value)) {
-        payload.insert("components".to_string(), components.clone());
+    payload
+}
+
+impl PreparedPluginPayload {
+    pub(super) fn release_id(&self) -> Option<i64> {
+        self.release_id
     }
 
-    if !package_ref.is_empty() {
-        payload.insert(
-            "checksum".to_string(),
-            package_ref.get("checksum").cloned().unwrap_or(Value::Null),
-        );
-        let release_id =
-            release_id_override.or_else(|| spec.get("releaseId").and_then(Value::as_i64));
-        let ready = release
-            .as_ref()
-            .is_some_and(|release| release.status == "ready" && release.scan_status == "passed");
-        if let Some(release) = release.filter(|_| ready) {
-            if let Some(_override) = release_id_override {
-                payload.insert(
-                    "version".to_string(),
-                    Value::String(release.version.clone()),
-                );
-                payload.insert(
-                    "checksum".to_string(),
+    pub(super) fn render(
+        mut self,
+        release: Option<&PluginReleaseRow>,
+    ) -> Result<Value, BuildError> {
+        if !self.has_package {
+            return Ok(Value::Object(self.payload));
+        }
+        let ready =
+            release.filter(|release| release.status == "ready" && release.scan_status == "passed");
+        if let Some(release) = ready {
+            if self.release_override {
+                self.payload
+                    .insert("version".into(), Value::String(release.version.clone()));
+                self.payload.insert(
+                    "checksum".into(),
                     Value::String(format!("sha256:{}", release.sha256)),
                 );
-                let components = release
+                if let Some(components) = release
                     .scan_report_json
                     .0
                     .to_value()
                     .get("components")
                     .filter(|value| json_truthy(value))
-                    .cloned();
-                if let Some(components) = components {
-                    payload.insert("components".to_string(), components);
+                {
+                    self.payload.insert("components".into(), components.clone());
                 }
             }
-            let (download_path, expires_at) = if local_http {
+            let (download_path, expires_at) = if self.local_http {
                 (
-                    format!(
-                        "/api/plugins/installed/{}/download?expected_release_id={}",
-                        installed.id, release.id
-                    ),
+                    download_path(self.installed_id, Some(release.id)),
                     String::new(),
                 )
             } else {
                 presign_download(&release.storage_key)?
             };
-            payload.insert("download_path".to_string(), Value::String(download_path));
-            payload.insert(
-                "download_url_expires_at".to_string(),
-                Value::String(expires_at),
-            );
-            payload.insert("release_id".to_string(), Value::from(release.id));
+            self.payload
+                .insert("download_path".into(), Value::String(download_path));
+            self.payload
+                .insert("download_url_expires_at".into(), Value::String(expires_at));
+            self.payload
+                .insert("release_id".into(), Value::from(release.id));
         } else {
-            payload.insert(
-                "download_path".to_string(),
-                Value::String(match (local_http, release_id) {
-                    (true, Some(id)) => format!(
-                        "/api/plugins/installed/{}/download?expected_release_id={id}",
-                        installed.id
-                    ),
-                    _ => format!("/api/plugins/installed/{}/download", installed.id),
-                }),
+            self.payload.insert(
+                "download_path".into(),
+                Value::String(download_path(
+                    self.installed_id,
+                    self.local_http.then_some(self.release_id).flatten(),
+                )),
             );
         }
+        Ok(Value::Object(self.payload))
     }
-    Ok(Value::Object(payload))
+}
+
+fn download_path(installed_id: i64, release_id: Option<i64>) -> String {
+    match release_id {
+        Some(id) => {
+            format!("/api/plugins/installed/{installed_id}/download?expected_release_id={id}")
+        }
+        None => format!("/api/plugins/installed/{installed_id}/download"),
+    }
 }
