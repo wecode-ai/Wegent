@@ -24,7 +24,10 @@ export async function waitForUnreadBadge(
     const expectedBadge = platform === 'darwin' ? (count > 0 ? String(count) : '') : null
     if (
       unreadItems.length === trayCount &&
-      (!expectedTrayId || unreadItems.some(item => item.id === expectedTrayId)) &&
+      (!expectedTrayId ||
+        unreadItems.some(
+          item => item.id === expectedTrayId || item.id?.endsWith(`:${expectedTaskId}`)
+        )) &&
       latest.dockBadge === expectedBadge
     ) {
       const snapshot = JSON.parse(await control.command('snapshot', 'body'))
