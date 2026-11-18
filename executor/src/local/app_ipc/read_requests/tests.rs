@@ -94,6 +94,11 @@ async fn wait_for_count(counter: &AtomicUsize, expected: usize) {
 async fn wait_for_handler_entry(runtime: &ControlledRuntime, method: &str) {
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
+            // Register before inspecting the queue so an entry cannot be lost
+            // between the check and the wait.
+            let notified = runtime.entered.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             let entered = {
                 let mut methods = runtime
                     .entered_methods
@@ -107,7 +112,7 @@ async fn wait_for_handler_entry(runtime: &ControlledRuntime, method: &str) {
             if entered.is_some() {
                 return;
             }
-            runtime.entered.notified().await;
+            notified.await;
         }
     })
     .await
