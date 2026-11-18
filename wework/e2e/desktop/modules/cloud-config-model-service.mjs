@@ -16,7 +16,6 @@ import {
 } from './response-protocol.mjs'
 
 const ACCOUNT = 'cloud-config-recovery-enterprise'
-const ACCESS = 'synthetic-cloud-config-recovery-access'
 
 async function authFileMetadata(path) {
   try {
@@ -40,6 +39,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
   let server
   let codexHome
   let nativeHome
+  let accessToken
   let unavailable = false
   let bootstrapBundles = 0
   let bundleFailures = 0
@@ -133,15 +133,18 @@ export function createCloudConfigModelService({ readUsage } = {}) {
           },
         })
       ).toString('base64url')
+      // New Codex releases read expiry from the access token itself. Keep the
+      // subscription fixture refresh-free while still exercising real auth parsing.
+      accessToken = `header.${claims}.signature`
       await writeFile(
         join(nativeHome, 'auth.json'),
         JSON.stringify({
           auth_mode: 'chatgpt',
           tokens: {
             account_id: ACCOUNT,
-            access_token: ACCESS,
+            access_token: accessToken,
             refresh_token: 'synthetic-cloud-config-recovery-refresh',
-            id_token: `header.${claims}.signature`,
+            id_token: accessToken,
           },
           last_refresh: new Date().toISOString(),
         })
@@ -213,7 +216,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
         }
         authSnapshots.push(snapshot)
         console.info('[desktop-e2e] subscription auth file metadata', JSON.stringify(snapshot))
-        assert.equal(request.headers.authorization, `Bearer ${ACCESS}`)
+        assert.equal(request.headers.authorization, `Bearer ${accessToken}`)
         assert.equal(request.headers['chatgpt-account-id'], ACCOUNT)
       }
       requests.push({ marker: plan.marker, round: plan.count, subscription })
