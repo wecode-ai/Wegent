@@ -116,9 +116,11 @@ def _sort_value(item: dict[str, Any], field: str) -> str | tuple[bool, datetime 
 
 
 def matches(item: dict[str, Any], values: dict[str, Any], parents: set[str]) -> bool:
-    text = " ".join(
-        str(item.get(key) or "") for key in ("id", "title", "description", "tags")
-    ).casefold()
+    fields = itertools.chain(
+        (item.get(key) for key in ("id", "title", "description")),
+        item.get("tags") or [],
+    )
+    text = " ".join(value for value in fields if isinstance(value, str)).casefold()
     if values.get("query", "").strip().casefold() not in text:
         return False
     for field, attribute in (

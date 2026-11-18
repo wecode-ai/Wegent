@@ -1071,13 +1071,8 @@ async fn call_individual_tool(
                             "item_id": task_id,
                             "item": item,
                         });
-                        match batch::device(context) {
-                            Ok(device_id) => {
-                                value["space_ref"] = json!({
-                                    "project_store": "local", "space_id": project_id,
-                                    "device_id": device_id,
-                                })
-                            }
+                        match project_space_ref(runtime, context, project_id) {
+                            Ok(space) => value["space_ref"] = space,
                             Err(message) => {
                                 value["space_ref_error"] = json!({
                                     "code": "source_unavailable", "message": message,
@@ -1859,6 +1854,25 @@ fn is_locally_routed_project(runtime: &TaskRuntime, project_id: &str, tool_name:
             || (project.metadata["task_provider"].as_str() == Some("dingtalk_aitable")
                 && is_dingtalk_read_tool(tool_name))
     })
+}
+
+fn project_space_ref(
+    runtime: &TaskRuntime,
+    context: &SpaceMcpRequestContext,
+    project_id: &str,
+) -> Result<Value, String> {
+    let project = runtime
+        .stand_in_store()
+        .get_project(project_id)
+        .map_err(|error| error.to_string())?;
+    match project.metadata["project_store"].as_str() {
+        Some("local") => Ok(json!({
+            "project_store": "local", "space_id": project_id,
+            "device_id": batch::device(context)?,
+        })),
+        Some("backend") => Ok(json!({"project_store":"backend","space_id":project_id})),
+        _ => Err("Project storage identity is unavailable".into()),
+    }
 }
 
 fn is_dingtalk_project(runtime: &TaskRuntime, project_id: &str) -> bool {

@@ -51,6 +51,49 @@ def add_items(db: Session, project, user: User, count: int) -> list[LoopItem]:
     return items
 
 
+@pytest.mark.parametrize(
+    ("query", "expected_indices"),
+    [
+        ('say "hi"', [0]),
+        (r"C:\tmp", [0]),
+        ('tag "quoted"', [0]),
+        (r"tag\path", [0]),
+        ("STRASSE", [0]),
+        ("评审", [0]),
+        (r"tag\\path", []),
+        ("'tag", []),
+        ("[]", []),
+        ("None", []),
+        ("", [0, 1, 2]),
+    ],
+)
+def test_search_matches_raw_fields_and_tags_without_list_representation(
+    board, test_db, test_user, query, expected_indices
+):
+    project, token, space = board
+    items = add_items(test_db, project, test_user, 3)
+    items[0].title = 'say "hi"'
+    items[0].description = r"C:\tmp"
+    items[0].metadata_json = {"tags": [r"tag\path", 'tag "quoted"', "Straße", "评审"]}
+    for item, metadata in zip(items[1:], [{"tags": []}, {}]):
+        item.title = ""
+        item.description = ""
+        item.metadata_json = metadata
+    test_db.commit()
+
+    page = dispatch(
+        "search_board_items",
+        token,
+        {"scope": {"kind": "projects", "spaces": [space]}, "query": query},
+    )
+
+    assert page["coverage"]["complete"] is True
+    assert page["matched_total"] == len(expected_indices)
+    assert {item["id"] for item in page["items"]} == {
+        items[index].id for index in expected_indices
+    }
+
+
 def test_batch_assignment_candidates_preserve_executor_discovery_denial(
     board, monkeypatch: pytest.MonkeyPatch
 ):

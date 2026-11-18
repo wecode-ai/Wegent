@@ -99,7 +99,7 @@ async fn authorize(
         if space["device_id"].as_str() != Some(device(context)?.as_str()) {
             return Err("scope_violation: target belongs to another device".into());
         }
-        if !is_locally_routed_project(runtime, project, action) {
+        if project_space_ref(runtime, context, project)?["project_store"] != "local" {
             return Err("Project reference does not match its store".into());
         }
     } else if space["project_store"] != "backend" {
@@ -111,20 +111,19 @@ async fn authorize(
         }
     }
     if let Some(grant) = context.grant.as_ref() {
-        let bound_store = context.bound_project_store.as_deref().unwrap_or_else(|| {
-            if grant
-                .space_id
-                .as_deref()
-                .is_some_and(|id| is_locally_routed_project(runtime, id, "get_board_item"))
-            {
-                "local"
-            } else {
-                "backend"
+        if let Some(bound_project) = grant.space_id.as_deref().filter(|_| grant.role.is_some()) {
+            let catalogued = runtime.stand_in_store().get_project(bound_project);
+            let bound_store = match (context.bound_project_store.as_deref(), &catalogued) {
+                (Some(store), _) => store,
+                (None, Ok(project)) => project.metadata["project_store"]
+                    .as_str()
+                    .ok_or("Project storage identity is unavailable")?,
+                (None, Err(super::super::TaskRuntimeError::ProjectNotFound)) => "backend",
+                (None, Err(error)) => return Err(error.to_string()),
+            };
+            if space["project_store"] != bound_store {
+                return Err("scope_violation: target belongs to another project store".into());
             }
-        });
-        if grant.role.is_some() && grant.space_id.is_some() && space["project_store"] != bound_store
-        {
-            return Err("scope_violation: target belongs to another project store".into());
         }
         let arguments = json!({"space_id":project,"item_id":target.get("item_id")});
         if let Some(error) = context_scope_error(grant, &arguments) {

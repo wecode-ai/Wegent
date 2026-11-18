@@ -58,11 +58,12 @@ pub(super) async fn call(
                 if !denied.is_empty() {
                     match cloud(context, name, json!({"items":[entry],"include":allowed})).await {
                         Ok(response) => {
-                            let mut result = response["results"][0].clone();
-                            if result["request_id"] != entry["request_id"] {
-                                return Err("Invalid remote identity".into());
-                            }
+                            let mut result = remote_result(&response, entry, &entry["request_id"]);
                             if result["state"] == "succeeded" {
+                                if !result["result"]["sections"].is_object() {
+                                    results.push(unavailable(entry, "Invalid remote sections"));
+                                    continue;
+                                }
                                 for section in denied {
                                     result["result"]["sections"]
                                         [section.as_str().ok_or("Invalid section")?] =
@@ -94,18 +95,13 @@ pub(super) async fn call(
         };
         match cloud(context, name, payload).await {
             Ok(response) => {
-                let remote_results = response["results"]
-                    .as_array()
-                    .ok_or("Missing remote results")?;
-                if remote_results.len() != remote.len() {
-                    return Err("Incomplete remote batch receipt".into());
-                }
-                for (index, result) in remote_results.iter().enumerate() {
-                    let mut result = result.clone();
-                    if name == "batch_get_assignment_candidates" {
-                        result["request_id"] = remote[index]["request_id"].clone();
-                    }
-                    results.push(result);
+                for (index, entry) in remote.iter().enumerate() {
+                    let request_id = if name == "batch_get_assignment_candidates" {
+                        json!(index.to_string())
+                    } else {
+                        entry["request_id"].clone()
+                    };
+                    results.push(remote_result(&response, entry, &request_id));
                 }
             }
             Err(message) => {
@@ -127,6 +123,50 @@ pub(super) async fn call(
         })
         .collect::<Vec<_>>();
     Ok(json!({"counts":counts(&ordered),"results":ordered}))
+}
+
+fn unavailable(entry: &Value, message: &str) -> Value {
+    let mut result = error(entry, message.into());
+    result["error"]["code"] = json!("source_unavailable");
+    result["error"]["retryable"] = json!(true);
+    if let Some(space) = entry.get("space") {
+        result["space"] = space.clone();
+    }
+    result
+}
+
+fn remote_result(response: &Value, entry: &Value, request_id: &Value) -> Value {
+    let Some(results) = response["results"].as_array() else {
+        return unavailable(entry, "Missing remote results");
+    };
+    let mut matching = results
+        .iter()
+        .filter(|result| result["request_id"] == *request_id);
+    let Some(result) = matching.next() else {
+        return unavailable(entry, "Missing remote entry result");
+    };
+    if matching.next().is_some() {
+        return unavailable(entry, "Duplicate remote entry result");
+    }
+    let succeeded = result["state"] == "succeeded";
+    if (!succeeded && result["state"] != "failed")
+        || (succeeded && !result["result"].is_object())
+        || (!succeeded && !result["error"].is_object())
+        || entry
+            .get("target")
+            .is_some_and(|target| result["target"] != *target)
+        || entry.get("space").is_some_and(|space| {
+            (succeeded || result.get("space").is_some()) && result["space"] != *space
+        })
+    {
+        return unavailable(entry, "Invalid remote entry result");
+    }
+    let mut result = result.clone();
+    result["request_id"] = entry["request_id"].clone();
+    if let Some(space) = entry.get("space") {
+        result["space"] = space.clone();
+    }
+    result
 }
 
 async fn local(

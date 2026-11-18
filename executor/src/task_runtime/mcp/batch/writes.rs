@@ -317,8 +317,12 @@ pub(super) async fn call(
     let mut indexes = Vec::new();
     let started = std::time::Instant::now();
     for (index, entry) in items.iter().enumerate() {
-        let identity = hash(target(entry));
-        if blocked.contains(&identity) || started.elapsed().as_secs() > 8 {
+        let identity = entry.get("target").map(hash);
+        if identity
+            .as_ref()
+            .is_some_and(|identity| blocked.contains(identity))
+            || started.elapsed().as_secs() > 8
+        {
             continue;
         }
         let result = match check(runtime, context, name, entry).await {
@@ -335,7 +339,9 @@ pub(super) async fn call(
         };
         let result = result.unwrap_or_else(|message| error(entry, message));
         if result["state"] != "succeeded" {
-            blocked.insert(identity);
+            if let Some(identity) = identity {
+                blocked.insert(identity);
+            }
         }
         state["results"][index] = result;
         store
@@ -397,6 +403,7 @@ async fn view(
         .as_array()
         .ok_or("Invalid operation")?
         .clone();
+    let mut hidden = HashSet::new();
     for (index, entry) in items.iter().enumerate() {
         let target = target(entry);
         let space = target.get("space").unwrap_or(target);
@@ -418,14 +425,19 @@ async fn view(
         }
         if state["results"][index]["state"] == "succeeded" {
             let current_target = &state["results"][index]["target"];
+            // Revoked session/project authority still hides the complete operation.
             authorize(runtime, context, current_target, "get_board_item").await?;
-            individual(
+            if individual(
                 runtime,
                 context,
                 "get_board_item",
                 json!({"space_id":space["space_id"],"item_id":current_target["item_id"]}),
             )
-            .await?;
+            .await
+            .is_err()
+            {
+                hidden.insert(index);
+            }
         }
     }
     let results = state["results"].as_array().ok_or("Invalid receipts")?;
@@ -440,9 +452,23 @@ async fn view(
             .save_board_operation(operation, &principal, &state)
             .map_err(|error| error.to_string())?;
     }
-    let results = state["results"].as_array().ok_or("Invalid receipts")?;
+    // Redaction is a response projection; keep the original durable commit snapshots intact.
+    let mut results = state["results"]
+        .as_array()
+        .ok_or("Invalid receipts")?
+        .clone();
+    for index in hidden {
+        let result = &results[index];
+        results[index] = json!({
+            "request_id":result["request_id"], "state":result["state"],
+            "committed":result["committed"],
+            "error":{"code":"result_unavailable",
+                "message":"Committed result is unavailable under current access",
+                "retryable":false}
+        });
+    }
     Ok(
-        json!({"operation_id":operation,"state":state["state"],"counts":counts(results),"results":results,"expires_at":chrono::DateTime::from_timestamp(state["expires_at"].as_i64().ok_or("Missing expiration")?,0).ok_or("Invalid expiration")?.to_rfc3339()}),
+        json!({"operation_id":operation,"state":state["state"],"counts":counts(&results),"results":results,"expires_at":chrono::DateTime::from_timestamp(state["expires_at"].as_i64().ok_or("Missing expiration")?,0).ok_or("Invalid expiration")?.to_rfc3339()}),
     )
 }
 
@@ -478,9 +504,13 @@ pub(super) async fn read(
                     .as_array()
                     .ok_or("Missing results")?
                     .iter()
-                    .any(|result| {
+                    .enumerate()
+                    .any(|(index, result)| {
+                        let entry = &state["request"]["items"][index];
+                        let requested = target(entry);
                         result["state"] == "succeeded"
-                            && result["target"]["space"]["project_store"] == "backend"
+                            && requested.get("space").unwrap_or(requested)["project_store"]
+                                == "backend"
                     })
                 {
                     return Err(message);

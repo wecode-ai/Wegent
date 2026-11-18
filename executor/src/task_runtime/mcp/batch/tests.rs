@@ -9,6 +9,9 @@ mod query_regressions;
 #[path = "receipt_regressions.rs"]
 mod receipt_regressions;
 
+#[path = "read_regressions.rs"]
+mod read_regressions;
+
 #[test]
 fn shared_contract_rejects_nested_ambiguity() {
     let tools = tools();

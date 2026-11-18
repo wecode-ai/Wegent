@@ -176,10 +176,10 @@ def _view(db: Session, token: MCPAuthInfo, row: LoopNode) -> dict[str, Any]:
         row.status = "expired"
         db.commit()
         raise failure("operation_expired", "Operation receipt expired", 410)
-    for entry, result in zip(data["request"]["items"], data["results"]):
-        if result["state"] == "succeeded":
-            _check_receipt_access(db, token, {**entry, "target": result["target"]})
-    results = data["results"]
+    results = [
+        _receipt_result(db, token, result) if result["state"] == "succeeded" else result
+        for result in data["results"]
+    ]
     return {
         "operation_id": row.id,
         "state": row.status,
@@ -189,18 +189,30 @@ def _view(db: Session, token: MCPAuthInfo, row: LoopNode) -> dict[str, Any]:
     }
 
 
-def _check_receipt_access(
-    db: Session, token: MCPAuthInfo, entry: dict[str, Any]
-) -> None:
+def _receipt_result(
+    db: Session, token: MCPAuthInfo, result: dict[str, Any]
+) -> dict[str, Any]:
     from app.mcp_server.tools import wework_space as single
 
-    target = entry.get("target")
-    space = target["space"] if target else entry["space"]
-    project = access.project(
-        db, token, space, item_id=target["item_id"] if target else None
-    )
-    if target:
+    target = result["target"]
+    project = access.project(db, token, target["space"], item_id=target["item_id"])
+    try:
         single._read_item(db, project, target["item_id"], token.user_id)
+    except HTTPException as error:
+        if error.status_code not in (403, 404):
+            raise
+        # Redact only the response; the durable commit snapshot remains unchanged.
+        return {
+            "request_id": result["request_id"],
+            "state": result["state"],
+            "committed": result["committed"],
+            "error": {
+                "code": "result_unavailable",
+                "message": "Committed result is unavailable under current access",
+                "retryable": False,
+            },
+        }
+    return result
 
 
 def read(
