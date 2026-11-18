@@ -908,6 +908,8 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
+    // Fixtures enqueue recovery directly to verify admission and durable failure handling.
+    #[cfg(test)]
     pub(super) async fn resume_active_goal(
         &self,
         local_task_id: &str,
