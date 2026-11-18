@@ -7,6 +7,10 @@ import { createMcpElicitationModel } from '../e2e/desktop/modules/mcp-elicitatio
 import { createAsyncRequestModel } from '../e2e/desktop/modules/async-request-model.mjs'
 import { readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
 import {
+  requestContainsSkillLocator,
+  requestSkillCatalogDiagnostics,
+} from '../e2e/desktop/modules/skill-catalog-locators.mjs'
+import {
   MCP_ELICITATION_ACCEPTED_MARKER,
   MCP_ELICITATION_COMPLETION_TEXT,
   MCP_ELICITATION_NAMESPACE,
@@ -15,6 +19,45 @@ import {
 } from '../e2e/desktop/modules/shared.mjs'
 import { createDesktopScenario } from '../e2e/desktop/scenarios/stand-in-list-confirmation.scenario.mjs'
 import { createDesktopScenario as createActionScenario } from '../e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs'
+
+test('skill discovery requires the exact expanded native path on every platform', () => {
+  for (const root of ['/home/test/plugins', 'C:\\Users\\test\\plugins', '\\\\server\\plugins']) {
+    const expected = `${root}/demo/1.0/SKILL.md`
+    const catalog = [
+      '### Skill roots',
+      `- \`r0\` = \`${root}\``,
+      '### Available skills',
+      '- demo: Run the fixture (file: r0/demo/1.0/SKILL.md)',
+    ].join('\n')
+    const body = { input: [{ content: [{ text: catalog }] }] }
+    assert.equal(requestContainsSkillLocator(body, expected), true)
+    assert.equal(requestContainsSkillLocator(body, `${root}/demo/2.0/SKILL.md`), false)
+    assert.equal(requestContainsSkillLocator({ input: expected }, expected), false)
+    assert.equal(
+      requestContainsSkillLocator(
+        { input: `### Available skills\n- demo: Fixture (file: ${expected})` },
+        expected
+      ),
+      true
+    )
+  }
+})
+
+test('skill catalog diagnostics expose format mismatches without retaining request text', () => {
+  const body = {
+    authorization: 'private-credential',
+    input: ['private-user-text', '## Available skills\n- demo: Fixture (file: r0/demo/SKILL.md)'],
+  }
+  assert.deepEqual(requestSkillCatalogDiagnostics(body), {
+    advertisedSkillPaths: [],
+    catalogHeadings: ['## Available skills'],
+    rootsSectionCount: 0,
+    skillsSectionCount: 0,
+    candidateLocatorCount: 1,
+    candidateLocatorPaths: ['r0/demo/SKILL.md'],
+  })
+  assert.equal(requestContainsSkillLocator(body, 'r0/demo/SKILL.md'), false)
+})
 
 test('async request model waits for the native write result before holding execution', async () => {
   const observed = []

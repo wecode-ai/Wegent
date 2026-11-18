@@ -5,7 +5,10 @@ import { copyFile, lstat, mkdir, readFile, readlink, writeFile } from 'node:fs/p
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
-import { requestContainsSkillLocator } from '../modules/desktop-server.mjs'
+import {
+  requestContainsSkillLocator,
+  requestSkillCatalogDiagnostics,
+} from '../modules/skill-catalog-locators.mjs'
 import {
   refreshPluginInventory,
   verifyPluginEnabledState,
@@ -507,8 +510,16 @@ export async function createDesktopScenario({
         events = [assistantMessage(`${active.id} completed`)]
       } else if (active && JSON.stringify(body.input ?? '').includes(active.prompt)) {
         assert.ok(requestAdvertisesShellCommand(body))
+        const discovered = requestContainsSkillLocator(body, active.skillPath)
+        if (!discovered) {
+          evidence.push({
+            sourceVersion: current.release.version,
+            expectedSkillPath: active.skillPath,
+            ...requestSkillCatalogDiagnostics(body),
+          })
+        }
         assert.ok(
-          requestContainsSkillLocator(body, active.skillPath, active.skillName),
+          discovered,
           'Codex did not discover the historical plugin in its migrated native runtime'
         )
         events = shellCommandResponse(body, active.id, active.command, workspacePath)

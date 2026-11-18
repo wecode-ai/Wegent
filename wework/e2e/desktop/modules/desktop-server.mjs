@@ -1,4 +1,5 @@
 import { selectedToolCall } from './model-tool-calls.mjs'
+import { requestContainsSkillLocator } from './skill-catalog-locators.mjs'
 import { completeCommandOnProcessExit } from './process-exit-command.mjs'
 import { processIsAlive } from '../process-lifecycle.mjs'
 import { nativeMatrixCatalogModel } from './model-native-catalog.mjs'
@@ -96,7 +97,6 @@ import {
   telemetryEvents,
 } from './response-protocol.mjs'
 import { tmpdir } from 'node:os'
-import { posix } from 'node:path'
 
 import {
   ANTHROPIC_EMPTY_COMPLETION_TEXT,
@@ -379,44 +379,6 @@ function findNestedString(value, predicate) {
     if (match) return match
   }
   return null
-}
-
-function requestContainsSkillLocator(body, skillPath) {
-  const normalize = value => {
-    const path = value.replaceAll('\\', '/')
-    return `${path.startsWith('//') ? '/' : ''}${posix.normalize(path)}`
-  }
-  const expectedPath = normalize(skillPath)
-  return Boolean(
-    findNestedString(body, catalog => {
-      const roots = new Map()
-      let section = null
-      for (const rawLine of catalog.split(/\r?\n/u)) {
-        const line = rawLine.trim()
-        if (/^#{1,6} /u.test(line) || /^<\/?skills_instructions>/u.test(line)) {
-          section =
-            line === '### Skill roots' ? 'roots' : line === '### Available skills' ? 'skills' : null
-          if (section === 'roots' || /^#{1,2} |^<\/?skills_instructions>/u.test(line)) {
-            roots.clear()
-          }
-          continue
-        }
-        if (section === 'roots') {
-          const root = line.match(/^- `([^`]+)` = `([^`]+)`$/u)
-          if (root) roots.set(root[1], root[2])
-        }
-        if (section !== 'skills') continue
-        const entry = line.match(/^- .+ \(file: (.+)\)$/u)
-        if (!entry) continue
-        const locator = entry[1].replaceAll('\\', '/')
-        const separator = locator.indexOf('/')
-        const root = roots.get(locator.slice(0, separator))
-        const expandedPath = root ? `${root}/${locator.slice(separator + 1)}` : locator
-        if (normalize(expandedPath) === expectedPath) return true
-      }
-      return false
-    })
-  )
 }
 
 /** Text of top-level user messages, excluding quoted messages inside tool output. */
