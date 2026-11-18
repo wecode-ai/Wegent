@@ -3,14 +3,6 @@ use super::*;
 
 const BLOCK_DEVICE_ROW: &str = "UPDATE plugin_device_installations SET state=state WHERE user_id=81001 AND installed_kind_id=? AND device_id=?";
 
-struct ReleaseBlocker<'a>(&'a Notify);
-
-impl Drop for ReleaseBlocker<'_> {
-    fn drop(&mut self) {
-        self.0.notify_one();
-    }
-}
-
 pub(super) async fn verify(
     context: &Context<'_>,
     state: &crate::state::AppState,
@@ -31,6 +23,7 @@ pub(super) async fn verify(
     let failure = tokio::time::timeout(Duration::from_secs(10), verify_receipt(
         context, &peer, &writer_state, &blocker_pool, false,
         "UPDATE missing_plugin_receipt_rows SET state=state WHERE installed_kind_id=? AND device_id=?",
+        None,
     )).await.expect("A failed blocker left the receipt waiting indefinitely").unwrap_err();
     assert!(
         failure.to_string().contains("missing_plugin_receipt_rows"),
@@ -45,6 +38,37 @@ pub(super) async fn verify(
     .await?
     .release()
     .await;
+    let failure = tokio::time::timeout(
+        Duration::from_secs(10),
+        verify_receipt(
+            context,
+            &peer,
+            &writer_state,
+            &blocker_pool,
+            false,
+            BLOCK_DEVICE_ROW,
+            Some("SELECT * FROM missing_receipt_inspection_rows"),
+        ),
+    )
+    .await
+    .expect("A failed inspection left the device row locked")
+    .unwrap_err();
+    assert!(
+        failure
+            .to_string()
+            .contains("missing_receipt_inspection_rows"),
+        "The fixture hid its inspection database error: {failure}"
+    );
+    // A new owner must be admitted after either fixture failure.
+    write_coordination::PluginWriteLease::acquire_installed(
+        context.mysql,
+        state.redis.as_ref(),
+        81001,
+        Some(&[context.id, peer.id]),
+    )
+    .await?
+    .release()
+    .await;
     for registration in [false, true] {
         verify_receipt(
             context,
@@ -53,6 +77,7 @@ pub(super) async fn verify(
             &blocker_pool,
             registration,
             BLOCK_DEVICE_ROW,
+            None,
         )
         .await?;
     }
@@ -79,6 +104,7 @@ async fn verify_receipt(
     blocker: &brz_mysql::MysqlService,
     registration: bool,
     blocker_statement: &str,
+    inspection_statement: Option<&str>,
 ) -> anyhow::Result<()> {
     context
         .set_intent(if registration { 84 } else { 83 }, true)
@@ -107,6 +133,7 @@ async fn verify_receipt(
     let mut result =
         crate::plugins_installed::record_sync_result::SyncResult::from_ack(&context.device, &ack);
     result.desired_plugin_snapshot = Some(plan["payload"].clone());
+    let revision = context.write_revision().await?;
     let peer_lease = write_coordination::PluginWriteLease::acquire_installed(
         context.mysql,
         state.redis.as_ref(),
@@ -114,7 +141,6 @@ async fn verify_receipt(
         Some(&[peer.id]),
     )
     .await?;
-    let revision = context.write_revision().await?;
     let (locked, observed) = tokio::sync::oneshot::channel();
     let release = Notify::new();
     let hold = blocker.with_transaction(async |tx| {
@@ -148,6 +174,9 @@ async fn verify_receipt(
             .map(|_| ())
         };
         // Inspect through an independent connection before releasing A's row.
+        if let Some(statement) = inspection_statement {
+            context.mysql.execute(statement, ()).await?;
+        }
         let peer_state = peer.state().await?;
         let unchanged_revision = context.write_revision().await?;
         anyhow::ensure!(
