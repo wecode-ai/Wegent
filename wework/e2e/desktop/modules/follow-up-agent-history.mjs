@@ -48,7 +48,7 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
         return true
       }
     }
-    statusDeadline ??= Date.now() + options.uiTimeoutMs
+    statusDeadline ??= Date.now() + options.modelResponseTimeoutMs
     assert.ok(
       Date.now() < statusDeadline,
       'The real child agent must finish before parent execution'
@@ -144,13 +144,15 @@ export function followUpAgentHistory(options, activeSelector, heldExecutionProgr
       try {
         await control.command('click', '[data-testid="new-chat-button"]')
         await send(INITIAL)
+        // Native parent and child execution use the existing model-response budget.
         const initial = await waitForWorkbenchDebugState(
           control,
           state =>
             state.pane?.messageSummary?.lastMessage?.role === 'assistant' &&
             state.pane?.messageSummary?.lastMessage?.status === 'done' &&
             state.pane?.subagentStatuses?.some(agent => agent.status === 'done'),
-          'The first native turn and its child agent must finish'
+          'The first native turn and its child agent must finish',
+          options.modelResponseTimeoutMs
         )
         const address = initial.workbench.currentRuntimeTask
         const originalId = await control.command('getAttribute', assistant, {

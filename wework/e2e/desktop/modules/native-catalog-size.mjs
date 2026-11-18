@@ -24,8 +24,18 @@ export async function verifyLargeNativeCatalog(control, baselines, timeoutMs) {
       assert.ok(Buffer.byteLength(JSON.stringify(params)) < 900_000)
       await rpc('runtime.codex.catalog.overrides.write', params)
     }
-    const restarted = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
-    assert.equal(restarted.restarted, true, JSON.stringify(restarted))
+    const restartWhenIdle = async () => {
+      const deadline = Date.now() + timeoutMs
+      let restart
+      do {
+        restart = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
+        if (restart.restarted) return
+        if ((restart.activeTaskCount ?? 0) > 0 || (restart.backgroundTerminalCount ?? 0) > 0) break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      } while (Date.now() < deadline)
+      assert.equal(restart?.restarted, true, JSON.stringify(restart))
+    }
+    await restartWhenIdle()
     const models = await rpc('runtime.codex.models.list', { includeHidden: true })
     for (const entry of entries) {
       assert.equal(

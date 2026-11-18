@@ -171,6 +171,7 @@ fn closed_session_child_events_cannot_leak_into_the_current_conversation() {
         routing.routes.insert(
             "old-child".into(),
             RuntimeThreadEventRoute {
+                goal_model_route: None,
                 local_task_id: TASK.into(),
                 request: ExecutionRequest::default(),
                 event_mapper: mapper,

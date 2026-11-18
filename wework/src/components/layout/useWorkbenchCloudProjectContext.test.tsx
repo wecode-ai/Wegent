@@ -6,6 +6,7 @@ import {
 } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import '@/i18n'
+import * as navigation from '@/lib/navigation'
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   forgetProjectSpaceTaskBinding,
@@ -129,6 +130,38 @@ describe('useWorkbenchCloudProjectContext', () => {
       vi.useRealTimers()
     }
   })
+
+  test.each(['local', 'backend'] as const)(
+    'opens an explicit %s Issue execution before optional context resolves',
+    projectStore => {
+      const navigate = vi.spyOn(navigation, 'navigateTo').mockImplementation(() => {})
+      const issueExecution = { projectId: 'source-project', issueId: 'source-issue' }
+      try {
+        const { result } = renderHook(() =>
+          useWorkbenchCloudProjectContext({
+            active: true,
+            currentRuntimeTask: {
+              deviceId: 'execution-device',
+              taskId: 'execution-task',
+              issueExecution,
+              ...(projectStore === 'backend' ? { projectSession: issueExecution } : {}),
+            },
+            defaultProjectSpace: null,
+            paneKey: 'execution-pane',
+            runtimeTaskTitle: 'Execution',
+          })
+        )
+        expect(result.current.boundCloudProject).toBeNull()
+        expect(result.current.boundCloudItem).toBeNull()
+        act(() => result.current.openBoundProjectSpaceTask())
+        expect(navigate).toHaveBeenCalledWith(
+          '/todo?projectStore=' + projectStore + '&projectId=source-project&itemId=source-issue'
+        )
+      } finally {
+        navigate.mockRestore()
+      }
+    }
+  )
 
   test('keeps a late association in its owning task while another task is loading', async () => {
     const targetProject = project('late-association-space', 'local')
