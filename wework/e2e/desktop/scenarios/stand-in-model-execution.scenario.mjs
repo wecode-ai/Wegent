@@ -334,7 +334,9 @@ export function createDesktopScenario(options) {
           '[data-workspace-tab-content="fixed-task"] [data-testid="new-chat-button"]'
         )
         await control.command('waitFor', ORDINARY)
-        await openExplicitModelMenu(control, `${ORDINARY} [data-testid="model-selector-button"]`)
+        await openExplicitModelMenu(control, `${ORDINARY} [data-testid="model-selector-button"]`, {
+          requireSelection: true,
+        })
         await control.command(
           'waitFor',
           '[data-testid="model-selector-menu"] [data-testid^="model-option-"][aria-checked="true"]'
