@@ -35,6 +35,9 @@ class WebAnswerOperation(BaseModel):
     task_id: int = Field(gt=0)
     answer_id: int = Field(gt=0)
     actor_id: int = Field(gt=0)
+    expected_generation_id: str | None = Field(
+        default=None, min_length=32, max_length=32
+    )
     user_subtask_id: int | None = None
     message: str = ""
     options: dict[str, Any] = Field(default_factory=dict)
@@ -84,7 +87,7 @@ def _has_native_knowledge(db: Any, task: Any, operation: WebAnswerOperation) -> 
 
 
 def _prepare(operation: WebAnswerOperation) -> dict | None:
-    """Select only persisted native Web Chat; capture identity before preparation."""
+    """Select native Web starts; keep controls with their accepted execution owner."""
     from app.api.ws.chat_namespace import _detach_retry_dispatch_objects
     from app.api.ws.events import ChatSendPayload
 
@@ -97,6 +100,26 @@ def _prepare(operation: WebAnswerOperation) -> dict | None:
             db, task_id=operation.task_id, user_id=operation.actor_id
         ):
             raise HTTPException(403, "Answer access denied")
+        # Mutable routing metadata cannot transfer an already accepted attempt.
+        if operation.action in {"cancel", "retry"}:
+            generation = answer.answer_generation_id
+            if (
+                operation.expected_generation_id is not None
+                and operation.expected_generation_id != generation
+            ):
+                raise HTTPException(409, "Answer attempt changed")
+            if not generation:
+                return None
+            if (
+                answer.role != SubtaskRole.ASSISTANT
+                or db.get(User, operation.actor_id) is None
+            ):
+                raise HTTPException(404, "Execution identity not found")
+            return (
+                {"generation_id": generation}
+                if operation.action == "cancel"
+                else {"selected": True}
+            )
         if task.client_origin != "frontend" or (task.json or {}).get("spec", {}).get(
             "device_id"
         ):
@@ -112,14 +135,6 @@ def _prepare(operation: WebAnswerOperation) -> dict | None:
             or operation.options.get("generation")
         ):
             return None
-        if operation.action == "retry":
-            return {"selected": True} if answer.answer_generation_id else None
-        if operation.action == "cancel":
-            return (
-                {"generation_id": answer.answer_generation_id}
-                if answer.answer_generation_id
-                else None
-            )
         if not _has_native_knowledge(db, task, operation):
             return None
         if answer.status != SubtaskStatus.PENDING or answer.answer_generation_id:

@@ -197,6 +197,53 @@ def test_unselected_runtime_keeps_its_existing_execution_path(context, surface):
     db.commit.assert_not_called()
 
 
+@pytest.mark.parametrize("action", ["start", "retry", "cancel"])
+@pytest.mark.parametrize("shell", ["Codex", "ClaudeCode"])
+def test_server_selected_non_chat_runtime_is_not_taken_over(
+    context, monkeypatch, action, shell
+):
+    db, _, answer = context
+    monkeypatch.setattr(runtime, "_selected_shell", lambda *args: shell)
+
+    assert runtime._prepare(operation().model_copy(update={"action": action})) is None
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["shell", "origin", "device"])
+@pytest.mark.parametrize("action", ["cancel", "retry"])
+def test_control_follows_accepted_identity_after_runtime_metadata_changes(
+    context, monkeypatch, change, action
+):
+    db, task, answer = context
+    answer.answer_generation_id = "a" * 32
+    if change == "shell":
+        monkeypatch.setattr(runtime, "_selected_shell", lambda *args: "Codex")
+    elif change == "origin":
+        task.client_origin = "api"
+    else:
+        task.json["spec"]["device_id"] = "new-device"
+
+    expected = {"generation_id": "a" * 32} if action == "cancel" else {"selected": True}
+    assert (
+        runtime._prepare(operation().model_copy(update={"action": action})) == expected
+    )
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("current", [None, "b" * 32])
+def test_cancel_rejects_an_identity_captured_before_the_private_rpc(context, current):
+    db, _, answer = context
+    answer.answer_generation_id = current
+    cancel = operation(expected_generation_id="a" * 32).model_copy(
+        update={"action": "cancel"}
+    )
+
+    with pytest.raises(HTTPException) as stale:
+        runtime._prepare(cancel)
+    assert stale.value.status_code == 409
+    db.commit.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_accepted_turn_runs_existing_dispatcher_as_background_work(monkeypatch):
     kwargs = {"assistant_subtask": SimpleNamespace(id=12)}
