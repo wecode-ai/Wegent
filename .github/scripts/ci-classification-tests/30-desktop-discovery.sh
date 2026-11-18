@@ -90,13 +90,6 @@ for terminal_wiring_path in \
   fi
 done
 
-assert_desktop_case "home preload race is invoked by its core CI checkpoint" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"collaboration-home-preload"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-home-preload.scenario.mjs"
 
 for board_transcript_path in \
   wework/e2e/desktop/scenarios/board-transcript-followup.scenario.mjs \

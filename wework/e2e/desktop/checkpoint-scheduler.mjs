@@ -2,7 +2,6 @@
 // renderer. Run them alone so Chromium's network service stays stable on the
 // four-vCPU desktop E2E runners. CI shard estimates must account for this prefix.
 export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
-  'background-terminals',
   'release-package-startup',
   'collaboration-issue-task-discovery',
   // Its partial-inventory guard must run through the real system-idle scheduler.
@@ -25,7 +24,6 @@ export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
 const PYTHON_RUNTIME_STARTUP_PEERS = [
   'collaboration-shared-core',
   'collaboration-templates',
-  'collaboration-template-agents',
   'collaboration-template-app-device-routing',
 ]
 

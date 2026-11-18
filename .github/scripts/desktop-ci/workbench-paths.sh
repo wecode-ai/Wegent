@@ -242,7 +242,7 @@ classify_workbench_path() {
       fi
       if [[ "$path" == wework/src/api/local/localServices* || \
         "$path" == wework/src/api/hybrid/hybridServices* ]]; then
-        select_target "core:background-terminals"
+        select_target "core:local-harness"
       fi
       if [[ "$path" == wework/src/api/hybrid/hybridServices* ]]; then
         select_target "core:stand-in-assignment-notifications"
@@ -302,7 +302,7 @@ classify_workbench_path() {
       wework/src/components/layout/DesktopWorkbenchLayout.test.tsx)
       select_target "core:window-lifecycle"
       if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
-        select_target "core:background-terminals"
+        select_target "core:local-harness"
         select_target "core:temporary-chat"
         select_target "core:cloud-context-resilience"
         select_target "core:task-board-association"
@@ -417,7 +417,7 @@ classify_workbench_path() {
       wework/src/components/layout/workspace-panels/BackgroundTerminalPanel* | \
       wework/src/api/runtimeBackgroundTerminals.ts | \
       wework/e2e/desktop/scenarios/background-terminals.scenario.mjs)
-      select_target "core:background-terminals"
+      select_target "core:local-harness"
       return
       ;;
 

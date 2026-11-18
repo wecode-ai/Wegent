@@ -31,12 +31,7 @@ classify_wework_path() {
       wework/src/features/todo/useBoardRuntimeConversations*)
       select_target "core:board-transcript-followup"
       return
-      ;;
-    wework/e2e/desktop/scenarios/collaboration-home-preload.scenario.mjs)
-      select_target "core:collaboration-home-preload"
-      return
-      ;;
-    wework/e2e/desktop/scenarios/device-artifact-declaration.scenario.mjs)
+      ;;    wework/e2e/desktop/scenarios/device-artifact-declaration.scenario.mjs)
       select_target "core:device-artifact-declaration"
       return
       ;;
@@ -259,7 +254,7 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx ]]; then
         select_target "core:temporary-chat"
-        select_target "core:background-terminals"
+        select_target "core:local-harness"
       fi
       return
       ;;

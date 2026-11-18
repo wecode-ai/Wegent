@@ -58,7 +58,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "shared right workspace panel selects plugin development and temporary chat" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-8","name":"Core / shard 8","segments":"background-terminals"},{"id":"core-10","name":"Core / shard 10","segments":"plugin-development"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-5","name":"Core / shard 5","segments":"local-harness"},{"id":"core-10","name":"Core / shard 10","segments":"plugin-development"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx"
@@ -66,7 +66,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "main workbench changes select fixed environment panel coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-2","name":"Core / shard 2","segments":"window-lifecycle"},{"id":"core-3","name":"Core / shard 3","segments":"dots-closed-loops"},{"id":"core-6","name":"Core / shard 6","segments":"task-board-association"},{"id":"core-8","name":"Core / shard 8","segments":"background-terminals,cloud-context-resilience"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-2","name":"Core / shard 2","segments":"window-lifecycle"},{"id":"core-3","name":"Core / shard 3","segments":"dots-closed-loops"},{"id":"core-5","name":"Core / shard 5","segments":"local-harness"},{"id":"core-6","name":"Core / shard 6","segments":"task-board-association"},{"id":"core-8","name":"Core / shard 8","segments":"cloud-context-resilience"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/DesktopWorkbenchMain.tsx"
@@ -113,7 +113,7 @@ for theme_foundation_path in \
   assert_desktop_case "theme foundations select all theme consumers: $theme_foundation_path" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"streaming-content"},{"id":"core-5","name":"Core / shard 5","segments":"application-menu"},{"id":"core-8","name":"Core / shard 8","segments":"background-terminals,collaboration-first-use"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"streaming-content"},{"id":"core-5","name":"Core / shard 5","segments":"local-harness,application-menu"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-first-use"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
     "$theme_foundation_path"
@@ -322,14 +322,6 @@ wework_desktop_macos_inspector_e2e=true' \
   "wework/electron/src/host/tray-manager.ts" \
   "wework/e2e/desktop/scenarios/tray-position.mjs"
 
-assert_desktop_case "background terminal files select their registered Core checkpoint" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"background-terminals"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}
-wework_desktop_macos_inspector_e2e=false' \
-  "wework/e2e/desktop/scenarios/background-terminals.scenario.mjs" \
   "wework/src/components/layout/BackgroundTerminalsSummary.tsx"
 
 assert_desktop_case "local harness files select local harness coverage" \

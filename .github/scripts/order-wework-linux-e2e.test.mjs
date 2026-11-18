@@ -201,7 +201,7 @@ test('reuses the existing history runner after its isolated checkpoint', async (
       { id: 'core-2', segments: checkpoints.at(-1) },
       { id: 'core-6', segments: history },
       { id: 'core-9', segments: 'human-interactions-hidden' },
-      { id: 'core-10', segments: 'collaboration-template-agents' },
+      { id: 'core-10', segments: 'collaboration-shared-core' },
     ],
   }
   const seconds = Object.fromEntries(
@@ -262,7 +262,7 @@ test('reuses the existing history runner after its isolated checkpoint', async (
 
 test('balancing includes exclusive startup checkpoints before the four-worker queue', () => {
   const seconds = {
-    'background-terminals': 60,
+    'plugin-uninstall-lost-response': 60,
     'release-package-startup': 100,
     'collaboration-issue-task-discovery': 80,
     'application-menu': 80,

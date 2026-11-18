@@ -474,7 +474,7 @@ classify_path() {
       select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-comment-notification"
       select_target "core:collaboration-board-move-recovery"
-      select_target "core:collaboration-home-preload"
+      select_target "core:collaboration-issue-assignment-activity"
       select_target "core:board-transcript-followup"
       if [[ "$path" == packages/collaboration/src/issue-detail/IssueExecutionLists* ||
         "$path" == packages/collaboration/src/issue-detail/createSharedIssueDetailPort* ||
