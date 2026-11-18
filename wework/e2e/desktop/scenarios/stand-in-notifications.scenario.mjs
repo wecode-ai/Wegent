@@ -29,7 +29,7 @@ import {
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `分身通知-${process.pid}`
+const PROJECT = `助理通知-${process.pid}`
 const MARKER = `STAND_IN_NOTIFICATION_${process.pid}`
 const FOLLOW_UP = `${MARKER}_FOLLOW_UP`
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
@@ -130,7 +130,7 @@ export function createDesktopScenario({
         'todos.create',
         {
           project_id: project.id,
-          todo: { title: '在通知内继续处理分身任务', assignee_user_id: userId },
+          todo: { title: '在通知内继续处理助理任务', assignee_user_id: userId },
         },
         uiTimeoutMs
       )
@@ -170,8 +170,8 @@ export function createDesktopScenario({
       const notificationRow = selector(`wework-notification-${id}`)
       await control.command('waitFor', notificationRow, { text: '助理处理' })
       const rowText = await control.command('getText', notificationRow)
-      assert.ok(rowText.includes('在通知内继续处理分身任务'))
-      assert.ok(!rowText.includes('我的分身'), 'Handling must preserve the original title')
+      assert.ok(rowText.includes('在通知内继续处理助理任务'))
+      assert.ok(!rowText.includes('我的助理'), 'Handling must preserve the original title')
       assert.equal(
         await control.command('getElementCount', selector(`wework-notification-${id}-body`)),
         '0',
@@ -187,7 +187,7 @@ export function createDesktopScenario({
       )
       await control.command('click', notificationRow)
       await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail-title"]`, {
-        text: '在通知内继续处理分身任务',
+        text: '在通知内继续处理助理任务',
       })
       await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
       await control.command('activateSystemNotification', 'body', {
@@ -296,7 +296,7 @@ export function createDesktopScenario({
             'getValueWhenReady',
             `${CONTENT} [data-testid="cloud-todo-detail-title"]`
           ),
-          '在通知内继续处理分身任务',
+          '在通知内继续处理助理任务',
           'Every notification hit target must open the original Issue'
         )
         await control.command('waitFor', `${CONTENT} [data-testid="cloud-todo-detail"]`, {
@@ -317,7 +317,7 @@ export function createDesktopScenario({
           'getValueWhenReady',
           `${CONTENT} [data-testid="cloud-todo-detail-title"]`
         ),
-        '在通知内继续处理分身任务'
+        '在通知内继续处理助理任务'
       )
       await control.command('click', `${CONTENT} [data-testid="cloud-todo-detail-close"]`)
       await verifyIssueAssignmentReceipts(

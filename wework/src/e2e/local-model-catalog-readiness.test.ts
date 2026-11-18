@@ -3,13 +3,13 @@
 import { beforeEach, expect, test, vi } from 'vitest'
 import { ensureLocalModelCatalogReady } from './local-model-catalog-readiness'
 
-const { listModels, listLocalModelConfigs } = vi.hoisted(() => ({
-  listModels: vi.fn(),
+const { prepareRuntimeModel, listLocalModelConfigs } = vi.hoisted(() => ({
+  prepareRuntimeModel: vi.fn(),
   listLocalModelConfigs: vi.fn(),
 }))
 
 vi.mock('@/api/local/localServices', () => ({
-  createLocalAppServices: () => ({ modelApi: { listModels } }),
+  createLocalAppServices: () => ({ runtimeWorkApi: { prepareRuntimeModel } }),
 }))
 vi.mock('@/features/model-settings/localModelSettings', () => ({ listLocalModelConfigs }))
 
@@ -20,7 +20,7 @@ beforeEach(() => {
 
 test('waits for catalog reconciliation before checking readiness', async () => {
   let finish!: () => void
-  listModels.mockReturnValue(
+  prepareRuntimeModel.mockReturnValue(
     new Promise<void>(resolve => {
       finish = resolve
     })
@@ -32,10 +32,11 @@ test('waits for catalog reconciliation before checking readiness', async () => {
   finish()
   await ready
   expect(listLocalModelConfigs).toHaveBeenCalledOnce()
+  expect(prepareRuntimeModel).toHaveBeenCalledWith({ deviceId: 'local-device' })
 })
 
 test('rejects a catalog that remains unready after reconciliation', async () => {
-  listModels.mockResolvedValue({ data: [] })
+  prepareRuntimeModel.mockResolvedValue(true)
   listLocalModelConfigs.mockReturnValue([{ id: 'fixture', catalogEntry: {}, catalogReady: false }])
 
   await expect(ensureLocalModelCatalogReady()).rejects.toThrow(
@@ -44,7 +45,7 @@ test('rejects a catalog that remains unready after reconciliation', async () => 
 })
 
 test('preserves reconciliation errors', async () => {
-  listModels.mockRejectedValue(new Error('restart failed'))
+  prepareRuntimeModel.mockRejectedValue(new Error('restart failed'))
 
   await expect(ensureLocalModelCatalogReady()).rejects.toThrow('restart failed')
   expect(listLocalModelConfigs).not.toHaveBeenCalled()

@@ -76,7 +76,7 @@ RUN if [ -n "$CARGO_REGISTRIES_CRATES_IO_INDEX" ]; then \
 # ---------------------------------------------------------------------------
 # Runtime stage: the actual device image.
 # ---------------------------------------------------------------------------
-FROM ${DEVICE_BASE_IMAGE}
+FROM ${DEVICE_BASE_IMAGE} AS node-runtime
 ARG TARGETPLATFORM
 ARG DEVICE_IMAGE_PLATFORM=${TARGETPLATFORM}
 ARG APP_VERSION=dev
@@ -136,6 +136,25 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
     && echo "$TZ" > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
+
+# Build the same locked DSH runtime shipped by Wework, outside the final image.
+FROM node-runtime AS connection-runtime-builder
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g --registry "$NPM_REGISTRY" pnpm@11.7.0
+WORKDIR /build/wework
+RUN npm install --prefix /build/wework --ignore-scripts --no-save --registry "$NPM_REGISTRY" tar@7.5.20
+COPY wework/harness-runtime ./harness-runtime
+COPY wework/scripts/prepare-harness-runtime.mjs wework/scripts/child-process-command.mjs ./scripts/
+COPY wework/scripts/lib ./scripts/lib
+ENV WEWORK_HARNESS_RUNTIME_CACHE_ROOT=/build/runtime-cache
+RUN node scripts/prepare-harness-runtime.mjs --materialize
+COPY wework/scripts/package-connection-runtime.mjs ./scripts/
+COPY wework/dsh ./dsh
+RUN node scripts/package-connection-runtime.mjs \
+      /build/runtime-cache/harness-runtime-dev /usr/local/bin/node /opt/wegent/connection-runtime
+
+FROM node-runtime AS device-runtime
 
 # Install the agent CLIs from the selected npm registry.
 RUN npm install -g --registry "$NPM_REGISTRY" \
@@ -234,6 +253,9 @@ RUN groupadd -r wegent \
 
 WORKDIR /app
 
+COPY --from=connection-runtime-builder /opt/wegent/connection-runtime /opt/wegent/connection-runtime
+RUN ln -s /opt/wegent/connection-runtime /app/connection-runtime
+
 # Keep both paths available:
 # - /app/executor is the executor-manager entrypoint-compatible path.
 # - ~/.wecode/wegent-executor/bin/wegent-executor is the local device install path.
@@ -252,6 +274,7 @@ RUN set -e; \
     && cp /app/executor /home/wegent/.wecode/wegent-executor/bin/wegent-executor \
     && chmod 0755 /app/executor /home/wegent/.wecode/wegent-executor/bin/wegent-executor \
     && ln -sf /home/wegent/.wecode/wegent-executor/bin/wegent-executor /usr/local/bin/wegent-executor \
+    && ln -s /opt/wegent/connection-runtime /home/wegent/.wecode/wegent-executor/bin/connection-runtime \
     && test "$(/app/executor --version)" = "${APP_VERSION}" \
     && chown -R wegent:wegent /app /home/wegent
 
@@ -422,6 +445,7 @@ _write_probe="$WEGENT_EXECUTOR_HOME/.write-probe.$$"
 printf 'ok' >"$_write_probe"
 rm -f "$_write_probe"
 install -m 0755 /app/executor "$WEGENT_EXECUTOR_HOME/bin/wegent-executor"
+ln -sfn /opt/wegent/connection-runtime "$WEGENT_EXECUTOR_HOME/bin/connection-runtime"
 
 pids=()
 

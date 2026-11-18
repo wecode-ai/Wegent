@@ -7,6 +7,7 @@ import {
   cacheRuntimeConversationQueuedMessages,
   cacheRuntimeConversationQueuePaused,
   setRuntimeConversationTaskPlan,
+  reconcileRuntimeConversationSnapshot,
 } from './runtimeConversationCache'
 import {
   useRuntimeConversationMetadata,
@@ -27,6 +28,72 @@ function start(address: typeof first, content: string) {
   })
 }
 afterEach(clearRuntimeConversationCacheForTests)
+
+test('publishes an authoritative snapshot immediately while an incremental frame is pending', () => {
+  const frame = vi.fn(() => 1)
+  vi.stubGlobal('requestAnimationFrame', frame)
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  try {
+    const { result, unmount } = renderHook(() => useRuntimeConversationSnapshot(first))
+    act(() =>
+      applyRuntimeConversationAction(first, { type: 'assistant_started', subtaskId: 'pending' })
+    )
+    act(() =>
+      reconcileRuntimeConversationSnapshot(first, [
+        {
+          id: 'pending',
+          status: 'done',
+          items: [
+            {
+              id: 'reply',
+              type: 'assistant_text',
+              content: 'Authoritative reply',
+              phase: 'final_answer',
+            },
+          ],
+        },
+      ])
+    )
+    expect(result.current.messages).toContainEqual(
+      expect.objectContaining({ content: 'Authoritative reply' })
+    )
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(1)
+    unmount()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('publishes a submitted user message without waiting for an animation frame', () => {
+  const frame = vi.fn(() => 1)
+  vi.stubGlobal('requestAnimationFrame', frame)
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  try {
+    const { result, unmount } = renderHook(() => useRuntimeConversationSnapshot(first))
+    act(() =>
+      applyRuntimeConversationAction(first, { type: 'assistant_started', subtaskId: 'old' })
+    )
+    expect(frame).toHaveBeenCalledOnce()
+    act(() =>
+      applyRuntimeConversationAction(first, {
+        type: 'user_added',
+        message: {
+          id: 'submitted',
+          role: 'user',
+          content: 'Continue',
+          status: 'done',
+          createdAt: '2026-11-17T00:00:00Z',
+        },
+      })
+    )
+    expect(result.current.messages).toContainEqual(expect.objectContaining({ id: 'submitted' }))
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(1)
+    expect(frame).toHaveBeenCalledOnce()
+    unmount()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
 
 test('reads queue and metadata changes directly and switches their owner synchronously', () => {
   cacheRuntimeConversationQueuedMessages(first, [

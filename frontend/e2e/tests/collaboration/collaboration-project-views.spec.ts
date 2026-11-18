@@ -8,6 +8,7 @@ import { createApiClient } from '../../utils/api-client'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
 import {
   dragCollaborationIssueToColumn,
+  enableLegacyBoardGrouping,
   showAllProjectIssues,
   webApi,
 } from '../../utils/collaboration-test-support'
@@ -466,6 +467,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
   projectTest(
     `saves manual ${groupBy} lane order across statuses and reloads`,
     async ({ page, scheduledProject: { path, issueId } }) => {
+      await enableLegacyBoardGrouping(page.context())
       const projectId = path.split('/').at(-1)!
       const project = await webApi<Resource & { current_user_id: number }>(
         page,

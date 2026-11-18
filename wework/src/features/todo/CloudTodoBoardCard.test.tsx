@@ -3,7 +3,7 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { clearRuntimeConversationCacheForTests } from '@/features/workbench/runtimeConversationCache'
 import '@/i18n'
 import { installDshUiTestContributions } from '@/test/setup.dom'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react/pure'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react/pure'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CloudTodoBoardCard, CloudTodoCardContent } from './CloudTodoBoardCard'
@@ -85,14 +85,14 @@ describe('CloudTodoBoardCard', () => {
             title: 'Work',
             workspacePath: '',
             runtime: 'codex',
-            runtimeHandle: { origin: { initiatedBy: 'stand_in', roleName: '研发分身' } },
+            runtimeHandle: { origin: { initiatedBy: 'stand_in', roleName: '研发助理' } },
           },
         }}
         display={{ showAssignee: true, showDate: false, showTags: false, showPriority: false }}
       />
     )
     const actor = screen.getByTestId('issue-participation-WEG-85')
-    expect(actor).toHaveTextContent('研发分身')
+    expect(actor).toHaveTextContent('研发助理')
     expect(actor).toHaveAttribute('data-processing-kind', 'stand_in')
     expect(screen.getByTestId('cloud-todo-card-header-WEG-85')).toContainElement(actor)
     expect(screen.getByTestId('cloud-todo-card-header-actors-WEG-85')).toHaveClass('ml-auto')
@@ -104,7 +104,10 @@ describe('CloudTodoBoardCard', () => {
     try {
       cleanup()
       // Radix defers autofocus restoration until after unmount; drain it in this DOM realm.
-      await vi.runOnlyPendingTimersAsync()
+      await act(async () => {
+        await vi.runOnlyPendingTimersAsync()
+      })
+      expect(vi.getTimerCount()).toBe(0)
       clearRuntimeConversationCacheForTests()
     } finally {
       vi.useRealTimers()

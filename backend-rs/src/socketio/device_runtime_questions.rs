@@ -260,7 +260,7 @@ fn question_text(title: &str, question: &Value, asynchronous: bool) -> String {
         }
     }
     lines.push(
-        "引用这条问题消息回复，可直接交给原任务；也可以直接发消息告诉分身，由分身结合上下文处理。"
+        "引用这条问题消息回复，可直接交给原任务；也可以直接发消息告诉助理，由助理结合上下文处理。"
             .into(),
     );
     lines.join("\n\n")
