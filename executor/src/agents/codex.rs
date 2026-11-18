@@ -615,6 +615,7 @@ impl CodexAppServerClient {
         handle: CodexAppServerHandle,
         response_rx: oneshot::Receiver<Result<Value, String>>,
     ) -> Result<Value, String> {
+        let write_started_at = Instant::now();
         let message = json!({
             "method": method,
             "id": request_id,
@@ -624,6 +625,24 @@ impl CodexAppServerClient {
             handle.remove_pending(request_id).await;
             return Err(error);
         }
+
+        log_executor_event(
+            "codex native request sent",
+            &[
+                ("method", method.to_owned()),
+                ("request_id", request_id.to_string()),
+                ("process_scope", "shared".to_owned()),
+                (
+                    "process_generation",
+                    handle.notifications.process_generation.to_string(),
+                ),
+                ("executor_pid", std::process::id().to_string()),
+                (
+                    "write_elapsed_ms",
+                    write_started_at.elapsed().as_millis().to_string(),
+                ),
+            ],
+        );
 
         with_rpc_timeout(method, timeout_seconds, async {
             response_rx
