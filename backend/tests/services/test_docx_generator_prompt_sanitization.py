@@ -101,7 +101,7 @@ class TestDocxGeneratorPromptSanitization:
             lambda *args, **kwargs: [],
         )
 
-        buffer = generate_task_docx(task, db)
+        buffer = generate_task_docx(task, db, viewer_id=1)
 
         generated_doc = Document(buffer)
         assert generated_doc.core_properties.title == "TaskTitle"
@@ -230,3 +230,36 @@ class TestDocxGeneratorPromptSanitization:
 
         full_text = "\n".join(p.text for p in doc.paragraphs)
         assert "Paris is the capital of France." in full_text
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        (
+            "readable",
+            "readable",
+            "正文[[citation:42]]/[[citation:43]][[evidence-unavailable]]",
+        ),
+        ("visit-only", "readable", "正文/[[citation:43]][[evidence-unavailable]]"),
+        ("visit-only", "visit-only", "正文/"),
+    ],
+)
+def test_docx_applies_readers_citation_visibility(first, second, expected):
+    subtask = _make_assistant_subtask(
+        "正文[[citation:42]]/[[citation:43]][[evidence-unavailable]]\n\n"
+        "```\n[[citation:42]]\n```"
+    )
+    subtask.result["answer_citations"] = [
+        {"citation_id": "42", "knowledge_base_id": 7},
+        {"citation_id": "43", "knowledge_base_id": 8},
+    ]
+    doc = Document()
+    task, user = _make_task_and_user()
+
+    _add_message(
+        doc, subtask, task, user, MagicMock(), {7: first, 8: second}.__getitem__
+    )
+
+    paragraphs = [paragraph.text for paragraph in doc.paragraphs]
+    assert expected in paragraphs
+    assert "[[citation:42]]" in paragraphs

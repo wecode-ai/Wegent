@@ -488,9 +488,9 @@ class MyKBSourcePermissionResponse(MyKBPermissionResponse):
     source_access: Literal["readable", "visit-only", "denied"] = Field(
         "denied", description="Current viewer's source access for this knowledge base"
     )
-
-    task_source_bound: bool = Field(
-        False,
+    task_source_bound: bool | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
         description="Whether the requested task is readable and bound to this source",
     )
 

@@ -4,7 +4,7 @@ import re
 from collections.abc import Callable
 
 # Whole code spans, fences, links/images and HTML are protected before rewriting.
-_PROTECTED = re.compile(
+PROTECTED_MARKDOWN = re.compile(
     r"(?m)^\s*(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\s*\1[^\n]*$"
     r"|(`+)[\s\S]*?\2"
     r"|(?<!\[)!?\[(?!\[)[^\n]*?\]\([^\n]*?\)"
@@ -24,7 +24,7 @@ def rewrite_markers(text: str, bind: Callable[[str], str]) -> str:
 
     parts: list[str] = []
     start = 0
-    for match in _PROTECTED.finditer(text):
+    for match in PROTECTED_MARKDOWN.finditer(text):
         parts.extend((rewrite(text[start : match.start()]), match[0]))
         start = match.end()
     parts.append(rewrite(text[start:]))

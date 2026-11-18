@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '@/apis/client'
 import { createTextKnowledgeDocument } from '@/apis/knowledge'
 import type { KnowledgeDocument } from '@/types/knowledge'
@@ -22,6 +22,7 @@ interface UseSaveKnowledgeDocumentOptions {
   open: boolean
   initialTitle: string
   initialContent: string
+  presentContent?: (content: string) => string
   knowledgeBaseId?: number
   onSaved: (document: KnowledgeDocument) => void
   onError?: (error: SaveKnowledgeDocumentError) => void
@@ -41,22 +42,32 @@ export function useSaveKnowledgeDocument({
   open,
   initialTitle,
   initialContent,
+  presentContent,
   knowledgeBaseId,
   onSaved,
   onError,
   onTargetUnavailable,
 }: UseSaveKnowledgeDocumentOptions) {
   const [title, setTitle] = useState(initialTitle)
-  const [content, setContent] = useState(initialContent)
+  const [draft, setDraft] = useState({ content: initialContent, revision: 0 })
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<SaveKnowledgeDocumentError>()
 
   useEffect(() => {
     if (!open) return
     setTitle(initialTitle)
-    setContent(initialContent)
+    setDraft(previous => ({ ...previous, content: initialContent }))
     setError(undefined)
   }, [initialContent, initialTitle, open])
+
+  const setContent = useCallback((content: string) => {
+    setDraft(previous => (previous.content === content ? previous : { ...previous, content }))
+  }, [])
+  const content = open ? (presentContent?.(draft.content) ?? draft.content) : draft.content
+  // Persist the filtered draft so lost markers cannot return when access recovers.
+  if (content !== draft.content) {
+    setDraft({ content, revision: draft.revision + 1 })
+  }
 
   const trimmedTitle = title.trim()
   const trimmedContent = content.trim()
@@ -94,6 +105,7 @@ export function useSaveKnowledgeDocument({
     title,
     setTitle,
     content,
+    contentRevision: draft.revision,
     setContent,
     isSaving,
     isValid,

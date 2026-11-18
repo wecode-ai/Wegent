@@ -26,6 +26,7 @@ import { listGroups } from '@/apis/groups'
 import { fetchBotsList } from '@/features/settings/services/bots'
 import type { BaseRole } from '@/types/base-role'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
+import { ChatEvidenceHost } from '@/features/tasks/components/message/evidence/ChatEvidenceHost'
 import { TaskRightPanelRenderer, useTaskRightPanel } from '@/features/tasks/components/right-panel'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { getFirstSearchParam, getSearchParam } from '@/lib/search-params'
@@ -157,6 +158,7 @@ export function ChatPageMobile() {
   const [isCreateGroupChatOpen, setIsCreateGroupChatOpen] = useState(false)
 
   const { request: rightPanelRequest, close: closeRightPanel } = useTaskRightPanel()
+  const [evidencePanelOpen, setEvidencePanelOpen] = useState(false)
 
   // Toast for notifications
   const { toast } = useToast()
@@ -316,21 +318,28 @@ export function ChatPageMobile() {
           {shareButton}
         </TopNavigation>
         {/* Chat area - taskType switches based on device selection */}
-        <ChatArea
-          teams={visibleTeams}
-          isTeamsLoading={isTeamsLoading}
-          loadError={teams.length === 0 ? loadError : null}
-          rawTeamsEmpty={teams.length === 0}
-          selectedTeamForNewTask={_selectedTeamForNewTask}
-          showRepositorySelector={showRepositorySelector}
-          taskType={taskType}
-          teamModeFilter={teamModeFilter}
-          onShareButtonRender={handleShareButtonRender}
-          onRefreshTeams={handleRefreshTeams}
-          onGenerateModeChange={isGenerationMode ? handleGenerateModeChange : undefined}
-          disabledReason={disabledReason}
-          extension={{ teamEdit: teamEditExtension }}
-        />
+        <ChatEvidenceHost
+          mobile
+          taskKey={taskId}
+          otherPanelRequest={rightPanelRequest}
+          onPanelChange={setEvidencePanelOpen}
+        >
+          <ChatArea
+            teams={visibleTeams}
+            isTeamsLoading={isTeamsLoading}
+            loadError={teams.length === 0 ? loadError : null}
+            rawTeamsEmpty={teams.length === 0}
+            selectedTeamForNewTask={_selectedTeamForNewTask}
+            showRepositorySelector={showRepositorySelector}
+            taskType={taskType}
+            teamModeFilter={teamModeFilter}
+            onShareButtonRender={handleShareButtonRender}
+            onRefreshTeams={handleRefreshTeams}
+            onGenerateModeChange={isGenerationMode ? handleGenerateModeChange : undefined}
+            disabledReason={disabledReason}
+            extension={{ teamEdit: teamEditExtension }}
+          />
+        </ChatEvidenceHost>
       </div>
       {/* Create Group Chat Dialog */}
       {isCreateGroupChatOpen && (
@@ -341,6 +350,7 @@ export function ChatPageMobile() {
       )}
       {rightPanelRequest && (
         <div
+          hidden={evidencePanelOpen}
           className="fixed inset-0 z-[70] overflow-hidden bg-surface"
           data-task-right-panel
           data-testid="task-right-panel-container"

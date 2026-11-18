@@ -1,4 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { useState } from 'react'
+import { ChatEvidenceHost } from '@/features/tasks/components/message/evidence/ChatEvidenceHost'
 import AnswerEvidenceMarkdown from '@/features/tasks/components/message/evidence/AnswerEvidenceMarkdown'
 import { apiClient, ApiError } from '@/apis/client'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -6,9 +9,8 @@ import MessageBubble, { type Message } from '@/features/tasks/components/message
 import {
   TaskSourceDecisions,
   useTaskSourceDecisions,
-  WorkspaceSourceAccess,
 } from '@/features/tasks/components/message/evidence/sourceAccess'
-import { stripAnswerEvidenceMarkers } from '@/features/tasks/utils/answerEvidenceMarkers'
+import { filterAnswerEvidenceMarkers } from '@/features/tasks/utils/answerEvidenceMarkers'
 
 let currentUser = 1
 let currentBackend = 'user:1'
@@ -17,9 +19,15 @@ jest.mock('@/features/common/UserContext', () => ({
 }))
 
 jest.mock('@/apis/client', () => {
-  const actual = jest.requireActual('@/apis/client')
   const client = { get: jest.fn(), getCacheScope: () => currentBackend }
-  return { ...actual, __esModule: true, apiClient: client, default: client }
+  return {
+    __esModule: true,
+    apiClient: client,
+    default: client,
+    get ApiError() {
+      return jest.requireActual('@/apis/client').ApiError
+    },
+  }
 })
 jest.mock('@/hooks/useTraceAction', () => ({
   useTraceAction: () => ({ trace: { event: jest.fn(), copy: jest.fn(), download: jest.fn() } }),
@@ -27,12 +35,17 @@ jest.mock('@/hooks/useTraceAction', () => ({
 jest.mock('@/hooks/useMessageFeedback', () => ({
   useMessageFeedback: () => ({ feedback: null, handleLike: jest.fn(), handleDislike: jest.fn() }),
 }))
-jest.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
-jest.mock('@/features/knowledge/document/components/DocumentDetailDialog', () => ({
-  DocumentDetailDialog: ({ allowDownload }: { allowDownload: boolean }) => (
-    <div data-testid="current-original" data-download-allowed={String(allowDownload)} />
-  ),
-}))
+jest.mock('@/hooks/useTranslation', () => {
+  const t = (
+    key: string,
+    values?: { title?: string; number?: number; documents?: number; fragments?: number }
+  ) => {
+    if (key === 'evidence.citation_label') return values?.title + ' · ' + values?.number
+    if (key === 'evidence.summary') return values?.documents + '/' + values?.fragments
+    return key
+  }
+  return { useTranslation: () => ({ t }) }
+})
 jest.mock('react-markdown', () =>
   jest.requireActual('../../../../../../../node_modules/react-markdown/index.js')
 )
@@ -143,35 +156,6 @@ test('HTML void tags do not consume the ordinary text following them', () => {
   expect(screen.getByTestId('answer-citation-42')).toBeInTheDocument()
 })
 
-test('current original loads independently with explicit download policy', async () => {
-  get
-    .mockResolvedValueOnce({
-      citation_id: '42',
-      content: '快照正文',
-      knowledge_base_id: 7,
-      document_id: 9,
-    })
-    .mockResolvedValueOnce({ content: '快照正文', knowledge_base_id: 7, document_id: 9 })
-    .mockResolvedValueOnce({ id: 9, kind_id: 7, name: '当前资料' })
-    .mockResolvedValueOnce({ original_download_allowed: false })
-  render(<AnswerEvidenceMarkdown source="[[citation:42]]" theme="light" evidence={evidence} />)
-  fireEvent.click(screen.getByTestId('answer-citation-42'))
-  await screen.findByText('快照正文')
-  fireEvent.click(screen.getByTestId('answer-evidence-open-original'))
-  await waitFor(() =>
-    expect(get).toHaveBeenCalledWith(
-      '/knowledge-bases/7/document-protection?preview_watermark=true',
-      { signal: expect.any(AbortSignal) }
-    )
-  )
-  expect(get).toHaveBeenCalledWith('/knowledge-documents/9', { signal: expect.any(AbortSignal) })
-  expect(await screen.findByTestId('current-original')).toHaveAttribute(
-    'data-download-allowed',
-    'false'
-  )
-  expect(screen.getByText('快照正文')).toBeInTheDocument()
-})
-
 test('removing the selected citation clears its authorized body immediately', async () => {
   get.mockResolvedValueOnce({ content: '前一引用正文' })
   const { rerender } = render(
@@ -225,7 +209,7 @@ test('same-title references switch independently and discard late responses', as
   expect(get).toHaveBeenCalledTimes(2)
 })
 
-test.each(['account', 'backend', 'generation', 'answer', 'task', 'workspace'] as const)(
+test.each(['account', 'backend', 'generation', 'answer', 'task'] as const)(
   'scope switch %s clears body and ignores pending reads',
   async change => {
     let late!: (value: unknown) => void
@@ -248,7 +232,6 @@ test.each(['account', 'backend', 'generation', 'answer', 'task', 'workspace'] as
       answerId: change === 'answer' ? 13 : evidence.answerId,
       generationId: change === 'generation' ? 'b'.repeat(32) : evidence.generationId,
       taskId: change === 'task' ? 5 : undefined,
-      workspaceId: change === 'workspace' ? 7 : undefined,
     }
     rerender(<AnswerEvidenceMarkdown source="[[citation:42]]" theme="light" evidence={next} />)
     expect(screen.queryByTestId('answer-evidence-panel')).not.toBeInTheDocument()
@@ -262,8 +245,18 @@ test.each(['account', 'backend', 'generation', 'answer', 'task', 'workspace'] as
 
 test('original read failure remains independent from authorized snapshot', async () => {
   get
-    .mockResolvedValueOnce({ content: '可核验快照', document_id: 9, knowledge_base_id: 7 })
-    .mockResolvedValueOnce({ content: '可核验快照', document_id: 9, knowledge_base_id: 7 })
+    .mockResolvedValueOnce({
+      citation_id: '42',
+      content: '可核验快照',
+      document_id: 9,
+      knowledge_base_id: 7,
+    })
+    .mockResolvedValueOnce({
+      citation_id: '42',
+      content: '可核验快照',
+      document_id: 9,
+      knowledge_base_id: 7,
+    })
     .mockRejectedValueOnce(new Error('original unavailable'))
     .mockResolvedValueOnce({ original_download_allowed: false })
   render(<AnswerEvidenceMarkdown source="[[citation:42]]" theme="light" evidence={evidence} />)
@@ -271,8 +264,57 @@ test('original read failure remains independent from authorized snapshot', async
   await screen.findByText('可核验快照')
   fireEvent.click(screen.getByTestId('answer-evidence-open-original'))
   expect(await screen.findByRole('alert')).toHaveTextContent('evidence.original_failed')
+  fireEvent.click(screen.getByTestId('answer-evidence-return-fragment'))
   expect(screen.getByText('可核验快照')).toBeInTheDocument()
 })
+
+test.each(['readable', 'denied', 'unknown'] as const)(
+  'an original 403 only hides a source after the current permission is confirmed (%s)',
+  async access => {
+    const fragment = {
+      citation_id: '42',
+      content: '证据片段',
+      document_id: 9,
+      knowledge_base_id: 7,
+    }
+    get
+      .mockResolvedValueOnce(fragment)
+      .mockResolvedValueOnce(fragment)
+      .mockRejectedValueOnce(new ApiError('original denied', 403))
+    if (access === 'unknown') get.mockRejectedValueOnce(new ApiError('offline', 503))
+    else get.mockResolvedValueOnce({ source_access: access })
+    render(
+      <AnswerEvidenceMarkdown
+        source="正文[[citation:42]] [[citation:43]]"
+        theme="light"
+        evidence={{
+          ...evidence,
+          taskId: 3,
+          citations: [...evidence.citations, { ...evidence.citations[0], citation_id: '43' }],
+        }}
+      />
+    )
+    fireEvent.click(screen.getByTestId('answer-citation-42'))
+    await screen.findByText('证据片段')
+    fireEvent.click(screen.getByTestId('answer-evidence-open-original'))
+    await waitFor(() =>
+      expect(get).toHaveBeenCalledWith(
+        '/share/KnowledgeBase/7/my-permission?task_id=3',
+        expect.anything()
+      )
+    )
+
+    if (access === 'denied') {
+      await waitFor(() => expect(screen.queryByText('证据片段')).not.toBeInTheDocument())
+      expect(screen.queryByTestId('answer-citation-43')).not.toBeInTheDocument()
+    } else {
+      expect(await screen.findByRole('alert')).toHaveTextContent('evidence.original_denied')
+      fireEvent.click(screen.getByTestId('answer-evidence-return-fragment'))
+      expect(screen.getByText('证据片段')).toBeInTheDocument()
+      expect(screen.getByTestId('answer-citation-43')).toBeInTheDocument()
+    }
+  }
+)
 
 test('confirmed visit-only hides the matching historical marker without a content read', () => {
   const restricted = { ...evidence, sourceAccess: { 7: 'visit-only' } as const }
@@ -311,7 +353,15 @@ const message: Message = {
   },
 }
 
-function Answer({ msg = message, taskId = 3 }: { msg?: Message; taskId?: number }) {
+function Answer({
+  msg = message,
+  taskId = 3,
+  onSaveToKnowledge,
+}: {
+  msg?: Message
+  taskId?: number
+  onSaveToKnowledge?: (content: string) => void
+}) {
   return (
     <TooltipProvider>
       <MessageBubble
@@ -321,6 +371,7 @@ function Answer({ msg = message, taskId = 3 }: { msg?: Message; taskId?: number 
         selectedTaskDetail={null}
         theme="light"
         t={key => key}
+        onSaveToKnowledge={onSaveToKnowledge}
       />
     </TooltipProvider>
   )
@@ -352,10 +403,22 @@ test('ordinary chat resolves mixed sources independently and preserves the visib
   expect(message.content).toContain('[[citation:42]]')
 })
 
-test('a new workbench permission clears the original and discards late reads before recovery', async () => {
+test('saving a mixed answer uses the same citation visibility as its copy text', async () => {
+  get.mockImplementation((url: string) =>
+    Promise.resolve({
+      source_access: url.includes('/7/my-permission') ? 'visit-only' : 'readable',
+    })
+  )
+  const save = jest.fn()
+  render(<Answer onSaveToKnowledge={save} />)
+  await screen.findByTestId('answer-source-access')
+  fireEvent.click(screen.getByTestId('message-save-to-knowledge-button'))
+  expect(save).toHaveBeenCalledWith('授权回答，另有说明[[citation:43]]。')
+})
+
+test('a source permission change clears the original and discards late reads before recovery', async () => {
   let resolveDocument!: (document: unknown) => void
   get.mockImplementation((url: string) => {
-    if (url.includes('/8/my-permission')) return Promise.resolve({ source_access: 'readable' })
     if (url.includes('/citations/42')) {
       return Promise.resolve({
         citation_id: '42',
@@ -371,9 +434,11 @@ test('a new workbench permission clears the original and discards late reads bef
     })
   })
   const view = (access: 'readable' | 'visit-only') => (
-    <WorkspaceSourceAccess.Provider value={{ knowledgeBaseId: 7, access, revision: 1 }}>
-      <Answer />
-    </WorkspaceSourceAccess.Provider>
+    <AnswerEvidenceMarkdown
+      source="授权回答[[citation:42]]"
+      theme="light"
+      evidence={{ ...evidence, sourceAccess: { 7: access } }}
+    />
   )
   const { rerender } = render(view('readable'))
   fireEvent.click(screen.getByTestId('answer-citation-42'))
@@ -381,12 +446,10 @@ test('a new workbench permission clears the original and discards late reads bef
   fireEvent.click(screen.getByTestId('answer-evidence-open-original'))
   await waitFor(() => expect(resolveDocument).toBeDefined())
   rerender(view('visit-only'))
-  expect(screen.getByTestId('answer-source-access')).toHaveTextContent('partial_visit_only')
   expect(screen.queryByText('先前片段')).not.toBeInTheDocument()
-  expect(screen.queryByText('受限汇总')).not.toBeInTheDocument()
   expect(screen.queryByTestId('answer-evidence-panel')).not.toBeInTheDocument()
   await act(async () => resolveDocument({ kind_id: 7, id: 9 }))
-  expect(screen.queryByTestId('current-original')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('answer-evidence-return-fragment')).not.toBeInTheDocument()
   expect(get.mock.calls.some(([url]) => url.includes('/7/my-permission'))).toBe(false)
 
   rerender(view('readable'))
@@ -508,7 +571,7 @@ test('rechecks the answer before opening an original after task revocation', asy
   ])
 })
 
-test('shared copy and export strip action markers while preserving literal Markdown examples', () => {
+test('copy and export preserve readable markers and literal Markdown examples', () => {
   const markdown = [
     '正文[[citation:42]]，且\\[[citation:43]]',
     '',
@@ -518,7 +581,23 @@ test('shared copy and export strip action markers while preserving literal Markd
     '',
     '<b>[[citation:42]]</b>',
   ].join('\n')
-  expect(stripAnswerEvidenceMarkers(markdown)).toBe(
+  const citations = [
+    ...evidence.citations,
+    { citation_id: '43', title: '其他资料', knowledge_base_id: 8, document_id: 10 },
+  ]
+  expect(
+    filterAnswerEvidenceMarkers(markdown, {
+      citations,
+      sourceAccess: { 7: 'denied', 8: 'readable' },
+    })
+  ).toBe(markdown.replace('正文[[citation:42]]', '正文'))
+  expect(
+    filterAnswerEvidenceMarkers(markdown, {
+      citations,
+      sourceAccess: { 7: 'readable', 8: 'readable' },
+    })
+  ).toBe(markdown)
+  expect(filterAnswerEvidenceMarkers(markdown, { visitOnly: true })).toBe(
     markdown.replace('正文[[citation:42]]，且\\[[citation:43]]', '正文，且')
   )
 })
@@ -572,14 +651,10 @@ test('a missing snapshot becomes a non-interactive marker', async () => {
   expect(get).toHaveBeenCalledTimes(1)
 })
 
-test('shares task permission reads without sharing an answer-specific visit decision', async () => {
+test('shares current task permission reads across answers without a snapshot-based lookup', async () => {
   get.mockImplementation((url: string) =>
     Promise.resolve({
-      source_access: url.includes('/8/my-permission')
-        ? 'readable'
-        : url.includes('answer_id=13')
-          ? 'visit-only'
-          : 'denied',
+      source_access: url.includes('/8/my-permission') ? 'readable' : 'denied',
     })
   )
 
@@ -596,7 +671,7 @@ test('shares task permission reads without sharing an answer-specific visit deci
   render(<Conversation />)
   await waitFor(() =>
     expect(screen.getAllByTestId('answer-source-access').map(notice => notice.textContent)).toEqual(
-      ['chat:evidence.source_denied', 'chat:evidence.partial_visit_only']
+      ['chat:evidence.source_denied', 'chat:evidence.source_denied']
     )
   )
   const requests = get.mock.calls.map(([url]) => url)
@@ -606,53 +681,36 @@ test('shares task permission reads without sharing an answer-specific visit deci
   expect(
     requests.filter(url => url === '/share/KnowledgeBase/8/my-permission?task_id=3')
   ).toHaveLength(1)
-  expect(requests.filter(url => url.includes('answer_id='))).toEqual([
-    '/share/KnowledgeBase/7/my-permission?task_id=3&answer_id=12&citation_id=42',
-    '/share/KnowledgeBase/7/my-permission?task_id=3&answer_id=13&citation_id=42',
-  ])
+  expect(requests).toHaveLength(2)
 })
 
-test.each(['chat', 'workbench'] as const)(
-  'keeps a fully visit-only answer without snapshots and removes gray decoration in %s',
-  async host => {
-    get.mockResolvedValue({ source_access: 'visit-only', task_source_bound: true })
-    const noSnapshot: Message = {
-      ...message,
-      content: '${$$}$授权问答[[evidence-unavailable]]',
-      result: {
-        retrieval_summary: {
-          source_statuses: message.result!.retrieval_summary!.source_statuses!.slice(0, 1),
-        },
+test('keeps a fully visit-only answer without snapshots and removes gray decoration', async () => {
+  get.mockResolvedValue({ source_access: 'visit-only' })
+  const noSnapshot: Message = {
+    ...message,
+    content: '${$$}$授权问答[[evidence-unavailable]]',
+    result: {
+      retrieval_summary: {
+        source_statuses: message.result!.retrieval_summary!.source_statuses!.slice(0, 1),
       },
-    }
-    const answer = <Answer msg={noSnapshot} />
-    render(
-      host === 'chat' ? (
-        answer
-      ) : (
-        <WorkspaceSourceAccess.Provider
-          value={{ knowledgeBaseId: 7, access: 'visit-only', revision: 1 }}
-        >
-          {answer}
-        </WorkspaceSourceAccess.Provider>
-      )
-    )
-
-    expect(await screen.findByTestId('answer-source-access')).toHaveTextContent(
-      'chat:evidence.visit_only'
-    )
-    expect(screen.getByText('授权问答')).toBeInTheDocument()
-    expect(screen.queryByTestId('answer-evidence-unavailable')).not.toBeInTheDocument()
-    expect(get.mock.calls.map(([url]) => url)).toEqual(
-      host === 'chat' ? ['/share/KnowledgeBase/7/my-permission?task_id=3'] : []
-    )
+    },
   }
-)
+  render(<Answer msg={noSnapshot} />)
+
+  expect(await screen.findByTestId('answer-source-access')).toHaveTextContent(
+    'chat:evidence.visit_only'
+  )
+  expect(screen.getByText('授权问答')).toBeInTheDocument()
+  expect(screen.queryByTestId('answer-evidence-unavailable')).not.toBeInTheDocument()
+  expect(get.mock.calls.map(([url]) => url)).toEqual([
+    '/share/KnowledgeBase/7/my-permission?task_id=3',
+  ])
+})
 
 test('mixed and unknown sources keep the existing gray decoration', async () => {
   get.mockImplementation((url: string) =>
     url.includes('/7/my-permission')
-      ? Promise.resolve({ source_access: 'visit-only', task_source_bound: true })
+      ? Promise.resolve({ source_access: 'visit-only' })
       : Promise.reject(new ApiError('temporarily unavailable', 503))
   )
   render(<Answer msg={{ ...message, content: message.content + '[[evidence-unavailable]]' }} />)
@@ -730,7 +788,7 @@ test('recovery from a shared permission failure clears both answers without dupl
   expect(sourceReads).toBe(2)
 })
 
-test('external-only workbench answers do not inherit the selected library restriction', () => {
+test('external-only answers keep their existing gray decoration without a permission lookup', () => {
   const externalAnswer: Message = {
     ...message,
     content: '${$$}$外部问答[[evidence-unavailable]]',
@@ -748,14 +806,581 @@ test('external-only workbench answers do not inherit the selected library restri
       },
     },
   }
-  render(
-    <WorkspaceSourceAccess.Provider
-      value={{ knowledgeBaseId: 7, access: 'visit-only', revision: 1 }}
-    >
-      <Answer msg={externalAnswer} />
-    </WorkspaceSourceAccess.Provider>
-  )
+  render(<Answer msg={externalAnswer} />)
   expect(screen.queryByTestId('answer-source-access')).not.toBeInTheDocument()
   expect(screen.getByTestId('answer-evidence-unavailable')).toBeInTheDocument()
   expect(get).not.toHaveBeenCalled()
 })
+
+test('chat numbers citations by the rendered blocks and keeps one panel when switching excerpts', async () => {
+  get.mockImplementation(async (url: string) => {
+    if (url.includes('my-permission')) return { source_access: 'readable' }
+    const citationId = url.includes('/43?') ? '43' : '42'
+    return {
+      citation_id: citationId,
+      knowledge_base_id: 7,
+      document_id: 9,
+      content: '片段 ' + citationId,
+    }
+  })
+  const blocks: NonNullable<NonNullable<Message['result']>['blocks']> = [
+    { id: 'a', type: 'text', content: '`[[citation:42]]` 正文[[citation:43]]' },
+    { id: 'b', type: 'text', content: '后续[[citation:42]]和[[citation:43]]' },
+  ]
+  render(
+    <ChatEvidenceHost>
+      <Answer
+        msg={{
+          ...message,
+          result: {
+            ...message.result,
+            sources: [],
+            blocks,
+            answer_citations: [
+              ...evidence.citations,
+              { ...evidence.citations[0], citation_id: '43' },
+            ],
+          },
+        }}
+      />
+    </ChatEvidenceHost>
+  )
+  const [first, repeated] = screen.getAllByTestId('answer-citation-43')
+  const second = screen.getByTestId('answer-citation-42')
+  expect(first).toHaveAccessibleName('资料 · 1')
+  expect(repeated).toHaveAccessibleName('资料 · 1')
+  expect(second).toHaveAccessibleName('资料 · 2')
+  expect(screen.getByTestId('answer-evidence-summary')).toHaveTextContent('1/2')
+  fireEvent.click(first)
+  expect(await screen.findByTestId('answer-evidence-content')).toHaveTextContent('片段 43')
+  await userEvent.selectOptions(screen.getByTestId('answer-evidence-select-fragment'), '42')
+  expect(screen.queryByText('片段 43')).not.toBeInTheDocument()
+  expect(await screen.findByTestId('answer-evidence-content')).toHaveTextContent('片段 42')
+  expect(screen.getAllByTestId('answer-evidence-panel')).toHaveLength(1)
+  fireEvent.click(screen.getByTestId('answer-evidence-close'))
+  await waitFor(() => expect(first).toHaveFocus())
+  expect(screen.queryByTestId('answer-evidence-preview')).not.toBeInTheDocument()
+})
+
+test('keyboard preview and panel independently authorize the same citation', async () => {
+  const snapshot = { citation_id: '42', knowledge_base_id: 7, document_id: 9 }
+  let reads = 0
+  get.mockImplementation(async (url: string) => {
+    if (url.includes('my-permission')) return { source_access: 'readable' }
+    return { ...snapshot, content: ++reads === 1 ? '预览正文' : '深入核验正文' }
+  })
+  render(
+    <ChatEvidenceHost>
+      <Answer />
+    </ChatEvidenceHost>
+  )
+  const citation = screen.getByTestId('answer-citation-42')
+  await act(async () => citation.focus())
+  expect(await screen.findByTestId('answer-evidence-preview-content')).toHaveTextContent('预览正文')
+  expect(reads).toBe(1)
+  await userEvent.keyboard('{Enter}')
+  expect(screen.queryByText('预览正文')).not.toBeInTheDocument()
+  expect(await screen.findByTestId('answer-evidence-content')).toHaveTextContent('深入核验正文')
+  expect(reads).toBe(2)
+  fireEvent.keyDown(screen.getByTestId('answer-evidence-close'), { key: 'Escape' })
+  await waitFor(() => expect(citation).toHaveFocus())
+  expect(screen.queryByTestId('answer-evidence-preview')).not.toBeInTheDocument()
+  expect(reads).toBe(2)
+  fireEvent.click(citation)
+  await waitFor(() => expect(reads).toBe(3))
+  expect(
+    get.mock.calls
+      .filter(([url]) => url.includes('/citations/'))
+      .map(([, options]) => options.cache)
+  ).toEqual(['no-store', 'no-store', 'no-store'])
+})
+
+function snapshotOf(citationId: string, content = '回答时的快照') {
+  const citation = message.result?.answer_citations?.find(item => item.citation_id === citationId)
+  return { ...citation, content }
+}
+
+const citationReads = () => get.mock.calls.filter(([url]) => url.includes('/citations/'))
+const isEvidenceMetadataRead = (url: string) => /\/citations\/|\/my-permission/.test(url)
+
+test('hover stays open when the pointer crosses into the preview, then closes', async () => {
+  get.mockImplementation(async (url: string) =>
+    url.includes('my-permission') ? { source_access: 'readable' } : snapshotOf('42')
+  )
+  const user = userEvent.setup()
+  render(
+    <ChatEvidenceHost>
+      <Answer />
+    </ChatEvidenceHost>
+  )
+  await user.hover(screen.getByTestId('answer-citation-42'))
+  expect(citationReads()).toHaveLength(0)
+  const preview = await screen.findByTestId('answer-evidence-preview')
+  await user.hover(preview)
+  expect(within(preview).getByTestId('answer-evidence-preview-content')).toHaveClass('line-clamp-4')
+  expect(citationReads()).toHaveLength(1)
+  expect(get.mock.calls.every(([url]) => isEvidenceMetadataRead(url))).toBe(true)
+  await user.unhover(preview)
+  await waitFor(() => expect(preview).not.toBeInTheDocument())
+})
+
+test.each([
+  [1100, false, 'side', 'complementary'],
+  [800, false, 'overlay', 'dialog'],
+  [390, true, 'mobile', 'dialog'],
+])('chat width %i shows the %s mobile variant as %s', async (width, mobile, layout, role) => {
+  const measuredWidth = jest
+    .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+    .mockReturnValue(width)
+  try {
+    get.mockImplementation(async (url: string) =>
+      url.includes('my-permission') ? { source_access: 'readable' } : snapshotOf('42')
+    )
+    const user = userEvent.setup()
+    render(
+      <ChatEvidenceHost mobile={mobile}>
+        <Answer />
+      </ChatEvidenceHost>
+    )
+    const trigger = screen.getByTestId('answer-citation-42')
+    if (mobile) {
+      await user.pointer([{ keys: '[TouchA>]', target: trigger }, '[/TouchA]'])
+    } else {
+      await user.click(trigger)
+    }
+    const panel = await screen.findByRole(role)
+    expect(panel).toHaveAttribute('data-layout', layout)
+    expect(panel).toHaveAttribute('data-version-status', 'unknown')
+    expect(panel.closest('[data-task-right-panel]') !== null).toBe(layout === 'side')
+    expect(await within(panel).findByTestId('answer-evidence-content')).toHaveTextContent(
+      '回答时的快照'
+    )
+    expect(within(panel).queryByTestId('answer-evidence-open-original')).toBeInTheDocument()
+    expect(citationReads()).toHaveLength(1)
+    expect(get.mock.calls.every(([url]) => isEvidenceMetadataRead(url))).toBe(true)
+    expect(within(panel).getByTestId('answer-evidence-close')).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(trigger).toHaveFocus())
+    expect(screen.queryByTestId('answer-evidence-panel')).not.toBeInTheDocument()
+  } finally {
+    measuredWidth.mockRestore()
+  }
+})
+
+test('chat summary shows only actual permitted snapshots and preserves external references', async () => {
+  get.mockImplementation(async (url: string) => {
+    if (url.includes('/7/my-permission')) return { source_access: 'visit-only' }
+    if (url.includes('/8/my-permission'))
+      return { source_access: 'readable', original_download_allowed: false }
+    return snapshotOf('43')
+  })
+  render(
+    <ChatEvidenceHost>
+      <Answer
+        msg={{
+          ...message,
+          result: {
+            ...message.result,
+            sources: [
+              ...(message.result?.sources ?? []),
+              {
+                index: 3,
+                title: '外部参考',
+                source_type: 'external',
+                source_uri: 'https://example.test',
+              },
+            ],
+          },
+        }}
+      />
+    </ChatEvidenceHost>
+  )
+  expect(await screen.findByTestId('answer-source-access')).toHaveTextContent('partial_visit_only')
+  expect(screen.queryByTestId('answer-citation-42')).not.toBeInTheDocument()
+  expect(screen.getByTestId('answer-citation-43')).toHaveAccessibleName('可读引用 · 2')
+  expect(screen.getByTestId('answer-evidence-summary')).toHaveTextContent('1/1')
+  expect(screen.queryByText('受限汇总')).not.toBeInTheDocument()
+  expect(screen.queryByText('可读汇总')).not.toBeInTheDocument()
+  expect(screen.getByText('外部参考').closest('a')).toHaveAttribute('href', 'https://example.test')
+  expect(citationReads()).toHaveLength(0)
+  fireEvent.click(screen.getByTestId('answer-citation-43'))
+  expect(await screen.findByTestId('answer-evidence-content')).toBeInTheDocument()
+})
+
+test.each(['account', 'backend', 'task', 'answer', 'generation', 'citation', 'close'] as const)(
+  'ordinary chat discards a late snapshot after %s changes',
+  async change => {
+    let deliver!: (value: unknown) => void
+    get.mockImplementation((url: string) =>
+      url.includes('my-permission')
+        ? Promise.resolve({ source_access: 'readable' })
+        : new Promise(resolve => {
+            deliver = resolve
+          })
+    )
+    const view = (msg = message, taskId = 3) => (
+      <ChatEvidenceHost>
+        <Answer msg={msg} taskId={taskId} />
+      </ChatEvidenceHost>
+    )
+    const { rerender } = render(view())
+    await act(async () => fireEvent.click(screen.getByTestId('answer-citation-42')))
+    expect(await screen.findByTestId('answer-evidence-panel')).toBeInTheDocument()
+    const signal = citationReads()[0][1].signal as AbortSignal
+
+    if (change === 'account') currentUser = 2
+    if (change === 'backend') currentBackend = 'backend:2'
+    if (change === 'close') fireEvent.click(screen.getByTestId('answer-evidence-close'))
+    else
+      rerender(
+        view(
+          {
+            ...message,
+            subtaskId: change === 'answer' ? 100 : message.subtaskId,
+            result: {
+              ...message.result,
+              answer_generation_id:
+                change === 'generation' ? 'b'.repeat(32) : evidence.generationId,
+              answer_citations:
+                change === 'citation'
+                  ? message.result?.answer_citations?.filter(item => item.citation_id !== '42')
+                  : message.result?.answer_citations,
+            },
+          },
+          change === 'task' ? 4 : 3
+        )
+      )
+
+    expect(signal.aborted).toBe(true)
+    expect(screen.queryByTestId('answer-evidence-panel')).not.toBeInTheDocument()
+    await act(async () => deliver(snapshotOf('42', '迟到正文')))
+    expect(screen.queryByText('迟到正文')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('answer-evidence-preview')).not.toBeInTheDocument()
+  }
+)
+
+test.each([
+  [403, 'read_denied', false],
+  [404, 'unavailable', false],
+  [409, 'unavailable', false],
+  [503, 'read_failed', true],
+  [undefined, 'read_failed', true],
+])(
+  'chat handles snapshot failure %s and retries only recoverable reads',
+  async (status, key, recoverable) => {
+    let reads = 0
+    get.mockImplementation(async (url: string) => {
+      if (url.includes('my-permission')) return { source_access: 'readable' }
+      reads++
+      if (reads === 2)
+        throw status ? new ApiError('snapshot failure', status) : new TypeError('offline')
+      return snapshotOf('42', reads === 1 ? '旧授权正文' : '重试后的快照')
+    })
+    render(
+      <ChatEvidenceHost>
+        <Answer />
+      </ChatEvidenceHost>
+    )
+    const trigger = screen.getByTestId('answer-citation-42')
+    fireEvent.click(trigger)
+    expect(await screen.findByText('旧授权正文')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('answer-evidence-close'))
+    fireEvent.click(trigger)
+    expect(
+      await within(screen.getByTestId('answer-evidence-panel')).findByRole('alert')
+    ).toHaveTextContent(`evidence.${key}`)
+    expect(screen.queryByText('旧授权正文')).not.toBeInTheDocument()
+    const retry = screen.queryByTestId('answer-evidence-retry-read_failed')
+    if (recoverable && retry) {
+      fireEvent.click(retry)
+      expect(await screen.findByText('重试后的快照')).toBeInTheDocument()
+    } else {
+      expect(retry).not.toBeInTheDocument()
+    }
+    expect(citationReads()).toHaveLength(recoverable ? 3 : 2)
+  }
+)
+
+test('a source permission decision clears an open snapshot and hides its entries only', async () => {
+  let permission!: (value: unknown) => void
+  get.mockImplementation((url: string) => {
+    if (url.includes('/7/my-permission'))
+      return new Promise(resolve => {
+        permission = resolve
+      })
+    if (url.includes('/8/my-permission')) return Promise.resolve({ source_access: 'readable' })
+    return Promise.resolve(snapshotOf('42', '待核验片段'))
+  })
+  render(
+    <ChatEvidenceHost>
+      <Answer />
+    </ChatEvidenceHost>
+  )
+  fireEvent.click(screen.getByTestId('answer-citation-42'))
+  expect(await screen.findByText('待核验片段')).toBeInTheDocument()
+  await act(async () => permission({ source_access: 'visit-only' }))
+  expect(screen.queryByText('待核验片段')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('answer-evidence-panel')).not.toBeInTheDocument()
+  expect(screen.getByText(/授权回答/).closest('[data-message-content]')).toHaveFocus()
+  expect(screen.queryByTestId('answer-citation-42')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('answer-evidence-summary-citation-42')).not.toBeInTheDocument()
+  expect(screen.getByTestId('answer-citation-43')).toHaveAccessibleName('可读引用 · 2')
+  expect(screen.getByTestId('answer-evidence-summary')).toHaveTextContent('1/1')
+  expect(citationReads()).toHaveLength(1)
+})
+
+test('a selected citation from a second answer supersedes the first answer panel', async () => {
+  let deliver!: (value: unknown) => void
+  const width = jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1100)
+  try {
+    get.mockImplementation((url: string) => {
+      if (url.includes('my-permission')) return Promise.resolve({ source_access: 'readable' })
+      if (url.includes('answer_id=13')) return Promise.resolve(snapshotOf('42', '第二条回答片段'))
+      return new Promise(resolve => {
+        deliver = resolve
+      })
+    })
+    render(
+      <ChatEvidenceHost>
+        <Answer />
+        <Answer msg={{ ...message, subtaskId: 13 }} />
+      </ChatEvidenceHost>
+    )
+    const [first, second] = screen.getAllByTestId('answer-citation-42')
+    fireEvent.click(first)
+    fireEvent.click(second)
+    await act(async () => deliver(snapshotOf('42', '迟到的第一条回答片段')))
+    expect(await screen.findByText('第二条回答片段')).toBeInTheDocument()
+    expect(screen.queryByText('迟到的第一条回答片段')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('answer-evidence-panel')).toHaveLength(1)
+    expect((citationReads()[0][1].signal as AbortSignal).aborted).toBe(true)
+  } finally {
+    width.mockRestore()
+  }
+})
+
+test('ordinary chat ignores markers inside raw HTML with quoted attributes', async () => {
+  get.mockResolvedValue({ source_access: 'readable' })
+  const raw =
+    '前置 <a href="https://example.test?q=>">[[citation:42]]</b>[[citation:42]]</a> 后续[[citation:43]]'
+  render(
+    <ChatEvidenceHost>
+      <Answer msg={{ ...message, content: raw }} />
+    </ChatEvidenceHost>
+  )
+  expect(screen.queryByTestId('answer-citation-42')).not.toBeInTheDocument()
+  expect(screen.getByTestId('answer-citation-43')).toHaveAccessibleName('可读引用 · 1')
+  expect(screen.getByTestId('answer-evidence-summary')).toHaveTextContent('1/1')
+  await act(async () => {})
+  expect(citationReads()).toHaveLength(0)
+})
+
+test('dismissing a mouse preview keeps focus in the chat input', async () => {
+  get.mockImplementation(async (url: string) =>
+    url.includes('my-permission') ? { source_access: 'readable' } : snapshotOf('42')
+  )
+  const user = userEvent.setup()
+  render(
+    <ChatEvidenceHost>
+      <Answer />
+      <input aria-label="聊天输入框" />
+    </ChatEvidenceHost>
+  )
+  const input = screen.getByRole('textbox', { name: '聊天输入框' })
+  await user.click(input)
+  await user.hover(screen.getByTestId('answer-citation-42'))
+  expect(await screen.findByTestId('answer-evidence-preview')).toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  expect(input).toHaveFocus()
+  expect(screen.queryByTestId('answer-evidence-preview')).not.toBeInTheDocument()
+})
+
+test('source permission checks follow the Markdown that is actually displayed', async () => {
+  get.mockResolvedValue({ source_access: 'visit-only' })
+  render(
+    <ChatEvidenceHost>
+      <Answer
+        msg={{
+          ...message,
+          content: '$$\n普通文字[[citation:42]]',
+          result: {
+            answer_generation_id: evidence.generationId,
+            answer_citations: evidence.citations,
+          },
+        }}
+      />
+    </ChatEvidenceHost>
+  )
+  expect(await screen.findByTestId('answer-source-access')).toHaveTextContent('visit_only')
+  expect(screen.getByText(/普通文字/)).toBeInTheDocument()
+  expect(screen.queryByTestId('answer-citation-42')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('answer-evidence-summary')).not.toBeInTheDocument()
+  expect(citationReads()).toHaveLength(0)
+})
+
+test('the chat host temporarily yields an occupied right panel without losing its state', async () => {
+  get.mockImplementation(async (url: string) =>
+    url.includes('my-permission') ? { source_access: 'readable' } : snapshotOf('42')
+  )
+  const otherPanel = { panelType: 'chat-workspace', panelProps: {} }
+  function ChatWithRightPanel() {
+    const [evidenceOpen, setEvidenceOpen] = useState(false)
+    return (
+      <>
+        <ChatEvidenceHost otherPanelRequest={otherPanel} onPanelChange={setEvidenceOpen}>
+          <Answer />
+        </ChatEvidenceHost>
+        <aside hidden={evidenceOpen}>
+          <input aria-label="右栏草稿" />
+        </aside>
+      </>
+    )
+  }
+  const user = userEvent.setup()
+  render(<ChatWithRightPanel />)
+  const draft = screen.getByRole('textbox', { name: '右栏草稿' })
+  await user.type(draft, '草稿')
+  await user.click(screen.getByTestId('answer-citation-42'))
+  expect(await screen.findByTestId('answer-evidence-content')).toBeInTheDocument()
+  expect(draft).not.toBeVisible()
+  await user.click(screen.getByTestId('answer-evidence-close'))
+  expect(draft).toBeVisible()
+  expect(draft).toHaveValue('草稿')
+})
+
+test.each([true, false])(
+  'copies a snapshot without the Clipboard API (copy returns %s)',
+  async copied => {
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const execCommand = Object.getOwnPropertyDescriptor(document, 'execCommand')
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    const copy = jest.fn(() => {
+      const field = document.activeElement
+      expect(field).toBeInstanceOf(HTMLTextAreaElement)
+      expect(field?.closest('[role="dialog"]')).toBe(screen.getByTestId('answer-evidence-panel'))
+      expect(field).toHaveValue('回答时的快照')
+      return copied
+    })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: copy })
+    try {
+      get.mockImplementation(async (url: string) =>
+        url.includes('my-permission') ? { source_access: 'readable' } : snapshotOf('42')
+      )
+      render(
+        <ChatEvidenceHost mobile>
+          <Answer />
+        </ChatEvidenceHost>
+      )
+      fireEvent.click(screen.getByTestId('answer-citation-42'))
+      const button = await screen.findByTestId('answer-evidence-copy-fragment')
+      await act(async () => {
+        button.focus()
+        fireEvent.click(button)
+      })
+      expect(copy).toHaveBeenCalledWith('copy')
+      expect(
+        screen.getByText(copied ? 'evidence.copied' : 'evidence.copy_failed')
+      ).toBeInTheDocument()
+      expect(button).toHaveFocus()
+      expect(document.querySelector('textarea')).toBeNull()
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+      if (execCommand) Object.defineProperty(document, 'execCommand', execCommand)
+      else Reflect.deleteProperty(document, 'execCommand')
+    }
+  }
+)
+
+test('closing the side panel returns focus to the collapsed source summary', async () => {
+  const width = jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1100)
+  try {
+    get.mockImplementation(async (url: string) =>
+      url.includes('my-permission') ? { source_access: 'readable' } : snapshotOf('42')
+    )
+    const user = userEvent.setup()
+    render(
+      <ChatEvidenceHost>
+        <Answer />
+      </ChatEvidenceHost>
+    )
+    const summary = screen.getByTestId('answer-evidence-summary')
+    await user.click(summary)
+    await user.click(screen.getByTestId('answer-evidence-summary-citation-42'))
+    const panel = await screen.findByRole('complementary')
+    await user.click(summary)
+    expect(summary.parentElement).not.toHaveAttribute('open')
+    await user.click(within(panel).getByTestId('answer-evidence-close'))
+    expect(summary).toHaveFocus()
+    expect(screen.queryByTestId('answer-evidence-preview')).not.toBeInTheDocument()
+  } finally {
+    width.mockRestore()
+  }
+})
+
+test.each([
+  '<svg><text>[[citation:42]]</text></svg> <svg />',
+  '<svg data-id=value/>[[citation:42]]</svg> <svg focusable/>',
+  '<a />[[citation:42]]</a> <math/>',
+])('raw HTML %s preserves citations that follow it', async raw => {
+  get.mockResolvedValue({ source_access: 'readable' })
+  await act(async () => {
+    render(
+      <ChatEvidenceHost>
+        <Answer msg={{ ...message, content: `前置 ${raw} 后续[[citation:43]]` }} />
+      </ChatEvidenceHost>
+    )
+  })
+  expect(screen.queryByTestId('answer-citation-42')).not.toBeInTheDocument()
+  expect(screen.getByTestId('answer-citation-43')).toHaveAccessibleName('可读引用 · 1')
+  expect(screen.getByTestId('answer-evidence-summary')).toHaveTextContent('1/1')
+  expect(citationReads()).toHaveLength(0)
+})
+
+test.each(['loading', 'ready'] as const)(
+  'clears a %s desktop preview on mobile without closing a panel',
+  async state => {
+    let resolvePreview!: (value: ReturnType<typeof snapshotOf>) => void
+    let previewSignal: AbortSignal | undefined
+    get.mockImplementation((url: string, options) => {
+      if (url.includes('my-permission')) return Promise.resolve({ source_access: 'readable' })
+      if (!previewSignal) {
+        previewSignal = options.signal
+        return new Promise(resolve => {
+          resolvePreview = resolve
+        })
+      }
+      return Promise.resolve(snapshotOf('42', '核验正文'))
+    })
+
+    const view = (mobile: boolean) => (
+      <ChatEvidenceHost mobile={mobile}>
+        <Answer />
+      </ChatEvidenceHost>
+    )
+    const { rerender } = render(view(false))
+    const trigger = screen.getByTestId('answer-citation-42')
+    await act(async () => trigger.focus())
+    expect(await screen.findByTestId('answer-evidence-preview')).toBeInTheDocument()
+    if (state === 'ready') {
+      await act(async () => resolvePreview(snapshotOf('42', '悬浮正文')))
+      expect(screen.getByText('悬浮正文')).toBeInTheDocument()
+    }
+
+    rerender(view(true))
+    expect(previewSignal?.aborted).toBe(true)
+    expect(screen.queryByTestId('answer-evidence-preview')).not.toBeInTheDocument()
+    if (state === 'loading') {
+      await act(async () => resolvePreview(snapshotOf('42', '迟到的悬浮正文')))
+      expect(screen.queryByText('迟到的悬浮正文')).not.toBeInTheDocument()
+    }
+    rerender(view(false))
+    expect(screen.queryByTestId('answer-evidence-preview')).not.toBeInTheDocument()
+    fireEvent.click(trigger)
+    expect(await screen.findByTestId('answer-evidence-content')).toHaveTextContent('核验正文')
+    rerender(view(true))
+    expect(screen.getByTestId('answer-evidence-panel')).toHaveAttribute('data-layout', 'mobile')
+    expect(screen.getByTestId('answer-evidence-content')).toHaveTextContent('核验正文')
+    expect(citationReads()).toHaveLength(2)
+  }
+)

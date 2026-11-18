@@ -895,6 +895,12 @@
     "wikispaceNeverSynced": "Never synced"
   },
   "evidence": {
+    "citation_label": "{{title}} · Excerpt {{number}}",
+    "summary": "{{documents}} documents · {{fragments}} excerpts",
+    "select_fragment": "Select citation excerpt",
+    "copy_fragment": "Copy excerpt from the answer",
+    "copied": "Excerpt copied",
+    "copy_failed": "Could not copy. You can select the excerpt and copy it manually.",
     "title": "Evidence at answer time",
     "unavailable": "Evidence unavailable",
     "close": "Close",
@@ -907,7 +913,14 @@
     "partial_visit_only": "Some sources are available for Q&A only. Their excerpts and originals are unavailable.",
     "retry": "Try again",
     "loading": "Loading evidence…",
-    "open_original": "Open current document",
+    "open_original": "View original",
+    "current_original": "Current original",
+    "answer_fragment": "Excerpt from the answer",
+    "return_fragment": "Back to cited excerpt",
+    "original_changed": "The original has changed",
+    "original_loading": "Loading current original…",
+    "original_denied": "You do not have permission to view the current original",
+    "original_unavailable": "The current original is unavailable",
     "original_failed": "Unable to open the current document. Try again."
   }
 }

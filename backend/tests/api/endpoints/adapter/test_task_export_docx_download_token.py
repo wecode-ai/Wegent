@@ -116,9 +116,9 @@ async def test_export_docx_with_download_token_streams_file(
     from app.api.endpoints.adapter import tasks
 
     _patch_task_access(monkeypatch)
+    generate = Mock(return_value=io.BytesIO(b"fake-docx"))
     monkeypatch.setattr(
-        "app.services.export.docx_generator.generate_task_docx",
-        Mock(return_value=io.BytesIO(b"fake-docx")),
+        "app.services.export.docx_generator.generate_task_docx", generate
     )
     token = create_docx_export_download_token(
         task_id=42,
@@ -136,6 +136,7 @@ async def test_export_docx_with_download_token_streams_file(
     )
 
     assert response.status_code == 200
+    assert generate.call_args.kwargs["viewer_id"] == 1
     disposition = response.headers["content-disposition"]
     disposition.encode("latin-1")
     assert disposition.endswith('.docx"')

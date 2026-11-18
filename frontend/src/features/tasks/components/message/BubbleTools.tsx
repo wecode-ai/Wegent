@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { FeedbackState } from '@/hooks/useMessageFeedback'
+import { copyMessageText } from './copyMessageText'
 
 // CopyButton component for copying markdown content
 export const CopyButton = ({
@@ -36,33 +37,11 @@ export const CopyButton = ({
 }) => {
   const [copied, setCopied] = useState(false)
 
-  const handleCopy = async () => {
-    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-      try {
-        await navigator.clipboard.writeText(content)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-        onCopySuccess?.()
-        return
-      } catch (err) {
-        console.error('Failed to copy text: ', err)
-      }
-    }
-
-    try {
-      const textarea = document.createElement('textarea')
-      textarea.value = content
-      textarea.style.cssText = 'position:fixed;opacity:0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      document.body.removeChild(textarea)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-      onCopySuccess?.()
-    } catch (err) {
-      console.error('Fallback copy failed: ', err)
-    }
+  const handleCopy = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (!(await copyMessageText(content, event.currentTarget))) return
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+    onCopySuccess?.()
   }
 
   const button = (
@@ -188,9 +167,9 @@ export interface BubbleToolsProps {
   /** Current feedback state (from useMessageFeedback hook) */
   feedback: FeedbackState
   /** Handler for like button click (from useMessageFeedback hook) */
-  onLike: () => void
+  onLike?: () => void
   /** Handler for dislike button click (from useMessageFeedback hook) */
-  onDislike: () => void
+  onDislike?: () => void
   /** Labels for feedback buttons */
   feedbackLabels?: {
     like: string
@@ -319,36 +298,40 @@ const BubbleTools = ({
           )
         })()}
       {/* Feedback buttons: like and dislike */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onLike}
-            className={`h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec ${feedback === 'like' ? 'text-green-500' : ''}`}
-          >
-            <ThumbsUp
-              className={`h-3.5 w-3.5 ${feedback === 'like' ? 'fill-current' : 'text-text-muted'}`}
-            />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{feedbackLabels?.like || 'Like'}</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onDislike}
-            className={`h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec ${feedback === 'dislike' ? 'text-red-500' : ''}`}
-          >
-            <ThumbsDown
-              className={`h-3.5 w-3.5 ${feedback === 'dislike' ? 'fill-current' : 'text-text-muted'}`}
-            />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{feedbackLabels?.dislike || 'Dislike'}</TooltipContent>
-      </Tooltip>
+      {onLike && onDislike && (
+        <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onLike}
+                className={`h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec ${feedback === 'like' ? 'text-green-500' : ''}`}
+              >
+                <ThumbsUp
+                  className={`h-3.5 w-3.5 ${feedback === 'like' ? 'fill-current' : 'text-text-muted'}`}
+                />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{feedbackLabels?.like || 'Like'}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onDislike}
+                className={`h-[30px] w-[30px] !rounded-full bg-fill-tert hover:!bg-fill-sec ${feedback === 'dislike' ? 'text-red-500' : ''}`}
+              >
+                <ThumbsDown
+                  className={`h-3.5 w-3.5 ${feedback === 'dislike' ? 'fill-current' : 'text-text-muted'}`}
+                />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{feedbackLabels?.dislike || 'Dislike'}</TooltipContent>
+          </Tooltip>
+        </>
+      )}
       {/* Send the message to a collaboration project. */}
       {showForward && onForwardClick && (
         <ForwardButton

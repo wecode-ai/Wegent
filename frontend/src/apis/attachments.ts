@@ -7,6 +7,7 @@
  */
 
 import { getToken } from './user'
+import { ApiError } from './client'
 import type { TruncationInfo } from '@/types/api'
 
 // API base URL - use relative path for browser compatibility
@@ -607,33 +608,42 @@ export async function getAttachmentPreview(
  * @param shareToken - Optional share token for public access
  * @returns Download URL
  */
-export function getAttachmentDownloadUrl(attachmentId: number, shareToken?: string): string {
-  const baseUrl = `${API_BASE_URL}/api/attachments/${attachmentId}/download`
+export function getAttachmentDownloadUrl(
+  attachmentId: number,
+  shareToken?: string,
+  apiBaseUrl = '/api'
+): string {
+  const baseUrl = `${apiBaseUrl}/attachments/${attachmentId}/download`
   if (shareToken) {
     return `${baseUrl}?share_token=${encodeURIComponent(shareToken)}`
   }
   return baseUrl
 }
 
-export async function createAttachmentDownloadUrl(attachmentId: number): Promise<string> {
+export async function createAttachmentDownloadUrl(
+  attachmentId: number,
+  signal?: AbortSignal,
+  apiBaseUrl = '/api'
+): Promise<string> {
   const token = getToken()
   if (!token) {
     throw new Error('Authentication required')
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/download-token`, {
+  const response = await fetch(`${apiBaseUrl}/attachments/${attachmentId}/download-token`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
+    ...(signal ? { signal } : {}),
   })
   if (!response.ok) {
-    throw new Error(`Failed to create attachment download token (${response.status})`)
+    throw await attachmentDownloadError(response, 'Failed to create attachment download token')
   }
 
   const data = await response.json()
   if (!data.download_token || typeof data.download_token !== 'string') {
     throw new Error('Invalid attachment download token response')
   }
-  return `${getAttachmentDownloadUrl(attachmentId)}?download_token=${encodeURIComponent(data.download_token)}`
+  return `${getAttachmentDownloadUrl(attachmentId, undefined, apiBaseUrl)}?download_token=${encodeURIComponent(data.download_token)}`
 }
 
 export async function getAttachmentPlayback(
@@ -660,6 +670,8 @@ export async function getAttachmentPlayback(
 }
 
 interface FetchAttachmentFileOptions {
+  apiBaseUrl?: string
+  cache?: RequestCache
   filename?: string
   shareToken?: string
   signal?: AbortSignal
@@ -700,16 +712,20 @@ export async function fetchAttachmentFile(
   options: FetchAttachmentFileOptions = {}
 ): Promise<File> {
   const token = getToken()
-  const response = await fetch(getAttachmentDownloadUrl(attachmentId, options.shareToken), {
-    method: 'GET',
-    headers: {
-      ...(!options.shareToken && token && { Authorization: `Bearer ${token}` }),
-    },
-    signal: options.signal,
-  })
+  const response = await fetch(
+    getAttachmentDownloadUrl(attachmentId, options.shareToken, options.apiBaseUrl),
+    {
+      method: 'GET',
+      headers: {
+        ...(!options.shareToken && token && { Authorization: `Bearer ${token}` }),
+      },
+      signal: options.signal,
+      ...(options.cache ? { cache: options.cache } : {}),
+    }
+  )
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch attachment (${response.status})`)
+    throw await attachmentDownloadError(response, 'Failed to fetch attachment')
   }
 
   const filename = getAttachmentFilename(response, attachmentId, options.filename)
@@ -717,6 +733,23 @@ export async function fetchAttachmentFile(
   return new File([blob], filename, {
     type: blob.type || response.headers.get('Content-Type') || 'application/octet-stream',
   })
+}
+
+async function attachmentDownloadError(response: Response, message: string): Promise<ApiError> {
+  let code: string | undefined
+  try {
+    const payload = await response.json()
+    if (typeof payload?.detail?.code === 'string') code = payload.detail.code
+  } catch {
+    // Some attachment failures have no JSON body.
+  }
+  return new ApiError(`${message} (${response.status})`, response.status, code)
+}
+
+export interface AttachmentDownloadScope {
+  apiBaseUrl: string
+  signal: AbortSignal
+  isCurrent: () => boolean
 }
 
 /**
@@ -729,14 +762,17 @@ export async function fetchAttachmentFile(
 export async function downloadAttachment(
   attachmentId: number,
   filename?: string,
-  shareToken?: string
+  shareToken?: string,
+  scope?: AttachmentDownloadScope
 ): Promise<void> {
-  let downloadUrl = getAttachmentDownloadUrl(attachmentId, shareToken)
+  if (scope && !scope.isCurrent()) return
+  let downloadUrl = getAttachmentDownloadUrl(attachmentId, shareToken, scope?.apiBaseUrl)
 
   if (!shareToken) {
-    downloadUrl = await createAttachmentDownloadUrl(attachmentId)
+    downloadUrl = await createAttachmentDownloadUrl(attachmentId, scope?.signal, scope?.apiBaseUrl)
   }
 
+  if (scope && !scope.isCurrent()) return
   const link = document.createElement('a')
   link.href = downloadUrl
   if (filename) {

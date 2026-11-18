@@ -25,6 +25,7 @@ import { getModelFromConfig } from '@/features/settings/services/bots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { parseKbUrl, parseKnowledgeBaseId } from '@/utils/knowledgeUrl'
+import { getTaskQueryParam } from '@/features/tasks/utils/task-query-params'
 import { useKnowledgeSidebar } from '../hooks/useKnowledgeSidebar'
 import {
   hasAdvancedKnowledgeBases,
@@ -37,11 +38,8 @@ import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowl
 import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
 import { KnowledgeUrlStatus } from './KnowledgeUrlStatus'
-import { KnowledgeChatArea, KnowledgeDetailPanel } from './KnowledgeDetailPanel'
-import { WorkspaceSourceAccess } from '@/features/tasks/components/message/evidence/sourceAccess'
-import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
-import { getTaskQueryParam } from '@/features/tasks/utils/task-query-params'
-import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePermissions'
+import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
+import { KnowledgeReadOnlyHistory } from './KnowledgeReadOnlyHistory'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { useKnowledgeSourceViews } from '@/features/knowledge/knowledgeSourceViewRegistry'
 import { CreateKnowledgeBaseDialog, type AvailableGroup } from './CreateKnowledgeBaseDialog'
@@ -100,9 +98,6 @@ function KnowledgeDocumentSession({
   const { user } = useUser()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const taskSession = useOptionalTaskSession()
-  const requestedTaskId = getTaskQueryParam(searchParams)
-  const requestedKbId = parseKnowledgeBaseId(searchParams.get('kb'))
   const parsedKbUrl = useMemo(() => {
     if (!pathname || pathname.startsWith('/knowledge/document/')) {
       return null
@@ -523,63 +518,28 @@ function KnowledgeDocumentSession({
     sidebar.selectedKb?.id === retainedKbId &&
     retainedKbId !== undefined &&
     (kbResolution?.status === 'loading' || kbResolution?.status === 'error')
-  const taskDetail = taskSession?.selectedTaskDetail
-  const taskMatchesUrl =
-    taskDetail?.task_type === 'knowledge' && String(taskDetail.id) === requestedTaskId
-  const hasListedSource = sidebar.allKnowledgeBases.some(kb => kb.id === requestedKbId)
-  const unavailableSource =
-    (sidebar.detailRequest?.kbId === requestedKbId && sidebar.detailRequest.status === 'error') ||
+  const requestedKbId = parseKnowledgeBaseId(searchParams.get('kb'))
+  const historyTaskId = parseKnowledgeBaseId(getTaskQueryParam(searchParams))
+  const sourceUnavailable =
+    (requestedKbId === sidebar.detailRequest?.kbId && sidebar.detailRequest.status === 'error') ||
     kbResolution?.status === 'not-found' ||
-    (initialUrlSyncDone && !hasListedSource && sidebar.selectedKb?.id !== requestedKbId)
-  const conversationKbId = taskMatchesUrl && unavailableSource ? requestedKbId : null
-  const conversationTaskId = conversationKbId ? taskDetail?.id : undefined
-  const {
-    myPermission: conversationPermission,
-    error: conversationPermissionError,
-    fetchMyPermission: fetchConversationPermission,
-  } = useKnowledgePermissions({ kbId: conversationKbId ?? 0, taskId: conversationTaskId })
-  useEffect(() => {
-    if (conversationKbId) void fetchConversationPermission()
-  }, [conversationKbId, fetchConversationPermission, permissionRevision])
+    (kbResolution?.status === 'error' && !retainsDetail) ||
+    (!kbResolution &&
+      initialUrlSyncDone &&
+      sidebar.selectedKb?.id !== requestedKbId &&
+      !sidebar.allKnowledgeBases.some(kb => kb.id === requestedKbId))
 
-  const conversationSourceAccess = useMemo(
-    () =>
-      conversationKbId
-        ? {
-            knowledgeBaseId: conversationKbId,
-            access: conversationPermission?.source_access,
-            revision: permissionRevision,
-          }
-        : null,
-    [conversationKbId, conversationPermission?.source_access, permissionRevision]
-  )
+  if (requestedKbId !== null && historyTaskId !== null && sourceUnavailable) {
+    return (
+      <KnowledgeReadOnlyHistory
+        knowledgeBaseId={requestedKbId}
+        taskId={historyTaskId}
+        permissionRefreshKey={permissionRevision}
+      />
+    )
+  }
 
   const renderMainContent = () => {
-    if (conversationKbId && conversationPermission?.task_source_bound) {
-      return (
-        <div
-          className="flex min-h-0 min-w-0 flex-1 flex-col"
-          data-testid="knowledge-workspace-chat"
-        >
-          <WorkspaceSourceAccess.Provider value={conversationSourceAccess}>
-            <KnowledgeChatArea
-              key={`${conversationKbId}:${conversationTaskId}`}
-              knowledgeBaseId={conversationKbId}
-              showRepositorySelector={false}
-              inputAlwaysAtBottom
-            />
-          </WorkspaceSourceAccess.Provider>
-        </div>
-      )
-    }
-    if (conversationKbId && !conversationPermission) {
-      return (
-        <KnowledgeUrlStatus
-          status={conversationPermissionError ? 'error' : 'loading'}
-          onRetry={fetchConversationPermission}
-        />
-      )
-    }
     if (kbResolution && kbResolution.status !== 'resolved' && !retainsDetail) {
       return <KnowledgeUrlStatus status={kbResolution.status} onRetry={sidebar.refreshAll} />
     }

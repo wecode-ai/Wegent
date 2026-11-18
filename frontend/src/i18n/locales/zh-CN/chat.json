@@ -895,6 +895,12 @@
     "wikispaceNeverSynced": "从未同步"
   },
   "evidence": {
+    "citation_label": "{{title}} · 片段 {{number}}",
+    "summary": "{{documents}} 篇文档 · {{fragments}} 个片段",
+    "select_fragment": "选择引用片段",
+    "copy_fragment": "复制回答时片段",
+    "copied": "已复制片段",
+    "copy_failed": "复制失败，可以选中文字后手动复制。",
     "title": "回答时的证据片段",
     "unavailable": "证据不可用",
     "close": "关闭",
@@ -907,7 +913,14 @@
     "partial_visit_only": "部分来源仅可用于问答，无法查看片段或原文",
     "retry": "重试",
     "loading": "正在读取证据…",
-    "open_original": "打开当前原文",
+    "open_original": "查看原文",
+    "current_original": "当前原文",
+    "answer_fragment": "回答时片段",
+    "return_fragment": "返回引用片段",
+    "original_changed": "原文已更新",
+    "original_loading": "正在读取当前原文…",
+    "original_denied": "你没有权限查看当前原文",
+    "original_unavailable": "当前原文不可用",
     "original_failed": "当前原文读取失败，请重试"
   }
 }

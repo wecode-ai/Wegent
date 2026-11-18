@@ -194,57 +194,6 @@ def _matches_snapshot_binding(
     )
 
 
-def find_authorized_source_task(
-    db: Session,
-    user_id: int,
-    kb_id: int,
-    *,
-    answer_id: int | None,
-    task_id: int | None,
-    citation_id: int | None = None,
-) -> tuple[int | None, bool, bool]:
-    """Return the readable task and whether it binds the source or owns its snapshot."""
-    answer = None
-    if answer_id is not None:
-        answer = subtask_store.get_by_id(db, subtask_id=answer_id)
-        if (
-            answer is None
-            or (task_id is not None and answer.task_id != task_id)
-            or answer.role != SubtaskRole.ASSISTANT
-            or answer.status != SubtaskStatus.COMPLETED
-        ):
-            return None, False, False
-        task_id = answer.task_id
-
-    if task_id is None or not task_access_store.is_member(
-        db, task_id=task_id, user_id=user_id
-    ):
-        return None, False, False
-    task = task_access_store.get_task(db, task_id=task_id)
-    if task is None:
-        return None, False, False
-    task_spec = task.json.get("spec") if isinstance(task.json, dict) else None
-    refs = task_spec.get("knowledgeBaseRefs") if isinstance(task_spec, dict) else None
-    task_bound = isinstance(refs, list) and any(
-        isinstance(ref, dict) and ref.get("id") == kb_id for ref in refs
-    )
-    if task_bound or answer is None or citation_id is None:
-        return task_id, task_bound, False
-
-    snapshot = (
-        db.query(KnowledgeCitation.caller_context)
-        .filter(
-            KnowledgeCitation.id == citation_id,
-            KnowledgeCitation.knowledge_base_id == kb_id,
-        )
-        .first()
-    )
-    snapshot_bound = snapshot is not None and _matches_snapshot_binding(
-        snapshot.caller_context, answer.id, answer.answer_generation_id
-    )
-    return task_id, False, snapshot_bound
-
-
 def read_citation(
     db: Session, user_id: int, citation_id: int, answer_id: int, generation_id: str
 ) -> dict:

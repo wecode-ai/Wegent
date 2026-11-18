@@ -700,7 +700,10 @@ class KnowledgePythonGateway(unittest.TestCase):
 
     def test_z_all_migrated_gets_reached_real_python_process(self) -> None:
         kb_id, doc_id = self.kbs[0].id, self.documents[0].id
+        citation_path = "/api/knowledge-bases/citations/1"
+        self.assertEqual(self.get(citation_path).status_code, 422)
         paths = (
+            citation_path,
             f"/api/knowledge-bases/{kb_id}/document-protection",
             f"/api/knowledge-bases/{kb_id}/artifacts",
             "/api/knowledge/documents",

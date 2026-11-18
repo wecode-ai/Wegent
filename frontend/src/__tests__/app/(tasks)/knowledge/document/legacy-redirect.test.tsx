@@ -20,9 +20,25 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/apis/knowledge', () => ({
   getOrganizationNamespace: jest.fn(),
 }))
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({ user: { id: 1 } }),
+}))
 
 jest.mock('@/features/knowledge/document/hooks', () => ({
   useKnowledgeBaseDetail: jest.fn(),
+}))
+jest.mock('@/features/knowledge/document/components/KnowledgeReadOnlyHistory', () => ({
+  KnowledgeReadOnlyHistory: ({
+    knowledgeBaseId,
+    taskId,
+  }: {
+    knowledgeBaseId: number
+    taskId: number
+  }) => (
+    <div data-testid="history-permission-gate">
+      {knowledgeBaseId}/{taskId}
+    </div>
+  ),
 }))
 
 const mockedGetOrganizationNamespace = getOrganizationNamespace as jest.MockedFunction<
@@ -139,6 +155,20 @@ describe('unavailable legacy ID targets', () => {
     expect(mockReplace).not.toHaveBeenCalled()
   })
 
+  it('checks the task binding for an inaccessible library without redirecting', () => {
+    mockSearchParams = new URLSearchParams('taskId=123')
+    mockedUseKnowledgeBaseDetail.mockReturnValue({
+      knowledgeBase: null,
+      loading: false,
+      error: null,
+      accessDenied: true,
+      refresh: jest.fn(),
+    })
+    render(<KnowledgeBaseCompatPage />)
+    expect(screen.getByTestId('history-permission-gate')).toHaveTextContent('42/123')
+    expect(mockReplace).not.toHaveBeenCalled()
+  })
+
   it('shows a failed ID request with retry', () => {
     const refresh = jest.fn()
     mockedUseKnowledgeBaseDetail.mockReturnValue({
@@ -154,26 +184,3 @@ describe('unavailable legacy ID targets', () => {
     expect(mockReplace).not.toHaveBeenCalled()
   })
 })
-
-it.each([403, 404])(
-  'sends a historical task for source binding verification after %s',
-  async status => {
-    jest.clearAllMocks()
-    mockKnowledgeBaseId = '42'
-    mockSearchParams = new URLSearchParams('taskId=123&documentId=7')
-    mockedUseKnowledgeBaseDetail.mockReturnValue({
-      knowledgeBase: null,
-      loading: false,
-      error: status === 404 ? 'missing' : null,
-      errorStatus: status,
-      accessDenied: status === 403,
-      refresh: jest.fn(),
-    })
-
-    render(<KnowledgeBaseCompatPage />)
-    await waitFor(() =>
-      expect(mockReplace).toHaveBeenCalledWith('/knowledge?type=document&kb=42&taskId=123')
-    )
-    expect(mockedGetOrganizationNamespace).not.toHaveBeenCalled()
-  }
-)

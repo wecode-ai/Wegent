@@ -1,81 +1,39 @@
 'use client'
 
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentProps } from 'react'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { apiClient, ApiError } from '@/apis/client'
-import { knowledgePermissionApi } from '@/apis/knowledge-permission'
-import { getDocument, getDocumentProtection } from '@/apis/knowledge'
-import { DocumentDetailDialog } from '@/features/knowledge/document/components/DocumentDetailDialog'
-import type { KnowledgeDocument, DocumentProtection } from '@/types/knowledge'
+import { CurrentEvidenceOriginal } from './CurrentEvidenceOriginal'
+import { EvidenceReadError } from './EvidenceReadError'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
-import { isCitationDenied, isSourceHidden, type SourceAccessMap } from './sourceAccess'
+import { isCitationDenied, isSourceHidden } from './sourceAccess'
+import { shouldHideAnswerMarker } from '../../../utils/answerEvidenceMarkers'
+import { evidenceRemark } from './evidenceRemark'
+import { CitationMarkup } from './CitationMarkup'
+import { AnswerEvidenceContext } from './AnswerEvidenceContext'
 import {
-  answerEvidenceMarker,
-  mapEvidenceText,
-  type MarkdownNode,
-} from '../../../utils/answerEvidenceMarkers'
+  type AnswerCitation,
+  type EvidenceScope,
+  type EvidenceSnapshot,
+  type ReadFailure,
+  getReadFailure,
+  readEvidenceSnapshot,
+} from './evidenceRead'
 
-export interface AnswerCitation {
-  citation_id: string
-  title: string
-  knowledge_base_id: number
-  document_id: number
-}
-
-export interface EvidenceScope {
-  taskId?: number
-  workspaceId?: number
-  shared?: boolean
-  permissionScope?: string
-  sourceAccess?: SourceAccessMap
-  onSourceDenied?: (id: number, result?: 'denied' | 'visit-only') => void
-  onAnswerDenied?: () => void
-  unavailableCitations?: ReadonlySet<string>
-  onCitationUnavailable?: (id: string) => void
-  answerId?: number
-  generationId?: string
-  citations?: AnswerCitation[]
-  committed: boolean
-  visitOnly?: boolean
-}
-
-interface Snapshot {
-  citation_id: string
-  content: string
-  title: string
-  knowledge_base_id: number
-  document_id: number
-}
-
-// Work on Markdown text nodes before raw HTML is parsed. Code and links are opaque.
-export function evidenceRemark(token: string) {
-  return (root: unknown) => {
-    mapEvidenceText(root as MarkdownNode, node => {
-      const value = node.value ?? ''
-      const parts: MarkdownNode[] = []
-      let start = 0
-      for (const match of value.matchAll(answerEvidenceMarker)) {
-        parts.push({ type: 'text', value: value.slice(start, match.index) })
-        parts.push({
-          type: 'text',
-          value: '',
-          data: {
-            hName: 'answer-citation',
-            hProperties: { citationId: match[1] || '', evidenceToken: token },
-          },
-        })
-        start = match.index + match[0].length
-      }
-      if (!start) return [node]
-      parts.push({ type: 'text', value: value.slice(start) })
-      return parts
-    })
-  }
-}
+export type { AnswerCitation, EvidenceScope } from './evidenceRead'
 
 export default function AnswerEvidenceMarkdown({
+  evidence,
+  ...props
+}: ComponentProps<typeof EnhancedMarkdown> & { evidence?: EvidenceScope }) {
+  const interaction = useContext(AnswerEvidenceContext)
+  if (interaction) return <CitationMarkup {...props} />
+  return <LegacyEvidenceMarkdown {...props} evidence={evidence} />
+}
+
+function LegacyEvidenceMarkdown({
   evidence,
   ...props
 }: ComponentProps<typeof EnhancedMarkdown> & { evidence?: EvidenceScope }) {
@@ -84,7 +42,6 @@ export default function AnswerEvidenceMarkdown({
     user?.id,
     apiClient.getCacheScope(),
     evidence?.taskId,
-    evidence?.workspaceId,
     evidence?.shared,
     evidence?.permissionScope,
     evidence?.answerId,
@@ -102,27 +59,20 @@ function EvidenceContent({
 }: ComponentProps<typeof EnhancedMarkdown> & { evidence?: EvidenceScope }) {
   const { t } = useTranslation('chat')
   const [openedId, setOpenedId] = useState<string>()
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
+  const [snapshot, setSnapshot] = useState<EvidenceSnapshot | null>(null)
   const [error, setError] = useState<ReadFailure>()
-  const [originalError, setOriginalError] = useState<ReadFailure>()
-  const [original, setOriginal] = useState<{
-    document: KnowledgeDocument
-    protection: DocumentProtection
-    request: number
-    originalRequest: number
-  } | null>(null)
+  const [showOriginal, setShowOriginal] = useState(false)
   const [deniedSources, setDeniedSources] = useState<ReadonlySet<number>>(new Set())
   const [answerDenied, setAnswerDenied] = useState(false)
   const [missingCitations, setMissingCitations] = useState<ReadonlySet<string>>(new Set())
   const pendingRead = useRef<AbortController | null>(null)
-  const pendingOriginal = useRef<AbortController | null>(null)
   const sequence = useRef(0)
-  const originalSequence = useRef(0)
   const scope = apiClient.getCacheScope()
   const current = (request: number) =>
     sequence.current === request && apiClient.getCacheScope() === scope
 
   const isHidden = (citation: AnswerCitation) =>
+    evidence?.visitOnly === true ||
     deniedSources.has(citation.knowledge_base_id) ||
     isSourceHidden(evidence?.sourceAccess?.[citation.knowledge_base_id])
   const isUnavailable = (id: string) =>
@@ -132,10 +82,9 @@ function EvidenceContent({
   const close = () => {
     sequence.current++
     pendingRead.current?.abort()
-    pendingOriginal.current?.abort()
     setOpenedId(undefined)
     setSnapshot(null)
-    setOriginal(null)
+    setShowOriginal(false)
   }
 
   useLayoutEffect(() => {
@@ -145,7 +94,6 @@ function EvidenceContent({
     () => () => {
       sequence.current++
       pendingRead.current?.abort()
-      pendingOriginal.current?.abort()
     },
     []
   )
@@ -162,12 +110,6 @@ function EvidenceContent({
     else setDeniedSources(previous => new Set(previous).add(citation.knowledge_base_id))
   }
 
-  const readSnapshot = (citation: AnswerCitation, signal: AbortSignal) =>
-    apiClient.get<Snapshot>(
-      `/knowledge-bases/citations/${citation.citation_id}?answer_id=${evidence?.answerId}&generation_id=${evidence?.generationId}`,
-      { cache: 'no-store', signal, redirectOnUnauthorized: false }
-    )
-
   const rejectSnapshot = (failure: unknown, citation: AnswerCitation) => {
     if (isCitationDenied(failure, 'answer') && !evidence?.shared) {
       denyAnswer()
@@ -178,6 +120,7 @@ function EvidenceContent({
       if (evidence?.onCitationUnavailable) evidence.onCitationUnavailable(citation.citation_id)
       else setMissingCitations(previous => new Set(previous).add(citation.citation_id))
     } else {
+      setShowOriginal(false)
       setSnapshot(null)
       setError(getReadFailure(failure, 'read_failed'))
     }
@@ -194,80 +137,17 @@ function EvidenceContent({
       return
     const request = ++sequence.current
     pendingRead.current?.abort()
-    pendingOriginal.current?.abort()
     const controller = new AbortController()
     pendingRead.current = controller
     setOpenedId(citation.citation_id)
     setSnapshot(null)
     setError(undefined)
-    setOriginal(null)
-    setOriginalError(undefined)
+    setShowOriginal(false)
     try {
-      const data = await readSnapshot(citation, controller.signal)
+      const data = await readEvidenceSnapshot(evidence, citation, controller.signal)
       if (current(request)) setSnapshot(data)
     } catch (failure) {
       if (current(request)) rejectSnapshot(failure, citation)
-    }
-  }
-
-  const handleOriginalDenial = async (
-    failure: unknown,
-    citation: AnswerCitation,
-    stillOpen: () => boolean
-  ): Promise<boolean> => {
-    if (!(failure instanceof ApiError)) return false
-    if (failure.status === 403) {
-      denySource(citation)
-      return true
-    }
-    if (failure.status !== 404) return false
-
-    // These endpoints also use 404 to conceal sources the viewer cannot read.
-    try {
-      const permission = await knowledgePermissionApi.getMyPermission(citation.knowledge_base_id, {
-        answerId: evidence?.answerId,
-        taskId: evidence?.taskId,
-        citationId: citation.citation_id,
-      })
-      if (!stillOpen()) return true
-      if (permission.source_access === 'denied' || permission.source_access === 'visit-only') {
-        denySource(citation, permission.source_access)
-        return true
-      }
-    } catch {
-      // Without a fresh source decision the original stays unavailable.
-    }
-    return false
-  }
-
-  const openOriginal = async () => {
-    if (!snapshot || !opened || hidden) return
-    const request = sequence.current
-    const originalRequest = ++originalSequence.current
-    pendingOriginal.current?.abort()
-    const controller = new AbortController()
-    pendingOriginal.current = controller
-    const stillOpen = () => current(request) && originalSequence.current === originalRequest
-    setOriginalError(undefined)
-    setOriginal(null)
-    try {
-      await readSnapshot(opened, controller.signal)
-    } catch (failure) {
-      if (!stillOpen()) return
-      rejectSnapshot(failure, opened)
-      return
-    }
-    if (!stillOpen()) return
-    try {
-      const document = await getDocument(snapshot.document_id, controller.signal)
-      if (!stillOpen()) return
-      if (document.kind_id !== snapshot.knowledge_base_id) throw new Error('Document moved')
-      const protection = await getDocumentProtection(snapshot.knowledge_base_id, controller.signal)
-      if (stillOpen()) setOriginal({ document, protection, request, originalRequest })
-    } catch (failure) {
-      if (!stillOpen()) return
-      const denied = await handleOriginalDenial(failure, opened, stillOpen)
-      if (!denied && stillOpen()) setOriginalError(getReadFailure(failure, 'original_failed'))
     }
   }
 
@@ -291,7 +171,7 @@ function EvidenceContent({
             const citation = evidence?.citations?.find(item => item.citation_id === citationId)
             if (
               evidenceToken === token &&
-              (evidence?.visitOnly || (citation && isHidden(citation)))
+              (shouldHideAnswerMarker(citationId, evidence) || (citation && isHidden(citation)))
             ) {
               return null
             }
@@ -320,12 +200,12 @@ function EvidenceContent({
       {opened && !hidden && (
         <section
           role="dialog"
-          aria-label={t('evidence.title')}
+          aria-label={t(showOriginal ? 'evidence.current_original' : 'evidence.title')}
           data-testid="answer-evidence-panel"
           className="my-3 rounded-lg border border-border bg-surface p-4"
         >
           <div className="flex justify-between gap-3">
-            <strong>{t('evidence.title')}</strong>
+            <strong>{t(showOriginal ? 'evidence.current_original' : 'evidence.title')}</strong>
             <button
               type="button"
               className="min-h-11 min-w-11"
@@ -337,6 +217,24 @@ function EvidenceContent({
           </div>
           {error ? (
             <EvidenceReadError failure={error} onRetry={() => void open(opened)} />
+          ) : showOriginal && snapshot && evidence && pendingRead.current ? (
+            <div className="flex min-h-0 flex-col gap-2">
+              <button
+                type="button"
+                className="min-h-11"
+                data-testid="answer-evidence-return-fragment"
+                onClick={() => setShowOriginal(false)}
+              >
+                {t('evidence.return_fragment')}
+              </button>
+              <CurrentEvidenceOriginal
+                citation={opened}
+                evidence={evidence}
+                selectionSignal={pendingRead.current.signal}
+                onSnapshotRejected={failure => rejectSnapshot(failure, opened)}
+                onSourceDenied={access => denySource(opened, access)}
+              />
+            </div>
           ) : snapshot ? (
             <>
               <p className="whitespace-pre-wrap" data-testid="answer-evidence-content">
@@ -346,7 +244,7 @@ function EvidenceContent({
                 type="button"
                 className="min-h-11 min-w-11"
                 data-testid="answer-evidence-open-original"
-                onClick={() => void openOriginal()}
+                onClick={() => setShowOriginal(true)}
               >
                 {t('evidence.open_original')}
               </button>
@@ -354,70 +252,8 @@ function EvidenceContent({
           ) : (
             <p>{t('evidence.loading')}</p>
           )}
-          {originalError && (
-            <EvidenceReadError failure={originalError} onRetry={() => void openOriginal()} />
-          )}
         </section>
       )}
-      {original && snapshot && opened && !hidden && (
-        <DocumentDetailDialog
-          open
-          onOpenChange={value => {
-            if (!value) {
-              originalSequence.current++
-              pendingOriginal.current?.abort()
-              setOriginal(null)
-            }
-          }}
-          document={original.document}
-          onReadError={failure => {
-            if (!(failure instanceof ApiError) || ![403, 404].includes(failure.status)) return
-            const stillOpen = () =>
-              current(original.request) && originalSequence.current === original.originalRequest
-            if (!stillOpen()) return
-            setOriginal(null)
-            setOriginalError(getReadFailure(failure, 'original_failed'))
-            void handleOriginalDenial(failure, opened, stillOpen)
-          }}
-          knowledgeBaseId={snapshot.knowledge_base_id}
-          allowDownload={original.protection.original_download_allowed === true}
-          watermarkText={original.protection.watermark_text}
-        />
-      )}
     </>
-  )
-}
-
-type ReadFailure = {
-  key: 'read_failed' | 'original_failed' | 'read_denied' | 'unavailable'
-  retryable: boolean
-}
-
-function getReadFailure(error: unknown, key: 'read_failed' | 'original_failed'): ReadFailure {
-  if (error instanceof ApiError) {
-    if (error.status === 403) return { key: 'read_denied', retryable: false }
-    if (error.status === 404 || error.status === 409)
-      return { key: 'unavailable', retryable: false }
-    return { key, retryable: error.status >= 500 }
-  }
-  return { key, retryable: true }
-}
-
-function EvidenceReadError({ failure, onRetry }: { failure: ReadFailure; onRetry: () => void }) {
-  const { t } = useTranslation('chat')
-  return (
-    <div role="alert">
-      <p>{t(`evidence.${failure.key}`)}</p>
-      {failure.retryable && (
-        <button
-          type="button"
-          className="min-h-11 min-w-11 text-primary underline"
-          data-testid={`answer-evidence-retry-${failure.key}`}
-          onClick={onRetry}
-        >
-          {t('evidence.retry')}
-        </button>
-      )}
-    </div>
   )
 }

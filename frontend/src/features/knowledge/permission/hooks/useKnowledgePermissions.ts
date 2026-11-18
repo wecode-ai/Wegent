@@ -136,9 +136,10 @@ export function useKnowledgePermissions(options: UseKnowledgePermissionsOptions)
       read(
         'mine',
         () =>
-          taskId
-            ? knowledgePermissionApi.getMyPermission(kbId, { taskId })
-            : knowledgePermissionApi.getMyPermission(kbId),
+          knowledgePermissionApi.getMyPermission(
+            kbId,
+            taskId === undefined ? undefined : { taskId }
+          ),
         myPermission => setState(prev => ({ ...prev, myPermission }))
       ),
     [read, kbId, taskId]

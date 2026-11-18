@@ -267,19 +267,16 @@ export const knowledgePermissionApi = {
    */
   getMyPermission: (
     kbId: number,
-    scope?: { taskId?: number; answerId?: number; citationId?: string }
+    scope?: { taskId?: number; signal?: AbortSignal }
   ): Promise<MyPermissionResponse> => {
     const query = new URLSearchParams()
     if (scope?.taskId && scope.taskId > 0) query.set('task_id', String(scope.taskId))
-    if (scope?.answerId && scope.answerId > 0) query.set('answer_id', String(scope.answerId))
-    if (scope?.citationId && /^[1-9]\d*$/.test(scope.citationId)) {
-      query.set('citation_id', scope.citationId)
-    }
     const queryString = query.toString()
     const suffix = queryString ? `?${queryString}` : ''
     return client.get<MyPermissionResponse>(`/share/KnowledgeBase/${kbId}/my-permission${suffix}`, {
       cache: 'no-store',
       ...(scope ? { redirectOnUnauthorized: false } : {}),
+      ...(scope?.signal ? { signal: scope.signal } : {}),
     })
   },
 

@@ -188,6 +188,8 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
   browser,
   baseURL,
 }) => {
+  test.setTimeout(180000)
+  await page.setViewportSize({ width: 1440, height: 900 })
   const client = createApiClient(request)
   const login = await client.login(ADMIN_USER.username, ADMIN_USER.password)
   const token = login.data!.access_token
@@ -219,23 +221,6 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
       },
     })
     cleanup.push(`/api/v1/namespaces/default/models/${name}`)
-    const bot = await create('/api/bots', {
-      name,
-      shell_name: 'Chat',
-      namespace: 'default',
-      is_active: true,
-      agent_config: { bind_model: name, bind_model_type: 'user' },
-      system_prompt: 'Use native RAG search and cite its evidence_id.',
-    })
-    cleanup.push(`/api/v1/namespaces/default/bots/${name}`)
-    const team = await create('/api/teams', {
-      name,
-      namespace: 'default',
-      is_active: true,
-      bind_mode: ['chat'],
-      bots: [{ bot_id: bot.id, bot_prompt: '', role: 'worker' }],
-    })
-    cleanup.push(`/api/v1/namespaces/default/teams/${name}`)
     const kb = await create('/api/knowledge-bases', {
       name,
       namespace: 'default',
@@ -246,6 +231,24 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
       allow_document_download: false,
     })
     cleanup.push(`/api/knowledge-bases/${kb.id}`)
+    const bot = await create('/api/bots', {
+      name,
+      shell_name: 'Chat',
+      namespace: 'default',
+      is_active: true,
+      agent_config: { bind_model: name, bind_model_type: 'user' },
+      system_prompt: 'Use native RAG search and cite its evidence_id.',
+      default_knowledge_base_refs: [{ id: kb.id, name }],
+    })
+    cleanup.push(`/api/v1/namespaces/default/bots/${name}`)
+    const team = await create('/api/teams', {
+      name,
+      namespace: 'default',
+      is_active: true,
+      bind_mode: ['chat'],
+      bots: [{ bot_id: bot.id, bot_prompt: '', role: 'worker' }],
+    })
+    cleanup.push(`/api/v1/namespaces/default/teams/${name}`)
     const text = 'EVIDENCE-SNAPSHOT-2026：项目上线日期为十一月十日。'
     const doc = await create('/api/knowledge/documents', {
       knowledge_base_id: kb.id,
@@ -292,8 +295,21 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
     const citation = page.locator('[data-testid^="answer-citation-"]').first()
     await expect(citation).toBeVisible({ timeout: 30000 })
     const id = await citation.getAttribute('data-testid')
-    await citation.click()
+    await citation.hover()
+    await expect(page.getByTestId('answer-evidence-preview-content')).toContainText(text)
+    await page.getByTestId('message-input').hover()
+    await expect(page.getByTestId('answer-evidence-preview')).toHaveCount(0)
+    await page.getByTestId('message-input').press('Tab')
+    await citation.focus()
+    await expect(page.getByTestId('answer-evidence-preview-content')).toContainText(text)
+    await citation.press('Enter')
+    const panel = page.getByTestId('answer-evidence-panel')
+    await expect(panel).toHaveAttribute('data-layout', 'side')
+    await expect(panel).toHaveAttribute('data-version-status', 'unknown')
     await expect(page.getByTestId('answer-evidence-content')).toContainText(text)
+    await page.getByTestId('answer-evidence-close').press('Escape')
+    await expect(citation).toBeFocused()
+    await expect(panel).toHaveCount(0)
     await page.reload()
     await page.getByTestId(id!).first().click()
     await expect(page.getByTestId('answer-evidence-content')).toContainText(text)
@@ -318,6 +334,18 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
     await page.getByTestId('answer-evidence-close').click()
     await page.getByTestId(id!).first().click()
     await expect(page.getByTestId('answer-evidence-content')).toContainText(text)
+    await page.getByTestId('answer-evidence-close').click()
+    await page.setViewportSize({ width: 900, height: 900 })
+    const originalReads: string[] = []
+    page.on('request', req => {
+      if (/knowledge-documents|\/documents\/\d+\/detail|document-protection/.test(req.url())) {
+        originalReads.push(req.url())
+      }
+    })
+    await page.getByTestId(id!).first().click()
+    await expect(panel).toHaveAttribute('data-layout', 'overlay')
+    await expect(page.getByTestId('answer-evidence-content')).toContainText(text)
+    expect(originalReads).toEqual([])
     const detail = page.waitForResponse(
       response => response.url().includes(`/documents/${doc.id}/detail`) && response.ok()
     )
@@ -327,6 +355,12 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
       page.getByText('CURRENT-ORIGINAL：项目日期已更新。', { exact: false })
     ).toBeVisible()
     await expect(page.getByTestId('knowledge-source-preview-download')).toHaveCount(0)
+
+    await expect(page.getByTestId('answer-original-download')).toHaveCount(0)
+    await expect(page.getByTestId('answer-original-file')).toHaveCount(0)
+    await expect(panel).toHaveAttribute('data-version-status', 'unknown')
+    await page.getByTestId('answer-evidence-return-fragment').click()
+    await expect(page.getByTestId('answer-evidence-content')).toContainText(text)
 
     // Reopening must reauthorize the source while answer access remains granted.
     const recipient = createApiClient(request)
@@ -367,8 +401,63 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
       await expect(viewer.getByTestId('answer-evidence-panel')).toHaveCount(0)
       await expect(viewerCitation).toHaveCount(0)
       await expect(viewer.getByTestId('answer-source-access')).toBeVisible()
+
+      await create(`/api/share/Team/${team.id}/members`, membership)
+      const restrictedHeaders = createBackendRequestHeaders(recipientToken)
+      const permission = await request.get(
+        `${API}/api/share/KnowledgeBase/${kb.id}/my-permission?task_id=${taskId}`,
+        { headers: restrictedHeaders }
+      )
+      expect(permission.ok(), await permission.text()).toBeTruthy()
+      expect((await permission.json()).source_access).toBe('visit-only')
+      const sourceReads: string[] = []
+      viewer.on('request', req => {
+        if (
+          /\/citations\/|knowledge-documents|\/documents\/\d+\/detail|document-protection/.test(
+            req.url()
+          )
+        ) {
+          sourceReads.push(req.url())
+        }
+      })
+      await viewer.reload()
+      await expect(viewer.getByText('项目十一月十日上线。', { exact: false }).first()).toBeVisible()
+      await expect(viewer.getByTestId('answer-source-access')).toHaveCount(1)
+      await expect(viewer.locator('[data-testid^="answer-citation-"]')).toHaveCount(0)
+      await expect(viewer.getByTestId('answer-evidence-unavailable')).toHaveCount(0)
+      await expect(viewer.getByTestId('answer-evidence-summary')).toHaveCount(0)
+      expect(sourceReads).toEqual([])
+      const citationUrl = (await denied).url()
+      expect((await request.get(citationUrl, { headers: restrictedHeaders })).status()).toBe(403)
+      const content = await request.get(`${API}/api/knowledge/documents/${doc.id}/content`, {
+        headers: restrictedHeaders,
+      })
+      expect(content.status()).toBe(403)
+      await expect(page.getByTestId('answer-evidence-content')).toContainText(text)
     } finally {
       await context.close()
+    }
+    const phone = await browser.newContext({
+      baseURL,
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      storageState: buildStorageState(baseURL!, token, getJwtExpiryMs(token)),
+    })
+    try {
+      await phone.addInitScript(() => localStorage.setItem('user_onboarding_completed', 'true'))
+      const mobile = await phone.newPage()
+      await mobile.goto(page.url())
+      await mobile.getByTestId(id!).first().tap()
+      const fullScreen = mobile.getByTestId('answer-evidence-panel')
+      await expect(fullScreen).toHaveAttribute('data-layout', 'mobile')
+      await expect(mobile.getByTestId('answer-evidence-content')).toContainText(text)
+      const bounds = await fullScreen.boundingBox()
+      expect(bounds?.x).toBe(0)
+      expect(bounds?.width).toBe(390)
+      await mobile.getByTestId('answer-evidence-close').tap()
+      await expect(fullScreen).toHaveCount(0)
+    } finally {
+      await phone.close()
     }
   } finally {
     await clearToolScenario(request, prompt)
@@ -435,14 +524,14 @@ test('multiple searches keep same-title documents distinct across grey refresh a
       name,
       namespace: 'default',
       is_active: true,
-      bind_mode: ['chat'],
+      bind_mode: ['chat', 'knowledge'],
       bots: [{ bot_id: bot.id, bot_prompt: '', role: 'worker' }],
     })
     cleanup.push(`/api/v1/namespaces/default/teams/${name}`)
     const kb = await create('/api/knowledge-bases', {
       name,
       namespace: 'default',
-      kb_type: 'classic',
+      kb_type: 'notebook',
       summary_enabled: false,
       retrieval_config: retrieval.config,
       rag_config_mode: 'auto',
@@ -498,9 +587,17 @@ test('multiple searches keep same-title documents distinct across grey refresh a
       prompt,
       '多资料{{answer_evidence_all}} 重复{{answer_evidence}} 坏引用[[evidence:unknown-generation]][[citation:123]]'
     )
-    await openProviderNativeChat(page, { teamId: team.id, teamName: name })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.addInitScript(teamId => {
+      localStorage.setItem('user_onboarding_completed', 'true')
+      localStorage.setItem('wegent_last_team_id_knowledge', String(teamId))
+    }, team.id)
+    await page.goto(`/knowledge/document/${kb.id}?view=notebook&teamId=${team.id}`)
+    await expect(page.getByTestId('knowledge-detail-notebook')).toBeVisible()
+    await expect(page.getByTestId('knowledge-workspace-chat')).toBeVisible()
+    const sources = page.getByTestId('knowledge-source-panel')
+    await expect(sources).toBeVisible()
     const knowledge = new ProviderNativeKnowledgePage(page)
-    await knowledge.selectWholeKnowledgeBase(kb.id, name)
     await knowledge.sendMessage(prompt)
     taskId = await knowledge.waitForTaskId()
     await waitForTaskTerminal(token, taskId)
@@ -512,6 +609,7 @@ test('multiple searches keep same-title documents distinct across grey refresh a
       ),
     ]
     expect(ids.length).toBeGreaterThanOrEqual(2)
+    expect(await buttons.count()).toBeGreaterThan(ids.length)
     const seenDocuments = new Set<number>()
     for (const id of ids) {
       const responsePromise = page.waitForResponse(
@@ -527,7 +625,27 @@ test('multiple searches keep same-title documents distinct across grey refresh a
       await page.getByTestId('answer-evidence-close').click()
     }
     expect([...seenDocuments].sort()).toEqual(docs.map(doc => doc.id).sort())
+    const first = page.getByTestId(ids[0]).first()
+    await first.hover()
+    await expect(page.getByTestId('answer-evidence-preview-content')).toBeVisible()
+    await first.click()
+    const panel = page.getByTestId('answer-evidence-panel')
+    await expect(panel).toHaveCount(1)
+    const excerpt = page.getByTestId('answer-evidence-content')
+    await expect(excerpt).toBeVisible()
+    const savedExcerpt = await excerpt.innerText()
+    await page.getByTestId('answer-evidence-open-original').click()
+    await expect(panel.getByText(savedExcerpt, { exact: false })).toBeVisible()
+    await page.getByTestId('answer-evidence-return-fragment').click()
+    await expect(excerpt).toHaveText(savedExcerpt)
+    await page.getByTestId('answer-evidence-close').click()
+    await expect(first).toBeFocused()
+    await expect(sources).toBeVisible()
     await page.reload()
+    await expect(page.getByTestId('knowledge-workspace-chat')).toBeVisible()
+    await first.click()
+    await expect(excerpt).toHaveText(savedExcerpt)
+    await page.getByTestId('answer-evidence-close').click()
     for (const id of ids) await expect(page.getByTestId(id).first()).toBeVisible()
     await expect(page.getByTestId('answer-evidence-unavailable')).toHaveCount(2)
     let greyRequests = 0

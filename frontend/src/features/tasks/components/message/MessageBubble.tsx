@@ -36,18 +36,19 @@ import EnhancedMarkdown, {
 } from './evidence/AnswerEvidenceMarkdown'
 import {
   filterAnswerSources,
-  getAnswerSourceIds,
+  getCopyableContentFromBlocks,
+  getAnswerSourceContext,
+  isVisitOnlyAnswer,
   isSourceHidden,
   useAnswerSourceAccess,
 } from './evidence/sourceAccess'
-import {
-  getRenderedCitationIds,
-  stripAnswerEvidenceMarkers,
-} from '../../utils/answerEvidenceMarkers'
+import { filterAnswerEvidenceMarkers } from '../../utils/answerEvidenceMarkers'
 import { ReasoningDisplay } from './thinking'
 import MixedContentView from './thinking/MixedContentView'
 import ThinkingDisplay from './thinking/ThinkingDisplay'
 import FinalPromptMessage from './FinalPromptMessage'
+import { AnswerEvidenceInteraction } from './evidence/AnswerEvidenceInteraction'
+import { ChatEvidenceContext } from './evidence/ChatEvidenceHost'
 import { parseMarkdownFinalPrompt } from './finalPromptParser'
 import { connectorAuthSlug, stripConnectorAuthMarkers } from '@/lib/connectorAuthMarkers'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
@@ -66,6 +67,7 @@ import type { SourceReference, GeminiAnnotation, RetrievalSummaryPayload } from 
 import type { Model } from '../../hooks/useModelSelection'
 import type { UnifiedModel } from '@/apis/models'
 import { isTextBlock, isThinkingBlock } from './thinking/types'
+import { nestMessageBlocks } from '@wegent/chat-core'
 import type { MessageBlock, ThinkingBlock, ThinkingStep } from './thinking/types'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
@@ -74,6 +76,8 @@ import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartU
 import { formatDateTime } from '@/utils/dateTime'
 import { getTeamDisplayName } from '@/utils/team'
 import { ErrorCard } from './ErrorCard'
+const emptySources: SourceReference[] = []
+
 export interface Message {
   type: 'user' | 'ai'
   content: string
@@ -159,6 +163,7 @@ export interface ParagraphAction {
 }
 
 export interface MessageBubbleProps {
+  readOnly?: boolean
   msg: Message
   index: number
   selectedTaskDetail: TaskDetail | null
@@ -371,22 +376,6 @@ function canSaveToKnowledge(
   return Boolean(onSaveToKnowledge) && !msg.isIncomplete && isComplete && content.trim().length > 0
 }
 
-/**
- * Extract copyable text content from message blocks.
- * When a message uses the blocks-based rendering (MixedContentView),
- * msg.content only holds the last streamed text block's content.
- * The full content is stored across all TextBlock entries in msg.result.blocks.
- */
-function getCopyableContentFromBlocks(blocks: MessageBlock[]): string {
-  return stripConnectorAuthMarkers(
-    blocks
-      .filter(isTextBlock)
-      .map(b => b.content)
-      .join('\n\n')
-      .trim()
-  )
-}
-
 function getSaveableMarkdown(
   markdown: string,
   annotations: GeminiAnnotation[] | undefined
@@ -419,6 +408,7 @@ function getBlockRenderHash(blocks: MessageBlock[] | undefined): string {
 
 const MessageBubble = memo(
   function MessageBubble({
+    readOnly = false,
     msg,
     index,
     selectedTaskDetail,
@@ -567,40 +557,58 @@ const MessageBubble = memo(
       const contentToParse = content.includes('${$$}$') ? content.split('${$$}$')[1] || '' : content
       return parseMarkdownFinalPrompt(contentToParse)
     }, [isUserTypeMessage, msg.content, msg.recoveredContent, msg.result?.blocks])
-    const sources = msg.sources || msg.result?.sources || []
+    const hasEvidenceHost = Boolean(React.useContext(ChatEvidenceContext))
+    const sources = msg.sources || msg.result?.sources || emptySources
     const citations = msg.result?.answer_citations
-    const committed = !isUserTypeMessage && !isStreaming && msg.subtaskStatus === 'COMPLETED'
-    const citationSources = React.useMemo(() => {
-      const bySource = new Map<number, string>()
-      if (!committed || !citations?.length) return bySource
-      const markdown =
-        getCopyableContentFromBlocks(mixedContentBlocks) || msg.recoveredContent || msg.content
-      const renderedIds = getRenderedCitationIds(markdown)
-      for (const citation of citations) {
-        if (renderedIds.has(citation.citation_id) && !bySource.has(citation.knowledge_base_id)) {
-          bySource.set(citation.knowledge_base_id, citation.citation_id)
+    const committed =
+      !isUserTypeMessage &&
+      !isStreaming &&
+      msg.status !== 'streaming' &&
+      msg.subtaskStatus === 'COMPLETED'
+    const sourceContext = React.useMemo(() => {
+      let markdown: string | { renderedText: readonly string[] } = ''
+      if (committed && citations?.length) {
+        if (!hasEvidenceHost) {
+          markdown =
+            getCopyableContentFromBlocks(mixedContentBlocks) || msg.recoveredContent || msg.content
+        } else if (!finalPromptData) {
+          const content = mixedContentBlocks.length
+            ? msg.recoveredContent || msg.content
+            : msg.content
+          const result = content.includes('${$$}$') ? content.split('${$$}$')[1] || '' : content
+          const textBlocks = nestMessageBlocks(mixedContentBlocks).filter(isTextBlock)
+          markdown = {
+            renderedText: textBlocks.length
+              ? textBlocks.map(block => block.content || result)
+              : [result],
+          }
         }
       }
-      return bySource
-    }, [citations, committed, mixedContentBlocks, msg.content, msg.recoveredContent])
-    const sourceIds = [
-      ...getAnswerSourceIds(sources, msg.result?.retrieval_summary),
-      ...citationSources.keys(),
-    ]
-    const hasUnscopedSources =
-      sources.some(source => !source.kb_id) ||
-      msg.result?.retrieval_summary?.source_statuses?.some(
-        status => status.provider !== 'internal' && status.status === 'hit'
-      ) === true
+      return getAnswerSourceContext(
+        markdown,
+        committed ? citations : undefined,
+        sources,
+        msg.result?.retrieval_summary
+      )
+    }, [
+      citations,
+      committed,
+      hasEvidenceHost,
+      finalPromptData,
+      mixedContentBlocks,
+      msg.content,
+      msg.recoveredContent,
+      msg.result?.retrieval_summary,
+      sources,
+    ])
+    const { sourceIds, hasUnscopedSources } = sourceContext
     const taskId = currentTaskId ?? selectedTaskDetail?.id
     const permissions = useAnswerSourceAccess(
       sourceIds,
       taskId,
       msg.subtaskId,
       msg.result?.answer_generation_id,
-      committed && !shareToken,
-      citationSources,
-      !hasUnscopedSources
+      committed && !shareToken
     )
     const access = permissions.relevantAccess
     const hasVisitOnly = access.includes('visit-only')
@@ -609,17 +617,12 @@ const MessageBubble = memo(
       hasUnscopedSources || sourceIds.some(id => !isSourceHidden(permissions.access[id]))
     const evidence: EvidenceScope = {
       taskId,
-      workspaceId: permissions.workspaceId,
       shared: Boolean(shareToken),
       answerId: msg.subtaskId,
       generationId: msg.result?.answer_generation_id,
       citations,
       committed,
-      visitOnly:
-        committed &&
-        hasVisitOnly &&
-        !hasOtherSources &&
-        access.every(value => value === 'visit-only'),
+      visitOnly: committed && isVisitOnlyAnswer(sourceContext, permissions.access),
       permissionScope: permissions.scope,
       sourceAccess: permissions.access,
       onSourceDenied: permissions.denySource,
@@ -627,20 +630,44 @@ const MessageBubble = memo(
       unavailableCitations: permissions.unavailableCitations,
       onCitationUnavailable: permissions.markUnavailable,
     }
-    const sourceReferences = filterAnswerSources(
+    const allowedSourceReferences = filterAnswerSources(
       sources,
       msg.result?.retrieval_summary,
       permissions.access,
       hasVisitOnly || hasSourceDenial
     )
+    // The evidence summary owns native snapshots. Keep other provider references in the existing footer.
+    const sourceReferences =
+      hasEvidenceHost && committed && citations?.length && !finalPromptData
+        ? {
+            sources: allowedSourceReferences.sources.filter(
+              source => !source.kb_id || (source.source_type && source.source_type !== 'internal')
+            ),
+            retrievalSummary: {
+              source_statuses: allowedSourceReferences.retrievalSummary?.source_statuses?.filter(
+                status => status.provider !== 'internal'
+              ),
+            },
+          }
+        : allowedSourceReferences
 
     const blockSaveableMarkdown = React.useMemo(
       () =>
         getSaveableMarkdown(
-          stripAnswerEvidenceMarkers(getCopyableContentFromBlocks(msg.result?.blocks ?? [])),
+          filterAnswerEvidenceMarkers(getCopyableContentFromBlocks(msg.result?.blocks ?? []), {
+            citations,
+            sourceAccess: permissions.access,
+            visitOnly: evidence.visitOnly,
+          }),
           msg.result?.annotations
         ),
-      [msg.result?.annotations, msg.result?.blocks]
+      [
+        citations,
+        evidence.visitOnly,
+        msg.result?.annotations,
+        msg.result?.blocks,
+        permissions.access,
+      ]
     )
     const hasToolBlocks = React.useMemo(
       () => msg.result?.blocks?.some(block => block.type === 'tool') ?? false,
@@ -785,7 +812,7 @@ const MessageBubble = memo(
         visibleResult = `${visibleResult}\n\n[${authorizeLabel}](wegent://modal/connector-oauth?slug=${encodeURIComponent(connectorSlug)})`
       }
       const normalizedResult = getSaveableMarkdown(visibleResult, annotations)
-      const saveableMarkdown = `${promptPart ? promptPart + '\n\n' : ''}${stripAnswerEvidenceMarkers(normalizedResult)}`
+      const saveableMarkdown = `${promptPart ? promptPart + '\n\n' : ''}${filterAnswerEvidenceMarkers(normalizedResult, evidence)}`
 
       const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/)
       if (progressMatch) {
@@ -903,9 +930,11 @@ const MessageBubble = memo(
 
       return (
         <>
-          <CollapsibleMessage content={normalizedResult} enabled={shouldEnableCollapse}>
-            {markdownContent}
-          </CollapsibleMessage>
+          <AnswerEvidenceInteraction evidence={evidence} markdown={normalizedResult}>
+            <CollapsibleMessage content={normalizedResult} enabled={shouldEnableCollapse}>
+              {markdownContent}
+            </CollapsibleMessage>
+          </AnswerEvidenceInteraction>
           <SourceReferences {...sourceReferences} />
           <GeminiAnnotations annotations={msg.result?.annotations || []} />
           {/* Hide BubbleTools during streaming */}
@@ -935,8 +964,8 @@ const MessageBubble = memo(
                 },
               ]}
               feedback={feedback}
-              onLike={handleLike}
-              onDislike={handleDislike}
+              onLike={readOnly ? undefined : handleLike}
+              onDislike={readOnly ? undefined : handleDislike}
               feedbackLabels={{
                 like: t('chat:messages.like') || 'Like',
                 dislike: t('chat:messages.dislike') || 'Dislike',
@@ -1222,6 +1251,7 @@ const MessageBubble = memo(
               className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
               onMouseUp={handleTextSelection}
               data-message-content="true"
+              tabIndex={hasEvidenceHost && citations?.length ? -1 : undefined}
             >
               {/* Show header for AI messages */}
               {!isUserTypeMessage && (
@@ -1410,8 +1440,8 @@ const MessageBubble = memo(
                             },
                           ]}
                           feedback={feedback}
-                          onLike={handleLike}
-                          onDislike={handleDislike}
+                          onLike={readOnly ? undefined : handleLike}
+                          onDislike={readOnly ? undefined : handleDislike}
                           feedbackLabels={{
                             like: t('chat:messages.like') || 'Like',
                             dislike: t('chat:messages.dislike') || 'Dislike',
@@ -1549,6 +1579,7 @@ const MessageBubble = memo(
       prevProps.msg.subtaskStatus === nextProps.msg.subtaskStatus &&
       prevProps.msg.subtaskId === nextProps.msg.subtaskId &&
       prevProps.currentTaskId === nextProps.currentTaskId &&
+      prevProps.readOnly === nextProps.readOnly &&
       prevProps.selectedTaskDetail?.id === nextProps.selectedTaskDetail?.id &&
       prevProps.shareToken === nextProps.shareToken &&
       prevProps.msg.timestamp === nextProps.msg.timestamp &&

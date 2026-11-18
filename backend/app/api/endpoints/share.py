@@ -547,8 +547,6 @@ def get_my_kb_permission(
     resource_id: int,
     response: Response,
     task_id: int | None = Query(None, gt=0),
-    answer_id: int | None = Query(None, gt=0),
-    citation_id: int | None = Query(None, gt=0, le=9223372036854775807),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> MyKBSourcePermissionResponse:
@@ -565,8 +563,6 @@ def get_my_kb_permission(
         knowledge_base_id=resource_id,
         user_id=current_user.id,
         task_id=task_id,
-        answer_id=answer_id,
-        citation_id=citation_id,
     )
 
 

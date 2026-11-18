@@ -68,7 +68,8 @@ export const knowledgeBaseApi = {
       includeSummary?: boolean
       offset?: number
       limit?: number
-    }
+    },
+    signal?: AbortSignal
   ): Promise<DocumentDetailResponse> => {
     const queryParams = new URLSearchParams()
     if (options?.includeContent !== undefined) {
@@ -87,8 +88,13 @@ export const knowledgeBaseApi = {
     const queryString = queryParams.toString()
     const url = `/knowledge-bases/${kbId}/documents/${docId}/detail${queryString ? `?${queryString}` : ''}`
 
-    const response = await client.get<DocumentDetailResponse>(url)
-    return response
+    return signal
+      ? client.get<DocumentDetailResponse>(url, {
+          signal,
+          cache: 'no-store',
+          redirectOnUnauthorized: false,
+        })
+      : client.get<DocumentDetailResponse>(url)
   },
 
   /**

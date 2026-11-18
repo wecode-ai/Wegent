@@ -18,6 +18,7 @@ import { SubagentBlock } from './components/SubagentBlock'
 import { SubagentGroupBlock } from './components/SubagentGroupBlock'
 import { GuidanceBlock } from './components/GuidanceBlock'
 import ReasoningDisplay from './ReasoningDisplay'
+import { AnswerEvidenceInteraction } from '../evidence/AnswerEvidenceInteraction'
 import EnhancedMarkdown, { type EvidenceScope } from '../evidence/AnswerEvidenceMarkdown'
 import { useTranslation } from '@/hooks/useTranslation'
 import { processCitePatterns } from '../../../utils/processCitePatterns'
@@ -660,9 +661,23 @@ const MixedContentView = memo(function MixedContentView({
     return result
   }, [mixedItems])
 
-  return (
+  const renderedItems = useMemo(
+    () =>
+      mergedItems.map(item =>
+        item.type === 'content' && annotations?.length
+          ? { ...item, content: processCitePatterns(item.content, annotations) }
+          : item
+      ),
+    [mergedItems, annotations]
+  )
+  const markdown = useMemo(
+    () => renderedItems.flatMap(item => (item.type === 'content' ? [item.content] : [])),
+    [renderedItems]
+  )
+
+  const body = (
     <div className="space-y-3">
-      {mergedItems.map((item, index) => {
+      {renderedItems.map((item, index) => {
         // Null check after filter
         if (!item) {
           return null
@@ -674,13 +689,9 @@ const MixedContentView = memo(function MixedContentView({
             return null
           }
           const key = 'blockId' in item ? item.blockId : `content-${index}`
-          const textContent =
-            annotations && annotations.length > 0
-              ? processCitePatterns(item.content, annotations)
-              : item.content
           return (
             <div key={key} className="text-sm">
-              <EnhancedMarkdown evidence={evidence} source={textContent} theme={theme} />
+              <EnhancedMarkdown evidence={evidence} source={item.content} theme={theme} />
             </div>
           )
         } else if (item.type === 'video') {
@@ -809,6 +820,11 @@ const MixedContentView = memo(function MixedContentView({
         </div>
       )}
     </div>
+  )
+  return (
+    <AnswerEvidenceInteraction evidence={evidence} markdown={markdown}>
+      {body}
+    </AnswerEvidenceInteraction>
   )
 })
 

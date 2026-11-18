@@ -55,6 +55,7 @@ export interface SaveToKnowledgeDialogProps {
   onOpenChange: (open: boolean) => void
   initialTitle: string
   initialContent: string
+  presentContent?: (content: string) => string
   defaultKnowledgeBaseId?: number
   onCreated: (document: KnowledgeDocument, knowledgeBase: KnowledgeBaseWithGroupInfo) => void
 }
@@ -98,6 +99,7 @@ export function SaveToKnowledgeDialog({
   onOpenChange,
   initialTitle,
   initialContent,
+  presentContent,
   defaultKnowledgeBaseId,
   onCreated,
 }: SaveToKnowledgeDialogProps) {
@@ -164,6 +166,7 @@ export function SaveToKnowledgeDialog({
     title,
     setTitle,
     content,
+    contentRevision,
     setContent,
     isSaving: submitting,
     isValid,
@@ -174,6 +177,7 @@ export function SaveToKnowledgeDialog({
     open,
     initialTitle,
     initialContent,
+    presentContent,
     knowledgeBaseId: selectedOption?.knowledgeBase.id,
     onSaved: document => {
       if (!selectedOption) return
@@ -270,7 +274,9 @@ export function SaveToKnowledgeDialog({
             <Label>{t('saveToKnowledge.contentLabel')}</Label>
             <div data-testid="save-to-knowledge-content-editor">
               <WysiwygEditor
-                initialContent={content}
+                initialContent={initialContent}
+                value={content}
+                contentRevision={contentRevision}
                 onChange={setContent}
                 className="min-h-[320px]"
                 language="markdown"

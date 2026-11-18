@@ -713,7 +713,9 @@ async def export_task_docx(
         from app.services.export.docx_generator import generate_task_docx
 
         # Generate DOCX document with optional message filter
-        docx_buffer = generate_task_docx(task, db, message_ids=filter_message_ids)
+        docx_buffer = generate_task_docx(
+            task, db, message_ids=filter_message_ids, viewer_id=current_user.id
+        )
 
         # Get task title for filename
         task_data = task.json.get("spec", {})

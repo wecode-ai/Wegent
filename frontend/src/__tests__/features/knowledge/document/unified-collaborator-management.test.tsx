@@ -35,6 +35,7 @@ jest.mock('@/features/common/UserContext', () => ({ useUser: () => ({ user: mock
 jest.mock('@/apis/client', () => ({
   __esModule: true,
   ApiError: class extends Error {},
+  apiClient: { getCacheScope: () => mockScope },
   default: { getCacheScope: () => mockScope },
 }))
 jest.mock('@/apis/knowledge-base', () => ({ knowledgeBaseApi: { getAllGrouped: jest.fn() } }))
@@ -182,7 +183,6 @@ jest.mock('@/contexts/TeamContext', () => ({
 }))
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => ({ selectTask: jest.fn() }),
-  useOptionalTaskSession: () => null,
 }))
 jest.mock('@/features/tasks/components/chat', () => ({ ChatArea: () => null }))
 jest.mock('@/features/knowledge/document/components/DocumentList', () => ({

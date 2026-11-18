@@ -9,7 +9,6 @@ import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { createKnowledgeBase, getKnowledgeBase } from '@/apis/knowledge'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 import { codeWikiApi } from '@/apis/code-wiki'
-import type { TaskDetail } from '@/types/api'
 import type {
   AllGroupedKnowledgeResponse,
   BatchPermissionAddResponse,
@@ -18,10 +17,6 @@ import type {
   PermissionResponse,
 } from '@/types/knowledge'
 
-let mockTaskDetail: Pick<TaskDetail, 'id' | 'task_type'> | null = null
-jest.mock('@/features/tasks/session/TaskSession', () => ({
-  useOptionalTaskSession: () => ({ selectedTaskDetail: mockTaskDetail }),
-}))
 const mockPush = jest.fn(),
   mockReplace = jest.fn()
 let mockParams = new URLSearchParams(),
@@ -74,9 +69,6 @@ jest.mock('@/features/knowledge/document/hooks/useAdvancedKnowledgeMode', () => 
   }),
 }))
 jest.mock('@/features/knowledge/document/components/KnowledgeDetailPanel', () => ({
-  KnowledgeChatArea: ({ knowledgeBaseId }: { knowledgeBaseId: number }) => (
-    <div data-testid="mock-history-chat">{knowledgeBaseId}</div>
-  ),
   KnowledgeDetailPanel: ({
     selectedKb,
     initialDocPath,
@@ -92,6 +84,19 @@ jest.mock('@/features/knowledge/document/components/KnowledgeDetailPanel', () =>
       <button data-testid="refresh-detail-permissions" onClick={onPermissionsChanged}>
         Refresh
       </button>
+    </div>
+  ),
+}))
+jest.mock('@/features/knowledge/document/components/KnowledgeReadOnlyHistory', () => ({
+  KnowledgeReadOnlyHistory: ({
+    knowledgeBaseId,
+    taskId,
+  }: {
+    knowledgeBaseId: number
+    taskId: number
+  }) => (
+    <div data-testid="history-permission-gate">
+      {knowledgeBaseId}/{taskId}
     </div>
   ),
 }))
@@ -221,7 +226,6 @@ afterEach(async () => {
 })
 
 beforeEach(() => {
-  mockTaskDetail = null
   localStorage.clear()
   jest.clearAllMocks()
   mockParams = new URLSearchParams()
@@ -580,6 +584,15 @@ it('retries a failed initial link lookup and recovers the requested detail', asy
   expect(await screen.findByTestId('mock-detail-panel')).toHaveTextContent('Docs')
 })
 
+it('checks the task binding when a historical library is absent from the sidebar', async () => {
+  mockPathname = '/knowledge/default/Docs'
+  mockParams = new URLSearchParams({ kb: '70', taskId: '123' })
+  render(<KnowledgeDocumentPageMobile initialKbNamespace="default" initialKbName="Docs" />)
+  expect(await screen.findByTestId('history-permission-gate')).toHaveTextContent('70/123')
+  expect(screen.queryByTestId('mock-detail-panel')).not.toBeInTheDocument()
+  expect(getKnowledgeBase).not.toHaveBeenCalled()
+})
+
 it('retains the mounted detail through a same-scope refresh failure and retries', async () => {
   mockPathname = '/knowledge/default/Docs'
   mockParams = new URLSearchParams({ kb: '7' })
@@ -928,22 +941,3 @@ it.each(
     }
   }
 )
-
-test('opens a bound history conversation when its source is absent from discovery', async () => {
-  mockParams = new URLSearchParams('kb=989&taskId=21&type=document')
-  mockTaskDetail = { id: 21, task_type: 'knowledge' }
-  jest.mocked(knowledgePermissionApi.getMyPermission).mockResolvedValueOnce({
-    has_access: false,
-    is_creator: false,
-    role: null,
-    pending_request: null,
-    source_access: 'visit-only',
-    task_source_bound: true,
-  })
-
-  render(<KnowledgeDocumentPageMobile />)
-  expect(await screen.findByTestId('mock-history-chat')).toHaveTextContent('989')
-  expect(knowledgePermissionApi.getMyPermission).toHaveBeenCalledWith(989, { taskId: 21 })
-  expect(getKnowledgeBase).not.toHaveBeenCalledWith(989)
-  expect(screen.queryByTestId('mock-detail-panel')).not.toBeInTheDocument()
-})

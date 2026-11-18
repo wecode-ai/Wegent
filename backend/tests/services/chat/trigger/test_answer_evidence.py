@@ -522,128 +522,79 @@ def test_implicit_flush_savepoint_rollback_failure_is_not_recoverable(monkeypatc
 
 
 @pytest.mark.parametrize(
-    (
-        "answer_id",
-        "member",
-        "task_bound",
-        "snapshot_generation",
-        "restricted",
-        "delegated",
-        "expected",
-    ),
+    ("acl_role", "restricted", "task_id", "member", "bound", "delegated", "expected"),
     [
-        (None, False, True, None, True, False, "denied"),
-        (None, True, True, None, True, False, "visit-only"),
-        (None, True, False, None, False, True, "visit-only"),
-        (12, True, True, None, True, False, "visit-only"),
-        (12, True, False, "current", True, False, "visit-only"),
-        (12, True, False, "stale", True, False, "denied"),
-        (12, True, False, None, True, False, "denied"),
-        (12, True, False, None, False, True, "visit-only"),
-        (12, False, False, None, False, True, "denied"),
-        (12, True, False, None, False, False, "denied"),
+        (True, False, None, False, False, False, "denied"),
+        (True, False, 5, True, True, False, "denied"),
+        (False, True, 5, True, True, False, "denied"),
+        (False, True, 5, True, True, True, "visit-only"),
+        (False, False, 5, True, False, True, "visit-only"),
+        (False, False, 5, False, True, True, "denied"),
     ],
     ids=[
-        "nonmember",
-        "task-binding",
-        "delegated-task-without-snapshot",
-        "bound-answer-without-snapshot",
-        "trusted-snapshot",
-        "old-generation",
-        "forged-result-without-snapshot",
-        "delegated-answer-without-snapshot",
-        "delegation-does-not-bypass-membership",
-        "no-source-grant",
+        "insufficient-direct-acl-alone",
+        "insufficient-direct-acl-in-task",
+        "historical-binding-without-agent-access",
+        "restricted-reader-with-current-agent-access",
+        "agent-access-without-snapshot",
+        "agent-delegation-does-not-bypass-task-membership",
     ],
 )
-def test_permission_endpoint_reports_only_authorized_source_scope(
-    monkeypatch,
-    answer_id,
-    member,
-    task_bound,
-    snapshot_generation,
-    restricted,
-    delegated,
-    expected,
+def test_permission_endpoint_requires_current_agent_access(
+    monkeypatch, acl_role, restricted, task_id, member, bound, delegated, expected
 ):
     from importlib import import_module
 
     from fastapi import Response
 
     from app.api.endpoints.share import get_my_kb_permission
-    from app.models.subtask import SubtaskRole, SubtaskStatus
     from app.services.chat import task_default_knowledge_bases
-    from app.services.knowledge import answer_evidence as module
+    from app.stores.tasks import task_access_store
 
     db = MagicMock()
-    first = db.query.return_value.filter.return_value.first
+    db.query.return_value.filter.return_value.first.side_effect = [
+        SimpleNamespace(json={"spec": {"directAccessRequirement": "edit"}}),
+        None,
+    ]
     monkeypatch.setattr(
         import_module("app.services.share.knowledge_share_service"),
         "resolve_knowledge_base_permission",
         lambda *args: SimpleNamespace(
-            has_access=False, is_creator=False, role=None, is_denied=restricted
+            has_access=acl_role, is_creator=False, role=None, is_denied=restricted
         ),
     )
-    monkeypatch.setattr(
-        module.subtask_store,
-        "get_by_id",
-        lambda *args, **kwargs: SimpleNamespace(
-            id=12,
-            task_id=5,
-            answer_generation_id="current",
-            role=SubtaskRole.ASSISTANT,
-            status=SubtaskStatus.COMPLETED,
-            result={
-                "answer_citations": [{"knowledge_base_id": 7, "citation_id": "42"}]
-            },
-        ),
+    monkeypatch.setattr(task_access_store, "is_member", lambda *args, **kwargs: member)
+    get_task = MagicMock(
+        return_value=SimpleNamespace(
+            json={"spec": {"knowledgeBaseRefs": [{"id": 7 if bound else 99}]}}
+        )
     )
-    monkeypatch.setattr(
-        module.task_access_store,
-        "is_member",
-        lambda *args, **kwargs: member,
-    )
-    monkeypatch.setattr(
-        module.task_access_store,
-        "get_task",
-        lambda *args, **kwargs: SimpleNamespace(
-            json={"spec": {"knowledgeBaseRefs": [{"id": 7}] if task_bound else []}}
-        ),
-    )
+    monkeypatch.setattr(task_access_store, "get_task", get_task)
+    resolve_delegate = MagicMock(return_value=11 if delegated else None)
     monkeypatch.setattr(
         task_default_knowledge_bases,
         "resolve_task_default_knowledge_base_read_user_id",
-        lambda *args: 11 if delegated else None,
+        resolve_delegate,
     )
-    snapshot = (
-        SimpleNamespace(
-            caller_context={
-                "answer_evidence": {
-                    "answer_id": 12,
-                    "generation_id": snapshot_generation,
-                    "local_id": "e",
-                }
-            },
-        )
-        if snapshot_generation
-        else None
-    )
-    binding_lookup = member and answer_id is not None and not task_bound
-    first.side_effect = ([snapshot] if binding_lookup else []) + [
-        SimpleNamespace(json={"spec": {}}),
-        None,
-    ]
+
     response = Response()
     permission = get_my_kb_permission(
         resource_id=7,
         response=response,
-        task_id=5,
-        answer_id=answer_id,
-        citation_id=42 if answer_id is not None else None,
+        task_id=task_id,
         db=db,
         current_user=SimpleNamespace(id=3),
     )
     assert permission.has_access is False
     assert permission.source_access == expected
-    assert permission.task_source_bound is (answer_id is None and member and task_bound)
+    if task_id is None:
+        assert "task_source_bound" not in permission.model_dump()
+    else:
+        assert permission.task_source_bound is (member and bound)
+    if task_id and member:
+        resolve_delegate.assert_called_once_with(db, task_id, 3, 7)
+    else:
+        resolve_delegate.assert_not_called()
+        get_task.assert_not_called()
+    db.get.assert_not_called()
     assert response.headers["Cache-Control"] == "private, no-store"

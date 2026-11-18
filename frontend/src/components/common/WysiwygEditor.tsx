@@ -20,6 +20,9 @@ const VIM_MODE_STORAGE_KEY = 'editor-vim-mode'
 
 export interface WysiwygEditorProps {
   initialContent: string
+  value?: string
+  /** Reset the CodeMirror history after an external change that must not be undone. */
+  contentRevision?: number
   onChange?: (content: string) => void
   onSave?: (content: string) => void
   onClose?: () => void
@@ -54,6 +57,8 @@ type ViewMode = 'edit' | 'preview' | 'split'
  */
 export function WysiwygEditor({
   initialContent,
+  value,
+  contentRevision,
   onChange,
   onSave: _onSave,
   onClose,
@@ -62,7 +67,15 @@ export function WysiwygEditor({
   defaultVimMode,
   language = 'markdown',
 }: WysiwygEditorProps) {
-  const [content, setContent] = useState(initialContent)
+  const [internalContent, setInternalContent] = useState(initialContent)
+  const content = value ?? internalContent
+  const isControlled = value !== undefined
+  const setContent = useCallback(
+    (next: string) => {
+      if (!isControlled) setInternalContent(next)
+    },
+    [isControlled]
+  )
   const [viewMode, setViewMode] = useState<ViewMode>(readOnly ? 'preview' : 'split')
   const [vimEnabled, setVimEnabled] = useState<boolean>(() => {
     // Initialize from localStorage first, then prop, then default to false
@@ -86,7 +99,7 @@ export function WysiwygEditor({
 
   // Update content when initialContent changes (e.g., when switching documents)
   useEffect(() => {
-    setContent(initialContent)
+    setInternalContent(initialContent)
   }, [initialContent])
 
   // Persist vim mode preference
@@ -121,7 +134,7 @@ export function WysiwygEditor({
       setContent(newContent)
       onChange?.(newContent)
     },
-    [onChange]
+    [onChange, setContent]
   )
 
   // Handle content change from CodeMirror
@@ -130,7 +143,7 @@ export function WysiwygEditor({
       setContent(newContent)
       onChange?.(newContent)
     },
-    [onChange]
+    [onChange, setContent]
   )
 
   // Handle save from Vim :w command
@@ -168,7 +181,7 @@ export function WysiwygEditor({
         })
       }
     },
-    [content, onChange]
+    [content, onChange, setContent]
   )
 
   // Render the editor toolbar
@@ -252,6 +265,7 @@ export function WysiwygEditor({
       )}
       {vimEnabled ? (
         <CodeMirrorEditor
+          key={contentRevision}
           value={content}
           onChange={handleCodeMirrorChange}
           onSave={handleVimSave}
