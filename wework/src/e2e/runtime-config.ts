@@ -4,6 +4,7 @@ export interface DesktopE2ERuntimeConfig {
   codexHomeInitialization?: boolean
   controlToken?: string
   controlUrl?: string
+  conversationCacheIdleTtlMs?: number
   disabled?: boolean
   localModelsCatalogReady?: boolean
   modelServerUrl?: string
