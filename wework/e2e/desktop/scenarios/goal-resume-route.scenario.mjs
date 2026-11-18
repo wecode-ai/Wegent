@@ -7,6 +7,7 @@ import { ensureTaskRowVisible } from '../modules/memory-tool-flows.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
+  MODEL_REQUEST_TIMEOUT_MS,
   createSingleRootLocalProject,
 } from '../modules/shared.mjs'
 import {
@@ -19,7 +20,6 @@ import {
   selectedToolCall,
   selectTool,
 } from '../modules/response-protocol.mjs'
-import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 
 const MARKER = 'WEWORK_GOAL_RESUME_ROUTE'
@@ -118,18 +118,11 @@ export function createDesktopScenario(options) {
           'clickWhenEnabled',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="resume-goal-button"]`
         )
-        // Resuming after a desktop restart restarts the native executor and rebinds
-        // the Goal model route before the next model request can begin.
-        await waitForValue(
-          async () => requests,
-          current => current >= 3,
-          'The resumed Goal did not reach the model',
-          options.uiTimeoutMs * 3
-        )
+        // Resuming after a restart starts Codex and reopens the thread before rendering the reply.
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-          { text: RECOVERED }
+          { text: RECOVERED, timeoutMs: MODEL_REQUEST_TIMEOUT_MS }
         )
         const settled = await waitForWorkbenchDebugState(
           control,

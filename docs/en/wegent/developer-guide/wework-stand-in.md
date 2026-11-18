@@ -414,3 +414,11 @@ Review coverage composes with the existing profile checkpoint, retaining every
 original assertion and sharing its build, startup and model protocol fixtures.
 No separate CI job is added. Screenshots and logs stay in test artifacts rather
 than repository commits.
+
+## Issue assignment wakeup diagnostics
+
+Correlate the Issue and assignment IDs across Python's `Stand-in Issue wakeup staged`, Rust Backend's `Stand-in Issue event page served`, and Executor's `issue_event_queued` and `Stand-in Issue event cursor saved`. The queued event's `intentId` links to `stand-in dispatch reconciliation`; `assignment_already_handled` identifies an already accepted assignment.
+
+`staged` describes a write attempt within the caller's transaction, not a commit. `allocated_sequence` is the sequence allocated for this attempt; a duplicate event can retain its original sequence. A served event page proves query visibility. Executor advances its cursor only after durable local enqueue. Logs contain identities and state, never Issue bodies or credentials.
+
+The current Python creation flow also suppresses wakeups when `notify_assignee=false`, logging `reason=notify_assignee_false`. API tests cover this distinction. An Executor protocol integration test uses simulated Backend event pages and real local persistence to verify enqueue, checkpoints and repeated collection. These diagnostics do not change intake policy or establish the cause of any historical Issue on their own.
