@@ -247,7 +247,7 @@ speedup from a new CI run.
 
 ### Test-only polling and retry timing
 
-- `stand-in` and `stand-in-cloud` default to
+- `stand-in`, `stand-in-cloud` and `stand-in-assignment-notifications` default to
   `WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS=500`. Only stand-in scheduler polling
   changes; negative assertions still observe a full cycle plus 500ms. Ordinary
   execution retains its 5000ms default.

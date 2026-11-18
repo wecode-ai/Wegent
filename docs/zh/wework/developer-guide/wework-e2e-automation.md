@@ -233,7 +233,7 @@ checkpoint 并发上限保持 4。两个 Core 性能基准分片以及 Cloud 的
 
 ### 测试专用轮询和退避时间
 
-- `stand-in`、`stand-in-cloud` 默认设置
+- `stand-in`、`stand-in-cloud`、`stand-in-assignment-notifications` 默认设置
   `WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS=500`。只调整助理调度轮询，
   负向断言仍观察一个完整周期并额外等待 500ms；普通运行缺省仍为 5000ms。
 - `model-overload-recovery` 默认设置

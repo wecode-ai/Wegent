@@ -6,7 +6,7 @@ export function checkpointScenarioEnv(env, checkpoint) {
   if (checkpoint === 'model-overload-recovery') {
     nextEnv.WEWORK_E2E_OVERLOAD_RETRY_BASE_MS ??= '2000'
   }
-  if (checkpoint === 'stand-in' || checkpoint === 'stand-in-cloud') {
+  if (['stand-in', 'stand-in-cloud', 'stand-in-assignment-notifications'].includes(checkpoint)) {
     nextEnv.WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS ??= '500'
   }
   if (checkpoint === 'workspace-attachments') {
