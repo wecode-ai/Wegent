@@ -86,3 +86,35 @@ may still need recovery:
 lifecycle is driven by archived tasks and the Worktree retention settings, with
 a Git snapshot saved before deletion. The storage maintenance thread does not
 delete these directories directly.
+
+## Isolating startup reads from writes
+
+Opening an initialized `data/tasks.sqlite` checks the current schema, history tables/indexes and default task project
+without waiting for the task-store initialization mutex or resetting WAL mode. First creation,
+schema migration, history-structure repair and default-project repair remain serialized when they modify data.
+
+UI assistant settings use one read-only WAL snapshot, normalizing legacy values and binding
+the current device in memory. Execution-owned reconciliation reserves a writer only for actual
+legacy migrations or device rebinding and re-reads transactionally. Explicit saves retain version,
+permission and device validation. Legacy roles have stable identities across views and migration.
+Refreshing an existing code project reads its existence and archive state without filling in
+execution metadata; importing a new project remains a write. Reading the model picker does not
+write custom catalogs, synchronize creation profiles or wait for a Codex restart. Execution
+preparation still reconciles catalogs before using a model. Enabled custom models remain
+selectable while catalog reconciliation is pending.
+
+Electron singleton protection, coherent file snapshots, connection mutexes and actual write
+transactions continue to guard their owning operations. They must not be bypassed to claim
+readiness. The desktop `startup-fault-isolation` checkpoint additionally reloads the workbench
+while a real database write transaction remains open, checks project, task and assistant reads,
+and verifies saving after release. It never modifies a personal database.
+
+Task updates publish their index state before recording telemetry outside the index lock, using timestamps captured when transitions are queued. SQLite waits cannot hold the task-list index mutex. Telemetry reads filter retention and queue limits in SQL; append and configuration writes own cleanup.
+
+Native quota account checks run outside the task send gate; state publication reacquires it and checks execution ownership, so cancellation does not wait for account reads.
+
+After the workbench mounts, its local runtime initializer prepares execution recovery and default plugins in the background. UI reads do not wait for this phase; failures use the existing runtime notice and retry action.
+
+Telemetry policy persists each user’s collection cutoff and rejects older queued observations within the write transaction. Additional policy storage initializes only on writes; reads create no tables. Terminal task state is published before releasing its execution claim, and telemetry persistence holds no execution-control mutex.
+
+Asynchronous capacity release checks native execution ownership, so question or Goal metadata updates cannot retain a completed turn's worker slot.

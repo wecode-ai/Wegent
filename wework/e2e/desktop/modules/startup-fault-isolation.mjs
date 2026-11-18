@@ -164,6 +164,8 @@ async function verifyStartupFault({
     assert.equal(result.visible, true)
     assert.equal(result.retryEnabled, true)
     assert.equal(result.reopened, true)
+    assert.equal(result.nativeProfileIsolated, true)
+    assert.equal(result.sessionProfileIsolated, true)
     assert.equal(result.state.ready, false, 'Recovery must not certify a healthy release')
     assert.ok(result.state.error)
     if (gpuLaunch) {
@@ -214,6 +216,11 @@ function recoveryWindowAssertion(evidencePath, gpuLaunch) {
     const { app, BrowserWindow } = require('electron')
     const fs = require('node:fs')
     const output = ${JSON.stringify(evidencePath)}
+    // Bootstrap failures precede main's path setup; isolate native stores before ready.
+    const profile = process.env.WEWORK_USER_DATA_DIR
+    if (!profile) throw new Error('Recovery probe requires an isolated native profile')
+    app.setPath('userData', profile)
+    app.setPath('sessionData', profile)
     if (process.platform === 'linux') {
       const stat = fs.readFileSync('/proc/self/stat', 'utf8')
       const pgid = Number(stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\\s+/)[2])
@@ -346,7 +353,7 @@ function recoveryWindowAssertion(evidencePath, gpuLaunch) {
           return
         }
         clearInterval(timer)
-        result = {visible:window.isVisible(),retryEnabled,reopened:true,state,profilePaths}
+        result = {visible:window.isVisible(),retryEnabled,reopened:true,state,profilePaths,nativeProfileIsolated:app.getPath('userData')===profile,sessionProfileIsolated:app.getPath('sessionData')===profile}
         persistResult()
         record('quit-requested', {windows:BrowserWindow.getAllWindows().length})
         app.quit()

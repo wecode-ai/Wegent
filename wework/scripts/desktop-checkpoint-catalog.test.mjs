@@ -93,6 +93,48 @@ test('literal CI targets and segment lists resolve to retained checkpoints or gr
   }
 })
 
+test('HTTP cloud authorization keeps Linux browser coverage outside the Windows Core matrix', () => {
+  const { ci } = loadDesktopCheckpointCatalog()
+  assert.ok(ci.cloud_segments.includes('cloud-http-authorization'))
+  assert.equal(ci.core_segments.includes('cloud-http-authorization'), false)
+  assert.equal(
+    ci.cloud_shards
+      .flatMap(shard => shard.split(','))
+      .filter(id => id === 'cloud-http-authorization').length,
+    1
+  )
+  const job = JSON.parse(
+    execFileSync(
+      'ruby',
+      [
+        '-ryaml',
+        '-rjson',
+        '-e',
+        "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-cloud-e2e'])",
+        '.github/workflows/wework-e2e.yml',
+      ],
+      { cwd: root, encoding: 'utf8' }
+    )
+  )
+  assert.equal(job['runs-on'], 'ubuntu-latest')
+  assert.ok(job.container.volumes.includes('/opt/google/chrome:/opt/google/chrome:ro'))
+  assert.ok(
+    job.container.volumes.includes(
+      '/usr/local/share/chromedriver-linux64:/opt/wegent-e2e/chromedriver:ro'
+    )
+  )
+  const verify = job.steps.find(
+    step => step.name === 'Verify the existing external browser runtime'
+  )
+  assert.ok(verify.if.includes("contains(matrix.segments, 'cloud-http-authorization')"))
+  const run = job.steps.find(step => step.name === 'Run Wework desktop Cloud E2E checkpoints')
+  assert.ok(
+    run.env.WEWORK_E2E_EXTERNAL_BROWSER_PREREAD.includes(
+      "contains(matrix.segments, 'cloud-http-authorization')"
+    )
+  )
+})
+
 test('every registered checkpoint retains a real module and a CI execution owner', () => {
   const catalog = loadDesktopCheckpointCatalog()
   const ciCheckpoints = expandDesktopCheckpoints([

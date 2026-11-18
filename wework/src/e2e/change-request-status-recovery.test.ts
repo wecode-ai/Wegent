@@ -12,6 +12,34 @@ import type { DeviceCommandRequest } from '@/types/api'
 import { createProvider } from '../../dsh/connection-git/provider.js'
 import { recoverChangeRequestStatus } from '../../e2e/desktop/scenarios/change-request-status.scenario.mjs'
 
+const fileIo = vi.hoisted(() => ({
+  pending: new Set<Promise<unknown>>(),
+  afterRead: undefined as ((path: string) => Promise<void>) | undefined,
+}))
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const filesystem = await importOriginal<typeof import('node:fs/promises')>()
+  // Observe real disk operations without replacing their contents or failures.
+  const track = <T>(operation: Promise<T>) => {
+    const settled = operation.finally(() => fileIo.pending.delete(settled))
+    fileIo.pending.add(settled)
+    return settled
+  }
+  return {
+    ...filesystem,
+    readFile: (...args: Parameters<typeof filesystem.readFile>) =>
+      track(
+        filesystem.readFile(...args).then(async content => {
+          await fileIo.afterRead?.(String(args[0]))
+          return content
+        })
+      ),
+    writeFile: (...args: Parameters<typeof filesystem.writeFile>) =>
+      track(filesystem.writeFile(...args)),
+    rename: (...args: Parameters<typeof filesystem.rename>) => track(filesystem.rename(...args)),
+  }
+})
+
 const target = linkedChangeRequestTarget(
   'native-runtime',
   'https://github.com/wecode-ai/Wegent/pull/2631'
@@ -51,6 +79,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  fileIo.afterRead = undefined
   vi.clearAllTimers()
   vi.useRealTimers()
   await rm(directory, { recursive: true, force: true })
@@ -274,7 +303,11 @@ async function finishRecovery(fixture: Awaited<ReturnType<typeof recoveryFixture
   )
   await fixture.firstRead
   const flushFilesystem = async () => {
-    for (let turn = 0; turn < 10; turn++) await new Promise(resolve => setImmediate(resolve))
+    // Only simulated native/UI delays advance time, never pending real disk operations.
+    do {
+      await Promise.allSettled([...fileIo.pending])
+      await new Promise(resolve => setImmediate(resolve))
+    } while (fileIo.pending.size)
   }
   await flushFilesystem()
   for (let step = 0; !result && step < 400; step++) {
@@ -384,6 +417,33 @@ test('keeps the ten-second native activation deadline', async () => {
   const result = await finishRecovery(fixture)
   expect((result.error as Error).message).toBe(activationFailure)
   expect(result.elapsedMs).toBe(10_000)
+  expect(fixture.timeline.some(entry => entry.event === 'summary-opened')).toBe(false)
+})
+
+test('does not advance the virtual deadline while a real journal read is pending', async () => {
+  const fixture = await recoveryFixture({ startDelayMs: 20_001 })
+  const startedAt = Date.now()
+  let readStartedAt: number | undefined
+  let readFinishedAt: number | undefined
+  fileIo.afterRead = async path => {
+    if (
+      path !== fixture.journalPath ||
+      Date.now() - startedAt < 9900 ||
+      readStartedAt !== undefined
+    )
+      return
+    readStartedAt = Date.now() - startedAt
+    // Delay real I/O completion independently of the simulated clock.
+    for (let turn = 0; turn < 100; turn++) await new Promise(resolve => setImmediate(resolve))
+    readFinishedAt = Date.now() - startedAt
+  }
+  const result = await finishRecovery(fixture)
+  expect((result.error as Error).message).toBe(activationFailure)
+  expect({ readStartedAt, readFinishedAt, elapsedMs: result.elapsedMs }).toEqual({
+    readStartedAt: 9900,
+    readFinishedAt: 9900,
+    elapsedMs: 10_000,
+  })
   expect(fixture.timeline.some(entry => entry.event === 'summary-opened')).toBe(false)
 })
 
