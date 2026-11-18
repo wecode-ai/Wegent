@@ -318,6 +318,7 @@ pub struct CodexAppServerTurn {
     pub quota_recovery: Option<CodexQuotaRecovery>,
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
+    pub error_type: Option<String>,
     pub response_item_id: Option<String>,
     pub response_value_origin: CodexResponseValueOrigin,
     pub goal_status: Option<String>,
@@ -329,6 +330,9 @@ pub struct CodexAppServerTurn {
 
 #[path = "codex/interaction.rs"]
 mod interaction;
+
+mod error_type;
+pub(crate) use error_type::codex_error_type;
 
 #[path = "codex/mcp_apps.rs"]
 mod mcp_apps;
@@ -2713,6 +2717,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             quota_recovery: state.quota_recovery.take(),
             thread_id,
             outcome,
+            error_type: state.error_type.clone(),
             response_item_id,
             response_value_origin,
             goal_status,
@@ -3123,6 +3128,7 @@ async fn run_codex_app_server_turn_with_runtime(
             quota_recovery: state.quota_recovery.take(),
             thread_id,
             outcome,
+            error_type: state.error_type.clone(),
             response_item_id,
             response_value_origin,
             goal_status,

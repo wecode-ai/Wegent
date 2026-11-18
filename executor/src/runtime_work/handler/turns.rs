@@ -2402,6 +2402,7 @@ impl RuntimeWorkRpcHandler {
                             &event_request,
                             json!({
                                 "error": {"message": message},
+                                "type": turn.error_type,
                                 "startedAt": turn.started_at_ms,
                                 "completedAt": turn.completed_at_ms,
                                 "durationMs": turn.duration_ms,

@@ -89,7 +89,7 @@ test.describe('Task member access through Rust routes', () => {
     expect((await memberApi.login(REGULAR_USER.username, REGULAR_USER.password)).status).toBe(200)
 
     botName = `${testPrefix}-member-access-bot`
-    teamName = `${testPrefix}-member-access-agent`
+    teamName = `${testPrefix}-member-access-team`
     const bot = await ownerApi.createBot({
       name: botName,
       shell_name: 'Chat',
@@ -111,7 +111,7 @@ test.describe('Task member access through Rust routes', () => {
     const team = await ownerApi.createTeam({
       name: teamName,
       bots: [{ bot_id: createdBotId, role: 'leader' }],
-      bind_mode: ['chat'],
+      bind_mode: ['code'],
       requires_workspace: false,
       workflow: { mode: 'solo' },
     })
@@ -166,7 +166,7 @@ test.describe('Task member access through Rust routes', () => {
     const prompt = `e2e approved task member access ${taskId}`
     const created = await ownerApi.post(`/api/tasks/${taskId}`, {
       prompt,
-      team_id: createdTeamId,
+      team_id: teamId,
       type: 'offline',
       task_type: 'code',
       git_url: '',
