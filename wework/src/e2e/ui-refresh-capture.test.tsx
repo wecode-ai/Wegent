@@ -217,3 +217,28 @@ test('counts smaller subtree replacements after an earlier maximum in the same c
   expect(after.removedSubtreeElements - before.removedSubtreeElements).toBe(3)
   expect(after.removedNodes - before.removedNodes).toBe(1)
 })
+
+test('sums disjoint selected roots inside a replaced ancestor without double-counting nested matches', () => {
+  const token = start({ regions: [{ name: 'panels', selector: '[data-region]' }], renderIds: [] })
+  const wrapper = document.createElement('div')
+  wrapper.innerHTML = [
+    '<section data-region><div data-region><span></span></div></section>',
+    '<section data-region><div><span></span><button></button></div></section>',
+    '<aside><span></span><span></span></aside>',
+  ].join('')
+  document.body.append(wrapper)
+  wrapper.remove()
+  const result = stop(token).regions.panels
+  expect(result).toMatchObject({
+    observed: true,
+    initialMatches: 0,
+    finalMatches: 0,
+    addedNodes: 1,
+    removedNodes: 1,
+    rootRemovals: 2,
+    addedSubtreeElements: 7,
+    removedSubtreeElements: 7,
+    maxAddedSubtreeElements: 4,
+    maxRemovedSubtreeElements: 4,
+  })
+})

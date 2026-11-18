@@ -121,13 +121,21 @@ function mutationRoots(region: Region, records: MutationRecord[], current: Eleme
   return outerRoots([...roots])
 }
 
-function subtreeSize(node: Node, roots: Element[]): number {
-  if (roots.some(root => contains(root, node))) return elements(node)
-  // A mutation outside the region can insert or remove an ancestor of its root.
-  return roots.reduce(
-    (largest, root) => (contains(node, root) ? Math.max(largest, elements(root)) : largest),
-    0
-  )
+function subtreeSizes(node: Node, roots: Element[], targetInside: boolean) {
+  if (targetInside || roots.some(root => contains(root, node))) {
+    const size = elements(node)
+    return { total: size, largest: size }
+  }
+  // Roots are disjoint after outerRoots; nested selector matches count only once.
+  let total = 0
+  let largest = 0
+  for (const root of roots) {
+    if (!contains(node, root)) continue
+    const size = elements(root)
+    total += size
+    largest = Math.max(largest, size)
+  }
+  return { total, largest }
 }
 
 function recordRegion(region: Region, records: MutationRecord[]): void {
@@ -154,14 +162,14 @@ function recordRegion(region: Region, records: MutationRecord[]): void {
     counts.removedNodes += removed.length
     counts.rootRemovals += roots.filter(root => removed.some(node => contains(node, root))).length
     for (const node of added) {
-      const size = targetInside ? elements(node) : subtreeSize(node, roots)
-      counts.addedSubtreeElements += size
-      counts.maxAddedSubtreeElements = Math.max(counts.maxAddedSubtreeElements, size)
+      const size = subtreeSizes(node, roots, targetInside)
+      counts.addedSubtreeElements += size.total
+      counts.maxAddedSubtreeElements = Math.max(counts.maxAddedSubtreeElements, size.largest)
     }
     for (const node of removed) {
-      const size = targetInside ? elements(node) : subtreeSize(node, roots)
-      counts.removedSubtreeElements += size
-      counts.maxRemovedSubtreeElements = Math.max(counts.maxRemovedSubtreeElements, size)
+      const size = subtreeSizes(node, roots, targetInside)
+      counts.removedSubtreeElements += size.total
+      counts.maxRemovedSubtreeElements = Math.max(counts.maxRemovedSubtreeElements, size.largest)
     }
   }
   counts.mutationBatches += Number(affected)

@@ -72,7 +72,7 @@ CI 与共享 runner 复用同一个结果清理实现，依据检查点 owner �
 - `renders`：已接入组件函数的调用次数，包括 StrictMode 重复调用及未提交的渲染尝试。默认接入 `app`、`workbench-provider`、`desktop-sidebar`、`desktop-workbench-main`、`workbench-conversation`、`right-workspace-panel`；同类组件的多个实例在当前渲染器内合计。可在更细的边界复用 `recordUiRender(id)`。
 - 区域的 `mutationBatches`／`mutationRecords`：该 CSS 选择器覆盖范围内观察到的 DOM 写入批次／记录数，不是浏览器绘制帧数。批次包含 MutationObserver 回调及显式排空；嵌套区域分别统计，不能相加当作全局刷新次数。
 - `rootRemovals`：匹配区域根节点被移除的次数；`maxAddedSubtreeElements`／`maxRemovedSubtreeElements` 是回调观察时新增／移除子树的最大元素规模，用于发现“一次更新就替换大片节点”。它们不是历史插入元素的精确累计值，也不代表像素重绘范围。
-- `addedSubtreeElements`／`removedSubtreeElements` 累计回调观察时各新增／移除子树的元素规模，操作窗口可通过累计量差值衡量更新工作量：即使此前已有更大的替换，后续较小替换仍可观测并通过区域预算断言。相同节点多次移动会重复计数；它们不是去重节点数、历史精确插入量或像素重绘面积。旧报告中缺少这两项时不可视为零；`max*` 仍表示整个采集窗口的最大值。
+- `addedSubtreeElements`／`removedSubtreeElements` 累计回调观察时各新增／移除子树的元素规模，操作窗口可通过累计量差值衡量更新工作量：即使此前已有更大的替换，后续较小替换仍可观测并通过区域预算断言。替换区域外的共同父容器时，累计其中所有互不重叠的匹配根，嵌套匹配只计一次，峰值仍保留单个匹配子树规模。相同节点多次移动会重复计数；它们不是去重节点数、历史精确插入量或像素重绘面积。旧报告中缺少这两项时不可视为零；`max*` 仍表示整个采集窗口的最大值。
 - `reactCommits`：复用 `wework-root` Profiler，保留快速提交的次数及 actualDuration 合计，不受原来慢提交阈值过滤。该范围为 App 的 Profiler 子树。以 `VITE_WEWORK_E2E=true` 构建的验证产物使用 React profiling 入口，记录真实提交次数；普通发布产物不启用该入口。对于未启用 profiling 的产物，未观察到有效回调时仍返回 `null`，不会用 DOM 批次冒充提交次数。
 
 例如，已有测试中的 `operationAndWaitForResult` 可以包含多个操作及其业务等待。只有明确要求不影响侧栏的场景，才采用下例的零更新预算；其他预算应依据需求及实际测量制定，不设置通用猜测阈值。
