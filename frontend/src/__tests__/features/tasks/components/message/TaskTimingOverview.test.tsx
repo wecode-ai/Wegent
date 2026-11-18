@@ -17,6 +17,11 @@ describe('TaskTimingOverview', () => {
           agentStartedAt: 5_000,
           agentFinishedAt: 20_000,
           terminalReceivedAt: 20_500,
+          queueDurationMs: 2_000,
+          createDurationMs: 1_000,
+          waitReadyDurationMs: 1_000,
+          dispatchDurationMs: 500,
+          agentDurationMs: 15_000,
         }}
       />
     )
@@ -30,7 +35,7 @@ describe('TaskTimingOverview', () => {
 
     expect(screen.getByTestId('task-timing-waterfall')).toHaveTextContent('容器创建1s')
     expect(screen.getByTestId('task-timing-waterfall')).toHaveTextContent('任务派发0s')
-    expect(screen.getByTestId('task-timing-waterfall')).toHaveTextContent('终态回调0s')
+    expect(screen.getByTestId('task-timing-waterfall')).not.toHaveTextContent('终态回调')
   })
 
   it('hides unavailable timing', () => {

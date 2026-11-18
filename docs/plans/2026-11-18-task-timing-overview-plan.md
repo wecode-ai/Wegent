@@ -34,6 +34,12 @@ sidebar_position: 20
 - 复用已有 executor 时不记录 create 阶段。
 - `prepare_only` 任务保留已观察边界。
 - 派发失败时保留已写入 payload 的 partial timing。
+- 同组件派生 duration 字段，避免 UI 跨时钟域计算主要阶段：
+  - `queueDurationMs`
+  - `createDurationMs`
+  - `waitReadyDurationMs`
+  - `dispatchDurationMs`
+  - `provisionDurationMs`
 
 ### 代码位置
 
@@ -157,6 +163,8 @@ AI 消息头部下方展示紧凑 summary。点击后展开轻量 waterfall。�
 
 Wework 原生 runtime 会话暂未把 subtask result 投影到共享 assistant 消息；
 本阶段不伪造客户端时间，待 runtime transcript 提供 result timing 后复用同一展示组件。
+
+UI 第一版只展示同组件派生 duration，不展示跨时钟域的终态回调阶段。
 
 ### 验证记录
 

@@ -479,12 +479,17 @@ class TestDockerExecutor:
             mock_wait_ready.assert_called_once_with("new-executor")
             mock_dispatch.assert_called_once_with(sample_task, "new-executor", 8080)
             timing = sample_task["metadata"]["timing"]
-            assert set(timing) == {
+            for key in (
                 "instanceCreateStartedAt",
                 "instanceCreateFinishedAt",
                 "instanceReadyAt",
                 "taskDispatchedAt",
-            }
+                "provisionDurationMs",
+                "createDurationMs",
+                "waitReadyDurationMs",
+                "dispatchDurationMs",
+            ):
+                assert key in timing
 
     def test_create_new_container_does_not_dispatch_for_sandbox(
         self, executor, mock_subprocess
@@ -573,7 +578,9 @@ class TestDockerExecutor:
             executor._execute_in_existing_container(task, status)
 
         timing = task["metadata"]["timing"]
-        assert set(timing) == {"instanceReadyAt", "taskDispatchedAt"}
+        assert "instanceReadyAt" in timing
+        assert "taskDispatchedAt" in timing
+        assert timing["dispatchDurationMs"] >= 0
 
     @patch.dict(
         os.environ,
@@ -610,10 +617,8 @@ class TestDockerExecutor:
                 executor._create_new_container(validation_task, task_info, status)
 
         timing = validation_task["metadata"]["timing"]
-        assert set(timing) == {
-            "instanceCreateStartedAt",
-            "instanceCreateFinishedAt",
-        }
+        assert "instanceCreateStartedAt" in timing
+        assert "instanceCreateFinishedAt" in timing
         mock_delete_container.assert_not_called()
 
     @patch.dict(

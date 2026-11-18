@@ -108,18 +108,33 @@ Executor 已经产生 `response.created`、`response.completed`、`response.fail
 
 所有时间为 epoch milliseconds；executor_manager 现有的 queue 秒级时间在注入时必须统一转换为毫秒。字段可以缺失，缺失表示该阶段没有被观察到。
 
+### 时钟域
+
+`executor_manager`、executor 和 Backend 是不同时钟域。第一版不尝试跨机器校正时钟，阶段耗时优先使用同一个组件派生的 duration 字段：
+
+```json
+{
+  "queueDurationMs": 123000,
+  "createDurationMs": 18000,
+  "waitReadyDurationMs": 21000,
+  "dispatchDurationMs": 900,
+  "agentDurationMs": 920000
+}
+```
+
+这些 duration 分别由 executor_manager 或 executor 在同一时钟域内计算。UI 不再展示跨时钟域的 `terminalReceivedAt - agentFinishedAt` 阶段；该字段仅保留为诊断数据。部署环境应保持 NTP/chrony 同步，但产品 overview 不依赖跨机器时钟差来计算主要阶段耗时。
+
 ### 派生阶段
 
 展示层或后端聚合器可以派生：
 
 | 阶段 | 计算 |
 | --- | --- |
-| 队列等待 | `dequeuedAt - enqueuedAt` |
-| 容器创建 | `instanceCreateFinishedAt - instanceCreateStartedAt` |
-| 等待就绪 | `instanceReadyAt - instanceCreateFinishedAt` |
-| 初次派发 | `taskDispatchedAt - instanceReadyAt` |
-| Agent 执行 | `agentFinishedAt - agentStartedAt` |
-| 终态回调 | `terminalReceivedAt - agentFinishedAt` |
+| 队列等待 | `queueDurationMs` |
+| 容器创建 | `createDurationMs` |
+| 等待就绪 | `waitReadyDurationMs` |
+| 初次派发 | `dispatchDurationMs` |
+| Agent 执行 | `agentDurationMs` |
 
 容器创建、等待就绪和初次派发可以合并展示为“运行环境准备”。
 
@@ -199,7 +214,7 @@ Agent 执行   ████████████████ 15m 20s
 终态回调     ▏ 0.5s
 ```
 
-图形按绝对时间区间绘制，不按百分比强行铺满。
+图形按各阶段 duration 的相对占比绘制，不按跨时钟域的绝对时间强行铺满。
 
 ### Top slow items
 

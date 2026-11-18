@@ -8,8 +8,8 @@ type Timing = Record<string, number>
 interface Stage {
   id: string
   label: string
-  startAt: number
-  endAt: number
+  durationMs: number
+  share: number
 }
 
 export function TaskTimingOverview({ timing }: { timing?: Timing }) {
@@ -39,43 +39,37 @@ export function TaskTimingOverview({ timing }: { timing?: Timing }) {
 
 function buildStages(timing?: Timing): Stage[] {
   if (!timing) return []
-  const stage = (
-    id: string,
-    label: string,
-    startAt: number | undefined,
-    endAt: number | undefined
-  ): Stage | null => {
-    if (startAt === undefined || endAt === undefined || endAt < startAt) return null
-    return { id, label, startAt, endAt }
-  }
+  const stage = (id: string, label: string, durationMs: number | undefined): Stage | null =>
+    durationMs !== undefined && durationMs >= 0 ? { id, label, durationMs, share: 0 } : null
 
-  return [
-    stage('queue', '排队等待', timing.enqueuedAt, timing.dequeuedAt),
-    stage('create', '容器创建', timing.instanceCreateStartedAt, timing.instanceCreateFinishedAt),
-    stage('ready', '等待就绪', timing.instanceCreateFinishedAt, timing.instanceReadyAt),
-    stage('dispatch', '任务派发', timing.instanceReadyAt, timing.taskDispatchedAt),
-    stage('agent', 'Agent 执行', timing.agentStartedAt, timing.agentFinishedAt),
-    stage('terminal', '终态回调', timing.agentFinishedAt, timing.terminalReceivedAt),
+  const observed = [
+    stage('queue', '排队等待', timing.queueDurationMs),
+    stage('create', '容器创建', timing.createDurationMs),
+    stage('ready', '等待就绪', timing.waitReadyDurationMs),
+    stage('dispatch', '任务派发', timing.dispatchDurationMs),
+    stage('agent', 'Agent 执行', timing.agentDurationMs),
   ].filter((item): item is Stage => item !== null)
+  const total = Math.max(totalDuration(observed), 1)
+  return observed.map(stage => ({ ...stage, share: stage.durationMs / total }))
+}
+
+function totalDuration(stages: Stage[]): number {
+  return stages.reduce((sum, stage) => sum + stage.durationMs, 0)
 }
 
 function buildSummary(stages: Stage[]): string {
   const names = ['queue', 'ready', 'agent']
   const parts = stages
     .filter(stage => names.includes(stage.id))
-    .map(stage => `${stage.label} ${formatDuration(stage.endAt - stage.startAt)}`)
+    .map(stage => `${stage.label} ${formatDuration(stage.durationMs)}`)
   return parts.length > 0 ? `耗时分布 · ${parts.join(' · ')}` : '耗时分布'
 }
 
 function TaskTimingWaterfall({ stages }: { stages: Stage[] }) {
-  const start = Math.min(...stages.map(stage => stage.startAt))
-  const end = Math.max(...stages.map(stage => stage.endAt))
-  const total = Math.max(end - start, 1)
-
   return (
     <div className="mt-2 space-y-1.5" data-testid="task-timing-waterfall">
       {stages.map(stage => {
-        const width = Math.max(((stage.endAt - stage.startAt) / total) * 100, 1)
+        const width = Math.max(stage.share * 100, 1)
         return (
           <div key={stage.id} className="flex min-w-0 items-center gap-2">
             <span className="w-20 shrink-0 truncate">{stage.label}</span>
@@ -86,7 +80,7 @@ function TaskTimingWaterfall({ stages }: { stages: Stage[] }) {
               />
             </span>
             <span className="w-20 shrink-0 text-right tabular-nums">
-              {formatDuration(stage.endAt - stage.startAt)}
+              {formatDuration(stage.durationMs)}
             </span>
           </div>
         )

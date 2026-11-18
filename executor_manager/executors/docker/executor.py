@@ -60,6 +60,60 @@ from shared.utils.task_identity import build_task_identity_env
 logger = setup_logger(__name__)
 
 
+def _record_stage_durations(timing: Dict[str, Any], boundaries: Dict[str, int]) -> None:
+    """Derive same-clock durations from adjacent observed boundaries."""
+    timing.update(_stage_durations(timing, boundaries))
+
+
+def _stage_durations(
+    timing: Dict[str, Any], boundaries: Dict[str, int]
+) -> Dict[str, int]:
+    """Return same-clock stage durations available from observed boundaries."""
+    durations: Dict[str, int] = {}
+
+    def set_duration(key: str, start: Any, end: Any) -> None:
+        value = _duration(start, end)
+        if value is not None:
+            durations.setdefault(key, value)
+
+    def boundary(name: str) -> Any:
+        return boundaries.get(name, timing.get(name))
+
+    set_duration("queueDurationMs", timing.get("enqueuedAt"), timing.get("dequeuedAt"))
+    set_duration(
+        "dispatchWaitMs", timing.get("dequeuedAt"), boundary("instanceCreateStartedAt")
+    )
+    set_duration(
+        "provisionDurationMs",
+        boundary("instanceCreateStartedAt"),
+        boundary("taskDispatchedAt"),
+    )
+    set_duration(
+        "createDurationMs",
+        boundary("instanceCreateStartedAt"),
+        timing.get("instanceCreateFinishedAt"),
+    )
+    set_duration(
+        "waitReadyDurationMs",
+        timing.get("instanceCreateFinishedAt"),
+        boundary("instanceReadyAt"),
+    )
+    set_duration(
+        "dispatchDurationMs",
+        boundary("instanceReadyAt"),
+        boundary("taskDispatchedAt"),
+    )
+    return durations
+
+
+def _duration(start: Any, end: Any) -> Optional[int]:
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+        return None
+    if end < start:
+        return None
+    return int(end - start)
+
+
 def _current_epoch_ms() -> int:
     """Return the current epoch time in milliseconds."""
     return int(time.time() * 1000)
@@ -551,6 +605,7 @@ class DockerExecutor(Executor):
             metadata["timing"] = timing
         for key, value in boundaries.items():
             timing.setdefault(key, value)
+        _record_stage_durations(timing, boundaries)
 
     def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:
         """Wait for a Docker container instance to become ready."""
