@@ -1,3 +1,4 @@
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { gateRuntimeResponse } from '@/e2e/runtime-transport-gates'
 import { reportE2EError } from '@/e2e/error-capture'
 
@@ -144,6 +145,7 @@ export function subscribeDesktopHostEvents(
   handler: DesktopHostEventHandler,
   options: DesktopHostEventSubscriptionOptions = {}
 ): () => void {
+  if (!isElectronRuntime()) return () => {}
   desktopHostEventHandlers.add(handler)
   if (options.replay) {
     for (const event of desktopHostEventHistory) {

@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 describe('desktop host events', () => {
+  let previousRuntimeConfig: Window['__WEWORK_RUNTIME_CONFIG__']
   beforeEach(() => {
+    previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
+    window.__WEWORK_RUNTIME_CONFIG__ = { ...previousRuntimeConfig, desktopHost: 'electron' }
     vi.resetModules()
     window.sessionStorage.clear()
   })
@@ -11,6 +14,18 @@ describe('desktop host events', () => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
+    window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
+  })
+
+  test('does not poll native events in browser mode', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'browser' }
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const { subscribeDesktopHostEvents } = await import('./desktopHost')
+    const unsubscribe = subscribeDesktopHostEvents(() => {})
+    await Promise.resolve()
+    unsubscribe()
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   test.each([

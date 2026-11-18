@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import i18n from '@/i18n'
-import { getDesktopWindowLabel } from '@/lib/runtime-environment'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import {
   installTraySettingsNavigation,
   syncNotificationUnreadCount,
@@ -29,14 +29,25 @@ vi.mock('@/i18n', () => ({
 
 vi.mock('@/lib/runtime-environment', () => ({
   getDesktopWindowLabel: vi.fn(() => 'main'),
+  isElectronRuntime: vi.fn(() => true),
 }))
 
 describe('trayNavigation', () => {
   beforeEach(() => {
+    vi.mocked(isElectronRuntime).mockReturnValue(true)
     vi.mocked(i18n.on).mockClear()
     vi.mocked(getDesktopWindowLabel).mockReturnValue('main')
     desktopHostMocks.invoke.mockClear()
     desktopHostMocks.subscribe.mockClear()
+  })
+
+  test('does not activate native tray capabilities in browser mode', () => {
+    vi.mocked(isElectronRuntime).mockReturnValue(false)
+    installTraySettingsNavigation()
+    syncTrayMenuState()
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalled()
+    expect(desktopHostMocks.subscribe).not.toHaveBeenCalled()
+    expect(i18n.on).not.toHaveBeenCalled()
   })
 
   test('installs desktop tray language synchronization once', () => {
