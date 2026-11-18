@@ -14,6 +14,7 @@ import {
 } from './model-progressive-contract.mjs'
 import { verifyNativeMcpCloudRouting } from './mcp-app-cloud-routing.mjs'
 import { verifyProjectRemovalCompletion } from './project-removal-completion.mjs'
+import { verifyRemoteConversationOwnerRejection } from './remote-conversation-owner.mjs'
 import { packagedComponentRoots } from './packaged-component-resources.mjs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -852,9 +853,9 @@ export async function verifyRemoteDockerCommandFlow(
     generatedAuthToken?.startsWith('wg-'),
     'The generated device must use a personal API key'
   )
-  if (projectEntry) {
-    await verifyRemoteDeviceOwnerIdentity(cloudEnvironment, generatedAuthToken)
-  }
+  const ownerId = projectEntry
+    ? await verifyRemoteDeviceOwnerIdentity(cloudEnvironment, generatedAuthToken)
+    : undefined
   const generatedDevice = await cloudEnvironment.startGeneratedRemoteDevice({
     deviceId: generatedDeviceId,
     deviceName: generatedDeviceName,
@@ -972,7 +973,7 @@ export async function verifyRemoteDockerCommandFlow(
   }
   await captureVerificationScreenshot(control, 'cloud-00-generated-remote-device-online.png')
   await control.command('navigate', 'body', { value: '/' })
-  return { deviceId: generatedDeviceId, ...generatedDevice }
+  return { deviceId: generatedDeviceId, ...generatedDevice, ownerId }
 }
 
 async function verifyRemoteDeviceOwnerIdentity(cloudEnvironment, deviceKey) {
@@ -987,9 +988,12 @@ async function verifyRemoteDeviceOwnerIdentity(cloudEnvironment, deviceKey) {
   ])
   assert.equal(session.status, 200)
   assert.equal(owner.status, 200)
-  assert.deepEqual(await owner.json(), { id: (await session.json()).id })
+  const { id: ownerId } = await session.json()
+  assert.ok(Number.isSafeInteger(ownerId) && ownerId > 0)
+  assert.deepEqual(await owner.json(), { id: ownerId })
   assert.equal(invalidKey.status, 401)
   assert.equal(profile.status, 401)
+  return ownerId
 }
 
 async function assertDisabledControl(control, selector, message) {
@@ -1038,7 +1042,7 @@ export async function prepareRemoteDeviceConversationModel(userDataDir, modelSer
 export async function verifyDisabledRemoteSessionCapabilities(
   control,
   cloudEnvironment,
-  { deviceId, home }
+  { deviceId, home, ownerId }
 ) {
   const device = await cloudEnvironment.device(deviceId)
   assert.deepEqual(
@@ -1164,8 +1168,15 @@ export async function verifyDisabledRemoteSessionCapabilities(
   )
   await captureVerificationScreenshot(control, 'cloud-00-generated-remote-task-completed.png')
 
-  await selectE2EModel(control, `local-model:${REMOTE_DEVICE_MODEL}`, REMOTE_DEVICE_MODEL)
   const apiLogPath = join(resultDir, 'backend-rs-logs', 'api.log')
+  await verifyRemoteConversationOwnerRejection(cloudEnvironment, {
+    deviceId,
+    ownerId,
+    taskId: runtimeTaskId,
+    apiLogPath,
+  })
+
+  await selectE2EModel(control, `local-model:${REMOTE_DEVICE_MODEL}`, REMOTE_DEVICE_MODEL)
   const apiLogOffset = (await readFile(apiLogPath, 'utf8')).length
   control.setScenario('cloud_follow_up')
   await sendPromptWithButton(
