@@ -3,7 +3,11 @@ import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from './upgrade-suite.mjs'
 
 export function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
-  if (checkpoint === 'workspace-attachments') {
+  if (
+    ['workspace-attachments', 'clipboard-history-image', 'browser-toolbar-actions'].includes(
+      checkpoint
+    )
+  ) {
     nextEnv.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS = '1'
   }
   if (
