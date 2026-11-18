@@ -1278,7 +1278,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                             auth_token=auth_token,  # Pass original JWT token from WebSocket session
                             previous_bot_id=previous_bot_id,  # Pipeline mode: previous stage's bot_id for session management
                             allow_new_session_fallback=bool(payload.task_id)
-                            and pipeline_info is None,
+                            and payload.action != "pipeline:confirm",
                         )
                     except Exception as e:
                         logger.exception(
