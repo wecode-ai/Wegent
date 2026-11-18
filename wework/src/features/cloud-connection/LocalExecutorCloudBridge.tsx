@@ -72,6 +72,7 @@ export function LocalExecutorCloudBridge({
     let needsConnectorResync = false
     let pluginAuthorizationRefreshAt: number | null = null
     let refreshingPluginAuthorization = false
+    let configuredOwnerRuntime: string | undefined
     const isCurrentConnectionAttempt = () =>
       !cancelled && connectionGenerationRef.current === generation
 
@@ -116,7 +117,13 @@ export function LocalExecutorCloudBridge({
       }
     }
 
-    const configureOwner = () => configureLocalRuntimeOwner(ownerUserId)
+    const configureOwner = async () => {
+      const runtime = await ensureLocalExecutorAvailable({ refresh: true })
+      if (!isCurrentConnectionAttempt()) return
+      if (runtime.runtimeInstanceId && runtime.runtimeInstanceId === configuredOwnerRuntime) return
+      await configureLocalRuntimeOwner(ownerUserId)
+      configuredOwnerRuntime = runtime.runtimeInstanceId
+    }
 
     const refreshConnectionStatus = async () => {
       if (!isCurrentConnectionAttempt()) return
