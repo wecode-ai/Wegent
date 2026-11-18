@@ -211,10 +211,7 @@ test.describe('Collaboration agent execution', () => {
         },
       }
     )
-    const issue = await apiRequest<CollaborationIssue>(request, '/api/v1/loop-items', {
-      method: 'POST',
-      data: { cloud_project_id: projectId, title: prompt, description: prompt, status: 'pending' },
-    })
+    const issue = await createIssue(request, projectId, { title: prompt, description: prompt })
     await page.goto(
       `/collaboration/workspaces/${workspace!.id}/projects/${projectId}/issues/${issue.id}`
     )
@@ -309,7 +306,14 @@ test.describe('Collaboration agent execution', () => {
       'test -n "$plugin_skill"',
       'cat "$plugin_skill"',
     ].join('\n')
-    const issue = await createIssue(request, projectId, agentCase)
+    const issue = await createIssue(request, projectId, {
+      title: 'Wegent agent capability execution',
+      description: [
+        agentCase.prompt,
+        `Call get_document_info with nodeId ${agentCase.nodeId}.`,
+        `Use the preloaded ${SKILL_NAME} Skill and finish with ${agentCase.answerMarker}.`,
+      ].join('\n'),
+    })
     const scenarioMatch = `task_id: ${issue.id}`
     configuredPrompts.add(scenarioMatch)
     await configureToolScenario(request, scenarioMatch, [
@@ -664,17 +668,12 @@ test.describe('Collaboration agent execution', () => {
   async function createIssue(
     request: APIRequestContext,
     projectId: string,
-    agentCase: AgentCase
+    content: { title: string; description: string }
   ): Promise<CollaborationIssue> {
     return apiRequest(request, `/api/v1/cloud-projects/${projectId}/loop-items`, {
       method: 'POST',
       data: {
-        title: 'Wegent agent capability execution',
-        description: [
-          agentCase.prompt,
-          `Call get_document_info with nodeId ${agentCase.nodeId}.`,
-          `Use the preloaded ${SKILL_NAME} Skill and finish with ${agentCase.answerMarker}.`,
-        ].join('\n'),
+        ...content,
         status: 'pending',
         priority: 'high',
         tags: ['collaboration-e2e', 'wegent-agent'],
