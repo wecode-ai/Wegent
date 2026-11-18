@@ -12,11 +12,40 @@ import {
 } from './shared.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForElementCount } from './harness-app-fixture.mjs'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   DIAGRAM_REGRESSION_LAST_SECTION,
   DIAGRAM_REGRESSION_MARKER,
 } from './conversation-diagram-fixture.mjs'
+
+const SCROLL_SETTLE_TIMEOUT_MS = 30_000
+const SCROLL_SETTLE_STABLE_MS = 1_000
+
+async function waitForStableScrollGeometry(control, selector, accept = () => true) {
+  const deadline = Date.now() + SCROLL_SETTLE_TIMEOUT_MS
+  let last
+  let stableSince = 0
+  let metrics
+  while (Date.now() < deadline) {
+    ;[metrics] = JSON.parse(await control.command('getElementMetrics', selector))
+    const geometry = `${metrics.scrollHeight}:${metrics.clientHeight}:${Math.round(metrics.scrollTop)}`
+    const now = Date.now()
+    if (geometry !== last) stableSince = now
+    last = geometry
+    if (now - stableSince >= SCROLL_SETTLE_STABLE_MS && accept(metrics)) return metrics
+    await delay(100)
+  }
+  assert.fail(`Conversation scroll geometry did not settle: ${JSON.stringify(metrics)}`)
+}
+
+function assertScrollIsInterior(metrics) {
+  const maximum = Math.max(0, metrics.scrollHeight - metrics.clientHeight)
+  assert.ok(
+    metrics.scrollTop > metrics.clientHeight && maximum - metrics.scrollTop > metrics.clientHeight,
+    `Conversation scroll did not settle inside the transcript: ${JSON.stringify(metrics)}`
+  )
+}
 
 export async function verifyConversationDiagrams(control, composerSelector, restoreTaskRow) {
   const selector = id => `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="${id}"]`
@@ -30,7 +59,9 @@ export async function verifyConversationDiagrams(control, composerSelector, rest
     await control.command('waitFor', selector('message-assistant'), {
       text: `Diagram regression section ${DIAGRAM_REGRESSION_LAST_SECTION}`,
     })
+    await waitForStableScrollGeometry(control, scroller)
     await control.command('scrollToRatioAsUser', scroller, { value: '0.5' })
+    assertScrollIsInterior(await waitForStableScrollGeometry(control, scroller))
     await control.command('waitFor', `${preview}[data-diagram-status="ready"]`)
     const source = await control.command('getAttribute', image, { value: 'src' })
     assert.ok(
@@ -76,6 +107,7 @@ export async function verifyConversationDiagrams(control, composerSelector, rest
       'The middle Markdown chunk must unmount outside the preparation window'
     )
     await control.command('scrollToRatioAsUser', scroller, { value: '0.5' })
+    assertScrollIsInterior(await waitForStableScrollGeometry(control, scroller))
     await control.command('waitFor', `${preview}[data-diagram-status="ready"]`)
     assert.equal(
       await control.command('getAttribute', image, { value: 'src' }),

@@ -194,6 +194,14 @@ MAN-08 的前提现在明确为两个模型均已真实就绪：C 在项目创�
 
 EnvironmentInfoPopover、ChangeRequestMonitor 与 observer 共 3 文件、33 项通过，目标 ESLint、两文件 Prettier、场景语法与差异检查通过。本地未执行 E2E，实际修复结果必须取得新 head 的 CI 证据。
 
+## 2026-11-18 新 activation 主线整合
+
+`d091ff4e12` 的 CI 运行期间，主线推进至 `b5818027e1bf55c281dbb0a04549035d91dd5195`，与状态场景及组件测试发生两处真实冲突。整合保留 failure、修复后 success 的同步基线；最后恢复使用主线 `recoverChangeRequestStatus`，严格确认同一 source、Runtime 和全新有效 lease 后再打开摘要，保留已合并、检查通过和同步正常的全部断言。旧的通用日志等待和额外刷新路径被替换，没有并存第二套恢复流程。
+
+组件测试完整保留 deferred 两次采集回归与主线四条提交反馈回归。状态组件、monitor、observer、主线恢复协议共 4 文件、66 项通过；跨设备通知、交互目录与 hybrid 自动合并回归 4 文件、143 项通过。Electron 启动参数和 Windows 构建键协议 7 项、双语文档契约 8 项通过；Wework typecheck、完整 lint（0 错误、5 项既有警告）、目标 ESLint、格式、场景语法及差异检查通过。
+
+文档自动合并保留普通任务页创建入口和主线跨设备问题说明。共享成员创建实现与其断言未改；未运行本地 E2E 或 ai:verify。包含本次主线整合的新 head 必须取得自身完整 CI 与无冲突结果后再交接。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
