@@ -5034,11 +5034,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       )}\n`,
       'utf8'
     )
-    await writeFailureHeap(
-      control,
-      electronUserDataDirectory,
-      join(resultDir, 'failure-main-heap.json')
-    )
     try {
       // Observe the failed condition itself: record the measured convergence
       // time or that no change happened within the budget, so slow
@@ -5052,6 +5047,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     } catch {
       // The follow-up is best-effort evidence; never mask the original failure.
     }
+    await writeFailureHeap(
+      control,
+      electronUserDataDirectory,
+      join(resultDir, 'failure-main-heap.json')
+    )
     throw error
   } finally {
     const teardownFailures = []

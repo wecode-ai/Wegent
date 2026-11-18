@@ -87,7 +87,10 @@ export function summarizeHeapRetainers(snapshot) {
       ].includes(kind)
     )
       throw new Error('Invalid heap node type')
-    const rawName = strings[nodes[i * width + name]]
+    const nameIndex = nodes[i * width + name]
+    if (!Number.isSafeInteger(nameIndex) || typeof strings[nameIndex] !== 'string')
+      throw new Error('Invalid heap node name')
+    const rawName = strings[nameIndex]
     return { type: kind, label: allowed.has(rawName) ? rawName : kind }
   }
   const categories = new Map()
