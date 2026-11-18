@@ -5,9 +5,33 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, onTestFinished, test, vi } from 'vitest'
 import {
+  assertReconcileSchedule,
   settleReconcileBaselines,
   settleRetainedPluginBaseline,
 } from '../e2e/desktop/scenarios/plugin-periodic-reconcile.scenario.mjs'
+
+test('measures periodic scheduling from registration despite variable request latency', () => {
+  const registeredAt = 1_795_007_158_095
+  const reconciliations = [
+    { at: 1_795_007_248_258, reconcile: true },
+    { at: 1_795_007_338_152, reconcile: true },
+  ]
+  expect(reconciliations[1].at - reconciliations[0].at).toBe(89_894)
+  expect(assertReconcileSchedule({ reconciliations }, registeredAt, reconciliations[1])).toEqual({
+    ticks: 2,
+    elapsedMs: 180_057,
+  })
+  for (const at of [registeredAt + 179_999, registeredAt + 226_001]) {
+    const request = { at, reconcile: true }
+    expect(() =>
+      assertReconcileSchedule(
+        { reconciliations: [reconciliations[0], request] },
+        registeredAt,
+        request
+      )
+    ).toThrow('did not use the configured')
+  }
+})
 
 async function fixture() {
   const home = await mkdtemp(join(tmpdir(), 'plugin-reconcile-baseline-'))
