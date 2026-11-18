@@ -189,6 +189,131 @@ describe('EnvironmentInfoPopover', () => {
     }
   })
 
+  test('settles both an in-flight collection and the opening refresh before advancing checks', async () => {
+    const reply = createConnectionObserverFixture()
+    let checksState = 'FAILURE'
+    const collections: Array<{
+      response: DeviceCommandResponse
+      resolve: (value: DeviceCommandResponse) => void
+    }> = []
+    const response = (request: Parameters<DeviceCommandApi['executeCommand']>[1]) => {
+      const result = reply(request)
+      const observation = outputAsRecord(outputAsRecord(result.stdout)?.observation)
+      if (observation) {
+        observation.refreshPending = false
+        observation.resourceStates[0].data.statusCheckRollup = { state: checksState }
+      }
+      return result
+    }
+    const executeCommand = vi
+      .fn<DeviceCommandApi['executeCommand']>()
+      .mockImplementation(async (_device, request) => response(request))
+    const monitor = new ChangeRequestMonitor({ executeCommand })
+    monitor.syncConnectionObservations(null, [
+      {
+        device_id: 'device',
+        runtime_features: { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } },
+      },
+    ] as DeviceInfo[])
+    const target = linkedChangeRequestTarget('device', 'https://github.com/org/repo/pull/1')!
+    const stop = monitor.register(target)
+    await monitor.refresh()
+    executeCommand.mockImplementation(async (_device, request) => {
+      if (request.command_key !== 'connection_observer_refresh') return response(request)
+      return new Promise<DeviceCommandResponse>(resolve => {
+        collections.push({ response: response(request), resolve })
+      })
+    })
+    const collecting = monitor.refresh({ shareInflight: false })
+    function Summary() {
+      const [open, setOpen] = useState(false)
+      const snapshot = useTaskChangeRequest(monitor, target)!
+      return (
+        <EnvironmentInfoPopover
+          info={applySharedChangeRequestSnapshot(
+            { additions: '+0', deletions: '-0', executionTarget: 'local', branchName: 'feature' },
+            snapshot
+          )}
+          docked={false}
+          popoverContainer={null}
+          open={open}
+          onOpenChange={setOpen}
+          onRefresh={() => monitor.refresh({ shareInflight: false })}
+        />
+      )
+    }
+    const view = render(<Summary />)
+    let ready = false
+    let waitingForObservation!: () => void
+    const observationWait = new Promise<void>(resolve => {
+      waitingForObservation = resolve
+    })
+    const control = {
+      async command(action: string, selector: string, options: { text?: string } = {}) {
+        if (action === 'click') fireEvent.click(document.querySelector(selector)!)
+        else if (action === 'waitFor') {
+          if (options.text === '状态同步正常') waitingForObservation()
+          await waitFor(() => {
+            const element = document.querySelector(selector)
+            expect(element).toBeInTheDocument()
+            if (options.text) expect(element).toHaveTextContent(options.text)
+          })
+        } else throw new Error(`Unexpected control action: ${action}`)
+        return ''
+      },
+    }
+    const preparation = openSynchronizedChangeRequestSummary(control).then(() => {
+      ready = true
+    })
+    try {
+      expect(
+        await Promise.race([
+          preparation.then(() => 'prematurely-ready'),
+          observationWait.then(() => 'waiting-for-observation'),
+        ])
+      ).toBe('waiting-for-observation')
+      expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查失败')
+      expect(ready).toBe(false)
+      expect(collections).toHaveLength(1)
+      await act(async () => {
+        collections[0].resolve(collections[0].response)
+        await collecting
+      })
+      expect(collections).toHaveLength(2)
+      expect(ready).toBe(false)
+      expect(monitor.getSnapshot(target)?.observation?.state).toBe('refreshing')
+      await act(async () => {
+        collections[1].resolve(collections[1].response)
+        await preparation
+      })
+      expect(ready).toBe(true)
+      expect(monitor.getSnapshot(target)?.observation?.state).toBe('observing')
+      expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查失败')
+      checksState = 'SUCCESS'
+      let advanced!: Promise<void>
+      act(() => {
+        advanced = monitor.refresh({ shareInflight: false })
+      })
+      expect(collections).toHaveLength(3)
+      expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查失败')
+      await act(async () => {
+        collections[2].resolve(collections[2].response)
+        await advanced
+      })
+      expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过')
+      expect(monitor.getSnapshot(target)?.observation?.state).toBe('observing')
+    } finally {
+      executeCommand.mockImplementation(async (_device, request) => response(request))
+      await act(async () => {
+        for (const collection of collections) collection.resolve(collection.response)
+        await collecting
+        await preparation
+      })
+      view.unmount()
+      stop()
+    }
+  })
+
   test('opens Git hosting settings from a GitLab CLI recovery hint', async () => {
     const popoverContainer = document.createElement('div')
     document.body.appendChild(popoverContainer)

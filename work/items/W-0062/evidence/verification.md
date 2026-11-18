@@ -186,6 +186,14 @@ MAN-08 的前提现在明确为两个模型均已真实就绪：C 在项目创�
 
 同时整合主线 `0c8538c5b0bcc352120e44c63ef13a2312825531`，仅同步其 workspace actions 两种渲染形式的既有选择器修复，无额外冲突。共享构建、Wework typecheck、完整 lint（0 错误、5 项既有警告）、双语文档契约 8 项、场景语法、目标 ESLint、代码 Prettier 和差异检查通过。未运行本地 E2E 或 ai:verify。
 
+## 2026-11-18 PR 状态切换的同步前置
+
+[Core8 官方日志](https://github.com/wecode-ai/Wegent/actions/runs/44224766180/job/134539053260) 与 artifact `14394750313` 显示 `change-request-status` 在修复后等待“检查通过”超时；失败时为“检查失败 + 正在同步状态”，1.339 秒后实际更新为“检查通过，等待合并”。两次顺序采集（03:10:13.880–24.381、24.458–33.271 UTC）跨越原断言窗口 03:10:22.476–32.544，均返回成功。没有证据支持文本隐藏、解析失败或永久不更新；8–10 秒采集耗时的底层原因仍未确认。
+
+场景原步骤只等环境面板出现，不保证此前采集已经完成。新增真实 deferred 组件回归稳定复现旧准备步骤会提前推进；现在在切换 failure、修复后 success 前复用既有同步准备 helper，等待在途采集及打开触发的采集正常结束。回归验证两次基线采集结束前不能推进，之后 FAILURE → SUCCESS 正常更新。其他状态切换已经有同步完成或全新 activation 前置；原状态、observer 数量、错误提示、持久化断言与等待时限完整保留，没有新增重试。
+
+EnvironmentInfoPopover、ChangeRequestMonitor 与 observer 共 3 文件、33 项通过，目标 ESLint、两文件 Prettier、场景语法与差异检查通过。本地未执行 E2E，实际修复结果必须取得新 head 的 CI 证据。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
