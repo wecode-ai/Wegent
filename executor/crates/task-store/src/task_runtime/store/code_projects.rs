@@ -261,13 +261,13 @@ fn git_output(
     );
     let output = match output {
         Ok(output) => output,
-        Err(error) if error.timed_out => return Err(TaskRuntimeError::Invalid(
+        Err(error) if error.timed_out => return Err(TaskRuntimeError::ProjectDiscovery(
             "Project Git discovery timed out; the project remains available for discovery on the next listing".to_owned(),
         )),
         Err(_) => return Ok(None),
     };
     if output.truncated {
-        return Err(TaskRuntimeError::Invalid(
+        return Err(TaskRuntimeError::ProjectDiscovery(
             "Project Git metadata exceeds the capture limit".to_owned(),
         ));
     }

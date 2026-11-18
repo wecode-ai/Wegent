@@ -317,7 +317,8 @@ Health queries and other IPC requests remain responsive during discovery; UI
 timeouts are not extended to hide blocking. The three Git probes for a new project share
 a 30-second deadline and reuse the native Git runner’s termination and reaping.
 A timeout does not persist that project’s catalog row; previously completed imports
-remain intact. Later listings can retry, or continue after removing the affected root.
+remain intact. Discovery errors are logged for the affected workspace and the scan continues
+with other entries; later listings can retry. Database and other non-discovery errors still propagate.
 
 E2E host-pipe diagnostics enabled for `clipboard-history-image` and `browser-toolbar-actions` record request IDs, send/receive/completion timestamps, and cumulative CPU and event-loop active/idle time in both processes. Correlate each request and compare adjacent samples to distinguish handler work, process activity, and scheduling waits. A single successful run is not evidence that an intermittent delay has been fixed.
 

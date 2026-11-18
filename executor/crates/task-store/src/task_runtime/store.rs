@@ -130,6 +130,8 @@ pub enum TaskRuntimeError {
     Database(#[from] rusqlite::Error),
     #[error("invalid task data: {0}")]
     Invalid(String),
+    #[error("project discovery failed: {0}")]
+    ProjectDiscovery(String),
     #[error("project not found")]
     ProjectNotFound,
     #[error("task not found")]

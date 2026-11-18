@@ -120,11 +120,11 @@ pub fn run_git_capture_blocking(
     timeout: Duration,
     max_output_bytes: usize,
 ) -> Result<GitCapture, GitRunError> {
-    let runtime = blocking_git_runtime()?;
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("git-capture".to_owned())
             .spawn_scoped(scope, || {
+                let runtime = blocking_git_runtime()?;
                 runtime.block_on(run_git_capture(args, cwd, env, timeout, max_output_bytes))
             })
             .map_err(|error| git_error(error.to_string(), false))?
@@ -306,6 +306,21 @@ async fn supervise_git(
         }
     };
     if let Err(original) = &result {
+        if original.timed_out
+            && std::env::var("WEWORK_PROJECT_INDEX_DIAGNOSTICS").as_deref() == Ok("1")
+        {
+            crate::logging::log_executor_event(
+                "native git timeout diagnostic",
+                &[
+                    ("pid", pid.map(|pid| pid.to_string()).unwrap_or_default()),
+                    (
+                        "child_exited",
+                        format!("{:?}", child.try_wait().map(|status| status.is_some())),
+                    ),
+                    ("reason", original.message.clone()),
+                ],
+            );
+        }
         tree.terminate();
         if let Err(error) = child.kill().await {
             if child.try_wait().ok().flatten().is_none() {
