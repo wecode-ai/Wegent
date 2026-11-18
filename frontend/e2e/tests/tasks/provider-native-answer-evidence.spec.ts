@@ -13,6 +13,7 @@ import {
   openProviderNativeChat,
   clearToolScenario,
   getScenarioModelBodies,
+  getToolScenarioState,
 } from '../../utils/provider-native-test-support'
 
 // Only model services are simulated: native storage, indexing, MCP and HTTP are real.
@@ -459,9 +460,15 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
       const fullScreen = mobile.getByTestId('answer-evidence-panel')
       await expect(fullScreen).toHaveAttribute('data-layout', 'mobile')
       await expect(mobile.getByTestId('answer-evidence-content')).toContainText(text)
-      const bounds = await fullScreen.boundingBox()
-      expect(bounds?.x).toBe(0)
-      expect(bounds?.width).toBe(390)
+      // The shared dialog animates in before it settles on the viewport edges.
+      await expect
+        .poll(() => fullScreen.boundingBox())
+        .toEqual({
+          x: 0,
+          y: 0,
+          width: 390,
+          height: 844,
+        })
       await mobile.getByTestId('answer-evidence-close').tap()
       await expect(fullScreen).toHaveCount(0)
     } finally {
@@ -689,8 +696,12 @@ test('multiple searches keep same-title documents distinct across grey refresh a
       .timeout(15000)
       .emitWithAck('chat:retry', { task_id: taskId, subtask_id: answer!.id })
     expect(intermediateRetry.success, JSON.stringify(intermediateRetry)).toBe(true)
-    // Wait for the new execution to replace the previous streaming session before cancelling it.
-    await expect(page.getByText('取消类型校验中的回答', { exact: false }).first()).toBeVisible()
+    // The retry ACK precedes stream startup. The last model step keeps the new stream active.
+    await expect
+      .poll(async () => (await getToolScenarioState(request, retryPrompt)).nextStep, {
+        message: 'The new retry should reach its held-open model response before cancellation',
+      })
+      .toBe(searchSteps.length + 1)
     const cancelAck = await socket
       .getRawSocket()!
       .timeout(15000)
