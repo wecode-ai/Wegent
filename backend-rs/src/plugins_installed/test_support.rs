@@ -9,7 +9,8 @@ use brz_mysql::{
 };
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
+use wegent_backend_test_support::unique_database_name;
 
 #[derive(Clone)]
 pub(crate) struct ObservedMysql {
@@ -155,13 +156,7 @@ where
     assert!(address.starts_with("127.0.0.1:"), "use a loopback fixture");
     let url = |name: &str| format!("mysql://root@{address}/{name}?ssl-mode=disabled");
     let admin = MysqlService::connect(&url("mysql")).await.unwrap();
-    let name = format!(
-        "installed_list_{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
+    let name = unique_database_name("installed_list");
     admin
         .execute(format!("CREATE DATABASE {name}"), ())
         .await
