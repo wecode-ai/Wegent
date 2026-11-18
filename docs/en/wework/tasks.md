@@ -60,7 +60,7 @@ The interface height follows its content, and saved interaction state is restore
 
 <a id="connection-event-waits"></a>
 
-Event waits show the effective condition in the composer, including alternatives such as checks passing or failing in one subscription. Long conditions have a full tooltip. The left task sidebar indicates waiting, received or monitoring error status and returns to the running indicator when execution resumes.
+Expand **Wait condition** above the composer to see the full effective condition, including alternatives such as checks passing or failing in one subscription. The left task sidebar indicates waiting, received or monitoring error status and returns to the running indicator when execution resumes.
 
 
 ### Ask AI to wait for connection events
