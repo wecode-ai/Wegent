@@ -37,6 +37,15 @@ async fn native_continuation_retains_capacity_after_local_control_finishes() {
         assert!(handler.native_task_holds_capacity("task-1"));
         assert_eq!(handler.get_runtime_capacity().await.unwrap()["active"], 1);
         assert!(!handler.is_active_local_task("task-1"));
+        let duplicate = handler
+            .send_message(json!({
+                "taskId":"task-1", "message":"duplicate recovery"
+            }))
+            .await
+            .unwrap();
+        assert_eq!(duplicate["success"], false);
+        assert_eq!(duplicate["code"], "bad_request");
+        assert_eq!(duplicate["error"], "runtime task is already running");
 
         handler.route_codex_notification(json!({"method":"thread/goal/cleared",
             "params":{"threadId":"thread-1"}}));

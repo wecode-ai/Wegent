@@ -54,7 +54,7 @@ jobs:
       wework_desktop_core_e2e_matrix: ${{ steps.linux-matrix.outputs.matrix }}
       windows_desktop_core_e2e_matrix: ${{ steps.windows-matrix.outputs.matrix }}
       wework_desktop_cloud_e2e: ${{ steps.classify.outputs.wework_desktop_cloud_e2e }}
-      wework_desktop_cloud_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_cloud_e2e_matrix }}
+      wework_desktop_cloud_e2e_matrix: ${{ steps.cloud-matrix.outputs.matrix }}
       wework_desktop_other_e2e: ${{ steps.classify.outputs.wework_desktop_other_e2e }}
       wework_desktop_other_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_other_e2e_matrix }}
       wework_desktop_macos_inspector_e2e: ${{ steps.classify.outputs.wework_desktop_macos_inspector_e2e }}
@@ -93,15 +93,23 @@ jobs:
       - name: Balance Windows Core checkpoints by measured duration
         id: windows-matrix
         env:
+          CORE_RUNNER_SCALE: "1.5"
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
         run: node .github/scripts/balance-wework-windows-e2e.mjs >> "$GITHUB_OUTPUT"
 
-      - name: Balance Linux Core checkpoints within existing runners
+      - name: Balance Linux Core checkpoints with 50% more runners
         id: linux-matrix
         env:
           CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}
-          CORE_RUNNER_SCALE: "1"
+          CORE_RUNNER_SCALE: "1.5"
         run: node .github/scripts/order-wework-linux-e2e.mjs --balance-core >> "$GITHUB_OUTPUT"
+
+      - name: Balance Cloud checkpoints with 50% more runners
+        id: cloud-matrix
+        env:
+          CORE_MATRIX: ${{ steps.classify.outputs.wework_desktop_cloud_e2e_matrix }}
+          CORE_RUNNER_SCALE: "1.5"
+        run: node .github/scripts/order-wework-linux-e2e.mjs --balance-cloud >> "$GITHUB_OUTPUT"
 
       - name: Resolve Wework E2E image
         id: image
