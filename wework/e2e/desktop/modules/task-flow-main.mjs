@@ -151,6 +151,7 @@ import {
   observeWindowsSocketExhaustion,
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
+import { collectPluginRuntimeDiagnostics } from './plugin-runtime-diagnostics.mjs'
 import { captureFailureFollowup, failedWaitCondition } from './failure-followup.mjs'
 import { startRendererCpuProfile } from './renderer-cpu-profile.mjs'
 import {
@@ -4992,6 +4993,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       }
     }
     const networkDiagnostics = collectWindowsNetworkDiagnostics()
+    await writeFile(
+      join(resultDir, 'plugin-runtime-diagnostics.json'),
+      `${JSON.stringify(await collectPluginRuntimeDiagnostics(homePath, executorHome, cloudEnvironment), null, 2)}\n`,
+      'utf8'
+    )
     await writeFile(
       join(resultDir, 'codex-sqlite-diagnostics.json'),
       `${JSON.stringify(await collectCodexSqliteDiagnostics(codexSqliteHome), null, 2)}\n`,

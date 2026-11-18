@@ -22,12 +22,12 @@ fn received_event_enters_the_message_queue_while_the_conversation_is_busy() {
             "status":"pending","operation_id":operation,"continuation":"Inspect the CI failure","events":[event],
             "resource_event_keys":[key],"observation_id":"observation"});
         handler.save_event_subscription(id,&record).unwrap();
-        workbench_control::journal::transact(&handler.event_subscription_path(),|state| {
+        event_store::transact(&handler.event_subscription_path(),|state| {
             state["observations"]["observation"] = json!({"events":[{"key":key,"sequence":1,"event":event}]}); Ok(())
         }).unwrap();
         assert!(handler.is_busy_local_task("caller"));
         handler.collect_conversation_subscription(id,record,"cycle").await.unwrap();
-        let saved = workbench_control::journal::transact(&handler.event_subscription_path(),|state|Ok(state["operations"][id].clone())).unwrap();
+        let saved = event_store::transact(&handler.event_subscription_path(),|state|Ok(state["operations"][id].clone())).unwrap();
         let receipt = handler.control_get_operation(&context("caller"),&json!({"operation_id":operation})).await.unwrap();
         assert_eq!(receipt["operation"]["delivery_status"],"accepted", "{receipt}");
         assert_eq!(saved["status"],"delivered");

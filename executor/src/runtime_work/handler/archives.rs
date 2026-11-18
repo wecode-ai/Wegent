@@ -399,6 +399,9 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_goal_missing_session(&link));
         };
 
+        // Capture ownership before the route preparation below resumes the
+        // session to apply the execution profile.
+        let session_loaded = self.codex_app_server.thread_is_loaded(&thread_id).await;
         if let Err(error) = self
             .prepare_goal_model_route(&link, &thread_id, &payload)
             .await
@@ -406,7 +409,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_action_failure(&link, error.message));
         }
         let mut params = Map::new();
-        params.insert("threadId".to_owned(), Value::String(thread_id));
+        params.insert("threadId".to_owned(), Value::String(thread_id.clone()));
         if let Some(objective) = payload.get("objective").cloned() {
             params.insert("objective".to_owned(), objective);
         }
@@ -426,6 +429,26 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                log_executor_event(
+                    "runtime Goal mutation result",
+                    &[
+                        ("local_task_id", link.local_task_id.clone()),
+                        (
+                            "thread_id",
+                            result["goal"]["threadId"]
+                                .as_str()
+                                .unwrap_or("none")
+                                .to_owned(),
+                        ),
+                        (
+                            "goal_status",
+                            result["goal"]["status"]
+                                .as_str()
+                                .unwrap_or("none")
+                                .to_owned(),
+                        ),
+                    ],
+                );
                 let goal = result
                     .get("goal")
                     .cloned()
@@ -444,7 +467,13 @@ impl RuntimeWorkRpcHandler {
                     // A successful activation must survive shutdown even when
                     // no local send still owns the native continuation.
                     self.persist_current_turn_state().await?;
-                    self.resume_active_goal(&link.local_task_id).await?
+                    // A session that was already resident owns its native
+                    // continuation, even before its first turn notification.
+                    if session_loaded {
+                        false
+                    } else {
+                        self.resume_active_goal(&link.local_task_id).await?
+                    }
                 } else {
                     false
                 };
