@@ -170,6 +170,7 @@ export async function createDesktopScenario({
       if (installed) {
         await update({ ...fixture, installedId: Number(installed.metadata.labels.id) }, null, {
           releaseId: fixture.releaseId,
+          updatePolicy: 'manual',
         })
       }
     }
@@ -185,12 +186,19 @@ export async function createDesktopScenario({
     try {
       for (const [role, original] of Object.entries(delivered.packages)) {
         const fixture = await publish(original)
-        await pluginApi(
-          cloud,
-          `/plugins/marketplace/${fixture.pluginId}/install?device_id=${installer.deviceId}`,
-          'POST'
-        )
-        fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
+        // Reinstall selects the latest release even for an active account installation.
+        // Reuse its membership so a second baseline never caches an unintended upgrade.
+        let installed = await accountPlugin(cloud, fixture.slug)
+        if (!installed) {
+          await pluginApi(
+            cloud,
+            `/plugins/marketplace/${fixture.pluginId}/install?device_id=${installer.deviceId}`,
+            'POST'
+          )
+          installed = await accountPlugin(cloud, fixture.slug)
+        }
+        assert.ok(installed, 'The historical plugin installation is missing')
+        fixture.installedId = Number(installed.metadata.labels.id)
         // Each baseline reuses the account but starts with a different device.
         // Reset account intent too, so the modern device cannot inherit the
         // previous baseline's upgraded release while native migration is checked.

@@ -94,7 +94,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(created.accepted, true, created.error)
         address = { deviceId: created.deviceId, taskId, workspacePath }
         const original = await waitDone()
-        // A cold session needs one durable owned continuation before native notifications.
+        // A cold session needs one native-owned continuation before notifications.
         await waitForValue(
           () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
           value => value.restarted === true,
@@ -111,8 +111,8 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(before.status, 'active')
         assert.equal(
           set.resumed,
-          true,
-          'The cold native Goal must admit its durable recovery owner'
+          false,
+          'Preparing a cold session must leave continuation owned by the native Goal'
         )
         await waitForValue(
           task,
