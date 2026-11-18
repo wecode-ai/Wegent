@@ -3,6 +3,7 @@ use super::*;
 use wegent_protocol::connection_events::matches_event;
 mod admission;
 mod cloud;
+mod conditions;
 mod goal_reconciliation;
 mod observations;
 mod observers;
@@ -13,6 +14,8 @@ mod session;
 mod store;
 use self::store as event_store;
 
+#[cfg(test)]
+mod delivery_tests;
 #[cfg(test)]
 mod tests;
 
@@ -189,8 +192,9 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return Ok(json!({"subscription":public_subscription(&record)}));
         }
-        validate_filter(&args["match"])?;
-        let intent = json!({"source":args["source"],"match":args.get("match").cloned().unwrap_or(json!({})),
+        let filter = conditions::resolve(&args)?;
+        validate_filter(&filter)?;
+        let intent = json!({"source":args["source"],"match":filter,
             "continuation":args["continuation"],"wait_for_event":args["wait_for_event"].as_bool().unwrap_or(false)});
         if let Some(record) = records.get(&id) {
             if record["intent"] != intent {
@@ -269,6 +273,21 @@ impl RuntimeWorkRpcHandler {
                 record["error_code"] = json!(error.code);
                 self.save_event_subscription(&id, &record)?;
                 return Err(error);
+            }
+        }
+        // Capture the activation window before returning, without another collection.
+        if record["status"] == "armed" && record["cloud_subscription"].is_null() {
+            record =
+                event_store::update(&self.event_subscription_path(), event_store::Scope::Source(&observation_id), |state| {
+                    let stored = &state["observations"][&observation_id];
+                    let observation =
+                        json!({"sequence":stored["sequence"],"events":stored["events"]});
+                    observations::capture_consumers(state, &observation_id, &observation);
+                    Ok(state["operations"][&id].clone())
+                })?;
+            self.save_event_subscription(&id, &record)?;
+            if record["status"] == "pending" {
+                self.connection_observation_wakeup.notify_one();
             }
         }
         Ok(json!({"subscription":public_subscription(&record)}))
@@ -518,10 +537,7 @@ impl RuntimeWorkRpcHandler {
             }
             self.save_event_subscription(id, &record)?;
         }
-        if record["status"] != "pending"
-            || self.is_busy_local_task(&task)
-            || link.interaction_status.is_some()
-        {
+        if record["status"] != "pending" || link.interaction_status.is_some() {
             return Ok(());
         }
         // Serialize the final Goal check and durable send acceptance with user
