@@ -2,20 +2,46 @@
 sidebar_position: 20
 ---
 
-# 任务 Wall Time 阶段总览实施计划
+# 任务时间占用 Profile 实施计划
 
-设计依据：[任务 Wall Time 阶段总览](../specs/2026-11-18-task-timing-overview.md)。
+设计依据：[任务时间占用 Profile](../specs/2026-11-18-task-timing-overview.md)。
 
 ## 目标
 
-按可独立验证的切片打通任务耗时数据链路：
+按可独立验证的切片打通会话时间占用 profile：
 
-1. executor_manager 记录队列和运行环境准备阶段
-2. executor 终态事件继承 timing metadata
-3. Backend 归并并持久化 timing
-4. 前端展示总用时和阶段 waterfall
+1. TimingSpan schema 与持久化
+2. executor_manager / executor 产生会话 span
+3. backend-rs 幂等写入并聚合
+4. 前端在对话操作台提供用户主动打开的耗时分析面板
 
-每个切片保持向后兼容；缺失字段不得导致执行失败。
+每个切片保持向后兼容；缺失字段不得导致执行失败。产品同时提供：
+
+- coverage：各类活动的区间 union，允许重叠
+- exclusive breakdown：互斥拆分，用于观察时间被谁占用
+
+两者不得混用。wall time 是时间轴，不再被当作唯一的统计目标。
+
+## 当前分支调整
+
+已完成的 executor_manager timing 和 executor timing 传播保留为数据源，但不再把
+`subtask.result.timing` 视为最终产品模型。后续需要迁移：
+
+```text
+queueDurationMs -> queue span
+provisionDurationMs -> provision span
+agentDurationMs -> agent span
+```
+
+当前 Backend Python 路径的 timing 修改不是 active path：`POST /api/internal/callback`
+已由 Rust 拥有。后续实现必须落在 `backend-rs`，并移除或重新定位 Python 路径变更，避免
+违反 API ownership。
+
+当前前端单条 AI 消息内自动展示 timing summary，需要调整为：
+
+- 保留低调的单轮基础信息，或暂时移除
+- 会话级完整视图由用户主动打开
+- 完整视图包含 waiting user、gap、父子 Agent、并行 Agent
 
 ## 切片 1：executor_manager 队列与准备阶段
 
@@ -112,6 +138,7 @@ RUSTUP_TOOLCHAIN=1.88.0 cargo test --test runner_contract --test callback_contra
 
 ## 切片 3：Backend callback 汇聚
 
+状态：已移除。原 Python 路径修改不是生产 active path。
 ### 行为
 
 - `CallbackRequest` 增加可选 timing 字段。
@@ -132,9 +159,11 @@ RUSTUP_TOOLCHAIN=1.88.0 cargo test --test runner_contract --test callback_contra
 - 老事件降级
 - timing 归并只允许补充空字段
 
+`POST /api/internal/callback` 已由 `backend-rs/config/routes.toml` 选中，生产请求走
+Rust handler。切片 7 必须在 Rust 中实现，不得恢复 Python fallback 行为。
 ## 切片 4：前端总览
 
-状态：已实现第一版。
+状态：已实现第一版，需要按会话级产品目标调整。
 
 ### 行为
 
@@ -180,11 +209,106 @@ pnpm --dir frontend exec prettier --check \
 - Jest：2 passed
 - Prettier：通过
 
+### 调整说明
+
+该形态回答“单轮基础设施耗时”，不满足会话级 wall-time profile 目标。后续应改为用户主动
+打开的会话级面板；单条消息内可保留极简耗时或暂时移除。
+
+## 切片 5：TimingSpan schema 与存储
+
+状态：未实现。
+
+### 行为
+
+- 新增 `task_timing_spans` 表和模型。
+- Span 包含 trace/task/subtask/turn、parent、kind、actor、status、start/end、duration、
+  clock、source、metadata。
+- `span_id` 幂等 upsert；已有字段不被重复回调覆盖。
+- open span 支持后续补 end。
+
+### 测试
+
+- migration upgrade / rollback
+- upsert 幂等
+- open span 补 end
+- 老任务无 span 正常
+
+## 切片 6：Executor span 数据源
+
+状态：未实现。
+
+### 行为
+
+- `agentDurationMs` 转为 agent span。
+- `response.subagent.activity` 转为 subagent span，保留 parent 和 actor path。
+- 工具 block 的 `createdAt` / `completedAt` / `durationMs` 转为 tool span。
+- `interaction_status` 进入 waiting/active 状态转换，产生 waiting_user span。
+- timing 数据不进入 prompt 或工具参数。
+
+### 测试
+
+- Agent、子 Agent、工具、等待用户四类 span
+- 并行子 Agent 不相加
+- 重复事件幂等
+- 老数据缺失字段降级
+
+## 切片 7：backend-rs 聚合
+
+状态：未实现。
+
+### 行为
+
+- Rust callback 归一化并写入 span。
+- 新增会话 timing 端点，返回：
+  - triage：命令/工具、子 Agent、Agent/模型、等待用户、Infra、未观测
+  - summary：wall time、coverage、exclusive breakdown
+  - swimlanes：User / Root / Child / Runtime / Gap
+  - critical path
+- union 聚合在后端完成，前端只渲染结果。
+
+### 测试
+
+- callback active path 写入
+- interval union
+- exclusive breakdown
+- triage 分类，特别是 tool input 中的常见包管理/Git 命令识别
+- 父子 inclusive / exclusive
+- critical path
+- open span 查询
+
+## 切片 8：前端耗时分析面板
+
+状态：未实现。
+
+### 行为
+
+- 在 Wework `ComposerToolbar` 的集中操作区增加“耗时分析”按钮，与剩余上下文、模型选择、
+  权限模式、插件和工作区控件并列。
+- Web 对话 composer toolbar 使用同样的入口语义。
+- 点击后打开右侧 Sheet/panel 显示 overview、泳道和 bottom-up。
+- 运行中定期刷新 open span。
+- 缺失数据显式降级。
+- 第一版不做常驻 mini chart，避免操作台过载。
+- 第一屏默认显示 Triage 和 Top suspects；完整泳道/表格为下钻。
+- 支持 dark theme；移动端使用 bottom sheet/全屏详情，不强行 split。
+
+### 测试
+
+- 用户主动打开
+- 入口位于对话操作台
+- 第一期不注册 `/timing`，避免占用过短命令名
+- 第一屏 triage 分类与 Top suspects
+- 并行子 Agent 泳道
+- coverage 与 exclusive breakdown 分开展示
+- gap 显示
+- critical path 展示
+
 ## 顺序与验收
 
-1. 切片 1 独立合入，不要求 UI 可见。
-2. 切片 2 保持 executor 兼容老 executor_manager。
-3. 切片 3 兼容老 executor 事件。
-4. 切片 4 在前三层数据可信后实施。
+1. 切片 5 先建立模型，避免继续扩大 result.timing。
+2. 切片 6 在 executor 侧补齐 agent / subagent / tool / waiting_user。
+3. 切片 7 必须落在 backend-rs active callback path。
+4. 切片 8 再提供用户主动打开的会话面板。
+5. 切片 1-4 保留的数据源逐步迁移；不符合 active ownership 的 Python 修改需要移除或重定位。
 
 每个切片完成后更新本文档状态，并补充实际测试命令与结果。
