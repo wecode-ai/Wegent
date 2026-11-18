@@ -1,4 +1,5 @@
 export interface ConnectionEventSubscription {
+  match?: Record<string, unknown> | null
   subscription_key: string
   source: {
     name: string

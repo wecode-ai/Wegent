@@ -40,6 +40,8 @@ flowchart LR
 
 异步开始快照可能晚于首次写入，结束快照可能包含稍后的写入；允许少量边界遗漏和相邻轮次合并，不保证精确时间归属。此取舍不通过全量入账或同步等待补偿。统计覆盖同一工作区内主 agent、子 agent、Shell 等来源的净变化，无法区分同时发生的人工写入。独立 worktree 分别统计；忽略文件遵循 Git 规则，已跟踪的忽略文件仍参与统计。
 
+每次 Git 调用显式启用长路径支持，避免 Git for Windows 在完整快照引用超过传统 260 字符限制时失败；不会修改工作区的 Git 配置或缩短引用哈希。
+
 快照使用私有 index，不修改真实 index、HEAD 或分支。待处理的前后 Git 树由私有 refs 保护，避免 GC 清理。后台进程按 64 KiB 缓冲生成完整二进制补丁和 JSONL 文件列表，计算 SHA-256 与字节数；不将完整 diff 或文件列表载入 Node 内存。Git 子进程的资源消耗仍取决于仓库和变更规模。归档目录只有在所有文件持久化完成后才原子发布。
 
 `record.json` 是脚本补全后的完整事件记录，包含宿主原始事件 `event`、采集时间、工作区、脱敏的 `git_url`、前后树 ID、文件数、增删行数及产物描述符。Git 地址在结束快照采集时固定到待处理项，不在延迟归档时重新读取；未配置 `remote.origin.url` 时为 `null`。URL 中的用户名、密码、查询参数和片段不会进入日志。产物路径相对于记录目录。二进制文件保留完整 Git 二进制补丁；无法按 UTF-8 表示的文件名用 `path_bytes_hex` 写入 `files.jsonl`。事件序号只在同一次执行内递增，后台完成顺序可能不同；不要只按时间戳跳过晚完成的记录。
@@ -81,6 +83,8 @@ The host emits lifecycle metadata after authorization and consumes callbacks asy
 `TurnStarted` establishes an internal working-tree baseline for a user request, without logging the repository as a full inventory. Native session/turn IDs can still be null; `execution_id` correlates events. `TurnCompleted` queues the net change from the previous snapshot; automatic continuation shares that baseline. `ExecutionCompleted` attempts to cover a failed final capture and releases the baseline. A new user request creates a new baseline.
 
 Asynchronous capture can miss early writes or include writes after a boundary. Small boundary omissions and coalesced turns are accepted; exact attribution is not promised. No full inventory or synchronous barrier compensates for this. Same-workspace child-agent and shell writes are included, as are concurrent human edits that cannot be distinguished. Separate worktrees are independent. Git ignore rules apply while tracked ignored files remain included.
+
+Each Git call explicitly enables long-path support so Git for Windows can create full snapshot refs beyond the traditional 260-character limit. Repository Git configuration and complete reference hashes remain unchanged.
 
 Private indexes preserve the real index, HEAD and branches. Private refs protect queued trees from GC. A detached plugin worker streams complete binary patches and JSONL file lists using 64 KiB buffers, records SHA-256 and byte counts, and atomically publishes only complete archives. Node never loads the complete patch or file list; Git subprocess resource use still depends on the repository and changes.
 

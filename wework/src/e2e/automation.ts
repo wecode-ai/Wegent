@@ -51,7 +51,11 @@ import {
   recordNativeTerminalKey,
 } from './native-terminal-diagnostics'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
-import { createNativeKeyObservation, readNativeTerminalViewport } from './native-key-observation'
+import {
+  createNativeKeyObservation,
+  readNativeTerminalViewport,
+  waitForNativeTerminalPageUp,
+} from './native-key-observation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import {
   getRuntimeStreamDiagnostics,
@@ -1377,7 +1381,7 @@ async function pressNativeDesktopControlKey(
   selector: string,
   key: string,
   phase: 'press' | 'down' | 'up' = 'press',
-  measurement?: { selector: string }
+  measurement?: { selector: string; timeoutMs?: number }
 ): Promise<string> {
   const windowLabel = getDesktopWindowLabel()
   recordNativeTerminalKey('focus-requested', key, findDesktopControlElements(selector)[0] ?? null)
@@ -1433,12 +1437,19 @@ async function pressNativeDesktopControlKey(
   } finally {
     window.removeEventListener(eventType, recordKey, true)
   }
-  return observation && viewportTarget
-    ? JSON.stringify({
-        viewportBefore: observation.result(),
-        viewportAfter: readNativeTerminalViewport(viewportTarget),
-      })
-    : (desktopControlDeepActiveElement()?.getAttribute('data-testid') ?? '')
+  if (!observation || !viewportTarget)
+    return desktopControlDeepActiveElement()?.getAttribute('data-testid') ?? ''
+  const viewportBefore = observation.result()
+  // Native key delivery can precede xterm's asynchronous scroll notification.
+  const viewportAfter =
+    key === 'Shift+PageUp'
+      ? await waitForNativeTerminalPageUp(
+          viewportTarget,
+          viewportBefore,
+          startedAt + (measurement?.timeoutMs ?? 10_000)
+        )
+      : readNativeTerminalViewport(viewportTarget)
+  return JSON.stringify({ viewportBefore, viewportAfter })
 }
 
 let activeDesktopControlPointer: {
@@ -3985,7 +3996,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         command.selector,
         command.key ?? '',
         'press',
-        command.target ? { selector: command.target } : undefined
+        command.target ? { selector: command.target, timeoutMs: command.timeoutMs } : undefined
       )
     }
     case 'nativeKeyDownOnly': {

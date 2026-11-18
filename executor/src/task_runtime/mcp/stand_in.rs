@@ -97,6 +97,8 @@ pub(crate) fn stand_in_mcp_client_config(
         request.auth_token.clone(),
     );
     context.surface = WeworkMcpSurface::StandIn;
+    context.current_device_id = Some(identity.device.clone());
+    context.principal_id = Some(identity.user.to_string());
     context.stand_in = Some(identity);
     let registered = super::super::mcp_http::register_space_mcp_context(context)?;
     if let Some(signature) = batch_signature {
@@ -250,7 +252,7 @@ pub(super) fn tools(context: &SpaceMcpRequestContext) -> Vec<Value> {
         connections::read_tool(false),
         json!({"name":"connect_source","description":"Discover resources for a requested stand-in source subscription through its installed provider. Use after list_connection_providers when the user needs that subscription or its read_source capability. This is not a required preflight for all one-time reads through installed execution plugins. Inspect resourceQuerySchema in the catalog; query must encode its public discovery parameters as a JSON object when declared. Ask a structured question for missing parameters rather than guessing an instance. Returns exact login identity or secure setup requirements when blocked; never request passwords in chat. Available resources still require an explicit scope choice and propose_profile confirmation to become subscriptions. Does not claim access to message contents or create schedules.","inputSchema":{"type":"object","properties":{"providerId":{"type":"string"},"kind":{"type":"string"},"query":{"type":"string"}},"required":["providerId","kind"]}}),
         json!({"name":"search_connections","description":"Search a Wework connection provider for real resources and exact IDs. Never invent IDs or silently expand intake.","inputSchema":{"type":"object","properties":{"providerId":{"type":"string"},"kind":{"type":"string"},"query":{"type":"string"},"cursor":{"type":"string"}},"required":["providerId","kind","query"]}}),
-        json!({"name":"list_projects","description":"List real local and cloud projects accessible to the current user before proposing project connections.","inputSchema":{"type":"object","properties":{}}}),
+        json!({"name":"list_projects","description":"List real local and cloud projects accessible to the current user before proposing project connections. Returns items and coverage; available projects remain usable when coverage.complete is false. Inspect coverage.sources and report unavailable sources rather than claiming complete discovery.","inputSchema":{"type":"object","properties":{}}}),
         json!({"name":"list_work","description":"Read work summaries for this role, or all roles when speaking to the primary stand-in. Fetch business details only when relevant.","inputSchema":{"type":"object","properties":{}}}),
     ];
     if context
@@ -344,7 +346,10 @@ pub(super) async fn call(
         };
     }
     if name == "list_projects" {
-        return call_tool_with_runtime_context(runtime, "list_spaces", json!({}), context).await;
+        return match batch::discovered_projects(runtime, context).await {
+            Ok(value) => text_result(value.to_string(), false),
+            Err(error) => text_result(error, true),
+        };
     }
     let result = match name {
         "configure_git_webhook"|"git_webhook_plan"=>super::stand_in_tasks::call(identity.clone(),name.to_owned(),arguments).await,

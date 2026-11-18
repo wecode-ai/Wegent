@@ -19,12 +19,25 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
 
 from app.mcp_server.context import get_mcp_context
 from app.mcp_server.schema_extractor import generate_tool_docstring
 from app.mcp_server.tools.decorator import get_registered_mcp_tools
 
 logger = logging.getLogger(__name__)
+
+
+class SchemaToolMetadata(FuncMetadata):
+    """Preserve exact JSON arguments for schema-owned tools without coercion."""
+
+    async def call_fn_with_arg_validation(
+        self, fn, fn_is_async, arguments_to_validate, arguments_to_pass_directly
+    ):
+        arguments = {**arguments_to_validate, **(arguments_to_pass_directly or {})}
+        if fn_is_async:
+            return await fn(**arguments)
+        return fn(**arguments)
 
 
 def register_tools_to_server(mcp_server: FastMCP, server_name: str) -> int:
@@ -102,6 +115,24 @@ def _register_tool(
             return json.dumps({"error": "Authentication required"})
 
         try:
+            if "input_schema" in tool_info:
+                from jsonschema import Draft202012Validator, FormatChecker
+
+                errors = list(
+                    Draft202012Validator(
+                        tool_info["input_schema"], format_checker=FormatChecker()
+                    ).iter_errors(kwargs)
+                )
+                if errors:
+                    return json.dumps(
+                        {
+                            "error": {
+                                "code": "invalid_request",
+                                "message": errors[0].message,
+                                "retryable": False,
+                            }
+                        }
+                    )
             # Build call kwargs with only valid MCP parameters
             call_kwargs = {k: v for k, v in kwargs.items() if k in mcp_param_names}
 
@@ -148,10 +179,20 @@ def _register_tool(
     tool_wrapper.__doc__ = full_docstring
 
     # Set function signature for FastMCP parameter inference
-    _set_function_signature(tool_wrapper, parameters)
+    signature_parameters = parameters
+    if "input_schema" in tool_info:
+        signature_parameters = [{**param, "python_type": Any} for param in parameters]
+    _set_function_signature(tool_wrapper, signature_parameters)
 
     # Register to MCP server
     mcp_server.tool()(tool_wrapper)
+    if "input_schema" in tool_info:
+        # Schema-owned tools validate the same contract in their dispatcher.
+        registered = mcp_server._tool_manager.get_tool(tool_name)
+        registered.parameters = tool_info["input_schema"]
+        registered.fn_metadata = SchemaToolMetadata(
+            **registered.fn_metadata.model_dump()
+        )
 
 
 def _serialize_result(result: Any) -> str:

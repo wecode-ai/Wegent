@@ -29,6 +29,26 @@ pub(super) fn merge_execution_environment(previous: &Value, mut incoming: Value)
 }
 
 impl LocalTaskStore {
+    /// Inspect a catalog alias without importing or enriching its persisted project.
+    pub fn code_project_visibility(
+        &self,
+        key: &str,
+        bound_local_id: Option<&str>,
+    ) -> Result<Option<bool>, TaskRuntimeError> {
+        let id = format!("local-code-{:x}", Sha256::digest(key.as_bytes()));
+        let bound_local_id = bound_local_id.filter(|id| *id != DEFAULT_WORK_ITEM_PROJECT_ID);
+        let connection = self.connection()?;
+        Ok(connection
+            .query_row(
+                "SELECT deleted_at FROM loop_items WHERE resource_type = 'project'
+             AND (id = ?1 OR id = ?2) ORDER BY CASE WHEN id = ?2 THEN 0 ELSE 1 END LIMIT 1",
+                params![id, bound_local_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .map(|deleted_at| deleted_at.is_none()))
+    }
+
     pub fn ensure_code_project(
         &self,
         key: &str,
