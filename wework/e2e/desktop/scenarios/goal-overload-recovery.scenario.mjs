@@ -1,3 +1,7 @@
+import {
+  OVERLOAD_FIRST_RETRY_DELAY_MS,
+  assertOverloadRetryTiming,
+} from '../modules/overload-retry-timing.mjs'
 import assert from 'node:assert/strict'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { mkdir, readFile } from 'node:fs/promises'
@@ -23,7 +27,6 @@ import { createGoalAdmissionRecovery } from '../modules/goal-admission-recovery.
 
 const GOAL = 'WEWORK_OVERLOADED_GOAL'
 const RECOVERED = 'WEWORK_OVERLOADED_GOAL_RECOVERED'
-const FIRST_RETRY_DELAY_MS = 10_000
 
 export function createDesktopScenario(options) {
   const existing = createOverloadRecovery(options)
@@ -192,7 +195,7 @@ export function createDesktopScenario(options) {
           if (!continuing) {
             // Observe beyond the native first retry delay in turn_recovery.rs to
             // prove a user mutation cannot be undone by the pending recovery.
-            await new Promise(resolve => setTimeout(resolve, FIRST_RETRY_DELAY_MS + 500))
+            await new Promise(resolve => setTimeout(resolve, OVERLOAD_FIRST_RETRY_DELAY_MS + 500))
             assert.equal(requests, 1, 'Recovery continued a Goal changed by the user')
             const goal = (await rpc('runtime.tasks.goal.get', { address })).goal
             assert.equal(goal?.status ?? null, action === 'clear' ? null : action)
@@ -204,6 +207,7 @@ export function createDesktopScenario(options) {
             await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { text: RECOVERED })
             const log = await readFile(join(options.resultDir, 'executor.log'), 'utf8')
             assert.ok(log.includes('codex overloaded turn recovery'))
+            assertOverloadRetryTiming(log)
             assert.equal((await rpc('runtime.tasks.goal.get', { address })).goal.status, 'complete')
           }
           await rpc('runtime.tasks.goal.clear', { address })
