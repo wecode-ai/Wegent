@@ -38,22 +38,30 @@ fn projection(record: &Value) -> Value {
 
 impl RuntimeWorkRpcHandler {
     fn read_ui_observer(&self, id: &str) -> Result<Value, AppIpcError> {
-        workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-            validate_observer_map(state)?;
-            Ok(state["observers"][id].clone())
-        })
+        event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("observers", id),
+            |state| {
+                validate_observer_map(state)?;
+                Ok(state["observers"][id].clone())
+            },
+        )
     }
 
     fn save_ui_observer(&self, record: &Value) -> Result<(), AppIpcError> {
         let id = field(record, "id")?;
-        workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-            validate_observer_map(state)?;
-            if state["observers"][id]["status"] == "stopped" && record["status"] != "stopped" {
-                return Err(lease_lost());
-            }
-            state["observers"][id] = record.clone();
-            Ok(())
-        })
+        event_store::update(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("observers", id),
+            |state| {
+                validate_observer_map(state)?;
+                if state["observers"][id]["status"] == "stopped" && record["status"] != "stopped" {
+                    return Err(lease_lost());
+                }
+                state["observers"][id] = record.clone();
+                Ok(())
+            },
+        )
     }
 
     pub(in crate::runtime_work::handler) async fn connection_observer_operation(
@@ -104,10 +112,11 @@ impl RuntimeWorkRpcHandler {
             self.read_cloud_ui_observer(&mut record, operation == "refresh")
                 .await?;
         } else {
-            let cached =
-                workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                    Ok(state["observations"][field(&record, "observation_id")?].clone())
-                })?;
+            let cached = event_store::read(
+                &self.event_subscription_path(),
+                event_store::Scope::Row("observations", field(&record, "observation_id")?),
+                |state| Ok(state["observations"][field(&record, "observation_id")?].clone()),
+            )?;
             if !cached.is_object()
                 || !cached["source"].is_object()
                 || !cached["checkpoint"].is_object()
@@ -151,6 +160,7 @@ impl RuntimeWorkRpcHandler {
         generation: &str,
         input: &Value,
     ) -> Result<Value, AppIpcError> {
+        let _activation = self.connection_observation_activations.read().await;
         let mut source = if input["source"].is_object() {
             input["source"].clone()
         } else {

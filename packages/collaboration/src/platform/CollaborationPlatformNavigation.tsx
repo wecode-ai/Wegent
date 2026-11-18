@@ -460,7 +460,8 @@ export function CollaborationPlatformNavigation({
         {fullSidebar ? (
           <>
             <div className="collaboration-platform-brand">
-              {messages.collaborationHome}
+              <span>{messages.collaborationHome}</span>
+              {host.sidebarHeaderActions}
             </div>
             <CollaborationPrimaryNavigation
               domain={domain}
