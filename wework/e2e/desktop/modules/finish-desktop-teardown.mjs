@@ -1,6 +1,33 @@
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+const COMMAND_EVIDENCE_FIELDS = [
+  'id',
+  'action',
+  'selector',
+  'timeoutMs',
+  'clientId',
+  'queuedAt',
+  'deliveredAt',
+  'responseFinishedAt',
+  'startedAt',
+  'resultReceivedAt',
+  'failedAt',
+  'lateResultAt',
+  'actionSucceeded',
+]
+
+function commandEvidence(commands) {
+  return commands.map(command =>
+    Object.fromEntries(
+      COMMAND_EVIDENCE_FIELDS.filter(field => Object.hasOwn(command, field)).map(field => [
+        field,
+        command[field],
+      ])
+    )
+  )
+}
+
 /** Persist the final outcome only after all lifecycle steps have settled. */
 export async function finishDesktopTeardown({
   control,
@@ -14,6 +41,7 @@ export async function finishDesktopTeardown({
   for (const [name, value] of [
     ['model-requests.json', control.modelRequests],
     ['http-requests.json', control.httpRequests],
+    ['command-history.json', commandEvidence(control.commandHistory)],
   ]) {
     try {
       await writeFile(join(resultDir, name), JSON.stringify(value, null, 2))

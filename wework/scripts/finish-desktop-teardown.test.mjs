@@ -12,7 +12,13 @@ async function fixture(t) {
   const performance = new DesktopPerformanceJournal({ checkpoint: 'lifecycle-outcome' })
   t.mock.method(console, 'error', () => {})
   return {
-    control: { performance, fatalError: null, modelRequests: [], httpRequests: [] },
+    control: {
+      performance,
+      fatalError: null,
+      modelRequests: [],
+      httpRequests: [],
+      commandHistory: [],
+    },
     resultDir,
     testFailed: false,
     teardownFailures: [],
@@ -37,9 +43,29 @@ test('a late controller assertion makes the final report fail and retains its or
 
 test('successful cleanup retains the functional outcome independently of metric coverage', async t => {
   const f = await fixture(t)
+  const command = {
+    id: 'operation-id',
+    action: 'fill',
+    selector: '[data-testid="composer"]',
+    clientId: 'renderer-client',
+    queuedAt: '2026-11-18T00:00:00.000Z',
+    startedAt: '2026-11-18T00:00:00.010Z',
+    resultReceivedAt: '2026-11-18T00:00:00.020Z',
+    actionSucceeded: true,
+  }
+  f.control.commandHistory.push({
+    ...command,
+    value: 'private-input',
+    text: 'private-expected-text',
+    headers: { Authorization: 'private-authorization' },
+    futurePayload: { connectorToken: 'private-token' },
+  })
   await finishDesktopTeardown(f)
   assert.equal((await readReport(f)).functionalPassed, true)
   assert.equal((await readReport(f)).complete, false, 'No renderer metrics were provided')
+  assert.deepEqual(JSON.parse(await readFile(join(f.resultDir, 'command-history.json'), 'utf8')), [
+    command,
+  ])
   await assert.rejects(readFile(join(f.resultDir, 'failure.txt')), { code: 'ENOENT' })
 })
 
