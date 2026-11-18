@@ -31,9 +31,9 @@ export function registerModelConfigurationCapabilities(
     return requestRuntime(params)
   })
   router.register('modelConfiguration.read', async () => {
-    const result = await store().read()
-    await syncRuntime?.()
-    return result
+    // Reads serve startup metadata; the executor sync runs independently after
+    // it starts and must not hold the renderer reveal path.
+    return store().read()
   })
   router.register('modelConfiguration.runtime', async () => {
     const result = await store().runtime()
