@@ -89,6 +89,7 @@ from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import (
     project_status_transition,
 )
+from app.services.loop_items.change_requests import reindex_change_request_badges
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
@@ -531,6 +532,31 @@ def mark_loop_item_read(
         observed_content_revision=values.content_revision if values else None,
     )
     return _loop_item_response(db, item, current_user)
+
+
+@router.post("/loop-items/{item_id}/badges/reindex")
+def reindex_loop_item_badges(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+) -> dict[str, object]:
+    if external_loop_item_provider.is_external_item(db, item_id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "External provider tasks use provider-owned badge sources",
+        )
+    item = loop_item_service.get(db, item_id, current_user.id)
+    result = reindex_change_request_badges(
+        db,
+        project_id=str(item.cloud_project_id),
+        item_id=item.id,
+        actor_user_id=current_user.id,
+    )
+    return {
+        "item_id": result.item_id,
+        "version": result.version,
+        "changed": result.changed,
+    }
 
 
 @router.patch("/loop-items/{item_id}", response_model=LoopItemResponse)
