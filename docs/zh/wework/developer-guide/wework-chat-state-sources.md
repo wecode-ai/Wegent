@@ -248,6 +248,13 @@ Goal 的原生续跑可能超过本地请求的生命周期，即使请求控制
 因此此前误写为 disabled 的原线程可以继续使用 subagent；明确指定的单代理执行仍禁用
 协作工具。桌面请求不再同时写入冲突的旧 single 字段。
 
+Wework 的 Codex 配置未设置子 agent 上限时，executor 初始化配置会补入
+`[agents] max_concurrent_threads_per_session = 6`。在 V2 中这对应包含主线程的
+7 个总线程。已配置的该字段或旧字段 `max_threads` 不会被覆盖；V2 专属配置
+`[features.multi_agent_v2] max_concurrent_threads_per_session` 仍按原生优先级生效，
+其数值包含主线程。之后手动调整配置也会保留，重启运行时后生效。
+单代理模式仍禁用子 agent；默认额度不改变委派权限。
+
 用户发送引导时，Wework 先把引导消息乐观插入当前 turn，再调用
 `runtime.tasks.guidance`。如果 Codex `turn/steer` 明确返回预期 turn ID 与实际活跃
 turn ID 不一致，executor 用返回的实际 ID 纠正本次引导目标并只重试一次，不回写

@@ -298,6 +298,15 @@ including threads previously persisted as disabled. Explicit single-agent
 executions still disable collaboration tools. Desktop requests no longer send
 the conflicting legacy single field alongside their native mode.
 
+When the Wework Codex configuration has no subagent limit, executor configuration
+initialization adds `[agents] max_concurrent_threads_per_session = 6`.
+In V2 this permits seven total threads including the root. Existing values of
+this field or the legacy `max_threads` field are preserved. The V2-specific
+`[features.multi_agent_v2] max_concurrent_threads_per_session` setting retains
+native precedence and counts the root. Later manual edits are preserved and
+take effect after restarting the runtime. Single-agent mode still disables
+subagents; the default capacity does not change delegation permissions.
+
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
 Codex `turn/steer` explicitly reports that the expected turn ID differs from
