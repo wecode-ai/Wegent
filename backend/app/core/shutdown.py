@@ -30,13 +30,18 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Optional, Set
+from typing import NamedTuple, Optional, Set
 
 logger = logging.getLogger(__name__)
 
 # Redis key for shutdown state (cross-worker communication)
 SHUTDOWN_STATE_KEY = "wegent:shutdown_state"
 SHUTDOWN_STATE_TTL = 120  # 2 minutes TTL for shutdown state
+
+
+class ShutdownInitiation(NamedTuple):
+    started: bool
+    marker_synced: bool
 
 
 class ShutdownManager:
@@ -95,7 +100,7 @@ class ShutdownManager:
         """Get a copy of active stream IDs."""
         return self._active_streams.copy()
 
-    async def initiate_shutdown(self) -> bool:
+    async def initiate_shutdown(self) -> ShutdownInitiation:
         """
         Initiate graceful shutdown.
 
@@ -104,16 +109,16 @@ class ShutdownManager:
         2. Records shutdown start time
         3. Optionally notifies other workers via Redis
 
-        Returns whether this call started the shutdown.
+        Reports whether this call started the drain and synchronized its marker.
         """
         from app.core.local_shutdown import mark_local_shutdown
 
         mark_local_shutdown()
         async with self._lock:
-            self._set_hybrid_marker(True)
+            marker_synced = self._set_hybrid_marker(True)
             if self._shutting_down:
                 logger.warning("Shutdown already initiated")
-                return False
+                return ShutdownInitiation(started=False, marker_synced=marker_synced)
 
             self._shutting_down = True
             self._shutdown_start_time = time.time()
@@ -124,7 +129,7 @@ class ShutdownManager:
 
         # The drain can proceed while the first caller publishes to Redis.
         await self._notify_shutdown_via_redis()
-        return True
+        return ShutdownInitiation(started=True, marker_synced=marker_synced)
 
     async def _notify_shutdown_via_redis(self) -> None:
         """Notify other workers about shutdown via Redis."""

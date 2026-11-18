@@ -62,9 +62,11 @@ Named parameters match one nonempty path segment, so unrelated Python paths
 under the same prefix remain with Python.
 
 When upgrading a hybrid deployment that uses a custom `WEGENT_RS_ROUTES_FILE`,
-copy the exact `/api/health` rule from the shipped route file into the override.
-Keep its `methods = []` setting so the Rust router also handles unsupported
-methods on that path. The Python process probe remains available at `/health`.
+copy the exact `/api/health` and `/api/health/` rules from the shipped route file
+into the override. Keep `methods = []` for Rust to handle method errors and
+the trailing-slash redirect. The Python process probe remains available at `/health`.
+For a directly launched gateway, set `WEGENT_RS_ROUTES_FILE` to the shipped
+route file or to an override that includes those rules before using `/api/health`.
 
 The hybrid launcher automatically provides a shutdown marker shared by its
 Rust and Python processes. If you launch those processes separately with Rust

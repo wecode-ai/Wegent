@@ -791,6 +791,10 @@ path = "/api/git/repositories/search" # app/api/endpoints/repository.py:122
 # The Rust router handles GET and returns the method error for other requests.
 methods = []
 path = "/api/health"
+[[routes]]
+# Preserve the trailing-slash redirect for every method.
+methods = []
+path = "/api/health/"
 #[[routes]]
 #methods = ["GET"]
 #path = "/api/im/private-sessions"

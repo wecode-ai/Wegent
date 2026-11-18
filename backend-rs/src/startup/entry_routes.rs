@@ -327,6 +327,8 @@ mod tests {
         assert!(table.matches(&http::Method::POST, "/api/health"));
         let custom = http::Method::from_bytes(b"CUSTOM").unwrap();
         assert!(table.matches(&custom, "/api/health"));
+        assert!(table.matches(&http::Method::GET, "/api/health/"));
+        assert!(table.matches(&custom, "/api/health/"));
         assert!(!table.matches(&custom, "/api/health/detail"));
     }
 

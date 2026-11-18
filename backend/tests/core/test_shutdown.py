@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 
 from app.api.endpoints import health
 from app.core.shutdown import ShutdownManager
@@ -79,6 +79,7 @@ class TestShutdownManager:
         marker.touch()
         monkeypatch.setenv("WEGENT_HYBRID_SHUTDOWN_FILE", str(marker))
         manager = ShutdownManager()
+        monkeypatch.setattr(health, "shutdown_manager", manager)
         assert not marker.exists()
         marker.parent.rmdir()
 
@@ -86,11 +87,21 @@ class TestShutdownManager:
             with patch("app.core.cache.cache_manager") as mock_cache:
                 mock_cache.set = AsyncMock(return_value=True)
                 # A missing parent makes the first marker write fail.
-                assert await manager.initiate_shutdown() is True
+                with pytest.raises(HTTPException) as error:
+                    await health.initiate_shutdown()
+                assert error.value.status_code == 503
+                assert manager.is_shutting_down
                 assert not marker.exists()
 
+                response = Response()
+                result = await health.wait_for_shutdown(response)
+                assert response.status_code == 503
+                assert result["status"] == "completed"
+                assert result["marker_synced"] is False
+
                 marker.parent.mkdir()
-                assert await manager.initiate_shutdown() is False
+                result = await health.initiate_shutdown()
+                assert result["status"] == "already_shutting_down"
                 assert marker.is_file()
                 mock_cache.set.assert_awaited_once()
         finally:
@@ -109,7 +120,7 @@ class TestShutdownManager:
         try:
             with patch("app.core.cache.cache_manager") as mock_cache:
                 mock_cache.set = AsyncMock(return_value=True)
-                assert await manager.initiate_shutdown()
+                assert (await manager.initiate_shutdown()).started
             marker.unlink()
             marker.mkdir()
 
@@ -149,7 +160,8 @@ class TestShutdownManager:
                 repeated = await asyncio.wait_for(
                     shutdown_manager.initiate_shutdown(), timeout=5
                 )
-                assert repeated is False
+                assert not repeated.started
+                assert repeated.marker_synced
                 mock_cache.set.assert_awaited_once()
             finally:
                 finish_publish.set()

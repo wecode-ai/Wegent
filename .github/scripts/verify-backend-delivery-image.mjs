@@ -147,6 +147,11 @@ export function assertRouteOwnership(routes) {
     "Rust must handle health method errors",
   );
   assert.equal(
+    matches("GET", "/api/health/"),
+    true,
+    "Rust must handle the health redirect",
+  );
+  assert.equal(
     matches("GET", "/api/knowledge-bases/all-grouped"),
     false,
     "Knowledge base probe must exercise Python forwarding",
@@ -290,6 +295,15 @@ print(urllib.request.urlopen('http://127.0.0.1:8004/health', timeout=5).read().d
   assert.equal(wrongMethod.status, 405);
   assert.equal(wrongMethod.headers.get("allow"), "GET");
   assert.deepEqual(await wrongMethod.json(), { detail: "Method Not Allowed" });
+  const slashRedirect = await fetch(base + "/api/health/?check=value%2Bmore", {
+    redirect: "manual",
+    signal: AbortSignal.timeout(5000),
+  });
+  assert.equal(slashRedirect.status, 307);
+  assert.equal(
+    new URL(slashRedirect.headers.get("location"), base).href,
+    new URL("/api/health?check=value%2Bmore", base).href,
+  );
   const user = await request(base, "/api/users/me", token(secret));
   assert.equal(
     user.user_name,

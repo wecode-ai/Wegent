@@ -14,7 +14,9 @@
 //! carry empty bodies, so the fully composed router is wrapped once at the
 //! listener root and every unmatched request is rendered like the source.
 use crate::FastApiError;
-use brz_http_server::{ApiMetrics, Handler, IntoHttpError, Request, Response, StatusCode};
+use brz_http_server::{
+    ApiMetrics, Handler, IntoHttpError, IntoHttpResponse, Redirect, Request, Response, StatusCode,
+};
 
 /// Standard method bit order shared with the platform router's bitset.
 const METHODS: [&str; 7] = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"];
@@ -23,13 +25,24 @@ const METHODS: [&str; 7] = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST",
 /// dispatch and delegates everything else to it unchanged.
 pub struct FastApiFallback<H> {
     inner: H,
+    slash_redirect_path: Option<&'static str>,
 }
 
 impl<H> FastApiFallback<H> {
     /// Wraps the fully composed application router served by the listener.
     #[must_use]
     pub fn new(inner: H) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            slash_redirect_path: None,
+        }
+    }
+
+    /// Preserves the trailing-slash redirect for a selected path.
+    #[must_use]
+    pub fn with_slash_redirect(mut self, canonical_path: &'static str) -> Self {
+        self.slash_redirect_path = Some(canonical_path);
+        self
     }
 }
 
@@ -62,6 +75,15 @@ where
         }
         let allowed = self.inner.route_methods(path);
         if allowed == 0 {
+            if let Some(canonical_path) = self.slash_redirect_path
+                && path.strip_suffix('/') == Some(canonical_path)
+            {
+                let location = request.query().map_or_else(
+                    || canonical_path.to_owned(),
+                    |query| format!("{canonical_path}?{query}"),
+                );
+                return Redirect::temporary(location).into_http_response(request.response_arena());
+            }
             return FastApiError::detail(StatusCode::NOT_FOUND, "Not Found")
                 .into_http_error(request.response_arena());
         }
@@ -111,7 +133,7 @@ mod tests {
         .expect("probe router");
         let server = brz_http_server::Server::bind(
             "127.0.0.1:0".parse().unwrap(),
-            FastApiFallback::new(handler),
+            FastApiFallback::new(handler).with_slash_redirect("/api/startup"),
         )
         .await
         .expect("bind test server");
@@ -162,6 +184,21 @@ mod tests {
         assert_eq!(body_of(&raw), r#"{"detail":"Method Not Allowed"}"#);
         assert_eq!(header_of(&raw, "allow:"), "GET");
         assert_eq!(header_of(&raw, "content-type:"), "application/json");
+    }
+
+    #[tokio::test]
+    async fn slash_alias_redirects_with_query_for_any_method() {
+        let raw = serve(
+            "POST /api/startup/?check=value%2Bmore HTTP/1.1\r\n\
+             Host: localhost\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+        assert!(raw.starts_with("HTTP/1.1 307"));
+        assert_eq!(
+            header_of(&raw, "location:"),
+            "/api/startup?check=value%2Bmore"
+        );
+        assert!(body_of(&raw).is_empty());
     }
 
     #[tokio::test]

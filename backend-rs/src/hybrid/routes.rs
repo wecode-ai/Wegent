@@ -203,7 +203,7 @@ mod tests {
             .filter(|rule| rule.methods.is_empty())
             .map(|rule| rule.path.as_str())
             .collect();
-        assert_eq!(all_method_paths, ["/api/health"]);
+        assert_eq!(all_method_paths, ["/api/health", "/api/health/"]);
         let table = load(&path).unwrap();
         let selected: BTreeSet<_> = file
             .routes
