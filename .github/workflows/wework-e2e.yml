@@ -204,13 +204,20 @@ jobs:
     name: Wework E2E
     needs:
       - changes
+      - build-wework-desktop-core-e2e
     if: needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       HOME: /root
+      WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
+      WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
+      WEWORK_E2E_BROWSER_EXECUTABLE: /opt/google/chrome/chrome
     container:
-      image: ${{ needs.changes.outputs.browser_image }}
+      options: --security-opt apparmor=unconfined
+      volumes:
+        - /opt/google/chrome:/opt/google/chrome:ro
+      image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -227,11 +234,42 @@ jobs:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           setup-toolchain: "false"
 
+      - name: Download shared Wework desktop E2E build
+        uses: actions/download-artifact@v6
+        with:
+          name: wework-desktop-core-e2e-build
+          path: .ci-artifacts
+
+      - name: Restore shared Wework desktop E2E build
+        run: .github/scripts/restore-wework-core-e2e-build.sh
+
+      - name: Restore shared Python dependencies
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+          setup-python: "false"
+          setup-uv: "false"
+
+      - name: Set up real object storage
+        uses: ./.github/actions/setup-minio-e2e
+
       - name: Run Wework E2E tests
         env:
           CI: true
         # Initialize a real session bus before Chromium starts its worker threads.
         run: dbus-run-session -- pnpm --filter wework e2e
+
+      - name: Upload real browser Backend diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-browser-backend-diagnostics
+          path: |
+            wework/test-results/desktop-e2e/**/cloud-*.log
+            wework/test-results/desktop-e2e/**/backend-rs-logs/*.log
+            wework/test-results/desktop-e2e/**/minio.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload Wework Playwright report
         if: always()
@@ -255,7 +293,7 @@ jobs:
     name: Build Shared Wework Desktop E2E Artifact
     needs:
       - changes
-    if: (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: (needs.changes.outputs.wework_e2e == 'true' || needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:

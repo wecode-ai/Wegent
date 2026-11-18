@@ -4,7 +4,11 @@ import { WeworkApp } from '../fixtures/wework-app'
 test('exposes a CI automation bridge and renders the login route', async ({ page }) => {
   const app = new WeworkApp(page)
 
+  const sessionResponse = page.waitForResponse(
+    response => new URL(response.url()).pathname === '/api/users/me'
+  )
   await app.goto('/')
+  expect((await sessionResponse).status()).toBe(401)
 
   await expect(page.getByTestId('login-form')).toBeVisible()
   await expect(page.getByTestId('login-username-input')).toBeVisible()
