@@ -50,6 +50,7 @@ describe('runtime conversation client', () => {
         ...address,
         data: {
           error: { message: 'Model unavailable' },
+          type: 'server_overloaded',
           startedAt: 1_789_714_800_000,
           durationMs: 2500,
         },
@@ -60,6 +61,7 @@ describe('runtime conversation client', () => {
         deviceId: address.deviceId,
         taskId: address.taskId,
         error: 'Model unavailable',
+        type: 'server_overloaded',
         startedAt: 1_789_714_800_000,
         durationMs: 2500,
       })

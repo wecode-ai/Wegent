@@ -2218,6 +2218,7 @@ fn turn_result_persists_goal_status_before_native_execution_settles() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: None,
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "done".to_owned(),
@@ -2330,6 +2331,7 @@ fn stale_terminal_result_cannot_emit_or_finish_replacement_execution() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: None,
             thread_id: "thread-stale".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "stale".to_owned(),
@@ -2898,6 +2900,7 @@ fn failed_responses_emit_runtime_turn_duration() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: Some("server_overloaded".to_owned()),
             thread_id: "thread-failed-duration".to_owned(),
             outcome: ExecutionOutcome::Failed {
                 message: "upstream failed".to_owned(),
@@ -2916,6 +2919,7 @@ fn failed_responses_emit_runtime_turn_duration() {
         .try_recv()
         .expect("failed response should be emitted");
     assert_eq!(event["event"], "response.failed");
+    assert_eq!(event["payload"]["data"]["type"], "server_overloaded");
     assert_eq!(event["payload"]["subtaskId"], "turn-failed-duration");
     assert_eq!(event["payload"]["data"]["startedAt"], 1_780_000_000_000_i64);
     assert_eq!(event["payload"]["data"]["durationMs"], 2_500);

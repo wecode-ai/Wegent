@@ -18,6 +18,12 @@ sidebar_position: 3
 <!-- ui-source: src/features/todo/WeworkCollaborationPlatform.tsx -->
 <!-- ui-source: ../packages/collaboration/src/platform/CollaborationPlatformNavigation.tsx -->
 
+## 按编号打开 Issue
+
+<a id="open-issue-by-reference"></a>
+
+在协作工作区点击 **左侧栏顶部「协作」标题旁的放大镜（搜索 Issue）**，输入完整编号（如 **WEG-123**），点击 **打开 Issue** 或按 **Enter** 直接查询并打开有权限的事项，无需先打开项目或加载看板。也可按 **⌘K（macOS）或 Ctrl+K（Windows/Linux）** 打开此入口。查询失败会显示原因，检查编号、权限或连接后可再次点击重试；修改编号或关闭弹窗后，旧查询不会跳转。相同编号存在于本地和云端时，结果会标明「本地」或「云端」，点击选择目标。部分来源连接失败时，会保留已找到的结果并显示失败来源；此时不会自动跳转，可明确选择已有结果或再次查询。切换账户或服务地址后，旧查询结果不会继续打开。按 **Esc** 关闭搜索。个人任务工作区还可通过展开的左侧栏顶部放大镜搜索已加载事项，支持 **#123**、**123** 和 Issue ID。
+
 ## 协作分组与全局资源目录
 
 <a id="workspace-resource-controls"></a>
