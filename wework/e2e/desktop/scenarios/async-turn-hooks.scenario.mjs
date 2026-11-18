@@ -174,7 +174,7 @@ try {
   if (event.hook_event_name === 'TurnStarted') await mark('baseline')
   if (event.hook_event_name === 'ExecutionCompleted') await mark('execution-ended')
 } catch (error) {
-  await writeFile(root + '/hook-error.log', String(error?.stack ?? error) + '\n', { flag: 'a' }).catch(() => {})
+  await writeFile(root + '/hook-error.log', String(error?.stack ?? error) + '\\n', { flag: 'a' }).catch(() => {})
   throw error
 } finally { await mark('finished') }
 `
