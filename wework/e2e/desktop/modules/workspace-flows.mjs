@@ -673,7 +673,9 @@ async function waitForControlSelectionOffset(control, selector, expected, messag
 async function waitForPersistedComposerInput(control, expected, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const snapshot = JSON.parse(
+      await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+    )
     if (snapshot.workbench?.composer?.currentInputLength === expected.length) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -703,7 +705,9 @@ async function waitForWorkbenchDebugState(
   const startedAt = Date.now()
   let lastSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
-    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const snapshot = JSON.parse(
+      await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+    )
     lastSnapshot = snapshot
     if (predicate(snapshot)) return snapshot
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))

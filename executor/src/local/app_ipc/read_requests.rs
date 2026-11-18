@@ -12,43 +12,82 @@ use crate::runtime_work::transcript_work::{
     MAX_CONCURRENT_HISTORY_READS, MAX_PENDING_HISTORY_READS,
 };
 
-pub(super) struct HistoryReadAdmission {
+pub(super) const MAX_CONCURRENT_CONNECTION_READS: usize = 2;
+pub(super) const MAX_PENDING_CONNECTION_READS: usize = MAX_CONCURRENT_CONNECTION_READS + 8;
+
+pub(super) struct ReadAdmission {
     active: Arc<Semaphore>,
     pending: Arc<Semaphore>,
 }
 
-impl Default for HistoryReadAdmission {
-    fn default() -> Self {
+impl ReadAdmission {
+    fn new(max_active: usize, max_pending: usize) -> Self {
         Self {
-            active: Arc::new(Semaphore::new(MAX_CONCURRENT_HISTORY_READS)),
-            pending: Arc::new(Semaphore::new(MAX_PENDING_HISTORY_READS)),
+            active: Arc::new(Semaphore::new(max_active)),
+            pending: Arc::new(Semaphore::new(max_pending)),
         }
     }
 }
 
-pub(super) const CANCELLABLE_READ_METHODS: &[&str] = &[
-    "runtime.tasks.transcript",
+pub(super) fn new_history_read_admission() -> Arc<ReadAdmission> {
+    Arc::new(ReadAdmission::new(
+        MAX_CONCURRENT_HISTORY_READS,
+        MAX_PENDING_HISTORY_READS,
+    ))
+}
+
+pub(super) fn new_connection_read_admission() -> Arc<ReadAdmission> {
+    Arc::new(ReadAdmission::new(
+        MAX_CONCURRENT_CONNECTION_READS,
+        MAX_PENDING_CONNECTION_READS,
+    ))
+}
+
+const HISTORY_READ_METHOD: &str = "runtime.tasks.transcript";
+const CONNECTION_READ_METHODS: &[&str] = &[
     "runtime.connections.git.read",
     "runtime.connections.mcp",
     "runtime.connections.cli",
 ];
 
-pub(super) fn is_cancellable_read(method: Option<&str>) -> bool {
-    method.is_some_and(|method| CANCELLABLE_READ_METHODS.contains(&method))
+pub(super) fn cancellable_read_methods() -> impl Iterator<Item = &'static str> {
+    std::iter::once(HISTORY_READ_METHOD).chain(CONNECTION_READ_METHODS.iter().copied())
+}
+
+#[derive(Clone, Copy)]
+enum ReadAdmissionKind {
+    History,
+    Connection,
+}
+
+fn admission_kind(method: Option<&str>) -> Option<ReadAdmissionKind> {
+    let method = method?;
+    if method == HISTORY_READ_METHOD {
+        Some(ReadAdmissionKind::History)
+    } else if CONNECTION_READ_METHODS.contains(&method) {
+        Some(ReadAdmissionKind::Connection)
+    } else {
+        None
+    }
 }
 
 type PendingReads = StdMutex<HashMap<String, watch::Sender<bool>>>;
 
 pub(super) struct ConnectionReadRequests {
     pending: Arc<PendingReads>,
-    admission: Arc<HistoryReadAdmission>,
+    history_admission: Arc<ReadAdmission>,
+    connection_admission: Arc<ReadAdmission>,
 }
 
 impl ConnectionReadRequests {
-    pub(super) fn new(admission: Arc<HistoryReadAdmission>) -> Self {
+    pub(super) fn new(
+        history_admission: Arc<ReadAdmission>,
+        connection_admission: Arc<ReadAdmission>,
+    ) -> Self {
         Self {
             pending: Arc::new(StdMutex::new(HashMap::new())),
-            admission,
+            history_admission,
+            connection_admission,
         }
     }
 
@@ -75,6 +114,19 @@ impl ConnectionReadRequests {
 
     pub(super) fn admit(
         &self,
+        method: Option<&str>,
+        id: &str,
+    ) -> Option<Result<(ReadRequestGuard, watch::Receiver<bool>), AppIpcError>> {
+        let admission = match admission_kind(method)? {
+            ReadAdmissionKind::History => &self.history_admission,
+            ReadAdmissionKind::Connection => &self.connection_admission,
+        };
+        Some(self.admit_with(admission, id))
+    }
+
+    fn admit_with(
+        &self,
+        admission: &Arc<ReadAdmission>,
         id: &str,
     ) -> Result<(ReadRequestGuard, watch::Receiver<bool>), AppIpcError> {
         let mut pending = self
@@ -87,24 +139,19 @@ impl ConnectionReadRequests {
                 "A history read with this request id is already running",
             ));
         }
-        let permit = self
-            .admission
-            .pending
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| {
-                AppIpcError::new(
-                    "runtime_read_busy",
-                    "History read queue is full; retry after the current read finishes",
-                )
-            })?;
+        let permit = admission.pending.clone().try_acquire_owned().map_err(|_| {
+            AppIpcError::new(
+                "runtime_read_busy",
+                "Read queue is full; retry after a current read finishes",
+            )
+        })?;
         let (sender, receiver) = watch::channel(false);
         pending.insert(id.to_owned(), sender);
         Ok((
             ReadRequestGuard {
                 pending: Arc::downgrade(&self.pending),
                 id: id.to_owned(),
-                admission: self.admission.active.clone(),
+                admission: admission.active.clone(),
                 _pending_permit: permit,
                 active_permit: None,
             },

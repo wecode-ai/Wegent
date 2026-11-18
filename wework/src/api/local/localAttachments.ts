@@ -1,3 +1,4 @@
+import { normalizeClipboardImageFiles } from '@/lib/clipboard-images'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getNativeFilePath } from '@/desktop/nativeFilePaths'
 import type { Attachment } from '@/types/api'
@@ -175,7 +176,8 @@ async function saveElectronAttachment(
 
 export function createLocalAttachmentApi(): LocalAttachmentApi {
   return {
-    async uploadAttachment(file, onProgress) {
+    async uploadAttachment(sourceFile, onProgress) {
+      const [file] = await normalizeClipboardImageFiles([sourceFile])
       onProgress?.(0)
       const localPath = getNativeFilePath(file) ?? (await saveElectronAttachment(file, onProgress))
       onProgress?.(100)

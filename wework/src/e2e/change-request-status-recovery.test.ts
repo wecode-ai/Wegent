@@ -1,7 +1,8 @@
 // @vitest-environment node
 
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { DatabaseSync } from 'node:sqlite'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -10,11 +11,13 @@ import { ChangeRequestUiObserver } from '@/features/workbench/changeRequestUiObs
 import { createConnectionObserverFixture } from '@/test/connection-observer'
 import type { DeviceCommandRequest } from '@/types/api'
 import { createProvider } from '../../dsh/connection-git/provider.js'
-import { recoverChangeRequestStatus } from '../../e2e/desktop/scenarios/change-request-status.scenario.mjs'
+import {
+  prepareChangeRequestRecovery,
+  recoverChangeRequestStatus,
+} from '../../e2e/desktop/scenarios/change-request-status.scenario.mjs'
 
 const fileIo = vi.hoisted(() => ({
   pending: new Set<Promise<unknown>>(),
-  afterRead: undefined as ((path: string) => Promise<void>) | undefined,
 }))
 
 vi.mock('node:fs/promises', async importOriginal => {
@@ -28,15 +31,9 @@ vi.mock('node:fs/promises', async importOriginal => {
   return {
     ...filesystem,
     readFile: (...args: Parameters<typeof filesystem.readFile>) =>
-      track(
-        filesystem.readFile(...args).then(async content => {
-          await fileIo.afterRead?.(String(args[0]))
-          return content
-        })
-      ),
+      track(filesystem.readFile(...args)),
     writeFile: (...args: Parameters<typeof filesystem.writeFile>) =>
       track(filesystem.writeFile(...args)),
-    rename: (...args: Parameters<typeof filesystem.rename>) => track(filesystem.rename(...args)),
   }
 })
 
@@ -44,7 +41,7 @@ const target = linkedChangeRequestTarget(
   'native-runtime',
   'https://github.com/wecode-ai/Wegent/pull/2631'
 )!
-const statusSelector = '[data-testid="change-request-state"]'
+const statusSelector = '[data-testid="change-request-button"]'
 const checksSelector = '[data-testid="change-request-checks"]'
 const environmentSelector = '[data-testid="environment-info-button"]'
 const healthSelector =
@@ -79,7 +76,6 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  fileIo.afterRead = undefined
   vi.clearAllTimers()
   vi.useRealTimers()
   await rm(directory, { recursive: true, force: true })
@@ -88,7 +84,7 @@ afterEach(async () => {
 async function recoveryFixture(options: FixtureOptions = {}) {
   const statePath = join(directory, 'provider-state')
   const executorHome = join(directory, 'executor-home')
-  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.json')
+  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.sqlite')
   await mkdir(join(executorHome, 'runtime-work'), { recursive: true })
   await writeFile(statePath, 'unavailable\n')
   const discovered = await createProvider('github').listResources(
@@ -143,8 +139,18 @@ async function recoveryFixture(options: FixtureOptions = {}) {
       }
       observers[other.id] = other
     }
-    await writeFile(`${journalPath}.next`, JSON.stringify({ observers }))
-    await rename(`${journalPath}.next`, journalPath)
+    const database = new DatabaseSync(journalPath)
+    try {
+      database.exec(
+        'CREATE TABLE IF NOT EXISTS records(section TEXT, id TEXT, value TEXT, PRIMARY KEY(section,id))'
+      )
+      const save = database.prepare("INSERT OR REPLACE INTO records VALUES('observers',?,?)")
+      database.exec('BEGIN')
+      for (const [id, value] of Object.entries(observers)) save.run(id, JSON.stringify(value))
+      database.exec('COMMIT')
+    } finally {
+      database.close()
+    }
   }
   await saveJournal()
   const reply = createConnectionObserverFixture()
@@ -231,9 +237,8 @@ async function recoveryFixture(options: FixtureOptions = {}) {
     if (selector === '[data-testid="environment-info-popover"]')
       return environmentOpen ? '环境' : ''
     if (!environmentOpen) return ''
-    if (selector === '[data-testid="change-request-button"]') return '#2631'
     if (selector === statusSelector)
-      return snapshot?.changeRequest?.state === 'merged' ? '已合并' : ''
+      return snapshot?.changeRequest?.state === 'merged' ? '#2631 已合并' : '#2631'
     if (selector === checksSelector)
       return snapshot?.changeRequest?.checks === 'success' ? '检查通过' : ''
     if (selector === healthSelector)
@@ -243,7 +248,11 @@ async function recoveryFixture(options: FixtureOptions = {}) {
     throw new Error(`Unexpected selector: ${selector}`)
   }
   const command = vi.fn(
-    async (action: string, selector: string, input: { text?: string; timeoutMs?: number } = {}) => {
+    async (
+      action: string,
+      selector: string,
+      input: { text?: string; timeoutMs?: number; value?: string } = {}
+    ) => {
       if (action === 'click') {
         if (selector === '[data-testid="change-request-status-switch"]') {
           enabled = true
@@ -262,7 +271,15 @@ async function recoveryFixture(options: FixtureOptions = {}) {
         }
         return ''
       }
-      if (action === 'getAttribute') return String(enabled)
+      if (action === 'getAttribute') {
+        if (
+          selector === '[data-testid="change-request-status-switch"]' &&
+          input.value === 'aria-checked'
+        )
+          return String(enabled)
+        if (selector === statusSelector && input.value === 'aria-label') return text(selector)
+        throw new Error(`Unexpected attribute: ${selector} ${input.value}`)
+      }
       if (action === 'getElementCount') return String(Number(environmentOpen))
       if (action !== 'waitFor') throw new Error(`Unexpected action: ${action}`)
       const deadline = Date.now() + (input.timeoutMs ?? 10_000)
@@ -291,7 +308,7 @@ async function finishRecovery(fixture: Awaited<ReturnType<typeof recoveryFixture
   let result: { error: unknown } | undefined
   const recovery = recoverChangeRequestStatus(fixture.control, {
     statePath: fixture.statePath,
-    executorHome: fixture.executorHome,
+    ...(await prepareChangeRequestRecovery(fixture.executorHome)),
     uiTimeoutMs: 10_000,
   }).then(
     () => {
@@ -348,6 +365,14 @@ test.each([false, true])(
       [healthSelector, '状态同步正常'],
     ])
       expect(waits).toContainEqual(['waitFor', selector, { text: expected }])
+    expect(fixture.control.command).toHaveBeenCalledWith('getAttribute', statusSelector, {
+      value: 'aria-label',
+    })
+    expect(
+      fixture.control.command.mock.calls.some(
+        ([, selector]) => selector === '[data-testid="change-request-state"]'
+      )
+    ).toBe(false)
     expect(result.elapsedMs).toBeGreaterThanOrEqual(13_174)
     expect(result.elapsedMs).toBeLessThan(20_000)
   }
@@ -420,33 +445,6 @@ test('keeps the ten-second native activation deadline', async () => {
   expect(fixture.timeline.some(entry => entry.event === 'summary-opened')).toBe(false)
 })
 
-test('does not advance the virtual deadline while a real journal read is pending', async () => {
-  const fixture = await recoveryFixture({ startDelayMs: 20_001 })
-  const startedAt = Date.now()
-  let readStartedAt: number | undefined
-  let readFinishedAt: number | undefined
-  fileIo.afterRead = async path => {
-    if (
-      path !== fixture.journalPath ||
-      Date.now() - startedAt < 9900 ||
-      readStartedAt !== undefined
-    )
-      return
-    readStartedAt = Date.now() - startedAt
-    // Delay real I/O completion independently of the simulated clock.
-    for (let turn = 0; turn < 100; turn++) await new Promise(resolve => setImmediate(resolve))
-    readFinishedAt = Date.now() - startedAt
-  }
-  const result = await finishRecovery(fixture)
-  expect((result.error as Error).message).toBe(activationFailure)
-  expect({ readStartedAt, readFinishedAt, elapsedMs: result.elapsedMs }).toEqual({
-    readStartedAt: 9900,
-    readFinishedAt: 9900,
-    elapsedMs: 10_000,
-  })
-  expect(fixture.timeline.some(entry => entry.event === 'summary-opened')).toBe(false)
-})
-
 test('keeps the independent ten-second UI state deadline after activation', async () => {
   const fixture = await recoveryFixture({ refreshDelayMs: 10_001 })
   const result = await finishRecovery(fixture)
@@ -461,7 +459,7 @@ test('does not enable observation if repairing its provider fixture fails', asyn
   await expect(
     recoverChangeRequestStatus(fixture.control, {
       statePath: join(directory, 'missing', 'provider-state'),
-      executorHome: fixture.executorHome,
+      ...(await prepareChangeRequestRecovery(fixture.executorHome)),
       uiTimeoutMs: 10_000,
     })
   ).rejects.toThrow('ENOENT')
@@ -472,11 +470,9 @@ test('does not enable observation if repairing its provider fixture fails', asyn
 test('does not expose a malformed native journal in its failure', async () => {
   const fixture = await recoveryFixture()
   await writeFile(fixture.journalPath, '{"private":"synthetic-private-journal"')
-  const error = await recoverChangeRequestStatus(fixture.control, {
-    statePath: fixture.statePath,
-    executorHome: fixture.executorHome,
-    uiTimeoutMs: 10_000,
-  }).catch((failure: unknown) => failure)
+  const error = await prepareChangeRequestRecovery(fixture.executorHome).catch(
+    (failure: unknown) => failure
+  )
   expect((error as Error).message).toBe(
     'The native change-request observer journal could not be read'
   )

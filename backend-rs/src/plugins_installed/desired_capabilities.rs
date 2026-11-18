@@ -14,6 +14,8 @@
 
 use std::collections::HashMap;
 
+mod plugin_payload;
+
 use brz_mysql::{Mysql, MysqlError, MysqlResult};
 use chrono::{Duration, Utc};
 use serde_json::{Map, Value};
@@ -195,24 +197,52 @@ pub(super) async fn build_local_plugins<Q: PluginQuery>(
     query: &mut Q,
     user_id: i64,
 ) -> Result<(Value, Value), BuildError> {
+    let started = std::time::Instant::now();
     let rows: Vec<InstalledKindRow> = query.fetch_all(format!(
         "SELECT {KIND_COLUMNS} FROM kinds WHERE user_id = ? AND kind = 'InstalledPlugin' AND namespace = 'default' ORDER BY id ASC"
     ), (user_id,)).await?;
-    let mut plugins = Vec::new();
-    for row in rows
-        .iter()
-        .filter(|row| row.is_active && is_synced_install(&row.json.0.to_value()))
-    {
-        plugins.push(plugin_payload(query, row, None, true).await?);
+    let installation_count = rows.len();
+    let mut prepared = Vec::new();
+    let mut revisions = Map::new();
+    for row in rows {
+        let json = row.json.0.to_value();
+        if let Ok(revision) = super::write_coordination::business_revision(&json) {
+            revisions.insert(row.id.to_string(), Value::from(revision));
+        }
+        if row.is_active && is_synced_install(&json) {
+            prepared.push(plugin_payload::prepare(&row, &json, None, true));
+        }
     }
-    let revisions: Map<String, Value> = rows
+    let mut release_ids: Vec<_> = prepared
         .iter()
-        .filter_map(|row| {
-            super::write_coordination::business_revision(&row.json.0.to_value())
-                .ok()
-                .map(|revision| (row.id.to_string(), Value::from(revision)))
-        })
+        .filter_map(|payload| payload.release_id())
         .collect();
+    release_ids.sort_unstable();
+    release_ids.dedup();
+    let installations_loaded = started.elapsed();
+    let releases: HashMap<_, _> =
+        crate::plugins_marketplace::db::list_release_rows_by_ids_on(query, &release_ids)
+            .await?
+            .into_iter()
+            .map(|row| (row.id, row))
+            .collect();
+    let releases_loaded = started.elapsed();
+    let plugins: Vec<_> = prepared
+        .into_iter()
+        .map(|payload| {
+            let release = payload.release_id().and_then(|id| releases.get(&id));
+            payload.render(release)
+        })
+        .collect::<Result<_, _>>()?;
+    tracing::debug!(
+        installations = installation_count,
+        plugins = plugins.len(),
+        releases = releases.len(),
+        installations_ms = installations_loaded.as_secs_f64() * 1000.0,
+        releases_ms = (releases_loaded - installations_loaded).as_secs_f64() * 1000.0,
+        render_ms = (started.elapsed() - releases_loaded).as_secs_f64() * 1000.0,
+        "local plugin snapshot batch projection"
+    );
     Ok((
         serde_json::json!({"mode":"merge", "scope":"plugins", "plugins":plugins}),
         Value::Object(revisions),
@@ -613,125 +643,12 @@ async fn plugin_payload<Q: PluginQuery>(
     local_http: bool,
 ) -> Result<Value, BuildError> {
     let json = installed.json.0.to_value();
-    let spec = object_or_empty(json.get("spec"));
-    let source = object_or_empty(spec.get("source")).clone();
-    let package_ref = object_or_empty(spec.get("packageRef")).clone();
-    let mut payload = Map::new();
-    payload.insert("installed_plugin_id".to_string(), Value::from(installed.id));
-    payload.insert(
-        "name".to_string(),
-        Value::String(plugin_payload_name(installed, &json, &spec, &source)),
-    );
-    payload.insert(
-        "display_name".to_string(),
-        value_or_name(spec.get("displayName"), &installed.name),
-    );
-    payload.insert(
-        "description".to_string(),
-        spec.get("description")
-            .cloned()
-            .unwrap_or_else(|| Value::String(String::new())),
-    );
-    payload.insert(
-        "enabled".to_string(),
-        spec.get("enabled").cloned().unwrap_or(Value::Bool(true)),
-    );
-    let marketplace = spec
-        .get("marketplace")
-        .filter(|value| json_truthy(value))
-        .or_else(|| source.get("marketplace").filter(|value| json_truthy(value)))
-        .cloned()
-        .unwrap_or(Value::Null);
-    payload.insert("marketplace".to_string(), marketplace);
-    payload.insert(
-        "version".to_string(),
-        spec.get("version").cloned().unwrap_or(Value::Null),
-    );
-    // Legacy uploaded/builtin manifests may omit a version. Match the existing
-    // installer default explicitly so receipts describe the same package key.
-    if local_http && payload["version"].as_str().is_none_or(str::is_empty) {
-        payload.insert("version".into(), Value::String("latest".into()));
-    }
-    if let Some(cloud_plugin_id) = cloud_plugin_id(&spec, &source) {
-        payload.insert("cloud_plugin_id".to_string(), Value::from(cloud_plugin_id));
-    }
-    payload.insert("source".to_string(), Value::Object(source));
-    if let Some(component_states) = spec
-        .get("componentStates")
-        .filter(|value| json_truthy(value))
-    {
-        payload.insert("component_states".to_string(), component_states.clone());
-    }
-    if let Some(components) = spec.get("components").filter(|value| json_truthy(value)) {
-        payload.insert("components".to_string(), components.clone());
-    }
-
-    if !package_ref.is_empty() {
-        payload.insert(
-            "checksum".to_string(),
-            package_ref.get("checksum").cloned().unwrap_or(Value::Null),
-        );
-        let release_id =
-            release_id_override.or_else(|| spec.get("releaseId").and_then(Value::as_i64));
-        let release = match release_id {
-            Some(release_id) => get_release(query, release_id).await?,
-            None => None,
-        };
-        let ready = release
-            .as_ref()
-            .is_some_and(|release| release.status == "ready" && release.scan_status == "passed");
-        if let Some(release) = release.filter(|_| ready) {
-            if let Some(_override) = release_id_override {
-                payload.insert(
-                    "version".to_string(),
-                    Value::String(release.version.clone()),
-                );
-                payload.insert(
-                    "checksum".to_string(),
-                    Value::String(format!("sha256:{}", release.sha256)),
-                );
-                let components = release
-                    .scan_report_json
-                    .0
-                    .to_value()
-                    .get("components")
-                    .filter(|value| json_truthy(value))
-                    .cloned();
-                if let Some(components) = components {
-                    payload.insert("components".to_string(), components);
-                }
-            }
-            let (download_path, expires_at) = if local_http {
-                (
-                    format!(
-                        "/api/plugins/installed/{}/download?expected_release_id={}",
-                        installed.id, release.id
-                    ),
-                    String::new(),
-                )
-            } else {
-                presign_download(&release.storage_key)?
-            };
-            payload.insert("download_path".to_string(), Value::String(download_path));
-            payload.insert(
-                "download_url_expires_at".to_string(),
-                Value::String(expires_at),
-            );
-            payload.insert("release_id".to_string(), Value::from(release.id));
-        } else {
-            payload.insert(
-                "download_path".to_string(),
-                Value::String(match (local_http, release_id) {
-                    (true, Some(id)) => format!(
-                        "/api/plugins/installed/{}/download?expected_release_id={id}",
-                        installed.id
-                    ),
-                    _ => format!("/api/plugins/installed/{}/download", installed.id),
-                }),
-            );
-        }
-    }
-    Ok(Value::Object(payload))
+    let payload = plugin_payload::prepare(installed, &json, release_id_override, local_http);
+    let release = match payload.release_id() {
+        Some(id) => get_release(query, id).await?,
+        None => None,
+    };
+    payload.render(release.as_ref())
 }
 
 /// `plugin_package_storage.presign_download`: a MinIO SigV4 query URL plus the
@@ -949,160 +866,10 @@ fn cloud_plugin_id(spec: &Map<String, Value>, source: &Map<String, Value>) -> Op
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
+mod tests;
 
-    #[test]
-    fn install_filters_match_the_source_predicates() {
-        assert!(is_enabled_install(
-            &json!({"spec": {"enabled": true, "installState": "installed"}})
-        ));
-        assert!(is_enabled_install(&json!({"spec": {}})));
-        assert!(!is_enabled_install(
-            &json!({"spec": {"enabled": false, "installState": "installed"}})
-        ));
-        assert!(!is_enabled_install(
-            &json!({"spec": {"installState": "uninstalled"}})
-        ));
-        assert!(is_synced_install(&json!({"spec": {"enabled": false}})));
-        assert!(!is_synced_install(
-            &json!({"spec": {"installState": "uninstalled"}})
-        ));
-    }
+#[cfg(test)]
+mod batch_mysql_tests;
 
-    #[test]
-    fn cloud_plugin_id_follows_the_source_type_checks() {
-        assert_eq!(
-            cloud_plugin_id(&object_or_empty(Some(&json!({"pluginId": 2}))), &Map::new()),
-            Some(2)
-        );
-        assert_eq!(
-            cloud_plugin_id(
-                &object_or_empty(Some(&json!({"pluginId": "2"}))),
-                &Map::new()
-            ),
-            Some(2)
-        );
-        assert_eq!(
-            cloud_plugin_id(
-                &object_or_empty(Some(&json!({"pluginId": true}))),
-                &Map::new()
-            ),
-            None
-        );
-        assert_eq!(
-            cloud_plugin_id(
-                &object_or_empty(Some(&json!({"pluginId": "x"}))),
-                &Map::new()
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn auto_update_blocked_release_matches_the_source_rule() {
-        let row = PluginDeviceInstallationRow {
-            id: 1,
-            installed_kind_id: 2,
-            user_id: 3,
-            device_id: "d".to_string(),
-            desired_release_id: 5,
-            actual_release_id: 4,
-            state: "failed".to_string(),
-            error_code: String::new(),
-            error_message: String::new(),
-            attempt_count: AUTO_UPDATE_FAILURE_LIMIT,
-            last_sync_at: chrono::NaiveDateTime::default(),
-            updated_at: chrono::NaiveDateTime::default(),
-        };
-        assert_eq!(auto_update_blocked_release_id(Some(&row), 5), Some(4));
-        assert_eq!(auto_update_blocked_release_id(None, 5), None);
-    }
-
-    #[test]
-    fn capability_snapshot_ignores_generated_download_values_and_order() {
-        let first = json!({
-            "mode": "replace",
-            "scope": null,
-            "skills": [],
-            "mcps": [],
-            "plugins": [
-                {"installed_plugin_id": 2, "name": "b", "marketplace": "wegent",
-                 "download_path": "http://s3/a?signature=1", "download_url_expires_at": "1"},
-                {"installed_plugin_id": 1, "name": "a", "marketplace": "wegent",
-                 "download_path": "http://s3/b?signature=2", "download_url_expires_at": "2"}
-            ]
-        });
-        let second = json!({
-            "mode": "replace",
-            "scope": null,
-            "skills": [],
-            "mcps": [],
-            "plugins": [
-                {"installed_plugin_id": 1, "name": "a", "marketplace": "wegent",
-                 "download_path": "http://s3/b?signature=3", "download_url_expires_at": "3"},
-                {"installed_plugin_id": 2, "name": "b", "marketplace": "wegent",
-                 "download_path": "http://s3/a?signature=4", "download_url_expires_at": "4"}
-            ]
-        });
-        assert_eq!(capability_snapshot(&first), capability_snapshot(&second));
-        let changed = json!({"mode": "replace", "plugins": [{"installed_plugin_id": 3}]});
-        assert_ne!(capability_snapshot(&first), capability_snapshot(&changed));
-    }
-
-    #[test]
-    fn skill_payload_writes_runtime_bind_shells() {
-        // Source `_skill_payload` (`capability_payloads.py:348`) always writes
-        // `bind_shells` from `get_runtime_skill_shells`, null when the package
-        // declares none. The recorded `device:sync_capabilities` payload proves
-        // `"bind_shells": ["ClaudeCode"]` for the installed `projects` skill.
-        let skill_row = |json: Value| InstalledKindRow {
-            id: 253867,
-            user_id: 157,
-            kind: "Skill".to_string(),
-            name: "projects".to_string(),
-            namespace: "default".to_string(),
-            json: brz_mysql::Json(brz_json::OpaqueJson::from_serializable(json)),
-            is_active: true,
-            created_at: chrono::NaiveDateTime::default(),
-            updated_at: chrono::NaiveDateTime::default(),
-        };
-        let declared = skill_payload(
-            &skill_row(json!({"spec": {"bindShells": ["ClaudeCode"]}})),
-            Some(253869),
-        );
-        assert_eq!(declared["bind_shells"], json!(["ClaudeCode"]));
-        let undeclared = skill_payload(&skill_row(json!({"spec": {}})), None);
-        assert_eq!(undeclared["bind_shells"], Value::Null);
-        assert!(undeclared.get("bind_shells").is_some());
-        // An explicit empty list stays `[]`; only an absent key becomes null.
-        let empty = skill_payload(&skill_row(json!({"spec": {"bindShells": []}})), None);
-        assert_eq!(empty["bind_shells"], json!([]));
-        assert!(empty.get("bind_shells").is_some());
-    }
-
-    #[test]
-    fn plugin_payload_name_prefers_the_marketplace_key() {
-        let installed = InstalledKindRow {
-            id: 1,
-            user_id: 2,
-            kind: "InstalledPlugin".to_string(),
-            name: "fallback".to_string(),
-            namespace: "default".to_string(),
-            json: brz_mysql::Json(brz_json::OpaqueJson::from_serializable(json!({}))),
-            is_active: true,
-            created_at: chrono::NaiveDateTime::default(),
-            updated_at: chrono::NaiveDateTime::default(),
-        };
-        assert_eq!(
-            plugin_payload_name(
-                &installed,
-                &json!({}),
-                &object_or_empty(Some(&json!({}))),
-                &object_or_empty(Some(&json!({"pluginKey": "dingtalk"})))
-            ),
-            "dingtalk"
-        );
-    }
-}
+#[cfg(test)]
+mod local_plugin_tests;

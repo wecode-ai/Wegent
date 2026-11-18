@@ -2581,6 +2581,16 @@ async fn run_codex_app_server_turn_on_shared_client(
                 )
                 .await
             {
+                if resume_goal_only {
+                    log_executor_event(
+                        "codex resumed Goal snapshot",
+                        &[
+                            ("thread_id", thread_id.clone()),
+                            ("goal_present", goal_response.get("goal").is_some_and(Value::is_object).to_string()),
+                            ("goal_status", goal_response["goal"]["status"].as_str().unwrap_or("none").to_owned()),
+                        ],
+                    );
+                }
                 sync_goal_status_from_response(&mut state, &goal_response);
             }
         }

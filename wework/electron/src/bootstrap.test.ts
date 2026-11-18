@@ -172,20 +172,18 @@ afterEach(() => {
   else Reflect.deleteProperty(process, 'resourcesPath')
 })
 
-test('renamed development bundles start main without a release launcher or release records', async () => {
+test('a renamed development bundle opens the application without a release launcher', async () => {
   vi.stubEnv('WEWORK_APP_HOT_RELOAD', '1')
-  startup.acquireStartup.mockRejectedValue(
-    new Error('Development bundles have no release launcher')
-  )
+  startup.acquireStartup.mockRejectedValue(new Error('spawn wework-launcher ENOENT'))
 
   await import('./bootstrap.js')
 
   expect(startup.main).toHaveBeenCalledOnce()
-  expect(startup.acquireStartup).not.toHaveBeenCalled()
   expect(startup.roots).toEqual([])
   expect(startup.afterStopPrepare).not.toHaveBeenCalled()
   expect(startup.restoreData).not.toHaveBeenCalled()
   expect(startup.showRecovery).not.toHaveBeenCalled()
+  expect(startup.acquireStartup).not.toHaveBeenCalled()
 })
 
 test('a concurrent recovery entry waits before reading or restoring the shared transaction', async () => {

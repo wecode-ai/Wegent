@@ -364,6 +364,12 @@ impl CodexNativeActivity {
         }
     }
 
+    fn goal_requires_resume(&self, thread_id: &str) -> bool {
+        self.goals
+            .get(thread_id)
+            .is_some_and(|goal| goal.active && !goal.native_work)
+    }
+
     pub(super) fn active_threads(&self) -> HashMap<String, usize> {
         let mut active: HashMap<_, _> = self
             .turns
@@ -403,6 +409,20 @@ pub(super) enum CodexNativeRequest {
         observation: u64,
         request_id: u64,
     },
+}
+
+impl CodexAppServerClient {
+    pub(crate) async fn goal_requires_resume(&self, thread_id: &str) -> bool {
+        let state = self.state.lock().await;
+        state.process.as_ref().is_some_and(|process| {
+            process
+                .notifications
+                .native_activity
+                .lock()
+                .expect("Codex native activity registry should not be poisoned")
+                .goal_requires_resume(thread_id)
+        })
+    }
 }
 
 impl CodexAppServerSharedState {
