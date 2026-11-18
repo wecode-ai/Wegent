@@ -32,6 +32,12 @@ function processingInput(body) {
   const input = Array.isArray(body.input) ? body.input : [body.input]
   return JSON.stringify(
     input.filter(item => {
+      if (
+        item?.type === 'function_call_output' &&
+        item.namespace === 'agent' &&
+        item.name === 'weworkstandinrecall'
+      )
+        return false
       const text =
         typeof item?.content === 'string'
           ? item.content

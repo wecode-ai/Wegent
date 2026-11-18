@@ -210,6 +210,12 @@ EnvironmentInfoPopover、ChangeRequestMonitor 与 observer 共 3 文件、33 项
 
 [Core5 日志](https://github.com/wecode-ai/Wegent/actions/runs/44230333813/job/134556621707) 与 artifact `14395896619` 显示通知已读、未读角标更新均成功；点击 Issue 关闭后，等待 `visible:false` 超时，原 Issue URL 仍保留。旧证据缺少 dismissal 与动画状态，尚未稳定复现，不能认定动画或导航为根因，也不能记为已修复。现只补关闭意图、连接状态和失败 frame 诊断；click 前仅读属性，不读取样式、尺寸或动画，避免提前 flush 改变时序。诊断及既有关闭回归 21 项通过，随后属性预读不 flush 的新增检查与相关套件 10 项通过，目标 ESLint、Prettier、Wework typecheck 和差异检查通过。产品关闭逻辑与 E2E 断言、预算均保持；后续必须依新证据继续调查，不能靠诊断后的偶然通过掩盖间歇问题。
 
+## 2026-11-18 Goal 恢复主线整合与同步身份复核
+
+主线 `b503a1f985b654df97cd17e05d1bc283942da03b` 与 `changeRequestMonitor.test.ts` 发生单文件冲突。整合同时保留本分支“observer 激活期间手动刷新获取新状态”和主线“收集中注册第二个任务仍能获取状态”的完整回归，运行时保留两种并发处理语义。monitor 三文件 21 项、环境面板与工作区身份/模型目录五文件 55 项、自动化/原生插件协议六文件 46 项全部通过；Rust 队列 17 项、Goal 路由恢复 10 项及双语文档 8 项通过。Wework typecheck、完整 lint（0 错误、5 项既有警告）、目标格式与差异检查通过。没有执行本地 E2E 或 ai:verify。
+
+独立复核发现认证场景的设备同步诊断此前使用了 HTTP record route，而同步注册表按稳定 Executor identity 索引；两者不同时可能错误读到空闲。两个检查现通过已有 `getLocalExecutorStatus.deviceId` 使用真实稳定身份，原有认证与恢复仍使用 record route。两种 ID 不同的协议红测稳定复现旧实现三项失败，修复后新增编排与既有证据两文件 26 项全部通过，语法、ESLint、Prettier 和差异检查通过。该补充仍需新提交真实 CI 验证；通知关闭问题继续按前述诊断取证，没有宣称解决。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

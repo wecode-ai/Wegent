@@ -20,9 +20,14 @@ import {
   readPluginAuthTarget,
 } from './plugin-auth-coordination-evidence.mjs'
 
-async function deviceSyncInFlight(control, deviceId) {
+async function deviceSyncInFlight(control) {
+  const status = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.ok(
+    typeof status.deviceId === 'string' && status.deviceId.trim(),
+    'Authentication baseline requires the stable local Executor identity'
+  )
   const debug = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body', { value: deviceId })
+    await control.command('getWorkbenchDebugSnapshot', 'body', { value: status.deviceId.trim() })
   )
   assert.equal(
     typeof debug.pluginDeviceSyncInFlight,
@@ -32,13 +37,7 @@ async function deviceSyncInFlight(control, deviceId) {
   return debug.pluginDeviceSyncInFlight
 }
 
-export async function holdBackgroundPluginAuthRow({
-  cloud,
-  control,
-  installedId,
-  expectedDeviceId,
-  timeoutMs,
-}) {
+export async function holdBackgroundPluginAuthRow({ cloud, control, installedId, timeoutMs }) {
   // Finish the real device-wide sync before injecting auth faults. Otherwise
   // its batch can hold unrelated plugin leases while waiting on the target row.
   await control.command('clickIfPresent', testId('plugin-detail-back-button'))
@@ -46,7 +45,7 @@ export async function holdBackgroundPluginAuthRow({
   await control.command('click', testId('new-chat-button'))
   await control.command('waitFor', testId('plugins-workspace'), { visible: false, timeoutMs })
   await until(
-    () => deviceSyncInFlight(control, expectedDeviceId),
+    () => deviceSyncInFlight(control),
     inFlight => inFlight === false,
     'Renderer device synchronization did not finish before authentication faults',
     timeoutMs
@@ -204,7 +203,6 @@ export async function verifyPluginAuthCoordination({
     cloud,
     control,
     installedId,
-    expectedDeviceId,
     timeoutMs,
   })
   const executorLog = join(resultDir, 'executor.log')
@@ -230,7 +228,7 @@ export async function verifyPluginAuthCoordination({
     pendingWait = await backgroundRow.waitFor('blocked')
     assert.ok(pendingWait.requestingTransactionId && pendingWait.blockingTransactionId)
     assert.equal(
-      await deviceSyncInFlight(control, expectedDeviceId),
+      await deviceSyncInFlight(control),
       false,
       'A renderer device-sync waiter cannot certify blocked background authentication'
     )

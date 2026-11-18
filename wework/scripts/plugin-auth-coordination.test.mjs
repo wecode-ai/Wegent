@@ -13,6 +13,7 @@ const fixture = vi.hoisted(() => ({
   holdLease: vi.fn(),
   install: vi.fn(),
   publish: vi.fn(),
+  mutate: vi.fn(),
 }))
 vi.mock('../e2e/desktop/modules/plugin-write-lease.mjs', () => ({
   holdPluginCoordinationFault: (...args) => fixture.holdCoordination(...args),
@@ -21,7 +22,7 @@ vi.mock('../e2e/desktop/modules/plugin-write-lease.mjs', () => ({
 }))
 vi.mock('../e2e/desktop/modules/plugin-write-coordination.mjs', () => ({
   publishIndependentPluginReleases: (...args) => fixture.publish(...args),
-  verifyIndependentPluginMutations: vi.fn(),
+  verifyIndependentPluginMutations: (...args) => fixture.mutate(...args),
 }))
 vi.mock('../e2e/desktop/modules/plugin-regression-fixture.mjs', async importOriginal => ({
   ...(await importOriginal()),
@@ -30,6 +31,7 @@ vi.mock('../e2e/desktop/modules/plugin-regression-fixture.mjs', async importOrig
 
 const reachedAuthCases = new Error('Verified baseline; stop before real fault processes')
 const refresh = '[data-testid="plugins-refresh-button"]'
+const executorDeviceId = 'electron-device-76'
 const deferred = () => {
   let resolve
   const promise = new Promise(done => {
@@ -54,6 +56,9 @@ function renderer({ refreshError, diagnostic = { pluginDeviceSyncInFlight: false
   const control = {
     async command(action, selector, options) {
       calls.push({ action, selector, options })
+      if (action === 'getLocalExecutorStatus') {
+        return JSON.stringify({ running: true, deviceId: executorDeviceId })
+      }
       if (action === 'getAttribute') return '4'
       if (action === 'clickWhenEnabled' && selector === refresh) {
         refreshRequested.resolve()
@@ -73,7 +78,13 @@ function renderer({ refreshError, diagnostic = { pluginDeviceSyncInFlight: false
         assert.equal(visible, false, 'Plugins can still start another device sync')
         diagnosticRequested.resolve()
         await syncCompletion.promise
-        return JSON.stringify(Array.isArray(diagnostic) ? diagnostic.shift() : diagnostic)
+        return JSON.stringify(
+          typeof diagnostic === 'function'
+            ? diagnostic(options.value)
+            : Array.isArray(diagnostic)
+              ? diagnostic.shift()
+              : diagnostic
+        )
       }
       if (action === 'localConnectorAuth') return JSON.stringify({ status: 'ok' })
       return ''
@@ -118,7 +129,7 @@ test('auth row faults cannot capture an unfinished renderer device-sync batch', 
     )
   )
   const diagnostic = run.calls.find(call => call.action === 'getWorkbenchDebugSnapshot')
-  assert.equal(diagnostic.options.value, 'app-record-76')
+  assert.equal(diagnostic.options.value, executorDeviceId)
 
   run.syncCompletion.resolve()
   assert.equal(await run.result, reachedAuthCases)
@@ -157,6 +168,24 @@ test('an in-flight device sync must complete before the target row is locked', a
   assert.equal(fixture.holdFault.mock.calls.length, 1)
 })
 
+test('a record route cannot hide an in-flight sync keyed by the stable Executor identity', async () => {
+  let stableReads = 0
+  const run = renderer({
+    diagnostic: key => ({
+      pluginDeviceSyncInFlight: key === executorDeviceId && stableReads++ === 0,
+    }),
+  })
+  run.reconciliation.resolve()
+  run.syncCompletion.resolve()
+  assert.equal(await run.result, reachedAuthCases)
+  assert.equal(stableReads, 2, 'The stable device sync was never observed and drained')
+  assert.ok(
+    run.calls
+      .filter(call => call.action === 'getWorkbenchDebugSnapshot')
+      .every(call => call.options.value === executorDeviceId)
+  )
+})
+
 test('the real auth workflow settles inventory after publishing and installing the other plugin', async () => {
   const events = []
   let fault
@@ -184,10 +213,22 @@ test('the real auth workflow settles inventory after publishing and installing t
   })
   fixture.holdFault.mockImplementation(async () => {
     events.push('held-auth-row')
-    throw reachedAuthCases
+    return {
+      assertHeld: async () => ({ held: true, blocked: true }),
+      async waitFor(event) {
+        assert.equal(event, 'blocked')
+        events.push('auth-row-blocked')
+        return { requestingTransactionId: 'auth-request', blockingTransactionId: 'held-row' }
+      },
+      release: async () => events.push('auth-row-released'),
+    }
   })
+  fixture.mutate.mockRejectedValue(reachedAuthCases)
   const control = {
     async command(action, selector, options) {
+      if (action === 'getLocalExecutorStatus') {
+        return JSON.stringify({ running: true, deviceId: executorDeviceId })
+      }
       if (action === 'localConnectorAuth') {
         const { action: auth } = JSON.parse(options.value)
         const code = fault === 'lease' ? 'plugin_write_busy' : 'plugin_write_unavailable'
@@ -208,6 +249,7 @@ test('the real auth workflow settles inventory after publishing and installing t
         events.push('left-plugins')
       }
       if (action === 'getWorkbenchDebugSnapshot') {
+        assert.equal(options.value, executorDeviceId)
         events.push('device-sync-idle')
         return JSON.stringify({ pluginDeviceSyncInFlight: false })
       }
@@ -216,12 +258,16 @@ test('the real auth workflow settles inventory after publishing and installing t
   }
   const result = await verifyPluginAuthCoordination({
     cloud: {
-      queryDatabase: async () => [{ status: 'disconnected', credential_cleared: 1, grants: 0 }],
+      queryDatabase: async query =>
+        query.includes('COALESCE')
+          ? ['InstalledPlugin', 'ConnectorConnection', 'ConnectorMigration'].map(kind => ({ kind }))
+          : [{ status: 'disconnected', credential_cleared: 1, grants: 0 }],
     },
     control,
     slug: 'account-auth-fixture',
     installedId: 77,
     expectedDeviceId: 'app-record-76',
+    resultDir: '.',
     connectionFor: async () => ({
       status: connected ? 'connected' : 'disconnected',
       device_ids: ['app-record-76'],
@@ -230,7 +276,7 @@ test('the real auth workflow settles inventory after publishing and installing t
     timeoutMs: 10_000,
   }).catch(error => error)
   assert.equal(result, reachedAuthCases)
-  assert.deepEqual(events.slice(-7), [
+  assert.deepEqual(events.slice(-10), [
     'published-other',
     'installed-other',
     'other-lease-released',
@@ -238,5 +284,8 @@ test('the real auth workflow settles inventory after publishing and installing t
     'left-plugins',
     'device-sync-idle',
     'held-auth-row',
+    'auth-row-blocked',
+    'device-sync-idle',
+    'auth-row-released',
   ])
 })
