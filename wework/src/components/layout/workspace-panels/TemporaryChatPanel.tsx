@@ -1509,7 +1509,10 @@ export function TemporaryChatPanel({
                   clearOnSubmit={!(nativeConversation && address && draft?.beginSubmission)}
                   disabled={
                     (!modelControls && taskModelIdentityPending) ||
-                    (nativeConversation && sending && !submissionTurnSettled)
+                    (nativeConversation &&
+                      sending &&
+                      !submissionTurnSettled &&
+                      failedAssistantCount === 0)
                   }
                   submitDisabled={taskModelIdentityPending}
                   showExecutionTools={showExecutionTools}
