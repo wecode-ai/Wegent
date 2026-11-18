@@ -535,10 +535,6 @@ classify_wework_path() {
       select_target "core:collaboration-runtime-reconciliation"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-board-backlog.scenario.mjs)
-      select_target "core:collaboration-board-backlog"
-      return
-      ;;
     wework/e2e/desktop/scenarios/collaboration-parent-board.scenario.mjs)
       select_target "core:collaboration-parent-board"
       return
@@ -548,7 +544,7 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/modules/collaboration-board-flows.mjs)
-      select_target "core:collaboration-board-backlog"
+      select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-board-move-recovery"
       return
       ;;

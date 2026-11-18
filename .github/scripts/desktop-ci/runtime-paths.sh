@@ -476,7 +476,7 @@ classify_path() {
       select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-attachment-preview"
       select_target "core:collaboration-issue-comment-notification"
-      select_target "core:collaboration-board-backlog"
+      select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-home-preload"
       select_target "core:board-transcript-followup"

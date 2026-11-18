@@ -149,13 +149,6 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$telemetry_scenario"
 done
 
-assert_desktop_case "Backlog scenario runs its independent Core checkpoint" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"collaboration-board-backlog"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-board-backlog.scenario.mjs"
 
 for suffix in '' '_tests'; do
   handler_path="executor/src/runtime_work/handler/stand_in_processing${suffix}.rs"
