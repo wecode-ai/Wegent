@@ -80,7 +80,10 @@ export function createDesktopScenario(options) {
       response.write(createSse([responseCreated(id)]))
       if (followUp) await followUpResponse.promise
       response.end(
-        createSse([assistantMessage(followUp ? FOLLOW_UP_DONE : INITIAL_DONE), responseCompleted(id)])
+        createSse([
+          assistantMessage(followUp ? FOLLOW_UP_DONE : INITIAL_DONE),
+          responseCompleted(id),
+        ])
       )
       return true
     },
