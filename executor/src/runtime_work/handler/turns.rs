@@ -1066,9 +1066,14 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.store.update_task(&turn.local_task_id, |link| {
-            link.running = true;
-            link.status = "active".to_owned();
-            link.thread_status = "active".to_owned();
+            if turn.request.extra.contains_key(quota_recovery::MARKER) {
+                // Checking quota does not start the deferred native turn.
+                crate::runtime_work::lifecycle::queue_native_execution(link, 0, false);
+            } else {
+                link.running = true;
+                link.status = "active".to_owned();
+                link.thread_status = "active".to_owned();
+            }
             link.updated_at = now_ms();
         });
         self.preparing_turns
@@ -2403,6 +2408,7 @@ impl RuntimeWorkRpcHandler {
                             &event_request,
                             json!({
                                 "error": {"message": message},
+                                "type": turn.error_type,
                                 "startedAt": turn.started_at_ms,
                                 "completedAt": turn.completed_at_ms,
                                 "durationMs": turn.duration_ms,

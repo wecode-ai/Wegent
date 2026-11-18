@@ -22,6 +22,7 @@ import {
 
 const ACCOUNT = 'cloud-config-recovery-enterprise'
 const ACCESS = 'synthetic-cloud-config-recovery-access'
+const REFRESH = 'synthetic-cloud-config-recovery-refresh'
 
 async function authFileMetadata(path) {
   try {
@@ -52,6 +53,7 @@ export function createCloudConfigModelService({
   let bundleFailures = 0
   let bundleSuccesses = 0
   let accountChecks = 0
+  let tokenRefreshes = 0
   const plans = new Map()
   const requests = []
   const authSnapshots = []
@@ -76,7 +78,7 @@ export function createCloudConfigModelService({
     async prepareApp({ appEnvironment, codexHome: home, control }) {
       codexHome = home
       assert.ok(Array.isArray(control.httpRequests), 'Shared HTTP diagnostics are unavailable')
-      server = createServer((request, response) => {
+      server = createServer(async (request, response) => {
         recordHttpRequest(
           request,
           response,
@@ -88,6 +90,15 @@ export function createCloudConfigModelService({
             bootstrapBundlesRemaining: bootstrapBundles,
           }
         )
+        if (request.method === 'POST' && request.url === '/oauth/token') {
+          const body = await readRequestBody(request)
+          assert.equal(body.grant_type, 'refresh_token')
+          assert.equal(body.refresh_token, REFRESH)
+          tokenRefreshes += 1
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ access_token: ACCESS, refresh_token: REFRESH }))
+          return
+        }
         if (handleModelSubscriptionUsage(request, response, readUsage)) return
         if (request.url?.startsWith('/backend-api/wham/accounts/check')) {
           accountChecks += 1
@@ -145,7 +156,7 @@ export function createCloudConfigModelService({
           tokens: {
             account_id: ACCOUNT,
             access_token: ACCESS,
-            refresh_token: 'synthetic-cloud-config-recovery-refresh',
+            refresh_token: REFRESH,
             id_token: `header.${claims}.signature`,
           },
           last_refresh: new Date().toISOString(),
@@ -155,6 +166,7 @@ export function createCloudConfigModelService({
       await rm(join(codexHome, 'auth.json'), { force: true })
       appEnvironment.CODEX_HOME = nativeHome
       appEnvironment.WEWORK_E2E_NATIVE_CODEX_HOME = nativeHome
+      appEnvironment.CODEX_REFRESH_TOKEN_URL_OVERRIDE = `http://127.0.0.1:${server.address().port}/oauth/token`
       // This checkpoint selects its configured native provider through real RPC.
       // Avoid unrelated custom catalog reconciliation: its restart endpoint must
       // preflight model/list, which would consume the failure before thread/resume.
@@ -265,6 +277,7 @@ export function createCloudConfigModelService({
         bundleFailures,
         bundleSuccesses,
         accountChecks,
+        tokenRefreshes,
         requests,
         authSnapshots,
       }

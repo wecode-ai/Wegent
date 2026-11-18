@@ -333,7 +333,9 @@ export function createDesktopScenario(options) {
           '[data-workspace-tab-content="fixed-task"] [data-testid="new-chat-button"]'
         )
         await control.command('waitFor', ORDINARY)
-        await openExplicitModelMenu(control, `${ORDINARY} [data-testid="model-selector-button"]`)
+        await openExplicitModelMenu(control, `${ORDINARY} [data-testid="model-selector-button"]`, {
+          requireSelection: true,
+        })
         await control.command(
           'waitFor',
           '[data-testid="model-selector-menu"] [data-testid^="model-option-"][aria-checked="true"]'
@@ -789,14 +791,30 @@ export function createDesktopScenario(options) {
   }
 }
 
-async function openExplicitModelMenu(control, trigger) {
+export async function openExplicitModelMenu(control, trigger, { requireSelection = false } = {}) {
   const menu = '[data-testid="model-selector-menu"]'
   await control.command('clickWhenEnabled', trigger)
   await control.command('waitFor', menu)
-  if ((await control.command('getAttribute', menu, { value: 'data-panel' })) === 'simple') {
-    await control.command('clickWhenEnabled', '[data-testid="model-advanced-toggle"]')
-  }
-  await control.command('waitFor', `${menu}[data-panel="advanced"]`)
+  await until(
+    async () => {
+      if ((await control.command('getAttribute', menu, { value: 'data-panel' })) === 'simple') {
+        await control.command('clickWhenEnabled', `${menu} [data-testid="model-advanced-toggle"]`)
+        return false
+      }
+      // Catalog initialization can briefly expose advanced view before resolving a selection.
+      return (
+        Number(
+          await control.command(
+            'getElementCount',
+            `${menu}[data-panel="advanced"]${requireSelection ? ' [role="radio"][aria-checked="true"]' : ''}`,
+            { visible: true }
+          )
+        ) > 0
+      )
+    },
+    ready => ready,
+    'The explicit model menu did not become ready'
+  )
 }
 
 async function cloudRequest(cloud, path, method = 'GET', body) {
