@@ -161,6 +161,7 @@ export async function createOrdinaryTaskProjectWithMemberFailure(
     await onProjectCreated?.(project)
 
     const failures = '[data-testid="collaboration-project-create-member-failures"]'
+    await control.command('scrollIntoView', failures)
     await control.command('waitFor', failures, {
       text: failedMember.user_name,
       visible: true,

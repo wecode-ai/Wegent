@@ -232,6 +232,10 @@ hongyu9 的最新评审要求把“部分成员添加失败后可恢复”从组
 
 本轮同时干净整合主线 `c0bc797072`。主线与本次两个 E2E 文件没有同文件冲突；整合后的目标格式、ESLint 和差异检查通过，完整 CI 与可合并状态仍以新 head 为准。
 
+`526c720a17` 的 Core10 实际运行暴露了测试假设问题：失败详情已渲染，但位于对话框的滚动 body 底部，首次直接等待 `visible:true` 时元素在可视区域外。既有设计把详情保留在最多 100vh 的滚动 body 内，并把重试和取消固定在 footer；因此场景现在先像用户一样把失败详情滚入视图，再断言成员、后端原因、已确认成员与重试按钮，没有移除页面高度约束或改变失败恢复逻辑。该次运行中的 Cloud1 `plugin-legacy-upgrade` 断言与本改动路径无关，但同样导致全绿未成立；需要新 head 的实际检查结果确认。
+
+提交该修正前主线又推进至 `78df73b26e`，本次两个 E2E 文件仍无同文件冲突并已干净整合。后续 head 必须重新取得完整 CI；前一失败的检查不能用于交接。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
