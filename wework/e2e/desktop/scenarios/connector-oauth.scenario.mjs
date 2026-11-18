@@ -26,6 +26,7 @@ import {
   startConnectorOAuthProvider,
 } from '../modules/connector-oauth-provider.mjs'
 import { verifyConnectorAccountSwitch } from '../modules/connector-account-switch.mjs'
+import { waitForConnectorNativeTurn } from '../modules/connector-native-turn.mjs'
 import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import {
   openPlugin,
@@ -131,6 +132,7 @@ export function createDesktopScenario({
   const modelRequests = []
   const toolRequestDiagnostics = []
   const lazyToolDiagnostics = []
+  let lazyReplySent = false
   let replySequence = 0
   let catalogAtResume = null
   let localSyncHold = null
@@ -200,6 +202,7 @@ export function createDesktopScenario({
         if (requestContainsToolOutput(body, LAZY_CALL_ID)) {
           assert.ok(toolOutputText(body, LAZY_CALL_ID)?.includes('CONNECTOR-OAUTH-ECHO-OK'))
           writeReply(response, `connector-lazy-${replySequence}`, LAZY_COMPLETION)
+          lazyReplySent = true
           return true
         }
         const discovered = requestContainsToolOutput(body, LAZY_DISCOVERY_ID)
@@ -668,9 +671,11 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: LAZY_COMPLETION,
-        timeoutMs: modelResponseTimeoutMs,
+      await waitForConnectorNativeTurn(control, {
+        completion: LAZY_COMPLETION,
+        replySent: () => lazyReplySent,
+        modelResponseTimeoutMs,
+        uiTimeoutMs,
       })
       assert.deepEqual(
         provider.toolCalls.filter(call => call.arguments.value === LAZY_PROMPT),
@@ -693,6 +698,7 @@ export function createDesktopScenario({
     diagnostics() {
       return {
         modelRequests: modelRequests.length,
+        lazyReplySent,
         lazyToolDiagnostics,
         toolRequestDiagnostics:
           toolRequestDiagnostics.length <= 16

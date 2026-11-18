@@ -4,6 +4,8 @@
 
 export const boardViewMessages = {
   'zh-CN': {
+    'todo.board_base_migration_failed': '基础看板设置保存失败，仍可继续查看看板。',
+    'todo.board_base_migration_retry': '重试保存',
     'todo.board_view_builtin': '基础看板',
     'todo.board_view_switch': '切换视图',
     'todo.board_view_settings': '看板设置',
@@ -60,6 +62,9 @@ export const boardViewMessages = {
     'todo.board_drop_success': '已更新「{{title}}」：{{action}}',
   },
   en: {
+    'todo.board_base_migration_failed':
+      'Base board settings could not be saved. You can still use the board.',
+    'todo.board_base_migration_retry': 'Retry saving',
     'todo.board_view_builtin': 'Base board',
     'todo.board_view_switch': 'Switch view',
     'todo.board_view_settings': 'Board settings',

@@ -122,6 +122,37 @@ it('logs local identity failures without blocking device inventory discovery', a
   }
 })
 
+it('discovers remote requests when local runtime identity is unavailable', async () => {
+  const log = vi.spyOn(console, 'info').mockImplementation(() => {})
+  const list = vi.fn().mockResolvedValue({
+    projects: [],
+    chats: [{ ...interactionTask.workspace, deviceId: 'remote', tasks: [interactionTask.task] }],
+    totalTasks: 1,
+  })
+  try {
+    const inventory = await readInteractionTaskInventory({
+      items: [],
+      devices: [{ device_id: 'remote', status: 'online' }],
+      services: {
+        getLocalRuntimeSidebarIdentity: async () => {
+          throw new Error('Local IPC unavailable')
+        },
+        runtimeWorkApi: { listRuntimeWork: list },
+      },
+    } as unknown as TaskSource)
+    expect(list).toHaveBeenCalledExactlyOnceWith({
+      pendingOnly: true,
+      preferCached: true,
+      deviceId: 'remote',
+    })
+    expect(inventory.items.map(item => item.address.deviceId)).toEqual(['remote'])
+    expect(inventory.failedDevices).toEqual(new Set())
+    expect(inventory.failedRequests).toEqual(new Set())
+  } finally {
+    log.mockRestore()
+  }
+})
+
 it('preserves per-device isolation through the canonical HTTP adapter', async () => {
   const get = vi.fn(async (path: string) => {
     const url = new URL(path, 'https://backend/api')
