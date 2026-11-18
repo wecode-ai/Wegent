@@ -21,7 +21,9 @@ export async function verifyPluginNativeAuth({
   timeoutMs,
 }) {
   const flags = { ...cloud.backendEnv }
-  const current = (await requestPluginExecutor(control, 'executor.backend.status')).payload.result
+  const current = (
+    await requestPluginExecutor(control, 'executor.backend.status', {}, { timeoutMs })
+  ).payload.result
   const stored = JSON.parse(
     await control.command('getLocalStorageItem', 'body', {
       value: 'wework.cloudConnection',
@@ -44,13 +46,18 @@ export async function verifyPluginNativeAuth({
   assert.ok(runtime.ok)
   const runtimeToken = (await runtime.json()).auth_token
   const configure = socket =>
-    requestPluginExecutor(control, 'executor.backend.configure', {
-      backend_url: cloud.backendUrl,
-      socket_url: socket,
-      auth_token: cloud.authToken,
-      runtime_auth_token: runtimeToken,
-      device_type: 'app',
-    })
+    requestPluginExecutor(
+      control,
+      'executor.backend.configure',
+      {
+        backend_url: cloud.backendUrl,
+        socket_url: socket,
+        auth_token: cloud.authToken,
+        runtime_auth_token: runtimeToken,
+        device_type: 'app',
+      },
+      { timeoutMs }
+    )
   const localAuth = action =>
     control.command('localConnectorAuth', 'body', {
       value: JSON.stringify({ pluginKey: 'desktop-account-auth', connectorSlug: 'mail', action }),
@@ -70,7 +77,9 @@ export async function verifyPluginNativeAuth({
       timeoutMs
     )
     assert.equal(fault.error, null)
-    const status = (await requestPluginExecutor(control, 'executor.backend.status')).payload.result
+    const status = (
+      await requestPluginExecutor(control, 'executor.backend.status', {}, { timeoutMs })
+    ).payload.result
     assert.equal(status.connected, false, 'Plugin authorization must not mark Device registered')
     const authorization = JSON.parse(
       await control.command('configurePluginNativeAuthorization', 'body')
@@ -100,7 +109,8 @@ export async function verifyPluginNativeAuth({
     assert.ok(root)
     await invokeLocal(root)
     assert.equal(
-      (await requestPluginExecutor(control, 'executor.backend.status')).payload.result.connected,
+      (await requestPluginExecutor(control, 'executor.backend.status', {}, { timeoutMs })).payload
+        .result.connected,
       false
     )
 
@@ -113,11 +123,16 @@ export async function verifyPluginNativeAuth({
       skills: { [slug]: slug },
     })
     const sync = async params => {
-      const response = await requestPluginExecutor(control, 'executor.plugins.local_sync', {
-        backend_url: cloud.backendUrl,
-        auth_token: cloud.authToken,
-        ...params,
-      })
+      const response = await requestPluginExecutor(
+        control,
+        'executor.plugins.local_sync',
+        {
+          backend_url: cloud.backendUrl,
+          auth_token: cloud.authToken,
+          ...params,
+        },
+        { timeoutMs }
+      )
       assert.equal(response.payload.error, undefined)
       assert.equal(response.payload.result.localCompleted, true)
       return response.payload.result
@@ -154,7 +169,8 @@ export async function verifyPluginNativeAuth({
     assert.equal(JSON.parse(await localAuth('logout')).status, 'ok')
     assert.equal((await connectionFor('mail')).status, 'disconnected')
     assert.equal(
-      (await requestPluginExecutor(control, 'executor.backend.status')).payload.result.connected,
+      (await requestPluginExecutor(control, 'executor.backend.status', {}, { timeoutMs })).payload
+        .result.connected,
       false
     )
     await writeFile(
