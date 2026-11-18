@@ -10,7 +10,11 @@ export interface RuntimeTaskAddress {
   worktreeId?: string | null;
   runtimeHandle?: Record<string, unknown> | null;
   /** Presentation context for an execution opened from an Issue. */
-  issueExecution?: { projectId: string; issueId: string };
+  issueExecution?: {
+    projectId: string;
+    issueId: string;
+    projectStore?: "local" | "backend";
+  };
   /** Read authority is resolved server-side from this Issue's durable binding. */
   projectSession?: { projectId: string; issueId: string };
 }

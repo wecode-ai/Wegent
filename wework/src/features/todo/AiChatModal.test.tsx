@@ -716,7 +716,11 @@ describe('AiChatModal', () => {
     await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
     expect(onOpenRuntimeTask).toHaveBeenCalledWith({
       ...address,
-      issueExecution: { projectId: String(project.id), issueId: task.id },
+      issueExecution: {
+        projectId: String(project.id),
+        issueId: task.id,
+        projectStore: project.project_store,
+      },
       projectSession: { projectId: String(project.id), issueId: task.id },
     })
     expect(onClose).toHaveBeenCalledOnce()
@@ -743,7 +747,11 @@ describe('AiChatModal', () => {
     await userEvent.click(screen.getByTestId('ai-chat-open-runtime-task'))
     expect(onOpenRuntimeTask).toHaveBeenCalledWith({
       ...address,
-      issueExecution: { projectId: String(project.id), issueId: task.id },
+      issueExecution: {
+        projectId: String(project.id),
+        issueId: task.id,
+        projectStore: 'local',
+      },
     })
     expect(onClose).toHaveBeenCalledOnce()
   })

@@ -1067,9 +1067,16 @@ export function useWorkbenchCloudProjectContext({
       ? deliveryItem
       : null
   const openBoundProjectSpaceTask = useCallback(() => {
-    if (!boundCloudProject || !boundCloudItem) return
-    const projectRef = projectSpaceRef(boundCloudProject)
-    const contentRoute = projectSpaceContentRoute(projectRef, boundCloudItem.id)
+    const execution = currentRuntimeTask?.issueExecution
+    const projectRef = execution?.projectStore
+      ? { projectId: execution.projectId, projectStore: execution.projectStore }
+      : boundCloudProject
+        ? projectSpaceRef(boundCloudProject)
+        : undefined
+    const itemId = execution?.issueId ?? boundCloudItem?.id
+    if (!projectRef || !itemId) return
+    const contentRoute = projectSpaceContentRoute(projectRef, itemId)
+    const title = boundCloudProject?.name
     if (workspaceTabs) {
       const existingBoardTab = workspaceTabs.tabs.find(
         tab =>
@@ -1079,19 +1086,19 @@ export function useWorkbenchCloudProjectContext({
       )
       if (existingBoardTab) {
         workspaceTabs.selectTab(existingBoardTab.id, {
-          title: boundCloudProject.name,
+          ...(title ? { title } : {}),
           contentRoute,
         })
         return
       }
       workspaceTabs.openTab('board', {
-        title: boundCloudProject.name,
+        ...(title ? { title } : {}),
         contentRoute,
       })
       return
     }
     navigateTo(contentRoute)
-  }, [boundCloudItem, boundCloudProject, workspaceTabs])
+  }, [boundCloudItem, boundCloudProject, currentRuntimeTask?.issueExecution, workspaceTabs])
 
   const finishDelivery = useCallback(() => {
     setDeliveryDialogOpen(false)

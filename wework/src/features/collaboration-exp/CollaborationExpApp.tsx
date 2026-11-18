@@ -550,7 +550,7 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
                   ...address,
                   ...(detail.data?.project.project_store === 'backend' && projectId && issueId
                     ? {
-                        issueExecution: { projectId, issueId },
+                        issueExecution: { projectId, issueId, projectStore: 'backend' },
                         projectSession: { projectId, issueId },
                       }
                     : {}),

@@ -1,3 +1,4 @@
+import { modelApplicationContextText } from '../modules/application-context-model.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -55,15 +56,18 @@ export function createDesktopScenario(options) {
           'Source context entered user input'
         )
       }
-      assert.ok(
-        (body.input ?? []).some(
-          item => item.role === 'developer' && JSON.stringify(item.content).includes(APP_CONTEXT)
-        ),
+      assert.equal(
+        modelApplicationContextText(body, 'cloudCollaboration'),
+        APP_CONTEXT,
         'Codex did not receive the application context independently'
       )
       assert.ok(
         (body.input ?? []).some(
-          item => item.role === 'user' && JSON.stringify(item.content).includes(SOURCE_CONTEXT)
+          item =>
+            item.type === 'function_call_output' &&
+            item.namespace === 'agent' &&
+            item.name === 'source' &&
+            item.output === SOURCE_CONTEXT
         ),
         'Codex did not retain the untrusted source context'
       )
