@@ -451,6 +451,7 @@ impl RuntimeWorkRpcHandler {
                 "response.completed"
             }
             ExecutionOutcome::Failed { message } => {
+                data["type"] = json!(result.error_type);
                 data["error"] = json!({"message": message});
                 "response.failed"
             }

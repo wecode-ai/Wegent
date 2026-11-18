@@ -95,6 +95,11 @@ fn overload_recovery_waits_for_saved_history_and_uses_bounded_backoff() {
         };
         assert_eq!(delay, Duration::from_secs(seconds));
         assert_eq!(notification["params"]["willRetry"], true);
+        assert_eq!(notification["params"]["retryAttempt"], index + 1);
+        assert_eq!(
+            notification["params"]["retryMaxAttempts"],
+            RETRY_DELAYS.len()
+        );
         assert_eq!(
             notification["params"]["error"]["codexErrorInfo"],
             "serverOverloaded"

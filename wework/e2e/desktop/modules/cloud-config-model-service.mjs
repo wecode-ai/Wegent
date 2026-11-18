@@ -16,6 +16,7 @@ import {
 } from './response-protocol.mjs'
 
 const ACCOUNT = 'cloud-config-recovery-enterprise'
+const REFRESH = 'synthetic-cloud-config-recovery-refresh'
 
 async function authFileMetadata(path) {
   try {
@@ -45,6 +46,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
   let bundleFailures = 0
   let bundleSuccesses = 0
   let accountChecks = 0
+  let tokenRefreshes = 0
   const plans = new Map()
   const requests = []
   const authSnapshots = []
@@ -69,6 +71,22 @@ export function createCloudConfigModelService({ readUsage } = {}) {
     async prepareApp({ appEnvironment, codexHome: home, control }) {
       codexHome = home
       server = createServer(async (request, response) => {
+        if (request.method === 'POST' && request.url === '/oauth/token') {
+          const body = await readRequestBody(request)
+          assert.equal(body.grant_type, 'refresh_token')
+          assert.equal(body.refresh_token, REFRESH)
+          assert.ok(accessToken)
+          tokenRefreshes += 1
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(
+            JSON.stringify({
+              access_token: accessToken,
+              refresh_token: REFRESH,
+              id_token: accessToken,
+            })
+          )
+          return
+        }
         if (readUsage && request.url?.includes('/wham/usage')) {
           try {
             const usage = await readUsage()
@@ -133,8 +151,8 @@ export function createCloudConfigModelService({ readUsage } = {}) {
           },
         })
       ).toString('base64url')
-      // New Codex releases read expiry from the access token itself. Keep the
-      // subscription fixture refresh-free while still exercising real auth parsing.
+      // New Codex releases read expiry from the access token itself. The same
+      // token serves initial authentication and the isolated refresh endpoint.
       accessToken = `header.${claims}.signature`
       await writeFile(
         join(nativeHome, 'auth.json'),
@@ -143,7 +161,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
           tokens: {
             account_id: ACCOUNT,
             access_token: accessToken,
-            refresh_token: 'synthetic-cloud-config-recovery-refresh',
+            refresh_token: REFRESH,
             id_token: accessToken,
           },
           last_refresh: new Date().toISOString(),
@@ -153,6 +171,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
       await rm(join(codexHome, 'auth.json'), { force: true })
       appEnvironment.CODEX_HOME = nativeHome
       appEnvironment.WEWORK_E2E_NATIVE_CODEX_HOME = nativeHome
+      appEnvironment.CODEX_REFRESH_TOKEN_URL_OVERRIDE = `http://127.0.0.1:${server.address().port}/oauth/token`
       // This checkpoint selects its configured native provider through real RPC.
       // Avoid unrelated custom catalog reconciliation: its restart endpoint must
       // preflight model/list, which would consume the failure before thread/resume.
@@ -266,6 +285,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
         bundleFailures,
         bundleSuccesses,
         accountChecks,
+        tokenRefreshes,
         requests,
         authSnapshots,
       }
