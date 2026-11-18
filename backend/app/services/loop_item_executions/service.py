@@ -2173,12 +2173,12 @@ class LoopItemExecutionService:
         key is (project, task, agent, runtime ids), making this idempotent.
         """
 
-        # Personal assistant work stays private until a final result is published.
-        if execution.executor_type == "human_assistant":
-            return None
         from app.services.loop_items.locking import lock_existing_issue
 
         lock_existing_issue(db, execution.loop_item_id)
+        # Personal assistant work stays private until a final result is published.
+        if execution.executor_type == "human_assistant":
+            return None
         current = db.get(
             LoopItemExecution,
             execution.id,

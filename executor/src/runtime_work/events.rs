@@ -1199,6 +1199,7 @@ impl CodexNotificationEventMapper {
                     "block_id": process_text.id.clone(),
                     "updates": {
                         "content_delta": pending_delta,
+                        "content_offset": process_text.content[..content_offset].chars().count(),
                         "status": "streaming",
                     }
                 }),
@@ -1432,6 +1433,7 @@ impl CodexNotificationEventMapper {
         let block_id = plan_block_id(params);
         let content = self.plan_blocks.entry(block_id.clone()).or_default();
         let is_new = content.is_empty();
+        let content_offset = content.chars().count();
         content.push_str(&delta);
 
         if is_new {
@@ -1464,6 +1466,7 @@ impl CodexNotificationEventMapper {
                 "block_id": block_id,
                 "updates": {
                     "content_delta": delta,
+                    "content_offset": content_offset,
                     "status": "streaming",
                 }
             }),
@@ -1831,6 +1834,7 @@ fn terminal_content_updates(streamed_content: &str, completed_content: &str) -> 
         }
         return json!({
             "content_delta": delta,
+            "content_offset": streamed_content.chars().count(),
             "status": "done",
         });
     }
@@ -3678,6 +3682,7 @@ mod tests {
             updated["payload"]["data"]["updates"]["content_delta"],
             "inspect."
         );
+        assert_eq!(updated["payload"]["data"]["updates"]["content_offset"], 7);
     }
 
     #[test]
