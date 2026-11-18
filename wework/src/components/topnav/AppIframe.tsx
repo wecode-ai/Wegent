@@ -61,9 +61,12 @@ function bootstrapBounds(bounds: EmbeddedBrowserBounds): EmbeddedBrowserBounds {
   return scaledBounds(bounds, 0.12)
 }
 
-async function waitForEmbeddedBrowserContent(label: string): Promise<void> {
+async function waitForEmbeddedBrowserContent(
+  label: string,
+  isDisposed: () => boolean
+): Promise<void> {
   const deadline = Date.now() + 30_000
-  while (Date.now() < deadline) {
+  while (!isDisposed() && Date.now() < deadline) {
     try {
       const ready = await evalEmbeddedBrowserJson<boolean>(
         `(() => {
@@ -83,7 +86,7 @@ async function waitForEmbeddedBrowserContent(label: string): Promise<void> {
     }
     await new Promise(resolve => window.setTimeout(resolve, 50))
   }
-  throw new Error('Timed out waiting for app content')
+  if (!isDisposed()) throw new Error('Timed out waiting for app content')
 }
 
 export function AppIframe({
@@ -186,16 +189,19 @@ export function AppIframe({
       setLoading(true)
       setError(false)
       void syncNativeBounds(false)
-        .then(() => navigateEmbeddedBrowser(src, label))
+        .then(() => {
+          if (!disposed) return navigateEmbeddedBrowser(src, label)
+        })
         .then(async () => {
+          if (disposed) return
           loadedSrcRef.current = src
-          if (waitForContent) await waitForEmbeddedBrowserContent(label)
+          if (waitForContent) await waitForEmbeddedBrowserContent(label, () => disposed)
           if (!disposed) setLoading(false)
           if (!disposed) revealNativeBrowser()
         })
         .catch(error => {
-          console.error('Failed to navigate app webview:', error)
           if (disposed) return
+          console.error('Failed to navigate app webview:', error)
           setLoading(false)
           setError(true)
         })
@@ -239,18 +245,19 @@ export function AppIframe({
 
     void openPromise
       .then(async () => {
+        if (disposed) return
         if (!activeRef.current) {
           void syncNativeBounds(false).catch(error => {
             console.error('Failed to keep inactive app webview hidden:', error)
           })
         }
-        if (waitForContent) await waitForEmbeddedBrowserContent(label)
+        if (waitForContent) await waitForEmbeddedBrowserContent(label, () => disposed)
         if (!disposed) setLoading(false)
         if (!disposed) revealNativeBrowser()
       })
       .catch(error => {
-        console.error('Failed to open app webview:', error)
         if (disposed) return
+        console.error('Failed to open app webview:', error)
         openedRef.current = false
         void syncNativeBounds(false)
         setLoading(false)
