@@ -5384,30 +5384,6 @@ describe('createLocalAppServices', () => {
     expect(payload.executionRequest.user_selected_skills).toEqual(['dws'])
   })
 
-  test('activates project-space capabilities for a generic cloud reference', async () => {
-    const request = vi.fn().mockResolvedValue({ accepted: true })
-    const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
-      request,
-      subscribe: vi.fn(),
-    })
-
-    await services.runtimeWorkApi?.createRuntimeTask({
-      deviceId: 'local-device',
-      workspacePath: '/Users/me/project',
-      taskId: 'task-project-space',
-      runtime: 'codex',
-      message: '[$项目空间](cloud://projects) 帮我创建一个新项目',
-    })
-
-    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
-    const prompt = payload.executionRequest.prompt as string
-    expect(prompt).toContain('[projectSpaceCapability]')
-    expect(prompt).toContain('Use wework_space as the only interface')
-    expect(prompt).toContain('Do not use git commands')
-    expect(prompt).toContain('read_item_attachment')
-  })
-
   test('rejects missing local model config instead of falling back to built-in Codex', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({

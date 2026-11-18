@@ -385,3 +385,27 @@ fn backend_tasks_retain_inline_artifact_rules_while_wework_keeps_them_deferred()
         }
     }
 }
+
+#[test]
+fn application_and_source_context_stay_separate_from_codex_turn_input() {
+    let mut request = ExecutionRequest {
+        prompt: json!("Verify the main build"),
+        ..Default::default()
+    };
+    let context = json!({
+        "cloudCollaboration":{"kind":"application","value":"Current Issue reference"},
+        "source":{"kind":"untrusted","value":"Quoted Issue content"}
+    });
+    request
+        .extra
+        .insert("additionalContext".into(), context.clone());
+    let launch = CodexLaunchConfig::default();
+    let params = turn_start_params("thread", &request, &launch, turn_input(&request.prompt));
+    assert_eq!(
+        params["input"],
+        json!([{"type":"text","text":"Verify the main build","text_elements":[]}])
+    );
+    for key in ["cloudCollaboration", "source"] {
+        assert_eq!(params["additionalContext"][key], context[key]);
+    }
+}
