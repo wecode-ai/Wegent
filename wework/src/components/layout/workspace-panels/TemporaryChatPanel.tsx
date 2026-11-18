@@ -475,7 +475,7 @@ export function TemporaryChatPanel({
         taskLifecycle.turn?.outcome ?? ''
       }|${taskLifecycle.turn?.active ?? false}`
     : null
-  const failedAssistantCount = messages.filter(
+  const failedAssistantCount = presentation.messages.filter(
     message =>
       message.role === 'assistant' &&
       (message.status === 'failed' || message.runtimeStatus === 'failed')
