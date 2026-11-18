@@ -32,6 +32,10 @@ import {
 } from '../modules/plugin-regression-fixture.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
 import {
+  resolveSkillLocatorPaths,
+  skillLocatorFailureSummary,
+} from '../modules/skill-locator-diagnostics.mjs'
+import {
   assistantMessage,
   readRequestBody,
   responseCompleted,
@@ -330,6 +334,7 @@ export async function createDesktopScenario({
     const id = `legacy-business-${Date.now()}`
     active = {
       id,
+      version,
       prompt: `WEWORK_LEGACY_PLUGIN ${id}`,
       output: null,
       // Keep the prepared Corepack ahead of host tools after native login-shell hydration.
@@ -507,10 +512,36 @@ export async function createDesktopScenario({
         events = [assistantMessage(`${active.id} completed`)]
       } else if (active && JSON.stringify(body.input ?? '').includes(active.prompt)) {
         assert.ok(requestAdvertisesShellCommand(body))
-        assert.ok(
-          requestContainsSkillLocator(body, active.skillPath, active.skillName),
-          'Codex did not discover the historical plugin in its migrated native runtime'
+        const hasSkillLocator = requestContainsSkillLocator(
+          body,
+          active.skillPath,
+          active.skillName
         )
+        const failureMessage =
+          'Codex did not discover the historical plugin in its migrated native runtime'
+        let message = failureMessage
+        if (!hasSkillLocator) {
+          try {
+            const summary = skillLocatorFailureSummary(body, {
+              skillPath: active.skillPath,
+              skillName: active.skillName,
+              pluginName: 'smart-app-builder',
+            })
+            message = `${failureMessage}: ${JSON.stringify({
+              at: new Date().toISOString(),
+              invocationId: active.id,
+              baselineVersion: current.release.version,
+              pluginVersion: active.version,
+              ...(await resolveSkillLocatorPaths(summary, {
+                pluginName: 'smart-app-builder',
+                allowedRoot: homePath,
+              })),
+            })}`
+          } catch {
+            message = `${failureMessage}: diagnostics unavailable`
+          }
+        }
+        assert.ok(hasSkillLocator, message)
         events = shellCommandResponse(body, active.id, active.command, workspacePath)
       } else events = [assistantMessage('Legacy plugin migration fixture ready')]
       response.writeHead(200, { 'Content-Type': 'text/event-stream' })
