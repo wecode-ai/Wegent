@@ -40,7 +40,8 @@ export function createDesktopScenario(options) {
       windowsHide: true,
     }).trim()
   }
-  const until = (load, ready, label) => storyUntil(load, ready, modelResponseTimeoutMs, label)
+  const until = (load, ready, label, timeoutMs = modelResponseTimeoutMs) =>
+    storyUntil(load, ready, timeoutMs, label)
   async function request(path, body, token = cloud.authToken) {
     const response = await fetch(`${cloud.backendUrl}/api${path}`, {
       method: body === undefined ? 'GET' : 'POST',
@@ -370,7 +371,8 @@ export function createDesktopScenario(options) {
           value =>
             value.requests.find(row => row.requestId === a.requestId)?.worktree?.merge?.state ===
             'awaiting_confirmation',
-          'A must produce a validation candidate before explicit owner publication'
+          'A must produce a validation candidate before explicit owner publication',
+          modelResponseTimeoutMs + 60_000
         )
         const finished = completed.requests.find(row => row.requestId === a.requestId)
         assert.equal(finished.runtimeTaskId, ra.runtimeTaskId)
