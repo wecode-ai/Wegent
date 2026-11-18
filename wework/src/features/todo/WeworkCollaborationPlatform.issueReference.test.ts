@@ -52,7 +52,7 @@ afterEach(() => {
 })
 
 function createLocalDeliveryApi() {
-  return {
+  const api = {
     listCloudProjects: vi.fn().mockResolvedValue({
       items: [
         {
@@ -87,6 +87,14 @@ function createLocalDeliveryApi() {
       },
     }),
   } as unknown as LocalProjectSpaceApi
+  api.getCloudProject = vi.fn(async projectId => {
+    const found = (await api.listCloudProjects()).items.find(
+      candidate => String(candidate.id) === String(projectId)
+    )
+    if (!found) throw new Error(`Project ${projectId} was not found`)
+    return found
+  })
+  return api
 }
 
 function createLocalDetailServices() {
