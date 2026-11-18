@@ -43,7 +43,15 @@
     },
     "loadFailed": "Requests could not be loaded.",
     "refreshFailed": "Requests could not be refreshed. Showing the last confirmed state.",
-    "sendFailed": "Acceptance has not been confirmed. Retry the same action to check its receipt; your text is retained.",
+    "sendFailed": "Acceptance has not been confirmed. This submission is retained; retry it to check its receipt. Your new draft is unaffected.",
+    "retrySubmission": "Retry this submission",
+    "localStates": {
+      "queued": "Waiting locally to send; server acceptance is unconfirmed",
+      "sending": "Sending; waiting for server acceptance",
+      "failed": "Delivery unconfirmed",
+      "preserved": "Preserved; acceptance is unconfirmed. Only an explicit retry requeues this submission",
+      "confirmed": "Server acceptance confirmed; see the request for execution status"
+    },
     "states": {
       "accepted": "Accepted",
       "queued": "Queued",

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { ArrowUpRight, Lock, Plus } from 'lucide-react'
 import type {
   AssistantExecutionRequest,
@@ -15,6 +15,7 @@ import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { useAssistantRequests } from './useAssistantRequests'
+import type { LocalRequestSubmission, RequestComposer } from './assistantRequestScopeStore'
 
 interface Props {
   api: AssistantRequestsApi
@@ -26,7 +27,6 @@ interface Props {
   openRequest?: { id: string; key: number }
 }
 
-type Composer = { action: 'new_request' | 'followup' | 'replace'; requestId?: string }
 const activeStates = new Set(['accepted', 'queued', 'waiting_device', 'running', 'waiting_user'])
 
 export function AssistantRequestPanel(props: Props) {
@@ -55,6 +55,7 @@ export function AssistantRequestPanel(props: Props) {
 
 function AssistantRequestContent(props: Props & { userId: number; accountKey: string }) {
   const { t } = useTranslation('collaborationExp')
+  const messageId = useId()
   const requests = useAssistantRequests({
     api: props.api,
     projectId: props.project.id,
@@ -64,8 +65,7 @@ function AssistantRequestContent(props: Props & { userId: number; accountKey: st
     active: props.active,
     revision: props.revision,
   })
-  const [composer, setComposer] = useState<Composer | null>(null)
-  const [message, setMessage] = useState('')
+  const { composer, message, start } = requests
   const list = requests.list
   const opened = useRef<Props['openRequest']>(undefined)
   const { active, openRequest, onExecution } = props
@@ -77,26 +77,8 @@ function AssistantRequestContent(props: Props & { userId: number; accountKey: st
     onExecution({ deviceId: request.deviceId, taskId: request.runtimeTaskId })
   }, [active, openRequest, onExecution, requests.failed, list])
   if (!list && !requests.failed) return null
-  if (list && !list.enabled && list.requests.length === 0) return null
-  const start = (next: Composer) => {
-    setComposer(next)
-    setMessage('')
-  }
-  const send = async () => {
-    if (!composer || !message.trim()) return
-    const action: AssistantRequestAction =
-      composer.action === 'new_request'
-        ? { action: 'new_request', message: message.trim() }
-        : {
-            action: composer.action,
-            requestId: composer.requestId!,
-            message: message.trim(),
-          }
-    if (await requests.submit(action)) {
-      setComposer(null)
-      setMessage('')
-    }
-  }
+  if (list && !list.enabled && list.requests.length === 0 && !requests.submissions.length)
+    return null
   return (
     <section
       className="space-y-3 px-4 py-3 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
@@ -111,7 +93,7 @@ function AssistantRequestContent(props: Props & { userId: number; accountKey: st
           <Button
             variant="ghost"
             size="sm"
-            disabled={requests.sending || requests.failed}
+            disabled={!props.active}
             data-testid="assistant-request-new"
             onClick={() => start({ action: 'new_request' })}
           >
@@ -129,11 +111,30 @@ function AssistantRequestContent(props: Props & { userId: number; accountKey: st
           </Button>
         </div>
       ) : null}
+      {requests.submissions.length ? (
+        <div className="space-y-2" data-testid="assistant-request-local-submissions">
+          {requests.submissions.map(submission => (
+            <LocalSubmission
+              key={submission.clientId}
+              submission={submission}
+              disabled={
+                !props.active ||
+                requests.submissionBusy(submission.clientId) ||
+                (!('message' in submission.action) &&
+                  'requestId' in submission.action &&
+                  requests.busy(submission.action.requestId))
+              }
+              onRetry={() => requests.retrySubmission(submission.clientId)}
+            />
+          ))}
+        </div>
+      ) : null}
       {list?.requests.map(request => (
         <AssistantRequestRow
           key={request.requestId}
           request={request}
-          disabled={requests.sending || requests.failed || !props.active}
+          disabled={!props.active}
+          busy={requests.busy(request.requestId)}
           enabled={list.enabled}
           onCompose={start}
           onAction={action => void requests.submit(action)}
@@ -149,19 +150,19 @@ function AssistantRequestContent(props: Props & { userId: number; accountKey: st
           data-testid="assistant-request-composer"
           onSubmit={event => {
             event.preventDefault()
-            void send()
+            requests.admit()
           }}
         >
-          <label className="block text-sm" htmlFor="assistant-request-message">
+          <label className="block text-sm" htmlFor={messageId}>
             {t(`requests.${composer.action}`)}
           </label>
           <textarea
-            id="assistant-request-message"
+            id={messageId}
             className="min-h-24 w-full rounded-md border border-border bg-transparent p-2 text-base"
             value={message}
             data-testid="assistant-request-message"
-            disabled={requests.sending}
-            onChange={event => setMessage(event.target.value)}
+            disabled={!props.active}
+            onChange={event => requests.setMessage(event.target.value)}
           />
           <div className="flex gap-2">
             <Button
@@ -169,8 +170,6 @@ function AssistantRequestContent(props: Props & { userId: number; accountKey: st
               size="sm"
               data-testid="assistant-request-send"
               disabled={
-                requests.sending ||
-                requests.failed ||
                 !message.trim() ||
                 !props.active ||
                 (composer.action !== 'followup' && !list?.enabled)
@@ -182,29 +181,69 @@ function AssistantRequestContent(props: Props & { userId: number; accountKey: st
               type="button"
               variant="ghost"
               size="sm"
-              disabled={requests.sending}
               data-testid="assistant-request-close-composer"
-              onClick={() => setComposer(null)}
+              onClick={requests.close}
             >
               {t('requests.closeComposer')}
             </Button>
           </div>
         </form>
       ) : null}
-      {requests.sendFailed ? (
-        <p role="alert" className="text-sm">
-          {t('requests.sendFailed')}
-        </p>
-      ) : null}
     </section>
+  )
+}
+
+function LocalSubmission(props: {
+  submission: LocalRequestSubmission
+  disabled: boolean
+  onRetry(): void
+}) {
+  const { t } = useTranslation('collaborationExp')
+  const { submission } = props
+  const actionLabels = {
+    cancel: 'requests.cancel',
+    retry: 'retry',
+    prepare_merge: 'requests.prepareMerge',
+    confirm_merge: 'requests.confirmMerge',
+  } as const
+  return (
+    <div
+      className="space-y-1 text-sm"
+      data-testid={`assistant-request-local-${submission.clientId}`}
+    >
+      <p>
+        {'message' in submission.action
+          ? submission.action.message
+          : t(actionLabels[submission.action.action])}
+      </p>
+      <p className="text-xs text-text-secondary" role="status">
+        {t(`requests.localStates.${submission.state}`)}
+        {submission.requestId ? ` · ${t('requests.id', { id: submission.requestId })}` : null}
+      </p>
+      {submission.state === 'failed' || submission.state === 'preserved' ? (
+        <>
+          {submission.state === 'failed' ? <p role="alert">{t('requests.sendFailed')}</p> : null}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={props.disabled}
+            data-testid={`assistant-request-local-retry-${submission.clientId}`}
+            onClick={props.onRetry}
+          >
+            {t('requests.retrySubmission')}
+          </Button>
+        </>
+      ) : null}
+    </div>
   )
 }
 
 function AssistantRequestRow(props: {
   request: AssistantExecutionRequest
   disabled: boolean
+  busy: boolean
   enabled: boolean
-  onCompose(value: Composer): void
+  onCompose(value: RequestComposer): void
   onAction(value: AssistantRequestAction): void
   onMerge(targetRevision: string, candidateRevision: string): void
   onExecution(address: RuntimeTaskAddress): void
@@ -236,7 +275,7 @@ function AssistantRequestRow(props: {
       {request.worktree ? (
         <AssistantRequestWorktree
           request={request}
-          disabled={disabled}
+          disabled={disabled || props.busy}
           onMerge={props.onMerge}
           onPrepare={() =>
             props.onAction({ action: 'prepare_merge', requestId: request.requestId })
@@ -272,7 +311,7 @@ function AssistantRequestRow(props: {
           <Button
             variant="ghost"
             size="sm"
-            disabled={disabled || request.state === 'cancelling'}
+            disabled={disabled || props.busy || request.state === 'cancelling'}
             data-testid={`assistant-request-cancel-${request.requestId}`}
             onClick={() => props.onAction({ action: 'cancel', requestId: request.requestId })}
           >
@@ -294,7 +333,7 @@ function AssistantRequestRow(props: {
           <Button
             variant="ghost"
             size="sm"
-            disabled={disabled}
+            disabled={disabled || props.busy}
             data-testid={`assistant-request-retry-${request.requestId}`}
             onClick={() => props.onAction({ action: 'retry', requestId: request.requestId })}
           >

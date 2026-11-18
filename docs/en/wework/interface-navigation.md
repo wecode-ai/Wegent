@@ -101,7 +101,7 @@ From **Projects → New project → Cloud project** in the sidebar, you can add 
 
 Edit Agent definitions from **Project settings → AI configuration**. Project Maintainers can edit non-private project definitions; shared source definitions retain their original permissions. Imported and manually created Agents share the same entry. See [Agent configuration](./projects.md#agent-capabilities) for device-conflict recovery.
 
-Open **Collaboration exp → Tasks → a cloud task assigned to you → Your assistant requests** to start independent assistant work with **New request**, or continue, cancel and retry an existing request. The entry appears only when the server enables the capability or existing requests are available, and only for the current owner. See [Independent assistant requests](./collaboration-experience.md#assistant-requests).
+Open **Collaboration exp → Tasks → a cloud task assigned to you → Your assistant requests** to start independent assistant work with **New request**, or continue, cancel and retry an existing request. Keep typing after sending; if a local submission has no confirmed receipt, select its **Retry this submission** action. The entry appears only when the server enables the capability or existing requests are available, and only for the current owner. See [Independent assistant requests](./collaboration-experience.md#assistant-requests).
 
 ## Sidebar feature entries
 

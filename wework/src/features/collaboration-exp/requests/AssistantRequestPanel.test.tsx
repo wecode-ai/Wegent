@@ -4,6 +4,7 @@ import type { AssistantExecutionRequest, AssistantRequestsApi } from '@wegent/co
 import '@/i18n'
 import { experienceIssueFixture, experienceProjectFixture } from '../model/fixtures'
 import { AssistantRequestPanel } from './AssistantRequestPanel'
+import { clearAssistantRequestScopesForTests } from './assistantRequestScopeStore'
 
 const account = vi.hoisted(() => ({ user: { id: 7 }, backend: 'backend-one' }))
 vi.mock('@/features/workbench/useWorkbench', () => ({
@@ -18,6 +19,7 @@ vi.mock('@/features/workbench/workbenchOwnership', () => ({
 
 afterEach(() => {
   cleanup()
+  clearAssistantRequestScopesForTests()
   account.user = { id: 7 }
   account.backend = 'backend-one'
 })
@@ -59,6 +61,36 @@ function fixture(api?: AssistantRequestsApi) {
 }
 
 describe('explicit assistant requests', () => {
+  it('admits a message and clears only its draft before server acceptance settles', async () => {
+    const props = fixture()
+    let accept!: (value: AssistantExecutionRequest) => void
+    const pending = new Promise<AssistantExecutionRequest>(resolve => {
+      accept = resolve
+    })
+    vi.mocked(props.api.submit).mockReturnValueOnce(pending)
+    render(<AssistantRequestPanel {...props} />)
+    await screen.findByTestId('assistant-request-new')
+    fireEvent.click(screen.getByTestId('assistant-request-new'))
+    fireEvent.change(screen.getByTestId('assistant-request-message'), {
+      target: { value: 'Independent B' },
+    })
+    fireEvent.click(screen.getByTestId('assistant-request-send'))
+    try {
+      expect(screen.getByTestId('assistant-request-message')).toHaveValue('')
+      expect(screen.getByTestId('assistant-request-message')).toBeEnabled()
+      expect(props.api.submit).not.toHaveBeenCalled()
+      expect(screen.getByTestId('assistant-request-local-submissions')).toHaveTextContent(
+        'Independent B'
+      )
+      fireEvent.change(screen.getByTestId('assistant-request-message'), {
+        target: { value: 'My next draft' },
+      })
+    } finally {
+      await act(async () => accept(request({ requestId: 'req-b', message: 'Independent B' })))
+    }
+    expect(screen.getByTestId('assistant-request-message')).toHaveValue('My next draft')
+  })
+
   it('separates new requests from followups and opens the returned execution', async () => {
     const props = fixture()
     render(<AssistantRequestPanel {...props} />)
@@ -75,7 +107,7 @@ describe('explicit assistant requests', () => {
         expect.objectContaining({ action: 'followup', requestId: 'req-a', message: 'More for A' })
       )
     )
-    await waitFor(() => expect(screen.queryByTestId('assistant-request-composer')).toBeNull())
+    expect(screen.getByTestId('assistant-request-message')).toHaveValue('')
     fireEvent.click(screen.getByTestId('assistant-request-new'))
     fireEvent.change(screen.getByTestId('assistant-request-message'), {
       target: { value: 'Independent B' },
@@ -96,7 +128,119 @@ describe('explicit assistant requests', () => {
     })
   })
 
-  it('retains the draft and idempotency key when server acceptance is uncertain', async () => {
+  it('sends an independent request while the first acceptance is pending', async () => {
+    const props = fixture()
+    let accept!: (value: AssistantExecutionRequest) => void
+    const pending = new Promise<AssistantExecutionRequest>(resolve => {
+      accept = resolve
+    })
+    vi.mocked(props.api.submit).mockReturnValueOnce(pending)
+    render(<AssistantRequestPanel {...props} />)
+    await screen.findByTestId('assistant-request-new')
+    fireEvent.click(screen.getByTestId('assistant-request-new'))
+    for (const message of ['First', 'Independent']) {
+      fireEvent.change(screen.getByTestId('assistant-request-message'), {
+        target: { value: message },
+      })
+      fireEvent.click(screen.getByTestId('assistant-request-send'))
+      expect(screen.getByTestId('assistant-request-message')).toBeEnabled()
+    }
+    try {
+      await waitFor(() => expect(props.api.submit).toHaveBeenCalledTimes(2))
+      expect(screen.getByTestId('assistant-request-local-submissions')).toHaveTextContent('First')
+      expect(screen.getByTestId('assistant-request-local-submissions')).toHaveTextContent(
+        'Independent'
+      )
+      const calls = vi.mocked(props.api.submit).mock.calls
+      expect(calls[0][2].idempotencyKey).not.toBe(calls[1][2].idempotencyKey)
+    } finally {
+      await act(async () => accept(request()))
+    }
+  })
+
+  it('restores admitted messages and newer drafts after unmount without sending them twice', async () => {
+    const props = fixture()
+    let accept!: (value: AssistantExecutionRequest) => void
+    const pending = new Promise<AssistantExecutionRequest>(resolve => {
+      accept = resolve
+    })
+    vi.mocked(props.api.submit).mockReturnValueOnce(pending)
+    const first = render(<AssistantRequestPanel {...props} />)
+    await screen.findByTestId('assistant-request-new')
+    fireEvent.click(screen.getByTestId('assistant-request-new'))
+    fireEvent.change(screen.getByTestId('assistant-request-message'), {
+      target: { value: 'Admitted' },
+    })
+    fireEvent.click(screen.getByTestId('assistant-request-send'))
+    fireEvent.change(screen.getByTestId('assistant-request-message'), {
+      target: { value: 'Next draft' },
+    })
+    await waitFor(() => expect(props.api.submit).toHaveBeenCalledTimes(1))
+    first.unmount()
+    render(<AssistantRequestPanel {...props} />)
+    expect(screen.getByTestId('assistant-request-message')).toHaveValue('Next draft')
+    expect(screen.getByTestId('assistant-request-local-submissions')).toHaveTextContent('Admitted')
+    await act(async () => accept(request()))
+    expect(screen.getByTestId('assistant-request-message')).toHaveValue('Next draft')
+    expect(props.api.submit).toHaveBeenCalledTimes(1)
+  })
+
+  it('admits with the last known capability when refreshing requests fails', async () => {
+    const props = fixture()
+    const view = render(<AssistantRequestPanel {...props} />)
+    await screen.findByTestId('assistant-request-new')
+    vi.mocked(props.api.list).mockRejectedValue(new Error('Refresh unavailable'))
+    view.rerender(<AssistantRequestPanel {...props} revision={1} />)
+    await screen.findByRole('alert')
+    expect(screen.getByTestId('assistant-request-new')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('assistant-request-continue-req-a'))
+    fireEvent.change(screen.getByTestId('assistant-request-message'), {
+      target: { value: 'Followup despite refresh' },
+    })
+    fireEvent.click(screen.getByTestId('assistant-request-send'))
+    expect(screen.getByTestId('assistant-request-message')).toHaveValue('')
+    await waitFor(() =>
+      expect(props.api.submit).toHaveBeenCalledWith(
+        props.project.id,
+        props.issue.id,
+        expect.objectContaining({
+          action: 'followup',
+          requestId: 'req-a',
+          message: 'Followup despite refresh',
+        })
+      )
+    )
+  })
+
+  it('retains separate drafts when changing the explicit action or request target', async () => {
+    const props = fixture()
+    render(<AssistantRequestPanel {...props} />)
+    await screen.findByTestId('assistant-request-new')
+    fireEvent.click(screen.getByTestId('assistant-request-new'))
+    fireEvent.change(screen.getByTestId('assistant-request-message'), {
+      target: { value: 'Independent draft' },
+    })
+    fireEvent.click(screen.getByTestId('assistant-request-continue-req-a'))
+    expect(screen.getByTestId('assistant-request-message')).toHaveValue('')
+    fireEvent.change(screen.getByTestId('assistant-request-message'), {
+      target: { value: 'Supplement draft' },
+    })
+    fireEvent.click(screen.getByTestId('assistant-request-new'))
+    expect(screen.getByTestId('assistant-request-message')).toHaveValue('Independent draft')
+    fireEvent.click(screen.getByTestId('assistant-request-continue-req-a'))
+    expect(screen.getByTestId('assistant-request-message')).toHaveValue('Supplement draft')
+    expect(props.api.submit).not.toHaveBeenCalled()
+  })
+
+  it('does not expose admission without current execution authority', () => {
+    const props = fixture()
+    render(<AssistantRequestPanel {...props} issue={{ ...props.issue, can_view_detail: false }} />)
+    expect(screen.queryByTestId('assistant-requests')).toBeNull()
+    expect(props.api.list).not.toHaveBeenCalled()
+    expect(props.api.submit).not.toHaveBeenCalled()
+  })
+
+  it('retains the submission and idempotency key when server acceptance is uncertain', async () => {
     const props = fixture()
     vi.mocked(props.api.submit).mockRejectedValueOnce(new Error('Network timeout'))
     render(<AssistantRequestPanel {...props} />)
@@ -107,12 +251,91 @@ describe('explicit assistant requests', () => {
     })
     fireEvent.click(screen.getByTestId('assistant-request-send'))
     await screen.findByRole('alert')
-    expect(screen.getByTestId('assistant-request-message')).toHaveValue('Independent B')
-    fireEvent.click(screen.getByTestId('assistant-request-send'))
+    expect(screen.getByTestId('assistant-request-message')).toHaveValue('')
+    expect(screen.getByTestId('assistant-request-local-submissions')).toHaveTextContent(
+      'Independent B'
+    )
+    fireEvent.change(screen.getByTestId('assistant-request-message'), {
+      target: { value: 'Next draft' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '重试此条发送' }))
     await waitFor(() => expect(props.api.submit).toHaveBeenCalledTimes(2))
     expect(vi.mocked(props.api.submit).mock.calls[0][2].idempotencyKey).toBe(
       vi.mocked(props.api.submit).mock.calls[1][2].idempotencyKey
     )
+    expect(screen.getByTestId('assistant-request-message')).toHaveValue('Next draft')
+  })
+
+  it('keeps cancellation available behind a failed supplement and another queued message', async () => {
+    const props = fixture()
+    vi.mocked(props.api.submit).mockRejectedValueOnce(new Error('Acceptance unknown'))
+    render(<AssistantRequestPanel {...props} />)
+    await screen.findByTestId('assistant-request-continue-req-a')
+    fireEvent.click(screen.getByTestId('assistant-request-continue-req-a'))
+    fireEvent.change(screen.getByTestId('assistant-request-message'), {
+      target: { value: 'Unconfirmed supplement' },
+    })
+    fireEvent.click(screen.getByTestId('assistant-request-send'))
+    await screen.findByRole('alert')
+    fireEvent.change(screen.getByTestId('assistant-request-message'), {
+      target: { value: 'Queued supplement' },
+    })
+    fireEvent.click(screen.getByTestId('assistant-request-send'))
+    expect(screen.getByTestId('assistant-request-cancel-req-a')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('assistant-request-cancel-req-a'))
+    await waitFor(() => expect(props.api.submit).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(props.api.submit).mock.calls[1][2]).toMatchObject({
+      action: 'cancel',
+      requestId: 'req-a',
+    })
+    expect(screen.getByTestId('assistant-request-local-submissions')).toHaveTextContent(
+      'Unconfirmed supplement'
+    )
+    expect(screen.getByTestId('assistant-request-local-submissions')).toHaveTextContent(
+      'Queued supplement'
+    )
+    expect(screen.getAllByRole('button', { name: '重试此条发送' })).toHaveLength(2)
+  })
+
+  it('writes a late acceptance only to its original account scope', async () => {
+    const props = fixture()
+    let accept!: (value: AssistantExecutionRequest) => void
+    const pending = new Promise<AssistantExecutionRequest>(resolve => {
+      accept = resolve
+    })
+    vi.mocked(props.api.submit).mockReturnValueOnce(pending)
+    const view = render(<AssistantRequestPanel {...props} />)
+    await screen.findByTestId('assistant-request-new')
+    fireEvent.click(screen.getByTestId('assistant-request-new'))
+    fireEvent.change(screen.getByTestId('assistant-request-message'), {
+      target: { value: 'Private admitted body' },
+    })
+    fireEvent.click(screen.getByTestId('assistant-request-send'))
+    await waitFor(() => expect(props.api.submit).toHaveBeenCalledTimes(1))
+    account.user = { id: 8 }
+    vi.mocked(props.api.list).mockResolvedValue({
+      enabled: true,
+      requests: [request({ ownerUserId: 8, message: 'Owner eight' })],
+    })
+    view.rerender(
+      <AssistantRequestPanel
+        {...props}
+        project={{ ...props.project, current_user_id: 8 }}
+        issue={{ ...props.issue, assignee_user_id: 8 }}
+      />
+    )
+    await screen.findByText('Owner eight')
+    expect(screen.queryByText('Private admitted body')).toBeNull()
+    await act(async () => accept(request()))
+    expect(screen.queryByText('Private admitted body')).toBeNull()
+    expect(screen.queryByText('Private request A')).toBeNull()
+    account.user = { id: 7 }
+    vi.mocked(props.api.list).mockResolvedValue({ enabled: true, requests: [request()] })
+    view.rerender(<AssistantRequestPanel {...props} />)
+    expect(screen.getByTestId('assistant-request-local-submissions')).toHaveTextContent(
+      'Private admitted body'
+    )
+    expect(props.api.submit).toHaveBeenCalledTimes(1)
   })
 
   it('resolves a clicked public receipt through the owner request read before opening its private execution', async () => {
@@ -474,7 +697,7 @@ describe('explicit assistant requests', () => {
     view.rerender(<AssistantRequestPanel {...props} revision={1} />)
     await screen.findByRole('alert')
     expect(screen.getByText('Private request A')).toBeVisible()
-    expect(screen.getByTestId('assistant-request-cancel-req-a')).toBeDisabled()
+    expect(screen.getByTestId('assistant-request-cancel-req-a')).toBeEnabled()
     fireEvent.click(screen.getByTestId('assistant-requests-retry'))
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
     expect(screen.getByTestId('assistant-request-cancel-req-a')).toBeEnabled()

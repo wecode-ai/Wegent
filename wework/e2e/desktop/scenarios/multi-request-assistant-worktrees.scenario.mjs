@@ -308,6 +308,32 @@ export function createDesktopScenario(options) {
           2,
           'A followup cannot allocate a second request'
         )
+        const uiFollowup = `${MARKER}: continue A from the request panel`
+        await control.command(
+          'clickWhenEnabled',
+          `[data-testid="assistant-request-continue-${a.requestId}"]`
+        )
+        await control.command('waitFor', '[data-testid="assistant-request-message"]')
+        await control.command('fill', '[data-testid="assistant-request-message"]', {
+          value: uiFollowup,
+        })
+        await control.command('clickWhenEnabled', '[data-testid="assistant-request-send"]')
+        const admitted = await until(
+          list,
+          value =>
+            value.requests
+              .find(row => row.requestId === a.requestId)
+              ?.commands.some(
+                command => command.action === 'followup' && command.message === uiFollowup
+              ),
+          'The request panel must durably admit its followup to A'
+        )
+        assert.equal(admitted.requests.length, 2, 'A UI followup cannot create another request')
+        const continued = admitted.requests.find(row => row.requestId === a.requestId)
+        assert.equal(continued.runtimeTaskId, ra.runtimeTaskId)
+        assert.equal(continued.conversationId, ra.conversationId)
+        assert.equal(continued.worktree.path, ra.worktree.path)
+        assert.equal(continued.worktree.branch, ra.worktree.branch)
         await request(path(), {
           action: 'cancel',
           requestId: b.requestId,

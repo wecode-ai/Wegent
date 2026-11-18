@@ -40,7 +40,15 @@
     },
     "loadFailed": "无法加载请求。",
     "refreshFailed": "无法刷新请求，当前显示上次确认的状态。",
-    "sendFailed": "尚未确认是否受理。重试相同操作可查询原回执；输入内容已保留。",
+    "sendFailed": "尚未确认是否受理。此条发送记录已保留，重试可查询原回执；新草稿不受影响。",
+    "retrySubmission": "重试此条发送",
+    "localStates": {
+      "queued": "本地等待发送，服务端尚未确认受理",
+      "sending": "正在发送，等待服务端确认受理",
+      "failed": "发送未获确认",
+      "preserved": "已保留，是否受理尚未确认；仅重试此条发送会重新排队",
+      "confirmed": "服务端已确认受理，执行状态见请求记录"
+    },
     "states": {
       "accepted": "已接受",
       "queued": "排队中",
