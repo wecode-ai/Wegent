@@ -4,6 +4,8 @@ sidebar_position: 36
 
 # Collaboration permission architecture and invariants
 
+Named Codex processes configure the log database in their actual launch Home, leaving the default account database untouched. Test processes remove inherited Codex Home variables so native protocol fixtures cannot consult the host account configuration or modify its log database.
+
 A cloud resource validation failure defers only its event, retaining its pending state and logging its event ID and error code. It must neither abort the batch and block other authorized local messages nor treat failed validation as successful authorization.
 
 Local DingTalk collection and personal stand-in processing use the current desktop workbench account as their local execution identity. The desktop synchronizes it through local IPC independently of cloud token issuance, connection health and `/users/me`. Collection waits for an identity and stops after logout; account switches exclude other accounts, and collection rechecks ownership before persisting messages or checkpoints. Cloud project operations retain server identity and permission validation. Collector connections and remote personal-task access cannot configure the workbench identity. CP01–CP20 remain unchanged.

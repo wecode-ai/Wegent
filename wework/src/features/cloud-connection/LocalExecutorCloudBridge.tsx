@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
 import { configurePluginNativeAuthorization } from '@/features/plugins/pluginNativeAuthorization'
-import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
+import {
+  configureLocalRuntimeOwner,
+  ensureLocalExecutorAvailable,
+  requestLocalExecutor,
+} from '@/desktop/localExecutor'
 import {
   applyLocalExecutorCloudConnection,
   type LocalExecutorCloudConnection,
@@ -112,8 +116,7 @@ export function LocalExecutorCloudBridge({
       }
     }
 
-    const configureOwner = () =>
-      requestLocalExecutor('runtime.owner.configure', { userId: ownerUserId })
+    const configureOwner = () => configureLocalRuntimeOwner(ownerUserId)
 
     const refreshConnectionStatus = async () => {
       if (!isCurrentConnectionAttempt()) return

@@ -725,11 +725,24 @@ export function disconnectLocalExecutorFromBackend(): Promise<LocalExecutorStatu
 function configureLocalExecutorBackend(
   params: Record<string, unknown>
 ): Promise<LocalExecutorStatus> {
-  // Backend configuration is one mutable host resource; admit writes in caller order.
-  const write = () => requestDshExecutor('executor.backend.configure', params)
+  return configureLocalExecutorIdentity('executor.backend.configure', params).then(() =>
+    ensureLocalExecutorAvailable()
+  )
+}
+
+export function configureLocalRuntimeOwner(userId: number | null): Promise<unknown> {
+  return configureLocalExecutorIdentity('runtime.owner.configure', { userId })
+}
+
+function configureLocalExecutorIdentity(
+  method: string,
+  params: Record<string, unknown>
+): Promise<unknown> {
+  // Account and Backend configuration share one ordered host identity boundary.
+  const write = () => requestDshExecutor(method, params)
   const pending = backendConnectionWrite.then(write, write)
   backendConnectionWrite = pending
-  return pending.then(() => ensureLocalExecutorAvailable())
+  return pending
 }
 
 export function requestLocalExecutor<T = unknown>(
