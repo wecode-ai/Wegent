@@ -38,7 +38,12 @@ const API_KEY = 'responses-protocol-fixture-key'
 const ERROR = "Unsupported custom tool: 'exec'. Only 'apply_patch' is supported."
 
 /** Exercise the real desktop/runtime/Codex chain against a strict model protocol oracle. */
-export function createDesktopScenario({ electronUserDataDirectory, workspacePath, resultDir }) {
+export function createDesktopScenario({
+  electronUserDataDirectory,
+  workspacePath,
+  resultDir,
+  modelResponseTimeoutMs,
+}) {
   const requests = []
   let probeRequests = 0
   let nativeProbeRequests = 0
@@ -289,7 +294,7 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
           await control.command(
             'waitFor',
             `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-            { text: `${DONE} ${round}` }
+            { text: `${DONE} ${round}`, timeoutMs: modelResponseTimeoutMs }
           )
           assert.equal(await readFile(artifact, 'utf8'), TOOL_OK)
         }
