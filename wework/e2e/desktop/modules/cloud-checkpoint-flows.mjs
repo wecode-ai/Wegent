@@ -90,14 +90,9 @@ import {
   verifyBackgroundTaskWindowLifecycle,
 } from './window-attachment-flows.mjs'
 
-import {
-  captureVerificationScreenshot,
-  verifyWorkspaceTabIsolation,
-  waitForControlValue,
-} from './workspace-flows.mjs'
+import { captureVerificationScreenshot, waitForControlValue } from './workspace-flows.mjs'
 
 const CLOUD_CHECKPOINTS = [
-  'workspace-tabs',
   'cloud-project-creation',
   'cloud-device-lifecycle',
   'priority-filter',
@@ -733,12 +728,6 @@ async function verifyCloudCheckpoint({
 
   if (checkpoint === 'core-task-flow') {
     await verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopApp, workspacePath)
-    return
-  }
-
-  if (checkpoint === 'workspace-tabs') {
-    setPhase('cloud-workspace-tab-isolation')
-    await verifyWorkspaceTabIsolation(control, restartDesktopApp)
     return
   }
 

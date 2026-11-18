@@ -182,7 +182,7 @@ test('reuses the existing history runner after its isolated checkpoint', async (
     'task-board-association',
     'task-status-sync',
     'temporary-chat',
-    'workspace-tabs',
+    'task-attachments',
     'window-lifecycle',
     'permission-modes',
     'core-task-flow',
@@ -271,7 +271,7 @@ test('balancing includes exclusive startup checkpoints before the four-worker qu
     'task-board-association': 100,
     'task-status-sync': 80,
     'temporary-chat': 80,
-    'workspace-tabs': 100,
+    'task-attachments': 100,
     'window-lifecycle': 20,
     'permission-modes': 20,
     'running-conversation-history': 300,
@@ -422,10 +422,15 @@ test('successful Linux timing replay prioritizes measured tails after new covera
     // Historical timing evidence cannot assign a cost to new, unmeasured coverage.
     const originalSeconds = completionSeconds(measured, seconds)
     const orderedSeconds = completionSeconds(measuredOrder, seconds)
-    assert.ok(
-      orderedSeconds < originalSeconds,
-      `${id}: ${orderedSeconds} < ${originalSeconds}`,
-    )
+    if (originalSeconds === seconds[longest]) {
+      // Pruned workloads can already reach the longest task's physical lower bound.
+      assert.equal(orderedSeconds, seconds[longest], id)
+    } else {
+      assert.ok(
+        orderedSeconds < originalSeconds,
+        `${id}: ${orderedSeconds} < ${originalSeconds}`,
+      )
+    }
   }
 })
 

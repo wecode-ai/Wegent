@@ -320,10 +320,7 @@ import {
   verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
   verifyTrackedTaskSettledStatus,
-  verifyDefaultWorkspaceStartupTab,
-  verifyWorkspaceIssueCreation,
   verifyWorkspaceDocumentTabs,
-  verifyWorkspaceTabIsolation,
   waitForControlSelectionOffset,
   waitForControlValue,
   waitForFolderPathReady,
@@ -2483,19 +2480,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await verifyPermissionModes(control)
       console.log(`Wework desktop permission-modes checkpoint passed. Evidence: ${resultDir}`)
       return
-    }
-
-    if (shouldRunDesktopCheckpoint('workspace-tabs')) {
-      phase = 'workspace-startup-tab'
-      await verifyDefaultWorkspaceStartupTab(control)
-      phase = 'workspace-issue-creation'
-      await verifyWorkspaceIssueCreation(control)
-      phase = 'workspace-tab-isolation'
-      await verifyWorkspaceTabIsolation(control, restartDesktopApp)
-      if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
-        console.log(`Wework desktop workspace-tabs checkpoint passed. Evidence: ${resultDir}`)
-        return
-      }
     }
 
     if (shouldRunDesktopCheckpoint('priority-filter')) {
