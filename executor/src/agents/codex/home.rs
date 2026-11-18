@@ -104,9 +104,10 @@ fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
 
     // Keep native config precedence: explicit V2 and profile limits override this default.
     let agents = document.get("agents");
-    if agents
-        .and_then(|item| item.get("max_concurrent_threads_per_session"))
-        .is_none()
+    if agents.map_or(true, |item| item.is_table_like())
+        && agents
+            .and_then(|item| item.get("max_concurrent_threads_per_session"))
+            .is_none()
         && agents.and_then(|item| item.get("max_threads")).is_none()
     {
         document["agents"]["max_concurrent_threads_per_session"] = value(6);

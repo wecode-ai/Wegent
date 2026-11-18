@@ -298,8 +298,9 @@ including threads previously persisted as disabled. Explicit single-agent
 executions still disable collaboration tools. Desktop requests no longer send
 the conflicting legacy single field alongside their native mode.
 
-When the Wework Codex configuration has no subagent limit, executor configuration
-initialization adds `[agents] max_concurrent_threads_per_session = 6`.
+When neither `agents.max_concurrent_threads_per_session` nor `agents.max_threads`
+is present, executor initialization adds `[agents] max_concurrent_threads_per_session = 6`.
+A non-table `agents` value is preserved for native configuration validation.
 In V2 this permits seven total threads including the root. Existing values of
 this field or the legacy `max_threads` field are preserved. The V2-specific
 `[features.multi_agent_v2] max_concurrent_threads_per_session` setting retains
@@ -309,10 +310,14 @@ subagents; the default capacity does not change delegation permissions.
 
 Project catalog synchronization in `projects.list` includes SQLite initialization
 and Git metadata discovery. It runs in a blocking worker rather than the IPC
-reactor. Concurrent listings share an asynchronous execution lock, which stays
+reactor. Catalog reads open only the project store, without initializing unrelated
+Issue or table providers. Concurrent listings share an asynchronous execution lock, which stays
 with an active worker after caller timeout or disconnect until the work finishes.
 Health queries and other IPC requests remain responsive during discovery; UI
-timeouts are not extended to hide blocking.
+timeouts are not extended to hide blocking. The three Git probes for a new project share
+a 30-second deadline and reuse the native Git runner’s termination and reaping.
+A timeout does not persist that project’s catalog row; previously completed imports
+remain intact. Later listings can retry, or continue after removing the affected root.
 
 E2E host-pipe diagnostics enabled for `clipboard-history-image` and `browser-toolbar-actions` record request IDs, send/receive/completion timestamps, and cumulative CPU and event-loop active/idle time in both processes. Correlate each request and compare adjacent samples to distinguish handler work, process activity, and scheduling waits. A single successful run is not evidence that an intermittent delay has been fixed.
 

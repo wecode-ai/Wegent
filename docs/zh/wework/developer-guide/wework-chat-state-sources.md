@@ -248,17 +248,20 @@ Goal 的原生续跑可能超过本地请求的生命周期，即使请求控制
 因此此前误写为 disabled 的原线程可以继续使用 subagent；明确指定的单代理执行仍禁用
 协作工具。桌面请求不再同时写入冲突的旧 single 字段。
 
-Wework 的 Codex 配置未设置子 agent 上限时，executor 初始化配置会补入
+`agents.max_concurrent_threads_per_session` 和 `agents.max_threads` 均不存在时，
+executor 初始化配置会补入
 `[agents] max_concurrent_threads_per_session = 6`。在 V2 中这对应包含主线程的
 7 个总线程。已配置的该字段或旧字段 `max_threads` 不会被覆盖；V2 专属配置
 `[features.multi_agent_v2] max_concurrent_threads_per_session` 仍按原生优先级生效，
 其数值包含主线程。之后手动调整配置也会保留，重启运行时后生效。
-单代理模式仍禁用子 agent；默认额度不改变委派权限。
+非表类型的 `agents` 值保留给原生配置校验。单代理模式仍禁用子 agent；默认额度不改变委派权限。
 
 `projects.list` 的项目目录同步包含 SQLite 初始化和 Git 元数据探测，必须在阻塞
-worker 中执行，不能占用 IPC reactor。并发枚举共用一个异步执行锁；请求超时或断开后，
+worker 中执行，不能占用 IPC reactor。目录读取只打开项目存储，不初始化无关的 Issue 和表格 provider。并发枚举共用一个异步执行锁；请求超时或断开后，
 已启动的 worker 继续持有该锁直到结束，避免遗留查询叠加。枚举期间健康查询及其他
-IPC 请求仍可处理；不通过延长 UI 超时规避阻塞。
+IPC 请求仍可处理；不通过延长 UI 超时规避阻塞。单个新项目的三次 Git 探测共用
+30 秒期限，复用原生 Git runner 的终止与回收机制。超时不写入该项目目录记录，
+保留此前完成的导入；后续枚举可重试，移除故障根目录后也可继续发现其他项目。
 
 为 `clipboard-history-image` 和 `browser-toolbar-actions` 开启的 E2E host-pipe 诊断会记录请求 ID、发送/接收/完成时间，以及两端进程的累计 CPU 时间和事件循环活动/空闲时间。出现延迟时应关联同一请求并比较相邻采样，区分处理耗时、进程忙碌和调度等待；单轮未复现不能作为已修复的证据。
 
