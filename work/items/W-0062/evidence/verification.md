@@ -222,6 +222,16 @@ head `3230884849` 的后续 Core / shard 4 失败转为 `codex-cloud-config-reco
 
 主线 `6056494661` 明确清理约 80% renderer 单测，与本分支修改过的五个测试形成 modify/delete 冲突。冲突按主线删除策略解决；创建流程仍保留 `packages/collaboration` 的共享组件/控制器测试和 CI 覆盖的真实成员持久化场景，云配置修复也新增了独立协议测试。合并后合成认证与原生窗口协议两文件 27 项、Wework typecheck 和差异检查通过。
 
+## 2026-11-18 真实成员失败与同项目重试
+
+hongyu9 的最新评审要求把“部分成员添加失败后可恢复”从组件 mock 提升到现有 `collaboration-shared-core` 真实桌面检查点。场景选择两名有效成员后，先创建成功路径；随后在普通 Tasks 看板再次打开共享创建窗口，选中两名成员，并通过现有管理接口将第二名成员临时置为 inactive。用户确认创建后，后端 `POST /api/v1/cloud-projects/{id}/members` 实际返回 `404 User not found`，而不是由前端注入错误。
+
+失败态断言项目只持久化一次，owner 与第一名成员已经写入、第二名成员尚未写入；共享窗口仍保留失败成员的已选项、展示该成员及后端原因，并提供“重试项目配置”。场景记录第一名成员在 `resource_members` 的 grant，再恢复第二名成员并点击同一确认按钮重试。重试后再次回读项目列表和成员名单，要求同名项目仍只有一条、两名成员各只有一条 Developer/direct_role，且第一名成员的 grant id、role、status、updated_at 完全未变，证明重试只补失败成员而没有重复创建项目或重写已确认成员。`finally` 会恢复测试账号 active 状态，失败项目进入既有 fixture 清理。
+
+该覆盖接入原有 `collaboration-shared-core` CI 分片，不新增独立 job。两个改动文件通过 Node 语法解析、目标 ESLint、Prettier 与 `git diff --check`。按仓库执行策略本地未运行 E2E 或 `ai:verify`；实际后端失败、UI 恢复和持久化结果必须由包含本改动的新 head CI 给出。
+
+本轮同时干净整合主线 `c0bc797072`。主线与本次两个 E2E 文件没有同文件冲突；整合后的目标格式、ESLint 和差异检查通过，完整 CI 与可合并状态仍以新 head 为准。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

@@ -19,6 +19,7 @@ import { verifyCollaborationIssueHome } from '../modules/collaboration-issue-hom
 import {
   assertCreatedMembers,
   createOrdinaryTaskProject,
+  createOrdinaryTaskProjectWithMemberFailure,
   selectProjectCreateMembers,
   verifyCollaborationMemberSettings,
 } from '../modules/collaboration-member-settings.mjs'
@@ -224,6 +225,7 @@ export function createDesktopScenario({
   let personalWorkspace = null
   let project = null
   let ordinaryTaskProject = null
+  let memberFailureProject = null
   let issue = null
   let agent = null
   let cloudEnvironment = null
@@ -269,6 +271,14 @@ export function createDesktopScenario({
         const latestWorkspace = await request(`/api/v1/workspaces/${workspace.id}`)
         if (latestWorkspace.status !== 'archived') {
           await request(`/api/v1/workspaces/${workspace.id}?version=${latestWorkspace.version}`, {
+            method: 'DELETE',
+          })
+        }
+      }
+      if (memberFailureProject) {
+        const latest = await request(`/api/v1/cloud-projects/${memberFailureProject.id}`)
+        if (latest.status !== 'archived') {
+          await request(`/api/v1/cloud-projects/${latest.id}?version=${latest.version}`, {
             method: 'DELETE',
           })
         }
@@ -358,6 +368,20 @@ export function createDesktopScenario({
           members: selectedMembers,
         })
         await capture(control, 'collaboration-shared-core-ordinary-task-members-created.png')
+        memberFailureProject = await createOrdinaryTaskProjectWithMemberFailure(control, {
+          name: `普通任务项目成员失败恢复-${process.pid}`,
+          owner,
+          request,
+          members: selectedMembers,
+          database: cloudEnvironment,
+          timeoutMs: uiTimeoutMs,
+          onProjectCreated: project => {
+            memberFailureProject = project
+          },
+          captureFailure: () =>
+            capture(control, 'collaboration-shared-core-ordinary-task-member-failure.png'),
+        })
+        await capture(control, 'collaboration-shared-core-ordinary-task-member-retried.png')
         await control.command('waitFor', '[data-testid="workspace-tab-select-fixed-board"]', {
           timeoutMs: workbenchReadyTimeoutMs,
         })
