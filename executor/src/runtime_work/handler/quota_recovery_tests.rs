@@ -413,6 +413,15 @@ fn quota_interrupt_during_account_read_does_not_wait_for_the_send_gate() {
 }
 
 #[cfg(unix)]
+#[derive(Clone, Copy, Debug)]
+enum ReplacementCheckpoint {
+    PendingQuery,
+    CancelledAtSendGate,
+    ReplacedAtSendGate,
+    ReplacedAtQueueOperation,
+}
+
+#[cfg(unix)]
 fn verify_quota_wait_protocol(interrupt: bool) {
     use std::os::unix::fs::PermissionsExt;
     let _lock = crate::test_env::lock();
@@ -596,12 +605,36 @@ done
                 .contains_key("waiting"));
             assert!(!home.path().join("unexpected-turn").exists());
 
-            for query_completed in [false, true] {
+            for checkpoint in [
+                ReplacementCheckpoint::PendingQuery,
+                ReplacementCheckpoint::CancelledAtSendGate,
+                ReplacementCheckpoint::ReplacedAtSendGate,
+                ReplacementCheckpoint::ReplacedAtQueueOperation,
+            ] {
+                let query_completed = !matches!(checkpoint, ReplacementCheckpoint::PendingQuery);
+                let waits_for_queue =
+                    matches!(checkpoint, ReplacementCheckpoint::ReplacedAtQueueOperation);
                 // A cancelled request must not consume the next scenario's marker.
                 handler.codex_app_server.restart().await;
                 fs::remove_file(home.path().join("account-requested")).unwrap();
                 fs::write(home.path().join("hold-account"), "").unwrap();
-                let replacement_turn = queued_wait("replacement", 0);
+                let mut replacement_turn = queued_wait("replacement", 0);
+                if waits_for_queue {
+                    let mut saved = wait(&replacement_turn).unwrap();
+                    saved.account = account_identity(&account);
+                    set_wait(&mut replacement_turn, &saved);
+                    fs::write(
+                        home.path().join("turns.json"),
+                        r#"{"data":[{"id":"failed","status":"failed","items":[]}]}"#,
+                    )
+                    .unwrap();
+                    fs::write(
+                        home.path().join("limits.json"),
+                        json!({"rateLimits":{"primary":{"usedPercent":100,"resetsAt":deadline / 1000}}})
+                            .to_string(),
+                    )
+                    .unwrap();
+                }
                 let mut link = RuntimeTaskLink::new_pending(
                     "replacement".into(),
                     "/work".into(),
@@ -622,14 +655,49 @@ done
                 }
                 let gate = handler.task_send_gate("replacement");
                 let send = gate.lock().await;
+                let operation = if waits_for_queue {
+                    Some(handler.turn_queue_operation.clone().lock_owned().await)
+                } else {
+                    None
+                };
                 if query_completed {
                     fs::remove_file(home.path().join("hold-account")).unwrap();
                     let client = handler.codex_app_server.for_request(&replacement_turn.request).unwrap();
                     // The fixture answers requests in order. This round trip flushes account/read.
                     client.request("account/read", json!({"refreshToken": false})).await.unwrap();
-                    // The saved account differs, so the check returns and waits on the held send gate.
+                    // An account mismatch reaches the gate immediately; the queue case reads on.
                     assert!(futures_util::poll!(recovering.as_mut()).is_pending());
                 }
+                let send = if waits_for_queue {
+                    drop(send);
+                    tokio::time::timeout(
+                        Duration::from_secs(2),
+                        futures_util::future::poll_fn(|cx| {
+                            assert!(std::future::Future::poll(recovering.as_mut(), cx).is_pending());
+                            // Owning the send gate proves the query and first ownership guard ran.
+                            if gate.try_lock().is_err() {
+                                std::task::Poll::Ready(())
+                            } else {
+                                std::task::Poll::Pending
+                            }
+                        }),
+                    )
+                    .await
+                    .expect("Recovery must reach the held queue operation");
+                    None
+                } else {
+                    Some(send)
+                };
+                let retained_execution = if matches!(
+                    checkpoint,
+                    ReplacementCheckpoint::ReplacedAtSendGate
+                        | ReplacementCheckpoint::ReplacedAtQueueOperation
+                ) {
+                    // Keep the sender alive so ownership changes without cancellation winning.
+                    Some(handler.active_local_executions.lock().unwrap().remove("replacement").unwrap())
+                } else {
+                    None
+                };
                 handler.reserve_turn_preparation(&replacement_turn);
                 let (cancel, _cancelled) = oneshot::channel();
                 let (_stopped, stopped) = oneshot::channel();
@@ -637,6 +705,7 @@ done
                     handler.start_local_task_execution("replacement".into(), cancel, stopped);
                 let expected = handler.store.get_task("replacement").unwrap();
                 drop(send);
+                drop(operation);
                 tokio::time::timeout(Duration::from_secs(2), recovering)
                     .await
                     .expect("Replaced quota recovery must stop without waiting for the provider");
@@ -649,8 +718,9 @@ done
                 assert_eq!(
                     serde_json::to_value(handler.store.get_task("replacement").unwrap()).unwrap(),
                     serde_json::to_value(expected).unwrap(),
-                    "Old recovery must preserve the replacement's task state and preparation (query_completed={query_completed})"
+                    "Old recovery must preserve the replacement's task state and preparation ({checkpoint:?})"
                 );
+                drop(retained_execution);
                 handler.finish_local_task_execution("replacement", execution);
                 handler
                     .preparing_turns
