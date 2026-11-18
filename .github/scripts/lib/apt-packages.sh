@@ -33,6 +33,21 @@ run_apt_with_diagnostics() {
   return "$apt_status"
 }
 
+run_apt_update_with_retry() {
+  local attempt
+  for attempt in 1 2 3; do
+    if run_apt_with_diagnostics "$@"; then
+      return 0
+    fi
+    if ((attempt == 3)); then
+      return 1
+    fi
+    # Package indexes can be rate-limited by an upstream mirror.
+    echo "APT update failed; retrying in $((attempt * 5)) seconds." >&2
+    sleep $((attempt * 5))
+  done
+}
+
 install_missing_apt_packages() {
   local package
   local missing=()
@@ -43,6 +58,6 @@ install_missing_apt_packages() {
 
   local privileged=()
   if ((EUID != 0)); then privileged=(sudo); fi
-  run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update || return
+  run_apt_update_with_retry "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update || return
   run_apt_with_diagnostics "${privileged[@]}" apt-get install --yes --no-install-recommends "${missing[@]}"
 }
