@@ -3,6 +3,8 @@
 // four-vCPU desktop E2E runners. CI shard estimates must account for this prefix.
 export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
   'release-package-startup',
+  // Native development approval starts a second complete Electron/Core runtime.
+  'security-boundaries',
   'collaboration-issue-task-discovery',
   // Its strict latency budget must observe the product rather than four
   // unrelated Electron workloads saturating the CI runner.

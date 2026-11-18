@@ -135,6 +135,7 @@ mod diagnostics;
 mod home;
 mod memory_review;
 mod native_provider;
+mod plugin_cache;
 mod provider_migration;
 mod stand_in_approval;
 mod stand_in_plugin_cli;

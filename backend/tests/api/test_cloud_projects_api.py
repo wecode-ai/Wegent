@@ -24,6 +24,7 @@ from app.models.delivery import (
     LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
+    ProjectChatAgent,
     loop_datetime_value_is_unset,
 )
 from app.models.kind import Kind
@@ -162,6 +163,95 @@ def test_execution_list_can_include_terminal_history(
     assert item["displayState"] == "succeeded"
     assert item["observedState"] == "succeeded"
     assert item["syncState"] == "in_sync"
+
+
+def test_execution_list_hides_private_agent_runtime_from_project_members(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "runtimescope", "name": "Runtime scope"},
+    )
+    assert created.status_code == 201, created.text
+    project = created.json()
+    member = User(
+        user_name="runtime-viewer",
+        password_hash="unused",
+        email="runtime-viewer@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    issue = LoopItem(
+        id="private-runtime-issue",
+        cloud_project_id=str(project["id"]),
+        title="Private runtime task",
+        status="in_progress",
+        priority="medium",
+        created_by_user_id=test_user.id,
+    )
+    agent = ProjectChatAgent(
+        id="private-runtime-agent",
+        cloud_project_id=str(project["id"]),
+        title="Private runtime agent",
+        name="Private runtime agent",
+        created_by_user_id=test_user.id,
+        metadata_json={"visibility": "private"},
+    )
+    execution = LoopItemExecution(
+        loop_item_id=issue.id,
+        cloud_project_id=str(project["id"]),
+        executor_owner_user_id=test_user.id,
+        agent_id=agent.id,
+        status="running",
+        observed_state="running",
+        sync_state="in_sync",
+        execution_environment="local",
+        execution_device_id="owner-device",
+        runtime_device_id="owner-device",
+        runtime_task_id="owner-task",
+        runtime_instance_id="owner-runtime",
+        error_message="private runtime detail",
+    )
+    test_db.add_all([member, issue, agent, execution])
+    test_db.commit()
+    test_db.refresh(member)
+    added = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/members",
+        headers=_auth(test_token),
+        json={"user_id": member.id, "role": "Viewer"},
+    )
+    assert added.status_code == 201, added.text
+
+    owner_item = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/executions",
+        headers=_auth(test_token),
+    ).json()["items"][0]
+    member_item = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/executions",
+        headers=_auth(create_access_token(data={"sub": member.user_name})),
+    ).json()["items"][0]
+
+    assert owner_item["runtimeDeviceId"] == "owner-device"
+    assert owner_item["runtimeTaskId"] == "owner-task"
+    assert member_item["agentId"] == agent.id
+    assert member_item["status"] == "running"
+    for key in (
+        "backendTaskId",
+        "executionDeviceId",
+        "runtimeDeviceId",
+        "runtimeTaskId",
+        "runtimeInstanceId",
+        "runtimeProfileId",
+        "runtimeSource",
+        "waitingRuntimeReason",
+    ):
+        assert member_item[key] is None
+    for key in ("errorMessage", "executionNote", "terminationReason"):
+        assert member_item[key] == ""
 
 
 def _create_chat_message(

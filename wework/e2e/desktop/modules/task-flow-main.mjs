@@ -4,6 +4,8 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { startAsyncResourceDiagnostics } from '../../../../.github/scripts/node-async-resource-diagnostics.mjs'
+import { flushProcessOutput } from '../process-output.mjs'
 import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
@@ -1237,6 +1239,9 @@ async function main() {
   let phase = 'startup'
   let desktopScenarioVerified = false
   let testFailed = false
+  const stopAsyncDiagnostics = startAsyncResourceDiagnostics(
+    join(resultDir, 'node-async-resource-diagnostics.jsonl')
+  )
   try {
     await control.start()
     // Publish bound ports for scenarios without releasing the listening sockets.
@@ -1311,6 +1316,8 @@ async function main() {
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
         executeDatabase: (sql, params) => cloudEnvironment.executeDatabase(sql, params),
+        executeDatabaseTransaction: statements =>
+          cloudEnvironment.executeDatabaseTransaction(statements),
         queryDatabase: (sql, params) => cloudEnvironment.queryDatabase(sql, params),
         publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
@@ -4858,6 +4865,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
     throw error
   } finally {
+    stopAsyncDiagnostics()
     const teardownFailures = []
     const runTeardownStep = async (label, action) => {
       try {
@@ -4884,6 +4892,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
+    await runTeardownStep('process output', flushProcessOutput)
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
         recursive: true,

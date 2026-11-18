@@ -68,8 +68,11 @@ impl BackgroundJobsRuntime {
             }
             let receiver = runtime.stop.subscribe();
             runtime.tasks.push(spawn(failure_tx.clone(), async move {
-                scheduler.run_until(stopped(receiver)).await?;
-                Ok(())
+                run_provider_task(
+                    || scheduler.run_until(stopped(receiver.clone())),
+                    receiver.clone(),
+                )
+                .await
             }));
         }
         if config.worker_enabled {
@@ -84,8 +87,11 @@ impl BackgroundJobsRuntime {
             )?;
             let receiver = runtime.stop.subscribe();
             runtime.tasks.push(spawn(failure_tx, async move {
-                worker.run_until(stopped(receiver)).await?;
-                Ok(())
+                run_provider_task(
+                    || worker.run_until(stopped(receiver.clone())),
+                    receiver.clone(),
+                )
+                .await
             }));
         }
         tracing::info!(scheduler=config.scheduler_enabled, worker=config.worker_enabled,
@@ -156,6 +162,28 @@ where
     })
 }
 
+async fn run_provider_task<F, Fut>(mut run: F, stop: watch::Receiver<bool>) -> Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = brz_schedule::Result<()>>,
+{
+    loop {
+        if *stop.borrow() {
+            return Ok(());
+        }
+        match run().await {
+            Err(brz_schedule::Error::Provider(error)) => {
+                tracing::warn!(%error, "background job provider unavailable; runner will resume");
+                tokio::select! {
+                    () = stopped(stop.clone()) => return Ok(()),
+                    () = tokio::time::sleep(Duration::from_secs(1)) => {}
+                }
+            }
+            result => return result.map_err(Into::into),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,5 +225,59 @@ mod tests {
                 .is_err()
         );
         assert!(client.providers.get().is_none());
+    }
+    #[tokio::test]
+    async fn provider_outage_recovers_without_reporting_runtime_failure() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let (stop, receiver) = watch::channel(false);
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let ready = Arc::new(tokio::sync::Notify::new());
+        let observed = ready.clone();
+        let count = attempts.clone();
+        let (failure, mut failures) = mpsc::unbounded_channel();
+        let task = spawn(failure, async move {
+            run_provider_task(
+                || {
+                    let receiver = receiver.clone();
+                    let count = count.clone();
+                    let ready = ready.clone();
+                    async move {
+                        if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                            return Err(brz_schedule::Error::Provider(
+                                "session request timed out".into(),
+                            ));
+                        }
+                        ready.notify_one();
+                        stopped(receiver).await;
+                        Ok(())
+                    }
+                },
+                receiver.clone(),
+            )
+            .await
+        });
+        let result = tokio::select! {
+            _ = observed.notified() => Ok(()),
+            error = failures.recv() => Err(error),
+        };
+        let _ = stop.send(true);
+        let outcome = task.await.unwrap();
+        assert!(
+            result.is_ok(),
+            "a provider outage terminated the runtime: {result:?}"
+        );
+        outcome.unwrap();
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn configuration_failures_remain_fatal() {
+        let (_stop, receiver) = watch::channel(false);
+        let result = run_provider_task(
+            || async { Err(brz_schedule::Error::Invalid("invalid registry".into())) },
+            receiver,
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("invalid registry"));
     }
 }
