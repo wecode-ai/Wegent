@@ -161,6 +161,7 @@ function RuntimeInteractionsState({
   const mounted = useRef(true)
   const [loading, setLoading] = useState(false)
   const [replyNotice, setReplyNotice] = useState<string | null>(null)
+  const clearReplyNotice = useCallback(() => setReplyNotice(null), [])
   const acceptancePrefix = `wework.interactions:${accountKey}:accepted:`
   const historyKey = `wework.interactions:${accountKey}:history`
   const projectItemsSupported = Boolean(
@@ -974,7 +975,5 @@ function RuntimeInteractionsState({
     ]
   )
   useLayoutEffect(() => publish(value), [publish, value])
-  return (
-    <TransientNotice message={replyNotice} tone="success" onClear={() => setReplyNotice(null)} />
-  )
+  return <TransientNotice message={replyNotice} tone="success" onClear={clearReplyNotice} />
 }

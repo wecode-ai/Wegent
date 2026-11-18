@@ -65,6 +65,9 @@ fn cloud_config_bundle_failures_are_detected() {
     assert!(is_codex_cloud_config_error(
         "failed to reload config: timed out waiting for cloud config bundle after 20s"
     ));
+    assert!(is_codex_cloud_config_error(
+        "failed to read configuration layers: Your authentication session could not be refreshed automatically. Please log out and sign in again."
+    ));
     assert!(!is_codex_cloud_config_error("model not found"));
 }
 

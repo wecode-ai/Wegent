@@ -1541,6 +1541,8 @@ pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
 
 fn is_codex_cloud_config_error(error: &str) -> bool {
     error.contains("cloud config bundle")
+        || (error.contains("failed to read configuration layers")
+            && error.contains("authentication session could not be refreshed"))
 }
 
 struct CodexAppServerSharedState {

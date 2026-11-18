@@ -96,7 +96,7 @@ impl CodexNativeActivity {
                 match params.pointer("/status/type").and_then(Value::as_str) {
                     Some("notLoaded") => {
                         self.loaded_threads.remove(&thread_id);
-                        return self.observe_goal(&thread_id, false);
+                        return self.unload_thread(&thread_id);
                     }
                     Some("idle" | "active" | "systemError") => {
                         self.loaded_threads.insert(thread_id);
@@ -246,6 +246,17 @@ impl CodexNativeActivity {
             .entry(thread_id.to_owned())
             .or_default()
             .observe_native(active, loaded)
+    }
+
+    fn unload_thread(&mut self, thread_id: &str) -> bool {
+        let Some(goal) = self.goals.get_mut(thread_id) else {
+            return false;
+        };
+        let was_busy = goal.is_busy();
+        // Unloading removes native work without changing the persisted Goal
+        // status. An active Goal must remain eligible for cold resume.
+        goal.native_work = false;
+        was_busy != goal.is_busy()
     }
 
     fn goal_observation(&self, thread_id: &str) -> u64 {
