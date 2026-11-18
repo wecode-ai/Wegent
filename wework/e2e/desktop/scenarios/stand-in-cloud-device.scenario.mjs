@@ -147,6 +147,7 @@ export function createDesktopScenario({
     await control.command('fill', `${selector} [data-testid="chat-message-input"]`, {
       value: message,
     })
+    await control.command('waitFor', `${selector} [data-testid="send-message-button"]:enabled`)
     await control.command('press', `${selector} [data-testid="chat-message-input"]`, {
       key: 'Enter',
     })
@@ -408,6 +409,14 @@ export function createDesktopScenario({
         text: REOPEN_COMPLETE,
         timeoutMs: modelResponseTimeoutMs,
       })
+      const reopened = await until(
+        () => remoteRpc('runtime.tasks.get', { taskId }),
+        result => result.task?.status === 'done' && result.task.running !== true,
+        'The bound cloud Executor must finish the turn after reopening',
+        modelResponseTimeoutMs
+      )
+      assert.equal(reopened.success, true, reopened.error)
+      assert.equal(reopened.task.threadId, threadId)
       assert.deepEqual(
         await binding(control),
         original,
