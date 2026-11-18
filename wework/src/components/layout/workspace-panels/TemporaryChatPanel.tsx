@@ -483,49 +483,13 @@ export function TemporaryChatPanel({
   const submissionTurnSettled =
     (terminalTurnSettled && lifecycleTurnKey !== submissionStartTurnKey) ||
     failedAssistantCount > submissionStartFailureCount
+  const nativeSubmissionPending =
+    nativeConversation && sending && !submissionTurnSettled && failedAssistantCount === 0
   const startSending = useCallback(() => {
     setSubmissionStartTurnKey(lifecycleTurnKey)
     setSubmissionStartFailureCount(failedAssistantCount)
     setSending(true)
   }, [failedAssistantCount, lifecycleTurnKey])
-  const hasModelControls = Boolean(modelControls)
-  const modelGateDiagnostics = useMemo(
-    () =>
-      JSON.stringify({
-        failedAssistantCount,
-        failedAssistantIds: presentation.messages
-          .filter(
-            message =>
-              message.role === 'assistant' &&
-              (message.status === 'failed' || message.runtimeStatus === 'failed')
-          )
-          .map(message => message.id),
-        lifecycleTurnKey,
-        messageCount: presentation.messages.length,
-        modelControls: hasModelControls,
-        sending,
-        submissionStartFailureCount,
-        submissionStartTurnKey,
-        submissionTurnSettled,
-        taskModelIdentityPending,
-      }),
-    [
-      failedAssistantCount,
-      hasModelControls,
-      lifecycleTurnKey,
-      presentation.messages,
-      sending,
-      submissionStartFailureCount,
-      submissionStartTurnKey,
-      submissionTurnSettled,
-      taskModelIdentityPending,
-    ]
-  )
-  useEffect(() => {
-    if (nativeConversation) {
-      console.info('[temporary-chat-model-gate]', modelGateDiagnostics)
-    }
-  }, [modelGateDiagnostics, nativeConversation])
   const messageViewId = useId()
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
@@ -1545,14 +1509,8 @@ export function TemporaryChatPanel({
                   }}
                   onSubmit={send}
                   clearOnSubmit={!(nativeConversation && address && draft?.beginSubmission)}
-                  disabled={
-                    (!modelControls && taskModelIdentityPending) ||
-                    (nativeConversation &&
-                      sending &&
-                      !submissionTurnSettled &&
-                      failedAssistantCount === 0)
-                  }
-                  submitDisabled={taskModelIdentityPending}
+                  disabled={!modelControls && taskModelIdentityPending}
+                  submitDisabled={taskModelIdentityPending || nativeSubmissionPending}
                   showExecutionTools={showExecutionTools}
                   showModelSelector
                   pluginPickerIconOnly
