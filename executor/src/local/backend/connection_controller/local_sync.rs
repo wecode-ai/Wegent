@@ -18,7 +18,7 @@ use std::{
     collections::HashMap,
     future::Future,
     path::Path,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
@@ -31,12 +31,14 @@ struct LocalSyncSession<'a> {
     progress: Option<&'a LocalSyncProgress>,
 }
 
-static LOCAL_SYNC_PROGRESS: LazyLock<Mutex<HashMap<[u8; 32], bool>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
 struct LocalSyncProgress([u8; 32]);
 
 impl LocalSyncProgress {
+    fn active() -> &'static Mutex<HashMap<[u8; 32], bool>> {
+        static PROGRESS: OnceLock<Mutex<HashMap<[u8; 32], bool>>> = OnceLock::new();
+        PROGRESS.get_or_init(Mutex::default)
+    }
+
     fn key(connection: &ConnectionConfig, value: &Value) -> Option<[u8; 32]> {
         let id = uuid::Uuid::parse_str(value.as_str()?).ok()?;
         Some(
@@ -51,7 +53,7 @@ impl LocalSyncProgress {
     }
 
     fn start(key: [u8; 32]) -> Result<Self, AppIpcError> {
-        let mut active = LOCAL_SYNC_PROGRESS.lock().unwrap();
+        let mut active = Self::active().lock().unwrap();
         if active.contains_key(&key) {
             return Err(error("invalid_params"));
         }
@@ -60,13 +62,13 @@ impl LocalSyncProgress {
     }
 
     fn locally_applied(&self) {
-        LOCAL_SYNC_PROGRESS.lock().unwrap().insert(self.0, true);
+        Self::active().lock().unwrap().insert(self.0, true);
     }
 }
 
 impl Drop for LocalSyncProgress {
     fn drop(&mut self) {
-        LOCAL_SYNC_PROGRESS.lock().unwrap().remove(&self.0);
+        Self::active().lock().unwrap().remove(&self.0);
     }
 }
 
@@ -459,8 +461,13 @@ impl LocalBackendConnectionController {
         };
         let progress_key = LocalSyncProgress::key(&connection, &params["progressId"]);
         if params["progressOnly"] == true {
-            let confirming =
-                progress_key.and_then(|key| LOCAL_SYNC_PROGRESS.lock().unwrap().get(&key).copied());
+            let confirming = progress_key.and_then(|key| {
+                LocalSyncProgress::active()
+                    .lock()
+                    .unwrap()
+                    .get(&key)
+                    .copied()
+            });
             return Ok(json!({"confirming": confirming == Some(true)}));
         }
         let progress = progress_key.map(LocalSyncProgress::start).transpose()?;
