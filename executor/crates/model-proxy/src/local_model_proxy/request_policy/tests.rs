@@ -81,6 +81,7 @@ async fn official_chatgpt_normalizes_foreign_reasoning_before_forwarding() {
             {
                 "type": "message",
                 "role": "user",
+                "id": "wework_event_4d7b7f0ca34416937adf4da7ab5046a3",
                 "content": [{"type": "input_text", "text": "continue"}]
             }
         ]
@@ -104,6 +105,7 @@ async fn official_chatgpt_normalizes_foreign_reasoning_before_forwarding() {
     assert_eq!(request["input"][0]["summary"][0]["text"], "foreign thought");
     assert!(request["input"][0].get("id").is_none());
     assert!(request["input"][0].get("encrypted_content").is_none());
+    assert!(request["input"][1].get("id").is_none());
     assert_eq!(request["input"][1]["content"][0]["text"], "continue");
 }
 
