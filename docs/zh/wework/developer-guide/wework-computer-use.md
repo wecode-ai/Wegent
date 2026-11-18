@@ -105,7 +105,10 @@ macOS 需要向实际运行的 Wework 应用授予：
 
 CUA 不是独立 sidecar，也不从用户环境或网络动态安装。Electron 包固定依赖
 `@trycua/cua-driver`，pnpm 根据构建平台选择对应的原生包，例如
-`@trycua/cua-driver-darwin-arm64`。
+`@trycua/cua-driver-darwin-arm64`。六个平台原生包必须同时声明为 Electron 包的
+直接 `optionalDependencies`，并与 Driver 保持相同版本；不能只依赖 Driver 的间接
+可选依赖，否则 electron-builder 的依赖收集可能遗漏原生库。本地打包生成的暂存
+`package.json` 也必须保留这些声明。
 
 JavaScript 文件进入 `app.asar`，原生 `.node`、`.dylib`、`.so` 和 `.dll` 文件通过
 Electron 打包配置解包到 `app.asar.unpacked`。原生动态加载不能直接读取 ASAR

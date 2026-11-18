@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { RuntimeTaskMachine } from '@/features/workbench/runtimeTaskLifecycle/RuntimeTaskMachine'
 import { RuntimeInteractionsProvider } from './RuntimeInteractionsProvider'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
+import type { TaskSource } from './NotificationTaskSourceContext'
 import {
   ConversationTranslationProvider,
   RequestUserInputCard,

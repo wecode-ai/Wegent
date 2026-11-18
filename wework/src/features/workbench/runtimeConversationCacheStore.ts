@@ -283,6 +283,29 @@ export function notifyRuntimeConversation(
 
 export function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]): void {
   if (archivedConversationKeys.has(key)) return
+  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+    const retryState = (entries: RuntimeConversationTurn[]) =>
+      entries.flatMap(turn => {
+        const blocks = turn.items.flatMap(item =>
+          item.type === 'block' &&
+          item.block.type === 'tool' &&
+          item.block.toolName === 'runtime_reconnecting'
+            ? [
+                {
+                  id: item.id,
+                  status: item.block.status,
+                  reason: item.block.toolInput?.retry_reason,
+                },
+              ]
+            : []
+        )
+        return blocks.length ? [{ id: turn.id, status: turn.status, blocks }] : []
+      })
+    const previous = retryState(turnsByConversation.get(key) ?? [])
+    const next = retryState(turns)
+    if ((previous.length || next.length) && JSON.stringify(previous) !== JSON.stringify(next))
+      console.debug('[Wework] Runtime retry conversation state', { key, previous, next })
+  }
   projectedMessagesByConversation.delete(key)
   cacheBoundedEntry(turnsByConversation, key, turns, evictedKey => {
     projectedMessagesByConversation.delete(evictedKey)
