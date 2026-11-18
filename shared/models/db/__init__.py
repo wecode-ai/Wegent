@@ -25,6 +25,7 @@ from .kind import Kind
 from .skill_binary import SkillBinary
 from .subtask import Subtask
 from .subtask_context import SubtaskContext
+from .task_timing_span import TaskTimingSpan
 from .user import User
 from .work_queue import (
     QueueMessage,
@@ -52,6 +53,7 @@ __all__ = [
     "User",
     "Kind",
     "SkillBinary",
+    "TaskTimingSpan",
     # Work Queue Models
     "QueueMessage",
     "RecentContact",
