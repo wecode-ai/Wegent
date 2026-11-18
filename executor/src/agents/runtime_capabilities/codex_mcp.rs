@@ -44,27 +44,15 @@ pub(super) fn prepare(
     let previous = servers.clone();
     let mut incoming = extract_claude_mcp_templates(request, &BTreeMap::new());
     super::preserve_explicit_mcp_approval_modes(request, &mut incoming);
-    for (name, server) in incoming {
-        servers.insert(name, native_definition(server)?);
-    }
-    // These grants remain authoritative per execution, not accumulated agent settings.
-    for name in [
-        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
-        crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
-        crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
-        crate::workbench_control::SERVER_NAME,
-    ] {
+    // An unavailable replacement must also remove its previously saved definition.
+    for name in incoming.keys() {
         servers.remove(name);
     }
-    let mut environment = BTreeMap::new();
-    bind_context(&mut servers, request, &mut environment)?;
-    let mut runtime = Map::new();
-    for (name, definition) in &servers {
-        let mut resolved = definition.clone();
-        resolve_context(&mut resolved, &environment)?;
-        append_stdio_environment(name, &resolved, &mut runtime)?;
-        runtime.insert(super::toml_key_path(&["mcp_servers", name]), resolved);
+    normalize_templates(&mut incoming, request)?;
+    for (name, server) in incoming {
+        servers.insert(name, server);
     }
+    prepare_runtime(&mut servers, request, thread_config)?;
     if servers != previous {
         update_servers(&mut document, &previous, &servers)?;
         crate::agents::codex::replace_config(&path, document.to_string())?;
@@ -76,6 +64,59 @@ pub(super) fn prepare(
         ("config_changed", (servers != previous).to_string()),
     ]);
     crate::logging::log_executor_event("codex MCP config merged", &fields);
+    Ok(())
+}
+
+/// Convert incoming templates without changing previously saved native settings.
+pub(crate) fn prepare_templates(
+    servers: &mut BTreeMap<String, Value>,
+    request: &ExecutionRequest,
+    thread_config: &mut Map<String, Value>,
+) -> Result<(), String> {
+    normalize_templates(servers, request)?;
+    prepare_runtime(servers, request, thread_config)
+}
+
+fn normalize_templates(
+    servers: &mut BTreeMap<String, Value>,
+    request: &ExecutionRequest,
+) -> Result<(), String> {
+    remove_managed_servers(servers);
+    super::mcp_environment::prepare_context(servers, request)?;
+    for server in servers.values_mut() {
+        *server = native_definition(server.clone())?;
+    }
+    Ok(())
+}
+
+fn remove_managed_servers(servers: &mut BTreeMap<String, Value>) {
+    // These grants remain authoritative per execution, not accumulated agent settings.
+    for name in [
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
+        crate::workbench_control::SERVER_NAME,
+    ] {
+        servers.remove(name);
+    }
+}
+
+/// Share binding across every Home and send resolved values only through stdin.
+fn prepare_runtime(
+    servers: &mut BTreeMap<String, Value>,
+    request: &ExecutionRequest,
+    thread_config: &mut Map<String, Value>,
+) -> Result<(), String> {
+    remove_managed_servers(servers);
+    let mut environment = BTreeMap::new();
+    bind_context(servers, request, &mut environment)?;
+    let mut runtime = Map::new();
+    for (name, definition) in servers.iter() {
+        let mut resolved = definition.clone();
+        resolve_context(&mut resolved, &environment)?;
+        append_stdio_environment(name, &resolved, &mut runtime)?;
+        runtime.insert(super::toml_key_path(&["mcp_servers", name]), resolved);
+    }
     thread_config.extend(runtime);
     Ok(())
 }

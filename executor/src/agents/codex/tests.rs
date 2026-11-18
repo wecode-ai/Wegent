@@ -23,15 +23,83 @@ fn global_mcps_without_backend_context_do_not_enter_native_configuration() {
     for backend_url in [None, Some(""), Some(" \t\n")] {
         let request = ExecutionRequest {
             backend_url: backend_url.map(str::to_owned),
+            mcp_servers: vec![json!({
+                "name": "web", "url": "${{backend_api_url}}/mcp/connectors/sse"
+            })],
             ..Default::default()
         };
-        let overrides = global_mcp_config_overrides(&request, &mut Map::new()).unwrap();
-        assert!(overrides
-            .iter()
-            .any(|value| value.starts_with("mcp_servers.web.url=")));
-        assert!(!overrides.iter().any(|value| value.contains("connector")));
-        assert!(!overrides.iter().any(|value| value.contains("${{")));
+        let mut launch = CodexLaunchConfig::default();
+        super::mcp_config::configure_task_mcp(&request, &mut launch).unwrap();
+        assert!(!launch.thread_config.contains_key("mcp_servers.web"));
+        assert!(!launch.thread_config.contains_key("mcp_servers.connector"));
+        let request = ExecutionRequest {
+            mcp_servers: Vec::new(),
+            ..request
+        };
+        let mut runtime = Map::new();
+        configure_global_mcps(&request, &mut runtime).unwrap();
+        assert_eq!(
+            runtime["mcp_servers.web"]["url"],
+            "https://example.test/mcp"
+        );
+        assert!(!runtime.contains_key("mcp_servers.connector"));
+        assert!(!serde_json::to_string(&runtime).unwrap().contains("${{"));
     }
+}
+
+#[test]
+fn global_mcp_backend_context_rebinds_without_argv_credentials() {
+    let _environment = environment::LaunchEnvironment::new();
+    let path = crate::local::capabilities::default_manifest_path();
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        json!({"version": 2, "mcps": {
+            "connector": {"server": {
+                "url": "${{backend_api_url}}/mcp/connectors/sse",
+                "headers": {"Authorization": "Bearer ${{task_token}}"}
+            }}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    for (backend, token) in [
+        ("https://first.example/api/", "synthetic-first-token"),
+        (
+            "https://second.example/deployment/api/",
+            "synthetic-next-token",
+        ),
+    ] {
+        let request = ExecutionRequest {
+            backend_url: Some(backend.into()),
+            auth_token: Some(token.into()),
+            ..Default::default()
+        };
+        let mut launch = CodexLaunchConfig::default();
+        super::mcp_config::configure_task_mcp(&request, &mut launch).unwrap();
+        let runtime = &launch.thread_config;
+        assert_eq!(
+            runtime["mcp_servers.connector"]["url"],
+            format!("{}/mcp/connectors/sse", backend.trim_end_matches('/'))
+        );
+        assert_eq!(
+            runtime["mcp_servers.connector"]["http_headers"]["Authorization"],
+            format!("Bearer {token}")
+        );
+        assert!(!launch
+            .config_overrides
+            .iter()
+            .any(|value| value.contains(token)));
+        assert!(!fs::read_to_string(&path).unwrap().contains(token));
+    }
+    let request = ExecutionRequest {
+        backend_url: Some("https://backend.example/api".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        configure_global_mcps(&request, &mut Map::new()).unwrap_err(),
+        "Missing MCP execution context: task_token"
+    );
 }
 
 #[test]
@@ -2926,11 +2994,7 @@ fn stdio_mcp_environment_is_private_per_service_in_start_and_resume_rpc() {
         ..Default::default()
     };
     let mut launch = CodexLaunchConfig::default();
-    let (overrides, environment) =
-        runtime_capabilities::request_mcp_config_overrides(&request, &mut launch.thread_config)
-            .unwrap();
-    launch.config_overrides.extend(overrides);
-    launch.env.extend(environment);
+    runtime_capabilities::configure_request_mcps(&request, &mut launch.thread_config).unwrap();
     for name in ["TOKEN", "OPENAI_API_KEY", "PATH"] {
         assert!(!launch.env.contains_key(name));
     }

@@ -47,12 +47,11 @@ mod skill_archive;
 use crate::services::workbench::archive_hash;
 pub use codex::prepare_codex_runtime;
 pub(crate) use codex::prepare_codex_runtime_locked;
+pub(super) use codex_mcp::prepare_templates as configure_codex_mcp_servers;
 use skill_archive::{expected_hash, publish_archive};
 pub(super) use wegent_filesystem::json_file::write_json_file;
 pub(crate) use wegent_mcp_runtime::mcp_environment;
-use wegent_mcp_runtime::toml_encoding::{
-    toml_json_value, toml_key_path, toml_key_segment, toml_value,
-};
+use wegent_mcp_runtime::toml_encoding::toml_key_path;
 use wegent_plugin_packages::skill_selection::{
     copy_skill_directory, read_skill_manifest, record_installed_skill, HomeSkillsStage,
 };
@@ -502,17 +501,15 @@ fn inject_managed_wework_mcps(
     Ok(())
 }
 
-pub fn request_mcp_config_overrides(
+pub fn configure_request_mcps(
     request: &ExecutionRequest,
     thread_config: &mut Map<String, Value>,
-) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
+) -> Result<(), String> {
     if let Some(home) = super::instance_home::request_home(request) {
-        codex_mcp::prepare(&home, request, thread_config)?;
-        return Ok((Vec::new(), BTreeMap::new()));
+        return codex_mcp::prepare(&home, request, thread_config);
     }
-    let mut overrides = Vec::new();
-    let mut environment = BTreeMap::new();
-    let mcp_servers = collect_request_mcp_servers(request)?;
+    let mut mcp_servers = collect_request_mcp_servers(request);
+    configure_codex_mcp_servers(&mut mcp_servers, request, thread_config)?;
     let server_names = mcp_servers.keys().cloned().collect::<Vec<_>>().join(",");
     let stdio_count = mcp_servers
         .values()
@@ -521,40 +518,11 @@ pub fn request_mcp_config_overrides(
                 || server.get("command").is_some()
         })
         .count();
-    for (name, server) in &mcp_servers {
-        let mut server = server.clone();
-        mcp_environment::append_stdio_environment(name, &server, thread_config)?;
-        if let Some(object) = server.as_object_mut() {
-            let native_headers = object.remove("http_headers");
-            if let Some(headers) = object.remove("headers").or(native_headers) {
-                if let Some(headers) = headers.as_object() {
-                    for (header, value) in headers {
-                        let Some(value) = value.as_str() else {
-                            continue;
-                        };
-                        use sha2::{Digest, Sha256};
-                        let variable = format!(
-                            "WEGENT_MCP_HEADER_{:x}",
-                            Sha256::digest(format!("{name}:{header}").as_bytes())
-                        );
-                        environment.insert(variable.clone(), value.to_owned());
-                        overrides.push(format!(
-                            "{}={}",
-                            toml_key_path(&["mcp_servers", name, "env_http_headers", header]),
-                            toml_value(&variable)
-                        ));
-                    }
-                }
-            }
-        }
-        overrides.extend(codex_mcp_server_overrides(name, &server));
-    }
     let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.extend([
         ("server_count", mcp_servers.len().to_string()),
         ("server_names", server_names),
         ("stdio_count", stdio_count.to_string()),
-        ("override_count", overrides.len().to_string()),
         (
             "backend_url_present",
             request
@@ -573,7 +541,7 @@ pub fn request_mcp_config_overrides(
         ),
     ]);
     log_executor_event("codex MCP request config compiled", &fields);
-    Ok((overrides, environment))
+    Ok(())
 }
 
 async fn deploy_request_skills(
@@ -2171,18 +2139,12 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
     value.as_object_mut().expect("value was just made object")
 }
 
-fn collect_request_mcp_servers(
-    request: &ExecutionRequest,
-) -> Result<BTreeMap<String, Value>, String> {
+pub(super) fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
     let mut servers =
         super::claude_options::extract_claude_mcp_templates(request, &BTreeMap::new());
     servers.remove(crate::workbench_control::SERVER_NAME);
-    let context = mcp_environment::prepare_context(&mut servers, request)?;
-    for server in servers.values_mut() {
-        *server = crate::mcp_utils::replace_variables_recursive(server, Some(&context));
-    }
     preserve_explicit_mcp_approval_modes(request, &mut servers);
-    Ok(servers)
+    servers
 }
 
 fn preserve_explicit_mcp_approval_modes(
@@ -2311,94 +2273,6 @@ fn has_mcp_headers(server: &Value) -> bool {
         .get("headers")
         .and_then(Value::as_object)
         .is_some_and(|headers| !headers.is_empty())
-}
-
-fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {
-    let Some(object) = server.as_object() else {
-        return Vec::new();
-    };
-    let key = toml_key_path(&["mcp_servers", name]);
-    let server_type = object.get("type").and_then(Value::as_str).unwrap_or("");
-    if server_type == "stdio" || object.get("command").is_some() {
-        let Some(command) = object
-            .get("command")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return Vec::new();
-        };
-        let mut overrides = vec![format!("{key}.command={}", toml_value(command))];
-        if let Some(args) = object.get("args").and_then(Value::as_array) {
-            let args = args
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|value| Value::String(value.to_owned()))
-                .collect::<Vec<_>>();
-            overrides.push(format!(
-                "{key}.args={}",
-                toml_json_value(&Value::Array(args))
-            ));
-        }
-        if let Some(names) = object.get("env_vars") {
-            overrides.push(format!("{key}.env_vars={}", toml_json_value(names)));
-        }
-        append_codex_mcp_server_approval_override(&key, object, &mut overrides);
-        return overrides;
-    }
-    let Some(url) = object
-        .get("url")
-        .or_else(|| object.get("base_url"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Vec::new();
-    };
-    let mut overrides = vec![format!("{key}.url={}", toml_value(url))];
-    if let Some(headers) = object.get("headers").and_then(Value::as_object) {
-        for (header_name, header_value) in headers {
-            if let Some(header_value) = header_value.as_str() {
-                overrides.push(format!(
-                    "{key}.http_headers.{}={}",
-                    toml_key_segment(header_name),
-                    toml_value(header_value)
-                ));
-            }
-        }
-    }
-    for (source_key, target_key) in [
-        ("bearer_token_env_var", "bearer_token_env_var"),
-        ("bearerTokenEnvVar", "bearer_token_env_var"),
-        ("oauth_client_id", "oauth_client_id"),
-        ("oauthClientId", "oauth_client_id"),
-        ("oauth_resource", "oauth_resource"),
-        ("oauthResource", "oauth_resource"),
-    ] {
-        if let Some(value) = object.get(source_key).and_then(Value::as_str) {
-            overrides.push(format!("{key}.{target_key}={}", toml_value(value)));
-        }
-    }
-    append_codex_mcp_server_approval_override(&key, object, &mut overrides);
-    overrides
-}
-
-fn append_codex_mcp_server_approval_override(
-    key: &str,
-    object: &Map<String, Value>,
-    overrides: &mut Vec<String>,
-) {
-    let approval_mode = object
-        .get("default_tools_approval_mode")
-        .or_else(|| object.get("defaultToolsApprovalMode"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("approve");
-    overrides.push(format!(
-        "{key}.default_tools_approval_mode={}",
-        toml_value(approval_mode)
-    ));
 }
 
 pub(super) fn load_global_mcp_records() -> Result<BTreeMap<String, Value>, String> {

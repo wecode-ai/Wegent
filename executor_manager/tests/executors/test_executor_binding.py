@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
-
 from executor_manager.clients import executor_binding
 from executor_manager.executors.docker.executor import DockerExecutor
 from executor_manager.routers.routers import app, openai_responses
@@ -107,8 +106,8 @@ async def test_enqueue_accepts_binding_credential_only_from_dispatch_header(
     ],
 )
 async def test_responses_preserve_optional_backend_context_for_each_queue(
-    request_id, backend_context
-):
+    request_id: str, backend_context: dict[str, object]
+) -> None:
     metadata = {
         "task_id": 42,
         "subtask_id": 43,

@@ -5823,13 +5823,16 @@ fn normalize_service_tier(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn global_mcp_config_overrides(
+fn configure_global_mcps(
     request: &ExecutionRequest,
     thread_config: &mut Map<String, Value>,
-) -> Result<Vec<String>, String> {
+) -> Result<(), String> {
     let mcps = runtime_capabilities::load_global_mcp_records()?;
+    let requested = runtime_capabilities::collect_request_mcp_servers(request);
     let mut servers = mcps
         .into_iter()
+        // Requested definitions replace matching globals even when unavailable.
+        .filter(|(name, _)| !requested.contains_key(name))
         .filter_map(|(name, record)| {
             record
                 .get("server")
@@ -5837,20 +5840,7 @@ fn global_mcp_config_overrides(
                 .map(|server| (name, Value::Object(server.clone())))
         })
         .collect::<BTreeMap<_, _>>();
-    servers.remove(crate::workbench_control::SERVER_NAME);
-    runtime_capabilities::mcp_environment::prepare_context(&mut servers, request)?;
-    let mut overrides = Vec::new();
-    for (name, server) in &servers {
-        runtime_capabilities::mcp_environment::append_stdio_environment(
-            name,
-            server,
-            thread_config,
-        )?;
-        if let Some(server) = server.as_object() {
-            overrides.extend(mcp_server_overrides(name, server));
-        }
-    }
-    Ok(overrides)
+    runtime_capabilities::configure_codex_mcp_servers(&mut servers, request, thread_config)
 }
 
 fn cdp_browser_mcp_config_overrides(
@@ -6108,65 +6098,6 @@ fn embedded_browser_label(request: &ExecutionRequest) -> Option<String> {
             })
             .collect::<String>()
     ))
-}
-
-fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> {
-    let key = toml_key_path(&["mcp_servers", name]);
-    let server_type = server
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim();
-    if server_type == "stdio" || server.get("command").is_some() {
-        let Some(command) = server
-            .get("command")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return Vec::new();
-        };
-        let mut overrides = vec![format!("{key}.command={}", toml_value(command))];
-        if let Some(args) = server.get("args").and_then(Value::as_array) {
-            let args = args
-                .iter()
-                .filter_map(value_string)
-                .map(Value::String)
-                .collect::<Vec<_>>();
-            overrides.push(format!(
-                "{key}.args={}",
-                toml_json_value(&Value::Array(args))
-            ));
-        }
-        if let Some(names) = server.get("env_vars") {
-            overrides.push(format!("{key}.env_vars={}", toml_json_value(names)));
-        }
-        return overrides;
-    }
-
-    let Some(url) = server
-        .get("url")
-        .or_else(|| server.get("base_url"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Vec::new();
-    };
-    let mut overrides = vec![format!("{key}.url={}", toml_value(url))];
-    for (source_key, target_key) in [
-        ("bearer_token_env_var", "bearer_token_env_var"),
-        ("bearerTokenEnvVar", "bearer_token_env_var"),
-        ("oauth_client_id", "oauth_client_id"),
-        ("oauthClientId", "oauth_client_id"),
-        ("oauth_resource", "oauth_resource"),
-        ("oauthResource", "oauth_resource"),
-    ] {
-        if let Some(value) = server.get(source_key).and_then(value_string) {
-            overrides.push(format!("{key}.{target_key}={}", toml_value(&value)));
-        }
-    }
-    overrides
 }
 
 async fn prepare_codex_execution_request(

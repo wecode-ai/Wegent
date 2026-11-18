@@ -27,7 +27,9 @@ class TestBuildConnectionsVariableSubstitution:
 
     @pytest.mark.parametrize("backend_url", [None, "", " \t\n"])
     @pytest.mark.parametrize("path", ["backend_url", "backend_api_url"])
-    def test_missing_backend_skips_only_dependent_servers(self, backend_url, path):
+    def test_missing_backend_skips_only_dependent_servers(
+        self, backend_url: str | None, path: str
+    ) -> None:
         config = {
             "connector": {
                 "type": "sse",

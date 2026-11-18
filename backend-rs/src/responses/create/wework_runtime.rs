@@ -17,7 +17,6 @@ use crate::auth::UserRow;
 use crate::background_jobs::project::runtime_rpc;
 use crate::device_identity::resolve_runtime_route_identity;
 use crate::http_compat::FastApiError;
-use crate::responses::create::bot_config::backend_url;
 use crate::responses::create::tokens;
 use crate::state::AppState;
 
@@ -107,6 +106,8 @@ pub(super) async fn execution_request(
         model_config,
         auth_token,
         skill_identity_token,
+        backend_url: crate::config::optional_env_or_dotenv("BACKEND_INTERNAL_URL")
+            .unwrap_or_default(),
     }))
 }
 
@@ -121,6 +122,7 @@ pub(super) struct RuntimeExecutionInput<'a> {
     pub model_config: Value,
     pub auth_token: String,
     pub skill_identity_token: String,
+    pub backend_url: String,
 }
 
 /// Assemble the execution context shared by new conversations and follow-up turns.
@@ -136,6 +138,7 @@ pub(super) fn assemble_execution_request(input: RuntimeExecutionInput<'_>) -> Va
         model_config,
         auth_token,
         skill_identity_token,
+        backend_url,
     } = input;
     let (generated_task_id, subtask_id) = runtime_execution_ids();
     let task_id_value = if task_id.is_empty() {
@@ -233,7 +236,7 @@ pub(super) fn assemble_execution_request(input: RuntimeExecutionInput<'_>) -> Va
         "interactive_form_answer" => json!(null),
         "auth_token" => json!(auth_token),
         "skill_identity_token" => json!(skill_identity_token),
-        "backend_url" => json!(backend_url()),
+        "backend_url" => json!(backend_url),
         "attachments" => json!([]),
         "is_subscription" => json!(false),
         "system_mcp_config" => json!(null),

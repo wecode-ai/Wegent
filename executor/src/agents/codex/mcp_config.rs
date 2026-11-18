@@ -8,8 +8,7 @@ pub(super) fn configure_task_mcp(
     launch: &mut CodexLaunchConfig,
 ) -> Result<(), String> {
     if super::super::instance_home::request_home(request).is_none() {
-        let overrides = global_mcp_config_overrides(request, &mut launch.thread_config)?;
-        launch.config_overrides.extend(overrides);
+        configure_global_mcps(request, &mut launch.thread_config)?;
     }
     launch
         .config_overrides
@@ -17,11 +16,11 @@ pub(super) fn configure_task_mcp(
     for (overrides, environment) in [
         cdp_browser_mcp_config_overrides(request)?,
         managed_wework_mcp_config_overrides(request)?,
-        runtime_capabilities::request_mcp_config_overrides(request, &mut launch.thread_config)?,
     ] {
         launch.config_overrides.extend(overrides);
         launch.env.extend(environment);
     }
+    runtime_capabilities::configure_request_mcps(request, &mut launch.thread_config)?;
     if crate::runtime_work::stand_in_requires_confirmation(request)
         && !external_work::applies(request)
     {

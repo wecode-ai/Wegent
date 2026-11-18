@@ -206,6 +206,14 @@ fn same_name_replaces_transport_and_keeps_other_settings_including_inline_tables
         prepare(home.path(), &request, &mut Map::new()).unwrap();
         let config: Value = toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(config["mcp_servers"]["replace"], json!({"url":"https://new.example", "default_tools_approval_mode":"approve"}));
+        request.mcp_servers = vec![json!({"name":"replace", "url":"${{backend_api_url}}/mcp/connectors/sse"})];
+        let mut runtime = Map::new();
+        prepare(home.path(), &request, &mut runtime).unwrap();
+        assert!(!runtime.contains_key("mcp_servers.replace"));
+        assert!(runtime.contains_key("mcp_servers.keep"));
+        let config: Value = toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(config["mcp_servers"].get("replace").is_none());
+        assert_eq!(config["mcp_servers"]["keep"], json!({"command":"keep"}));
     }
 }
 

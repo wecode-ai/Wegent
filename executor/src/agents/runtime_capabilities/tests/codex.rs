@@ -21,13 +21,62 @@ fn default_home_skips_backend_dependent_mcps_before_native_configuration() {
             ..Default::default()
         };
         let mut runtime = Map::new();
-        let (overrides, environment) =
-            request_mcp_config_overrides(&request, &mut runtime).unwrap();
-        assert!(overrides.contains(&"mcp_servers.web.url=\"https://example.test/mcp\"".to_owned()));
-        assert!(!overrides.iter().any(|value| value.contains("connector")));
-        assert!(!overrides.iter().any(|value| value.contains("${{")));
-        assert!(runtime.is_empty());
-        assert!(environment.is_empty());
+        configure_request_mcps(&request, &mut runtime).unwrap();
+        assert_eq!(
+            runtime["mcp_servers.web"]["url"],
+            "https://example.test/mcp"
+        );
+        assert!(!runtime.contains_key("mcp_servers.connector"));
+        assert!(!runtime.contains_key("mcp_servers.bot-connector"));
+        assert!(!serde_json::to_string(&runtime).unwrap().contains("${{"));
+    }
+}
+
+#[test]
+fn default_home_mcp_rebinds_encoded_backend_context_without_argv_credentials() {
+    let reference = format!(
+        "${{{}}}",
+        mcp_environment::context_variable("backend_api_url")
+    );
+    for (backend, token) in [
+        ("https://first.example/api/", "synthetic-first-token"),
+        (
+            "https://second.example/deployment/api/",
+            "synthetic-next-token",
+        ),
+    ] {
+        let request = ExecutionRequest {
+            backend_url: Some(backend.into()),
+            auth_token: Some(token.into()),
+            mcp_servers: vec![
+                json!({
+                    "name": "connector", "url": format!("{reference}/mcp/connectors/sse"),
+                    "headers": {"Authorization": "Bearer ${{task_token}}"}
+                }),
+                json!({
+                    "name": "backend-command", "command": "tool",
+                    "args": [reference, "${{task_token}}"],
+                    "env": {"TOKEN": "${{task_token}}"}
+                }),
+            ],
+            ..Default::default()
+        };
+        let mut runtime = Map::new();
+        configure_request_mcps(&request, &mut runtime).unwrap();
+        assert_eq!(
+            runtime["mcp_servers.connector"]["url"],
+            format!("{}/mcp/connectors/sse", backend.trim_end_matches('/'))
+        );
+        assert_eq!(
+            runtime["mcp_servers.connector"]["http_headers"]["Authorization"],
+            format!("Bearer {token}")
+        );
+        assert_eq!(
+            runtime["mcp_servers.backend-command"]["args"][0],
+            backend.trim_end_matches('/')
+        );
+        assert_eq!(runtime["mcp_servers.backend-command"]["args"][1], token);
+        assert_eq!(runtime["mcp_servers.backend-command.env"]["TOKEN"], token);
     }
 }
 
