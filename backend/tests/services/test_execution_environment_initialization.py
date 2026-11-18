@@ -620,6 +620,7 @@ async def test_initialization_prepares_device_and_returns_ready_state(
 @pytest.mark.asyncio
 async def test_initialization_failure_returns_error_state(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(
         execution_environment_initialization,
@@ -660,6 +661,10 @@ async def test_initialization_failure_returns_error_state(
         "prepared_at": None,
         "error": "setup failed",
     }
+    assert "phase=validate_result" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+    assert "setup failed" not in caplog.text
+    assert "exit 1" not in caplog.text
 
 
 @pytest.mark.asyncio

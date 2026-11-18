@@ -199,6 +199,7 @@ async fn acknowledge_assignment(
                 } else if public_result.is_some() && delivery_id.is_none() {
                     Some("awaiting_delivery")
                 } else { None };
+                let source_body_bytes = public_result.as_ref().map(|result| result.body_bytes);
                 let receipt = json!({
                     "projectId":locked[0].cloud_project_id,"issueId":item_id,
                     "humanAssignmentId":super::human_task_binding::direct_human_assignment_id(item_id,assignment_id),
@@ -207,6 +208,17 @@ async fn acknowledge_assignment(
                     "deviceId":payload.device_id,"deliveryId":delivery_id,"publicMessageId":public_result.map(|result|result.id),"confirmedMessageId":confirmed,
                     "observedAt":update.observed_at,"updatedAt":timestamp,
                 });
+                if previous.is_none_or(|old| ["state", "reasonCode", "publicMessageId", "confirmedMessageId", "deliveryId"].iter().any(|key| old[*key] != receipt[*key])) {
+                    tracing::info!(
+                        item_id, assignment_id, user_id = user.id,
+                        source_message_id = ?receipt["publicMessageId"].as_str(),
+                        source_body_bytes = ?source_body_bytes,
+                        state = ?receipt["state"].as_str(),
+                        reason = ?receipt["reasonCode"].as_str(),
+                        stage = "transaction_pending",
+                        "Stand-in receipt source selected"
+                    );
+                }
                 persist_dispatch_receipt(tx, item_id, assignment_id, receipt).await?;
             }
             if payload.dispatch.as_ref().is_some_and(|update| update.state == DispatchState::BlockedPolicy) || unbound_failure(&payload) {
@@ -309,6 +321,7 @@ async fn require_owned_device(
 #[derive(FromMysqlRow)]
 struct PublicResult {
     id: String,
+    body_bytes: i64,
     binding_id: String,
 }
 
@@ -327,7 +340,7 @@ async fn public_result_on(
     tx.fetch_optional(
         // Public stand-in replies intentionally have no runtime address. Their
         // server-generated idempotency key binds the validated device and task.
-        "SELECT message_id AS id,CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in.binding_id')) AS CHAR CHARACTER SET utf8mb4) AS binding_id FROM project_chat_messages WHERE task_id=? AND client_message_id=SHA2(CONCAT(project_id,CHAR(0),task_id,CHAR(0),?,CHAR(0),?,CHAR(0),?),256) AND JSON_EXTRACT(metadata,'$.stand_in.user_id')=? AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in.human_assignment_id'))=? AND status='completed' AND JSON_TYPE(JSON_EXTRACT(metadata,'$.stand_in.binding_id'))='STRING' AND (deleted_at IS NULL OR deleted_at<='1970-01-02') FOR UPDATE",
+        "SELECT message_id AS id,OCTET_LENGTH(TRIM(content)) AS body_bytes,CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in.binding_id')) AS CHAR CHARACTER SET utf8mb4) AS binding_id FROM project_chat_messages WHERE task_id=? AND client_message_id=SHA2(CONCAT(project_id,CHAR(0),task_id,CHAR(0),?,CHAR(0),?,CHAR(0),?),256) AND JSON_EXTRACT(metadata,'$.stand_in.user_id')=? AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in.human_assignment_id'))=? AND status='completed' AND JSON_TYPE(JSON_EXTRACT(metadata,'$.stand_in.binding_id'))='STRING' AND (deleted_at IS NULL OR deleted_at<='1970-01-02') FOR UPDATE",
         (item_id,payload.device_id.as_deref().unwrap_or_default(),payload.task_id.as_deref().unwrap_or_default(),id,user_id,super::human_task_binding::direct_human_assignment_id(item_id,assignment_id)),
     ).await
 }
@@ -405,7 +418,7 @@ pub(super) async fn project_delivery(
         return Ok(());
     };
     let source: Option<PublicResult> = state.mysql.fetch_optional(
-        "SELECT message_id AS id,CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in.binding_id')) AS CHAR CHARACTER SET utf8mb4) AS binding_id FROM project_chat_messages WHERE task_id=? AND message_id=? AND JSON_TYPE(JSON_EXTRACT(metadata,'$.stand_in.binding_id'))='STRING' AND (deleted_at IS NULL OR deleted_at<='1970-01-02')",
+        "SELECT message_id AS id,OCTET_LENGTH(TRIM(content)) AS body_bytes,CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in.binding_id')) AS CHAR CHARACTER SET utf8mb4) AS binding_id FROM project_chat_messages WHERE task_id=? AND message_id=? AND JSON_TYPE(JSON_EXTRACT(metadata,'$.stand_in.binding_id'))='STRING' AND (deleted_at IS NULL OR deleted_at<='1970-01-02')",
         (issue,message_id),
     ).await.map_err(internal)?;
     let Some(source) = source else { return Ok(()) };

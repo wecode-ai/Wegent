@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -15,7 +17,10 @@ from fastapi import HTTPException, status
 from app.core.distributed_lock import distributed_lock
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
-from app.services.device.command_service import execute_configured_device_command
+from app.services.device.command_service import (
+    _git_command_failure,
+    execute_configured_device_command,
+)
 from app.services.device.git_credentials import (
     DeviceGitCredentialNoAccountsError,
     sync_git_accounts_to_device,
@@ -25,6 +30,8 @@ from app.services.device.remote_control_policy import device_kind_type
 from app.services.device.runtime_route import runtime_device_route_id
 from shared.models.db import User
 from shared.telemetry.decorators import trace_async
+
+logger = logging.getLogger(__name__)
 
 
 async def _sync_device_git_credentials(db: Any, device: Kind) -> bool:
@@ -191,6 +198,9 @@ async def initialize_execution_environment(
                 "Execution environment initialization is already in progress "
                 "on this device",
             )
+        started_at = time.monotonic()
+        phase = "dispatch"
+        result: dict[str, Any] = {}
         try:
             command_args = dict(
                 db=db,
@@ -217,6 +227,7 @@ async def initialize_execution_environment(
             result = await execute_configured_device_command(**command_args)
             if not result.get("success") and _requires_git_configuration(result):
                 try:
+                    phase = "credential_sync"
                     synced = await _sync_device_git_credentials(db, device)
                 except Exception as sync_error:
                     failure = json.loads(
@@ -232,7 +243,9 @@ async def initialize_execution_environment(
                 if synced:
                     # Synchronization is not proof of repository access. Prepare
                     # again once, reusing completed checkouts.
+                    phase = "dispatch_after_credentials"
                     result = await execute_configured_device_command(**command_args)
+            phase = "validate_result"
             if not bool(result.get("success")) or result.get("exit_code") != 0:
                 error_message = str(
                     result.get("stderr")
@@ -249,6 +262,29 @@ async def initialize_execution_environment(
                     )
                 raise RuntimeError(error_message)
         except Exception as error:
+            # Never log command output, credentials, setup commands, or exception text.
+            detail = str(error).lower()
+            diagnostic_result = result if isinstance(result, dict) else {}
+            logger.error(
+                "[ExecutionEnvironment] initialization failed "
+                "environment_id=%s device_route=%s phase=%s error_type=%s "
+                "duration_ms=%s exit_code=%s command_failure=%s "
+                "offline=%s missing_socket=%s error_sha256=%s",
+                environment_id,
+                device_key,
+                phase,
+                type(error).__name__,
+                round((time.monotonic() - started_at) * 1000),
+                (
+                    diagnostic_result.get("exit_code")
+                    if isinstance(diagnostic_result.get("exit_code"), int)
+                    else None
+                ),
+                _git_command_failure(diagnostic_result or {"error": str(error)}),
+                "offline" in detail or "disconnected" in detail,
+                "no socket" in detail,
+                hashlib.sha256(str(error).encode("utf-8")).hexdigest(),
+            )
             return {
                 "status": "error",
                 "workspace_path": "",
