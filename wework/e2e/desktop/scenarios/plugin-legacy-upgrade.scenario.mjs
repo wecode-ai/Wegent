@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { copyFile, lstat, mkdir, readFile, readlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { requestContainsSkillLocator } from '../modules/desktop-server.mjs'
@@ -320,6 +320,9 @@ export async function createDesktopScenario({
       () => entry(fixture),
       value =>
         value?.version === version &&
+        // The manifest version and versioned native runtime publish independently.
+        // Do not cache the historical skill path between those two publications.
+        basename(value.runtime.codex_link) === version &&
         !value.runtime_recovery_error &&
         value.runtime.codex_link.startsWith(desktopFor(current.release)),
       `Migrated ${fixture.slug} did not reach ${version}`,
