@@ -163,16 +163,31 @@ export async function createDesktopScenario({
       executorVersion: release.version,
       ...delivered.evidence,
     })
-    // Reset shared account intent before the old device can synchronize a previous baseline.
-    for (const original of Object.values(delivered.packages)) {
+    const fixtures = {}
+    // The install endpoint selects the marketplace latest. Pin the account before
+    // the historical executor connects so an earlier baseline's latest cannot
+    // be materialized into this baseline's native cache.
+    for (const [role, original] of Object.entries(delivered.packages)) {
       const fixture = await publish(original)
-      const installed = await accountPlugin(cloud, fixture.slug)
-      if (installed) {
-        await update({ ...fixture, installedId: Number(installed.metadata.labels.id) }, null, {
-          releaseId: fixture.releaseId,
-          updatePolicy: 'manual',
-        })
+      let installed = await accountPlugin(cloud, fixture.slug)
+      if (!installed) {
+        await pluginApi(cloud, `/plugins/marketplace/${fixture.pluginId}/install`, 'POST')
+        installed = await accountPlugin(cloud, fixture.slug)
       }
+      assert.ok(installed, 'The historical plugin installation is missing')
+      fixture.installedId = Number(installed.metadata.labels.id)
+      await update(fixture, null, { releaseId: fixture.releaseId })
+      fixture.installState = {
+        updatePolicy: 'manual',
+        ...(role === 'disabled'
+          ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
+          : {}),
+      }
+      await update(fixture, null, fixture.installState)
+      const desired = await accountPlugin(cloud, fixture.slug)
+      assert.equal(desired.spec.releaseId, fixture.releaseId)
+      assert.equal(desired.spec.version, fixture.version)
+      fixtures[role] = fixture
     }
     const installer = await startHistoricalPluginExecutor({
       release,
@@ -182,48 +197,9 @@ export async function createDesktopScenario({
       directory: join(resultDir, 'historical-executors', release.version),
       token: releaseAssetToken,
     })
-    const fixtures = {}
     try {
-      for (const [role, original] of Object.entries(delivered.packages)) {
-        const fixture = await publish(original)
-        // Reinstall selects the latest release even for an active account installation.
-        // Reuse its membership so a second baseline never caches an unintended upgrade.
-        let installed = await accountPlugin(cloud, fixture.slug)
-        if (!installed) {
-          await pluginApi(
-            cloud,
-            `/plugins/marketplace/${fixture.pluginId}/install?device_id=${installer.deviceId}`,
-            'POST'
-          )
-          installed = await accountPlugin(cloud, fixture.slug)
-        }
-        assert.ok(installed, 'The historical plugin installation is missing')
-        fixture.installedId = Number(installed.metadata.labels.id)
-        // Each baseline reuses the account but starts with a different device.
-        // Reset account intent too, so the modern device cannot inherit the
-        // previous baseline's upgraded release while native migration is checked.
-        await update(fixture, null, { releaseId: fixture.releaseId })
-        const desired = await accountPlugin(cloud, fixture.slug)
-        assert.equal(desired.spec.releaseId, fixture.releaseId)
-        assert.equal(desired.spec.version, fixture.version)
-        await update(fixture, installer.deviceId, { releaseId: fixture.releaseId })
-        await update(fixture, installer.deviceId, {
-          updatePolicy: 'manual',
-          ...(role === 'disabled'
-            ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
-            : {}),
-        })
-        // The modern app registers a different device. Reset account intent too:
-        // a prior release case must not update this case's migrated runtime.
-        await update(fixture, null, {
-          releaseId: fixture.releaseId,
-          updatePolicy: 'manual',
-          ...(role === 'disabled'
-            ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
-            : {}),
-        })
-        assert.equal((await accountPlugin(cloud, fixture.slug)).spec.version, fixture.version)
-        fixtures[role] = fixture
+      for (const fixture of Object.values(fixtures)) {
+        await update(fixture, installer.deviceId, fixture.installState)
       }
       let observedState
       const original = await until(

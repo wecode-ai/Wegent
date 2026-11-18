@@ -272,13 +272,22 @@ export function createProjectChatClient(
               leaveUnusedRoom(projectId, taskId)
               return
             }
-            if ((revisions.get(message.messageId) ?? 0) !== revision) return
+            const superseded = (revisions.get(message.messageId) ?? 0) !== revision
             const resolved = snapshot.messages.find(
               (row) =>
                 row.messageId === message.messageId &&
                 row.projectId === projectId &&
                 (row.taskId ?? undefined) === taskId,
             )
+            console.debug('[Project chat source] Exact message read', {
+              messageId: message.messageId,
+              matched: Boolean(resolved),
+              superseded,
+              traceMatches: resolved?.traceRef === message.traceRef,
+              traceState: resolved?.traceState,
+              hasRuntimeAddress: Boolean(resolved?.runtimeAddress),
+            })
+            if (superseded) return
             const latest = latestMessages.get(message.messageId)
             if (resolved && latest && latest.traceRef === message.traceRef) {
               resolvedSources.set(message.messageId, {
