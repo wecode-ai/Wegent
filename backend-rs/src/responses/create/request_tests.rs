@@ -247,7 +247,10 @@ async fn unproven_chat_continuation_carries_the_explicit_fallback_marker() {
     let mut input = chat_input(&team, &bot);
     input.allow_new_session_fallback = true;
     let fixture = MysqlRows::start_results(|sql| {
-        if sql.contains("kinds.kind = 'Shell'") {
+        if sql.contains("FROM tasks") && sql.contains("WHERE id = ? AND user_id = ?") {
+            let owner = vec![("id", SqlValue::I64(3))];
+            (owner.clone(), vec![owner])
+        } else if sql.contains("kinds.kind = 'Shell'") {
             coordinate_fixture(sql)
         } else {
             skill_fixture(sql, false, false)
@@ -261,6 +264,12 @@ async fn unproven_chat_continuation_carries_the_explicit_fallback_marker() {
 
     assert!(request.new_session);
     assert!(request.legacy_session_fallback);
+    assert!(
+        fixture
+            .queries()
+            .iter()
+            .any(|sql| sql.contains("FROM subtasks"))
+    );
 }
 
 #[tokio::test]
