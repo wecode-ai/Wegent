@@ -58,6 +58,12 @@ export function createConversationEventModel({
         'release-document',
         'Only the selected topic may wake the model'
       )
+      if (phase === 'workflow') {
+        assert.equal(data.events[0].external.payload.id, 44231414768)
+        assert.equal(data.events[0].external.payload.head_sha, 'a'.repeat(40))
+        assert.equal(data.events[0].external.payload.status, 'completed')
+        assert.equal(data.events[0].external.payload.conclusion, 'failure')
+      }
       if (
         ['goal', 'human'].includes(phase) &&
         !requestContainsToolOutput(body, `${marker}_complete`)
@@ -70,7 +76,10 @@ export function createConversationEventModel({
       completed.add(phase)
       return [assistantMessage(`${marker}_DONE：已收到文档变化，在原会话继续处理。`)]
     }
-    if (phase !== 'ordinary' && !requestContainsToolOutput(body, `${marker}_create_goal`)) {
+    if (
+      !['ordinary', 'workflow'].includes(phase) &&
+      !requestContainsToolOutput(body, `${marker}_create_goal`)
+    ) {
       return selectedToolCall(
         `${marker}_create_goal`,
         selectTool(body, 'create_goal', {
@@ -92,9 +101,24 @@ export function createConversationEventModel({
         {
           subscription_key: marker,
           source: sources[phase],
-          match: { '/eventType': 'message.received', '/topicId': 'release-document' },
+          match: {
+            '/eventType': 'message.received',
+            '/topicId': 'release-document',
+            ...(phase === 'workflow'
+              ? {
+                  '/external/eventType': 'tracked.workflow_run',
+                  '/external/payload/id': 44231414768,
+                  '/external/payload/head_sha': 'a'.repeat(40),
+                  '/external/payload/status': 'completed',
+                  $any: [
+                    { '/external/payload/conclusion': 'success' },
+                    { '/external/payload/conclusion': 'failure' },
+                  ],
+                }
+              : {}),
+          },
           continuation: `${marker} 文档有变化，请继续原任务。`,
-          wait_for_event: phase !== 'ordinary',
+          wait_for_event: !['ordinary', 'workflow'].includes(phase),
         },
       ],
     ]

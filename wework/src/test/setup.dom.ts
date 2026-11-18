@@ -1,5 +1,6 @@
 import * as matchers from '@testing-library/jest-dom/matchers'
-import { beforeEach, expect, vi } from 'vitest'
+import { afterAll, beforeEach, expect, vi } from 'vitest'
+import { setTimeout as yieldToTimers } from 'node:timers/promises'
 import {
   WEWORK_DSH_SLOTS,
   type WeworkDshSlotEntry,
@@ -8,6 +9,12 @@ import {
 import { clearDshUiModuleCache, importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
 
 expect.extend(matchers)
+
+afterAll(async () => {
+  // Radix schedules focus restoration after unmount. Finish those callbacks in
+  // their originating jsdom realm before Vitest replaces its Event constructors.
+  await yieldToTimers(0)
+})
 
 class ResizeObserverMock {
   observe() {}
