@@ -1351,6 +1351,64 @@ describe('shared IssueDetail', () => {
     }
   })
 
+  it.each(['add', 'remove'] as const)(
+    'ignores a collaborator %s completion after switching Issues',
+    async operation => {
+      let finish!: (value?: unknown) => void
+      const pending = new Promise(resolve => {
+        finish = resolve
+      })
+      let finishOther!: (value: unknown) => void
+      const otherPending = new Promise(resolve => {
+        finishOther = resolve
+      })
+      const other = { ...issue, id: 'issue-other', title: 'Other Issue' }
+      const list = jest
+        .fn()
+        .mockImplementation(async (id: string) =>
+          operation === 'remove' && id === issue.id ? [collaborator] : []
+        )
+      const add = jest
+        .fn()
+        .mockReturnValueOnce(operation === 'add' ? pending : otherPending)
+        .mockReturnValue(otherPending)
+      const remove = jest.fn().mockReturnValue(pending)
+      const api = createApi({ collaborators: { list, add, remove } })
+      const view = renderDetail(api, { members: [member] })
+      await openIssueProperties()
+      if (operation === 'add') {
+        fireEvent.click(screen.getByTestId('cloud-todo-add-collaborator'))
+        fireEvent.change(screen.getByTestId('cloud-todo-collaborator-select'), {
+          target: { value: '张三' },
+        })
+        fireEvent.click(await screen.findByTestId('cloud-todo-collaborator-option-5'))
+        fireEvent.click(screen.getByTestId('cloud-todo-confirm-collaborator'))
+        await waitFor(() => expect(add).toHaveBeenCalledWith(issue.id, 5))
+      } else {
+        fireEvent.click(await screen.findByRole('button', { name: '移除参与者 张三' }))
+        await waitFor(() => expect(remove).toHaveBeenCalledWith(issue.id, 5))
+      }
+      view.rerender(detailView(api, { issue: other, allIssues: [issue, other], members: [member] }))
+      await waitFor(() => expect(list).toHaveBeenCalledWith(other.id))
+      fireEvent.click(screen.getByTestId('cloud-todo-add-collaborator'))
+      fireEvent.change(screen.getByTestId('cloud-todo-collaborator-select'), {
+        target: { value: '张三' },
+      })
+      fireEvent.click(await screen.findByTestId('cloud-todo-collaborator-option-5'))
+      fireEvent.click(screen.getByTestId('cloud-todo-confirm-collaborator'))
+      await waitFor(() => expect(add).toHaveBeenCalledWith(other.id, 5))
+      await act(async () => {
+        finish(operation === 'add' ? collaborator : undefined)
+      })
+      expect(screen.queryByRole('button', { name: '移除参与者 张三' })).not.toBeInTheDocument()
+      expect(screen.getByTestId('cloud-todo-confirm-collaborator')).toBeDisabled()
+      await act(async () => {
+        finishOther({ ...collaborator, issueId: other.id })
+      })
+      expect(screen.getByTestId('cloud-todo-add-collaborator')).toBeEnabled()
+    }
+  )
+
   it('opens attachments and manages collaborators, bindings, and delivery detail', async () => {
     const open = jest.spyOn(window, 'open').mockImplementation(() => null)
     const api = createApi({
@@ -1448,8 +1506,9 @@ describe('shared IssueDetail', () => {
     expect(await screen.findByTitle('张三')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('cloud-todo-add-collaborator'))
     fireEvent.change(screen.getByTestId('cloud-todo-collaborator-select'), {
-      target: { value: '6' },
+      target: { value: '李四' },
     })
+    fireEvent.click(await screen.findByTestId('cloud-todo-collaborator-option-6'))
     fireEvent.click(screen.getByTestId('cloud-todo-confirm-collaborator'))
     await waitFor(() => expect(api.collaborators.add).toHaveBeenCalledWith(issue.id, 6))
     expect(await screen.findByTitle('李四')).toBeInTheDocument()

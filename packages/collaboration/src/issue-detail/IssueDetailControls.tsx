@@ -2,64 +2,198 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useRef, useState, type ChangeEventHandler, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ChangeEventHandler, type ReactNode } from 'react'
 import * as Popover from '@radix-ui/react-popover'
-import { Check, Search } from 'lucide-react'
+import { Check, Search, X } from 'lucide-react'
 
 import type { CollaborationPriority, CollaborationStatus } from '../types'
 import { useCollaborationPortalTheme } from '../theme'
 import { useEscapeKey } from '../markdown/useEscapeKey'
+import { MemberSearchPicker } from '../controls/MemberSearchPicker'
+import { ConfirmationDialog } from '../controls/ConfirmationDialog'
 import { isImeComposingEvent } from '@wegent/chat-core/ime'
 
 export function IssueDetailCollaboratorPicker({
-  value,
   members,
-  onChange,
   onAdd,
   busy,
   label,
   addLabel,
-  compact = false,
   className,
+  searchUsers,
+  outsideLabel,
+  confirmLabel,
+  cancelLabel,
+  emptyLabel,
+  retryLabel,
+  projectMemberIds,
+  excludedUserIds,
 }: {
-  value: number | null
+  projectMemberIds?: ReadonlySet<number>
+  excludedUserIds?: ReadonlySet<number>
   members: ReadonlyArray<{ user_id: number; user_name: string }>
-  onChange(value: number | null): void
-  onAdd(): void
+  onAdd(ids: number[]): Promise<void>
   busy: boolean
   label: string
   addLabel: string
   compact?: boolean
   className?: string
+  searchUsers?: (query: string) => Promise<Array<{ id: number; user_name: string }>>
+  outsideLabel: string
+  retryLabel: string
+  confirmLabel: string
+  cancelLabel: string
+  emptyLabel: string
 }) {
-  const desktopHeight = compact ? 'md:h-8' : 'md:h-9'
+  const inputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+  const memberIds = projectMemberIds ?? new Set(members.map(member => member.user_id))
+  const [query, setQuery] = useState('')
+  const [selected, setSelected] = useState<Array<{ id: number; user_name: string }>>([])
+  const [confirming, setConfirming] = useState(false)
+  const search = useIssuePeopleSearch(query, searchUsers)
+  const matchingMembers = members.filter(member =>
+    member.user_name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+  )
+  const users = [
+    ...matchingMembers.map(member => ({
+      id: member.user_id,
+      user_name: member.user_name,
+    })),
+    ...search.users.filter(user => !matchingMembers.some(member => member.user_id === user.id)),
+  ].filter(user => !excludedUserIds?.has(user.id))
   return (
-    <div className={`flex items-center gap-2 ${className ?? ''}`}>
-      <select
-        data-testid="cloud-todo-collaborator-select"
-        aria-label={label}
-        value={value ?? ''}
-        onChange={event => onChange(event.target.value === '' ? null : Number(event.target.value))}
-        className={`h-11 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-text-muted ${desktopHeight}`}
+    <div className={`min-w-0 ${className ?? ''}`}>
+      <MemberSearchPicker
+        inputRef={inputRef}
+        query={query}
+        onQueryChange={setQuery}
+        users={users}
+        onSelect={user =>
+          setSelected(current =>
+            current.some(entry => entry.id === user.id)
+              ? current.filter(entry => entry.id !== user.id)
+              : [...current, user]
+          )
+        }
+        savingUserId={busy ? -1 : null}
+        selectedUserIds={new Set(selected.map(user => user.id))}
+        userDescription={user => (memberIds.has(user.id) ? undefined : outsideLabel)}
+        placeholder={label}
+        emptyLabel={emptyLabel}
+        addLabel={addLabel}
+        addingLabel={addLabel}
+        inputTestId="cloud-todo-collaborator-select"
+        resultTestId={id => `cloud-todo-collaborator-option-${id}`}
+        loadingLabel={search.loading ? '…' : undefined}
+        error={search.error}
       >
-        <option value="">{label}</option>
-        {members.map(member => (
-          <option key={member.user_id} value={member.user_id}>
-            {member.user_name}
-          </option>
-        ))}
-      </select>
+        {search.error && (
+          <button
+            type="button"
+            data-testid="cloud-todo-collaborator-retry"
+            onClick={search.retry}
+            className="min-h-11 px-2 text-sm underline md:min-h-9"
+          >
+            {retryLabel}
+          </button>
+        )}
+        <div className="mt-2 flex flex-wrap gap-1">
+          {selected.map(user => (
+            <button
+              type="button"
+              key={user.id}
+              data-testid={`cloud-todo-selected-collaborator-${user.id}`}
+              disabled={busy}
+              aria-label={`${cancelLabel} ${user.user_name}`}
+              className="inline-flex min-h-11 items-center gap-1 rounded-lg bg-muted px-2 text-sm md:min-h-8"
+              onClick={() => setSelected(current => current.filter(entry => entry.id !== user.id))}
+            >
+              {user.user_name}
+              <X className="h-3 w-3" aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      </MemberSearchPicker>
       <button
         type="button"
         data-testid="cloud-todo-confirm-collaborator"
-        disabled={value === null || busy}
-        onClick={onAdd}
-        className={`h-11 shrink-0 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-40 ${desktopHeight}`}
+        disabled={!selected.length || busy}
+        className="mt-2 min-h-11 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-40 md:min-h-9"
+        onClick={() => {
+          if (selected.some(user => !memberIds.has(user.id))) setConfirming(true)
+          else void onAdd(selected.map(user => user.id)).catch(() => undefined)
+        }}
       >
-        {addLabel}
+        {addLabel} {selected.length || ''}
       </button>
+      {confirming && (
+        <ConfirmationDialog
+          title={confirmLabel}
+          subject={selected.map(user => user.user_name).join(', ')}
+          description={outsideLabel}
+          labels={{
+            cancel: cancelLabel,
+            confirm: confirmLabel,
+            pending: addLabel,
+            failed: emptyLabel,
+          }}
+          testIdPrefix="issue-outside-collaborator"
+          onClose={() => setConfirming(false)}
+          onConfirm={() => onAdd(selected.map(user => user.id))}
+        />
+      )}
     </div>
   )
+}
+
+export function useIssuePeopleSearch(
+  query: string,
+  searchUsers?: (query: string) => Promise<Array<{ id: number; user_name: string }>>
+) {
+  const [attempt, setAttempt] = useState(0)
+  const [result, setResult] = useState<{
+    query: string
+    search: typeof searchUsers
+    users: Array<{ id: number; user_name: string }>
+    error?: string
+  }>()
+  useEffect(() => {
+    if (!query.trim() || !searchUsers) return
+    let active = true
+    const timer = setTimeout(() => {
+      void searchUsers(query.trim()).then(
+        users => {
+          if (active) setResult({ query, search: searchUsers, users })
+        },
+        cause => {
+          if (active)
+            setResult({
+              query,
+              search: searchUsers,
+              users: [],
+              error: String(cause),
+            })
+        }
+      )
+    }, 250)
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
+  }, [query, searchUsers, attempt])
+  const current = result?.query === query && result.search === searchUsers ? result : undefined
+  return {
+    users: current?.users ?? [],
+    error: current?.error,
+    retry: () => {
+      setResult(undefined)
+      setAttempt(value => value + 1)
+    },
+    loading: Boolean(query.trim() && searchUsers && !current),
+  }
 }
 
 export interface IssueDetailSelectProps<TValue extends string> {
@@ -175,6 +309,8 @@ export interface IssueDetailSearchableSelectProps<TValue extends string> {
   open?: boolean
   onOpenChange?(open: boolean): void
   showAllLabel?(group: string, count: number): string
+  onSearchChange?(query: string): void
+  searchStatus?: ReactNode
   onChange(value: TValue): void
 }
 
@@ -225,6 +361,8 @@ export function IssueDetailSearchableSelect<TValue extends string>({
   open: controlledOpen,
   onOpenChange,
   onChange,
+  onSearchChange,
+  searchStatus,
 }: IssueDetailSearchableSelectProps<TValue>) {
   const portalTheme = useCollaborationPortalTheme()
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -271,6 +409,7 @@ export function IssueDetailSearchableSelect<TValue extends string>({
         setOpen(nextOpen)
         if (nextOpen) {
           setQuery('')
+          onSearchChange?.('')
           setExpandedGroups(new Set())
           setActiveValue(value)
         }
@@ -350,12 +489,16 @@ export function IssueDetailSearchableSelect<TValue extends string>({
               ref={searchInputRef}
               data-testid={`${testId}-search`}
               value={query}
-              onChange={event => setQuery(event.target.value)}
+              onChange={event => {
+                setQuery(event.target.value)
+                onSearchChange?.(event.target.value)
+              }}
               placeholder={searchPlaceholder}
               aria-label={searchPlaceholder}
               className="min-h-11 min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary md:min-h-8"
             />
           </label>
+          {searchStatus}
           <div
             role="listbox"
             aria-label={accessibleLabel}

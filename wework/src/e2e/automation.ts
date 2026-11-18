@@ -1,3 +1,4 @@
+import { waitForDomChange } from './waitForDomChange'
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
 import { collectConversationRenderingDiagnostics } from './conversation-rendering-diagnostics'
 import {
@@ -1768,7 +1769,7 @@ async function waitForDesktopControlElement(
       } else {
         matchedAt = null
       }
-      await waitForDesktopControlTick()
+      await waitForDomChange(document)
       continue
     }
 
@@ -1788,7 +1789,7 @@ async function waitForDesktopControlElement(
     } else {
       matchedAt = null
     }
-    await waitForDesktopControlTick()
+    await waitForDomChange(document)
   }
 
   const diagnostics = findDesktopControlElementsWithin(command.selector, command.target).map(

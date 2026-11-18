@@ -8,4 +8,13 @@ allowBuilds:
   electron-winstaller: true
 
 patchedDependencies:
-  '@trycua/cua-driver@0.22.1': patches/@trycua__cua-driver@0.22.1.patch
+  '@trycua/cua-driver@0.52.13': patches/@trycua__cua-driver@0.52.13.patch
+
+minimumReleaseAgeExclude:
+  - '@trycua/cua-driver-darwin-arm64@0.52.13'
+  - '@trycua/cua-driver-darwin-x64@0.52.13'
+  - '@trycua/cua-driver-linux-arm64-gnu@0.52.13'
+  - '@trycua/cua-driver-linux-x64-gnu@0.52.13'
+  - '@trycua/cua-driver-win32-arm64-msvc@0.52.13'
+  - '@trycua/cua-driver-win32-x64-msvc@0.52.13'
+  - '@trycua/cua-driver@0.52.13'
