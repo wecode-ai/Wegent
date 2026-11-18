@@ -640,6 +640,8 @@ When a user submits new input while the message queue is paused, they can preser
 
 ## Message Admission and On-Demand Context
 
+Image paste registers file references synchronously; conversion and upload remain asynchronous. Submission captures every selected attachment, including later files in a sequential upload batch. The message enters its local conversation or queue immediately. Clearing the draft must not cancel submitted uploads or append their late results to a newer draft. Runtime transport waits for that attachment snapshot; any preparation failure fails the send instead of delivering text alone. In-memory preparation handles are omitted from persisted JSON; an unfinished attachment whose preparation cannot be recovered after restart must fail explicitly.
+
 No behavior may block local message admission. Send synchronously validates the input, records the message in its owning conversation or queue, and clears only the submitted draft revision before required attachment preparation, runtime checks, and transport. Late receipts must preserve newer drafts and other conversations. An unanswered question remains visible until delivery is confirmed; the new input appears as sending meanwhile. Admission, queueing, failure, and completed model execution are distinct states.
 
 Project and Issue bindings carry their owning task; late association results cannot populate a different conversation. Failed sends restore text and attachments against the original conversation's draft revision even after the pane switches or closes, preserving newer edits. Each send removes only the temporary queue entry it created; existing entries retain their retry action on failure.
@@ -657,7 +659,8 @@ sequenceDiagram
     participant T as Source tools
     C->>S: Record message or queue item and clear submitted draft
     S-->>C: Display immediately
-    S->>R: Message, explicit attachments, resource IDs
+    S->>S: Await conversion and upload of the submitted attachments; retain failures
+    S->>R: Message, prepared explicit attachments, resource IDs
     R-->>S: Accepted, queued, or failed receipt
     S->>S: Settle by original conversation and draft revision; retain failed retries
     R->>M: Start turn
