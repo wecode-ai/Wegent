@@ -3114,6 +3114,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "toml_edit",
  "tower",
  "url",

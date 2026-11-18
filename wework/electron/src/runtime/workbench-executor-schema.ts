@@ -1,10 +1,9 @@
 import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-
-const execute = promisify(execFile)
+import { performance } from 'node:perf_hooks'
 const PROTOCOL_VERSION = 1
 const LAYOUT_VERSION = 1
 const MANIFEST_VERSION = 2
+let nextSchemaProbeId = 0
 // macOS can validate a newly installed native binary before its first execution.
 export const EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS = 30_000
 
@@ -50,6 +49,56 @@ function executorSchemaQueryFailure(error: unknown, elapsedMs: number): Error {
   })
 }
 
+function queryExecutorSchema(command: string, environment: NodeJS.ProcessEnv): Promise<string> {
+  const startedAt = performance.now()
+  return new Promise((resolve, reject) => {
+    const traceEnabled = environment.WEWORK_PROCESS_TRACE === '1'
+    const probeId = traceEnabled ? ++nextSchemaProbeId : null
+    let pid: number | undefined
+    // A process can exit before its inherited pipes close. Log those boundaries
+    // independently and record only timing and process metadata.
+    const trace = (stage: string, details?: { code: number | null; signal: string | null }) =>
+      console.info('[executor-schema] trace', {
+        probeId,
+        stage,
+        pid: pid ?? null,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        ...details,
+      })
+    if (traceEnabled) trace('requested')
+    // Never pass runtime flags or credentials into this read-only capability query.
+    const child = execFile(
+      command,
+      ['--workbench-schema', '--version'],
+      {
+        env: {
+          PATH: environment.PATH,
+          SystemRoot: environment.SystemRoot,
+          WINDIR: environment.WINDIR,
+        },
+        timeout: EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+        maxBuffer: 16 * 1024,
+        windowsHide: true,
+        encoding: 'utf8',
+      },
+      (error, stdout) => {
+        if (error) reject(error)
+        else resolve(stdout)
+      }
+    )
+    if (!traceEnabled) return
+    pid = child.pid
+
+    child.once('spawn', () => trace('spawned'))
+    child.stdout?.once('data', () => trace('stdout'))
+    child.stderr?.once('data', () => trace('stderr'))
+    child.once('error', () => trace('error'))
+    child.once('exit', (code, signal) => trace('exit', { code, signal }))
+    child.once('close', (code, signal) => trace('close', { code, signal }))
+  })
+}
+
 export async function assertExecutorWorkbenchCompatibility(
   environment: NodeJS.ProcessEnv
 ): Promise<void> {
@@ -70,20 +119,7 @@ export async function assertExecutorWorkbenchCompatibility(
   const startedAt = Date.now()
   try {
     // Old executors ignore unknown flags. --version makes them exit without loading Homes.
-    // Never pass runtime flags or credentials into this read-only capability query.
-    const { stdout } = await execute(command, ['--workbench-schema', '--version'], {
-      env: {
-        PATH: environment.PATH,
-        SystemRoot: environment.SystemRoot,
-        WINDIR: environment.WINDIR,
-      },
-      timeout: EXECUTOR_SCHEMA_QUERY_TIMEOUT_MS,
-      killSignal: 'SIGKILL',
-      maxBuffer: 16 * 1024,
-      windowsHide: true,
-      encoding: 'utf8',
-    })
-    response = JSON.parse(stdout)
+    response = JSON.parse(await queryExecutorSchema(command, environment))
   } catch (error) {
     throw executorSchemaQueryFailure(error, Date.now() - startedAt)
   }

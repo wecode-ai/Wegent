@@ -13,7 +13,7 @@ pub(super) fn configure_task_mcp(
     }
     launch
         .config_overrides
-        .extend(computer_use_mcp_config_overrides());
+        .extend(computer_use_mcp_config_overrides(&request.task_id));
     for (overrides, environment) in [
         cdp_browser_mcp_config_overrides(request)?,
         managed_wework_mcp_config_overrides(request)?,
