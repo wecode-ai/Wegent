@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import {
+  WINDOWS_EMPTY_BUTTON_DIAGNOSTICS,
+  WINDOWS_NATIVE_DIAGNOSTIC_FIELDS,
+} from './native-plugin-window-diagnostics.mjs'
 
 const execute = promisify(execFile)
 const TITLES = [
@@ -76,6 +80,7 @@ end run`,
     const script = `
 $decisionStages = [System.Collections.Generic.HashSet[string]]::new()
 $decisionClock = [System.Diagnostics.Stopwatch]::StartNew()
+$targetPid = ${pid}
 function Write-DecisionStage([string]$decisionStage) {
   if ($decisionStages.Add($decisionStage)) {
     Write-Output "native-decision:$decisionStage"
@@ -152,6 +157,7 @@ while ([DateTime]::UtcNow -lt $deadline) {
   }
   Start-Sleep -Milliseconds 100
 }
+${WINDOWS_EMPTY_BUTTON_DIAGNOSTICS}
 throw 'The isolated app did not display its native Core plugin decision'
 `
     await execute(
@@ -181,6 +187,9 @@ throw 'The isolated app did not display its native Core plugin decision'
         'dialog-ambiguous',
         'button-search-started',
         'button-search-completed',
+        'empty-button-diagnostics-started',
+        'empty-button-diagnostics-completed',
+        'empty-button-diagnostics-failed',
         'button-present',
         'button-name-read-started',
         'button-name-read',
@@ -237,6 +246,9 @@ function windowsDecisionEvidence(output, allowedStages) {
   const stageElapsedMs = {}
   let buttonCount = null
   let apartmentState = null
+  const emptyButtonDiagnostics = Object.fromEntries(
+    WINDOWS_NATIVE_DIAGNOSTIC_FIELDS.map(field => [field, null])
+  )
   for (const line of lines) {
     const timing = /^native-decision-timing:([a-z-]+):(\d+)$/.exec(line)
     if (timing && allowedStages.has(timing[1]) && Number.isSafeInteger(Number(timing[2])))
@@ -245,6 +257,17 @@ function windowsDecisionEvidence(output, allowedStages) {
     if (count && Number.isSafeInteger(Number(count[1]))) buttonCount = Number(count[1])
     const apartment = /^native-decision-apartment:(MTA|STA|Unknown)$/.exec(line)
     if (apartment) apartmentState = apartment[1]
+    const structure = /^native-decision-structure:([a-z0-9-]+):(\d+)$/.exec(line)
+    if (
+      structure &&
+      WINDOWS_NATIVE_DIAGNOSTIC_FIELDS.includes(structure[1]) &&
+      Number.isSafeInteger(Number(structure[2])) &&
+      (!['native-handle-present', 'native-pid-matches', 'native-dialog-class-matches'].includes(
+        structure[1]
+      ) ||
+        Number(structure[2]) <= 1)
+    )
+      emptyButtonDiagnostics[structure[1]] = Number(structure[2])
   }
   return {
     stages: lines
@@ -254,6 +277,7 @@ function windowsDecisionEvidence(output, allowedStages) {
     stageElapsedMs,
     buttonCount,
     apartmentState,
+    emptyButtonDiagnostics,
   }
 }
 

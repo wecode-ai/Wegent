@@ -482,6 +482,12 @@ test('retains Windows native failure stages and the unchanged deadline without e
     )
     expect(script).toContain('if ($decisions.Count -gt 1)')
     expect(script).toContain('UtcNow.AddSeconds(10)')
+    expect(
+      script.indexOf("Write-DecisionStage 'empty-button-diagnostics-started'")
+    ).toBeGreaterThan(script.lastIndexOf('Start-Sleep -Milliseconds 100'))
+    expect(script).toContain('GetWindowThreadProcessId(window, out pid)')
+    expect(script).not.toContain('SendMessage')
+    expect(script).not.toContain('GetWindowText')
     expect(log).toHaveBeenCalledWith(
       '[native-plugin-decision-failed]',
       JSON.stringify({
@@ -500,8 +506,49 @@ test('retains Windows native failure stages and the unchanged deadline without e
         stageElapsedMs: {},
         buttonCount: null,
         apartmentState: null,
+        emptyButtonDiagnostics: {
+          'uia-descendants': null,
+          'uia-buttons': null,
+          'native-handle-present': null,
+          'native-pid-matches': null,
+          'native-dialog-class-matches': null,
+          'win32-children': null,
+          'win32-buttons': null,
+        },
       })
     )
+    expect(log.mock.calls.flat().join(' ')).not.toContain('private')
+  } finally {
+    log.mockRestore()
+  }
+})
+
+test.each([
+  ['uia-descendants', '0', 0],
+  ['uia-buttons', '2', 2],
+  ['native-handle-present', '0', 0],
+  ['native-pid-matches', '1', 1],
+  ['native-dialog-class-matches', '0', 0],
+  ['win32-children', '4', 4],
+  ['win32-buttons', '2', 2],
+  ['uia-descendants', '-1', null],
+  ['uia-buttons', 'unknown', null],
+  ['native-handle-present', '2', null],
+  ['native-pid-matches', '3', null],
+  ['native-dialog-class-matches', '3', null],
+  ['win32-children', '9007199254740992', null],
+])('retains bounded native structure evidence: %s=%s', async (field, value, expected) => {
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  const original = Object.assign(new Error('Native decision terminated'), {
+    stdout: `native-decision-structure:${field}:${value}\nnative-decision-structure:private-field:42\nprivate-child-output`,
+  })
+  native.execute.mockRejectedValue(original)
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    await expect(
+      withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => null)
+    ).rejects.toBe(original)
+    expect(JSON.parse(log.mock.calls[0][1]).emptyButtonDiagnostics[field]).toBe(expected)
     expect(log.mock.calls.flat().join(' ')).not.toContain('private')
   } finally {
     log.mockRestore()
