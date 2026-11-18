@@ -1,5 +1,5 @@
 import * as desktopHost from '@/api/dsh/desktopHost'
-import { createCloudModelCatalog } from '@/api/hybrid/cloudModelCatalog'
+import { createModelCatalog } from '@/api/hybrid/modelCatalog'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useStandInConversationModel } from '@/features/todo/useStandInConversationModel'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -2564,7 +2564,7 @@ describe('ChatInput', () => {
       const load = vi.fn(() => pending)
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       if (recovery === 'menu') load.mockRejectedValueOnce(new Error('Cloud unavailable'))
-      const cache = createCloudModelCatalog(load)
+      const cache = createModelCatalog('cloud', load)
       const refresh = vi.fn(cache.refresh)
       const services = {
         standInApi: {

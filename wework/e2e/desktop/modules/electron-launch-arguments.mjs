@@ -42,12 +42,9 @@ export function resolveElectronLaunchArguments({
       'true',
       'Root Electron E2E may disable the Chromium sandbox only inside isolated Xvfb'
     )
-    argumentsForPlatform.push(
-      '--no-sandbox',
-      '--disable-gpu',
-      '--in-process-gpu',
-      '--disable-dev-shm-usage'
-    )
+    // Preserve Chromium's GPU process boundary. In-process Viz failed its
+    // FrameSinkManager teardown invariant after the recovery windows closed.
+    argumentsForPlatform.push('--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage')
   }
   if (platform === 'win32') {
     // crbug.com/572515601: Windows random allocation can fail despite free loopback ports.

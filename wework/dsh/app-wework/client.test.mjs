@@ -6,6 +6,8 @@ import test from 'node:test'
 import vm from 'node:vm'
 import JSZip from 'jszip'
 
+import { waitForTerminalStatus } from '../test-support/export-status.mjs'
+
 import { apply as applyConversationExport } from '../conversation-export/index.js'
 
 async function loadClient({ setTimeoutImpl = setTimeout } = {}) {
@@ -615,7 +617,7 @@ test('does not duplicate a conversation export write after its response is lost'
   )
 
   await registration.methods.finish({ exportTaskId })
-  const status = await waitForExportCompletion(registration.methods, exportTaskId)
+  const status = await waitForTerminalStatus(registration.methods, exportTaskId)
   const archive = await JSZip.loadAsync(await readFile(destination))
   assert.equal(status.state, 'completed')
   assert.equal(await archive.file('conversation.md').async('string'), 'hello\\n')
@@ -959,23 +961,10 @@ test('exposes only the save dialog capability to contribution modules', async ()
   assert.equal('host' in runtime.host, false)
 })
 
-test('provides namespaced state, validated configuration, and secure values', async () => {
+test('provides namespaced state and validated configuration', async () => {
   const client = await loadClient()
   const values = new Map()
-  const secureCalls = []
   const runtime = client.exports.createExtensionRuntime({
-    secureStorage: {
-      get: async key => {
-        secureCalls.push(['get', key])
-        return 'secret'
-      },
-      set: async (key, value) => {
-        secureCalls.push(['set', key, value])
-      },
-      delete: async key => {
-        secureCalls.push(['delete', key])
-      },
-    },
     storage: {
       getItem: key => values.get(key) ?? null,
       setItem: (key, value) => values.set(key, value),
@@ -1009,19 +998,13 @@ test('provides namespaced state, validated configuration, and secure values', as
     () => runtime.service.configuration.update('quality', { threshold: -1 }),
     /Threshold is invalid/
   )
+})
 
-  const secrets = runtime.service.secrets.scope('quality')
-  assert.equal(await secrets.get('token'), 'secret')
-  await secrets.set('token', 'updated')
-  await secrets.delete('token')
-  assert.equal(
-    JSON.stringify(secureCalls),
-    JSON.stringify([
-      ['get', 'quality.token'],
-      ['set', 'quality.token', 'updated'],
-      ['delete', 'quality.token'],
-    ])
-  )
+test('does not expose a credential registry through either renderer SDK surface', async () => {
+  const client = await loadClient()
+  const runtime = client.exports.createExtensionRuntime()
+  assert.equal('secrets' in runtime.service, false)
+  assert.equal('secrets' in runtime.host, false)
 })
 
 test('mounts the Wework bundle with the active DSH context', async () => {
@@ -1074,12 +1057,3 @@ test('waits for the Wework application bundle when it loads after DSH plugins', 
   assert.equal(mounted, true)
   cleanup()
 })
-
-async function waitForExportCompletion(methods, exportTaskId) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const status = await methods.status({ exportTaskId })
-    if (status.state === 'completed' || status.state === 'failed') return status
-    await new Promise(resolve => setTimeout(resolve, 10))
-  }
-  throw new Error('Conversation export did not finish in time')
-}

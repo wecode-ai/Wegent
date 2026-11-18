@@ -112,7 +112,17 @@ fn apply_local_execution_state(
     link.turn_status = Some("inProgress".to_owned());
 }
 
+fn settle_pending_native_admission(link: &mut RuntimeTaskLink, outcome: &str) {
+    if crate::runtime_work::lifecycle::native_execution_state(link).is_some_and(|state| {
+        state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+            && state.process_generation.is_none()
+    }) {
+        crate::runtime_work::lifecycle::settle_native_execution(link, outcome);
+    }
+}
+
 fn apply_local_task_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
+    settle_pending_native_admission(link, "failed");
     link.running = false;
     link.status = "failed".to_owned();
     link.thread_status = "failed".to_owned();

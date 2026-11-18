@@ -6,16 +6,24 @@ import {
 import { builtinCodexCatalogModel, codexCatalogModelIdForUpstream } from './codexCatalog'
 import { modelInterfaceToolProfile } from '../../../electron/src/host/model-interface-runtime'
 
-export * from './localModelConstants'
+export {
+  KIMI_CODING_CONTEXT_WINDOW,
+  KIMI_K3_CONTEXT_WINDOW,
+  DEEPSEEK_FLASH_MODEL_ID,
+  DEEPSEEK_V4_FLASH_MODEL_ID,
+  DEEPSEEK_V4_PRO_MODEL_ID,
+  DEEPSEEK_V4_CONTEXT_WINDOW,
+} from '../../../electron/src/shared/model-provider-profiles'
 import {
   KIMI_CODING_CONTEXT_WINDOW,
   KIMI_K3_CONTEXT_WINDOW,
   DEEPSEEK_V4_CONTEXT_WINDOW,
-} from './localModelConstants'
+} from '../../../electron/src/shared/model-provider-profiles'
 
 export interface LocalModelConfig {
   id: string
   providerConnectionId?: string
+  providerRevision?: string
   providerProfileId?: string
   displayName: string
   group?: string

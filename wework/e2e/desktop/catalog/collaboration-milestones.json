@@ -10,6 +10,7 @@
     }
   },
   "paths": [
+    "wework/e2e/desktop/modules/base-board-status-grouping.mjs",
     "packages/collaboration/src/milestones/*",
     "packages/collaboration/src/CollaborationApp.*",
     "packages/collaboration/src/SharedIssueDetailEditor.*",

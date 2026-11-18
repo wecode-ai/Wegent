@@ -5,7 +5,10 @@ import {
   type RuntimeTaskReminderItem,
 } from '@/features/workbench/runtimeTaskReminders'
 
-/** Sidebar visibility never defines which authorized executions can ask for a decision. */
+/**
+ * Sidebar visibility never defines which authorized executions can ask for a
+ * decision. Discover each device's pending work through its authorized route.
+ */
 export async function readInteractionTaskInventory(source: TaskSource): Promise<{
   items: RuntimeTaskReminderItem[]
   failedDevices: Set<string>
@@ -71,5 +74,11 @@ export async function readInteractionTaskInventory(source: TaskSource): Promise<
       }
     })
   )
-  return { items, failedDevices, failedRequests, refreshedDevices, localIssueQuestionsPending }
+  return {
+    items,
+    failedDevices,
+    failedRequests,
+    refreshedDevices,
+    localIssueQuestionsPending,
+  }
 }

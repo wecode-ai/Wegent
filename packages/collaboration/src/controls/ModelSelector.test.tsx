@@ -61,6 +61,51 @@ function officialModel(modelId: string, isDefault = false): CodexOfficialModel {
 }
 
 describe("model controls without a desktop host", () => {
+  it("keeps an open model list when reasoning arrives with the catalog", () => {
+    const models = codexRuntimeModels(
+      [officialModel("gpt-6.1-sol", true)],
+      null,
+      true,
+    );
+    const render = (ready: boolean) =>
+      act(() =>
+        root.render(
+          <ModelSelector
+            translate={translate}
+            isMobile={false}
+            models={ready ? models : []}
+            selectedModel={ready ? models[0] : null}
+            selectedModelOptions={{ reasoning: "medium" }}
+            disabled={false}
+            onSelectModel={vi.fn()}
+            onSelectModelOption={vi.fn()}
+            onOpenModelSettings={vi.fn()}
+          />,
+        ),
+      );
+    render(false);
+    act(() => element("model-selector-button").click());
+    expect(element("model-selector-menu").getAttribute("data-panel")).toBe(
+      "advanced",
+    );
+    render(true);
+    expect(element("model-selector-menu").getAttribute("data-panel")).toBe(
+      "advanced",
+    );
+    expect(element("model-option-default").getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    act(() => element("model-option-gpt-6.1-sol").click());
+    expect(element("model-selector-menu").getAttribute("data-panel")).toBe(
+      "simple",
+    );
+    act(() => element("model-selector-button").click());
+    act(() => element("model-selector-button").click());
+    expect(element("model-selector-menu").getAttribute("data-panel")).toBe(
+      "simple",
+    );
+  });
+
   it("owns radio choices separate from reasoning controls within its modal picker", () => {
     const models = codexRuntimeModels(
       [officialModel("gpt-6.1-sol", true), officialModel("gpt-6-astra")],
