@@ -37,20 +37,9 @@ impl RuntimeWorkRpcHandler {
             }
             "runtime.stand_in.telemetry.configure"
             | "runtime.stand_in.telemetry.list"
-            | "runtime.stand_in.telemetry.ack" => boxed_rpc(move || async move {
-                let handler = self.clone();
-                let method = method.to_owned();
-                tokio::task::spawn_blocking(move || {
-                    handler.stand_in_telemetry_rpc(&method, payload)
-                })
-                .await
-                .map_err(|error| {
-                    AppIpcError::new(
-                        "telemetry_worker_failed",
-                        format!("Telemetry database worker failed: {error}"),
-                    )
-                })?
-            }),
+            | "runtime.stand_in.telemetry.ack" => {
+                boxed_rpc(move || async move { self.stand_in_telemetry_rpc(method, payload).await })
+            }
             "runtime.stand_in.list" => {
                 boxed_rpc(move || async move { self.list_stand_in_settings(payload).await })
             }

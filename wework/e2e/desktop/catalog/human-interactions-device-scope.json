@@ -1,0 +1,12 @@
+{
+  "order": 6100,
+  "scenario": "./scenarios/interaction-reminder-device-scope.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 5100,
+      "shard": 2,
+      "position": 21000
+    }
+  }
+}

@@ -3,11 +3,12 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
-import { promisify } from 'node:util'
+import { isDeepStrictEqual, promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
 import { selectE2EModel, runChecked, repoDir, waitForLogPattern } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { until } from '../modules/plugin-regression-fixture.mjs'
 
 const execFileAsync = promisify(execFile)
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -15,6 +16,15 @@ const ACTIVE_WORKBENCH_SELECTOR =
 const CHANGE_REQUEST_BUTTON = '[data-testid="change-request-button"]'
 const CHANGE_REQUEST_REFRESH_INTERVAL_MS = 30_000
 const ENVIRONMENT_BUTTON = '[data-testid="environment-info-button"]'
+const CHANGE_REQUEST_SOURCE = {
+  providerId: '@wegent/dsh-connection-git/github',
+  kind: 'repository',
+  transport: 'cli',
+  profile: JSON.stringify(['https://github.com', '1']),
+  id: '2630',
+  name: 'wecode-ai/Wegent',
+  monitoredObjects: [{ entityKind: 'change_request', number: 2631 }],
+}
 const QUERY_LOG_FILE = '.wework-change-request-e2e-queries'
 const STATE_FILE = '.wework-change-request-e2e-state'
 const TASK_PROMPT = 'Inspect the pull request status for this branch'
@@ -291,8 +301,94 @@ async function refreshEnvironment(control) {
   await control.command('waitFor', '[data-testid="environment-info-popover"]')
 }
 
+async function readNativeUiObservers(journalPath) {
+  try {
+    const { observers } = JSON.parse(await readFile(journalPath, 'utf8'))
+    assert.ok(observers && typeof observers === 'object' && !Array.isArray(observers))
+    return Object.entries(observers).map(([id, observer]) => {
+      assert.ok(observer && typeof observer === 'object' && observer.id === id)
+      return observer
+    })
+  } catch {
+    throw new Error('The native change-request observer journal could not be read')
+  }
+}
+
+function hasChangeRequestSource(observer) {
+  return Object.entries(CHANGE_REQUEST_SOURCE).every(([key, value]) =>
+    isDeepStrictEqual(observer.source?.[key], value)
+  )
+}
+
+function newChangeRequestObserverPredicate(before) {
+  const devices = new Set(before.filter(hasChangeRequestSource).map(observer => observer.device_id))
+  assert.equal(devices.size, 1, 'The target observation must belong to one native Runtime')
+  const [deviceId] = devices
+  assert.ok(typeof deviceId === 'string' && deviceId)
+  const identityFields = ['id', 'consumer_key', 'generation']
+  const previousIdentities = identityFields.map(field => new Set(before.map(row => row[field])))
+  return observers =>
+    observers.filter(
+      observer =>
+        hasChangeRequestSource(observer) &&
+        observer.device_id === deviceId &&
+        identityFields.every(
+          (field, index) =>
+            typeof observer[field] === 'string' &&
+            observer[field].length > 0 &&
+            !previousIdentities[index].has(observer[field])
+        ) &&
+        observer.consumer_key.startsWith('change-request-ui:') &&
+        observer.status === 'observing' &&
+        Number.isSafeInteger(observer.expires_at) &&
+        observer.expires_at > Date.now()
+    ).length === 1
+}
+
+export async function recoverChangeRequestStatus(
+  control,
+  { statePath, executorHome, uiTimeoutMs }
+) {
+  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.json')
+  const activationCompleted = newChangeRequestObserverPredicate(
+    await readNativeUiObservers(journalPath)
+  )
+  // Repair the provider before re-enabling its observer. Start may return cached facts.
+  await writeFile(statePath, 'merged\n')
+  await control.command('click', '[data-testid="change-request-status-switch"]')
+  await waitForAttribute(
+    control,
+    '[data-testid="change-request-status-switch"]',
+    'aria-checked',
+    'true',
+    'Re-enabling PR/MR status lookup was not persisted'
+  )
+  await until(
+    () => readNativeUiObservers(journalPath),
+    activationCompleted,
+    'The target native change-request observer did not finish its new activation',
+    uiTimeoutMs
+  )
+  // Only now open the summary: its forced refresh has the original UI step budget.
+  await control.command('click', '[data-testid="settings-back-button"]')
+  await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
+  await control.command('click', ENVIRONMENT_BUTTON)
+  await control.command('waitFor', '[data-testid="environment-info-popover"]')
+
+  await control.command('waitFor', CHANGE_REQUEST_BUTTON, { text: '#2631' })
+  await control.command('waitFor', '[data-testid="change-request-state"]', { text: '已合并' })
+  await control.command('waitFor', '[data-testid="change-request-checks"]', { text: '检查通过' })
+  await control.command('click', '[data-testid="environment-change-request-status"]')
+  await control.command(
+    'waitFor',
+    '[data-testid="environment-change-request-status-popover"] [data-testid="resource-observation-status"]',
+    { text: '状态同步正常' }
+  )
+}
+
 export async function createDesktopScenario({
   captureScreenshot,
+  executorHome,
   homePath,
   resultDir,
   uiTimeoutMs,
@@ -676,36 +772,7 @@ asyncio.run(mark_busy())`,
       })
       await capture(control, 'change-request-status-07-settings-disabled.png', 'body')
 
-      await control.command('click', '[data-testid="change-request-status-switch"]')
-      await waitForAttribute(
-        control,
-        '[data-testid="change-request-status-switch"]',
-        'aria-checked',
-        'true',
-        'Re-enabling PR/MR status lookup was not persisted'
-      )
-      await control.command('click', '[data-testid="settings-back-button"]')
-      await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
-      await control.command('click', ENVIRONMENT_BUTTON)
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
-
-      await writeFile(statePath, 'merged\n')
-      await refreshEnvironment(control)
-      await control.command('waitFor', CHANGE_REQUEST_BUTTON, {
-        text: '#2631',
-      })
-      await control.command('waitFor', '[data-testid="change-request-state"]', {
-        text: '已合并',
-      })
-      await control.command('waitFor', '[data-testid="change-request-checks"]', {
-        text: '检查通过',
-      })
-      await control.command('click', '[data-testid="environment-change-request-status"]')
-      await control.command(
-        'waitFor',
-        '[data-testid="environment-change-request-status-popover"] [data-testid="resource-observation-status"]',
-        { text: '状态同步正常' }
-      )
+      await recoverChangeRequestStatus(control, { statePath, executorHome, uiTimeoutMs })
       await capture(control, 'change-request-status-08-recovered-merged.png')
       await control.command('click', '[data-testid="environment-change-request-status"]')
     },

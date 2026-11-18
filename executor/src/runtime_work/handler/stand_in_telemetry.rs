@@ -3,8 +3,27 @@ use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::stand_in_telemetry::origin_properties;
 
+#[cfg(test)]
+#[path = "stand_in_telemetry_tests.rs"]
+mod tests;
+
 impl RuntimeWorkRpcHandler {
-    pub(super) fn stand_in_telemetry_rpc(
+    pub(super) async fn stand_in_telemetry_rpc(
+        &self,
+        method: &str,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let handler = self.clone();
+        let method = method.to_owned();
+        // SQLite writer contention must not stall unrelated startup and control RPCs.
+        tokio::task::spawn_blocking(move || {
+            handler.stand_in_telemetry_rpc_blocking(&method, payload)
+        })
+        .await
+        .map_err(|error| AppIpcError::new("stand_in_settings", error.to_string()))?
+    }
+
+    fn stand_in_telemetry_rpc_blocking(
         &self,
         method: &str,
         payload: Value,

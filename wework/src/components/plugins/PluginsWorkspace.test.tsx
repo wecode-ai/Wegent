@@ -44,6 +44,7 @@ import {
 } from '@/features/plugins/pluginMarketplaceCache'
 import * as refreshReconciliation from '@/features/plugins/pluginRefreshReconciliation'
 import '@/i18n'
+import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
 import * as navigation from '@/lib/navigation'
 import type {
   InstalledPlugin,
@@ -5426,6 +5427,9 @@ describe('PluginsWorkspace', () => {
 
     const notice = await screen.findByTestId('plugin-operation-notice')
     expect(notice).toHaveAttribute('data-notice-kind', 'authorization')
+    expect(vi.mocked(authorizeWegentConnector).mock.calls[0][3]).toBe(
+      openConnectorAuthorizationWindow
+    )
     expect(notice).toHaveTextContent('请在浏览器中完成 GitHub 连接')
     expect(notice.querySelector('img')).toHaveAttribute('src', 'https://example.com/github.png')
 
@@ -6265,7 +6269,7 @@ describe('PluginsWorkspace', () => {
         '/api',
         'cloud-token',
         'github',
-        expect.any(Function),
+        openConnectorAuthorizationWindow,
         { isCurrent: expect.any(Function) }
       )
     })
@@ -6310,7 +6314,7 @@ describe('PluginsWorkspace', () => {
         '/api',
         'cloud-token',
         'github',
-        expect.any(Function),
+        openConnectorAuthorizationWindow,
         { isCurrent: expect.any(Function) }
       )
     })
@@ -6366,6 +6370,9 @@ describe('PluginsWorkspace', () => {
         )
       }
       await waitFor(() => expect(authorizeWegentConnector).toHaveBeenCalledTimes(1))
+      expect(vi.mocked(authorizeWegentConnector).mock.calls[0][3]).toBe(
+        openConnectorAuthorizationWindow
+      )
       const options = vi.mocked(authorizeWegentConnector).mock.calls[0][4]
       expect(options?.isCurrent?.()).toBe(true)
       view.rerender(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="other-account" />)

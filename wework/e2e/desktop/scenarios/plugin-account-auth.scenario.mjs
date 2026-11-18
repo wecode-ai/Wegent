@@ -379,6 +379,12 @@ export async function createDesktopScenario({
               slug,
               homePath,
               installedId,
+              expectedDeviceId: local.execution_target_id,
+              expectedDeviceBinding: {
+                deviceRowId: local.id,
+                runtimeDeviceId: local.socket_device_id,
+                runtimeInstanceId: local.runtime_instance_id,
+              },
               connectionFor,
               signalAutomaticRetry,
               reconcileMarker,
