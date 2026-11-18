@@ -147,6 +147,10 @@ async fn recovery_fixture(task_json: Value) -> MysqlRows {
         if sql.contains("FROM subtask_contexts") {
             return (vec![("id", SqlValue::I64(0))], vec![]);
         }
+        if sql.starts_with("SELECT id FROM subtasks ") {
+            let row = vec![("id", SqlValue::I64(101))];
+            return (row.clone(), vec![row]);
+        }
         let row: Row = if sql.contains("executor_deleted_at") {
             let mut row = vec![("unused", SqlValue::Null); 23];
             for (column, value) in [
@@ -323,6 +327,10 @@ async fn run_executor_recovery(
                 let body: Value = serde_json::from_slice(&body).unwrap();
                 if path.ends_with("/responses") {
                     assert!(has_binding_credential);
+                    assert_eq!(
+                        body["metadata"]["backend_url"],
+                        "https://backend.example/api"
+                    );
                     assert_eq!(body["metadata"]["executor_name"], "replacement");
                     assert_eq!(body["metadata"]["executor_namespace"], "replacement-ns");
                     ("200 OK", json!({"id": "resp_100", "status": "queued"}))
@@ -363,6 +371,7 @@ async fn run_executor_recovery(
         task_id: 100,
         subtask_id: 101,
         user_id: 7,
+        backend_url: "https://backend.example/api".into(),
         bot: json!([{"shell_type": "Codex"}]),
         executor_name: Some("old-executor".into()),
         executor_namespace: Some("old-namespace".into()),

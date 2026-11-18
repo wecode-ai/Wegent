@@ -3,6 +3,38 @@
 
 use super::*;
 
+#[tokio::test]
+async fn dispatch_rejects_missing_backend_url_before_signing_or_scheduling() {
+    use crate::responses::create::dispatch::ExecutionRequest;
+    use crate::sql_test_support::mysql_rows::MysqlRows;
+    let fixture = MysqlRows::start(|sql| panic!("unexpected query: {sql}")).await;
+    let state = crate::app_test_support::app(fixture.mysql.clone());
+    for backend_url in ["", " \t\n"] {
+        let mut request = ExecutionRequest {
+            backend_url: backend_url.into(),
+            ..Default::default()
+        };
+        let error = dispatch_request(&state, &request)
+            .err()
+            .expect("invalid dispatch");
+        assert_eq!(error, "Execution request is missing backend_url");
+        let error = crate::responses::create::seam::dispatch_chat_turn(
+            &state,
+            &mut request,
+            "test-request",
+            None,
+            None,
+        )
+        .await
+        .expect_err("invalid turn");
+        assert_eq!(
+            error.detail_message(),
+            Some("Execution request is missing backend_url")
+        );
+    }
+    assert!(fixture.queries().is_empty());
+}
+
 #[test]
 fn binding_credential_only_applies_to_its_turn() {
     let mut claims = BindingClaims {

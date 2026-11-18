@@ -24,6 +24,10 @@ pub(crate) fn dispatch_request(
     state: &AppState,
     request: &crate::responses::create::dispatch::ExecutionRequest,
 ) -> Result<DispatchRequest, String> {
+    crate::responses::create::bot_config::ensure_execution_backend_url(Some(&request.backend_url))
+        .map_err(|_| {
+            crate::responses::create::bot_config::MISSING_EXECUTION_BACKEND_URL.to_owned()
+        })?;
     let payload = crate::responses::create::dispatch::assemble(request, false, true);
     let claims = json!({
         "type": PURPOSE,

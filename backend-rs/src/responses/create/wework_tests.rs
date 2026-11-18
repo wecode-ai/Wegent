@@ -173,10 +173,36 @@ fn assembles_the_runtime_create_payload_top_level() {
         .expect("options"),
         from_persisted: false,
     };
-    let execution = json!({
-        "prompt": "测试",
-        "backend_url": "https://backend.example/api"
-    });
+    let user = crate::auth::UserRow {
+        id: 7,
+        user_name: "test-user".into(),
+        users_password_hash: String::new(),
+        email: None,
+        git_info: brz_mysql::Json(serde_json::from_value(json!({})).expect("git metadata")),
+        is_active: 1,
+        role: "user".into(),
+        auth_source: "local".into(),
+        preferences: "{}".into(),
+        created_at: Default::default(),
+        updated_at: Default::default(),
+    };
+    let execution = assemble_execution_request(RuntimeExecutionInput {
+        user: &user,
+        user_id: 7,
+        task_id: "task-1",
+        device_id: "device-1",
+        message: "测试",
+        title: "12312",
+        client_user_message_id: "message-1",
+        model_config: json!({}),
+        auth_token: "test-task-token".into(),
+        skill_identity_token: "test-skill-token".into(),
+    })
+    .expect("execution request");
+    assert_eq!(
+        execution["backend_url"],
+        crate::responses::create::bot_config::backend_url()
+    );
     let payload = assemble_create_payload(
         execution,
         "测试",
@@ -210,11 +236,26 @@ fn assembles_the_runtime_create_payload_top_level() {
 
 #[test]
 fn rejects_runtime_execution_requests_without_backend_url() {
-    let error = super::wework_runtime::ensure_execution_backend_url(&json!({
-        "backend_url": " "
-    }))
-    .expect_err("missing backend_url must be rejected");
-    assert_eq!(error.to_string(), "Execution request is missing backend_url");
+    for execution in [
+        json!({}),
+        json!({"backend_url": null}),
+        json!({"backend_url": ""}),
+        json!({"backend_url": " \t\n"}),
+        json!({"backend_url": 42}),
+    ] {
+        let error = crate::responses::create::bot_config::ensure_execution_backend_url(
+            execution.get("backend_url").and_then(Value::as_str),
+        )
+        .expect_err("missing backend_url must be rejected");
+        assert_eq!(
+            error.status(),
+            brz_http_server::StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            error.detail_message(),
+            Some("Execution request is missing backend_url")
+        );
+    }
 }
 
 #[test]
