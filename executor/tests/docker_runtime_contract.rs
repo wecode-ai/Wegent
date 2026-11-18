@@ -53,7 +53,7 @@ fn isolated_environment(root: &Path) -> Vec<EnvGuard> {
     .map(|(key, child)| {
         let path = root.join(child);
         fs::create_dir_all(&path).unwrap();
-        EnvGuard::set(key, path)
+        EnvGuard::set(key, path.to_str().unwrap())
     })
     .collect()
 }

@@ -59,7 +59,7 @@ pub struct EnvGuard {
 }
 
 impl EnvGuard {
-    pub fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+    pub fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var_os(key);
         std::env::set_var(key, value);
         Self { key, previous }
