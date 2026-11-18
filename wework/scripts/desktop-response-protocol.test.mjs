@@ -259,6 +259,8 @@ test('retains failed scenario model requests without recording authorization hea
     server.handle(request, new ServerResponse(request)),
     error => error === failure
   )
-  assert.deepEqual(server.modelRequests, [{ body, scenario: server.scenario, failed: true }])
+  assert.deepEqual(server.modelRequests, [
+    { body, scenario: server.scenario, protocol: 'responses', httpRequestIndex: 0, failed: true },
+  ])
   assert.equal(JSON.stringify(server.modelRequests).includes('synthetic-sensitive-header'), false)
 })

@@ -106,6 +106,9 @@ for (const [scenario, prompt, completion] of [
       const server = new DesktopE2EServer('/isolated-model-message-fixture')
       server.url = 'http://127.0.0.1:1234'
       server.setDesktopScenario(createDesktopScenario({}))
+      server.handleModelResponse = async () => {
+        assert.fail('Custom requests must not enter the initial task fixture')
+      }
       const message = { role: 'user', content: prompt }
       const request = Readable.from([
         JSON.stringify({
@@ -139,11 +142,9 @@ for (const [scenario, prompt, completion] of [
               : 'message_stop'
         )
       )
-      assert.equal(
-        server.modelRequests.length,
-        0,
-        'Custom requests must not enter the initial task fixture'
-      )
+      assert.equal(server.modelRequests.length, 1)
+      assert.equal(server.modelRequests[0].body.model, 'synthetic-selected-model')
+      assert.equal(Object.hasOwn(server.modelRequests[0], 'authorization'), false)
     })
   }
 }
