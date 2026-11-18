@@ -61,7 +61,7 @@ async fn successful_full_application_confirms_once_and_repairs_an_old_journal() 
 #[tokio::test]
 async fn failed_confirmation_keeps_the_accepted_intent_until_full_recovery() {
     let fixture = registered_fixture(Plan::Valid).await;
-    fixture.completion_failures.store(1, Ordering::SeqCst);
+    *fixture.completion_failures.lock().unwrap() = 1;
     fixture
         .sync(json!({"action":"update","targetId":8,"payload":{"releaseId":3}}))
         .await
@@ -106,7 +106,7 @@ async fn failed_materialization_never_confirms_an_installed_device() {
 async fn receipt_contention_retries_with_the_same_result_without_reapplying() {
     let fixture = registered_fixture(Plan::Valid).await;
     *fixture.completion_error.lock().unwrap() = "plugin_write_busy".into();
-    fixture.completion_failures.store(1, Ordering::SeqCst);
+    *fixture.completion_failures.lock().unwrap() = 1;
     assert_eq!(
         fixture
             .sync(json!({"action":"update","targetId":8,"payload":{"releaseId":3}}))
@@ -126,7 +126,7 @@ async fn transient_confirmation_failures_preserve_actual_results_and_recover() {
     for code in ["plugin_write_busy", "plugin_write_lease_lost"] {
         let fixture = registered_fixture(Plan::Valid).await;
         *fixture.completion_error.lock().unwrap() = code.into();
-        fixture.completion_failures.store(3, Ordering::SeqCst);
+        *fixture.completion_failures.lock().unwrap() = 3;
         let failure = fixture
             .sync(json!({"action":"update","targetId":8,"payload":{"releaseId":3}}))
             .await
@@ -161,7 +161,7 @@ async fn failed_unchanged_confirmation_is_durable_and_recovers() {
     journal["confirmedDeviceRevision"] = Value::Null;
     persist(&fixture.path, &journal).unwrap();
     *fixture.completion_error.lock().unwrap() = "plugin_write_busy".into();
-    fixture.completion_failures.store(1, Ordering::SeqCst);
+    *fixture.completion_failures.lock().unwrap() = 1;
     assert_eq!(
         fixture.sync(json!({"full":true})).await.unwrap_err().code,
         "plugin_local_confirmation_pending"
@@ -184,7 +184,7 @@ async fn failed_unchanged_confirmation_is_durable_and_recovers() {
 async fn confirmation_ownership_failures_remain_errors() {
     let fixture = registered_fixture(Plan::Valid).await;
     *fixture.completion_error.lock().unwrap() = "SNAPSHOT_NOT_OWNED".into();
-    fixture.completion_failures.store(1, Ordering::SeqCst);
+    *fixture.completion_failures.lock().unwrap() = 1;
     assert_eq!(
         fixture.sync(json!({"full":true})).await.unwrap_err().code,
         "SNAPSHOT_NOT_OWNED"
@@ -205,7 +205,7 @@ async fn unchanged_confirmation_cannot_clear_a_newer_plugins_pending_recovery() 
             .await
             .unwrap();
         *fixture.completion_error.lock().unwrap() = "plugin_write_busy".into();
-        fixture.completion_failures.store(3, Ordering::SeqCst);
+        *fixture.completion_failures.lock().unwrap() = 3;
         let failure = fixture
             .sync(json!({"installedPluginId":9}))
             .await

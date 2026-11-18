@@ -174,7 +174,7 @@ struct Fixture {
     plans: Arc<Mutex<Vec<Value>>>,
     submissions: Arc<Mutex<Vec<HashMap<String, String>>>>,
     completions: Arc<Mutex<Vec<Value>>>,
-    completion_failures: Arc<AtomicUsize>,
+    completion_failures: Arc<Mutex<usize>>,
     completion_error: Arc<Mutex<String>>,
     completion_hold: Arc<AtomicBool>,
     completion_entered: Arc<Notify>,
@@ -218,7 +218,7 @@ impl Fixture {
         let plans = Arc::new(Mutex::new(Vec::new()));
         let submissions = Arc::new(Mutex::new(Vec::new()));
         let completions = Arc::new(Mutex::new(Vec::new()));
-        let completion_failures = Arc::new(AtomicUsize::new(0));
+        let completion_failures = Arc::new(Mutex::new(0usize));
         let completion_error = Arc::new(Mutex::new("completion_unavailable".to_string()));
         let completion_hold = Arc::new(AtomicBool::new(false));
         let completion_entered = Arc::new(Notify::new());
@@ -319,9 +319,12 @@ impl Fixture {
                     async move {
                         let recorded: Vec<Value> = body["completion"]["result"]["plugins"].as_array().unwrap().iter().map(|item| item["id"].clone()).collect();
                         completions.lock().unwrap().push(body);
-                        let fail = failures
-                            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| count.checked_sub(1))
-                            .is_ok();
+                        let fail = {
+                            let mut remaining = failures.lock().unwrap();
+                            let fail = *remaining > 0;
+                            *remaining = remaining.saturating_sub(1);
+                            fail
+                        };
                         if hold.swap(false, Ordering::SeqCst) {
                             entered.notify_one();
                             release.notified().await;
