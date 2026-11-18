@@ -886,6 +886,8 @@ GitHub Actions 将 plugins、core 和 cloud 三个 Linux 桌面场景作为矩�
 编译进应用二进制；因此 plugins、core 和 cloud 可共享应用构建，同时仍保持各自
 独立的运行目录与进程状态。
 
+隔离显示的 Xvfb 进程若在 5 秒内未报告显示编号，启动脚本会在清理前记录 Xvfb 及其直接子进程的状态、内核等待点和进程名，以定位启动阻塞。
+
 Linux 桌面场景会把 Electron 系统依赖下载得到的 `.deb` 文件缓存在 runner 用户目录，
 并按操作系统、CPU 架构和自然周轮换缓存。每次运行仍执行 `apt-get update`，旧缓存
 只作为恢复来源，缺失或更新后的软件包会从 Ubuntu 软件源下载。安装使用
