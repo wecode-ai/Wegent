@@ -16,14 +16,37 @@ so we use dict-style access (conn["key"]) not attribute access.
 from unittest.mock import patch
 
 import pytest
+from chat_shell.tools.mcp.client import MCPClient, build_connections
 from langchain_core.tools import StructuredTool
 
-from chat_shell.tools.mcp.client import MCPClient, build_connections
 from shared.models.execution import ExecutionRequest
 
 
 class TestBuildConnectionsVariableSubstitution:
     """Tests that build_connections() resolves ${{path}} placeholders."""
+
+    @pytest.mark.parametrize("backend_url", [None, "", " \t\n"])
+    @pytest.mark.parametrize("path", ["backend_url", "backend_api_url"])
+    def test_missing_backend_skips_only_dependent_servers(self, backend_url, path):
+        config = {
+            "connector": {
+                "type": "sse",
+                "url": f"${{{{{path}}}}}/mcp/connectors/sse",
+                "headers": {"Authorization": "Bearer ${{task_token}}"},
+            },
+            "backend-command": {
+                "type": "stdio",
+                "command": "tool",
+                "args": [f"${{{{{path}}}}}"],
+            },
+            "web": {"type": "sse", "url": "https://example.test/mcp"},
+        }
+        request = ExecutionRequest(backend_url=backend_url, auth_token="synthetic")
+        for task_data in [request, None]:
+            connections = build_connections(config, task_data)
+            assert set(connections) == {"web"}
+            assert connections["web"]["url"] == "https://example.test/mcp"
+        assert config["connector"]["url"] == f"${{{{{path}}}}}/mcp/connectors/sse"
 
     def test_sse_headers_placeholder_replaced(self) -> None:
         """${{user.name}} in SSE headers should be replaced by task_data value."""
@@ -179,17 +202,21 @@ class TestMCPClientToolNamePrefix:
                 ]
 
         config = {
+            "connector": {
+                "type": "sse",
+                "url": "${{backend_api_url}}/mcp/connectors/sse",
+            },
             "filesystem": {
                 "type": "streamable-http",
                 "url": "http://mcp.example.com/stream",
-            }
+            },
         }
 
         with patch(
             "chat_shell.tools.mcp.client.MultiServerMCPClient",
             FakeMultiServerMCPClient,
         ):
-            client = MCPClient(config)
+            client = MCPClient(config, task_data=ExecutionRequest())
             await client.connect()
 
         assert [tool.name for tool in client.get_tools()] == ["filesystem_list_files"]

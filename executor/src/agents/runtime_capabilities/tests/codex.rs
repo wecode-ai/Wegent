@@ -4,6 +4,33 @@
 
 use super::*;
 
+#[test]
+fn default_home_skips_backend_dependent_mcps_before_native_configuration() {
+    for backend_url in [None, Some(""), Some(" \t\n")] {
+        let request = ExecutionRequest {
+            backend_url: backend_url.map(str::to_owned),
+            auth_token: Some("synthetic-task-token".to_owned()),
+            bot: json!([{"shell_type": "Codex", "mcp_servers": [{
+                "name": "bot-connector", "url": "${{backend_api_url}}/mcp/connectors/sse",
+                "headers": {"Authorization": "Bearer ${{task_token}}"}
+            }]}]),
+            mcp_servers: vec![
+                json!({"name": "connector", "url": "${{backend_url}}/mcp/connectors/sse"}),
+                json!({"name": "web", "url": "https://example.test/mcp"}),
+            ],
+            ..Default::default()
+        };
+        let mut runtime = Map::new();
+        let (overrides, environment) =
+            request_mcp_config_overrides(&request, &mut runtime).unwrap();
+        assert!(overrides.contains(&"mcp_servers.web.url=\"https://example.test/mcp\"".to_owned()));
+        assert!(!overrides.iter().any(|value| value.contains("connector")));
+        assert!(!overrides.iter().any(|value| value.contains("${{")));
+        assert!(runtime.is_empty());
+        assert!(environment.is_empty());
+    }
+}
+
 fn with_agent_identity(mut request: ExecutionRequest) -> ExecutionRequest {
     request.bot[0]["id"] = json!(23);
     request.new_session = true;

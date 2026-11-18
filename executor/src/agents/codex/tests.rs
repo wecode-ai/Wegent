@@ -7,6 +7,34 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn global_mcps_without_backend_context_do_not_enter_native_configuration() {
+    let _environment = environment::LaunchEnvironment::new();
+    let path = crate::local::capabilities::default_manifest_path();
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        json!({"version": 2, "mcps": {
+            "connector": {"server": {"url": "${{backend_api_url}}/mcp/connectors/sse"}},
+            "web": {"server": {"url": "https://example.test/mcp"}}
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    for backend_url in [None, Some(""), Some(" \t\n")] {
+        let request = ExecutionRequest {
+            backend_url: backend_url.map(str::to_owned),
+            ..Default::default()
+        };
+        let overrides = global_mcp_config_overrides(&request, &mut Map::new()).unwrap();
+        assert!(overrides
+            .iter()
+            .any(|value| value.starts_with("mcp_servers.web.url=")));
+        assert!(!overrides.iter().any(|value| value.contains("connector")));
+        assert!(!overrides.iter().any(|value| value.contains("${{")));
+    }
+}
+
+#[test]
 fn provider_switch_boundary_uses_a_trusted_developer_item() {
     let mut request = ExecutionRequest::default();
     request

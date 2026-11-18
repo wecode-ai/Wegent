@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     agents::{
         backend_url::{backend_http_client, is_local_mode, request_backend_url_or_default},
-        claude_config_dir, claude_task_dir, extract_claude_options,
+        claude_config_dir, claude_task_dir,
         skill_download::skill_download_concurrency,
     },
     attachments::{
@@ -512,7 +512,7 @@ pub fn request_mcp_config_overrides(
     }
     let mut overrides = Vec::new();
     let mut environment = BTreeMap::new();
-    let mcp_servers = collect_request_mcp_servers(request);
+    let mcp_servers = collect_request_mcp_servers(request)?;
     let server_names = mcp_servers.keys().cloned().collect::<Vec<_>>().join(",");
     let stdio_count = mcp_servers
         .values()
@@ -2171,11 +2171,18 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
     value.as_object_mut().expect("value was just made object")
 }
 
-fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
-    let mut servers = extract_claude_options(request, &BTreeMap::new()).mcp_servers;
-    preserve_explicit_mcp_approval_modes(request, &mut servers);
+fn collect_request_mcp_servers(
+    request: &ExecutionRequest,
+) -> Result<BTreeMap<String, Value>, String> {
+    let mut servers =
+        super::claude_options::extract_claude_mcp_templates(request, &BTreeMap::new());
     servers.remove(crate::workbench_control::SERVER_NAME);
-    servers
+    let context = mcp_environment::prepare_context(&mut servers, request)?;
+    for server in servers.values_mut() {
+        *server = crate::mcp_utils::replace_variables_recursive(server, Some(&context));
+    }
+    preserve_explicit_mcp_approval_modes(request, &mut servers);
+    Ok(servers)
 }
 
 fn preserve_explicit_mcp_approval_modes(

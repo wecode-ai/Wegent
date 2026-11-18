@@ -51,17 +51,9 @@ pub fn bind_context(
     request: &ExecutionRequest,
     environment: &mut BTreeMap<String, String>,
 ) -> Result<(), String> {
-    let context = request.variable_context();
-    let mut unconfigured = Vec::new();
-    for (name, server) in servers.iter_mut() {
+    let context = prepare_context(servers, request)?;
+    for server in servers.values_mut() {
         normalize_context_references(server, request.auth_token.as_deref())?;
-        if let Some(path) = missing_optional_mcp_context(server, &context)? {
-            let mut fields = crate::logging::task_fields(&request.task_id, &request.subtask_id);
-            fields.extend([("server_name", name.clone()), ("context_path", path)]);
-            crate::logging::log_executor_event("unconfigured MCP skipped", &fields);
-            unconfigured.push(name.clone());
-            continue;
-        }
         visit_strings(server, &mut |text| {
             for captures in env_reference().captures_iter(text) {
                 let path = decode_context_path(&captures[1])?;
@@ -79,10 +71,28 @@ pub fn bind_context(
             Ok(())
         })?;
     }
+    Ok(())
+}
+
+/// Remove optional services before either native or direct context resolution.
+pub fn prepare_context(
+    servers: &mut BTreeMap<String, Value>,
+    request: &ExecutionRequest,
+) -> Result<Value, String> {
+    let context = request.variable_context();
+    let mut unconfigured = Vec::new();
+    for (name, server) in servers.iter_mut() {
+        if let Some(path) = missing_optional_mcp_context(server, &context)? {
+            let mut fields = crate::logging::task_fields(&request.task_id, &request.subtask_id);
+            fields.extend([("server_name", name.clone()), ("context_path", path)]);
+            crate::logging::log_executor_event("unconfigured MCP skipped", &fields);
+            unconfigured.push(name.clone());
+        }
+    }
     for name in unconfigured {
         servers.remove(&name);
     }
-    Ok(())
+    Ok(context)
 }
 
 fn normalize_context_references(server: &mut Value, token: Option<&str>) -> Result<(), String> {
@@ -120,8 +130,16 @@ fn missing_optional_mcp_context(
 ) -> Result<Option<String>, String> {
     let mut missing = None;
     visit_strings(server, &mut |text| {
-        for captures in env_reference().captures_iter(text) {
-            let path = decode_context_path(&captures[1])?;
+        let paths = task_reference()
+            .captures_iter(text)
+            .map(|captures| Ok(captures[1].trim().to_owned()))
+            .chain(
+                env_reference()
+                    .captures_iter(text)
+                    .map(|captures| decode_context_path(&captures[1])),
+            );
+        for path in paths {
+            let path = path?;
             if (path.starts_with("task_data.user_mcps.")
                 || matches!(path.as_str(), "backend_url" | "backend_api_url"))
                 && get_nested_value(Some(context), &path)

@@ -191,7 +191,7 @@ class ExecutionRequest:
     # === Authentication ===
     auth_token: str = ""
     skill_identity_token: str = ""
-    backend_url: str = ""
+    backend_url: Optional[str] = ""
 
     # === Attachments ===
     attachments: list = field(default_factory=list)
@@ -267,7 +267,7 @@ class ExecutionRequest:
     @property
     def backend_api_url(self) -> str:
         """Backend API base for MCP templates, with exactly one API prefix."""
-        base = self.backend_url.strip().rstrip("/")
+        base = (self.backend_url or "").strip().rstrip("/")
         root = base.removesuffix("/api")
         return f"{root}/api" if root else ""
 

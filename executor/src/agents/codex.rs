@@ -5824,28 +5824,26 @@ fn normalize_service_tier(value: Option<&Value>) -> Option<String> {
 }
 
 fn global_mcp_config_overrides(
+    request: &ExecutionRequest,
     thread_config: &mut Map<String, Value>,
 ) -> Result<Vec<String>, String> {
     let mcps = runtime_capabilities::load_global_mcp_records()?;
-
+    let mut servers = mcps
+        .into_iter()
+        .filter_map(|(name, record)| {
+            record
+                .get("server")
+                .and_then(Value::as_object)
+                .map(|server| (name, Value::Object(server.clone())))
+        })
+        .collect::<BTreeMap<_, _>>();
+    servers.remove(crate::workbench_control::SERVER_NAME);
+    runtime_capabilities::mcp_environment::prepare_context(&mut servers, request)?;
     let mut overrides = Vec::new();
-    let mut names = mcps.keys().collect::<Vec<_>>();
-    names.sort();
-    for name in names {
-        if name == crate::workbench_control::SERVER_NAME {
-            continue;
-        }
-        let Some(server) = mcps
-            .get(name)
-            .and_then(|record| record.get("server"))
-            .and_then(Value::as_object)
-        else {
-            continue;
-        };
-        let server = Value::Object(server.clone());
+    for (name, server) in &servers {
         runtime_capabilities::mcp_environment::append_stdio_environment(
             name,
-            &server,
+            server,
             thread_config,
         )?;
         if let Some(server) = server.as_object() {

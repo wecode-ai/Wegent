@@ -8,7 +8,7 @@ pub(super) fn configure_task_mcp(
     launch: &mut CodexLaunchConfig,
 ) -> Result<(), String> {
     if super::super::instance_home::request_home(request).is_none() {
-        let overrides = global_mcp_config_overrides(&mut launch.thread_config)?;
+        let overrides = global_mcp_config_overrides(request, &mut launch.thread_config)?;
         launch.config_overrides.extend(overrides);
     }
     launch

@@ -35,7 +35,10 @@ from langchain_mcp_adapters.sessions import (
 
 from shared.models.execution import ExecutionRequest
 from shared.telemetry.decorators import add_span_event, trace_async
-from shared.utils.mcp_utils import replace_mcp_server_variables
+from shared.utils.mcp_utils import (
+    filter_backend_dependent_mcp_servers,
+    replace_mcp_server_variables,
+)
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = logging.getLogger(__name__)
@@ -162,7 +165,8 @@ def build_connections(
     Returns:
         Dict of server_name to Connection config
     """
-    # Apply variable substitution to the entire config
+    config = filter_backend_dependent_mcp_servers(config, task_data)
+    # Apply variable substitution after removing unavailable integrations.
     if task_data:
         config = replace_mcp_server_variables(config, task_data)
         logger.debug(

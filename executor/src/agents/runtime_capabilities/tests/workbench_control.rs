@@ -91,7 +91,7 @@ fn user_mcp_definitions_cannot_override_the_managed_control_server() {
         ],
         ..Default::default()
     };
-    let servers = collect_request_mcp_servers(&request);
+    let servers = collect_request_mcp_servers(&request).unwrap();
     assert!(!servers.contains_key("wework_control"));
     assert!(servers.contains_key("ordinary"));
     let home = tempfile::tempdir().unwrap();
