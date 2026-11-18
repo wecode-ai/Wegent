@@ -45,6 +45,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
   let bundleFailures = 0
   let bundleSuccesses = 0
   let accountChecks = 0
+  let tokenRefreshes = 0
   const plans = new Map()
   const requests = []
   const authSnapshots = []
@@ -68,7 +69,32 @@ export function createCloudConfigModelService({ readUsage } = {}) {
     },
     async prepareApp({ appEnvironment, codexHome: home, control }) {
       codexHome = home
+      const claims = Buffer.from(
+        JSON.stringify({
+          email: 'cloud-config-recovery@example.test',
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          'https://api.openai.com/auth': {
+            chatgpt_account_id: ACCOUNT,
+            // An account-only synthetic identity cannot reuse the native bundle
+            // disk cache. Each real loader therefore observes the service state.
+            chatgpt_plan_type: 'enterprise',
+          },
+        })
+      ).toString('base64url')
+      const idToken = `header.${claims}.signature`
       server = createServer(async (request, response) => {
+        if (request.method === 'POST' && request.url === '/oauth/token') {
+          tokenRefreshes += 1
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(
+            JSON.stringify({
+              access_token: ACCESS,
+              refresh_token: 'synthetic-cloud-config-recovery-refresh',
+              id_token: idToken,
+            })
+          )
+          return
+        }
         if (readUsage && request.url?.includes('/wham/usage')) {
           try {
             const usage = await readUsage()
@@ -121,18 +147,6 @@ export function createCloudConfigModelService({ readUsage } = {}) {
 
       nativeHome = join(appEnvironment.HOME, '.codex')
       await mkdir(nativeHome, { recursive: true })
-      const claims = Buffer.from(
-        JSON.stringify({
-          email: 'cloud-config-recovery@example.test',
-          exp: Math.floor(Date.now() / 1000) + 3600,
-          'https://api.openai.com/auth': {
-            chatgpt_account_id: ACCOUNT,
-            // An account-only synthetic identity cannot reuse the native bundle
-            // disk cache. Each real loader therefore observes the service state.
-            chatgpt_plan_type: 'enterprise',
-          },
-        })
-      ).toString('base64url')
       await writeFile(
         join(nativeHome, 'auth.json'),
         JSON.stringify({
@@ -141,7 +155,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
             account_id: ACCOUNT,
             access_token: ACCESS,
             refresh_token: 'synthetic-cloud-config-recovery-refresh',
-            id_token: `header.${claims}.signature`,
+            id_token: idToken,
           },
           last_refresh: new Date().toISOString(),
         })
@@ -150,6 +164,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
       await rm(join(codexHome, 'auth.json'), { force: true })
       appEnvironment.CODEX_HOME = nativeHome
       appEnvironment.WEWORK_E2E_NATIVE_CODEX_HOME = nativeHome
+      appEnvironment.CODEX_REFRESH_TOKEN_URL_OVERRIDE = `http://127.0.0.1:${server.address().port}/oauth/token`
       // This checkpoint selects its configured native provider through real RPC.
       // Avoid unrelated custom catalog reconciliation: its restart endpoint must
       // preflight model/list, which would consume the failure before thread/resume.
@@ -260,6 +275,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
         bundleFailures,
         bundleSuccesses,
         accountChecks,
+        tokenRefreshes,
         requests,
         authSnapshots,
       }

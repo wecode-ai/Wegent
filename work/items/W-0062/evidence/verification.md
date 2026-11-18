@@ -214,6 +214,8 @@ EnvironmentInfoPopover、ChangeRequestMonitor 与 observer 共 3 文件、33 项
 
 最新 head `6ba0c601d7` 的 Core / shard 4 失败为 `coordination-runtime` 等待 `stand-in-status-open` 超时。作业日志显示点击在 `04:58:38` 发出、默认 10 秒后超时；该场景已注明状态面板按 15 秒轮询，后续处理和恢复入口也使用同一 20 秒轮询窗口。失败后自动观察记录显示选择器在超时后 `432ms` 已出现，确认是测试等待预算早于既有轮询更新，而非缺少错误入口。现让首次状态入口等待使用同一 20 秒窗口，产品状态、错误恢复和所有断言保持不变。场景语法、目标 ESLint 与 Prettier 通过；真实结果以新 head CI 为准。
 
+head `3230884849` 的后续 Core / shard 4 失败转为 `codex-cloud-config-recovery` 的 `config/read`：日志同时记录云配置 bundle 已回退到默认值，以及 `failed to read configuration layers: Your access token could not be refreshed`；失败 artifact 显示场景中止在该降级读取，模型请求尚未发出。Codex 的认证代码使用 `/oauth/token` 刷新端点，而合成认证服务此前对所有未显式处理的请求返回空对象。现在为隔离进程设置既有刷新端点覆盖，返回与初始身份一致的三字段 access/refresh/id token，并增加协议测试验证响应、ID token 形状、配置 origin 和一次刷新计数；测试 1 项、语法、目标 ESLint、Prettier 与差异检查通过。云配置 503 故障、降级、恢复和后续断言保持不变，实际跨边界结果仍以新 head CI 为准。
+
 主线 `b503a1f985b654df97cd17e05d1bc283942da03b` 与 `changeRequestMonitor.test.ts` 发生单文件冲突。整合同时保留本分支“observer 激活期间手动刷新获取新状态”和主线“收集中注册第二个任务仍能获取状态”的完整回归，运行时保留两种并发处理语义。monitor 三文件 21 项、环境面板与工作区身份/模型目录五文件 55 项、自动化/原生插件协议六文件 46 项全部通过；Rust 队列 17 项、Goal 路由恢复 10 项及双语文档 8 项通过。Wework typecheck、完整 lint（0 错误、5 项既有警告）、目标格式与差异检查通过。没有执行本地 E2E 或 ai:verify。
 
 独立复核发现认证场景的设备同步诊断此前使用了 HTTP record route，而同步注册表按稳定 Executor identity 索引；两者不同时可能错误读到空闲。两个检查现通过已有 `getLocalExecutorStatus.deviceId` 使用真实稳定身份，原有认证与恢复仍使用 record route。两种 ID 不同的协议红测稳定复现旧实现三项失败，修复后新增编排与既有证据两文件 26 项全部通过，语法、ESLint、Prettier 和差异检查通过。该补充仍需新提交真实 CI 验证；通知关闭问题继续按前述诊断取证，没有宣称解决。
