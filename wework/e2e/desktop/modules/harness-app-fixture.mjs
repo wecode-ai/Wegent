@@ -68,6 +68,7 @@ export async function setExperimentalFeatures(control, enabled, uiTimeoutMs) {
     'waitFor',
     `[data-testid="general-experimental-features-toggle"][aria-checked="${expected}"]`,
     {
+      enabled: true,
       stableMs: 300,
       timeoutMs: uiTimeoutMs,
     }

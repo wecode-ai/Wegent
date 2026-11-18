@@ -518,19 +518,27 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    pub(super) async fn abort_active_turn(&self, local_task_id: &str) -> bool {
-        self.abort_active_turn_with_timeout(local_task_id, Duration::from_secs(10))
-            .await
-    }
-
     pub(super) async fn abort_active_turn_with_timeout(
         &self,
         local_task_id: &str,
         stop_timeout: Duration,
     ) -> bool {
+        let Some(execution_id) = self.active_local_execution_id(local_task_id) else {
+            return true;
+        };
+        self.abort_local_task_execution_with_timeout(local_task_id, execution_id, stop_timeout)
+            .await
+    }
+
+    pub(super) async fn abort_local_task_execution_with_timeout(
+        &self,
+        local_task_id: &str,
+        execution_id: u64,
+        stop_timeout: Duration,
+    ) -> bool {
         let deadline = Instant::now() + stop_timeout;
         loop {
-            match self.poll_active_turn_stop(local_task_id) {
+            match self.poll_active_turn_stop(local_task_id, execution_id) {
                 ActiveTurnStopState::Missing | ActiveTurnStopState::Stopped => return true,
                 ActiveTurnStopState::Pending => {}
             }
@@ -545,7 +553,7 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    fn poll_active_turn_stop(&self, local_task_id: &str) -> ActiveTurnStopState {
+    fn poll_active_turn_stop(&self, local_task_id: &str, execution_id: u64) -> ActiveTurnStopState {
         let mut active = self
             .active_local_executions
             .lock()
@@ -553,6 +561,9 @@ impl RuntimeWorkRpcHandler {
         let Some(control) = active.get_mut(local_task_id) else {
             return ActiveTurnStopState::Missing;
         };
+        if control.execution_id != execution_id {
+            return ActiveTurnStopState::Stopped;
+        }
         request_execution_stop(control);
         if !control.stop_acknowledged {
             control.stop_acknowledged = match control.stopped.try_recv() {
@@ -570,11 +581,16 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    pub(super) fn is_active_local_task(&self, local_task_id: &str) -> bool {
+    pub(super) fn active_local_execution_id(&self, local_task_id: &str) -> Option<u64> {
         self.active_local_executions
             .lock()
             .expect("active local execution map lock should not be poisoned")
-            .contains_key(local_task_id)
+            .get(local_task_id)
+            .map(|control| control.execution_id)
+    }
+
+    pub(super) fn is_active_local_task(&self, local_task_id: &str) -> bool {
+        self.active_local_execution_id(local_task_id).is_some()
     }
 
     pub(super) fn clear_active_request_user_input(&self, local_task_id: &str, execution_id: u64) {
