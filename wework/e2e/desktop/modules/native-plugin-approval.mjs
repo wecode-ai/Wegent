@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execute = promisify(execFile)
-export const NATIVE_PLUGIN_DECISION_TIMEOUT_MS = 40_000
+export const NATIVE_PLUGIN_DECISION_TIMEOUT_MS = 12_000
+const WINDOWS_NATIVE_PLUGIN_DECISION_TIMEOUT_MS = 40_000
 const TITLES = [
   'Confirm Core plugin installation',
   'Confirm Core plugin update',
@@ -34,7 +35,14 @@ export async function withNativePluginDecision(control, operation, { allow = tru
 }
 
 export async function clickNativeDecision(pid, allow, signal, evidenceDirectory, decision = {}) {
-  const options = { timeout: NATIVE_PLUGIN_DECISION_TIMEOUT_MS, signal, encoding: 'utf8' }
+  const options = {
+    timeout:
+      process.platform === 'win32'
+        ? WINDOWS_NATIVE_PLUGIN_DECISION_TIMEOUT_MS
+        : NATIVE_PLUGIN_DECISION_TIMEOUT_MS,
+    signal,
+    encoding: 'utf8',
+  }
   if (process.platform === 'darwin') {
     await clickMacosNativeDecision(
       pid,
