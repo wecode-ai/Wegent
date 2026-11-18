@@ -220,6 +220,8 @@ head `3230884849` 的后续 Core / shard 4 失败转为 `codex-cloud-config-reco
 
 独立复核发现认证场景的设备同步诊断此前使用了 HTTP record route，而同步注册表按稳定 Executor identity 索引；两者不同时可能错误读到空闲。两个检查现通过已有 `getLocalExecutorStatus.deviceId` 使用真实稳定身份，原有认证与恢复仍使用 record route。两种 ID 不同的协议红测稳定复现旧实现三项失败，修复后新增编排与既有证据两文件 26 项全部通过，语法、ESLint、Prettier 和差异检查通过。该补充仍需新提交真实 CI 验证；通知关闭问题继续按前述诊断取证，没有宣称解决。
 
+主线 `6056494661` 明确清理约 80% renderer 单测，与本分支修改过的五个测试形成 modify/delete 冲突。冲突按主线删除策略解决；创建流程仍保留 `packages/collaboration` 的共享组件/控制器测试和 CI 覆盖的真实成员持久化场景，云配置修复也新增了独立协议测试。合并后合成认证与原生窗口协议两文件 27 项、Wework typecheck 和差异检查通过。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
