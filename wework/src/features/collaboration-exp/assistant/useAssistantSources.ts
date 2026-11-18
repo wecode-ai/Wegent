@@ -176,7 +176,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
     [source, refresh]
   )
 
-  const inbox = useStandInInbox(api, ownerId, deviceId, active)
+  const inbox = useStandInInbox(api, ownerId, deviceId, active, scope)
   const currentFailure = failure?.scope === scope && failure.api === api ? failure : undefined
   const currentProposalFailure =
     proposalFailure?.scope === scope && proposalFailure.api === api ? proposalFailure : undefined
@@ -193,7 +193,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
           ? currentProposalFailure.message
           : inbox.error,
     inbox,
-    inboxReady: Boolean(deviceId && inbox.scope === `${ownerId}:${deviceId}`),
+    inboxReady: Boolean(inbox.scope),
     refresh,
   }
 }

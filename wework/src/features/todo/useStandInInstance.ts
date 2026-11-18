@@ -24,7 +24,12 @@ export function useStandInInstance(
   entryRequestKey?: number
 ) {
   const [binding, setBinding] = useState<StandInInstanceBinding>()
-  const [stoppedProfile, setStoppedProfile] = useState<PersonalStandInSettings>()
+  const [stoppedProfile, setStoppedProfile] = useState<{
+    version: number
+    userId: number
+    deviceId: string
+    profile: PersonalStandInSettings
+  }>()
   const [localDeviceId, setLocalDeviceId] = useState('')
   const [error, setError] = useState<{
     cause: unknown
@@ -68,7 +73,12 @@ export function useStandInInstance(
         setBinding(value)
         const profile = await api.personalGet(value.target.userId, value.target.deviceId)
         if (!current) return
-        setStoppedProfile(profile)
+        setStoppedProfile({
+          version: value.version,
+          userId: value.target.userId,
+          deviceId: value.target.deviceId,
+          profile,
+        })
         setError(null)
         return
       }
@@ -204,8 +214,14 @@ export function useStandInInstance(
           code: 'stand_in_stop_incomplete',
         })
       }
-      setBinding(await api.binding(localDeviceId, 'completeStop', stopping.version))
-      setStoppedProfile(stopped)
+      const completed = await api.binding(localDeviceId, 'completeStop', stopping.version)
+      setBinding(completed)
+      setStoppedProfile({
+        version: completed.version,
+        userId: target.userId,
+        deviceId: target.deviceId,
+        profile: stopped,
+      })
     })
   const bind = (target: StandInBindingTarget) =>
     run(async () => {
@@ -239,9 +255,17 @@ export function useStandInInstance(
         setBinding(next)
       }
     }, true)
+  const currentStoppedProfile =
+    binding?.status === 'stopped' &&
+    binding.target &&
+    stoppedProfile?.version === binding.version &&
+    stoppedProfile.userId === binding.target.userId &&
+    stoppedProfile.deviceId === binding.target.deviceId
+      ? stoppedProfile.profile
+      : undefined
   return {
     binding,
-    stoppedProfile,
+    stoppedProfile: currentStoppedProfile,
     localDeviceId,
     busy,
     error: error ? getStandInErrorMessage(error.cause, error.fallback) : null,

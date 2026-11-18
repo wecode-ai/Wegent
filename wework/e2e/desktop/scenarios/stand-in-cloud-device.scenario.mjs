@@ -30,6 +30,8 @@ const USER = 1
 const CLOUD_NAME = 'Cloud stand-in bound device'
 const PROMPT = 'CLOUD_STAND_IN_DEVICE_EXECUTION'
 const COMPLETE = 'CLOUD_STAND_IN_DEVICE_EXECUTION_COMPLETE'
+const REOPEN_PROMPT = 'CLOUD_STAND_IN_VERIFY_REOPENED_RELAY'
+const REOPEN_COMPLETE = 'CLOUD_STAND_IN_REOPENED_RELAY_CONFIRMED'
 const HOLD = 'CLOUD_STAND_IN_STOP_RUNNING_CONVERSATION'
 const LOCAL_NAME = 'Signed-out local stand-in'
 const LOCAL_PROMPT = 'LOCAL_STAND_IN_DEVICE_HISTORY'
@@ -137,6 +139,10 @@ export function createDesktopScenario({
     await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${role}`))
     await control.command('waitFor', testId('stand-in-conversation'))
     const selector = testId('stand-in-conversation')
+    await sendChat(control, selector, message)
+    return selector
+  }
+  async function sendChat(control, selector, message) {
     await selectE2EModel(control, undefined, undefined, selector)
     await control.command('fill', `${selector} [data-testid="chat-message-input"]`, {
       value: message,
@@ -144,7 +150,6 @@ export function createDesktopScenario({
     await control.command('press', `${selector} [data-testid="chat-message-input"]`, {
       key: 'Enter',
     })
-    return selector
   }
   async function observeDevice(control, device, status) {
     await control.command('navigate', 'body', { value: '/cloud-work' })
@@ -169,12 +174,18 @@ export function createDesktopScenario({
         return false
       const body = await readRequestBody(req)
       const input = JSON.stringify(body.input ?? [])
-      if (!input.includes(PROMPT) && !input.includes(LOCAL_PROMPT) && !input.includes(HOLD))
+      const reopened = input.includes(REOPEN_PROMPT)
+      if (
+        !reopened &&
+        !input.includes(PROMPT) &&
+        !input.includes(LOCAL_PROMPT) &&
+        !input.includes(HOLD)
+      )
         return false
       modelRequests++
       const id = `cloud-stand-in-${modelRequests}`
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-      if (input.includes(HOLD)) {
+      if (!reopened && input.includes(HOLD)) {
         heldResponse = res
         heldRequestSeen = true
         res.on('close', () => {
@@ -185,7 +196,9 @@ export function createDesktopScenario({
         res.end(
           createSse([
             responseCreated(id),
-            assistantMessage(input.includes(LOCAL_PROMPT) ? LOCAL_COMPLETE : COMPLETE),
+            assistantMessage(
+              reopened ? REOPEN_COMPLETE : input.includes(LOCAL_PROMPT) ? LOCAL_COMPLETE : COMPLETE
+            ),
             responseCompleted(id),
           ])
         )
@@ -415,20 +428,31 @@ export function createDesktopScenario({
 
       // Reopen a binding saved under a previous address through the current relay.
       const stopped = await binding(control)
+      const previousAddress = 'https://previous-stand-in.example.invalid/api'
       const original = await rpc(control, 'runtime.stand_in.binding', {
         operation: 'bind',
         version: stopped.version,
         target: {
           userId: USER,
           deviceId: CLOUD_DEVICE_ID,
-          backendUrl: 'https://previous-stand-in.example.invalid/api',
+          backendUrl: previousAddress,
         },
       })
+      assert.equal(
+        original.target.backendUrl,
+        previousAddress,
+        'The previous address must be saved'
+      )
       await remoteRpc('runtime.stand_in.personal.lifecycle', { userId: USER, operation: 'start' })
       await reloadMainWindow(control)
       await control.command('waitFor', testId('stand-in-overview'))
       await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${role.id}`))
       await control.command('waitFor', remoteChat, { text: COMPLETE })
+      await sendChat(control, remoteChat, REOPEN_PROMPT)
+      await control.command('waitFor', remoteChat, {
+        text: REOPEN_COMPLETE,
+        timeoutMs: modelResponseTimeoutMs,
+      })
       assert.deepEqual(
         await binding(control),
         original,
