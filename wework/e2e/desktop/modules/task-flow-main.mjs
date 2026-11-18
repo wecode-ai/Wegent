@@ -1585,8 +1585,8 @@ async function main() {
         ownerProcessId: process.pid,
       })
       await Promise.all([
-        appendProcessOutput(child.stdout, appLogPath),
-        appendProcessOutput(child.stderr, appLogPath),
+        appendProcessOutput(child.stdout, appLogPath, child),
+        appendProcessOutput(child.stderr, appLogPath, child),
       ])
       if (process.platform === 'win32') {
         const stopObserving = observeWindowsSocketExhaustion([child.stdout, child.stderr], () => {
@@ -4868,10 +4868,22 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     stopAsyncDiagnostics()
     const teardownFailures = []
     const runTeardownStep = async (label, action) => {
+      const startedAt = Date.now()
+      console.log('[desktop-e2e-teardown]', { label, status: 'started' })
       try {
         await action()
+        console.log('[desktop-e2e-teardown]', {
+          label,
+          status: 'completed',
+          elapsedMs: Date.now() - startedAt,
+        })
       } catch (error) {
         teardownFailures.push({ error, label })
+        console.error('[desktop-e2e-teardown]', {
+          label,
+          status: 'failed',
+          elapsedMs: Date.now() - startedAt,
+        })
       }
     }
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
