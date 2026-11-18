@@ -780,3 +780,19 @@ test.each([true, false])(
     )
   }
 )
+
+test('Windows encoded native input fits the CreateProcess command-line limit', async () => {
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  native.execute.mockResolvedValue({ stdout: '' })
+  await withNativePluginDecision(
+    { applicationProcessId: 2147483647, command: vi.fn() },
+    async () => null
+  )
+  const [command, args] = native.execute.mock.calls[0]
+  const commandLine = [command, ...args].map(arg => '"' + arg + '"').join(' ')
+  expect(commandLine.length + 1).toBeLessThanOrEqual(32767)
+  const script = Buffer.from(args.at(-1), 'base64').toString('utf16le')
+  expect(script).toContain('DialogButtons($dialogHandle, $targetPid)')
+  expect(script).not.toContain('FindAndRead(')
+  expect(script).not.toContain('private static int[] Read(')
+})

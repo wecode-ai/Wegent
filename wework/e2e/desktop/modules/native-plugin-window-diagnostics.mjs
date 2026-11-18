@@ -38,7 +38,7 @@ function Write-DecisionStage([string]$decisionStage) {
 }
 `
 
-export const WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE = `
+const WINDOWS_NATIVE_DIALOG_INTEROP = `
 using System;
 using System.Text;
 using System.Collections.Generic;
@@ -54,27 +54,9 @@ public static class WeworkNativeDialogStructure {
   [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
   [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr window);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int length);
-  public static int[] FindAndRead(int expectedPid, string[] titles) {
-    var matches = new List<IntPtr>();
-    bool complete = EnumWindows(delegate(IntPtr window, IntPtr data) {
-      uint pid;
-      GetWindowThreadProcessId(window, out pid);
-      if (pid != expectedPid) return true;
-      var name = new StringBuilder(256);
-      if (GetClassName(window, name, name.Capacity) <= 0 || name.ToString() != "#32770") return true;
-      var title = new StringBuilder(512);
-      if (GetWindowText(window, title, title.Capacity) <= 0 || Array.IndexOf(titles, title.ToString()) < 0) return true;
-      matches.Add(window);
-      return true;
-    }, IntPtr.Zero);
-    if (!complete) throw new InvalidOperationException("Native window enumeration failed");
-    if (matches.Count != 1) return new int[] { matches.Count };
-    var structure = Read(matches[0], expectedPid);
-    var result = new int[structure.Length + 1];
-    result[0] = 1;
-    Array.Copy(structure, 0, result, 1, structure.Length);
-    return result;
-  }
+`
+
+export const WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE = `${WINDOWS_NATIVE_DIALOG_INTEROP}
   private static bool OwnedWindow(IntPtr window, int expectedPid) {
     uint pid;
     GetWindowThreadProcessId(window, out pid);
@@ -106,6 +88,31 @@ public static class WeworkNativeDialogStructure {
     }, IntPtr.Zero);
     if (!readable) throw new InvalidOperationException("Native control classes are unavailable");
     return matches.ToArray();
+  }
+}
+`
+
+export const WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE = `${WINDOWS_NATIVE_DIALOG_INTEROP}
+  public static int[] FindAndRead(int expectedPid, string[] titles) {
+    var matches = new List<IntPtr>();
+    bool complete = EnumWindows(delegate(IntPtr window, IntPtr data) {
+      uint pid;
+      GetWindowThreadProcessId(window, out pid);
+      if (pid != expectedPid) return true;
+      var name = new StringBuilder(256);
+      if (GetClassName(window, name, name.Capacity) <= 0 || name.ToString() != "#32770") return true;
+      var title = new StringBuilder(512);
+      if (GetWindowText(window, title, title.Capacity) <= 0 || Array.IndexOf(titles, title.ToString()) < 0) return true;
+      matches.Add(window);
+      return true;
+    }, IntPtr.Zero);
+    if (!complete) throw new InvalidOperationException("Native window enumeration failed");
+    if (matches.Count != 1) return new int[] { matches.Count };
+    var structure = Read(matches[0], expectedPid);
+    var result = new int[structure.Length + 1];
+    result[0] = 1;
+    Array.Copy(structure, 0, result, 1, structure.Length);
+    return result;
   }
   private static int[] Read(IntPtr window, int expectedPid) {
     if (window == IntPtr.Zero) return new int[] { 0, -1, -1, -1, -1 };

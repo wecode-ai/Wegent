@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import {
   WINDOWS_DECISION_STAGE_DIAGNOSTICS,
-  WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE,
+  WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE,
   windowsNativeWindowDiagnosticScript,
   WINDOWS_NATIVE_DIAGNOSTIC_FIELDS,
   WINDOWS_UIA_STRUCTURE_DIAGNOSTICS,
@@ -94,7 +94,7 @@ Write-DecisionStage 'client-loaded'
 Add-Type -AssemblyName UIAutomationTypes
 Write-DecisionStage 'types-loaded'
 Add-Type -ErrorAction Stop -TypeDefinition @'
-${WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE}
+${WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE}
 '@
 Write-DecisionStage 'native-reader-loaded'
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, ${pid})
