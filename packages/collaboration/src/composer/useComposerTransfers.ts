@@ -17,7 +17,7 @@ export interface ComposerTransferServices {
   resolveTransfer: (
     data: DataTransfer,
     source: 'clipboard' | 'drop'
-  ) => Promise<ComposerPathTransfer>
+  ) => ComposerPathTransfer | Promise<ComposerPathTransfer>
 }
 export const browserComposerTransferServices: ComposerTransferServices = {
   hasPathTransfer: () => false,
@@ -75,13 +75,17 @@ export function useComposerTransfers({
       if (files.length > 0 || services.hasPathTransfer(clipboardData)) {
         event.preventDefault()
         setTransferError(null)
-        void services
-          .resolveTransfer(clipboardData, 'clipboard')
-          .then(async ({ attachmentFiles, referenceEntries }) => {
-            insertPathReferences(referenceEntries)
-            if (attachmentFiles.length > 0) await onPasteFiles?.(attachmentFiles)
-          })
-          .catch(reportError)
+        const accept = ({ attachmentFiles, referenceEntries }: ComposerPathTransfer) => {
+          insertPathReferences(referenceEntries)
+          return attachmentFiles.length > 0 ? onPasteFiles?.(attachmentFiles) : undefined
+        }
+        try {
+          const transfer = services.resolveTransfer(clipboardData, 'clipboard')
+          const accepted = transfer instanceof Promise ? transfer.then(accept) : accept(transfer)
+          void Promise.resolve(accepted).catch(reportError)
+        } catch (cause) {
+          reportError(cause)
+        }
         return true
       }
       if (!onPasteFiles) return false
@@ -133,8 +137,7 @@ export function useComposerTransfers({
       event.preventDefault()
       event.stopPropagation()
       setTransferError(null)
-      void services
-        .resolveTransfer(dataTransfer, 'drop')
+      void Promise.resolve(services.resolveTransfer(dataTransfer, 'drop'))
         .then(async ({ attachmentFiles, referenceEntries }) => {
           insertPathReferences(referenceEntries)
           if (attachmentFiles.length > 0) await onPasteFiles?.(attachmentFiles)

@@ -1,0 +1,12 @@
+{
+  "order": 156500,
+  "scenario": "./scenarios/runtime-load-performance.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 103000,
+      "shard": 6,
+      "position": 8000
+    }
+  }
+}

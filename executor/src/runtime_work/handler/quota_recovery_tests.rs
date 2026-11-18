@@ -6,6 +6,30 @@ use super::*;
 
 struct ProviderHold(PathBuf);
 
+#[tokio::test]
+async fn quota_recheck_reservation_remains_publicly_queued() {
+    let _lock = crate::test_env::lock();
+    let (handler, _root) = super::super::tests::isolated_runtime_work_handler("quota-recheck");
+    let turn = queued_wait("waiting", now_ms() - 1);
+    handler.store.upsert_task(RuntimeTaskLink::new_pending(
+        "waiting".into(),
+        "/work".into(),
+        "Wait".into(),
+    ));
+    handler.project_quota_waits(&VecDeque::from([turn.clone()]));
+    handler.reserve_turn_preparation(&turn);
+    let response = handler.get_task(&json!({"taskId":"waiting"})).unwrap();
+    assert_eq!(response["task"]["status"], "queued");
+    assert_eq!(response["task"]["running"], false);
+    assert_eq!(response["task"]["executionState"]["phase"], "queued");
+    assert!(response["task"]["runtimeHandle"]["quotaWait"].is_object());
+    assert!(handler
+        .preparing_turns
+        .lock()
+        .unwrap()
+        .contains_key("waiting"));
+}
+
 impl Drop for ProviderHold {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
