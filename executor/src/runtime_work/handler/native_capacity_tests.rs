@@ -1,5 +1,22 @@
 use super::*;
 
+#[test]
+fn quota_readmission_does_not_publish_a_stale_wait_with_running_state() {
+    let (handler, root, _) = setup("native-quota-readmission");
+    handler.store.update_task("task-1", |link| {
+        crate::runtime_work::lifecycle::queue_native_execution(link, 0, false);
+        link.runtime_handle["quotaWait"] = json!({"resumeAt": 1, "nextCheckAt": 1});
+    });
+    start_test_execution(&handler, "task-1");
+
+    let public = handler.get_task(&json!({"taskId": "task-1"})).unwrap();
+    assert_eq!(public["task"]["executionState"]["phase"], "starting");
+    assert_eq!(public["task"]["status"], "running");
+    assert_eq!(public["task"]["running"], true);
+    assert!(public["task"]["runtimeHandle"].get("quotaWait").is_none());
+    let _ = fs::remove_dir_all(root);
+}
+
 #[tokio::test]
 async fn native_continuation_retains_capacity_after_local_control_finishes() {
     for clear_during_turn in [false, true] {
