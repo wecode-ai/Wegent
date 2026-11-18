@@ -200,15 +200,9 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
             } else {
                 let response = result.unwrap();
                 assert_eq!(response["success"], true, "{response}");
-                assert!(
-                    handler
-                        .codex_app_server
-                        .thread_is_loaded("11111111-1111-4111-8111-111111111111")
-                        .await
-                );
                 assert_eq!(
                     response["resumed"], false,
-                    "The prepared native session owns continuation before turn notifications arrive"
+                    "Preparing a cold session must leave continuation owned by native Goal"
                 );
                 let repeated = handler
                     .set_task_goal(json!({

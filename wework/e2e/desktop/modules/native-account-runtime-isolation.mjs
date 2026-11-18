@@ -134,7 +134,7 @@ export async function verifyNativeAccountRuntimeIsolation({
     )
     assert.equal(await readFile(join(homePath, 'native-account-revoked'), 'utf8'), 'revoked')
     assert.equal(
-      (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-install-started')
+      (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-ensure-started')
         .length - 1,
       2,
       'Only startup preparation and the explicit foreground retry may install Python'

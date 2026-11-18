@@ -529,7 +529,7 @@ Enqueue, cancellation, and dequeue advance the same execution revision only afte
 persistence succeeds. Cancelling admission preserves the previous turn's result, and an
 older queued snapshot cannot make the cancelled task busy again.
 
-Prepare the model route before inspecting native session residency for Goal activation. A session loaded during preparation owns its native continuation after successful activation; its earlier cold state must not enqueue another recovery. Activation and the existing Goal journal still require durable persistence before admission can be acknowledged.
+Prepare the model route before Goal activation. The prepared native session owns continuation after successful activation, so activation does not enqueue another recovery. Activation and the existing Goal journal still require durable persistence before admission can be acknowledged.
 
 `recovering` means the executor owns Goal recovery or bounded retry backoff. Recovery awaiting admission has no process binding; backoff retains process ownership and must settle when that process exits. Recovery remains busy without an active model turn; its queued legacy
 `task.running: false` must not present that owned recovery as stopped.

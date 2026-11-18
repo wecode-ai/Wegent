@@ -405,9 +405,6 @@ impl RuntimeWorkRpcHandler {
         {
             return Ok(task_action_failure(&link, error.message));
         }
-        // Route preparation can load a cold session. Activation then owns its
-        // native continuation, so recovery must use this prepared residency.
-        let session_loaded = self.codex_app_server.thread_is_loaded(&thread_id).await;
         let mut params = Map::new();
         params.insert("threadId".to_owned(), Value::String(thread_id.clone()));
         if let Some(objective) = payload.get("objective").cloned() {
@@ -459,7 +456,7 @@ impl RuntimeWorkRpcHandler {
                     string_field(&goal, "status"),
                 );
                 self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
-                let resumed = if string_field(&goal, "status").as_deref() == Some("active") {
+                if string_field(&goal, "status").as_deref() == Some("active") {
                     self.journal_active_goal_turn(
                         &link.local_task_id,
                         self.active_codex_turn(&link.local_task_id).as_ref(),
@@ -467,19 +464,11 @@ impl RuntimeWorkRpcHandler {
                     // A successful activation must survive shutdown even when
                     // no local send still owns the native continuation.
                     self.persist_current_turn_state().await?;
-                    // The prepared session owns its native continuation,
-                    // even before its first turn notification.
-                    if session_loaded {
-                        false
-                    } else {
-                        self.resume_active_goal(&link.local_task_id).await?
-                    }
-                } else {
-                    false
-                };
+                    // Route preparation loaded the session before activation; native Goal owns continuation.
+                }
                 let mut response = task_action_success(&link);
                 response["goal"] = goal;
-                response["resumed"] = Value::Bool(resumed);
+                response["resumed"] = Value::Bool(false);
                 Ok(response)
             }
             // A timed-out mutation can still activate the native Goal. Only an
