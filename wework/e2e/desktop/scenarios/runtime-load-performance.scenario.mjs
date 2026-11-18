@@ -80,8 +80,8 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
       await control.command('reloadMainWindow', 'body')
       await control.awaitReadyAfter(readyCount, WORKBENCH_READY_TIMEOUT_MS)
 
-      let sidebarLoadMs = null
-      let conversationOpenMs = null
+      let sidebarElapsedMs = null
+      let conversationElapsedMs = null
       let rowVisibleAtReady = null
       let measurementError = null
       try {
@@ -91,7 +91,7 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
         const sidebarStartedAt = performance.now()
         rowVisibleAtReady = Number(await control.command('getElementCount', row)) > 0
         await control.command('waitFor', row, { visible: true, timeoutMs: uiTimeoutMs })
-        sidebarLoadMs = Number((performance.now() - sidebarStartedAt).toFixed(3))
+        sidebarElapsedMs = performance.now() - sidebarStartedAt
 
         await control.command('click', '[data-testid="new-chat-button"]')
         await waitForWorkbenchDebugState(
@@ -111,7 +111,7 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
             timeoutMs: uiTimeoutMs,
           }
         )
-        conversationOpenMs = Number((performance.now() - conversationStartedAt).toFixed(3))
+        conversationElapsedMs = performance.now() - conversationStartedAt
       } catch (error) {
         measurementError = error
       }
@@ -121,9 +121,10 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
         JSON.stringify(
           {
             budgetMs: LOAD_BUDGET_MS,
-            sidebarLoadMs,
+            sidebarLoadMs: sidebarElapsedMs == null ? null : Number(sidebarElapsedMs.toFixed(3)),
             rowVisibleAtReady,
-            conversationOpenMs,
+            conversationOpenMs:
+              conversationElapsedMs == null ? null : Number(conversationElapsedMs.toFixed(3)),
             taskId: task.taskId,
             error:
               measurementError instanceof Error
@@ -143,12 +144,12 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
         'The task row was visible before sidebar load timing started'
       )
       assert.ok(
-        sidebarLoadMs != null && sidebarLoadMs < LOAD_BUDGET_MS,
-        `Sidebar load exceeded ${LOAD_BUDGET_MS}ms: ${sidebarLoadMs}ms`
+        sidebarElapsedMs != null && sidebarElapsedMs < LOAD_BUDGET_MS,
+        `Sidebar load exceeded ${LOAD_BUDGET_MS}ms: ${sidebarElapsedMs}ms`
       )
       assert.ok(
-        conversationOpenMs != null && conversationOpenMs < LOAD_BUDGET_MS,
-        `Conversation open exceeded ${LOAD_BUDGET_MS}ms: ${conversationOpenMs}ms`
+        conversationElapsedMs != null && conversationElapsedMs < LOAD_BUDGET_MS,
+        `Conversation open exceeded ${LOAD_BUDGET_MS}ms: ${conversationElapsedMs}ms`
       )
     },
   }
