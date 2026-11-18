@@ -8,6 +8,8 @@ import { routeUpgradeRequests } from './upgrade-request-route.mjs'
 import { captureStartupNativeStack } from './startup-native-stack.mjs'
 import { requiresMacosQuitWorkaround } from '../../../electron/src/host/macos-quit-workaround.mjs'
 
+export { captureStartupNativeStack }
+
 const forceQuit = requiresMacosQuitWorkaround(process.platform, release())
 export const PROBE_EXPECTED_EXIT = forceQuit ? [null, 'SIGKILL'] : [0, null]
 export const PROBE_QUIT_SCRIPT = forceQuit

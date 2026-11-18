@@ -12,11 +12,14 @@ export function focusE2EWindow(target: FocusTarget, activate: () => void): Promi
       target.removeListener('focus', focused)
     }
     const focused = () => {
-      if (!target.isFocused()) return
+      if (!target.isFocused()) return false
       cleanup()
       resolve()
+      return true
     }
     const timeout = setTimeout(() => {
+      // Native state can settle without another focus notification.
+      if (focused()) return
       cleanup()
       reject(new Error('Native window activation did not acquire focus'))
     }, 5000)
