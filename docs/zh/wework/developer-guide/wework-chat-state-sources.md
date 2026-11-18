@@ -255,6 +255,11 @@ Wework 的 Codex 配置未设置子 agent 上限时，executor 初始化配置�
 其数值包含主线程。之后手动调整配置也会保留，重启运行时后生效。
 单代理模式仍禁用子 agent；默认额度不改变委派权限。
 
+`projects.list` 的项目目录同步包含 SQLite 初始化和 Git 元数据探测，必须在阻塞
+worker 中执行，不能占用 IPC reactor。并发枚举共用一个异步执行锁；请求超时或断开后，
+已启动的 worker 继续持有该锁直到结束，避免遗留查询叠加。枚举期间健康查询及其他
+IPC 请求仍可处理；不通过延长 UI 超时规避阻塞。
+
 用户发送引导时，Wework 先把引导消息乐观插入当前 turn，再调用
 `runtime.tasks.guidance`。如果 Codex `turn/steer` 明确返回预期 turn ID 与实际活跃
 turn ID 不一致，executor 用返回的实际 ID 纠正本次引导目标并只重试一次，不回写

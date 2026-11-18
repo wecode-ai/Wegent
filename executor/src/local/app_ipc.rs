@@ -21,6 +21,7 @@ use tokio::{
 use super::backend::runtime_rpc_encoding::encode_app_ipc_response;
 use super::event_stream::{event_sequence, ExecutorEventHub};
 mod connection_read_scope;
+mod project_listing;
 mod read_requests;
 use crate::{
     agents::resolve_codex_binary,
@@ -360,6 +361,7 @@ pub struct AppIpcServer {
     event_tx: broadcast::Sender<Value>,
     event_hub: ExecutorEventHub,
     bundled_plugin_marketplace: Arc<BlockingSingleFlight<BundledPluginMarketplace>>,
+    project_listing: Arc<Mutex<()>>,
     history_read_admission: Arc<ReadAdmission>,
     connection_read_admission: Arc<ReadAdmission>,
     connection_read_only: bool,
@@ -380,6 +382,7 @@ impl Default for AppIpcServer {
             event_tx,
             event_hub,
             bundled_plugin_marketplace: Arc::new(BlockingSingleFlight::default()),
+            project_listing: Arc::new(Mutex::new(())),
             history_read_admission: new_history_read_admission(),
             connection_read_admission: new_connection_read_admission(),
             connection_read_only: false,
@@ -941,6 +944,10 @@ impl AppIpcServer {
 
         if method == "device.execute_command" {
             return self.handle_device_command(params).await;
+        }
+
+        if method == "projects.list" {
+            return project_listing::list(self.project_listing.clone()).await;
         }
 
         if method.starts_with("milestones.")
@@ -2091,15 +2098,7 @@ fn app_ipc_event_data(message: &Value) -> Option<&Value> {
 }
 
 async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
-    let runtime = if method == "projects.list" {
-        wegent_runtime_logging::project_index_diagnostics::trace(
-            "projects_list.init",
-            TaskRuntime::from_env,
-        )
-    } else {
-        TaskRuntime::from_env()
-    }
-    .map_err(task_runtime_error)?;
+    let runtime = TaskRuntime::from_env().map_err(task_runtime_error)?;
     match method {
         "dws.auth_status" => serialize_task_value(
             runtime
@@ -2117,11 +2116,6 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
         }
-        "projects.list" => serialize_task_value(
-            runtime
-                .list_collaboration_projects()
-                .map_err(task_runtime_error)?,
-        ),
         "projects.create" => {
             let input = serde_json::from_value::<ProjectCreate>(params)
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;

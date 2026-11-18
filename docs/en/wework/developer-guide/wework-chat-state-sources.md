@@ -307,6 +307,13 @@ native precedence and counts the root. Later manual edits are preserved and
 take effect after restarting the runtime. Single-agent mode still disables
 subagents; the default capacity does not change delegation permissions.
 
+Project catalog synchronization in `projects.list` includes SQLite initialization
+and Git metadata discovery. It runs in a blocking worker rather than the IPC
+reactor. Concurrent listings share an asynchronous execution lock, which stays
+with an active worker after caller timeout or disconnect until the work finishes.
+Health queries and other IPC requests remain responsive during discovery; UI
+timeouts are not extended to hide blocking.
+
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
 Codex `turn/steer` explicitly reports that the expected turn ID differs from
