@@ -206,6 +206,7 @@ test.describe('Collaboration agent execution', () => {
         data: {
           runtime: 'wegent',
           wegent_team_id: resources.teamId,
+          share_with_workspace: true,
           name: `${TEST_PREFIX} managed Chat`,
         },
       }

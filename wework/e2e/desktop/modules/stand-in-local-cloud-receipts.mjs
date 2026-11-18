@@ -56,9 +56,58 @@ export async function verifyLocalCloudStandInReceipt(
     )
     assert.equal(String(assignment.target_id), String(userId))
     assert.equal(assignment.human_read_at, null, 'Background execution is not a human detail read')
+    const pending = await until(
+      () => request(`/v1/loop-items/${issue.id}/assignments`),
+      result =>
+        result.items.find(row => row.dispatch_receipt?.reasonCode === 'awaiting_publication'),
+      uiTimeoutMs,
+      'Unconfirmed output must wait for the owning human to publish it'
+    )
+    assert.equal(pending.dispatch_receipt.state, 'waiting_user')
+    assert.equal(pending.dispatch_receipt.confirmedMessageId, null)
+    assert.equal(pending.dispatch_receipt.deliveryId, null)
+    const commentPath = `/v1/cloud-projects/${settingsParams().projectId}/loop-items/${issue.id}/activity-comments`
+    const comments = await request(commentPath)
+    const result = comments.find(comment => comment.id === pending.dispatch_receipt.publicMessageId)
+    assert.ok(result?.body.trim(), 'The receipt must reference the real execution result')
+    assert.equal(result.generation_source, 'ai')
+    assert.equal(result.confirmation_state, 'pending')
+    const before = await request(`/v1/loop-items/${issue.id}`)
+    const publication = await request(commentPath, {
+      body: result.body,
+      assistant_source: { device_id: binding.device_id, task_id: binding.task_id },
+    })
+    assert.equal(publication.generation_source, 'ai')
+    assert.equal(publication.publication_source, 'human')
+    assert.equal(publication.confirmation_state, 'authorized')
+    const confirmed = await until(
+      () => request(`/v1/loop-items/${issue.id}/assignments`),
+      result =>
+        result.items.find(
+          row => row.id === pending.id && row.dispatch_receipt?.reasonCode === 'awaiting_delivery'
+        ),
+      uiTimeoutMs,
+      'A confirmed publication must still wait for a real Delivery'
+    )
+    assert.equal(confirmed.dispatch_receipt.state, 'waiting_user')
+    assert.equal(confirmed.dispatch_receipt.confirmedMessageId, publication.id)
+    assert.equal(confirmed.dispatch_receipt.deliveryId, null)
+    const draft = await request(`/v1/loop-items/${issue.id}/deliveries`, {
+      title: `${marker}_LOCAL_APP_DELIVERY`,
+      markdown: result.body,
+      source_task: { device_id: binding.device_id, task_id: binding.task_id },
+    })
+    assert.equal(draft.status, 'draft')
+    const delivery = await request(`/v1/deliveries/${draft.id}/finalize`, { fulfillments: [] })
+    assert.equal(delivery.status, 'delivered')
+    assert.equal(delivery.source_task_snapshot.taskId, binding.task_id)
+    assert.equal(delivery.source_task_snapshot.deviceId, binding.device_id)
     const completed = await until(
       () => request(`/v1/loop-items/${issue.id}/assignments`),
-      result => result.items.find(row => row.dispatch_receipt?.state === 'completed'),
+      result =>
+        result.items.find(
+          row => row.id === pending.id && row.dispatch_receipt?.state === 'completed'
+        ),
       uiTimeoutMs,
       'Published work must persist its assignment completion receipt'
     )
@@ -67,13 +116,14 @@ export async function verifyLocalCloudStandInReceipt(
     assert.equal(String(receipt.ownerUserId), String(userId))
     assert.equal(receipt.runtimeTaskId, binding.task_id)
     assert.ok(receipt.humanAssignmentId)
-    const comments = await request(
-      `/v1/cloud-projects/${settingsParams().projectId}/loop-items/${issue.id}/activity-comments`
-    )
+    assert.equal(receipt.publicMessageId, result.id)
+    assert.equal(receipt.confirmedMessageId, publication.id)
+    assert.equal(receipt.deliveryId, delivery.id)
     assert.ok(
       comments.some(comment => comment.id === receipt.publicMessageId && comment.body.trim()),
       'Completion must reference an actual public result from the owning execution'
     )
+    assert.equal((await request(`/v1/loop-items/${issue.id}`)).status, before.status)
     const refreshed = await request(`/v1/loop-items/${issue.id}/assignments`)
     assert.deepEqual(
       refreshed.items.find(row => row.id === completed.id).dispatch_receipt,

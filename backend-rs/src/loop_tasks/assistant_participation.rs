@@ -424,11 +424,17 @@ async fn participation_sources<M: Mysql>(
     issue: &str,
     owner: i32,
 ) -> MysqlResult<Vec<ParticipationSource>> {
+    // Declare one text type for each UNION column. Historical table and connection
+    // collations may differ. UNION ALL preserves every identifier without comparing
+    // it; a text collation also keeps the driver from treating strings as bytes.
     mysql
         .fetch_all(
-            "SELECT 'binding' AS source_kind, id AS source_id, task_user_id AS owner_user_id, \
-               COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in_conversation_id')),'null'), task_id) AS conversation_id, \
-               NULL AS role_id, device_id, task_id, \
+            "SELECT CONVERT('binding' USING utf8mb4) COLLATE utf8mb4_unicode_ci AS source_kind, \
+               CONVERT(id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS source_id, task_user_id AS owner_user_id, \
+               CONVERT(COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in_conversation_id')),'null'), task_id) USING utf8mb4) COLLATE utf8mb4_unicode_ci AS conversation_id, \
+               CAST(NULL AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS role_id, \
+               CONVERT(device_id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS device_id, \
+               CONVERT(task_id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS task_id, \
                CASE WHEN device_id<>'' AND task_id<>'' THEN 1 ELSE 0 END AS available, created_at AS source_created_at \
              FROM loop_items WHERE resource_type='execution' AND cloud_project_id=? \
                AND loop_item_id=? AND task_user_id=? \
@@ -878,6 +884,7 @@ mod tests {
         assert!(!sql.contains("SELECT content"));
         assert!(!sql.contains("wework_transcripts"));
         assert!(!sql.contains("m.sender_id=CAST(? AS CHAR)"));
+        assert_eq!(sql.matches("COLLATE utf8mb4_unicode_ci AS").count(), 6);
     }
 }
 
@@ -889,13 +896,54 @@ mod mysql_tests {
     async fn reads_execution_sources_from_the_deployed_schema() -> anyhow::Result<()> {
         crate::migrations::mysql_tests::isolated(async |mysql| {
             crate::migrations::mysql_tests::seed_collaboration(mysql).await?;
-            mysql.execute("INSERT INTO loop_item_executions (loop_item_id,cloud_project_id,executor_owner_user_id,runtime_device_id,runtime_task_id,error_message,execution_payload) VALUES ('root','1001',7,'device','run','','{}')", ()).await?;
-            assert_eq!(source_owner_ids(mysql,"1001","root").await?, vec![7]);
-            let sources = participation_sources(mysql,"1001","root",7).await?;
-            assert_eq!(sources.len(),1);
-            assert_eq!(sources[0].owner_user_id,7);
-            assert_eq!(sources[0].task_id.as_deref(),Some("run"));
+            seed_mixed_sources(mysql).await?;
+            for collation in ["utf8mb4_0900_ai_ci", "utf8mb4_unicode_ci", "utf8mb4_bin"] {
+                // The fixture owns a single-connection pool, closed before schema cleanup.
+                mysql
+                    .execute(format!("SET NAMES utf8mb4 COLLATE {collation}"), ())
+                    .await?;
+                assert_eq!(source_owner_ids(mysql, "1001", "root").await?, vec![7]);
+                let sources = participation_sources(mysql, "1001", "root", 7).await?;
+                assert_eq!(sources.len(), 3, "{collation}");
+                for (kind, task) in [
+                    ("binding", "Task-私人"),
+                    ("execution", "run"),
+                    ("message", "Task-消息"),
+                ] {
+                    let source = sources
+                        .iter()
+                        .find(|source| source.source_kind == kind)
+                        .unwrap();
+                    assert_eq!(source.owner_user_id, 7);
+                    assert_eq!(source.task_id.as_deref(), Some(task));
+                }
+                let binding = sources
+                    .iter()
+                    .find(|source| source.source_kind == "binding")
+                    .unwrap();
+                assert_eq!(binding.source_id, "Binding-来源");
+                assert_eq!(binding.device_id.as_deref(), Some("Device-设备"));
+                let message = sources
+                    .iter()
+                    .find(|source| source.source_kind == "message")
+                    .unwrap();
+                assert_eq!(message.role_id.as_deref(), Some("评审"));
+                assert!(
+                    participation_sources(mysql, "1001", "root", 8)
+                        .await?
+                        .is_empty()
+                );
+            }
             Ok(())
-        }).await
+        })
+        .await
+    }
+
+    async fn seed_mixed_sources(mysql: &brz_mysql::MysqlService) -> anyhow::Result<()> {
+        mysql.execute("ALTER TABLE loop_item_executions MODIFY runtime_device_id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '', MODIFY runtime_task_id VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT ''", ()).await?;
+        mysql.execute("INSERT INTO loop_items (id,resource_type,cloud_project_id,loop_item_id,task_user_id,device_id,task_id,metadata,description,created_at,updated_at) VALUES ('Binding-来源','execution','1001','root',7,'Device-设备','Task-私人','{}','',UTC_TIMESTAMP(),UTC_TIMESTAMP())", ()).await?;
+        mysql.execute("INSERT INTO loop_item_executions (loop_item_id,cloud_project_id,executor_owner_user_id,runtime_device_id,runtime_task_id,error_message,execution_payload) VALUES ('root','1001',7,'device','run','','{}')", ()).await?;
+        mysql.execute("INSERT INTO project_chat_messages (message_id,project_id,task_id,sender_type,content,runtime_device_id,runtime_task_id,metadata) VALUES ('Message-来源','1001','root','agent','','Device-消息','Task-消息',?)", (Json(json!({"stand_in":{"user_id":7,"role_id":"评审"}})),)).await?;
+        Ok(())
     }
 }
