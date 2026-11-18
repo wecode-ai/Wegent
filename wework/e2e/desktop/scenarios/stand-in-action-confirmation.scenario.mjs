@@ -165,7 +165,7 @@ export function createDesktopScenario({
       )
       assert.ok(!approvalText.includes('允许此命令规则') && !approvalText.includes('以后不再询问'))
       const question = '[data-testid="request-user-input-question-__codex_approval"]'
-      const removal = `${question} strong.text-error`
+      const removal = `${question} strong.text-destructive`
       assert.equal(await control.command('getText', removal), 'rm')
       assert.equal(Number(await control.command('getElementCount', removal)), 1)
       assert.notEqual(

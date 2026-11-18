@@ -551,7 +551,7 @@ const CODEX_APPROVAL_QUESTION_ID = "__codex_approval";
 function highlightRm(commandText: string) {
   return commandText.split(/(?<![\w.-])(rm)(?![\w./-])/).map((part, index) =>
     index % 2 === 1 ? (
-      <strong key={index} className="font-semibold text-error">
+      <strong key={index} className="font-semibold text-destructive">
         {part}
       </strong>
     ) : (
