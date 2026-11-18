@@ -8,7 +8,7 @@ import gc
 from copy import deepcopy
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 from sqlalchemy.orm import ORMExecuteState, Session
 
 from app.models.kind import Kind
@@ -225,6 +225,12 @@ def verify_failed_bootstrap_rolls_back_and_can_retry(
     test_db: Session, failed_slug: str | None
 ) -> None:
     model = Kind if failed_slug else SystemConfig
+    staged_rows: list[Kind] = []
+
+    def retain_staged_rows(
+        session: Session, _flush_context: object, _instances: object
+    ) -> None:
+        staged_rows.extend(row for row in session.dirty if isinstance(row, Kind))
 
     def reject_insert(
         _mapper: object, _connection: object, row: Kind | SystemConfig
@@ -232,12 +238,18 @@ def verify_failed_bootstrap_rolls_back_and_can_retry(
         if isinstance(row, SystemConfig) or row.name == failed_slug:
             raise RuntimeError("test bootstrap write failure")
 
+    event.listen(test_db, "before_flush", retain_staged_rows)
     event.listen(model, "before_insert", reject_insert)
     try:
         with pytest.raises(RuntimeError, match="test bootstrap write failure"):
             ensure_builtin_connector_apps(test_db)
     finally:
         event.remove(model, "before_insert", reject_insert)
+        event.remove(test_db, "before_flush", retain_staged_rows)
+
+    if failed_slug != BUILTIN_CONNECTOR_APPS[0].slug:
+        assert staged_rows
+    assert all(inspect(row).transient for row in staged_rows)
 
     assert (
         test_db.query(Kind)

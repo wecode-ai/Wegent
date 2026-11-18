@@ -9,6 +9,56 @@ import { expect, it } from 'vitest'
 const launcher = resolve(import.meta.dirname, '../e2e/desktop/run-with-xvfb.sh')
 const fixtureTimeoutMs = 10_000
 
+function displayFixture() {
+  const directory = mkdtempSync(join(tmpdir(), 'wegent-xvfb-logging-'))
+  writeFileSync(join(directory, 'mcookie'), '#!/bin/sh\nprintf synthetic-checkpoint-cookie', {
+    mode: 0o755,
+  })
+  writeFileSync(join(directory, 'xauth'), '#!/bin/sh\ntest -f "$2"', { mode: 0o755 })
+  writeFileSync(
+    join(directory, 'Xvfb'),
+    `#!/bin/sh
+set -eu
+printf '%s|' "$@" > "$XVFB_TEST_DIR/arguments"
+printf '%s' "$$" > "$XVFB_TEST_DIR/server-pid"
+display=199
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    :*) display=\${1#:} ;;
+    -auth) shift; auth_file=$1 ;;
+  esac
+  shift
+done
+log_file="$(dirname "$auth_file")/Xvfb.log"
+printf '%s' "$log_file" > "$XVFB_TEST_DIR/log-path"
+printf '%s' "$auth_file" > "$XVFB_TEST_DIR/auth-path"
+printf '%s\\n' 'Xvfb fixture diagnostic' >&2
+if [ "\${XVFB_TEST_REMOVE_LOG:-}" = 1 ]; then rm -f "$log_file"; fi
+if [ "\${XVFB_TEST_FAIL_START:-}" = 1 ]; then exit 23; fi
+# Publish readiness immediately, without sending a transient parent signal.
+printf '%s\\n' "$display" >&3
+exec sleep 60
+`,
+    { mode: 0o755 }
+  )
+  return directory
+}
+
+function launch(directory, command, environment = {}) {
+  return spawnSync('sh', [launcher, ...command], {
+    env: {
+      ...process.env,
+      PATH: `${directory}:${process.env.PATH}`,
+      XVFB_TEST_DIR: directory,
+      WEWORK_E2E_XVFB_SERVER_NUM: '',
+      WEWORK_E2E_XVFB_SCREEN: '',
+      ...environment,
+    },
+    encoding: 'utf8',
+    timeout: fixtureTimeoutMs,
+  })
+}
+
 it.each([
   { exitCode: 0 },
   { exitCode: 37 },
@@ -18,89 +68,67 @@ it.each([
   { exitCode: 127, missingCommand: true },
   { exitCode: 0, screen: '1280x900x24' },
 ])(
-  'preserves diagnostics, cleanup and exit status for %j',
+  'preserves readiness, diagnostics, cleanup and exit status for %j',
   ({ exitCode, serverNum, removeLog, missingCommand, screen }) => {
-    const directory = mkdtempSync(join(tmpdir(), 'wegent-xvfb-logging-'))
+    const directory = displayFixture()
     try {
-      writeFileSync(
-        join(directory, 'xvfb-run'),
-        `#!/bin/sh
-set -eu
-printf '%s|' "$@" > "$XVFB_TEST_DIR/arguments"
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -a|--server-num=*|--server-args=*) shift ;;
-    --error-file=*) error_file=\${1#--error-file=}; shift ;;
-    *) break ;;
-  esac
-done
-test -f "$error_file"
-printf '%s' "$error_file" > "$XVFB_TEST_DIR/log-path"
-printf '%s\\n' 'Xvfb fixture diagnostic' >> "$error_file"
-if [ "\${XVFB_TEST_REMOVE_LOG:-}" = 1 ]; then rm -f "$error_file"; fi
-"$@"
-`,
-        { mode: 0o755 }
-      )
       const command = missingCommand
         ? ['missing-wegent-test-command']
         : ['sh', '-c', `printf 'launcher stderr' >&2; exit ${exitCode}`]
-      const result = spawnSync('sh', [launcher, ...command], {
-        env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH}`,
-          XVFB_TEST_DIR: directory,
-          WEWORK_E2E_XVFB_SERVER_NUM: serverNum ?? '',
-          WEWORK_E2E_XVFB_SCREEN: screen ?? '',
-          XVFB_TEST_REMOVE_LOG: removeLog ? '1' : '0',
-        },
-        encoding: 'utf8',
-        timeout: fixtureTimeoutMs,
+      const result = launch(directory, command, {
+        WEWORK_E2E_XVFB_SERVER_NUM: serverNum ?? '',
+        WEWORK_E2E_XVFB_SCREEN: screen ?? '',
+        XVFB_TEST_REMOVE_LOG: removeLog ? '1' : '0',
       })
       expect(result.error).toBeUndefined()
       expect(result.status, result.stderr).toBe(exitCode)
       if (!removeLog) expect(result.stderr).toContain('Xvfb fixture diagnostic')
       if (!missingCommand) expect(result.stderr).toContain('launcher stderr')
       expect(existsSync(readFileSync(join(directory, 'log-path'), 'utf8'))).toBe(false)
+      expect(existsSync(readFileSync(join(directory, 'auth-path'), 'utf8'))).toBe(false)
+      const pid = Number(readFileSync(join(directory, 'server-pid'), 'utf8'))
+      expect(() => process.kill(pid, 0)).toThrow()
       const args = readFileSync(join(directory, 'arguments'), 'utf8').split('|')
-      expect(args).toContain(`--server-args=-noreset -screen 0 ${screen ?? '1280x720x24'}`)
-      if (serverNum) {
-        expect(args).toContain(`--server-num=${serverNum}`)
-        expect(args).not.toContain('-a')
-      } else {
-        expect(args).toContain('-a')
-        expect(args.some(argument => argument.startsWith('--server-num='))).toBe(false)
-      }
+      expect(args).toContain('-noreset')
+      expect(args).toContain('-displayfd')
+      expect(args).toContain('-auth')
+      expect(args).not.toContain('-ac')
+      expect(args).toContain(screen ?? '1280x720x24')
+      if (serverNum) expect(args).toContain(`:${serverNum}`)
+      else expect(args.some(argument => argument.startsWith(':'))).toBe(false)
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
   },
-  // The outer deadline must include the synchronous child's existing timeout.
   fixtureTimeoutMs + 5_000
 )
+
+it('does not start the checkpoint when the display exits before readiness', () => {
+  const directory = displayFixture()
+  try {
+    const marker = join(directory, 'checkpoint-started')
+    const result = launch(directory, ['touch', marker], { XVFB_TEST_FAIL_START: '1' })
+    expect(result.error).toBeUndefined()
+    expect(result.status, result.stderr).toBe(23)
+    expect(result.stderr).toContain('Xvfb fixture diagnostic')
+    expect(result.stderr).toContain('Xvfb exited before publishing its display')
+    expect(existsSync(marker)).toBe(false)
+    expect(existsSync(readFileSync(join(directory, 'auth-path'), 'utf8'))).toBe(false)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 it.each(['1280x900', '0x900x24', '1280x-1x24', '1280x900x8', '1280x900x24 -ac'])(
   'rejects invalid screen %j before launching Xvfb',
   screen => {
-    const directory = mkdtempSync(join(tmpdir(), 'wegent-xvfb-invalid-screen-'))
+    const directory = displayFixture()
     try {
-      const marker = join(directory, 'launched')
-      writeFileSync(join(directory, 'xvfb-run'), `#!/bin/sh\ntouch '${marker}'\n`, {
-        mode: 0o755,
-      })
-      const result = spawnSync('sh', [launcher, 'true'], {
-        env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH}`,
-          WEWORK_E2E_XVFB_SCREEN: screen,
-        },
-        encoding: 'utf8',
-        timeout: 10_000,
-      })
+      const result = launch(directory, ['true'], { WEWORK_E2E_XVFB_SCREEN: screen })
       expect(result.error).toBeUndefined()
       expect(result.status).toBe(2)
       expect(result.stderr).toContain('WEWORK_E2E_XVFB_SCREEN must be')
-      expect(existsSync(marker)).toBe(false)
+      expect(existsSync(join(directory, 'server-pid'))).toBe(false)
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
