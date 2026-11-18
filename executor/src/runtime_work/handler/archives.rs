@@ -399,6 +399,9 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_goal_missing_session(&link));
         };
 
+        // Capture ownership before the route preparation below resumes the
+        // session to apply the execution profile.
+        let session_loaded = self.codex_app_server.thread_is_loaded(&thread_id).await;
         if let Err(error) = self
             .prepare_goal_model_route(&link, &thread_id, &payload)
             .await
@@ -464,11 +467,12 @@ impl RuntimeWorkRpcHandler {
                     // A successful activation must survive shutdown even when
                     // no local send still owns the native continuation.
                     self.persist_current_turn_state().await?;
-                    // A loaded Goal already owns native inference, even before its first turn notification.
-                    if self.codex_app_server.goal_requires_resume(&thread_id).await {
-                        self.resume_active_goal(&link.local_task_id).await?
-                    } else {
+                    // A session that was already resident owns its native
+                    // continuation, even before its first turn notification.
+                    if session_loaded {
                         false
+                    } else {
+                        self.resume_active_goal(&link.local_task_id).await?
                     }
                 } else {
                     false
