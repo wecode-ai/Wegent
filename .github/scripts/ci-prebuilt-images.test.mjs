@@ -331,11 +331,14 @@ test("Fork Executor consumers do not require a registry login for public images"
   const consumer = workflow("e2e-tests").jobs["executor-e2e-tests"];
   const login = consumer.steps.find((step) => step.name === "Log in to GHCR");
   const enabled = (eventName, headRepository) =>
-    login.if === undefined || runInNewContext(login.if, {
+    login.if === undefined ||
+    runInNewContext(login.if, {
       github: {
         event_name: eventName,
         repository: "wecode-ai/Wegent",
-        event: { pull_request: { head: { repo: { full_name: headRepository } } } },
+        event: {
+          pull_request: { head: { repo: { full_name: headRepository } } },
+        },
       },
     });
   assert.equal(enabled("pull_request", "fork-owner/Wegent"), false);
@@ -841,7 +844,7 @@ test("download bundles are restored once and reject unexpected archive paths", (
     );
     executable(
       join(directory, ".github/scripts/restore-oci-runtime-binary.sh"),
-      'test -z "$GITHUB_TOKEN$GITHUB_ACTOR"\ncp "$TEST_ARCHIVE" "$3"\necho restored >> "$TEST_RESTORE_LOG"',
+      'test -z "$GITHUB_TOKEN$GITHUB_ACTOR"\nif [[ "${TEST_RESTORE_EXIT:-0}" != 0 ]]; then echo "synthetic restore failure" >&2; exit "$TEST_RESTORE_EXIT"; fi\ncp "$TEST_ARCHIVE" "$3"\necho restored >> "$TEST_RESTORE_LOG"',
     );
     const env = {
       ...process.env,
@@ -863,6 +866,19 @@ test("download bundles are restored once and reject unexpected archive paths", (
         encoding: "utf8",
       });
     assert.equal(run({ TEST_IMAGE_EXISTS: "false" }).status, 0);
+    assert.equal(existsSync(env.TEST_RESTORE_LOG), false);
+    const unavailable = run({ TEST_RESTORE_EXIT: "75" });
+    assert.equal(unavailable.status, 0, unavailable.stderr);
+    assert.match(unavailable.stderr, /synthetic restore failure/);
+    assert.match(unavailable.stdout, /CI download cache is unavailable/);
+    assert.equal(existsSync(env.TEST_RESTORE_LOG), false);
+    assert.equal(
+      existsSync(join(env.WEWORK_CI_DOWNLOAD_CACHE_DIR, "ci-downloads-image")),
+      false,
+    );
+    const broken = run({ TEST_RESTORE_EXIT: "1" });
+    assert.notEqual(broken.status, 0);
+    assert.match(broken.stderr, /synthetic restore failure/);
     assert.equal(existsSync(env.TEST_RESTORE_LOG), false);
     const success = run({});
     assert.equal(success.status, 0, success.stderr);
