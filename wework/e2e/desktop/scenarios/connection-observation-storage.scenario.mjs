@@ -23,6 +23,7 @@ export function createDesktopScenario(options) {
   const snapshot = () => {
     const database = new DatabaseSync(databasePath, { readOnly: true })
     try {
+      database.exec('PRAGMA busy_timeout=250')
       return database.prepare('SELECT section,id,value,consumers FROM records').all()
     } finally {
       database.close()
