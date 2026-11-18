@@ -180,6 +180,27 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
                     .await
                     .unwrap();
             }
+            if !loaded {
+                // Model-route preparation resumes the thread. Simulate a native unload
+                // before activation so this case actually exercises cold Goal recovery.
+                fs::write(
+                    root.join("thread_goal_set.notifications.jsonl"),
+                    [
+                        json!({"method":"thread/status/changed", "params": {
+                            "threadId":"11111111-1111-4111-8111-111111111111",
+                            "status":{"type":"notLoaded"}
+                        }}),
+                        json!({"method":"thread/goal/updated", "params": {
+                            "threadId":"11111111-1111-4111-8111-111111111111",
+                            "goal":{"status":"active", "tokensUsed":10}
+                        }}),
+                    ]
+                    .map(|notification| notification.to_string())
+                    .join("\n")
+                        + "\n",
+                )
+                .unwrap();
+            }
             if fail_persistence {
                 let blocked = root.join("blocked-queue-parent");
                 fs::write(&blocked, "not a directory").unwrap();
