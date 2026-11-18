@@ -391,7 +391,7 @@ classify_wework_path() {
     # visibility lifecycle, so background policy changes own this checkpoint.
     wework/electron/src/host/window-background-policy* | \
       wework/e2e/desktop/scenarios/window-background-policy.scenario.mjs)
-      select_target "core:window-background-policy"
+      select_target "core:window-lifecycle"
       return
       ;;
 
@@ -402,7 +402,7 @@ classify_wework_path() {
       wework/src/desktop/ApplicationMenuWorkspaceBridge* | \
       wework/src/components/topnav/ApplicationMenuButton* | \
       wework/e2e/desktop/scenarios/application-menu.scenario.mjs)
-      select_target "core:application-menu"
+      select_target "core:window-lifecycle"
       return
       ;;
 

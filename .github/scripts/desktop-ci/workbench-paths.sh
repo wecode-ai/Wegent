@@ -516,7 +516,7 @@ classify_workbench_path() {
       wework/src/components/settings/GitHostingSettingsPage* | \
       wework/src/types/gitCredentials.ts | \
       wework/e2e/desktop/scenarios/change-request-status.scenario.mjs)
-      select_target "core:change-request-status"
+      select_target "core:core-task-flow"
       return
       ;;
 

@@ -28,11 +28,10 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Windows background policy runs its native checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"window-background-policy"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"window-lifecycle"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/electron/src/host/window-background-policy.ts" \
-  "wework/e2e/desktop/scenarios/window-background-policy.scenario.mjs"
 
 assert_desktop_case "Issue navigation source changes retain existing coverage and select notification reads" \
   'wework_desktop_e2e=true

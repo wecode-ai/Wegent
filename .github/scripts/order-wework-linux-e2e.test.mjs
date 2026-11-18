@@ -176,7 +176,7 @@ function completionSeconds(checkpoints, seconds) {
 
 test('reuses the existing history runner after its isolated checkpoint', async () => {
   const checkpoints = [
-    'application-menu',
+    'codex-native-catalog',
     'automation-lifecycle',
     'embedded-browser',
     'task-board-association',
@@ -265,7 +265,7 @@ test('balancing includes exclusive startup checkpoints before the four-worker qu
     'plugin-uninstall-lost-response': 60,
     'release-package-startup': 100,
     'collaboration-issue-task-discovery': 80,
-    'application-menu': 80,
+    'codex-native-catalog': 80,
     'automation-lifecycle': 20,
     'embedded-browser': 60,
     'task-board-association': 100,
@@ -313,14 +313,14 @@ test('balancing distributes the four-worker tail across existing Core runners', 
         segments:
           'plugin-development,harness-app-lifecycle,harness-app-models,temporary-chat,core-task-flow',
       },
-      { id: 'core-2', segments: 'application-menu' },
+      { id: 'core-2', segments: 'codex-native-catalog' },
       { id: 'core-6', segments: 'running-conversation-history' },
     ],
   }
   const seconds = Object.fromEntries(
     expandDesktopCheckpoints(
       matrix.include.flatMap((entry) => entry.segments.split(',')),
-    ).map((name) => [name, name === 'application-menu' ? 10 : 100]),
+    ).map((name) => [name, name === 'codex-native-catalog' ? 10 : 100]),
   )
   const balanced = balanceLinuxCoreMatrix(matrix, seconds)
   const maximum = (selection) =>
