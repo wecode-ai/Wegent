@@ -111,7 +111,7 @@ Record an issue directly at the top of **Collaboration → My work**; choose the
 
 In a narrow window, select **Collaboration navigation** above the page to reveal the complete Issue, project and management navigation. Selecting a destination closes it; select the entry again or press Escape to return to the content. The navigation temporarily occupies the content area while drafts remain intact. The top workspace strip reveals its current tab after switching or resizing. Arrow keys, Home and End move tab focus; Enter or Space activates it.
 
-With no projects yet, the home starts with **Start with your first issue**. **New issue** opens the existing independent-Issue form without requiring a project. Independent Issues belong to the signed-in account; if disconnected, complete the existing sign-in flow first. Project association remains optional. To create or import a project, open **Projects → Personal group → Create project** in the sidebar; blank projects, local folders and existing projects remain available.
+With no projects yet, the home starts with **Start with your first issue**. **New issue** opens the existing independent-Issue form without requiring a project. Independent Issues belong to the signed-in account; if disconnected, complete the existing sign-in flow first. Project association remains optional. To create or import a project, open **Projects → Personal group → …** in the sidebar and choose **New project**, **Create from local folder** or **Import existing project**.
 
 **Collaboration project** selects where the Issue is saved; **Code workspace (optional)** in **Create task** selects the code directory used for execution. These selections are independent. Work that does not need a repository can run without a code directory. The recording area stays compact; mode switches retain drafts and attachments.
 
@@ -367,10 +367,12 @@ Issue visibility is set separately during project creation, in project settings,
 
 DingTalk controls access to AI Table records. Wework project roles control entry and editing in its table view.
 
-### Import more projects into the local space
+<a id="local-project-import"></a>
 
-Wework automatically adds local Task projects to the local space during initial
-setup. To add more projects, use the **New project** dropdown in a local group’s project list. Import options appear when local import is supported and are not repeated in the creation dialog:
+### Import more projects into the personal group
+
+Wework automatically adds local Task projects to the personal group during initial
+setup. To add more projects, open **Collaboration → Projects → Personal group → …** and choose an import action below. These actions remain available while connected to the cloud, always store projects on the current device and show them under the unified personal group. They appear only when the host provides local project storage and importing, and are not repeated in the creation dialog:
 
 - **Import existing project** lists projects that already exist on the Tasks
   page but are not yet in the local space. Wework deduplicates them by runtime

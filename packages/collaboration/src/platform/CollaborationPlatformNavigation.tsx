@@ -200,6 +200,23 @@ export function CollaborationPlatformNavigation({
   const localWorkspace = workspaces.find(
     (workspace) => allowLocalProjects && workspace.location === "local",
   );
+  const localProjectImportActions =
+    localWorkspace && host.renderProjectImporter
+      ? [
+          {
+            label: messages.addFolder,
+            icon: FolderPlus,
+            testId: "collaboration-workspace-nav-add-folder",
+            onSelect: () => onCreateProject(localWorkspace.id, "folder"),
+          },
+          {
+            label: messages.importExistingProject,
+            icon: FolderOpen,
+            testId: "collaboration-workspace-nav-import-existing-project",
+            onSelect: () => onCreateProject(localWorkspace.id, "existing"),
+          },
+        ]
+      : [];
   const createWorkspaceButton = canCreateWorkspace ? (
     <button
       type="button"
@@ -248,30 +265,13 @@ export function CollaborationPlatformNavigation({
                     testId: "collaboration-workspace-nav-create-blank-project",
                     onSelect: () => onCreateProject(candidate.id, "blank"),
                   },
-                  ...(candidate.location === "local" &&
-                  localWorkspace &&
-                  host.renderProjectImporter
-                    ? [
-                        {
-                          label: messages.addFolder,
-                          icon: FolderPlus,
-                          testId: "collaboration-workspace-nav-add-folder",
-                          onSelect: () =>
-                            onCreateProject(localWorkspace!.id, "folder"),
-                        },
-                        {
-                          label: messages.importExistingProject,
-                          icon: FolderOpen,
-                          testId:
-                            "collaboration-workspace-nav-import-existing-project",
-                          onSelect: () =>
-                            onCreateProject(localWorkspace!.id, "existing"),
-                        },
-                      ]
+                  ...(candidate.location === "local"
+                    ? localProjectImportActions
                     : []),
                 ],
               }),
         },
+        ...(isDefault ? localProjectImportActions : []),
         ...(canOpen
           ? [
               {

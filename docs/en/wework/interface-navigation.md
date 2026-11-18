@@ -102,6 +102,8 @@ From **Projects → New project → Cloud project** in the sidebar, you can add 
 
 Edit Agent definitions from **Project settings → AI configuration**. Project Maintainers can edit non-private project definitions; shared source definitions retain their original permissions. Imported and manually created Agents share the same entry. See [Agent configuration](./projects.md#agent-capabilities) for device-conflict recovery.
 
+Import a local project: **Collaboration → Projects → Personal group → … → Import existing project / Create from local folder**. Projects remain on the current device while connected to the cloud; the host must support local importing. See [Import into the personal group](./projects.md#local-project-import).
+
 ## Sidebar feature entries
 
 Project settings in narrow windows collapse the sidebar into **Collaboration navigation** above the page. Expand it for Home, projects and other collaboration entries; choosing a location collapses it again. See [Project settings](./projects.md).

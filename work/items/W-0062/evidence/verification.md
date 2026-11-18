@@ -176,6 +176,16 @@ MAN-08 的前提现在明确为两个模型均已真实就绪：C 在项目创�
 
 前一提交 `308dcbca2b` 已实际通过 [task-model-deletion](https://github.com/wecode-ai/Wegent/actions/runs/44224766180/job/134539053088)（02:55:58 UTC）与 [Plugins](https://github.com/wecode-ai/Wegent/actions/runs/44224766180/job/134539053029)（02:58:04 UTC），均为 `assertion-errors=none`；此记录仅对应该提交，不表示其他仍在运行的检查已通过。
 
+## 2026-11-18 云端个人分组的本地导入恢复
+
+`308dcbca2b` 的七个工作流全部结束：六个成功，Wework E2E 失败；62 项成功、11 项按规则跳过、3 项失败、0 等待。失败项为 shared-core、change-request-status 及汇总；运行时队列、模型删除和 Plugins 实际通过，不能据此提前报告全绿。
+
+[shared-core 日志](https://github.com/wecode-ai/Wegent/actions/runs/44224766180/job/134539053341) 与官方 artifact `14392619203` 确认本地项目 seed、Git preflight、归档和 reload 均成功，随后等待已被移除的本地分组 tree 超时。真实 UI 显示云端 Owner 个人分组 `73`；只改该 ID 仍无法完成导入，因为该分组原菜单只有云端创建，而本地项目页入口已不可达。真实组件的两项新增用例稳定复现菜单缺失。
+
+个人分组菜单现在复用既有文件夹和已有项目导入动作，始终向本地 workspace 派发，云端普通创建语义保持。缺本地能力、工作区或 importer 时隐藏这些动作。共享场景从已有响应获得 Owner 默认分组，使用其可见菜单；两轮 reload、归档后显式恢复、Git preflight、单行去重、聊天和云项目可见的全部断言保留。完整组件 209 项、实际导航及导入调用协议 13 项通过；协议测试中的文件/Git准备与 Native seed helper 使用测试替身，真实跨边界结果仍以 CI 为准。
+
+同时整合主线 `0c8538c5b0bcc352120e44c63ef13a2312825531`，仅同步其 workspace actions 两种渲染形式的既有选择器修复，无额外冲突。共享构建、Wework typecheck、完整 lint（0 错误、5 项既有警告）、双语文档契约 8 项、场景语法、目标 ESLint、代码 Prettier 和差异检查通过。未运行本地 E2E 或 ai:verify。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

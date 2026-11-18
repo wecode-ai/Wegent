@@ -1513,6 +1513,139 @@ describe("CollaborationPlatformApp real component flow", () => {
     );
   });
 
+  it.each([
+    ["existing", true],
+    ["existing", false],
+    ["folder", true],
+    ["folder", false],
+  ] as const)(
+    "imports a local %s project from the cloud personal group menu, selected=%s",
+    async (mode, selected) => {
+      const defaultSpace = { ...workspace, is_system_default: true };
+      const importedProject = {
+        ...project,
+        id: "imported-local-project",
+        workspace_id: localWorkspace.id,
+        project_store: "local" as const,
+      };
+      const { api, projects } = createApi({
+        initialWorkspaces: [localWorkspace, defaultSpace, groupWorkspace],
+        initialProjects: [project],
+      });
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{
+            ...initialLocation,
+            workspaceId: selected ? defaultSpace.id : groupWorkspace.id,
+          }}
+          capabilities={{
+            automation: false,
+            dingtalkAitable: false,
+            projectNavigation: "projects",
+            projectLocation: "cloud",
+            workspaceLocations: ["local", "cloud"],
+          }}
+          renderProjectImporter={({ workspace, mode, onImported }) => (
+            <button
+              data-testid="personal-local-importer"
+              onClick={() => {
+                projects.push(importedProject);
+                void onImported(importedProject);
+              }}
+            >
+              {workspace.id}:{mode}
+            </button>
+          )}
+        />,
+      );
+      expect(
+        container.querySelector(
+          `[data-testid="collaboration-workspace-tree-${localWorkspace.id}"]`,
+        ),
+      ).toBeNull();
+      await click(
+        byTestId(
+          selected
+            ? "collaboration-workspace-actions"
+            : `collaboration-workspace-actions-${defaultSpace.id}`,
+        ),
+      );
+      await click(
+        portalByTestId(
+          mode === "existing"
+            ? "collaboration-workspace-nav-import-existing-project"
+            : "collaboration-workspace-nav-add-folder",
+        ),
+      );
+      expect(byTestId("personal-local-importer").textContent).toBe(
+        `${localWorkspace.id}:${mode}`,
+      );
+      await click(byTestId("personal-local-importer"));
+      expect(byTestId("test-location").textContent).toContain(
+        '"collaborationDomain":"local"',
+      );
+      expect(byTestId("test-location").textContent).toContain(
+        '"projectId":"imported-local-project"',
+      );
+      expect(
+        byTestId(`collaboration-workspace-tree-${defaultSpace.id}`).contains(
+          byTestId(`collaboration-workspace-project-${importedProject.id}`),
+        ),
+      ).toBe(true);
+      expect(api.projects.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["cloud-only", "no-local-workspace", "no-importer"])(
+    "hides personal group import actions when unavailable: %s",
+    async (unavailable) => {
+      const defaultSpace = { ...workspace, is_system_default: true };
+      const { api } = createApi({
+        initialWorkspaces:
+          unavailable === "no-local-workspace"
+            ? [defaultSpace]
+            : [localWorkspace, defaultSpace],
+        initialProjects: [project],
+      });
+      await render(
+        <PlatformHarness
+          api={api}
+          start={{ ...initialLocation, workspaceId: defaultSpace.id }}
+          capabilities={{
+            automation: false,
+            dingtalkAitable: false,
+            projectNavigation: "projects",
+            projectLocation: "cloud",
+            workspaceLocations:
+              unavailable === "cloud-only" ? ["cloud"] : ["local", "cloud"],
+          }}
+          renderProjectImporter={
+            unavailable === "no-importer" ? undefined : () => <div />
+          }
+        />,
+      );
+      await click(byTestId("collaboration-workspace-actions"));
+      for (const testId of [
+        "collaboration-workspace-nav-import-existing-project",
+        "collaboration-workspace-nav-add-folder",
+      ]) {
+        expect(
+          document.body.querySelector(`[data-testid="${testId}"]`),
+        ).toBeNull();
+      }
+      await click(portalByTestId("collaboration-workspace-nav-create-project"));
+      await change(
+        portalByTestId("collaboration-project-name-input") as HTMLInputElement,
+        "Cloud personal project",
+      );
+      await click(portalByTestId("collaboration-project-create-confirm"));
+      expect(api.projects.create).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: defaultSpace.id }),
+      );
+    },
+  );
+
   it("selects the existing personal default once without exposing an unassigned option", async () => {
     const defaultSpace = {
       ...workspace,

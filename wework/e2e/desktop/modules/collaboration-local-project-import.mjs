@@ -9,7 +9,6 @@ import {
   reloadMainWindow,
   expandCollaborationSpaces,
   revealCollaborationSidebarElement,
-  LOCAL_COLLABORATION_WORKSPACE_ID,
 } from './workspace-flows.mjs'
 
 async function waitForLocalProject(control, projectId, timeoutMs) {
@@ -26,8 +25,16 @@ async function waitForLocalProject(control, projectId, timeoutMs) {
 
 export async function verifyCollaborationLocalProjectImport(
   control,
-  { cloudProjectId, cloudWorkspaceId, executorHome, scoped, workbenchReadyTimeoutMs }
+  {
+    cloudProjectId,
+    cloudWorkspaceId,
+    personalWorkspaceId,
+    executorHome,
+    scoped,
+    workbenchReadyTimeoutMs,
+  }
 ) {
+  assert.ok(personalWorkspaceId, 'The owner personal group must be available for local import')
   const key = 'issue-home-local-project-e2e'
   const path = join(executorHome, 'issue-home-project')
   const repositoryUrl = 'https://github.com/wecode-ai/issue-home-project.git'
@@ -85,8 +92,8 @@ export async function verifyCollaborationLocalProjectImport(
       timeoutMs: workbenchReadyTimeoutMs,
     })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-    const localWorkspace = inCollaborationSidebar(
-      `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"] [data-testid^="collaboration-workspace-actions"]`
+    const personalWorkspaceActions = inCollaborationSidebar(
+      `[data-testid="collaboration-workspace-tree-${personalWorkspaceId}"] [data-testid^="collaboration-workspace-actions"]`
     )
     const cloudWorkspace = inCollaborationSidebar(
       `[data-testid="collaboration-workspace-${cloudWorkspaceId}"]`
@@ -95,7 +102,7 @@ export async function verifyCollaborationLocalProjectImport(
       `[data-testid="collaboration-workspace-project-${cloudProjectId}"]`
     )
     await expandCollaborationSpaces(control, scoped('').trim())
-    await revealCollaborationSidebarElement(control, localWorkspace)
+    await revealCollaborationSidebarElement(control, personalWorkspaceActions)
     await revealCollaborationSidebarElement(control, cloudWorkspace)
     assert.equal(
       Number(
@@ -110,7 +117,7 @@ export async function verifyCollaborationLocalProjectImport(
       'The unified board still exposed local/cloud mode selectors'
     )
     assert.ok(
-      await control.command('getAttribute', localWorkspace, { value: 'aria-label' }),
+      await control.command('getAttribute', personalWorkspaceActions, { value: 'aria-label' }),
       'The local project management action must remain available on the unified board'
     )
 
@@ -136,19 +143,10 @@ export async function verifyCollaborationLocalProjectImport(
         0,
         'An archived Task project must remain absent before explicit import'
       )
+      await control.command('clickWhenEnabled', personalWorkspaceActions)
       await control.command(
         'click',
-        inCollaborationSidebar(
-          `[data-testid="collaboration-workspace-tree-${LOCAL_COLLABORATION_WORKSPACE_ID}"] .collaboration-workspace-identity`
-        )
-      )
-      await control.command(
-        'clickWhenEnabled',
-        scoped('[data-testid="collaboration-workspace-project-create"]')
-      )
-      await control.command(
-        'click',
-        '[data-testid="collaboration-workspace-project-open-existing"]'
+        '[data-testid="collaboration-workspace-nav-import-existing-project"]'
       )
       await control.command('waitFor', '[data-testid="existing-local-project-import-dialog"]')
       await control.command(

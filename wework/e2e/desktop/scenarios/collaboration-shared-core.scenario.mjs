@@ -221,6 +221,7 @@ export function createDesktopScenario({
   let owner = null
   const selectedMembers = []
   let workspace = null
+  let personalWorkspace = null
   let project = null
   let ordinaryTaskProject = null
   let issue = null
@@ -519,6 +520,9 @@ export function createDesktopScenario({
         workspace = await waitForApiValue(
           async () => {
             const response = await request('/api/v1/workspaces')
+            personalWorkspace = response.items?.find(
+              candidate => candidate.is_system_default && candidate.access_role === 'Owner'
+            )
             return response.items?.find(candidate => candidate.name === workspaceName) ?? null
           },
           value => Boolean(value),
@@ -1125,6 +1129,7 @@ export function createDesktopScenario({
         await verifyCollaborationLocalProjectImport(control, {
           cloudProjectId: project.id,
           cloudWorkspaceId: workspace.id,
+          personalWorkspaceId: personalWorkspace?.id,
           executorHome,
           scoped,
           workbenchReadyTimeoutMs,

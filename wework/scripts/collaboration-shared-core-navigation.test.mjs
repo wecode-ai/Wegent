@@ -1,6 +1,9 @@
 // @vitest-environment node
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { afterEach, expect, test, vi } from 'vitest'
+import { verifyCollaborationLocalProjectImport } from '../e2e/desktop/modules/collaboration-local-project-import.mjs'
+import { createLocalCollaborationProject } from '../e2e/desktop/modules/workspace-flows.mjs'
 import { createProjectOnlyNavigationRegression } from '../e2e/desktop/modules/project-only-navigation.mjs'
 import {
   assertCreatedMembers,
@@ -9,7 +12,21 @@ import {
   verifyCollaborationMemberSettings,
 } from '../e2e/desktop/modules/collaboration-member-settings.mjs'
 import { projectCreateLabels } from '../../packages/collaboration/src/project-create/labels'
-import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
+import { DEFAULT_STEP_TIMEOUT_MS, runChecked } from '../e2e/desktop/modules/shared.mjs'
+
+vi.mock('node:fs/promises', async original => ({
+  ...(await original()),
+  mkdir: vi.fn(),
+  writeFile: vi.fn(),
+}))
+vi.mock('../e2e/desktop/modules/shared.mjs', async original => ({
+  ...(await original()),
+  runChecked: vi.fn(),
+}))
+vi.mock('../e2e/desktop/modules/workspace-flows.mjs', async original => ({
+  ...(await original()),
+  createLocalCollaborationProject: vi.fn(),
+}))
 
 // These unit tests drive the actual navigation callers; other board regressions
 // keep their own real E2E assertions in the shared-core checkpoint.
@@ -358,3 +375,122 @@ test.each([false, true])(
     }
   }
 )
+
+test('local import keeps its archived project, Git checks and both reload passes under the cloud personal group', async () => {
+  const projectId = `local-code-${createHash('sha256').update('issue-home-local-project-e2e').digest('hex')}`
+  const row = `[data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-workspace-project-${projectId}"]`
+  const personalActions =
+    '[data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-workspace-tree-personal-cloud"] [data-testid^="collaboration-workspace-actions"]'
+  let imported = false
+  let pickerOpen = false
+  let menuOpen = false
+  const control = controlFixture(false)
+  const baseCommand = control.command.getMockImplementation()
+  control.command.mockImplementation(async (action, selector, input) => {
+    assert.ok(
+      !selector?.includes('wework-local-workspace'),
+      'The cloud personal group replaces the local storage workspace in navigation'
+    )
+    if (action === 'readLocalProject') {
+      return JSON.stringify({
+        metadata: {
+          execution_environment: {
+            repositories: [
+              {
+                name: 'issue-home-project',
+                path: 'issue-home-project',
+                primary: true,
+                ref: 'main',
+                url: 'https://github.com/wecode-ai/issue-home-project.git',
+              },
+            ],
+            setup_steps: [],
+          },
+        },
+      })
+    }
+    if (action === 'preflightLocalWorktree') {
+      return JSON.stringify({
+        supported: true,
+        gitRepository: true,
+        refValid: true,
+        gitCommonDirWritable: true,
+      })
+    }
+    if (action === 'archiveLocalProject') imported = false
+    if (action === 'getElementCount') {
+      if (selector === row) return imported ? '1' : '0'
+      if (selector === '[data-testid="existing-local-project-import-dialog"]')
+        return pickerOpen ? '1' : '0'
+    }
+    if (action === 'snapshot') {
+      return JSON.stringify({
+        testIds: ['wework-collaboration-platform', 'collaboration-platform-root'],
+      })
+    }
+    if (action === 'getText') return '云端协作分组'
+    if (action === 'getElementMetrics')
+      return JSON.stringify([{ scrollWidth: 240, clientWidth: 240 }])
+    if (action === 'clickWhenEnabled' && selector === personalActions) menuOpen = true
+    if (
+      action === 'click' &&
+      selector === '[data-testid="collaboration-workspace-nav-import-existing-project"]'
+    ) {
+      assert.equal(menuOpen, true, 'Import must start at the visible personal group menu')
+      pickerOpen = true
+      menuOpen = false
+    }
+    if (
+      action === 'clickWhenEnabled' &&
+      selector === '[data-testid="confirm-existing-local-project-import"]'
+    ) {
+      assert.equal(pickerOpen, true)
+      imported = true
+      pickerOpen = false
+    }
+    if (action === 'waitFor' && selector === row) {
+      assert.equal(imported, true, 'The archived project only appears after explicit import')
+    }
+    return baseCommand(action, selector, input)
+  })
+
+  await verifyCollaborationLocalProjectImport(control, {
+    cloudProjectId: 'cloud-project',
+    cloudWorkspaceId: 'cloud-group',
+    personalWorkspaceId: 'personal-cloud',
+    executorHome: '/fixture',
+    scoped,
+    workbenchReadyTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  expect(
+    control.command.mock.calls.filter(([action]) => action === 'reloadMainWindow')
+  ).toHaveLength(2)
+  expect(control.command).toHaveBeenCalledWith('seedLocalProject', 'body', expect.any(Object))
+  expect(control.command).toHaveBeenCalledWith('archiveLocalProject', 'body', expect.any(Object))
+  expect(
+    control.command.mock.calls.filter(
+      ([action, selector]) => action === 'waitFor' && selector === row
+    )
+  ).toHaveLength(2)
+  expect(createLocalCollaborationProject).toHaveBeenCalledWith(
+    control,
+    content,
+    '协作空间后续导入项目'
+  )
+  expect(
+    control.command.mock.calls.filter(
+      ([action, selector]) =>
+        action === 'waitFor' && selector === scoped('[data-testid="project-space-chat-sidebar"]')
+    )
+  ).toHaveLength(2)
+  expect(
+    control.command.mock.calls.filter(
+      ([action, selector]) =>
+        action === 'waitFor' &&
+        selector ===
+          '[data-testid="collaboration-platform-sidebar"] [data-testid="collaboration-workspace-project-cloud-project"]'
+    )
+  ).toHaveLength(4)
+  expect(runChecked).toHaveBeenCalledWith('git', ['init', '-b', 'main'], expect.any(Object))
+})
