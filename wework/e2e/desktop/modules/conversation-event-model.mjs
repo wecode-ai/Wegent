@@ -110,6 +110,10 @@ export function createConversationEventModel({
                   '/external/payload/id': 44231414768,
                   '/external/payload/head_sha': 'a'.repeat(40),
                   '/external/payload/status': 'completed',
+                  $any: [
+                    { '/external/payload/conclusion': 'success' },
+                    { '/external/payload/conclusion': 'failure' },
+                  ],
                 }
               : {}),
           },

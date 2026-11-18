@@ -29,6 +29,8 @@
     "wework/e2e/desktop/modules/conversation-event-human-wait.mjs",
     "wework/e2e/desktop/modules/conversation-event-model.mjs",
     "wework/e2e/desktop/fixtures/conversation-events-provider.mjs",
-    "wework/dsh/connection-git/**"
+    "wework/dsh/connection-git/**",
+    "shared/rust/protocol/src/connection_events.rs",
+    "wework/src/components/layout/SidebarConnectionEventStatus*"
   ]
 }

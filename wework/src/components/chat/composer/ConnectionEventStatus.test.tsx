@@ -137,3 +137,27 @@ describe('ConnectionEventStatus', () => {
     expect(screen.queryByText('等待事件，到达后自动继续')).not.toBeInTheDocument()
   })
 })
+
+test('shows one subscription with both terminal outcomes and its commit scope', () => {
+  render(
+    <ConnectionEventStatus
+      subscriptions={[
+        {
+          ...subscription,
+          match: {
+            '/external/payload/headRefOid': 'commit-123',
+            $any: [
+              { '/external/payload/statusCheckRollup/state': 'SUCCESS' },
+              { '/external/payload/statusCheckRollup/state': 'FAILURE' },
+            ],
+          },
+        },
+      ]}
+    />
+  )
+  expect(screen.getAllByTestId('connection-event-condition')).toHaveLength(1)
+  expect(screen.getByTestId('connection-event-condition')).toHaveTextContent(
+    '检查结果: 通过 或 检查结果: 失败'
+  )
+  expect(screen.getByTestId('connection-event-condition')).toHaveTextContent('提交: commit-123')
+})

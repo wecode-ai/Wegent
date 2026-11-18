@@ -205,6 +205,55 @@ async function waitForSidebarPointerSensorCleanup() {
 await preloadDefaultDshUiTestModules()
 
 describe('DesktopSidebar', () => {
+  test.each([
+    ['armed', false, '等待事件'],
+    ['pending', false, '事件已到达，等待继续'],
+    ['error', false, '事件监听异常'],
+    ['cancelled', false, null],
+    ['armed', true, null],
+  ] as const)('event subscription sidebar status %s running=%s', async (status, running, label) => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'event-wait',
+                    title: 'Wait for CI',
+                    runtime: 'codex',
+                    running,
+                    status: running ? 'running' : 'done',
+                    runtimeHandle: {
+                      connectionEventSubscriptions: [
+                        { subscription_key: 'one', source: { name: 'Wegent' }, status },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    const icon = screen.queryByTestId('runtime-local-task-event-event-wait')
+    if (label) expect(icon).toHaveAttribute('aria-label', label)
+    else expect(icon).not.toBeInTheDocument()
+  })
+
   test('keeps worktree details in hover content and allows partially expanded tasks to collapse', async () => {
     const onOpenRuntimeTask = vi.fn()
     renderSidebar({

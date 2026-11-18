@@ -183,12 +183,24 @@ export function createDesktopScenario(options) {
           await control.command('waitFor', '[data-testid="connection-event-status"]', {
             text: '发布文档',
           })
+          if (phase === 'workflow') {
+            await control.command('waitFor', '[data-testid="connection-event-condition"]', {
+              text: '或',
+            })
+          }
           const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
           const address = debug.workbench.currentRuntimeTask
           assert.ok(address?.taskId)
           if (!originalAddress) originalAddress = address
           assert.equal(address.taskId, originalAddress.taskId)
           assert.equal(address.workspacePath, originalAddress.workspacePath)
+          if (phase === 'workflow') {
+            await control.command(
+              'waitFor',
+              `[data-testid="runtime-local-task-event-${address.taskId}"]`,
+              { visible: true }
+            )
+          }
           const getTask = () => rpc(control, 'runtime.tasks.get', { address })
           await waitForValue(
             getTask,
@@ -356,6 +368,7 @@ export function createDesktopScenario(options) {
               { id: 9 },
               { head_sha: 'b'.repeat(40) },
               { status: 'in_progress' },
+              { conclusion: 'cancelled' },
             ]) {
               const ignored = event(
                 `workflow-ignored-${JSON.stringify(patch)}`,
