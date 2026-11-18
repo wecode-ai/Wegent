@@ -127,17 +127,19 @@ test('runs resource-exclusive checkpoints alone before parallel work', async () 
 })
 
 test('caps Linux Core renderer-intensive shards at two workers', () => {
-  const checkpoints = [
+  const rendererIntensive = [
     'collaboration-shared-core',
     'question-discussion',
     'issue-human-handoff',
     'stand-in-memory-learning',
-    'independent',
+    'stand-in-memory-timer',
   ]
 
-  assert.equal(linuxCoreParallelWorkerLimit(checkpoints, 4), 2)
+  for (const checkpoint of rendererIntensive) {
+    assert.equal(linuxCoreParallelWorkerLimit([checkpoint, 'independent'], 4), 2)
+  }
   assert.equal(linuxCoreParallelWorkerLimit(['independent-a', 'independent-b'], 4), 4)
-  assert.equal(linuxCoreParallelWorkerLimit(checkpoints, 1), 1)
+  assert.equal(linuxCoreParallelWorkerLimit(rendererIntensive, 1), 1)
 })
 
 test('keeps the real system-idle uninstall checkpoint isolated in the shared policy', async () => {
