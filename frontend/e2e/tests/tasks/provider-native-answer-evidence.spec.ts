@@ -689,6 +689,8 @@ test('multiple searches keep same-title documents distinct across grey refresh a
       .timeout(15000)
       .emitWithAck('chat:retry', { task_id: taskId, subtask_id: answer!.id })
     expect(intermediateRetry.success, JSON.stringify(intermediateRetry)).toBe(true)
+    // Wait for the new execution to replace the previous streaming session before cancelling it.
+    await expect(page.getByText('取消类型校验中的回答', { exact: false }).first()).toBeVisible()
     const cancelAck = await socket
       .getRawSocket()!
       .timeout(15000)
