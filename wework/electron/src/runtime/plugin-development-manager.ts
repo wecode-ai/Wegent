@@ -619,6 +619,7 @@ export function pluginDevelopmentEnvironment(
   const e2eControlToken = base.WEWORK_E2E_CONTROL_TOKEN?.trim()
   const e2eEnabled = base.WEWORK_PLUGIN_DEVELOPMENT_E2E === '1' && Boolean(e2eControlUrl)
   const environment = { ...base }
+  delete environment.WEWORK_COMPONENT_DATA_DIRECTORY
   delete environment.ELECTRON_RUN_AS_NODE
   delete environment.CODEX_HOME
   delete environment.WEGENT_CODEX_HOME
