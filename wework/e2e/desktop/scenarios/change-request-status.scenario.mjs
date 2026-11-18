@@ -651,6 +651,7 @@ export async function createDesktopScenario({
         { text: '状态同步正常' }
       )
       await capture(control, 'change-request-status-04-checks-passed.png')
+      const recovery = await prepareChangeRequestRecovery(executorHome)
       await control.command('click', '[data-testid="environment-change-request-status"]')
 
       await writeFile(statePath, 'unavailable\n')
@@ -744,7 +745,6 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="git-hosting-settings-page"]', {
         timeoutMs: uiTimeoutMs,
       })
-      const recovery = await prepareChangeRequestRecovery(executorHome)
       await control.command('click', '[data-testid="change-request-status-switch"]')
       await waitForAttribute(
         control,
