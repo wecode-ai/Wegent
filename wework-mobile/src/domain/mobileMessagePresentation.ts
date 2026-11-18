@@ -1,7 +1,7 @@
 import type { WorkbenchMessage } from '../../../packages/chat-core/src/runtime-conversation'
 import { normalizeTurnFileChanges } from '../../../packages/chat-core/src/turn-file-changes'
 import type { ChatFileChangesSummary, ChatMessage, ChatProcessingBlock } from '@/types/runtime'
-import { visibleRuntimeUserMessage } from './runtimeUserMessage'
+import { visibleRuntimeUserMessage } from '../../../packages/chat-core/src/runtime-user-message.js'
 
 /** Native presentation adapts timestamps and file labels, never turn ownership or order. */
 export function mobileMessagesFromWorkbench(messages: WorkbenchMessage[]): ChatMessage[] {
@@ -27,9 +27,6 @@ export function mobileMessagesFromWorkbench(messages: WorkbenchMessage[]): ChatM
         }),
       })) as ChatProcessingBlock[] | undefined,
       fileChanges: mobileFileChanges(message.fileChanges),
-      textItems: message.runtimeDisplayItems?.flatMap(item =>
-        item.type === 'assistant_text' ? [{ id: item.id, content: item.content }] : []
-      ),
     }
   })
 }

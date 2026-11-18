@@ -1,7 +1,6 @@
-import { assistantBodyParts } from './messagePresentation'
 import { describe, expect, it } from 'vitest'
 
-import type { ChatProcessingBlock, ChatToolBlock } from '@/types/runtime'
+import type { ChatMessage, ChatProcessingBlock, ChatToolBlock } from '@/types/runtime'
 import {
   buildMessageDisplayRows,
   buildMessageDisplaySegments,
@@ -11,6 +10,7 @@ import {
   processingActivityStats,
   processingDurationLabel,
   processingSegmentTitle,
+  projectMobileAssistantMessage,
   shouldCollapseCompletedProcessing,
 } from './messagePresentation'
 
@@ -423,10 +423,74 @@ it('groups only adjacent tools and keeps every native text position, including r
       { id: 'tool-c', type: 'block' as const },
     ],
   }
-  expect(assistantBodyParts(message)).toEqual([
+  expect(projectMobileAssistantMessage(message).parts).toEqual([
     { id: 'before', type: 'text', content: 'Same' },
     { id: 'tool-a', type: 'processing', blocks: [block('tool-a'), block('tool-b')] },
     { id: 'after', type: 'text', content: 'Same' },
     { id: 'tool-c', type: 'processing', blocks: [block('tool-c')] },
   ])
+})
+
+it('matches desktop prose grouping and excludes a duplicate activity block', () => {
+  const first = 'Use [the guide][guide].'
+  const last = '[guide]: /work/SKILL.md'
+  const content = `${first}\n\n${last}`
+  const message: ChatMessage = {
+    id: 'view',
+    role: 'assistant',
+    status: 'completed',
+    createdAt: 1,
+    content,
+    blocks: [
+      tool('command', 'bash'),
+      {
+        id: 'duplicate-reply',
+        subtaskId: 'turn',
+        type: 'text',
+        content,
+        status: 'done',
+        createdAt: 1,
+      },
+    ],
+    runtimeDisplayItems: [
+      { type: 'block', id: 'command' },
+      { type: 'block', id: 'duplicate-reply' },
+      { type: 'assistant_text', id: 'first', content: first },
+      { type: 'assistant_text', id: 'last', content: last },
+    ],
+  }
+  expect(projectMobileAssistantMessage(message).parts).toEqual([
+    { type: 'processing', id: 'command', blocks: [tool('command', 'bash')] },
+    { type: 'text', id: 'first', content },
+  ])
+})
+
+it('shows settled references without falsely completing a command that outlives its turn', () => {
+  const command: ChatToolBlock = {
+    ...tool('command', 'bash', 'pending'),
+    renderPayload: { kind: 'command_execution', status: 'inProgress' },
+  }
+  const content = '[PR Review 技能](/work/SKILL.md:3)'
+  const message: ChatMessage = {
+    id: 'view',
+    role: 'assistant',
+    status: 'streaming',
+    createdAt: 1,
+    content,
+    blocks: [command],
+    runtimeDisplayItems: [
+      { type: 'assistant_text', id: 'reply', content },
+      { type: 'block', id: 'command' },
+    ],
+  }
+  expect(projectMobileAssistantMessage(message).references).toEqual([])
+  expect(projectMobileAssistantMessage({ ...message, status: 'completed' })).toMatchObject({
+    streaming: false,
+    interleaved: true,
+    parts: [
+      { type: 'text', content },
+      { type: 'processing', blocks: [command] },
+    ],
+    references: [{ path: '/work/SKILL.md', lineStart: 3 }],
+  })
 })

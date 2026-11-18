@@ -208,7 +208,7 @@ describe('chatReducer', () => {
         id: previous[0].id,
         subtaskId: 'turn-1',
         content: 'Hello',
-        textItems: [{ id: 'reply', content: 'Hello' }],
+        runtimeDisplayItems: [{ type: 'assistant_text', id: 'reply', content: 'Hello' }],
         status: 'streaming',
       },
     ])
@@ -433,7 +433,10 @@ describe('chatReducer', () => {
     })
     expect(output[0]).toMatchObject({
       content: '# 标题\n\n- 条目',
-      textItems: [{ id: 'item-1', content: '# 标题\n\n- 条目' }],
+      runtimeDisplayItems: [
+        { type: 'block', id: 'runtime-reasoning:turn-1' },
+        { type: 'assistant_text', id: 'item-1', content: '# 标题\n\n- 条目' },
+      ],
       streamingThinkingContent: undefined,
       status: 'streaming',
     })
@@ -459,7 +462,7 @@ describe('chatReducer', () => {
 
     expect(done[0]).toMatchObject({
       content: '完整内容',
-      textItems: [{ id: 'item-1', content: '完整内容' }],
+      runtimeDisplayItems: [{ type: 'assistant_text', id: 'item-1', content: '完整内容' }],
     })
   })
 
@@ -522,7 +525,7 @@ describe('chatReducer', () => {
       },
     })
     expect(state[0].content).toBe('')
-    expect(state[0].textItems).toEqual([])
+    expect(state[0].runtimeDisplayItems).toEqual([{ id: 'message', type: 'block' }])
     state = stream(state, {
       name: 'response.block.created',
       payload: {
@@ -562,7 +565,11 @@ describe('chatReducer', () => {
         data: { item_id: 'first', delta: '🙂', offset: 103, block_offset: 2 },
       },
     })
-    expect(state[0].textItems?.[0]).toMatchObject({ id: 'first', content: '重复🙂' })
+    expect(state[0].runtimeDisplayItems?.[0]).toMatchObject({
+      id: 'first',
+      type: 'assistant_text',
+      content: '重复🙂',
+    })
     state = stream(state, {
       name: 'response.output_text.done',
       payload: { subtaskId: 'turn', data: { item_id: 'first', text: '修正🙂' } },
@@ -627,7 +634,7 @@ describe('chatReducer', () => {
     expect(state[0].runtimeDisplayItems?.map(item => item.id)).toEqual(['first', 'second'])
     expect([
       state[0].blocks?.[0] && 'content' in state[0].blocks[0] ? state[0].blocks[0].content : '',
-      state[0].textItems?.[0].content,
+      state[0].runtimeDisplayItems?.find(item => item.type === 'assistant_text')?.content,
     ]).toEqual(['相同内容', '相同内容'])
   })
 

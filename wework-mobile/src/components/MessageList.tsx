@@ -1,4 +1,3 @@
-import { assistantBodyParts } from '@/domain/messagePresentation'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { KeyboardAwareLegendList, useKeyboardScrollToEnd } from '@legendapp/list/keyboard'
 import type { LegendListRef } from '@legendapp/list/react-native'
@@ -24,7 +23,7 @@ import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
 import type { SharedValue } from 'react-native-reanimated'
 
 import { hasAppendedUserMessage } from '@/domain/messageListScroll'
-import { buildThinkingPreview } from '@/domain/messagePresentation'
+import { buildThinkingPreview, projectMobileAssistantMessage } from '@/domain/messagePresentation'
 import { pendingMobileUserInput } from '@/domain/requestUserInput'
 import type { Attachment, ChatFileChangesSummary, ChatMessage } from '@/types/runtime'
 import { AssistantMarkdown } from './AssistantMarkdown'
@@ -34,6 +33,7 @@ import { ProcessingTimeline } from './ProcessingTimeline'
 import type { RequestUserInputHandlers } from './RequestUserInputCard'
 import { useMessageListDiagnostics } from './useMessageListDiagnostics'
 import { useMobileFilePreview } from './files/FilePreviewContext'
+import { MessageDocumentReferences } from './MessageDocumentReferences'
 import { ConversationFollowingContext, useConversationFollowing } from './useConversationReading'
 
 interface MessageListProps extends RequestUserInputHandlers {
@@ -294,36 +294,38 @@ const Message = memo(
             ]}
             testID={`message-${message.id}`}
           >
-            <Text variant="bodyLarge">{message.content}</Text>
+            <AssistantMarkdown variant="user">{message.content}</AssistantMarkdown>
           </Pressable>
           <MessageAttachments messageId={message.id} attachments={message.attachments} />
         </View>
       )
     }
 
-    const thinkingPreview =
-      message.status === 'streaming'
-        ? buildThinkingPreview(message.streamingThinkingContent ?? '')
-        : ''
+    const presentation = projectMobileAssistantMessage(message)
+    const thinkingPreview = presentation.streaming
+      ? buildThinkingPreview(message.streamingThinkingContent ?? '')
+      : ''
 
     return (
       <Pressable
         accessible={false}
-        accessibilityHint={message.content.trim() ? '长按正文可选择文字或复制' : undefined}
+        accessibilityHint={presentation.content.trim() ? '长按正文可选择文字或复制' : undefined}
         onPress={Keyboard.dismiss}
         style={({ pressed }) => [styles.assistant, pressed && styles.messagePressed]}
         testID={`message-${message.id}`}
       >
-        {assistantBodyParts(message).map((part, index) =>
+        {presentation.parts.map((part, index) =>
           part.type === 'text' ? (
-            <AssistantMarkdown key={part.id} streaming={message.status === 'streaming'}>
+            <AssistantMarkdown key={part.id} streaming={presentation.streaming}>
               {part.content}
             </AssistantMarkdown>
           ) : (
             <ProcessingTimeline
               key={part.id}
+              interleaved={presentation.interleaved}
               message={{
                 ...message,
+                content: presentation.content,
                 id: index === 0 ? message.id : `${message.id}:${part.id}`,
                 blocks: part.blocks,
               }}
@@ -333,6 +335,7 @@ const Message = memo(
             />
           )
         )}
+        <MessageDocumentReferences references={presentation.references} />
         <MessageAttachments messageId={message.id} attachments={message.attachments} />
         {message.status === 'completed' && message.fileChanges ? (
           <FileChangesSummary summary={message.fileChanges} />

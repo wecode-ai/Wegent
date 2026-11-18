@@ -6,6 +6,7 @@ import { runtimeTaskKey } from '@/domain/runtimeTaskLifecycle'
 import type { RuntimeStream } from '@/services/runtimeStream'
 import { recordMobileDiagnostic } from '@/services/mobileDiagnostics'
 import type { ChatMessage, RuntimeTaskAddress, RuntimeTranscriptResponse } from '@/types/runtime'
+import type { RuntimeConversationTurn } from '../../../packages/chat-core/src/runtime-conversation'
 
 // Match the PC conversation cache bounds; snapshots remain in memory only.
 const MAX_CONVERSATIONS = 50
@@ -201,7 +202,7 @@ export function useMobileTranscript(
       const entry = entryFor(address)
       if (entry.pending) return entry.pending
       const read = ++readRevision.current
-      const diagnostic = (phase: string, counts: Record<string, unknown> = {}) =>
+      const diagnostic = (phase: string, details: () => Record<string, unknown> = () => ({})) =>
         recordMobileDiagnostic(`[MobileTranscript] ${phase}`, () => ({
           read,
           retained: entries.current.get(runtimeTaskKey(address)) === entry,
@@ -210,7 +211,7 @@ export function useMobileTranscript(
             runtimeTaskKey(currentAddress.current) === runtimeTaskKey(address)
           ),
           messages: entry.messages.length,
-          ...counts,
+          ...details(),
         }))
       diagnostic('Read started')
       if (
@@ -223,7 +224,7 @@ export function useMobileTranscript(
       const request = stream
         .getTranscript(address)
         .then(transcript => {
-          diagnostic('Read received', { receivedMessages: transcript.messages.length })
+          diagnostic('Read received', () => ({ receivedMessages: transcript.messages.length }))
           if (entries.current.get(runtimeTaskKey(address)) !== entry) return null
           receive?.(transcript)
           const resetPagination = entry.conversation.hydrate(transcript, entry.loaded)
@@ -235,14 +236,17 @@ export function useMobileTranscript(
           entry.loaded = true
           entry.title = transcript.title
           entry.touchedAt = Date.now()
-          diagnostic('Hydrated', { tailLength: entry.messages.at(-1)?.content.length ?? 0 })
+          diagnostic('Hydrated', () => ({
+            tailLength: entry.messages.at(-1)?.content.length ?? 0,
+            ...settledTurnToolCounts(transcript.turns ?? [], entry.conversation.turns),
+          }))
           publish(address, entry)
           return transcript
         })
         .catch(cause => {
-          diagnostic('Read failed', {
+          diagnostic('Read failed', () => ({
             errorType: cause instanceof Error ? cause.name : typeof cause,
-          })
+          }))
           if (entries.current.get(runtimeTaskKey(address)) !== entry) return null
           onError(cause instanceof Error ? cause.message : String(cause), address)
           throw cause
@@ -364,4 +368,35 @@ export function useMobileTranscript(
     loadMoreMessagesBefore,
     retainDevices,
   }
+}
+
+// Distinguish a missing live completion from a stale snapshot or item merge.
+// Only compare opaque identities in memory; do not log them or any tool input/output.
+function settledTurnToolCounts(
+  snapshot: RuntimeConversationTurn[],
+  hydrated: RuntimeConversationTurn[]
+) {
+  const historyByTurn = new Map(snapshot.map(turn => [turn.id, turn]))
+  let runningInHistory = 0
+  let finishedInHistory = 0
+  let missingFromHistory = 0
+  let missingTurnFromPage = 0
+  for (const turn of hydrated) {
+    if (turn.status === 'pending' || turn.status === 'streaming') continue
+    const history = historyByTurn.get(turn.id)
+    const historyItems = new Map(history?.items.map(item => [item.id, item]))
+    for (const item of turn.items) {
+      if (item.type !== 'block' || item.block.type !== 'tool') continue
+      if (item.block.status === 'done' || item.block.status === 'error') continue
+      if (!history) {
+        missingTurnFromPage++
+        continue
+      }
+      const stored = historyItems.get(item.id)
+      if (stored?.type !== 'block' || stored.block.type !== 'tool') missingFromHistory++
+      else if (stored.block.status === 'done' || stored.block.status === 'error') finishedInHistory++
+      else runningInHistory++
+    }
+  }
+  return { runningInHistory, finishedInHistory, missingFromHistory, missingTurnFromPage }
 }

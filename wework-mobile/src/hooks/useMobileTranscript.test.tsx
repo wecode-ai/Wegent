@@ -347,6 +347,134 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
     expect(state.messages).toMatchObject([{ content: 'Complete', status: 'completed' }])
   })
 
+  it.each([
+    { scenario: 'a complete settled turn', partial: false, liveUpdate: false, keepsCached: false },
+    { scenario: 'a turn cut by pagination', partial: true, liveUpdate: false, keepsCached: true },
+    {
+      scenario: 'a command receiving live output',
+      partial: false,
+      liveUpdate: true,
+      keepsCached: true,
+    },
+  ])(
+    'reconciles cached commands when reopening $scenario',
+    async ({ partial, liveUpdate, keepsCached }) => {
+      const block = (id: string, running: boolean) => ({
+        id,
+        type: 'tool' as const,
+        tool_name: 'bash',
+        status: running ? ('pending' as const) : ('done' as const),
+        render_payload: {
+          kind: 'command_execution',
+          status: running ? 'inProgress' : 'completed',
+          processId: id,
+        },
+      })
+      const transcript = {
+        ...page('', 'older'),
+        messages: [
+          { id: 'earlier', role: 'user', content: 'Earlier request', messageIndex: 0 },
+          {
+            id: 'reply',
+            role: 'assistant',
+            subtaskId: 'turn',
+            content: 'Complete',
+            status: 'done',
+            messageIndex: 1,
+            blocks: [block('finished-command', false), block('background-command', true)],
+          },
+        ],
+      } satisfies RuntimeTranscriptResponse
+      getTranscript.mockResolvedValueOnce({
+        ...transcript,
+        messages: transcript.messages.slice(0, 1),
+      })
+      await load()
+      await act(() => {
+        state.dispatchMessages({
+          type: 'stream',
+          event: { name: 'response.created', payload: { subtaskId: 'turn', data: {} } },
+        })
+        for (const id of ['finished-command', 'background-command', 'obsolete-command']) {
+          state.dispatchMessages({
+            type: 'stream',
+            event: {
+              name: 'response.block.created',
+              payload: { subtaskId: 'turn', data: { block: block(id, true) } },
+            },
+          })
+        }
+        state.dispatchMessages({
+          type: 'stream',
+          event: {
+            name: 'response.completed',
+            payload: { subtaskId: 'turn', data: { output_text: 'Complete' } },
+          },
+        })
+      })
+      expect(state.messages.at(-1)?.blocks?.map(item => item.status)).toEqual([
+        'pending',
+        'pending',
+        'pending',
+      ])
+
+      const output = vi.spyOn(console, 'info').mockImplementation(() => {})
+      setDiagnosticRecording(true)
+      await open(second)
+      await open()
+      const pending = deferred<RuntimeTranscriptResponse>()
+      getTranscript.mockReturnValueOnce(pending.promise)
+      let read!: Promise<unknown>
+      await act(() => {
+        read = state.reloadTranscript(first)
+        if (liveUpdate) {
+          state.dispatchMessages({
+            type: 'stream',
+            event: {
+              name: 'response.block.updated',
+              payload: {
+                subtaskId: 'turn',
+                data: { blockId: 'obsolete-command', updates: { toolOutputDelta: 'new output' } },
+              },
+            },
+          })
+        }
+      })
+      await act(async () => {
+        pending.resolve({
+          ...transcript,
+          messages: partial ? transcript.messages.slice(1) : transcript.messages,
+        })
+        await read
+      })
+      expect(state.messages.at(-1)?.blocks).toMatchObject([
+        { id: 'finished-command', status: 'done' },
+        { id: 'background-command', status: 'pending' },
+        ...(keepsCached
+          ? [
+              {
+                id: 'obsolete-command',
+                status: 'pending',
+                ...(liveUpdate ? { toolOutput: 'new output' } : {}),
+              },
+            ]
+          : []),
+      ])
+      expect(state.hasMoreMessagesBefore).toBe(true)
+      expect(output).toHaveBeenCalledWith(
+        '[MobileTranscript] Hydrated',
+        expect.objectContaining({
+          runningInHistory: 1,
+          finishedInHistory: 0,
+          missingFromHistory: Number(keepsCached),
+        })
+      )
+      expect(JSON.stringify(output.mock.calls)).not.toMatch(
+        /finished-command|background-command|obsolete-command/
+      )
+    }
+  )
+
   it('uses canonical snapshot text item IDs so overlapping deltas do not duplicate text', async () => {
     const pending = deferred<RuntimeTranscriptResponse>()
     getTranscript.mockReturnValue(pending.promise)
@@ -379,7 +507,10 @@ describe('mobile conversation snapshots (PC hydration and cache contract)', () =
       await read
     })
     expect(state.messages).toMatchObject([
-      { content: 'Hello', textItems: [{ id: 'item', content: 'Hello' }] },
+      {
+        content: 'Hello',
+        runtimeDisplayItems: [{ type: 'assistant_text', id: 'item', content: 'Hello' }],
+      },
     ])
   })
 

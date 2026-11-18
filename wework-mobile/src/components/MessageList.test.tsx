@@ -153,6 +153,39 @@ describe('conversation waiting, streaming and native list integration (PC contra
   const list = () => boundary.list.mock.lastCall![0]
   const listInstance = () => renderer!.root.findByType(KeyboardAwareLegendList)
 
+  it('renders the same user emphasis and assistant document references as the desktop turn', async () => {
+    const openWorkspaceFile = vi.fn()
+    preview.current = {
+      target: { deviceId: 'cloud', path: '/workspace' },
+      openWorkspaceFile,
+    } as unknown as MobileFilePreviewActions
+    const prompt = '**#4697** 这个 jiaqi 修改了，再次 review 下吧'
+    const reply =
+      '[#4697](https://github.com/wecode-ai/Wegent/pull/4697) 复审通过。\n\n按 [PR Review 技能](/workspace/skills/review/SKILL.md:3-7) 回写 Issue。'
+    await render([
+      { ...user, content: prompt },
+      {
+        ...assistant,
+        content: reply,
+        status: 'completed',
+        references: [{ path: 'skills/review/SKILL.md' }],
+        runtimeDisplayItems: [{ type: 'assistant_text', id: 'reply', content: reply }],
+      },
+    ])
+
+    const markdown = renderer!.root.findAllByType('AssistantMarkdown' as never)
+    expect(markdown[0]?.props).toMatchObject({ variant: 'user', children: prompt })
+    expect(markdown[1]?.props.children).toBe(reply)
+    const reference = button('codex-reference-card')
+    expect(reference.props.accessibilityLabel).toBe('预览 /workspace/skills/review/SKILL.md')
+    await act(() => reference.props.onPress())
+    expect(openWorkspaceFile).toHaveBeenCalledExactlyOnceWith(
+      '/workspace/skills/review/SKILL.md',
+      3,
+      7
+    )
+  })
+
   it.each(['ios', 'android'] as const)(
     'dismisses on body taps and platform scroll gestures on %s',
     async platform => {
@@ -281,13 +314,16 @@ describe('conversation waiting, streaming and native list integration (PC contra
   )
 
   it('replaces waiting with each text delta instead of waiting for completion', async () => {
+    const streamingContent = () =>
+      renderer!.root.findAllByType('AssistantMarkdown' as never).find(node => node.props.streaming)
+        ?.props.children
     await render([user, assistant])
     expect(indicators()).toHaveLength(1)
     await render([user, { ...assistant, content: '你' }])
     expect(indicators()).toHaveLength(0)
-    expect(renderer!.root.findByType('AssistantMarkdown' as never).props.children).toBe('你')
+    expect(streamingContent()).toBe('你')
     await render([user, { ...assistant, content: '你好' }])
-    expect(renderer!.root.findByType('AssistantMarkdown' as never).props.children).toBe('你好')
+    expect(streamingContent()).toBe('你好')
   })
 
   it('shows reasoning while streaming, then hides it on completion', async () => {

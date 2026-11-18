@@ -18,7 +18,7 @@ import {
   getSubagentStatus,
 } from '../../../packages/collaboration/src/conversation/blocks/subagentPresentation'
 import { mobileMessagesFromWorkbench } from '@/domain/mobileMessagePresentation'
-import { assistantBodyParts } from '@/domain/messagePresentation'
+import { projectMobileAssistantMessage } from '@/domain/messagePresentation'
 import { projectRuntimeConversationTurns } from '../../../packages/chat-core/src/runtime-turns'
 import { runtimeTranscriptTurnsToConversationTurns } from '../../../packages/chat-core/src/runtime-transcript'
 import {
@@ -273,26 +273,31 @@ function SubagentConversation({
         </View>
       ) : null}
       {block.summary?.trim() ? <AssistantMarkdown muted>{block.summary}</AssistantMarkdown> : null}
-      {content.map(message => (
-        <View key={message.id} style={styles.group}>
-          {assistantBodyParts(message).map((part, index) =>
-            part.type === 'text' ? (
-              <AssistantMarkdown key={part.id} streaming={running}>
-                {part.content}
-              </AssistantMarkdown>
-            ) : (
-              <ProcessingTimeline
-                key={part.id}
-                message={{
-                  ...message,
-                  id: index === 0 ? message.id : `${message.id}:${part.id}`,
-                  blocks: part.blocks,
-                }}
-              />
-            )
-          )}
-        </View>
-      ))}
+      {content.map(message => {
+        const presentation = projectMobileAssistantMessage(message)
+        return (
+          <View key={message.id} style={styles.group}>
+            {presentation.parts.map((part, index) =>
+              part.type === 'text' ? (
+                <AssistantMarkdown key={part.id} streaming={presentation.streaming}>
+                  {part.content}
+                </AssistantMarkdown>
+              ) : (
+                <ProcessingTimeline
+                  key={part.id}
+                  interleaved={presentation.interleaved}
+                  message={{
+                    ...message,
+                    content: presentation.content,
+                    id: index === 0 ? message.id : `${message.id}:${part.id}`,
+                    blocks: part.blocks,
+                  }}
+                />
+              )
+            )}
+          </View>
+        )
+      })}
       {output ? <AssistantMarkdown streaming={running}>{output}</AssistantMarkdown> : null}
       {(block.children ?? []).flatMap(child =>
         child.type === 'subagent'

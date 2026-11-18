@@ -1,6 +1,10 @@
 export type DeviceStatus = 'online' | 'offline' | 'busy'
 import type { ModelType, ModelOptions, UnifiedModel } from '../../../packages/chat-core/src/models'
-import type { Attachment, TurnFileChangesSummary } from '../../../packages/chat-core/src/runtime'
+import type {
+  Attachment,
+  CodexReference,
+  TurnFileChangesSummary,
+} from '../../../packages/chat-core/src/runtime'
 export type { Attachment }
 export type { ModelType, ModelOptions, UnifiedModel }
 export type { RunnerModel } from '../../../packages/collaboration/src/agent-form/runnerRouting'
@@ -39,8 +43,7 @@ export interface DeviceInfo {
   bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null
   runtime_features?:
-    | import('../../../packages/chat-core/src/execution-project').RuntimeFeatureSet
-    | null
+    import('../../../packages/chat-core/src/execution-project').RuntimeFeatureSet | null
 }
 
 export interface DeviceListResponse {
@@ -317,7 +320,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   attachments?: Attachment[]
-  textItems?: ChatTextItem[]
+  references?: CodexReference[] | null
   blocks?: ChatProcessingBlock[]
   fileChanges?: ChatFileChangesSummary
   streamingThinkingContent?: string
@@ -329,12 +332,6 @@ export interface ChatMessage {
   runtimeStatus?: import('../../../packages/chat-core/src/runtime-conversation').RuntimeWorkbenchMessageStatus
   stoppedNotice?: boolean
   runtimeDisplayItems?: import('../../../packages/chat-core/src/runtime-conversation').RuntimeAssistantDisplayItem[]
-}
-
-export interface ChatTextItem {
-  id: string
-  content: string
-  streamOffset?: number
 }
 
 export type ChatBlockStatus = 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
@@ -371,10 +368,7 @@ export type ChatSubagentBlock =
   import('../../../packages/chat-core/src/runtime-conversation').SubagentBlock
 
 export type ChatProcessingBlock =
-  | ChatToolBlock
-  | ChatNarrativeBlock
-  | ChatFileChangesBlock
-  | ChatSubagentBlock
+  ChatToolBlock | ChatNarrativeBlock | ChatFileChangesBlock | ChatSubagentBlock
 
 export interface ChatFileChangeItem {
   path: string

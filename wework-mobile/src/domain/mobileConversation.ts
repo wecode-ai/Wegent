@@ -21,6 +21,7 @@ import {
   settleMobileUserInput,
 } from './requestUserInput'
 import { mobileMessagesFromWorkbench } from './mobileMessagePresentation'
+import { reconcileCachedRuntimeCommands } from './runtimeTranscript'
 import type { ChatAction, RuntimeStreamEvent } from './chatActions'
 import type { ChatMessage, RuntimeTaskAddress, RuntimeTranscriptResponse } from '@/types/runtime'
 
@@ -151,13 +152,27 @@ export class MobileConversation {
         this.messages.length > 0 &&
         !this.messages.some(message => snapshotIds.has(message.id)))
     const base = this.buffered ? this.hydrationBase : this.turns
-    this.turns = hydrateRuntimeConversationTurns(
-      changedThread ? [] : resetPagination ? base.filter(turn => turn.id === null) : base,
+    const hydrationBase = changedThread
+      ? []
+      : resetPagination
+        ? base.filter(turn => turn.id === null)
+        : base
+    const hydrated = hydrateRuntimeConversationTurns(
+      hydrationBase,
       snapshot,
       this.buffered ?? [],
       false,
       [...this.superseded]
     )
+    this.turns =
+      transcript.runtime === 'codex'
+        ? reconcileCachedRuntimeCommands(
+            hydrationBase,
+            snapshot,
+            hydrated,
+            Boolean(transcript.hasMoreBefore || transcript.beforeCursor)
+          )
+        : hydrated
     this.project()
     return resetPagination
   }

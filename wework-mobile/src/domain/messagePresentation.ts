@@ -1,4 +1,14 @@
 import { fileChangesSourceKey, mergeFileChangesSummaries } from './mobileFileChanges'
+import type {
+  ProcessingBlock,
+  WorkbenchMessage,
+} from '../../../packages/chat-core/src/runtime-conversation'
+import {
+  getAssistantRenderProjection,
+  hasRunningProcessingBlocks,
+  isCancelledAssistantMessage,
+} from '../../../packages/collaboration/src/conversation/assistantMessagePresentation'
+import { getAssistantReferences } from '../../../packages/collaboration/src/conversation/codexReferences'
 import {
   getGeneratedImages,
   type GeneratedImageArtifact,
@@ -7,6 +17,7 @@ export type { GeneratedImageArtifact } from '../../../packages/chat-core/src/gen
 import type {
   ChatFileChangeItem,
   ChatFileChangesBlock,
+  ChatFileChangesSummary,
   ChatMessage,
   ChatNarrativeBlock,
   ChatProcessingBlock,
@@ -14,14 +25,7 @@ import type {
 } from '@/types/runtime'
 
 export type ToolActivityKind =
-  | 'web'
-  | 'file'
-  | 'search'
-  | 'command'
-  | 'create'
-  | 'edit'
-  | 'guidance'
-  | 'tool'
+  'web' | 'file' | 'search' | 'command' | 'create' | 'edit' | 'guidance' | 'tool'
 
 export type MessageDisplayRow =
   | { type: 'narrative'; id: string; block: ChatNarrativeBlock }
@@ -452,27 +456,49 @@ export type AssistantBodyPart =
   | { id: string; type: 'text'; content: string }
   | { id: string; type: 'processing'; blocks: ChatProcessingBlock[] }
 
-/** Only adjacent processing items may be grouped; text remains at its native position. */
-export function assistantBodyParts(message: ChatMessage): AssistantBodyPart[] {
-  if (!message.runtimeDisplayItems)
-    return [
-      ...(message.blocks?.length
-        ? [{ id: 'processing', type: 'processing' as const, blocks: message.blocks }]
-        : []),
-      ...(message.content ? [{ id: 'text', type: 'text' as const, content: message.content }] : []),
-    ]
-  const blocks = new Map(message.blocks?.map(block => [block.id, block]))
-  const parts: AssistantBodyPart[] = []
-  for (const item of message.runtimeDisplayItems) {
-    if (item.type === 'assistant_text') {
-      parts.push({ id: item.id, type: 'text', content: item.content })
-    } else {
-      const block = blocks.get(item.id)
-      if (!block) continue
-      const previous = parts.at(-1)
-      if (previous?.type === 'processing') previous.blocks.push(block)
-      else parts.push({ id: item.id, type: 'processing', blocks: [block] })
-    }
+export function projectMobileAssistantMessage(message: ChatMessage) {
+  const nativeFileChanges = new Map<string, ChatFileChangesSummary>()
+  const source: WorkbenchMessage = {
+    ...message,
+    createdAt: String(message.createdAt),
+    status: message.status === 'completed' ? 'done' : message.status,
+    fileChanges: message.fileChanges?.source,
+    blocks: message.blocks?.flatMap<ProcessingBlock>(block => {
+      if (block.type === 'tool' || block.type === 'subagent') return [block]
+      if (block.type === 'error' || block.type === 'guidance') return []
+      if (block.type !== 'file_changes') return [{ ...block, type: block.type }]
+      if (!block.fileChanges.source) return []
+      nativeFileChanges.set(block.id, block.fileChanges)
+      return [{ ...block, fileChanges: block.fileChanges.source }]
+    }),
   }
-  return parts
+  const projection = getAssistantRenderProjection(source)
+  const cancelled = isCancelledAssistantMessage(source)
+  const streaming = !cancelled && source.status === 'streaming'
+  const hasFinalArtifacts =
+    cancelled ||
+    source.status === 'done' ||
+    source.status === 'failed' ||
+    (!streaming && !hasRunningProcessingBlocks(projection.blocks))
+  return {
+    content: projection.content,
+    interleaved: projection.interleaved,
+    streaming,
+    references: hasFinalArtifacts
+      ? getAssistantReferences(source.references, projection.content, source.fileChanges)
+      : [],
+    parts: projection.segments.map<AssistantBodyPart>(segment =>
+      segment.kind === 'content'
+        ? { id: segment.id, type: 'text', content: segment.content }
+        : {
+            id: segment.id,
+            type: 'processing',
+            blocks: segment.blocks.map(block =>
+              block.type === 'file_changes'
+                ? { ...block, fileChanges: nativeFileChanges.get(block.id)! }
+                : block
+            ),
+          }
+    ),
+  }
 }
