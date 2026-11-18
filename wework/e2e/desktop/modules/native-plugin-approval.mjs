@@ -3,7 +3,8 @@ import { execFile } from 'node:child_process'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import {
-  WINDOWS_EMPTY_BUTTON_DIAGNOSTICS,
+  WINDOWS_DECISION_STAGE_DIAGNOSTICS,
+  windowsNativeWindowDiagnosticScript,
   WINDOWS_NATIVE_DIAGNOSTIC_FIELDS,
   WINDOWS_UIA_STRUCTURE_DIAGNOSTICS,
 } from './native-plugin-window-diagnostics.mjs'
@@ -79,15 +80,8 @@ end run`,
   }
   if (process.platform === 'win32') {
     const script = `
-$decisionStages = [System.Collections.Generic.HashSet[string]]::new()
-$decisionClock = [System.Diagnostics.Stopwatch]::StartNew()
+${WINDOWS_DECISION_STAGE_DIAGNOSTICS}
 $targetPid = ${pid}
-function Write-DecisionStage([string]$decisionStage) {
-  if ($decisionStages.Add($decisionStage)) {
-    Write-Output "native-decision:$decisionStage"
-    Write-Output ("native-decision-timing:{0}:{1}" -f $decisionStage, $decisionClock.ElapsedMilliseconds)
-  }
-}
 Write-DecisionStage 'started'
 $decisionApartment = [System.Threading.Thread]::CurrentThread.GetApartmentState()
 Write-Output ("native-decision-apartment:{0}" -f $decisionApartment)
@@ -159,7 +153,6 @@ ${WINDOWS_UIA_STRUCTURE_DIAGNOSTICS}
   }
   Start-Sleep -Milliseconds 100
 }
-${WINDOWS_EMPTY_BUTTON_DIAGNOSTICS}
 throw 'The isolated app did not display its native Core plugin decision'
 `
     await execute(
@@ -172,7 +165,7 @@ throw 'The isolated app did not display its native Core plugin decision'
         Buffer.from(script, 'utf16le').toString('base64'),
       ],
       options
-    ).catch(error => {
+    ).catch(async error => {
       const stages = new Set([
         'started',
         'client-loaded',
@@ -192,9 +185,6 @@ throw 'The isolated app did not display its native Core plugin decision'
         'uia-structure-started',
         'uia-structure-completed',
         'uia-structure-failed',
-        'empty-button-diagnostics-started',
-        'empty-button-diagnostics-completed',
-        'empty-button-diagnostics-failed',
         'button-present',
         'button-name-read-started',
         'button-name-read',
@@ -205,6 +195,7 @@ throw 'The isolated app did not display its native Core plugin decision'
         'invoke-started',
         'invoke-completed',
       ])
+      const evidence = windowsDecisionEvidence(error.stdout, stages)
       if (!signal.aborted)
         console.error(
           '[native-plugin-decision-failed]',
@@ -214,9 +205,15 @@ throw 'The isolated app did not display its native Core plugin decision'
             code: typeof error.code === 'number' ? error.code : null,
             killed: error.killed === true,
             signal: error.signal ?? null,
-            ...windowsDecisionEvidence(error.stdout, stages),
+            ...evidence,
           })
         )
+      if (
+        !signal.aborted &&
+        evidence.buttonCount === 0 &&
+        evidence.stages.includes('dialog-matched')
+      )
+        await recordWindowsNativeWindowDiagnostics(pid, signal)
       throw error
     })
     return
@@ -244,6 +241,52 @@ throw 'The isolated app did not display its native Core plugin decision'
     ['key', '--clearmodifiers', ...(allow ? ['Tab', 'Return'] : ['Escape'])],
     { encoding: 'utf8', timeout: inputTimeout }
   )
+}
+
+async function recordWindowsNativeWindowDiagnostics(pid, signal) {
+  const stages = new Set([
+    'observer-started',
+    'observer-types-loaded',
+    'observer-dialog-matched',
+    'observer-dialog-missing',
+    'observer-dialog-ambiguous',
+    'observer-completed',
+    'observer-failed',
+  ])
+  let output
+  let failure = null
+  try {
+    const result = await execute(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Mta',
+        '-EncodedCommand',
+        Buffer.from(windowsNativeWindowDiagnosticScript(pid, TITLES), 'utf16le').toString('base64'),
+      ],
+      { timeout: 4_000, signal, encoding: 'utf8' }
+    )
+    output = result.stdout
+  } catch (error) {
+    output = error.stdout
+    failure = {
+      code: typeof error.code === 'number' ? error.code : null,
+      killed: error.killed === true,
+      signal: error.signal ?? null,
+    }
+  }
+  if (!signal.aborted)
+    console.error(
+      '[native-plugin-window-diagnostics]',
+      JSON.stringify({
+        pid,
+        platform: 'win32',
+        phase: 'after-decision-failure',
+        failure,
+        ...windowsDecisionEvidence(output, stages),
+      })
+    )
 }
 
 function windowsDecisionEvidence(output, allowedStages) {

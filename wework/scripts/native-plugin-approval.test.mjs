@@ -497,10 +497,8 @@ test('retains Windows native failure stages and the unchanged deadline without e
     )
     expect(script).toContain('if ($decisions.Count -gt 1)')
     expect(script).toContain('UtcNow.AddSeconds(10)')
-    expect(
-      script.indexOf("Write-DecisionStage 'empty-button-diagnostics-started'")
-    ).toBeGreaterThan(script.lastIndexOf('Start-Sleep -Milliseconds 100'))
-    expect(script).toContain('GetWindowThreadProcessId(window, out pid)')
+    expect(script).not.toContain('empty-button-diagnostics')
+    expect(script).not.toContain('GetWindowThreadProcessId')
     expect(script).not.toContain('SendMessage')
     expect(script).not.toContain('GetWindowText')
     expect(log).toHaveBeenCalledWith(
@@ -569,3 +567,65 @@ test.each([
     log.mockRestore()
   }
 })
+
+test.each([false, true])(
+  'observes Win32 structure only after native failure and preserves that failure; observer failure=%s',
+  async observerFails => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    const original = Object.assign(new Error('Native decision terminated'), {
+      killed: true,
+      signal: 'SIGTERM',
+      stdout:
+        'native-decision:dialog-matched\nnative-decision-button-count:0\nnative-decision-structure:uia-descendants:5\nnative-decision-structure:uia-buttons:0\n',
+    })
+    native.execute.mockRejectedValueOnce(original)
+    if (observerFails)
+      native.execute.mockRejectedValueOnce(
+        Object.assign(new Error('private-observer-error'), {
+          killed: true,
+          signal: 'SIGTERM',
+          stdout: 'native-decision:observer-started\nprivate-observer-output',
+        })
+      )
+    else
+      native.execute.mockResolvedValueOnce({
+        stdout:
+          'native-decision:observer-started\nnative-decision:observer-dialog-matched\nnative-decision-structure:win32-children:4\nnative-decision-structure:win32-buttons:2\nnative-decision:observer-completed\n',
+      })
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(
+        withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => null)
+      ).rejects.toBe(original)
+      expect(native.execute).toHaveBeenCalledTimes(2)
+      expect(native.execute.mock.calls.map(call => call[2].timeout)).toEqual([12_000, 4_000])
+      const input = Buffer.from(native.execute.mock.calls[0][1].at(-1), 'base64').toString(
+        'utf16le'
+      )
+      const observer = Buffer.from(native.execute.mock.calls[1][1].at(-1), 'base64').toString(
+        'utf16le'
+      )
+      expect(input).toContain('UtcNow.AddSeconds(10)')
+      expect(input).not.toContain('WeworkNativeDialogStructure')
+      expect(observer).toContain('$targetPid = 123')
+      expect(observer).toContain('Confirm Core plugin installation')
+      expect(observer).toContain('Core 插件更新确认')
+      expect(observer).toContain('pid != expectedPid')
+      expect(observer).toContain('name.ToString() != "#32770"')
+      expect(observer).toContain('Array.IndexOf(titles, title.ToString()) < 0')
+      expect(observer).toContain('if (matches.Count != 1)')
+      expect(observer).not.toMatch(
+        /InvokePattern|SendMessage|SetForegroundWindow|mouse_event|keybd_event|Start-Sleep/
+      )
+      const observed = JSON.parse(
+        log.mock.calls.find(call => call[0] === '[native-plugin-window-diagnostics]')[1]
+      )
+      expect(observed.phase).toBe('after-decision-failure')
+      expect(observed.emptyButtonDiagnostics['win32-buttons']).toBe(observerFails ? null : 2)
+      expect(observed.failure?.killed ?? false).toBe(observerFails)
+      expect(log.mock.calls.flat().join(' ')).not.toContain('private')
+    } finally {
+      log.mockRestore()
+    }
+  }
+)
