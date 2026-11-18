@@ -109,7 +109,11 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(set.accepted, true, set.error)
         const before = set.goal
         assert.equal(before.status, 'active')
-        assert.equal(set.resumed, true, 'Activation must admit the owned Goal recovery')
+        assert.equal(
+          set.resumed,
+          false,
+          'Goal activation prepares the native session before mutation and must not admit duplicate work'
+        )
         await waitForValue(
           task,
           value => requests === 2 && value.running === true,
